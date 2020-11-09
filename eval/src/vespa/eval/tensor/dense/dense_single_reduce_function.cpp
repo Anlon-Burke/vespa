@@ -43,26 +43,25 @@ struct Params {
 };
 
 template <typename CT, typename AGGR>
-CT reduce_cells(const CT *src, size_t dim_size, size_t stride, AGGR &aggr) {
-    aggr.first(*src);
+CT reduce_cells(const CT *src, size_t dim_size, size_t stride) {
+    AGGR aggr(*src);
     for (size_t i = 1; i < dim_size; ++i) {
         src += stride;
-        aggr.next(*src);
+        aggr.sample(*src);
     }
     return aggr.result();
 }
 
 template <typename CT, typename AGGR>
 void my_single_reduce_op(InterpretedFunction::State &state, uint64_t param) {
-    const auto &params = *(const Params *)(param);
-    const CT *src = DenseTensorView::typify_cells<CT>(state.peek(0)).cbegin();
+    const auto &params = unwrap_param<Params>(param);
+    const CT *src = state.peek(0).cells().typify<CT>().cbegin();
     auto dst_cells = state.stash.create_array<CT>(params.outer_size * params.inner_size);
-    AGGR aggr;
     CT *dst = dst_cells.begin();
     const size_t block_size = (params.dim_size * params.inner_size);
     for (size_t outer = 0; outer < params.outer_size; ++outer) {
         for (size_t inner = 0; inner < params.inner_size; ++inner) {
-            *dst++ = reduce_cells<CT, AGGR>(src + inner, params.dim_size, params.inner_size, aggr);
+            *dst++ = reduce_cells<CT, AGGR>(src + inner, params.dim_size, params.inner_size);
         }
         src += block_size;
     }
@@ -95,12 +94,11 @@ DenseSingleReduceFunction::DenseSingleReduceFunction(const ValueType &result_typ
 DenseSingleReduceFunction::~DenseSingleReduceFunction() = default;
 
 InterpretedFunction::Instruction
-DenseSingleReduceFunction::compile_self(const TensorEngine &, Stash &stash) const
+DenseSingleReduceFunction::compile_self(eval::EngineOrFactory, Stash &stash) const
 {
     auto op = typify_invoke<2,MyTypify,MyGetFun>(result_type().cell_type(), _aggr);
     auto &params = stash.create<Params>(result_type(), child().result_type(), _dim_idx);
-    static_assert(sizeof(uint64_t) == sizeof(&params));
-    return InterpretedFunction::Instruction(op, (uint64_t)&params);
+    return InterpretedFunction::Instruction(op, wrap_param<Params>(params));
 }
 
 const TensorFunction &

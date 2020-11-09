@@ -6,6 +6,7 @@
 #include "tensor.h"
 #include "tensor_spec.h"
 #include "aggr.h"
+#include "operation.h"
 #include <vespa/vespalib/stllike/string.h>
 #include <vespa/vespalib/util/stash.h>
 #include <memory>
@@ -41,7 +42,7 @@ public:
         size_t index;
         vespalib::string name;
         static constexpr size_t npos = -1;
-        Label(const TensorSpec::Label &label)
+        Label(const TensorSpec::Label &label) noexcept
             : index(label.index), name(label.name) {}
         bool operator<(const Label &rhs) const {
             if (index != rhs.index) {
@@ -75,15 +76,17 @@ private:
     Cells _cells;
 
 public:
-    using map_fun_t = double (*)(double);
-    using join_fun_t = double (*)(double, double);
+    using map_fun_t = vespalib::eval::operation::op1_t;
+    using join_fun_t = vespalib::eval::operation::op2_t;
 
     SimpleTensor();
+    TypedCells cells() const override { abort(); }
+    const Index &index() const override { abort(); }
     explicit SimpleTensor(double value);
     SimpleTensor(const ValueType &type_in, Cells cells_in);
     double as_double() const final override;
     const ValueType &type() const override { return _type; }
-    const Cells &cells() const { return _cells; }
+    const Cells &my_cells() const { return _cells; }
     std::unique_ptr<SimpleTensor> map(map_fun_t function) const;
     std::unique_ptr<SimpleTensor> reduce(Aggregator &aggr, const std::vector<vespalib::string> &dimensions) const;
     std::unique_ptr<SimpleTensor> rename(const std::vector<vespalib::string> &from, const std::vector<vespalib::string> &to) const;
@@ -93,6 +96,7 @@ public:
     static std::unique_ptr<SimpleTensor> concat(const SimpleTensor &a, const SimpleTensor &b, const vespalib::string &dimension);
     static void encode(const SimpleTensor &tensor, nbostream &output);
     static std::unique_ptr<SimpleTensor> decode(nbostream &input);
+    MemoryUsage get_memory_usage() const override;
 };
 
 } // namespace vespalib::eval

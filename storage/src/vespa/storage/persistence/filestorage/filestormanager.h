@@ -11,7 +11,6 @@
 #include "filestorhandler.h"
 #include "filestormetrics.h"
 #include <vespa/vespalib/util/document_runnable.h>
-#include <vespa/vespalib/util/sync.h>
 #include <vespa/vespalib/util/isequencedtaskexecutor.h>
 #include <vespa/document/bucket/bucketid.h>
 #include <vespa/persistence/spi/persistenceprovider.h>
@@ -41,6 +40,8 @@ struct FileStorManagerTest;
 class ReadBucketList;
 class BucketOwnershipNotifier;
 class AbortBucketOperationsCommand;
+struct DoneInitializeHandler;
+class PersistenceHandler;
 
 class FileStorManager : public StorageLinkQueued,
                         public framework::HtmlStatusReporter,
@@ -48,36 +49,32 @@ class FileStorManager : public StorageLinkQueued,
                         private config::IFetcherCallback<vespa::config::content::StorFilestorConfig>,
                         public MessageSender
 {
-    ServiceLayerComponentRegister & _compReg;
-    ServiceLayerComponent          _component;
-    const spi::PartitionStateList & _partitions;
-    spi::PersistenceProvider      & _providerCore;
-    ProviderErrorWrapper            _providerErrorWrapper;
-    spi::PersistenceProvider      * _provider;
-    
-    const document::BucketIdFactory& _bucketIdFactory;
-    config::ConfigUri                _configUri;
+    ServiceLayerComponentRegister   & _compReg;
+    ServiceLayerComponent             _component;
+    spi::PersistenceProvider        & _providerCore;
+    ProviderErrorWrapper              _providerErrorWrapper;
+    spi::PersistenceProvider        * _provider;
+    DoneInitializeHandler&            _init_handler;
+    const document::BucketIdFactory & _bucketIdFactory;
 
-    typedef std::vector<DiskThread::SP> DiskThreads;
-    std::vector<DiskThreads>                 _disks;
+    std::vector<std::unique_ptr<PersistenceHandler>> _persistenceHandlers;
+    std::vector<std::unique_ptr<DiskThread>>         _threads;
     std::unique_ptr<BucketOwnershipNotifier> _bucketOwnershipNotifier;
 
     std::unique_ptr<vespa::config::content::StorFilestorConfig> _config;
     config::ConfigFetcher _configFetcher;
     uint32_t              _threadLockCheckInterval; // In seconds
     bool                  _failDiskOnError;
+    bool                  _use_async_message_handling_on_schedule;
     std::shared_ptr<FileStorMetrics> _metrics;
     std::unique_ptr<FileStorHandler> _filestorHandler;
     std::unique_ptr<vespalib::ISequencedTaskExecutor> _sequencedExecutor;
-
-    mutable vespalib::Monitor _threadMonitor; // Notify to stop sleeping
-    bool                      _closed;
-
-    friend struct FileStorManagerTest;
+    bool       _closed;
+    std::mutex _lock;
 
 public:
-    FileStorManager(const config::ConfigUri &, const spi::PartitionStateList&,
-                    spi::PersistenceProvider&, ServiceLayerComponentRegister&);
+    FileStorManager(const config::ConfigUri &, spi::PersistenceProvider&,
+                    ServiceLayerComponentRegister&, DoneInitializeHandler&);
     FileStorManager(const FileStorManager &) = delete;
     FileStorManager& operator=(const FileStorManager &) = delete;
 
@@ -98,8 +95,21 @@ public:
 
     void handleNewState() override;
 
+    // Must be called exactly once at startup _before_ storage chain is opened.
+    // This function expects that no external messages may arrive prior to, or
+    // concurrently with this call, such as client operations or cluster controller
+    // node state requests.
+    // By ensuring that this function is called prior to chain opening, this invariant
+    // shall be upheld since no RPC/MessageBus endpoints have been made available
+    // yet at that point in time.
+    void initialize_bucket_databases_from_provider();
+
+    const FileStorMetrics& get_metrics() const { return *_metrics; }
+
 private:
     void configure(std::unique_ptr<vespa::config::content::StorFilestorConfig> config) override;
+    PersistenceHandler & createRegisteredHandler(const ServiceLayerComponent & component);
+    VESPA_DLL_LOCAL PersistenceHandler & getThreadLocalHandler();
 
     void replyWithBucketNotFound(api::StorageMessage&, const document::Bucket&);
 
@@ -118,7 +128,7 @@ private:
 
     StorBucketDatabase::WrappedEntry mapOperationToDisk(api::StorageMessage&, const document::Bucket&);
     StorBucketDatabase::WrappedEntry mapOperationToBucketAndDisk(api::BucketCommand&, const document::DocumentId*);
-    bool handlePersistenceMessage(const std::shared_ptr<api::StorageMessage>&, uint16_t disk);
+    bool handlePersistenceMessage(const std::shared_ptr<api::StorageMessage>&);
 
     // Document operations
     bool onPut(const std::shared_ptr<api::PutCommand>&) override;
@@ -157,6 +167,7 @@ private:
     void storageDistributionChanged() override;
     void updateState();
     void propagateClusterStates();
+    void update_reported_state_after_db_init();
 };
 
 } // storage

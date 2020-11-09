@@ -2,8 +2,10 @@
 package com.yahoo.vespa.hosted.provision.testutils;
 
 import com.yahoo.component.Version;
+import com.yahoo.config.provision.ActivationContext;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
+import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
@@ -58,7 +60,7 @@ public class MockNodeRepository extends NodeRepository {
      */
     public MockNodeRepository(MockCurator curator, NodeFlavors flavors) {
         super(flavors,
-              new EmptyProvisionServiceProvider().getHostResourcesCalculator(),
+              new EmptyProvisionServiceProvider(),
               curator,
               Clock.fixed(Instant.ofEpochMilli(123), ZoneId.of("Z")),
               Zone.defaultZone(),
@@ -66,8 +68,7 @@ public class MockNodeRepository extends NodeRepository {
               DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa"),
               new InMemoryFlagSource(),
               true,
-              false,
-              0);
+              0, 1000);
         this.flavors = flavors;
 
         curator.setZooKeeperEnsembleConnectionSpec("cfg1:1234,cfg2:1234,cfg3:1234");
@@ -82,65 +83,60 @@ public class MockNodeRepository extends NodeRepository {
         List<Node> nodes = new ArrayList<>();
 
         // Regular nodes
-        nodes.add(createNode("node1", "host1.yahoo.com", ipConfig(1), Optional.empty(),
-                             new Flavor(new NodeResources(2, 8, 50, 1, fast, local)), Optional.empty(), NodeType.tenant));
-        nodes.add(createNode("node2", "host2.yahoo.com", ipConfig(2), Optional.empty(),
-                             new Flavor(new NodeResources(2, 8, 50, 1, fast, local)), Optional.empty(), NodeType.tenant));
-        nodes.add(createNode("node3", "host3.yahoo.com", ipConfig(3), Optional.empty(),
-                             new Flavor(new NodeResources(0.5, 48, 500, 1, fast, local)), Optional.empty(), NodeType.tenant));
-        Node node4 = createNode("node4", "host4.yahoo.com", ipConfig(4), Optional.of("dockerhost1.yahoo.com"),
-                                new Flavor(new NodeResources(1, 4, 100, 1, fast, local)), Optional.empty(), NodeType.tenant);
-        node4 = node4.with(node4.status()
-                                .withVespaVersion(new Version("6.41.0"))
-                                .withDockerImage(DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa:6.41.0")));
+        nodes.add(Node.create("node1", ipConfig(1), "host1.yahoo.com", resources(2, 8, 50, 1, fast, local), NodeType.tenant).build());
+        nodes.add(Node.create("node2", ipConfig(2), "host2.yahoo.com", resources(2, 8, 50, 1, fast, local), NodeType.tenant).build());
+        nodes.add(Node.create("node3", ipConfig(3), "host3.yahoo.com", resources(0.5, 48, 500, 1, fast, local), NodeType.tenant).build());
+        Node node4 = Node.create("node4", ipConfig(4), "host4.yahoo.com", resources(1, 4, 100, 1, fast, local), NodeType.tenant)
+                .parentHostname("dockerhost1.yahoo.com")
+                .status(Status.initial()
+                        .withVespaVersion(new Version("6.41.0"))
+                        .withContainerImage(DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa:6.41.0")))
+                .build();
         nodes.add(node4);
 
-        Node node5 = createNode("node5", "host5.yahoo.com", ipConfig(5), Optional.of("dockerhost2.yahoo.com"),
-                                new Flavor(new NodeResources(1, 8, 100, 1, slow, remote)), Optional.empty(), NodeType.tenant);
-        nodes.add(node5.with(node5.status()
-                                  .withVespaVersion(new Version("1.2.3"))
-                                  .withDockerImage(DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa:1.2.3"))));
+        Node node5 = Node.create("node5", ipConfig(5), "host5.yahoo.com", resources(1, 8, 100, 1, slow, remote), NodeType.tenant)
+                .parentHostname("dockerhost2.yahoo.com")
+                .status(Status.initial()
+                        .withVespaVersion(new Version("1.2.3"))
+                        .withContainerImage(DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa:1.2.3")))
+                .build();
+        nodes.add(node5);
 
 
-        nodes.add(createNode("node6", "host6.yahoo.com", ipConfig(6), Optional.empty(),
-                             new Flavor(new NodeResources(2, 8, 50, 1, fast, local)), Optional.empty(), NodeType.tenant));
-        Node node7 = createNode("node7", "host7.yahoo.com", ipConfig(7), Optional.empty(),
-                                new Flavor(new NodeResources(2, 8, 50, 1, fast, local)), Optional.empty(), NodeType.tenant);
+        nodes.add(Node.create("node6", ipConfig(6), "host6.yahoo.com", resources(2, 8, 50, 1, fast, local), NodeType.tenant).build());
+        Node node7 = Node.create("node7", ipConfig(7), "host7.yahoo.com", resources(2, 8, 50, 1, fast, local), NodeType.tenant).build();
         nodes.add(node7);
 
         // 8, 9, 11 and 12 are added by web service calls
-        Node node10 = createNode("node10", "host10.yahoo.com", ipConfig(10), Optional.of("parent1.yahoo.com"),
-                                 new Flavor(new NodeResources(2, 8, 50, 1, fast, local)), Optional.empty(), NodeType.tenant);
-        Status node10newStatus = node10.status();
-        node10newStatus = node10newStatus
-                .withVespaVersion(Version.fromString("5.104.142"))
-                .withDockerImage(DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa:5.104.142"));
-        node10 = node10.with(node10newStatus);
+        Node node10 = Node.create("node10", ipConfig(10), "host10.yahoo.com", resources(2, 8, 50, 1, fast, local), NodeType.tenant)
+                .parentHostname("parent1.yahoo.com")
+                .status(Status.initial()
+                        .withVespaVersion(Version.fromString("5.104.142"))
+                        .withContainerImage(DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa:5.104.142")))
+                .build();
         nodes.add(node10);
 
-        Node node55 = createNode("node55", "host55.yahoo.com", ipConfig(55), Optional.empty(),
-                                 new Flavor(new NodeResources(2, 8, 50, 1, fast, local)), Optional.empty(), NodeType.tenant);
-        nodes.add(node55.with(node55.status().withWantToRetire(true, true)));
+        Node node55 = Node.create("node55", ipConfig(55), "host55.yahoo.com", resources(2, 8, 50, 1, fast, local), NodeType.tenant)
+                .status(Status.initial().withWantToRetire(true, true)).build();
+        nodes.add(node55);
 
         /* Setup docker hosts (two of these will be reserved for spares */
-        nodes.add(createNode("dockerhost1", "dockerhost1.yahoo.com", ipConfig(100, 1, 3), Optional.empty(),
-                             flavors.getFlavorOrThrow("large"), Optional.empty(), NodeType.host));
-        nodes.add(createNode("dockerhost2", "dockerhost2.yahoo.com", ipConfig(101, 1, 3), Optional.empty(),
-                             flavors.getFlavorOrThrow("large"), Optional.empty(), NodeType.host));
-        nodes.add(createNode("dockerhost3", "dockerhost3.yahoo.com", ipConfig(102, 1, 3), Optional.empty(),
-                             flavors.getFlavorOrThrow("large"), Optional.empty(), NodeType.host));
-        nodes.add(createNode("dockerhost4", "dockerhost4.yahoo.com", ipConfig(103, 1, 3), Optional.empty(),
-                             flavors.getFlavorOrThrow("large"), Optional.empty(), NodeType.host));
-        nodes.add(createNode("dockerhost5", "dockerhost5.yahoo.com", ipConfig(104, 1, 3), Optional.empty(),
-                             flavors.getFlavorOrThrow("large"), Optional.empty(), NodeType.host));
-        nodes.add(createNode("dockerhost6", "dockerhost6.yahoo.com", ipConfig(105, 1, 3), Optional.empty(),
-                flavors.getFlavorOrThrow("large"), Optional.empty(), NodeType.host));
+        nodes.add(Node.create("dockerhost1", ipConfig(100, 1, 3), "dockerhost1.yahoo.com",
+                             flavors.getFlavorOrThrow("large"), NodeType.host).build());
+        nodes.add(Node.create("dockerhost2", ipConfig(101, 1, 3), "dockerhost2.yahoo.com",
+                             flavors.getFlavorOrThrow("large"), NodeType.host).build());
+        nodes.add(Node.create("dockerhost3", ipConfig(102, 1, 3), "dockerhost3.yahoo.com",
+                             flavors.getFlavorOrThrow("large"), NodeType.host).build());
+        nodes.add(Node.create("dockerhost4", ipConfig(103, 1, 3), "dockerhost4.yahoo.com",
+                             flavors.getFlavorOrThrow("large"), NodeType.host).build());
+        nodes.add(Node.create("dockerhost5", ipConfig(104, 1, 3), "dockerhost5.yahoo.com",
+                             flavors.getFlavorOrThrow("large"), NodeType.host).build());
+        nodes.add(Node.create("dockerhost6", ipConfig(105, 1, 3), "dockerhost6.yahoo.com",
+                flavors.getFlavorOrThrow("large"), NodeType.host).build());
 
         // Config servers
-        nodes.add(createNode("cfg1", "cfg1.yahoo.com", ipConfig(201), Optional.empty(),
-                             flavors.getFlavorOrThrow("default"), Optional.empty(), NodeType.config));
-        nodes.add(createNode("cfg2", "cfg2.yahoo.com", ipConfig(202), Optional.empty(),
-                             flavors.getFlavorOrThrow("default"), Optional.empty(), NodeType.config));
+        nodes.add(Node.create("cfg1", ipConfig(201), "cfg1.yahoo.com", flavors.getFlavorOrThrow("default"), NodeType.config).build());
+        nodes.add(Node.create("cfg2", ipConfig(202), "cfg2.yahoo.com", flavors.getFlavorOrThrow("default"), NodeType.config).build());
 
         // Ready all nodes, except 7 and 55
         nodes = addNodes(nodes, Agent.system);
@@ -185,10 +181,8 @@ public class MockNodeRepository extends NodeRepository {
         activate(provisioner.prepare(app3, cluster3, Capacity.from(new ClusterResources(2, 1, new NodeResources(1, 4, 100, 1)), false, true), null), app3, provisioner);
 
         List<Node> largeNodes = new ArrayList<>();
-        largeNodes.add(createNode("node13", "host13.yahoo.com", ipConfig(13), Optional.empty(),
-                                  new Flavor(new NodeResources(10, 48, 500, 1, fast, local)), Optional.empty(), NodeType.tenant));
-        largeNodes.add(createNode("node14", "host14.yahoo.com", ipConfig(14), Optional.empty(),
-                                  new Flavor(new NodeResources(10, 48, 500, 1, fast, local)), Optional.empty(), NodeType.tenant));
+        largeNodes.add(Node.create("node13", ipConfig(13), "host13.yahoo.com", resources(10, 48, 500, 1, fast, local), NodeType.tenant).build());
+        largeNodes.add(Node.create("node14", ipConfig(14), "host14.yahoo.com", resources(10, 48, 500, 1, fast, local), NodeType.tenant).build());
         addNodes(largeNodes, Agent.system);
         setReady(largeNodes, Agent.system, getClass().getSimpleName());
         ApplicationId app4 = ApplicationId.from(TenantName.from("tenant4"), ApplicationName.from("application4"), InstanceName.from("instance4"));
@@ -197,9 +191,11 @@ public class MockNodeRepository extends NodeRepository {
     }
 
     private void activate(List<HostSpec> hosts, ApplicationId application, NodeRepositoryProvisioner provisioner) {
-        NestedTransaction transaction = new NestedTransaction();
-        provisioner.activate(transaction, application, hosts);
-        transaction.commit();
+        try (var lock = provisioner.lock(application)) {
+            NestedTransaction transaction = new NestedTransaction();
+            provisioner.activate(hosts, new ActivationContext(0), new ApplicationTransaction(lock, transaction));
+            transaction.commit();
+        }
     }
 
     private void addRecord(String name, String ipAddress) {
@@ -237,4 +233,7 @@ public class MockNodeRepository extends NodeRepository {
         return ipConfig(nodeIndex, 1, 0);
     }
 
+    private static Flavor resources(double vcpu, double memoryGb, double diskGb, double bandwidthGbps, NodeResources.DiskSpeed diskSpeed, NodeResources.StorageType storageType) {
+        return new Flavor(new NodeResources(vcpu, memoryGb, diskGb, bandwidthGbps, diskSpeed, storageType));
+    }
 }

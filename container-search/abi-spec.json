@@ -1987,6 +1987,7 @@
       "public void <init>(com.yahoo.search.cluster.NodeManager, boolean)",
       "public void start()",
       "public com.yahoo.search.cluster.MonitorConfiguration getConfiguration()",
+      "public boolean isClosed()",
       "public void add(java.lang.Object, boolean)",
       "public com.yahoo.search.cluster.BaseNodeMonitor getNodeMonitor(java.lang.Object)",
       "public synchronized void failed(java.lang.Object, com.yahoo.search.result.ErrorMessage)",
@@ -4218,11 +4219,13 @@
       "public"
     ],
     "methods": [
+      "public void <init>(com.yahoo.statistics.Statistics, com.yahoo.jdisc.Metric, com.yahoo.container.handler.threadpool.ContainerThreadPool, com.yahoo.container.logging.AccessLog, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.container.core.ContainerHttpConfig, com.yahoo.search.searchchain.ExecutionFactory)",
       "public void <init>(com.yahoo.statistics.Statistics, com.yahoo.jdisc.Metric, java.util.concurrent.Executor, com.yahoo.container.logging.AccessLog, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.container.core.ContainerHttpConfig, com.yahoo.search.searchchain.ExecutionFactory)",
       "public void <init>(com.yahoo.statistics.Statistics, com.yahoo.jdisc.Metric, java.util.concurrent.Executor, com.yahoo.container.logging.AccessLog, com.yahoo.search.query.profile.config.QueryProfilesConfig, com.yahoo.container.core.ContainerHttpConfig, com.yahoo.search.searchchain.ExecutionFactory)",
       "public void <init>(com.yahoo.statistics.Statistics, com.yahoo.jdisc.Metric, java.util.concurrent.Executor, com.yahoo.container.logging.AccessLog, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.search.searchchain.ExecutionFactory, java.util.Optional)",
       "public void <init>(com.yahoo.container.core.ChainsConfig, com.yahoo.search.config.IndexInfoConfig, com.yahoo.container.QrSearchersConfig, com.yahoo.vespa.configdefinition.SpecialtokensConfig, com.yahoo.statistics.Statistics, com.yahoo.language.Linguistics, com.yahoo.jdisc.Metric, com.yahoo.component.provider.ComponentRegistry, java.util.concurrent.Executor, com.yahoo.container.logging.AccessLog, com.yahoo.search.query.profile.config.QueryProfilesConfig, com.yahoo.component.provider.ComponentRegistry, com.yahoo.container.core.ContainerHttpConfig)",
       "public final com.yahoo.container.jdisc.HttpResponse handle(com.yahoo.container.jdisc.HttpRequest)",
+      "public java.util.Optional getRequestType()",
       "public com.yahoo.search.Result searchAndFill(com.yahoo.search.Query, com.yahoo.component.chain.Chain)",
       "public com.yahoo.processing.rendering.Renderer getRendererCopy(com.yahoo.component.ComponentSpecification)",
       "public com.yahoo.search.searchchain.SearchChainRegistry getSearchChainRegistry()",
@@ -5193,6 +5196,8 @@
       "public void setFreshness(com.yahoo.prelude.Freshness)",
       "public void setQueryCache(boolean)",
       "public boolean getQueryCache()",
+      "public void setRerankCount(int)",
+      "public java.lang.Integer getRerankCount()",
       "public com.yahoo.prelude.Location getLocation()",
       "public void setLocation(com.yahoo.prelude.Location)",
       "public void setLocation(java.lang.String)",
@@ -5223,6 +5228,7 @@
       "public static final java.lang.String LIST_FEATURES",
       "public static final java.lang.String FRESHNESS",
       "public static final java.lang.String QUERYCACHE",
+      "public static final java.lang.String RERANKCOUNT",
       "public static final java.lang.String MATCH_PHASE",
       "public static final java.lang.String DIVERSITY",
       "public static final java.lang.String SOFTTIMEOUT",
@@ -5862,7 +5868,7 @@
       "public com.yahoo.search.query.profile.DimensionValues getDimensionValues()",
       "public java.util.Map values()",
       "public java.util.List inherited()",
-      "public void set(java.lang.String, java.lang.Object)",
+      "public java.lang.Object set(java.lang.String, java.lang.Object)",
       "public void inherit(com.yahoo.search.query.profile.QueryProfile)",
       "public int compareTo(com.yahoo.search.query.profile.QueryProfileVariant)",
       "public boolean matches(com.yahoo.search.query.profile.DimensionValues)",
@@ -5893,6 +5899,7 @@
       "public int compareTo(com.yahoo.search.query.profile.QueryProfileVariants$FieldValue)",
       "public com.yahoo.search.query.profile.QueryProfileVariants$FieldValue clone(java.lang.String, java.util.List)",
       "public com.yahoo.search.query.profile.QueryProfileVariants$FieldValue clone()",
+      "public java.lang.String toString()",
       "public bridge synthetic java.lang.Object clone()",
       "public bridge synthetic int compareTo(java.lang.Object)"
     ],
@@ -5948,6 +5955,7 @@
       "public com.yahoo.search.query.profile.QueryProfileVariants clone()",
       "protected void ensureNotFrozen()",
       "public com.yahoo.search.query.profile.QueryProfileVariant getVariant(com.yahoo.search.query.profile.DimensionValues, boolean)",
+      "public java.lang.String toString()",
       "public bridge synthetic java.lang.Object clone()"
     ],
     "fields": []

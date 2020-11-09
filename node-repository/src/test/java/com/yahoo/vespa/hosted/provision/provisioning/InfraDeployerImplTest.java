@@ -2,6 +2,7 @@
 package com.yahoo.vespa.hosted.provision.provisioning;
 
 import com.yahoo.component.Version;
+import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.HostName;
@@ -24,7 +25,9 @@ import com.yahoo.vespa.service.monitor.InfraApplicationApi;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
+import org.mockito.ArgumentMatcher;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -46,7 +49,6 @@ import static org.mockito.Mockito.when;
  */
 @RunWith(Parameterized.class)
 public class InfraDeployerImplTest {
-
 
     @Parameterized.Parameters(name = "application={0}")
     public static Iterable<Object[]> parameters() {
@@ -98,10 +100,14 @@ public class InfraDeployerImplTest {
         verify(duperModelInfraApi, never()).infraApplicationActivated(any(), any());
         if (applicationIsActive) {
             verify(duperModelInfraApi).infraApplicationRemoved(application.getApplicationId());
-            verify(provisioner).remove(any(), eq(application.getApplicationId()));
+            ArgumentMatcher<ApplicationTransaction> txMatcher = tx -> {
+                assertEquals(application.getApplicationId(), tx.application());
+                return true;
+            };
+            verify(provisioner).remove(argThat(txMatcher));
             verify(duperModelInfraApi).infraApplicationRemoved(eq(application.getApplicationId()));
         } else {
-            verify(provisioner, never()).remove(any(), any());
+            verify(provisioner, never()).remove(any());
             verify(duperModelInfraApi, never()).infraApplicationRemoved(any());
         }
     }
@@ -129,14 +135,19 @@ public class InfraDeployerImplTest {
     private void verifyActivated(String... hostnames) {
         verify(duperModelInfraApi).infraApplicationActivated(
                 eq(application.getApplicationId()), eq(Stream.of(hostnames).map(HostName::from).collect(Collectors.toList())));
-        verify(provisioner).activate(any(), eq(application.getApplicationId()), argThat(hostSpecs -> {
+        ArgumentMatcher<ApplicationTransaction> transactionMatcher = t -> {
+            assertEquals(application.getApplicationId(), t.application());
+            return true;
+        };
+        ArgumentMatcher<Collection<HostSpec>> hostsMatcher = hostSpecs -> {
             assertEquals(Set.of(hostnames), hostSpecs.stream().map(HostSpec::hostname).collect(Collectors.toSet()));
             return true;
-        }));
+        };
+        verify(provisioner).activate(argThat(hostsMatcher), any(), argThat(transactionMatcher));
     }
 
     private Node addNode(int id, Node.State state, Optional<Version> wantedVespaVersion) {
-        Node node = tester.addNode("id-" + id, "node-" + id, "default", nodeType);
+        Node node = tester.addHost("id-" + id, "node-" + id, "default", nodeType);
         Optional<Node> nodeWithAllocation = wantedVespaVersion.map(version -> {
             ClusterSpec clusterSpec = application.getClusterSpecWithVersion(version).with(Optional.of(ClusterSpec.Group.from(0)));
             ClusterMembership membership = ClusterMembership.from(clusterSpec, 1);

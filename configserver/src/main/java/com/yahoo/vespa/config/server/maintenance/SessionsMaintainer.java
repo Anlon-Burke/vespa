@@ -19,9 +19,7 @@ public class SessionsMaintainer extends ConfigServerMaintainer {
     private final boolean hostedVespa;
 
     SessionsMaintainer(ApplicationRepository applicationRepository, Curator curator, Duration interval, FlagSource flagSource) {
-        // Start this maintainer immediately. It frees disk space, so if disk goes full and config server
-        // restarts this makes sure that cleanup will happen as early as possible
-        super(applicationRepository, curator, flagSource, Duration.ZERO, interval);
+        super(applicationRepository, curator, flagSource, Duration.ofMinutes(1), interval);
         this.hostedVespa = applicationRepository.configserverConfig().hostedVespa();
     }
 
@@ -30,14 +28,10 @@ public class SessionsMaintainer extends ConfigServerMaintainer {
         applicationRepository.deleteExpiredLocalSessions();
 
         if (hostedVespa) {
-            Duration expiryTime = Duration.ofHours(6);
+            Duration expiryTime = Duration.ofMinutes(90);
             int deleted = applicationRepository.deleteExpiredRemoteSessions(expiryTime);
             log.log(LogLevel.FINE, () -> "Deleted " + deleted + " expired remote sessions older than " + expiryTime);
         }
-
-        Duration lockExpiryTime = Duration.ofHours(6);
-        int deleted = applicationRepository.deleteExpiredSessionLocks(lockExpiryTime);
-        log.log(LogLevel.FINE, () -> "Deleted " + deleted + " locks older than " + lockExpiryTime);
 
         return true;
     }

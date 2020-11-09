@@ -16,7 +16,6 @@
 #include <vespa/searchlib/fef/indexproperties.h>
 #include <vespa/searchlib/fef/properties.h>
 #include <vespa/vespalib/util/closuretask.h>
-#include <vespa/eval/tensor/default_tensor_engine.h>
 
 using vespa::config::search::RankProfilesConfig;
 using proton::matching::MatchingStats;
@@ -28,6 +27,7 @@ using search::TuneFileDocumentDB;
 using search::index::Schema;
 using search::SerialNum;
 using vespalib::ThreadStackExecutorBase;
+using vespalib::eval::EngineOrFactory;
 using namespace searchcorespi;
 
 namespace proton {
@@ -39,7 +39,7 @@ SearchableDocSubDB::SearchableDocSubDB(const Config &cfg, const Context &ctx)
       _indexWriter(),
       _rSearchView(),
       _rFeedView(),
-      _tensorLoader(vespalib::tensor::DefaultTensorEngine::ref()),
+      _tensorLoader(EngineOrFactory::get()),
       _constantValueCache(_tensorLoader),
       _constantValueRepo(_constantValueCache),
       _configurer(_iSummaryMgr, _rSearchView, _rFeedView, ctx._queryLimiter, _constantValueRepo, ctx._clock,
@@ -146,7 +146,6 @@ SearchableDocSubDB::applyConfig(const DocumentDBConfig &newConfigSnapshot, const
 {
     StoreOnlyDocSubDB::reconfigure(newConfigSnapshot.getStoreConfig());
     IReprocessingTask::List tasks;
-    updateLidReuseDelayer(&newConfigSnapshot);
     applyFlushConfig(newConfigSnapshot.getMaintenanceConfigSP()->getFlushConfig());
     if (params.shouldMatchersChange() && _addMetrics) {
         reconfigureMatchingMetrics(newConfigSnapshot.getRankProfilesConfig());
@@ -157,9 +156,8 @@ SearchableDocSubDB::applyConfig(const DocumentDBConfig &newConfigSnapshot, const
             createAttributeSpec(newConfigSnapshot.getAttributesConfig(), serialNum);
         IReprocessingInitializer::UP initializer =
                 _configurer.reconfigure(newConfigSnapshot, oldConfigSnapshot, *attrSpec, params, resolver);
-        if (initializer.get() != nullptr && initializer->hasReprocessors()) {
-            tasks.push_back(IReprocessingTask::SP(createReprocessingTask(*initializer,
-                    newConfigSnapshot.getDocumentTypeRepoSP()).release()));
+        if (initializer && initializer->hasReprocessors()) {
+            tasks.emplace_back(createReprocessingTask(*initializer, newConfigSnapshot.getDocumentTypeRepoSP()));
         }
         proton::IAttributeManager::SP newMgr = getAttributeManager();
         if (_addMetrics) {
@@ -202,7 +200,7 @@ SearchableDocSubDB::initViews(const DocumentDBConfig &configSnapshot, const Sess
     const Schema::SP &schema = configSnapshot.getSchemaSP();
     const IIndexManager::SP &indexMgr = getIndexManager();
     _constantValueRepo.reconfigure(configSnapshot.getRankingConstants());
-    Matchers::SP matchers(_configurer.createMatchers(schema, configSnapshot.getRankProfilesConfig()).release());
+    Matchers::SP matchers = _configurer.createMatchers(schema, configSnapshot.getRankProfilesConfig(), configSnapshot.getOnnxModels());
     auto matchView = std::make_shared<MatchView>(std::move(matchers), indexMgr->getSearchable(), attrMgr,
                                                  sessionManager, _metaStoreCtx, _docIdLimit);
     _rSearchView.set(SearchView::create(
@@ -217,7 +215,7 @@ SearchableDocSubDB::initViews(const DocumentDBConfig &configSnapshot, const Sess
     auto attrWriter = std::make_shared<AttributeWriter>(attrMgr);
     {
         std::lock_guard<std::mutex> guard(_configMutex);
-        initFeedView(attrWriter, configSnapshot);
+        initFeedView(std::move(attrWriter), configSnapshot);
     }
     if (_addMetrics) {
         reconfigureMatchingMetrics(configSnapshot.getRankProfilesConfig());
@@ -225,13 +223,13 @@ SearchableDocSubDB::initViews(const DocumentDBConfig &configSnapshot, const Sess
 }
 
 void
-SearchableDocSubDB::initFeedView(const IAttributeWriter::SP &attrWriter,
+SearchableDocSubDB::initFeedView(IAttributeWriter::SP attrWriter,
                                  const DocumentDBConfig &configSnapshot)
 {
     assert(_writeService.master().isCurrentThread());
     auto feedView = std::make_shared<SearchableFeedView>(getStoreOnlyFeedViewContext(configSnapshot),
             getFeedViewPersistentParams(),
-            FastAccessFeedView::Context(attrWriter, _docIdLimit),
+            FastAccessFeedView::Context(std::move(attrWriter), _docIdLimit),
             SearchableFeedView::Context(getIndexWriter()));
 
     // XXX: Not exception safe.
@@ -242,13 +240,11 @@ SearchableDocSubDB::initFeedView(const IAttributeWriter::SP &attrWriter,
 /**
  * Handle reconfigure caused by index manager changing state.
  *
- * Flush engine is disabled (for all document dbs) during initial replay and
- * recovery feed modes, the flush engine has not started.  For a resurrected
- * document type, flushing might occur during replay.
+ * Flush engine is disabled (for all document dbs) during initial replay, the
+ * flush engine has not started.
  */
 bool
-SearchableDocSubDB::
-reconfigure(vespalib::Closure0<bool>::UP closure)
+SearchableDocSubDB::reconfigure(vespalib::Closure0<bool>::UP closure)
 {
     assert(_writeService.master().isCurrentThread());
 
@@ -257,11 +253,10 @@ reconfigure(vespalib::Closure0<bool>::UP closure)
     // Everything should be quiet now.
 
     SearchView::SP oldSearchView = _rSearchView.get();
-    IFeedView::SP oldFeedView = _iFeedView.get();
 
     bool ret = true;
 
-    if (closure.get() != nullptr)
+    if (closure)
         ret = closure->call();  // Perform index manager reconfiguration now
     reconfigureIndexSearchable();
     return ret;
@@ -323,18 +318,6 @@ MatchingStats
 SearchableDocSubDB::getMatcherStats(const vespalib::string &rankProfile) const
 {
     return _rSearchView.get()->getMatcherStats(rankProfile);
-}
-
-void
-SearchableDocSubDB::updateLidReuseDelayer(const LidReuseDelayerConfig &config)
-{
-    Parent::updateLidReuseDelayer(config);
-    /*
-     * The lid reuse delayer should not have any pending lids stored at this
-     * time, since DocumentDB::applyConfig() calls forceCommit() on the
-     * feed view before applying the new config to the sub dbs.
-     */
-    _lidReuseDelayer->setHasIndexedOrAttributeFields(config.hasIndexedOrAttributeFields());
 }
 
 void

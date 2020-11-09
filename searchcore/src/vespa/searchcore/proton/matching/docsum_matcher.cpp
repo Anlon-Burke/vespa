@@ -5,12 +5,14 @@
 #include "search_session.h"
 #include <vespa/eval/eval/tensor.h>
 #include <vespa/eval/eval/tensor_engine.h>
+#include <vespa/eval/eval/engine_or_factory.h>
 #include <vespa/vespalib/objects/nbostream.h>
 #include <vespa/searchcommon/attribute/i_search_context.h>
 #include <vespa/searchlib/queryeval/blueprint.h>
 #include <vespa/searchlib/queryeval/intermediate_blueprints.h>
 #include <vespa/searchlib/queryeval/same_element_blueprint.h>
 #include <vespa/searchlib/queryeval/same_element_search.h>
+#include <vespa/searchlib/queryeval/matching_elements_search.h>
 #include <vespa/searchlib/fef/feature_resolver.h>
 #include <vespa/searchlib/fef/rank_program.h>
 
@@ -25,6 +27,7 @@ using search::fef::RankProgram;
 using search::queryeval::AndNotBlueprint;
 using search::queryeval::Blueprint;
 using search::queryeval::IntermediateBlueprint;
+using search::queryeval::MatchingElementsSearch;
 using search::queryeval::SameElementBlueprint;
 using search::queryeval::SearchIterator;
 
@@ -69,9 +72,9 @@ get_feature_set(const MatchToolsFactory &mtf,
             for (uint32_t j = 0; j < featureNames.size(); ++j) {
                 if (resolver.is_object(j)) {
                     auto obj = resolver.resolve(j).as_object(docId);
-                    if (const auto *tensor = obj.get().as_tensor()) {
+                    if (! obj.get().type().is_double()) {
                         vespalib::nbostream buf;
-                        tensor->engine().encode(*tensor, buf);
+                        vespalib::eval::EngineOrFactory::get().encode(obj.get(), buf);
                         f[j].set_data(vespalib::Memory(buf.peek(), buf.size()));
                     } else {
                         f[j].set_double(obj.get().as_double());
@@ -106,6 +109,13 @@ void find_matching_elements(const std::vector<uint32_t> &docs, const SameElement
     }
 }
 
+void find_matching_elements(const std::vector<uint32_t> &docs, MatchingElementsSearch &search, MatchingElements &result) {
+    search.initRange(docs.front(), docs.back() + 1);
+    for (uint32_t i = 0; i < docs.size(); ++i) {
+        search.find_matching_elements(docs[i], result);
+    }
+}
+
 void find_matching_elements(const std::vector<uint32_t> &docs, const vespalib::string &field_name, const AttrSearchCtx &attr_ctx, MatchingElements &result) {
     int32_t weight = 0;
     std::vector<uint32_t> matches;
@@ -125,6 +135,8 @@ void find_matching_elements(const MatchingElementsFields &fields, const std::vec
         if (fields.has_field(same_element->field_name())) {
             find_matching_elements(docs, *same_element, result);
         }
+    } else if (auto matching_elements_search = bp.create_matching_elements_search(fields)) {
+        find_matching_elements(docs, *matching_elements_search, result);
     } else if (const AttrSearchCtx *attr_ctx = bp.get_attribute_search_context()) {
         if (fields.has_struct_field(attr_ctx->attributeName())) {
             find_matching_elements(docs, fields.get_enclosing_field(attr_ctx->attributeName()), *attr_ctx, result);

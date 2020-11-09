@@ -12,14 +12,10 @@ vespa_add_library(searchlib_util OBJECT
     filesizecalculator.cpp
     fileutil.cpp
     foldedstringcompare.cpp
-    ioerrorhandler.cpp
     logutil.cpp
     rawbuf.cpp
-    sigbushandler.cpp
     slime_output_raw_buf_adapter.cpp
     state_explorer_utils.cpp
-    statebuf.cpp
-    statefile.cpp
     stringenum.cpp
     url.cpp
     DEPENDS

@@ -14,7 +14,6 @@ import com.yahoo.vespa.config.server.http.SessionHandler;
 import com.yahoo.vespa.config.server.http.Utils;
 
 import java.time.Duration;
-import java.time.Instant;
 
 /**
  * A handler that prepares a session given by an id in the request. v2 of application API
@@ -35,13 +34,12 @@ public class SessionPrepareHandler extends SessionHandler {
         this.zookeeperBarrierTimeout = Duration.ofSeconds(configserverConfig.zookeeper().barrierTimeout());
     }
 
-  @Override
+    @Override
     protected HttpResponse handlePUT(HttpRequest request) {
-        Tenant tenant = getExistingTenant(request);
-        TenantName tenantName = tenant.getName();
         long sessionId = getSessionIdV2(request);
+        TenantName tenantName = getExistingTenant(request).getName();
         PrepareParams prepareParams = PrepareParams.fromHttpRequest(request, tenantName, zookeeperBarrierTimeout);
-        PrepareResult result = applicationRepository.prepare(tenant, sessionId, prepareParams, Instant.now());
+        PrepareResult result = applicationRepository.prepare(sessionId, prepareParams);
         return new SessionPrepareResponse(result, tenantName, request);
     }
 
@@ -51,7 +49,7 @@ public class SessionPrepareHandler extends SessionHandler {
         long sessionId = getSessionIdV2(request);
         applicationRepository.validateThatSessionIsNotActive(tenant, sessionId);
         applicationRepository.validateThatSessionIsPrepared(tenant, sessionId);
-        return new SessionPrepareResponse(applicationRepository.createDeployLog(), tenant.getName(), request, sessionId);
+        return new SessionPrepareResponse(tenant.getName(), request, sessionId);
     }
 
     @Override

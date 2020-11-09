@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "typed_cells.h"
+#include "typed_cells_dispatch.h"
 #include "dense_tensor_cells_iterator.h"
 #include <vespa/eval/tensor/tensor.h>
 
@@ -18,6 +18,7 @@ public:
     using CellsIterator = DenseTensorCellsIterator;
     using Address = std::vector<eval::ValueType::Dimension::size_type>;
 
+    DenseTensorView(const DenseTensorView &rhs) : DenseTensorView(rhs._typeRef, rhs._cellsRef) {}
     DenseTensorView(const eval::ValueType &type_in, TypedCells cells_in)
         : _typeRef(type_in),
           _cellsRef(cells_in)
@@ -26,7 +27,8 @@ public:
     }
 
     const eval::ValueType &fast_type() const { return _typeRef; }
-    const TypedCells &cellsRef() const { return _cellsRef; }
+    TypedCells cells() const final override { return _cellsRef; }
+    const Index &index() const override { return eval::TrivialIndex::get(); }
     bool operator==(const DenseTensorView &rhs) const;
     CellsIterator cellsIterator() const { return CellsIterator(_typeRef, _cellsRef); }
 
@@ -39,17 +41,13 @@ public:
     std::unique_ptr<Tensor> modify(join_fun_t op, const CellValues &cellValues) const override;
     std::unique_ptr<Tensor> add(const Tensor &arg) const override;
     std::unique_ptr<Tensor> remove(const CellValues &) const override;
-    bool equals(const Tensor &arg) const override;
-    Tensor::UP clone() const override;
     eval::TensorSpec toSpec() const override;
     void accept(TensorVisitor &visitor) const override;
+    MemoryUsage get_memory_usage() const override {
+        size_t sz = sizeof(DenseTensorView);
+        return MemoryUsage(sz, sz, 0, 0);
+    }
 
-    template <typename T> static ConstArrayRef<T> typify_cells(const eval::Value &self) {
-        return static_cast<const DenseTensorView &>(self).cellsRef().typify<T>();
-    }
-    template <typename T> static ConstArrayRef<T> unsafe_typify_cells(const eval::Value &self) {
-        return static_cast<const DenseTensorView &>(self).cellsRef().unsafe_typify<T>();
-    }
 protected:
     explicit DenseTensorView(const eval::ValueType &type_in)
         : _typeRef(type_in),

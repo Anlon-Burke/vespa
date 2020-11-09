@@ -2,10 +2,13 @@
 #include "bucketinfo.h"
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/vespalib/util/xmlstream.h>
+#include <ostream>
 
 namespace storage::api {
 
-BucketInfo::BucketInfo()
+static_assert(sizeof(BucketInfo) == 32, "BucketInfo should be 32 bytes");
+
+BucketInfo::BucketInfo() noexcept
     : _lastModified(0),
       _checksum(0),
       _docCount(0),
@@ -17,7 +20,7 @@ BucketInfo::BucketInfo()
 {}
 
 BucketInfo::BucketInfo(uint32_t checksum, uint32_t docCount,
-                       uint32_t totDocSize)
+                       uint32_t totDocSize) noexcept
     : _lastModified(0),
       _checksum(checksum),
       _docCount(docCount),
@@ -30,7 +33,7 @@ BucketInfo::BucketInfo(uint32_t checksum, uint32_t docCount,
 
 BucketInfo::BucketInfo(uint32_t checksum, uint32_t docCount,
                        uint32_t totDocSize, uint32_t metaCount,
-                       uint32_t usedFileSize)
+                       uint32_t usedFileSize) noexcept
     : _lastModified(0),
       _checksum(checksum),
       _docCount(docCount),
@@ -44,7 +47,7 @@ BucketInfo::BucketInfo(uint32_t checksum, uint32_t docCount,
 BucketInfo::BucketInfo(uint32_t checksum, uint32_t docCount,
                        uint32_t totDocSize, uint32_t metaCount,
                        uint32_t usedFileSize,
-                       bool ready, bool active)
+                       bool ready, bool active) noexcept
     : _lastModified(0),
       _checksum(checksum),
       _docCount(docCount),
@@ -58,7 +61,7 @@ BucketInfo::BucketInfo(uint32_t checksum, uint32_t docCount,
 BucketInfo::BucketInfo(uint32_t checksum, uint32_t docCount,
                        uint32_t totDocSize, uint32_t metaCount,
                        uint32_t usedFileSize,
-                       bool ready, bool active, Timestamp lastModified)
+                       bool ready, bool active, Timestamp lastModified) noexcept
     : _lastModified(lastModified),
       _checksum(checksum),
       _docCount(docCount),
@@ -68,10 +71,6 @@ BucketInfo::BucketInfo(uint32_t checksum, uint32_t docCount,
       _ready(ready),
       _active(active)
 {}
-
-BucketInfo::BucketInfo(const BucketInfo &) = default;
-BucketInfo & BucketInfo::operator = (const BucketInfo &) = default;
-BucketInfo::~BucketInfo() {}
 
 bool
 BucketInfo::operator==(const BucketInfo& info) const
@@ -86,9 +85,10 @@ BucketInfo::operator==(const BucketInfo& info) const
 }
 
 // TODO: add ready/active to printing
-void
-BucketInfo::print(vespalib::asciistream& out, const PrintProperties&) const
+vespalib::string
+BucketInfo::toString() const
 {
+    vespalib::asciistream out;
     out << "BucketInfo(";
     if (valid()) {
         out << "crc 0x" << vespalib::hex << _checksum << vespalib::dec
@@ -108,6 +108,7 @@ BucketInfo::print(vespalib::asciistream& out, const PrintProperties&) const
         out << "invalid";
     }
     out << ")";
+    return out.str();
 }
 
 void
@@ -122,6 +123,11 @@ BucketInfo::printXml(vespalib::XmlOutputStream& xos) const
         << XmlAttribute("ready", _ready)
         << XmlAttribute("active", _active)
         << XmlAttribute("lastmodified", _lastModified);
+}
+
+std::ostream &
+operator << (std::ostream & os, const BucketInfo & bucketInfo) {
+    return os << bucketInfo.toString();
 }
 
 }

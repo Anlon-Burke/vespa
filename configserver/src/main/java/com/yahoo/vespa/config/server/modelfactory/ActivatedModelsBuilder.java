@@ -1,10 +1,9 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.modelfactory;
 
 import com.google.common.collect.ImmutableSet;
 import com.yahoo.component.Version;
 import com.yahoo.config.application.api.ApplicationPackage;
-import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.api.ConfigDefinitionRepo;
 import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.api.ModelFactory;
@@ -13,13 +12,12 @@ import com.yahoo.config.model.application.provider.MockFileRegistry;
 import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.DockerImage;
-import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.container.jdisc.secretstore.SecretStore;
-import com.yahoo.vespa.config.server.ConfigServerSpec;
 import com.yahoo.vespa.config.server.GlobalComponentRegistry;
 import com.yahoo.vespa.config.server.ServerCache;
 import com.yahoo.vespa.config.server.application.Application;
+import com.yahoo.vespa.config.server.application.ApplicationCuratorDatabase;
 import com.yahoo.vespa.config.server.application.PermanentApplicationPackage;
 import com.yahoo.vespa.config.server.deploy.ModelContextImpl;
 import com.yahoo.vespa.config.server.monitoring.MetricUpdater;
@@ -35,7 +33,6 @@ import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.flags.FlagSource;
 
-import java.net.URI;
 import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Level;
@@ -51,18 +48,17 @@ public class ActivatedModelsBuilder extends ModelsBuilder<Application> {
     private static final Logger log = Logger.getLogger(ActivatedModelsBuilder.class.getName());
 
     private final TenantName tenant;
-    private final long appGeneration;
+    private final long applicationGeneration;
     private final SessionZooKeeperClient zkClient;
     private final PermanentApplicationPackage permanentApplicationPackage;
     private final ConfigDefinitionRepo configDefinitionRepo;
     private final Metrics metrics;
     private final Curator curator;
-    private final DeployLogger logger;
     private final FlagSource flagSource;
     private final SecretStore secretStore;
 
     public ActivatedModelsBuilder(TenantName tenant,
-                                  long appGeneration,
+                                  long applicationGeneration,
                                   SessionZooKeeperClient zkClient,
                                   GlobalComponentRegistry globalComponentRegistry) {
         super(globalComponentRegistry.getModelFactoryRegistry(),
@@ -70,13 +66,12 @@ public class ActivatedModelsBuilder extends ModelsBuilder<Application> {
               globalComponentRegistry.getZone(),
               HostProvisionerProvider.from(globalComponentRegistry.getHostProvisioner()));
         this.tenant = tenant;
-        this.appGeneration = appGeneration;
+        this.applicationGeneration = applicationGeneration;
         this.zkClient = zkClient;
         this.permanentApplicationPackage = globalComponentRegistry.getPermanentApplicationPackage();
         this.configDefinitionRepo = globalComponentRegistry.getStaticConfigDefinitionRepo();
         this.metrics = globalComponentRegistry.getMetrics();
         this.curator = globalComponentRegistry.getCurator();
-        this.logger = new SilentDeployLogger();
         this.flagSource = globalComponentRegistry.getFlagSource();
         this.secretStore = globalComponentRegistry.getSecretStore();
     }
@@ -90,16 +85,17 @@ public class ActivatedModelsBuilder extends ModelsBuilder<Application> {
                                             Optional<AllocatedHosts> ignored // Ignored since we have this in the app package for activated models
     ) {
         log.log(Level.FINE, String.format("Loading model version %s for session %s application %s",
-                                              modelFactory.version(), appGeneration, applicationId));
+                                          modelFactory.version(), applicationGeneration, applicationId));
         ModelContext.Properties modelContextProperties = createModelContextProperties(applicationId);
         Provisioned provisioned = new Provisioned();
         ModelContext modelContext = new ModelContextImpl(
                 applicationPackage,
                 Optional.empty(),
                 permanentApplicationPackage.applicationPackage(),
-                logger,
+                new SilentDeployLogger(),
                 configDefinitionRepo,
                 getForVersionOrLatest(applicationPackage.getFileRegistries(), modelFactory.version()).orElse(new MockFileRegistry()),
+                new ApplicationCuratorDatabase(tenant, curator).readReindexingStatus(applicationId),
                 createStaticProvisioner(applicationPackage.getAllocatedHosts(),
                                         modelContextProperties.applicationId(),
                                         provisioned),
@@ -113,7 +109,7 @@ public class ActivatedModelsBuilder extends ModelsBuilder<Application> {
         ServerCache serverCache = new ServerCache(configDefinitionRepo, zkClient.getUserConfigDefinitions());
         return new Application(modelFactory.createModel(modelContext),
                                serverCache,
-                               appGeneration,
+                               applicationGeneration,
                                applicationPackage.getMetaData().isInternalRedeploy(),
                                modelFactory.version(),
                                applicationMetricUpdater,
@@ -133,12 +129,7 @@ public class ActivatedModelsBuilder extends ModelsBuilder<Application> {
 
     private ModelContext.Properties createModelContextProperties(ApplicationId applicationId) {
         return new ModelContextImpl.Properties(applicationId,
-                                               configserverConfig.multitenant(),
-                                               ConfigServerSpec.fromConfig(configserverConfig),
-                                               HostName.from(configserverConfig.loadBalancerAddress()),
-                                               configserverConfig.ztsUrl() != null ? URI.create(configserverConfig.ztsUrl()) : null,
-                                               configserverConfig.athenzDnsSuffix(),
-                                               configserverConfig.hostedVespa(),
+                                               configserverConfig,
                                                zone(),
                                                ImmutableSet.copyOf(new ContainerEndpointsCache(TenantRepository.getTenantPath(tenant), curator).read(applicationId)),
                                                false, // We may be bootstrapping, but we only know and care during prepare
@@ -149,8 +140,8 @@ public class ActivatedModelsBuilder extends ModelsBuilder<Application> {
                                                        .flatMap(new EndpointCertificateRetriever(secretStore)::readEndpointCertificateSecrets),
                                                zkClient.readAthenzDomain(),
                                                new ApplicationRolesStore(curator, TenantRepository.getTenantPath(tenant))
-                                                       .readApplicationRoles(applicationId));
-
+                                                       .readApplicationRoles(applicationId),
+                                               zkClient.readQuota());
     }
 
 }

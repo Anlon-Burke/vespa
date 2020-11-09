@@ -232,9 +232,9 @@ protected:
 public:
     class EnumModifier
     {
-        std::unique_lock<std::shared_timed_mutex> _enumLock;
+        std::unique_lock<std::shared_mutex> _enumLock;
     public:
-        EnumModifier(std::shared_timed_mutex &lock, attribute::InterlockGuard &interlockGuard)
+        EnumModifier(std::shared_mutex &lock, attribute::InterlockGuard &interlockGuard)
             : _enumLock(lock)
         {
             (void) interlockGuard;
@@ -397,6 +397,7 @@ public:
     CollectionType getInternalCollectionType() const { return _config.collectionType(); }
     const BaseName & getBaseFileName() const { return _baseFileName; }
     void setBaseFileName(vespalib::stringref name) { _baseFileName = name; }
+    bool isUpdateableInMemoryOnly() const { return _isUpdateableInMemoryOnly; }
 
     const vespalib::string & getName() const override final { return _baseFileName.getAttributeName(); }
 
@@ -575,7 +576,7 @@ private:
     BaseName                              _baseFileName;
     Config                                _config;
     std::shared_ptr<attribute::Interlock> _interlock;
-    mutable std::shared_timed_mutex       _enumLock;
+    mutable std::shared_mutex             _enumLock;
     GenerationHandler                     _genHandler;
     GenerationHolder                      _genHolder;
     Status                                _status;
@@ -587,6 +588,7 @@ private:
     uint64_t                              _compactLidSpaceGeneration;
     bool                                  _hasEnum;
     bool                                  _loaded;
+    bool                                  _isUpdateableInMemoryOnly;
     vespalib::steady_time                 _nextStatUpdateTime;
 
 ////// Locking strategy interface. only available from the Guards.
@@ -606,7 +608,7 @@ private:
      * Used to regulate access to critical resources. Apply the
      * reader/writer guards.
      */
-    std::shared_timed_mutex & getEnumLock() { return _enumLock; }
+    std::shared_mutex & getEnumLock() { return _enumLock; }
 
     friend class ComponentGuard<AttributeVector>;
     friend class AttributeValueGuard;

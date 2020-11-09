@@ -5,18 +5,19 @@ import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Deployer;
-import com.yahoo.config.provision.NodeResources;
 import com.yahoo.jdisc.Metric;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.applications.Application;
 import com.yahoo.vespa.hosted.provision.applications.Applications;
 import com.yahoo.vespa.hosted.provision.applications.Cluster;
+import com.yahoo.vespa.hosted.provision.autoscale.AllocatableClusterResources;
 import com.yahoo.vespa.hosted.provision.autoscale.Autoscaler;
-import com.yahoo.vespa.hosted.provision.autoscale.NodeMetricsDb;
+import com.yahoo.vespa.hosted.provision.autoscale.MetricsDb;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -33,7 +34,7 @@ public class AutoscalingMaintainer extends NodeRepositoryMaintainer {
     private final Metric metric;
 
     public AutoscalingMaintainer(NodeRepository nodeRepository,
-                                 NodeMetricsDb metricsDb,
+                                 MetricsDb metricsDb,
                                  Deployer deployer,
                                  Metric metric,
                                  Duration interval) {
@@ -66,12 +67,16 @@ public class AutoscalingMaintainer extends NodeRepositoryMaintainer {
         Application application = nodeRepository().applications().get(applicationId).orElse(new Application(applicationId));
         Optional<Cluster> cluster = application.cluster(clusterId);
         if (cluster.isEmpty()) return;
-        Optional<ClusterResources> target = autoscaler.autoscale(cluster.get(), clusterNodes);
-        if ( ! cluster.get().targetResources().equals(target))
-            applications().put(application.with(cluster.get().withTarget(target)), deployment.applicationLock().get());
-        if (target.isPresent()) {
-            logAutoscaling(target.get(), applicationId, clusterId, clusterNodes);
-            deployment.activate();
+        var advice = autoscaler.autoscale(cluster.get(), clusterNodes);
+
+        if (advice.isEmpty()) return;
+
+        if ( ! cluster.get().targetResources().equals(advice.target())) {
+            applications().put(application.with(cluster.get().withTarget(advice.target())), deployment.applicationLock().get());
+            if (advice.target().isPresent()) {
+                logAutoscaling(advice.target().get(), applicationId, cluster.get(), clusterNodes);
+                deployment.activate();
+            }
         }
     }
 
@@ -81,21 +86,20 @@ public class AutoscalingMaintainer extends NodeRepositoryMaintainer {
 
     private void logAutoscaling(ClusterResources target,
                                 ApplicationId application,
-                                ClusterSpec.Id clusterId,
+                                Cluster cluster,
                                 List<Node> clusterNodes) {
-        int currentGroups = (int)clusterNodes.stream().map(node -> node.allocation().get().membership().cluster().group()).distinct().count();
+        ClusterResources current = new AllocatableClusterResources(clusterNodes, nodeRepository(), cluster.exclusive()).toAdvertisedClusterResources();
         ClusterSpec.Type clusterType = clusterNodes.get(0).allocation().get().membership().cluster().type();
-        log.info("Autoscaling " + application + " " + clusterType + " " + clusterId + ":" +
-                 "\nfrom " + toString(clusterNodes.size(), currentGroups, clusterNodes.get(0).resources()) +
-                 "\nto   " + toString(target.nodes(), target.groups(), target.nodeResources()));
+        log.info("Autoscaling " + application + " " + clusterType + " " + cluster.id() + ":" +
+                 "\nfrom " + toString(current) + "\nto   " + toString(target));
     }
 
-    private String toString(int nodes, int groups, NodeResources resources) {
-        return String.format(nodes + (groups > 1 ? " (in " + groups + " groups)" : "") +
-                             " * [vcpu: %0$.1f, memory: %1$.1f Gb, disk %2$.1f Gb]" +
-                             " (total: [vcpu: %3$.1f, memory: %4$.1f Gb, disk: %5$.1f Gb])",
-                             resources.vcpu(), resources.memoryGb(), resources.diskGb(),
-                             nodes * resources.vcpu(), nodes * resources.memoryGb(), nodes * resources.diskGb());
+    static String toString(ClusterResources r) {
+        return String.format(Locale.US, "%d%s * [vcpu: %.1f, memory: %.1f Gb, disk %.1f Gb]" +
+                             " (total: [vcpu: %.1f, memory: %.1f Gb, disk: %.1f Gb])",
+                             r.nodes(), r.groups() > 1 ? " (in " + r.groups() + " groups)" : "",
+                             r.nodeResources().vcpu(), r.nodeResources().memoryGb(), r.nodeResources().diskGb(),
+                             r.nodes() * r.nodeResources().vcpu(), r.nodes() * r.nodeResources().memoryGb(), r.nodes() * r.nodeResources().diskGb());
     }
 
     private Map<ClusterSpec.Id, List<Node>> nodesByCluster(List<Node> applicationNodes) {

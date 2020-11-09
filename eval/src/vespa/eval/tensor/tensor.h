@@ -5,6 +5,7 @@
 #include "cell_function.h"
 #include "tensor_address.h"
 #include <vespa/vespalib/stllike/string.h>
+#include <vespa/eval/eval/operation.h>
 #include <vespa/eval/eval/tensor.h>
 #include <vespa/eval/eval/tensor_spec.h>
 #include <vespa/eval/eval/value_type.h>
@@ -27,7 +28,7 @@ class Tensor : public eval::Tensor
 public:
     typedef std::unique_ptr<Tensor> UP;
     typedef std::reference_wrapper<const Tensor> CREF;
-    using join_fun_t = double (*)(double, double);
+    using join_fun_t = vespalib::eval::operation::op2_t;
 
     Tensor();
     virtual ~Tensor() {}
@@ -55,8 +56,6 @@ public:
      */
     virtual std::unique_ptr<Tensor> remove(const CellValues &cellAddresses) const = 0;
 
-    virtual bool equals(const Tensor &arg) const = 0; // want to remove, but needed by document
-    virtual Tensor::UP clone() const = 0; // want to remove, but needed by document
     virtual eval::TensorSpec toSpec() const = 0;
     virtual void accept(TensorVisitor &visitor) const = 0;
 

@@ -1,6 +1,7 @@
 // Copyright 2018 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.maintenance;
 
+import com.yahoo.concurrent.DaemonThreadFactory;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.deployment.InternalStepRunner;
@@ -35,7 +36,7 @@ public class JobRunner extends ControllerMaintainer {
     private final StepRunner runner;
 
     public JobRunner(Controller controller, Duration duration) {
-        this(controller, duration, Executors.newFixedThreadPool(32), new InternalStepRunner(controller));
+        this(controller, duration, Executors.newFixedThreadPool(128, new DaemonThreadFactory("job-runner-")), new InternalStepRunner(controller));
     }
 
     @TestOnly
@@ -74,7 +75,7 @@ public class JobRunner extends ControllerMaintainer {
     /** Advances each of the ready steps for the given run, or marks it as finished, and stashes it. Public for testing. */
     public void advance(Run run) {
         if (   ! run.hasFailed()
-            &&   run.start().isBefore(controller().clock().instant().minus(jobTimeout))) {
+            &&   controller().clock().instant().isAfter(run.start().plus(jobTimeout))) {
             jobs.abort(run.id());
             advance(jobs.run(run.id()).get());
         }
@@ -89,6 +90,9 @@ public class JobRunner extends ControllerMaintainer {
             jobs.finish(id);
             controller().jobController().run(id)
                         .ifPresent(run -> controller().applications().deploymentTrigger().notifyOfCompletion(id.application()));
+        }
+        catch (TimeoutException e) {
+            // One of the steps are still being run — that's ok, we'll try to finish the run again later.
         }
         catch (Exception e) {
             log.log(Level.WARNING, "Exception finishing " + id, e);

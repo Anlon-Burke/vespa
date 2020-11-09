@@ -14,7 +14,6 @@ import com.yahoo.vespa.hosted.provision.node.History;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
@@ -35,7 +34,7 @@ import java.util.stream.Collectors;
  *
  * The purpose of the automatic recycling to dirty + fail count is that nodes which were moved
  * to failed due to some undetected hardware failure will end up being failed again.
- * When that has happened enough they will not be recycled.
+ * When that has happened enough they will not be recycled, and need manual inspection to move on.
  *
  * Nodes with detected hardware issues will not be recycled.
  *
@@ -45,7 +44,9 @@ import java.util.stream.Collectors;
 public class FailedExpirer extends NodeRepositoryMaintainer {
 
     private static final Logger log = Logger.getLogger(FailedExpirer.class.getName());
-    private static final int maxAllowedFailures = 5; // Stop recycling nodes after this number of failures
+    // We will stop giving the nodes back to Openstack for break-fix, setting this to number a high value, we might
+    // eventually remove this counter and recycling nodes forever
+    private static final int maxAllowedFailures = 50;
 
     private final NodeRepository nodeRepository;
     private final Zone zone;
@@ -72,10 +73,10 @@ public class FailedExpirer extends NodeRepositoryMaintainer {
 
     @Override
     protected boolean maintain() {
-        List<Node> remainingNodes = new ArrayList<>(nodeRepository.list()
-                .state(Node.State.failed)
-                .nodeType(NodeType.tenant, NodeType.host)
-                .asList());
+        List<Node> remainingNodes = nodeRepository.getNodes(Node.State.failed).stream()
+                                                  .filter(node -> node.type() == NodeType.tenant ||
+                                                                  node.type() == NodeType.host)
+                                                  .collect(Collectors.toList());
 
         recycleIf(remainingNodes, node -> node.allocation().isEmpty());
         recycleIf(remainingNodes, node ->
@@ -98,11 +99,11 @@ public class FailedExpirer extends NodeRepositoryMaintainer {
         List<Node> nodesToRecycle = new ArrayList<>();
         for (Node candidate : nodes) {
             if (NodeFailer.hasHardwareIssue(candidate, nodeRepository)) {
-                List<String> unparkedChildren = !candidate.type().isHost() ? Collections.emptyList() :
-                                                nodeRepository.list().childrenOf(candidate).asList().stream()
-                                      .filter(node -> node.state() != Node.State.parked)
-                                      .map(Node::hostname)
-                                      .collect(Collectors.toList());
+                List<String> unparkedChildren = !candidate.type().isHost() ? List.of() :
+                                                nodeRepository.list()
+                                                              .childrenOf(candidate)
+                                                              .matching(node -> node.state() != Node.State.parked)
+                                                              .mapToList(Node::hostname);
 
                 if (unparkedChildren.isEmpty()) {
                     nodeRepository.park(candidate.hostname(), false, Agent.FailedExpirer,

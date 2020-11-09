@@ -2,7 +2,9 @@
 package com.yahoo.vespa.hosted.provision.provisioning;
 
 import com.google.inject.Inject;
+import com.yahoo.config.provision.ActivationContext;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
@@ -10,11 +12,11 @@ import com.yahoo.config.provision.HostFilter;
 import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
+import com.yahoo.config.provision.ProvisionLock;
 import com.yahoo.config.provision.ProvisionLogger;
 import com.yahoo.config.provision.Provisioner;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.transaction.Mutex;
-import com.yahoo.transaction.NestedTransaction;
 import com.yahoo.vespa.flags.FetchVector;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.Flags;
@@ -85,9 +87,8 @@ public class NodeRepositoryProvisioner implements Provisioner {
     @Override
     public List<HostSpec> prepare(ApplicationId application, ClusterSpec cluster, Capacity requested,
                                   ProvisionLogger logger) {
-        log.log(zone.system().isCd() ? Level.INFO : Level.FINE,
-                () -> "Received deploy prepare request for " + requested +
-                      " for application " + application + ", cluster " + cluster);
+        log.log(Level.FINE, () -> "Received deploy prepare request for " + requested +
+                                  " for application " + application + ", cluster " + cluster);
 
         if (cluster.group().isPresent()) throw new IllegalArgumentException("Node requests cannot specify a group");
 
@@ -101,12 +102,12 @@ public class NodeRepositoryProvisioner implements Provisioner {
         int groups;
         NodeResources resources;
         NodeSpec nodeSpec;
-        if ( requested.type() == NodeType.tenant) {
+        if (requested.type() == NodeType.tenant) {
             ClusterResources target = decideTargetResources(application, cluster, requested);
             int nodeCount = capacityPolicies.decideSize(target.nodes(), requested, cluster, application);
             groups = Math.min(target.groups(), nodeCount); // cannot have more groups than nodes
             resources = capacityPolicies.decideNodeResources(target.nodeResources(), requested, cluster);
-            boolean exclusive = capacityPolicies.decideExclusivity(cluster.isExclusive());
+            boolean exclusive = capacityPolicies.decideExclusivity(requested, cluster.isExclusive());
             nodeSpec = NodeSpec.from(nodeCount, resources, exclusive, requested.canFail());
             logIfDownscaled(target.nodes(), nodeCount, cluster, logger);
         }
@@ -119,9 +120,9 @@ public class NodeRepositoryProvisioner implements Provisioner {
     }
 
     @Override
-    public void activate(NestedTransaction transaction, ApplicationId application, Collection<HostSpec> hosts) {
+    public void activate(Collection<HostSpec> hosts, ActivationContext context, ApplicationTransaction transaction) {
         validate(hosts);
-        activator.activate(application, hosts, transaction);
+        activator.activate(hosts, context.generation(), transaction);
     }
 
     @Override
@@ -130,9 +131,14 @@ public class NodeRepositoryProvisioner implements Provisioner {
     }
 
     @Override
-    public void remove(NestedTransaction transaction, ApplicationId application) {
-        nodeRepository.deactivate(application, transaction);
-        loadBalancerProvisioner.ifPresent(lbProvisioner -> lbProvisioner.deactivate(application, transaction));
+    public void remove(ApplicationTransaction transaction) {
+        nodeRepository.deactivate(transaction);
+        loadBalancerProvisioner.ifPresent(lbProvisioner -> lbProvisioner.deactivate(transaction));
+    }
+
+    @Override
+    public ProvisionLock lock(ApplicationId application) {
+        return new ProvisionLock(application, nodeRepository.lock(application));
     }
 
     /**
@@ -149,7 +155,7 @@ public class NodeRepositoryProvisioner implements Provisioner {
         }
     }
 
-    /** Returns the current resources of this cluster, or the closes  */
+    /** Returns the current resources of this cluster, or requested min if none */
     private ClusterResources currentResources(ApplicationId applicationId,
                                               ClusterSpec clusterSpec,
                                               Capacity requested) {
@@ -158,19 +164,26 @@ public class NodeRepositoryProvisioner implements Provisioner {
                                    .not().retired()
                                    .not().removable()
                                    .asList();
+        boolean firstDeployment = nodes.isEmpty();
         AllocatableClusterResources currentResources =
-                nodes.isEmpty() ? new AllocatableClusterResources(requested.minResources(),
-                                                                  clusterSpec.type(),
-                                                                  nodeRepository) // new deployment: Use min
-                                : new AllocatableClusterResources(nodes, nodeRepository);
-        return within(Limits.of(requested), clusterSpec.isExclusive(), currentResources);
+                firstDeployment // start at min, preserve current resources otherwise
+                ? new AllocatableClusterResources(requested.minResources(), clusterSpec.type(), clusterSpec.isExclusive(), nodeRepository)
+                : new AllocatableClusterResources(nodes, nodeRepository, clusterSpec.isExclusive());
+        return within(Limits.of(requested), clusterSpec.isExclusive(), currentResources, firstDeployment);
     }
 
     /** Make the minimal adjustments needed to the current resources to stay within the limits */
-    private ClusterResources within(Limits limits, boolean exclusive, AllocatableClusterResources current) {
-        if (limits.isEmpty()) return current.toAdvertisedClusterResources();
+    private ClusterResources within(Limits limits,
+                                    boolean exclusive,
+                                    AllocatableClusterResources current,
+                                    boolean firstDeployment) {
         if (limits.min().equals(limits.max())) return limits.min();
 
+        // Don't change current deployments that are still legal
+        var currentAsAdvertised = current.toAdvertisedClusterResources();
+        if (! firstDeployment && currentAsAdvertised.isWithin(limits.min(), limits.max())) return currentAsAdvertised;
+
+        // Otherwise, find an allocation that preserves the current resources as well as possible
         return allocationOptimizer.findBestAllocation(ResourceTarget.preserve(current), current, limits, exclusive)
                                   .orElseThrow(() -> new IllegalArgumentException("No allocation possible within " + limits))
                                   .toAdvertisedClusterResources();
@@ -198,13 +211,13 @@ public class NodeRepositoryProvisioner implements Provisioner {
             log.log(Level.FINE, () -> "Prepared node " + node.hostname() + " - " + node.flavor());
             Allocation nodeAllocation = node.allocation().orElseThrow(IllegalStateException::new);
             hosts.add(new HostSpec(node.hostname(),
-                                   nodeRepository.resourcesCalculator().realResourcesOf(node, nodeRepository),
+                                   nodeRepository.resourcesCalculator().realResourcesOf(node, nodeRepository, node.allocation().get().membership().cluster().isExclusive()),
                                    node.flavor().resources(),
                                    requestedResources,
                                    nodeAllocation.membership(),
                                    node.status().vespaVersion(),
                                    nodeAllocation.networkPorts(),
-                                   node.status().dockerImage()));
+                                   node.status().containerImage()));
             if (nodeAllocation.networkPorts().isPresent()) {
                 log.log(Level.FINE, () -> "Prepared node " + node.hostname() + " has port allocations");
             }

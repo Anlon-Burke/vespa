@@ -42,6 +42,7 @@ import java.util.stream.Collectors;
  */
 public class RoutingApiHandler extends AuditLoggingRequestHandler {
 
+    private static final String OPTIONAL_PREFIX = "/api";
     private final Controller controller;
 
     public RoutingApiHandler(Context ctx, Controller controller) {
@@ -52,7 +53,7 @@ public class RoutingApiHandler extends AuditLoggingRequestHandler {
     @Override
     public HttpResponse auditAndHandle(HttpRequest request) {
         try {
-            var path = new Path(request.getUri());
+            var path = new Path(request.getUri(), OPTIONAL_PREFIX);
             switch (request.getMethod()) {
                 case GET: return get(path, request);
                 case POST: return post(path);
@@ -264,6 +265,7 @@ public class RoutingApiHandler extends AuditLoggingRequestHandler {
                     // Include status from routing policies
                     var routingPolicies = controller.routing().policies().get(deploymentId);
                     for (var policy : routingPolicies.values()) {
+                        if (policy.endpoints().isEmpty()) continue; // This policy does not apply to a global endpoint
                         if (!controller.zoneRegistry().routingMethods(policy.id().zone()).contains(RoutingMethod.exclusive)) continue;
                         deploymentStatusToSlime(deploymentsArray.addObject(), new DeploymentId(policy.id().owner(),
                                                                                                policy.id().zone()),

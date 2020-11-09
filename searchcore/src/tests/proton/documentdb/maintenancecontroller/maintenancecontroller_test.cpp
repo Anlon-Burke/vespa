@@ -9,7 +9,6 @@
 #include <vespa/searchcore/proton/attribute/i_attribute_manager.h>
 #include <vespa/searchcore/proton/bucketdb/bucket_create_notifier.h>
 #include <vespa/searchcore/proton/common/doctypename.h>
-#include <vespa/searchcore/proton/common/feedtoken.h>
 #include <vespa/searchcore/proton/common/transient_memory_usage_provider.h>
 #include <vespa/searchcore/proton/documentmetastore/operation_listener.h>
 #include <vespa/searchcore/proton/feedoperation/moveoperation.h>
@@ -147,7 +146,7 @@ struct MyDocumentRetriever : public DocumentRetrieverBaseForTest
 {
     MyDocumentSubDB &_subDB;
 
-    explicit MyDocumentRetriever(MyDocumentSubDB &subDB)
+    explicit MyDocumentRetriever(MyDocumentSubDB &subDB) noexcept
         : _subDB(subDB)
     {
     }
@@ -234,7 +233,10 @@ public:
     }
 
     // Implements IOperationStorer
-    void storeOperation(const FeedOperation &op, DoneCallback) override;
+    void appendOperation(const FeedOperation &op, DoneCallback) override;
+    CommitResult startCommit(DoneCallback) override {
+        return CommitResult();
+    }
 
     uint32_t getHeartBeats() const {
         return _heartBeats;
@@ -347,11 +349,11 @@ struct MockLidSpaceCompactionHandler : public ILidSpaceCompactionHandler
     IDocumentScanIterator::UP getIterator() const override { return IDocumentScanIterator::UP(); }
     MoveOperation::UP createMoveOperation(const search::DocumentMetaData &, uint32_t) const override { return MoveOperation::UP(); }
     void handleMove(const MoveOperation &, IDestructorCallback::SP) override {}
-    void handleCompactLidSpace(const CompactLidSpaceOperation &) override {}
+    void handleCompactLidSpace(const CompactLidSpaceOperation &, std::shared_ptr<IDestructorCallback>) override {}
 };
 
 
-class MaintenanceControllerFixture : public ICommitable
+class MaintenanceControllerFixture
 {
 public:
     MyExecutor                    _executor;
@@ -382,11 +384,9 @@ public:
 
     MaintenanceControllerFixture();
 
-    ~MaintenanceControllerFixture() override;
+    ~MaintenanceControllerFixture();
 
     void syncSubDBs();
-    void commit() override { }
-    void commitAndWait() override { }
     void performSyncSubDBs();
     void notifyClusterStateChanged();
     void performNotifyClusterStateChanged();
@@ -404,8 +404,7 @@ public:
     void
     setPruneConfig(const DocumentDBPruneRemovedDocumentsConfig &pruneConfig)
     {
-        DocumentDBMaintenanceConfig::SP
-            newCfg(new DocumentDBMaintenanceConfig(
+        auto newCfg = std::make_shared<DocumentDBMaintenanceConfig>(
                            pruneConfig,
                            _mcCfg->getHeartBeatConfig(),
                            _mcCfg->getSessionCachePruneInterval(),
@@ -414,7 +413,7 @@ public:
                            _mcCfg->getAttributeUsageFilterConfig(),
                            _mcCfg->getAttributeUsageSampleInterval(),
                            _mcCfg->getBlockableJobConfig(),
-                           _mcCfg->getFlushConfig()));
+                           _mcCfg->getFlushConfig());
         _mcCfg = newCfg;
         forwardMaintenanceConfig();
     }
@@ -422,8 +421,7 @@ public:
     void
     setHeartBeatConfig(const DocumentDBHeartBeatConfig &heartBeatConfig)
     {
-        DocumentDBMaintenanceConfig::SP
-            newCfg(new DocumentDBMaintenanceConfig(
+        auto newCfg = std::make_shared<DocumentDBMaintenanceConfig>(
                            _mcCfg->getPruneRemovedDocumentsConfig(),
                            heartBeatConfig,
                            _mcCfg->getSessionCachePruneInterval(),
@@ -432,7 +430,7 @@ public:
                            _mcCfg->getAttributeUsageFilterConfig(),
                            _mcCfg->getAttributeUsageSampleInterval(),
                            _mcCfg->getBlockableJobConfig(),
-                           _mcCfg->getFlushConfig()));
+                           _mcCfg->getFlushConfig());
         _mcCfg = newCfg;
         forwardMaintenanceConfig();
     }
@@ -440,8 +438,7 @@ public:
     void
     setGroupingSessionPruneInterval(vespalib::duration groupingSessionPruneInterval)
     {
-        DocumentDBMaintenanceConfig::SP
-            newCfg(new DocumentDBMaintenanceConfig(
+        auto newCfg = std::make_shared<DocumentDBMaintenanceConfig>(
                            _mcCfg->getPruneRemovedDocumentsConfig(),
                            _mcCfg->getHeartBeatConfig(),
                            groupingSessionPruneInterval,
@@ -450,14 +447,13 @@ public:
                            _mcCfg->getAttributeUsageFilterConfig(),
                            _mcCfg->getAttributeUsageSampleInterval(),
                            _mcCfg->getBlockableJobConfig(),
-                           _mcCfg->getFlushConfig()));
+                           _mcCfg->getFlushConfig());
         _mcCfg = newCfg;
         forwardMaintenanceConfig();
     }
 
     void setLidSpaceCompactionConfig(const DocumentDBLidSpaceCompactionConfig &cfg) {
-        DocumentDBMaintenanceConfig::SP
-            newCfg(new DocumentDBMaintenanceConfig(
+        auto newCfg = std::make_shared<DocumentDBMaintenanceConfig>(
                            _mcCfg->getPruneRemovedDocumentsConfig(),
                            _mcCfg->getHeartBeatConfig(),
                            _mcCfg->getSessionCachePruneInterval(),
@@ -466,21 +462,19 @@ public:
                            _mcCfg->getAttributeUsageFilterConfig(),
                            _mcCfg->getAttributeUsageSampleInterval(),
                            _mcCfg->getBlockableJobConfig(),
-                           _mcCfg->getFlushConfig()));
+                           _mcCfg->getFlushConfig());
         _mcCfg = newCfg;
         forwardMaintenanceConfig();
     }
 
     void
-    performNotifyBucketStateChanged(document::BucketId bucketId,
-                                    BucketInfo::ActiveState newState)
+    performNotifyBucketStateChanged(document::BucketId bucketId, BucketInfo::ActiveState newState)
     {
         _bucketHandler.notifyBucketStateChanged(bucketId, newState);
     }
 
     void
-    notifyBucketStateChanged(const document::BucketId &bucketId,
-                             BucketInfo::ActiveState newState)
+    notifyBucketStateChanged(const document::BucketId &bucketId, BucketInfo::ActiveState newState)
     {
         _executor.execute(makeTask(makeClosure(this,
                                                &MaintenanceControllerFixture::
@@ -494,12 +488,12 @@ public:
 MaintenanceDocumentSubDB
 MyDocumentSubDB::getSubDB()
 {
-    IDocumentRetriever::SP retriever(new MyDocumentRetriever(*this));
+    auto retriever = std::make_shared<MyDocumentRetriever>(*this);
 
     return MaintenanceDocumentSubDB("my_sub_db", _subDBId,
                                     _metaStoreSP,
                                     retriever,
-                                    IFeedView::SP());
+                                    IFeedView::SP(), nullptr);
 }
 
 
@@ -536,7 +530,7 @@ MyDocumentSubDB::handlePut(PutOperation &op)
                                      op.getBucketId(),
                                      op.getTimestamp(),
                                      op.getSerializedDocSize(),
-                                     op.getLid()));
+                                     op.getLid(), 0u));
         assert(putRes.ok());
         assert(op.getLid() == putRes._lid);
         _docs[op.getLid()] = doc;
@@ -549,7 +543,7 @@ MyDocumentSubDB::handlePut(PutOperation &op)
         assert(meta.getGid() == gid);
         (void) meta;
 
-        bool remres = _metaStore.remove(op.getPrevLid());
+        bool remres = _metaStore.remove(op.getPrevLid(), 0u);
         assert(remres);
         (void) remres;
         _metaStore.removeComplete(op.getPrevLid());
@@ -578,7 +572,7 @@ MyDocumentSubDB::handleRemove(RemoveOperationWithDocId &op)
                                      op.getBucketId(),
                                      op.getTimestamp(),
                                      op.getSerializedDocSize(),
-                                     op.getLid()));
+                                     op.getLid(), 0u));
         assert(putRes.ok());
         assert(op.getLid() == putRes._lid);
         const document::DocumentType *docType =
@@ -595,7 +589,7 @@ MyDocumentSubDB::handleRemove(RemoveOperationWithDocId &op)
         assert(meta.getGid() == gid);
         (void) meta;
 
-        bool remres = _metaStore.remove(op.getPrevLid());
+        bool remres = _metaStore.remove(op.getPrevLid(), 0u);
         assert(remres);
         (void) remres;
 
@@ -614,7 +608,7 @@ MyDocumentSubDB::prepareMove(MoveOperation &op)
 {
     const DocumentId &docId = op.getDocument()->getId();
     const document::GlobalId &gid = docId.getGlobalId();
-    DocumentMetaStore::Result inspectResult = _metaStore.inspect(gid);
+    DocumentMetaStore::Result inspectResult = _metaStore.inspect(gid, 0u);
     assert(!inspectResult._found);
     op.setDbDocumentId(DbDocumentId(_subDBId, inspectResult._lid));
 }
@@ -636,7 +630,7 @@ MyDocumentSubDB::handleMove(const MoveOperation &op)
                                      op.getBucketId(),
                                      op.getTimestamp(),
                                      op.getSerializedDocSize(),
-                                     op.getLid()));
+                                     op.getLid(), 0u));
         assert(putRes.ok());
         assert(op.getLid() == putRes._lid);
         _docs[op.getLid()] = doc;
@@ -649,7 +643,7 @@ MyDocumentSubDB::handleMove(const MoveOperation &op)
         assert(meta.getGid() == gid);
         (void) meta;
 
-        bool remres = _metaStore.remove(op.getPrevLid());
+        bool remres = _metaStore.remove(op.getPrevLid(), 0u);
         assert(remres);
         (void) remres;
 
@@ -706,7 +700,7 @@ MyFeedHandler::handleMove(MoveOperation &op, IDestructorCallback::SP moveDoneCtx
     assert(op.getPrevSubDbId() != 1u);
     assert(op.getSubDbId() < _subDBs.size());
     assert(op.getPrevSubDbId() < _subDBs.size());
-    storeOperation(op, std::move(moveDoneCtx));
+    appendOperation(op, std::move(moveDoneCtx));
     _subDBs[op.getSubDbId()]->handleMove(op);
     _subDBs[op.getPrevSubDbId()]->handleMove(op);
 }
@@ -717,7 +711,7 @@ MyFeedHandler::performPruneRemovedDocuments(PruneRemovedDocumentsOperation &op)
 {
     assert(isExecutorThread());
     if (op.getLidsToRemove()->getNumLids() != 0u) {
-        storeOperation(op, std::make_shared<search::IgnoreCallback>());
+        appendOperation(op, std::make_shared<search::IgnoreCallback>());
         // magic number.
         _subDBs[1u]->handlePruneRemovedDocuments(op);
     }
@@ -740,7 +734,7 @@ MyFeedHandler::setSubDBs(const std::vector<MyDocumentSubDB *> &subDBs)
 
 
 void
-MyFeedHandler::storeOperation(const FeedOperation &op, DoneCallback)
+MyFeedHandler::appendOperation(const FeedOperation &op, DoneCallback)
 {
     const_cast<FeedOperation &>(op).setSerialNum(incSerialNum());
 }
@@ -877,7 +871,7 @@ MaintenanceControllerFixture::injectMaintenanceJobs()
                                             _fh, _fh, _bmc, _clusterStateHandler, _bucketHandler,
                                             _calc,
                                             _diskMemUsageNotifier,
-                                            _jobTrackers, *this,
+                                            _jobTrackers,
                                             _readyAttributeManager,
                                             _notReadyAttributeManager,
                                             std::make_unique<const AttributeConfigInspector>(AttributesConfigBuilder()),
@@ -930,7 +924,7 @@ MaintenanceControllerFixture::insertDocs(const test::UserDocuments &docs, MyDocu
         for (const test::Document &testDoc : bucketDocs.getDocs()) {
             PutOperation op(testDoc.getBucket(), testDoc.getTimestamp(), testDoc.getDoc());
             op.setDbDocumentId(DbDocumentId(subDb.getSubDBId(), testDoc.getLid()));
-            _fh.storeOperation(op, std::make_shared<search::IgnoreCallback>());
+            _fh.appendOperation(op, std::make_shared<search::IgnoreCallback>());
             subDb.handlePut(op);
         }
     }
@@ -946,7 +940,7 @@ MaintenanceControllerFixture::removeDocs(const test::UserDocuments &docs, Timest
         for (const test::Document &testDoc : bucketDocs.getDocs()) {
             RemoveOperationWithDocId op(testDoc.getBucket(), timestamp, testDoc.getDoc()->getId());
             op.setDbDocumentId(DbDocumentId(_removed.getSubDBId(), testDoc.getLid()));
-            _fh.storeOperation(op, std::make_shared<search::IgnoreCallback>());
+            _fh.appendOperation(op, std::make_shared<search::IgnoreCallback>());
             _removed.handleRemove(op);
         }
     }

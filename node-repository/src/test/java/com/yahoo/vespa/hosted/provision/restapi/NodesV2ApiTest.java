@@ -3,6 +3,7 @@ package com.yahoo.vespa.hosted.provision.restapi;
 
 import com.yahoo.application.container.handler.Request;
 import com.yahoo.application.container.handler.Response;
+import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.text.Utf8;
@@ -90,8 +91,8 @@ public class NodesV2ApiTest {
         // POST new nodes
         assertResponse(new Request("http://localhost:8080/nodes/v2/node",
                                    ("[" + asNodeJson("host8.yahoo.com", "default", "127.0.8.1") + "," + // test with only 1 ip address
-                                   asHostJson("host9.yahoo.com", "large-variant", Optional.empty(), "127.0.9.1", "::9:1") + "," +
-                                   asHostJson("parent2.yahoo.com", "large-variant", Optional.of(TenantName.from("myTenant")), "127.0.127.1", "::127:1") + "," +
+                                   asHostJson("host9.yahoo.com", "large-variant", "127.0.9.1", "::9:1") + "," +
+                                   asNodeJson("parent2.yahoo.com", NodeType.host, "large-variant", Optional.of(TenantName.from("myTenant")), Optional.of(ApplicationId.from("tenant1", "app1", "instance1")), Optional.empty(), "127.0.127.1", "::127:1") + "," +
                                    asDockerNodeJson("host11.yahoo.com", "parent.host.yahoo.com", "::11") + "]").
                                    getBytes(StandardCharsets.UTF_8),
                                    Request.Method.POST),
@@ -229,7 +230,7 @@ public class NodesV2ApiTest {
                                    Utf8.toBytes("{\"modelName\": null}"), Request.Method.PATCH),
                        "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
         tester.assertPartialResponse(new Request("http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com"), "modelName", false);
-        tester.container().handleRequest((new Request("http://localhost:8080/nodes/v2/upgrade/tenant", Utf8.toBytes("{\"dockerImage\": \"docker.domain.tld/my/image\"}"), Request.Method.PATCH)));
+        tester.container().handleRequest((new Request("http://localhost:8080/nodes/v2/upgrade/tenant", Utf8.toBytes("{\"dockerImage\": \"ignored-registry.example.com/my/image\"}"), Request.Method.PATCH)));
 
         ((OrchestratorMock) tester.container().components().getComponent(OrchestratorMock.class.getName()))
                 .suspend(new HostName("host4.yahoo.com"));
@@ -305,7 +306,7 @@ public class NodesV2ApiTest {
                 ("[" + asNodeJson("host-with-ip.yahoo.com", "default", "foo") + "]").
                         getBytes(StandardCharsets.UTF_8),
                 Request.Method.POST);
-        tester.assertResponse(req, 400, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Found one or more invalid addresses in [foo]: 'foo' is not an IP string literal.\"}");
+        tester.assertResponse(req, 400, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Invalid IP address 'foo': 'foo' is not an IP string literal.\"}");
 
         // Attempt to POST tenant node with already assigned IP
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node",
@@ -321,7 +322,7 @@ public class NodesV2ApiTest {
 
         // Attempt to POST host node with already assigned IP
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node",
-                                         "[" + asHostJson("host200.yahoo.com", "default", Optional.empty(), "127.0.2.1") + "]",
+                                         "[" + asHostJson("host200.yahoo.com", "default", "127.0.2.1") + "]",
                                           Request.Method.POST), 400,
                        "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Cannot assign [127.0.2.1] to host200.yahoo.com: [127.0.2.1] already assigned to host2.yahoo.com\"}");
 
@@ -333,7 +334,7 @@ public class NodesV2ApiTest {
 
         // Node types running a single container can share their IP address with child node
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node",
-                                         "[" + asNodeJson("cfghost42.yahoo.com", NodeType.confighost, "default", Optional.empty(), "127.0.42.1") + "]",
+                                         "[" + asNodeJson("cfghost42.yahoo.com", NodeType.confighost, "default", Optional.empty(), Optional.empty(), Optional.empty(), "127.0.42.1") + "]",
                                          Request.Method.POST), 200,
                        "{\"message\":\"Added 1 nodes to the provisioned state\"}");
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node",
@@ -349,7 +350,7 @@ public class NodesV2ApiTest {
 
         // ... nor with child node on different host
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node",
-                                         "[" + asNodeJson("cfghost43.yahoo.com", NodeType.confighost, "default", Optional.empty(), "127.0.43.1") + "]",
+                                         "[" + asNodeJson("cfghost43.yahoo.com", NodeType.confighost, "default", Optional.empty(), Optional.empty(), Optional.empty(), "127.0.43.1") + "]",
                                           Request.Method.POST), 200,
                        "{\"message\":\"Added 1 nodes to the provisioned state\"}");
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node/cfg42.yahoo.com",
@@ -374,7 +375,7 @@ public class NodesV2ApiTest {
     @Test
     public void fails_to_ready_node_with_hard_fail() throws Exception {
         assertResponse(new Request("http://localhost:8080/nodes/v2/node",
-                        ("[" + asHostJson("host12.yahoo.com", "default", Optional.empty()) + "]").
+                        ("[" + asHostJson("host12.yahoo.com", "default") + "]").
                                 getBytes(StandardCharsets.UTF_8),
                         Request.Method.POST),
                 "{\"message\":\"Added 1 nodes to the provisioned state\"}");
@@ -738,25 +739,25 @@ public class NodesV2ApiTest {
                               200,
                               "{\"message\":\"Set osVersion to null for nodes of type confighost\"}");
 
-        // Set docker image for config and tenant
+        // Set container image for config and tenant
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/tenant",
                         Utf8.toBytes("{\"dockerImage\": \"my-repo.my-domain.example:1234/repo/tenant\"}"),
                         Request.Method.PATCH),
-                "{\"message\":\"Set docker image to my-repo.my-domain.example:1234/repo/tenant for nodes of type tenant\"}");
+                "{\"message\":\"Set container image to my-repo.my-domain.example:1234/repo/tenant for nodes of type tenant\"}");
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/config",
                         Utf8.toBytes("{\"dockerImage\": \"my-repo.my-domain.example:1234/repo/image\"}"),
                         Request.Method.PATCH),
-                "{\"message\":\"Set docker image to my-repo.my-domain.example:1234/repo/image for nodes of type config\"}");
+                "{\"message\":\"Set container image to my-repo.my-domain.example:1234/repo/image for nodes of type config\"}");
 
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/"),
                 "{\"versions\":{\"config\":\"6.123.456\",\"confighost\":\"6.124.42\",\"controller\":\"6.123.456\"},\"osVersions\":{\"host\":\"7.5.2\"},\"dockerImages\":{\"tenant\":\"my-repo.my-domain.example:1234/repo/tenant\",\"config\":\"my-repo.my-domain.example:1234/repo/image\"}}");
 
-        // Cannot set docker image for non docker node type
+        // Cannot set container image for non docker node type
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/confighost",
                                           Utf8.toBytes("{\"dockerImage\": \"my-repo.my-domain.example:1234/repo/image\"}"),
                                           Request.Method.PATCH),
                               400,
-                              "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Setting docker image for confighost nodes is unsupported\"}");
+                              "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Setting container image for confighost nodes is unsupported\"}");
     }
 
     @Test
@@ -939,6 +940,44 @@ public class NodesV2ApiTest {
                                       "\"resources\":{\"vcpu\":56.0,\"memoryGb\":34.0,\"diskGb\":12.0,\"bandwidthGbps\":78.0,\"diskSpeed\":\"fast\",\"storageType\":\"remote\"}");
     }
 
+    @Test
+    public void test_node_switch_hostname() throws Exception {
+        String hostname = "host42.yahoo.com";
+        // Add host with switch hostname
+        String json = asNodeJson(hostname, NodeType.host, "default", Optional.empty(), Optional.empty(), Optional.of("switch0"), "127.0.42.1", "::42:1");
+        assertResponse(new Request("http://localhost:8080/nodes/v2/node",
+                                   ("[" + json + "]").getBytes(StandardCharsets.UTF_8),
+                                   Request.Method.POST),
+                       "{\"message\":\"Added 1 nodes to the provisioned state\"}");
+        tester.assertResponseContains(new Request("http://localhost:8080/nodes/v2/node/" + hostname), "\"switchHostname\":\"switch0\"");
+
+        // Update switch hostname
+        json = "{\"switchHostname\":\"switch1\"}";
+        assertResponse(new Request("http://localhost:8080/nodes/v2/node/" + hostname, json.getBytes(StandardCharsets.UTF_8), Request.Method.PATCH),
+                       "{\"message\":\"Updated host42.yahoo.com\"}");
+        tester.assertResponseContains(new Request("http://localhost:8080/nodes/v2/node/" + hostname), "\"switchHostname\":\"switch1\"");
+
+        // Clear switch hostname
+        json = "{\"switchHostname\":null}";
+        assertResponse(new Request("http://localhost:8080/nodes/v2/node/" + hostname, json.getBytes(StandardCharsets.UTF_8), Request.Method.PATCH),
+                       "{\"message\":\"Updated host42.yahoo.com\"}");
+        tester.assertPartialResponse(new Request("http://localhost:8080/nodes/v2/node/" + hostname), "switchHostname", false);
+    }
+
+    @Test
+    public void exclusive_to_patch() throws IOException {
+        String url = "http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com";
+        tester.assertPartialResponse(new Request(url), "exclusiveTo", false); // Initially there is no exclusiveTo
+
+        assertResponse(new Request(url, Utf8.toBytes("{\"exclusiveTo\": \"t1:a1:i1\"}"), Request.Method.PATCH),
+                "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
+        tester.assertPartialResponse(new Request(url), "exclusiveTo\":\"t1:a1:i1\",", true);
+
+        assertResponse(new Request(url, Utf8.toBytes("{\"exclusiveTo\": null}"), Request.Method.PATCH),
+                "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
+        tester.assertPartialResponse(new Request(url), "exclusiveTo", false);
+    }
+
     private static String asDockerNodeJson(String hostname, String parentHostname, String... ipAddress) {
         return asDockerNodeJson(hostname, NodeType.tenant, parentHostname, ipAddress);
     }
@@ -957,15 +996,17 @@ public class NodesV2ApiTest {
                 "\"flavor\":\"" + flavor + "\"}";
     }
 
-    private static String asHostJson(String hostname, String flavor, Optional<TenantName> reservedTo, String... ipAddress) {
-        return asNodeJson(hostname,  NodeType.host, flavor, reservedTo, ipAddress);
+    private static String asHostJson(String hostname, String flavor, String... ipAddress) {
+        return asNodeJson(hostname, NodeType.host, flavor, Optional.empty(), Optional.empty(), Optional.empty(), ipAddress);
     }
 
-    private static String asNodeJson(String hostname, NodeType nodeType, String flavor, Optional<TenantName> reservedTo, String... ipAddress) {
+    private static String asNodeJson(String hostname, NodeType nodeType, String flavor, Optional<TenantName> reservedTo, Optional<ApplicationId> exclusiveTo, Optional<String> switchHostname, String... ipAddress) {
         return "{\"hostname\":\"" + hostname + "\", \"openStackId\":\"" + hostname + "\"," +
                createIpAddresses(ipAddress) +
                "\"flavor\":\"" + flavor + "\"" +
-               (reservedTo.isPresent() ? ", \"reservedTo\":\"" + reservedTo.get().value() + "\"" : "") +
+               (reservedTo.map(tenantName -> ", \"reservedTo\":\"" + tenantName.value() + "\"").orElse("")) +
+               (exclusiveTo.map(appId -> ", \"exclusiveTo\":\"" + appId.serializedForm() + "\"").orElse("")) +
+               (switchHostname.map(s -> ", \"switchHostname\":\"" + s + "\"").orElse("")) +
                ", \"type\":\"" + nodeType + "\"}";
     }
 
@@ -989,8 +1030,8 @@ public class NodesV2ApiTest {
         tester.assertFile(request, file);
     }
 
-    private void assertResponse(Request request, String file) throws IOException {
-        tester.assertResponse(request, file);
+    private void assertResponse(Request request, String response) throws IOException {
+        tester.assertResponse(request, response);
     }
 
 }

@@ -14,36 +14,33 @@
 #pragma once
 
 #include <vespa/storageapi/defs.h>
-#include <vespa/vespalib/util/printable.h>
 #include <vespa/vespalib/util/xmlserializable.h>
+#include <vespa/vespalib/stllike/string.h>
 
 namespace storage::api {
 
-class BucketInfo : public vespalib::AsciiPrintable
+class BucketInfo
 {
     Timestamp _lastModified;
-    uint32_t _checksum;
-    uint32_t _docCount;
-    uint32_t _totDocSize;
-    uint32_t _metaCount;
-    uint32_t _usedFileSize;
-    bool _ready;
-    bool _active;
+    uint32_t  _checksum;
+    uint32_t  _docCount;
+    uint32_t  _totDocSize;
+    uint32_t  _metaCount;
+    uint32_t  _usedFileSize;
+    bool      _ready;
+    bool      _active;
 
 public:
-    BucketInfo();
-    BucketInfo(uint32_t checksum, uint32_t docCount, uint32_t totDocSize);
+    BucketInfo() noexcept;
+    BucketInfo(uint32_t checksum, uint32_t docCount, uint32_t totDocSize) noexcept;
     BucketInfo(uint32_t checksum, uint32_t docCount, uint32_t totDocSize,
-               uint32_t metaCount, uint32_t usedFileSize);
-    BucketInfo(uint32_t checksum, uint32_t docCount, uint32_t totDocSize,
-               uint32_t metaCount, uint32_t usedFileSize,
-               bool ready, bool active);
+               uint32_t metaCount, uint32_t usedFileSize) noexcept;
     BucketInfo(uint32_t checksum, uint32_t docCount, uint32_t totDocSize,
                uint32_t metaCount, uint32_t usedFileSize,
-               bool ready, bool active, Timestamp lastModified);
-    BucketInfo(const BucketInfo &);
-    BucketInfo & operator = (const BucketInfo &);
-    ~BucketInfo();
+               bool ready, bool active) noexcept;
+    BucketInfo(uint32_t checksum, uint32_t docCount, uint32_t totDocSize,
+               uint32_t metaCount, uint32_t usedFileSize,
+               bool ready, bool active, Timestamp lastModified) noexcept;
 
     Timestamp getLastModified() const { return _lastModified; }
     uint32_t getChecksum() const { return _checksum; }
@@ -78,12 +75,10 @@ public:
     bool empty() const {
         return _metaCount == 0 && _usedFileSize == 0 && _checksum == 0;
     }
-    void print(std::ostream& out, bool verbose, const std::string& indent) const override {
-        vespalib::AsciiPrintable::print(out, verbose, indent);
-    }
-    void print(vespalib::asciistream&, const PrintProperties&) const override;
-
+    vespalib::string toString() const;
     void printXml(vespalib::XmlOutputStream&) const;
 };
+
+std::ostream & operator << (std::ostream & os, const BucketInfo & bucketInfo);
 
 }

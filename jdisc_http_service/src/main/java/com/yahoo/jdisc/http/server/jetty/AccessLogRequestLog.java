@@ -4,6 +4,7 @@ package com.yahoo.jdisc.http.server.jetty;
 import com.google.common.base.Objects;
 import com.yahoo.container.logging.AccessLog;
 import com.yahoo.container.logging.AccessLogEntry;
+import com.yahoo.jdisc.http.ServerConfig;
 import com.yahoo.jdisc.http.servlet.ServletRequest;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.RequestLog;
@@ -15,6 +16,7 @@ import java.security.Principal;
 import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -27,29 +29,25 @@ import static com.yahoo.jdisc.http.core.HttpServletRequestUtils.getConnectorLoca
  * @author Oyvind Bakksjo
  * @author bjorncs
  */
-public class AccessLogRequestLog extends AbstractLifeCycle implements RequestLog {
+class AccessLogRequestLog extends AbstractLifeCycle implements RequestLog {
 
     private static final Logger logger = Logger.getLogger(AccessLogRequestLog.class.getName());
-
-    // TODO These hardcoded headers should be provided by config instead
-    private static final String HEADER_NAME_X_FORWARDED_FOR = "x-forwarded-for";
-    private static final String HEADER_NAME_X_FORWARDED_PORT = "X-Forwarded-Port";
-    private static final String HEADER_NAME_Y_RA = "y-ra";
-    private static final String HEADER_NAME_Y_RP = "y-rp";
-    private static final String HEADER_NAME_YAHOOREMOTEIP = "yahooremoteip";
-    private static final String HEADER_NAME_CLIENT_IP = "client-ip";
 
     // HTTP headers that are logged as extra key-value-pairs in access log entries
     private static final List<String> LOGGED_REQUEST_HEADERS = List.of("Vespa-Client-Version");
 
     private final AccessLog accessLog;
+    private final List<String> remoteAddressHeaders;
+    private final List<String> remotePortHeaders;
 
-    public AccessLogRequestLog(final AccessLog accessLog) {
+    AccessLogRequestLog(AccessLog accessLog, ServerConfig.AccessLog config) {
         this.accessLog = accessLog;
+        this.remoteAddressHeaders = config.remoteAddressHeaders();
+        this.remotePortHeaders = config.remotePortHeaders();
     }
 
     @Override
-    public void log(final Request request, final Response response) {
+    public void log(Request request, Response response) {
         try {
             AccessLogEntry accessLogEntry = Optional.ofNullable(request.getAttribute(JDiscHttpServlet.ATTRIBUTE_NAME_ACCESS_LOG_ENTRY))
                     .map(AccessLogEntry.class::cast)
@@ -100,8 +98,8 @@ public class AccessLogRequestLog extends AbstractLifeCycle implements RequestLog
                 accessLogEntry.addKeyValue("cipher-suite", cipherSuite);
             }
 
-            final long startTime = request.getTimeStamp();
-            final long endTime = System.currentTimeMillis();
+            long startTime = request.getTimeStamp();
+            long endTime = System.currentTimeMillis();
             accessLogEntry.setTimeStamp(startTime);
             accessLogEntry.setDurationBetweenRequestResponse(endTime - startTime);
             accessLogEntry.setReturnedContentSize(response.getHttpChannel().getBytesWritten());
@@ -121,26 +119,31 @@ public class AccessLogRequestLog extends AbstractLifeCycle implements RequestLog
         }
     }
 
-    private static String getRemoteAddress(final HttpServletRequest request) {
-        return Optional.ofNullable(request.getHeader(HEADER_NAME_X_FORWARDED_FOR))
-                .or(() -> Optional.ofNullable(request.getHeader(HEADER_NAME_Y_RA)))
-                .or(() -> Optional.ofNullable(request.getHeader(HEADER_NAME_YAHOOREMOTEIP)))
-                .or(() -> Optional.ofNullable(request.getHeader(HEADER_NAME_CLIENT_IP)))
-                .orElseGet(request::getRemoteAddr);
+    private String getRemoteAddress(HttpServletRequest request) {
+        for (String header : remoteAddressHeaders) {
+            String value = request.getHeader(header);
+            if (value != null) return value;
+        }
+        return request.getRemoteAddr();
     }
 
-    private static int getRemotePort(final HttpServletRequest request) {
-        return Optional.ofNullable(request.getHeader(HEADER_NAME_X_FORWARDED_PORT))
-                .or(() -> Optional.ofNullable(request.getHeader(HEADER_NAME_Y_RP)))
-                .flatMap(AccessLogRequestLog::parsePort)
-                .orElseGet(request::getRemotePort);
+    private int getRemotePort(HttpServletRequest request) {
+        for (String header : remotePortHeaders) {
+            String value = request.getHeader(header);
+            if (value != null) {
+                OptionalInt maybePort = parsePort(value);
+                if (maybePort.isPresent()) return maybePort.getAsInt();
+            }
+        }
+        return request.getRemotePort();
     }
 
-    private static Optional<Integer> parsePort(String port) {
+    private static OptionalInt parsePort(String port) {
         try {
-            return Optional.of(Integer.valueOf(port));
+            return OptionalInt.of(Integer.parseInt(port));
         } catch (IllegalArgumentException e) {
-            return Optional.empty();
+            return OptionalInt.empty();
         }
     }
+
 }

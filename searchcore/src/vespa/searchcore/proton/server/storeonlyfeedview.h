@@ -7,12 +7,13 @@
 #include "isummaryadapter.h"
 #include "replaypacketdispatcher.h"
 #include "searchcontext.h"
-#include "pendinglidtracker.h"
+#include <vespa/searchcore/proton/common/pendinglidtracker.h>
 #include <vespa/searchcore/proton/common/doctypename.h>
 #include <vespa/searchcore/proton/attribute/ifieldupdatecallback.h>
 #include <vespa/searchcore/proton/common/feeddebugger.h>
 #include <vespa/searchcore/proton/documentmetastore/documentmetastore.h>
 #include <vespa/searchcore/proton/documentmetastore/documentmetastorecontext.h>
+#include <vespa/searchcore/proton/documentmetastore/lidreusedelayer.h>
 #include <vespa/searchcore/proton/feedoperation/lidvectorcontext.h>
 #include <vespa/searchcore/proton/persistenceengine/resulthandler.h>
 #include <vespa/searchcore/proton/reference/pending_notify_remove_done.h>
@@ -32,13 +33,10 @@ class ForceCommitContext;
 class OperationDoneContext;
 class PutDoneContext;
 class RemoveDoneContext;
-class CommitTimeTracker;
 class IGidToLidChangeHandler;
 struct IFieldUpdateCallback;
 class RemoveDocumentsOperation;
 class DocumentOperation;
-
-namespace documentmetastore { class ILidReuseDelayer; }
 
 /**
  * The feed view used by the store-only sub database.
@@ -49,7 +47,7 @@ class StoreOnlyFeedView : public IFeedView,
                           protected FeedDebugger
 {
 protected:
-    typedef search::transactionlog::Packet Packet;
+    using Packet = search::transactionlog::Packet;
 public:
     using UP = std::unique_ptr<StoreOnlyFeedView>;
     using SP = std::shared_ptr<StoreOnlyFeedView>;
@@ -69,37 +67,37 @@ public:
     using PromisedStream = std::promise<vespalib::nbostream>;
     using DocumentSP = std::shared_ptr<Document>;
     using DocumentUpdateSP = std::shared_ptr<DocumentUpdate>;
+    using LidReuseDelayer = documentmetastore::LidReuseDelayer;
 
     using Lid = search::DocumentIdT;
 
     struct Context
     {
-        const ISummaryAdapter::SP               &_summaryAdapter;
-        const search::index::Schema::SP         &_schema;
-        const IDocumentMetaStoreContext::SP     &_documentMetaStoreContext;
-        IGidToLidChangeHandler                  &_gidToLidChangeHandler;
-        const std::shared_ptr<const document::DocumentTypeRepo>    &_repo;
-        searchcorespi::index::IThreadingService &_writeService;
-        documentmetastore::ILidReuseDelayer     &_lidReuseDelayer;
-        CommitTimeTracker                       &_commitTimeTracker;
+        ISummaryAdapter::SP                                _summaryAdapter;
+        search::index::Schema::SP                          _schema;
+        IDocumentMetaStoreContext::SP                      _documentMetaStoreContext;
+        std::shared_ptr<const document::DocumentTypeRepo>  _repo;
+        std::shared_ptr<PendingLidTrackerBase>             _pendingLidsForCommit;
+        IGidToLidChangeHandler                            &_gidToLidChangeHandler;
+        searchcorespi::index::IThreadingService           &_writeService;
 
-        Context(const ISummaryAdapter::SP &summaryAdapter,
-                const search::index::Schema::SP &schema,
-                const IDocumentMetaStoreContext::SP &documentMetaStoreContext,
+        Context(ISummaryAdapter::SP summaryAdapter,
+                search::index::Schema::SP schema,
+                IDocumentMetaStoreContext::SP documentMetaStoreContext,
+                std::shared_ptr<const document::DocumentTypeRepo> repo,
+                std::shared_ptr<PendingLidTrackerBase> pendingLidsForCommit,
                 IGidToLidChangeHandler &gidToLidChangeHandler,
-                const std::shared_ptr<const document::DocumentTypeRepo> &repo,
-                searchcorespi::index::IThreadingService &writeService,
-                documentmetastore::ILidReuseDelayer &lidReuseDelayer,
-                CommitTimeTracker &commitTimeTracker)
-            : _summaryAdapter(summaryAdapter),
-              _schema(schema),
-              _documentMetaStoreContext(documentMetaStoreContext),
+                searchcorespi::index::IThreadingService &writeService)
+            : _summaryAdapter(std::move(summaryAdapter)),
+              _schema(std::move(schema)),
+              _documentMetaStoreContext(std::move(documentMetaStoreContext)),
+              _repo(std::move(repo)),
+              _pendingLidsForCommit(std::move(pendingLidsForCommit)),
               _gidToLidChangeHandler(gidToLidChangeHandler),
-              _repo(repo),
-              _writeService(writeService),
-              _lidReuseDelayer(lidReuseDelayer),
-              _commitTimeTracker(commitTimeTracker)
+              _writeService(writeService)
         {}
+        Context(Context &&) noexcept;
+        ~Context();
     };
 
     struct PersistentParams
@@ -140,13 +138,13 @@ protected:
     };
 
 private:
-    const ISummaryAdapter::SP                _summaryAdapter;
-    const IDocumentMetaStoreContext::SP      _documentMetaStoreContext;
-    const std::shared_ptr<const document::DocumentTypeRepo>     _repo;
-    const document::DocumentType            *_docType;
-    documentmetastore::ILidReuseDelayer     &_lidReuseDelayer;
-    CommitTimeTracker                       &_commitTimeTracker;
-    PendingLidTracker                        _pendingLidTracker;
+    const ISummaryAdapter::SP                                _summaryAdapter;
+    const IDocumentMetaStoreContext::SP                      _documentMetaStoreContext;
+    const std::shared_ptr<const document::DocumentTypeRepo>  _repo;
+    const document::DocumentType                            *_docType;
+    LidReuseDelayer                                          _lidReuseDelayer;
+    PendingLidTracker                                        _pendingLidsForDocStore;
+    std::shared_ptr<PendingLidTrackerBase>                   _pendingLidsForCommit;
 
 protected:
     const search::index::Schema::SP          _schema;
@@ -163,7 +161,6 @@ private:
     void putSummary(SerialNum serialNum,  Lid lid, DocumentSP doc, OnOperationDoneType onDone);
     void removeSummary(SerialNum serialNum,  Lid lid, OnWriteDoneType onDone);
     void heartBeatSummary(SerialNum serialNum);
-
 
     bool useDocumentStore(SerialNum replaySerialNum) const {
         return replaySerialNum > _params._flushedDocumentStoreSerialNum;
@@ -182,14 +179,13 @@ private:
 
     // Removes documents from meta store and document store.
     // returns the number of documents removed.
-    size_t removeDocuments(const RemoveDocumentsOperation &op, bool remove_index_and_attribute_fields,
-                           bool immediateCommit);
+    size_t removeDocuments(const RemoveDocumentsOperation &op, bool remove_index_and_attribute_fields);
 
-    void internalRemove(FeedToken token, SerialNum serialNum, PendingNotifyRemoveDone &&pendingNotifyRemoveDone,
+    void internalRemove(FeedToken token, IPendingLidTracker::Token uncommitted, SerialNum serialNum,
+                        PendingNotifyRemoveDone &&pendingNotifyRemoveDone,
                         Lid lid, std::shared_ptr<search::IDestructorCallback> moveDoneCtx);
 
-    // Ack token early if visibility delay is nonzero
-    void considerEarlyAck(FeedToken &token);
+    IPendingLidTracker::Token get_pending_lid_token(const DocumentOperation &op);
 
     void makeUpdatedDocument(SerialNum serialNum, Lid lid, const DocumentUpdate & update, OnOperationDoneType onWriteDone,
                              PromisedDoc promisedDoc, PromisedStream promisedStream);
@@ -200,33 +196,23 @@ protected:
     virtual void heartBeatAttributes(SerialNum serialNum);
 
 private:
-    virtual void putAttributes(SerialNum serialNum, Lid lid, const Document &doc,
-                               bool immediateCommit, OnPutDoneType onWriteDone);
-
-    virtual void putIndexedFields(SerialNum serialNum, Lid lid, const DocumentSP &newDoc,
-                                  bool immediateCommit, OnOperationDoneType onWriteDone);
+    virtual void putAttributes(SerialNum serialNum, Lid lid, const Document &doc, OnPutDoneType onWriteDone);
+    virtual void putIndexedFields(SerialNum serialNum, Lid lid, const DocumentSP &newDoc, OnOperationDoneType onWriteDone);
 
     virtual void updateAttributes(SerialNum serialNum, Lid lid, const DocumentUpdate &upd,
-                                  bool immediateCommit, OnOperationDoneType onWriteDone, IFieldUpdateCallback & onUpdate);
+                                  OnOperationDoneType onWriteDone, IFieldUpdateCallback & onUpdate);
 
-    virtual void updateAttributes(SerialNum serialNum, Lid lid, FutureDoc doc,
-                                  bool immediateCommit, OnOperationDoneType onWriteDone);
-
-    virtual void updateIndexedFields(SerialNum serialNum, Lid lid, FutureDoc doc,
-                                     bool immediateCommit, OnOperationDoneType onWriteDone);
-
-    virtual void removeAttributes(SerialNum serialNum, Lid lid, bool immediateCommit, OnRemoveDoneType onWriteDone);
-    virtual void removeIndexedFields(SerialNum serialNum, Lid lid, bool immediateCommit, OnRemoveDoneType onWriteDone);
+    virtual void updateAttributes(SerialNum serialNum, Lid lid, FutureDoc doc, OnOperationDoneType onWriteDone);
+    virtual void updateIndexedFields(SerialNum serialNum, Lid lid, FutureDoc doc, OnOperationDoneType onWriteDone);
+    virtual void removeAttributes(SerialNum serialNum, Lid lid, OnRemoveDoneType onWriteDone);
+    virtual void removeIndexedFields(SerialNum serialNum, Lid lid, OnRemoveDoneType onWriteDone);
 
 protected:
-    virtual void removeAttributes(SerialNum serialNum, const LidVector &lidsToRemove,
-                                  bool immediateCommit, OnWriteDoneType onWriteDone);
-
-    virtual void removeIndexedFields(SerialNum serialNum, const LidVector &lidsToRemove,
-                                     bool immediateCommit, OnWriteDoneType onWriteDone);
-
+    virtual void removeAttributes(SerialNum serialNum, const LidVector &lidsToRemove, OnWriteDoneType onWriteDone);
+    virtual void removeIndexedFields(SerialNum serialNum, const LidVector &lidsToRemove, OnWriteDoneType onWriteDone);
+    virtual void internalForceCommit(SerialNum serialNum, OnForceCommitDoneType onCommitDone);
 public:
-    StoreOnlyFeedView(const Context &ctx, const PersistentParams &params);
+    StoreOnlyFeedView(Context ctx, const PersistentParams &params);
     ~StoreOnlyFeedView() override;
 
     const ISummaryAdapter::SP &getSummaryAdapter() const { return _summaryAdapter; }
@@ -235,8 +221,6 @@ public:
     const search::IDocumentStore &getDocumentStore() const { return _summaryAdapter->getDocumentStore(); }
     const IDocumentMetaStoreContext::SP &getDocumentMetaStore() const { return _documentMetaStoreContext; }
     searchcorespi::index::IThreadingService &getWriteService() { return _writeService; }
-    documentmetastore::ILidReuseDelayer &getLidReuseDelayer() { return _lidReuseDelayer; }
-    CommitTimeTracker &getCommitTimeTracker() { return _commitTimeTracker; }
     IGidToLidChangeHandler &getGidToLidChangeHandler() const { return _gidToLidChangeHandler; }
 
     const std::shared_ptr<const document::DocumentTypeRepo> &getDocumentTypeRepo() const override { return _repo; }
@@ -254,8 +238,7 @@ public:
     void handleMove(const MoveOperation &putOp, std::shared_ptr<search::IDestructorCallback> doneCtx) override;
     void heartBeat(search::SerialNum serialNum) override;
     void sync() override;
-    void forceCommit(SerialNum serialNum) override;
-    virtual void forceCommit(SerialNum serialNum, OnForceCommitDoneType onCommitDone);
+    void forceCommit(SerialNum serialNum, DoneCallback onDone) override;
 
     /**
      * Prune lids present in operation.  Caller must call doneSegment()
@@ -265,6 +248,7 @@ public:
      */
     void handlePruneRemovedDocuments(const PruneRemovedDocumentsOperation &pruneOp) override;
     void handleCompactLidSpace(const CompactLidSpaceOperation &op) override;
+    std::shared_ptr<PendingLidTrackerBase> getUncommittedLidTracker() { return _pendingLidsForCommit; }
 };
 
 }

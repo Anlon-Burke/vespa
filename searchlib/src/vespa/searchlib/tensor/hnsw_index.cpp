@@ -6,7 +6,6 @@
 #include "hnsw_index_saver.h"
 #include "random_level_generator.h"
 #include <vespa/searchlib/util/state_explorer_utils.h>
-#include <vespa/eval/tensor/dense/typed_cells.h>
 #include <vespa/vespalib/data/slime/cursor.h>
 #include <vespa/vespalib/data/slime/inserter.h>
 #include <vespa/vespalib/datastore/array_store.hpp>
@@ -41,7 +40,7 @@ struct PairDist {
     uint32_t id_first;
     uint32_t id_second;
     double distance;
-    PairDist(uint32_t i1, uint32_t i2, double d)
+    PairDist(uint32_t i1, uint32_t i2, double d) noexcept
       : id_first(i1), id_second(i2), distance(d)
     {}
 };

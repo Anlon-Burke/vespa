@@ -6,7 +6,6 @@ import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.NodeResources;
-import com.yahoo.transaction.NestedTransaction;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancer;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancerId;
 import com.yahoo.vespa.hosted.provision.node.Agent;
@@ -45,8 +44,8 @@ public class LoadBalancerExpirerTest {
         // Deploy two applications with a total of three load balancers
         ClusterSpec.Id cluster1 = ClusterSpec.Id.from("qrs");
         ClusterSpec.Id cluster2 = ClusterSpec.Id.from("qrs2");
-        ApplicationId app1 = tester.makeApplicationId();
-        ApplicationId app2 = tester.makeApplicationId();
+        ApplicationId app1 = ProvisioningTester.makeApplicationId();
+        ApplicationId app2 = ProvisioningTester.makeApplicationId();
         LoadBalancerId lb1 = new LoadBalancerId(app1, cluster1);
         LoadBalancerId lb2 = new LoadBalancerId(app2, cluster1);
         LoadBalancerId lb3 = new LoadBalancerId(app2, cluster2);
@@ -55,7 +54,7 @@ public class LoadBalancerExpirerTest {
         assertEquals(3, loadBalancers.get().size());
 
         // Remove one application deactivates load balancers for that application
-        removeApplication(app1);
+        tester.remove(app1);
         assertSame(LoadBalancer.State.inactive, loadBalancers.get().get(lb1).state());
         assertNotSame(LoadBalancer.State.inactive, loadBalancers.get().get(lb2).state());
 
@@ -111,7 +110,7 @@ public class LoadBalancerExpirerTest {
 
         // Prepare application
         ClusterSpec.Id cluster = ClusterSpec.Id.from("qrs");
-        ApplicationId app = tester.makeApplicationId();
+        ApplicationId app = ProvisioningTester.makeApplicationId();
         LoadBalancerId lb = new LoadBalancerId(app, cluster);
         deployApplication(app, false, cluster);
 
@@ -144,12 +143,6 @@ public class LoadBalancerExpirerTest {
                                                .filter(node -> node.allocation().get().membership().cluster().id().equals(cluster))
                                                .collect(Collectors.toList()),
                                          Agent.system, this.getClass().getSimpleName());
-    }
-
-    private void removeApplication(ApplicationId application) {
-        NestedTransaction transaction = new NestedTransaction();
-        tester.provisioner().remove(transaction, application);
-        transaction.commit();
     }
 
     private void deployApplication(ApplicationId application, ClusterSpec.Id... clusters) {

@@ -17,8 +17,8 @@ namespace eval {
 namespace test {
 
 using CellType = ValueType::CellType;
-using map_fun_t = TensorEngine::map_fun_t;
-using join_fun_t = TensorEngine::join_fun_t;
+using map_fun_t = vespalib::eval::operation::op1_t;
+using join_fun_t = vespalib::eval::operation::op2_t;
 
 // Random access sequence of numbers
 struct Sequence {
@@ -38,7 +38,7 @@ struct Div10 : Sequence {
     double operator[](size_t i) const override { return (seq[i] / 10.0); }
 };
 
-// Sequence of another sequence divided by 10
+// Sequence of another sequence divided by 16
 struct Div16 : Sequence {
     const Sequence &seq;
     Div16(const Sequence &seq_in) : seq(seq_in) {}

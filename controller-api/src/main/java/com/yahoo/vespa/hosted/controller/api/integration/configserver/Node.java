@@ -1,6 +1,7 @@
 // Copyright 2018 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.api.integration.configserver;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.DockerImage;
@@ -8,8 +9,13 @@ import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.TenantName;
+import com.yahoo.vespa.hosted.controller.api.integration.noderepository.NodeHistory;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -48,13 +54,17 @@ public class Node {
     private final boolean wantToRetire;
     private final boolean wantToDeprovision;
     private final Optional<TenantName> reservedTo;
+    private final Optional<ApplicationId> exclusiveTo;
+    private final Map<String, JsonNode> reports;
+    private final List<NodeHistory> history;
 
     public Node(HostName hostname, Optional<HostName> parentHostname, State state, NodeType type, NodeResources resources, Optional<ApplicationId> owner,
                 Version currentVersion, Version wantedVersion, Version currentOsVersion, Version wantedOsVersion,
                 Optional<Instant> currentFirmwareCheck, Optional<Instant> wantedFirmwareCheck, ServiceState serviceState,
                 Optional<Instant> suspendedSince, long restartGeneration, long wantedRestartGeneration, long rebootGeneration, long wantedRebootGeneration,
                 int cost, String flavor, String clusterId, ClusterType clusterType, boolean wantToRetire, boolean wantToDeprovision,
-                Optional<TenantName> reservedTo, DockerImage wantedDockerImage, DockerImage currentDockerImage) {
+                Optional<TenantName> reservedTo, Optional<ApplicationId> exclusiveTo,
+                DockerImage wantedDockerImage, DockerImage currentDockerImage, Map<String, JsonNode> reports, List<NodeHistory> history) {
         this.hostname = hostname;
         this.parentHostname = parentHostname;
         this.state = state;
@@ -80,8 +90,11 @@ public class Node {
         this.wantToRetire = wantToRetire;
         this.wantToDeprovision = wantToDeprovision;
         this.reservedTo = reservedTo;
+        this.exclusiveTo = exclusiveTo;
         this.wantedDockerImage = wantedDockerImage;
         this.currentDockerImage = currentDockerImage;
+        this.reports = reports;
+        this.history = history;
     }
 
     public HostName hostname() {
@@ -188,6 +201,16 @@ public class Node {
 
     public Optional<TenantName> reservedTo() { return reservedTo; }
 
+    public Optional<ApplicationId> exclusiveTo() { return exclusiveTo; }
+
+    public Map<String, JsonNode> reports() {
+        return reports;
+    }
+
+    public List<NodeHistory> history() {
+        return history;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -211,7 +234,8 @@ public class Node {
         dirty,
         failed,
         parked,
-        unknown,
+        breakfixed,
+        unknown
     }
 
     /** Known node states with regards to service orchestration */
@@ -258,6 +282,9 @@ public class Node {
         private boolean wantToRetire;
         private boolean wantToDeprovision;
         private Optional<TenantName> reservedTo = Optional.empty();
+        private Optional<ApplicationId> exclusiveTo = Optional.empty();
+        private Map<String, JsonNode> reports = new HashMap<>();
+        private List<NodeHistory> history = new ArrayList<>();
 
         public Builder() { }
 
@@ -289,6 +316,9 @@ public class Node {
             this.wantToRetire = node.wantToRetire;
             this.wantToDeprovision = node.wantToDeprovision;
             this.reservedTo = node.reservedTo;
+            this.exclusiveTo = node.exclusiveTo;
+            this.reports = node.reports;
+            this.history = node.history;
         }
 
         public Builder hostname(HostName hostname) {
@@ -426,12 +456,22 @@ public class Node {
             return this;
         }
 
+        public Builder exclusiveTo(ApplicationId exclusiveTo) {
+            this.exclusiveTo = Optional.of(exclusiveTo);
+            return this;
+        }
+
+        public Builder history(List<NodeHistory> history) {
+            this.history = history;
+            return this;
+        }
+
         public Node build() {
             return new Node(hostname, parentHostname, state, type, resources, owner, currentVersion, wantedVersion,
                             currentOsVersion, wantedOsVersion, currentFirmwareCheck, wantedFirmwareCheck, serviceState,
                             suspendedSince, restartGeneration, wantedRestartGeneration, rebootGeneration, wantedRebootGeneration,
-                            cost, flavor, clusterId, clusterType, wantToRetire, wantToDeprovision, reservedTo,
-                            wantedDockerImage, currentDockerImage);
+                            cost, flavor, clusterId, clusterType, wantToRetire, wantToDeprovision, reservedTo, exclusiveTo,
+                            wantedDockerImage, currentDockerImage, reports, history);
         }
 
     }

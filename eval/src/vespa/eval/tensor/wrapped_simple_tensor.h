@@ -26,14 +26,15 @@ public:
         : _space(), _tensor(tensor) {}
     explicit WrappedSimpleTensor(std::unique_ptr<eval::SimpleTensor> tensor)
         : _space(std::move(tensor)), _tensor(*_space) {}
+    eval::TypedCells cells() const override { abort(); }
+    const Index &index() const override { abort(); }
     ~WrappedSimpleTensor() {}
     const eval::SimpleTensor &get() const { return _tensor; }
     const eval::ValueType &type() const override { return _tensor.type(); }
-    bool equals(const Tensor &arg) const override;
     eval::TensorSpec toSpec() const override;
     double as_double() const override;
     void accept(TensorVisitor &visitor) const override;
-    Tensor::UP clone() const override;
+    MemoryUsage get_memory_usage() const override;
     // functions below should not be used for this implementation
     Tensor::UP apply(const CellFunction &) const override;
     Tensor::UP join(join_fun_t, const Tensor &) const override;

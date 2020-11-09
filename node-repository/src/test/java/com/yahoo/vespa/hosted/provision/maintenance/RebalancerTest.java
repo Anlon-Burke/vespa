@@ -2,6 +2,7 @@
 package com.yahoo.vespa.hosted.provision.maintenance;
 
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
@@ -9,6 +10,7 @@ import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
+import com.yahoo.config.provision.ProvisionLock;
 import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.config.provisioning.FlavorsConfig;
@@ -54,7 +56,7 @@ public class RebalancerTest {
 
         // --- Making a more suitable node configuration available causes rebalancing
         Node newCpuHost = tester.makeReadyNode("cpu");
-        tester.deployZoneApp();
+        tester.activateTenantHosts();
 
         tester.maintain();
         assertTrue("Rebalancer retired the node we wanted to move away from", tester.isNodeRetired(cpuSkewedNode));
@@ -74,14 +76,15 @@ public class RebalancerTest {
         // --- Adding a more suitable node reconfiguration causes no action as the system is not stable
         Node memSkewedNode = tester.getNode(memoryApp);
         Node newMemHost = tester.makeReadyNode("mem");
-        tester.deployZoneApp();
+        tester.activateTenantHosts();
 
         tester.maintain();
         assertFalse("No rebalancing happens because cpuSkewedNode is still retired", tester.isNodeRetired(memSkewedNode));
 
         // --- Making the system stable enables rebalancing
         NestedTransaction tx = new NestedTransaction();
-        tester.nodeRepository().deactivate(List.of(cpuSkewedNode), tx);
+        tester.nodeRepository().deactivate(List.of(cpuSkewedNode),
+                                           new ApplicationTransaction(new ProvisionLock(cpuApp, () -> {}), tx));
         tx.commit();
 
         //     ... if activation fails when trying, we clean up the state
@@ -117,7 +120,7 @@ public class RebalancerTest {
 
         // --- Making a more suitable node configuration available causes rebalancing
         Node newCpuHost = tester.makeReadyNode("cpu");
-        tester.deployZoneApp();
+        tester.activateTenantHosts();
 
         tester.deployApp(cpuApp, false /* skip advancing clock after deployment */);
         tester.maintain();
@@ -150,9 +153,9 @@ public class RebalancerTest {
                     cpuApp, new MockDeployer.ApplicationContext(cpuApp, clusterSpec("c"), Capacity.from(new ClusterResources(1, 1, cpuResources))),
                     memoryApp, new MockDeployer.ApplicationContext(memoryApp, clusterSpec("c"), Capacity.from(new ClusterResources(1, 1, memResources))));
             deployer = new MockDeployer(tester.provisioner(), tester.clock(), apps);
-            rebalancer = new Rebalancer(deployer, tester.nodeRepository(), metric, tester.clock(), Duration.ofMinutes(1));
+            rebalancer = new Rebalancer(deployer, tester.nodeRepository(), metric, Duration.ofMinutes(1));
             tester.makeReadyNodes(3, "flat", NodeType.host, 8);
-            tester.deployZoneApp();
+            tester.activateTenantHosts();
         }
 
         void maintain() { rebalancer.maintain(); }
@@ -163,7 +166,7 @@ public class RebalancerTest {
 
         NodeRepository nodeRepository() { return tester.nodeRepository(); }
 
-        void deployZoneApp() { tester.deployZoneApp(); }
+        void activateTenantHosts() { tester.activateTenantHosts(); }
 
         void deployApp(ApplicationId id) { deployApp(id, true); }
 

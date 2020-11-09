@@ -12,6 +12,10 @@ import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.Zone;
 
 import java.io.File;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
@@ -33,6 +37,7 @@ public interface ModelContext {
     DeployLogger deployLogger();
     ConfigDefinitionRepo configDefinitionRepo();
     FileRegistry getFileRegistry();
+    default Optional<? extends Reindexing> reindexing() { return Optional.empty(); }
     Properties properties();
     default Optional<File> appDir() { return Optional.empty();}
 
@@ -45,8 +50,13 @@ public interface ModelContext {
     /** The Vespa version we want nodes to become */
     Version wantedNodeVespaVersion();
 
+    interface FeatureFlags {
+        @ModelFeatureFlag(owner = "bjorncs") default boolean enableAutomaticReindexing() { return false; }
+    }
+
     /** Warning: As elsewhere in this package, do not make backwards incompatible changes that will break old config models! */
     interface Properties {
+        FeatureFlags featureFlags();
         boolean multitenant();
         ApplicationId applicationId();
         List<ConfigServerSpec> configServerSpecs();
@@ -62,9 +72,6 @@ public interface ModelContext {
         // TODO: Only needed for LbServicesProducerTest
         default boolean useDedicatedNodeForLogserver() { return true; }
 
-        // TODO Remove when 7.225 is last
-        default boolean useAdaptiveDispatch() { return true; }
-
         default Optional<EndpointCertificateSecrets> endpointCertificateSecrets() { return Optional.empty(); }
 
         // TODO Revisit in May or June 2020
@@ -72,24 +79,11 @@ public interface ModelContext {
 
         default int defaultNumResponseThreads() { return 2; }
 
-        // TODO Revisit in May or June 2020
-        double threadPoolSizeFactor();
+        // TODO(bjorncs) Temporary feature flag
+        default double threadPoolSizeFactor() { return 2.0; }
 
-        // TODO Revisit in May or June 2020
-        double queueSizeFactor();
-
-        // TODO Remove when 7.229 is last
-        default double defaultSoftStartSeconds() { return 0; }
-
-        // TODO Remove when 7.226 is last
-        default double defaultTopKProbability() {
-            return 0.9999;
-        }
-
-        // TODO Remove when 7.238 is last
-        default String docprocLoadBalancerType() {
-            return "adaptive";
-        }
+        // TODO(bjorncs) Temporary feature flag
+        default double queueSizeFactor() { return 40.0; };
 
         /// Default setting for the gc-options attribute if not specified explicit by application
         String jvmGCOptions();
@@ -100,15 +94,29 @@ public interface ModelContext {
         boolean skipCommunicationManagerThread();
         boolean skipMbusRequestThread();
         boolean skipMbusReplyThread();
+        // TODO(balder) Last used on 7.305
+        default boolean tlsUseFSync() { return true; }
+        default String tlsCompressionType() { return "ZSTD"; }
+        default double visibilityDelay() { return 0.0; }
 
-        // TODO Remove when 7.247 is last
-        default boolean useDistributorBtreeDb() { return true; }
+        boolean useAsyncMessageHandlingOnSchedule();
+        int contentNodeBucketDBStripeBits();
+        int mergeChunkSize();
 
-        boolean useContentNodeBtreeDb();
+        // TODO(balder) Last used on 7.306
+        default boolean useContentNodeBtreeDb() { return true; }
 
         boolean useThreePhaseUpdates();
 
-        default String proxyProtocol() { return "https+proxy-protocol"; } // TODO bjorncs: Remove after end of May
+        // TODO Remove on 7.XXX when this is default on.
+        boolean useDirectStorageApiRpc();
+
+        // TODO Remove on 7.XXX when this is default on.
+        boolean useFastValueTensorImplementation();
+
+        // TODO(bjorncs) Temporary feature flag
+        default String proxyProtocol() { return "https+proxy-protocol"; }
+
         default Optional<AthenzDomain> athenzDomain() { return Optional.empty(); }
 
         // TODO(mpolden): Remove after May 2020
@@ -120,7 +128,28 @@ public interface ModelContext {
         default Duration jdiscHealthCheckProxyClientTimeout() { return Duration.ofMillis(100); }
 
         // TODO(bjorncs): Temporary feature flag
-        default double feedCoreThreadPoolSizeFactor() { return 1.0; }
+        default double feedCoreThreadPoolSizeFactor() { return 4.0; }
+
+        default Quota quota() {
+            return Quota.unlimited();
+        }
+
+        // TODO(bjorncs): Temporary feature flag
+        default boolean useNewRestapiHandler() { return true; }
+
+        // TODO(mortent): Temporary feature flag
+        default boolean useAccessControlTlsHandshakeClientAuth() { return false; }
+
+        // TODO(bjorncs): Temporary feature flag
+        default double jettyThreadpoolSizeFactor() { return 1.0; }
+
+    }
+
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target(ElementType.METHOD)
+    @interface ModelFeatureFlag {
+        String owner();
+        String comment() default "";
     }
 
 }

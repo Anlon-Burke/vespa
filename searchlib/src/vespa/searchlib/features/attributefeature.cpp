@@ -5,11 +5,13 @@
 #include "valuefeature.h"
 #include "constant_tensor_executor.h"
 #include "dense_tensor_attribute_executor.h"
+#include "direct_tensor_attribute_executor.h"
 #include "tensor_attribute_executor.h"
 
 #include <vespa/searchcommon/common/undefinedvalues.h>
 #include <vespa/searchcommon/attribute/attributecontent.h>
 #include <vespa/searchlib/tensor/dense_tensor_attribute.h>
+#include <vespa/searchlib/tensor/direct_tensor_attribute.h>
 #include <vespa/searchlib/fef/indexproperties.h>
 #include <vespa/searchlib/attribute/singlenumericattribute.h>
 #include <vespa/searchlib/attribute/multinumericattribute.h>
@@ -24,6 +26,7 @@ using search::attribute::BasicType;
 using search::attribute::CollectionType;
 using search::attribute::ConstCharContent;
 using search::tensor::DenseTensorAttribute;
+using search::tensor::DirectTensorAttribute;
 using search::attribute::IntegerContent;
 using search::attribute::FloatContent;
 using search::tensor::ITensorAttribute;
@@ -466,10 +469,13 @@ createTensorAttributeExecutor(const IAttributeVector *attribute, const vespalib:
                 tensorType.to_spec().c_str());
         return ConstantTensorExecutor::createEmpty(tensorType, stash);
     }
-    if (tensorType.is_dense()) {
-        return stash.create<DenseTensorAttributeExecutor>(tensorAttribute);
+    if (tensorAttribute->supports_extract_dense_view()) {
+        return stash.create<DenseTensorAttributeExecutor>(*tensorAttribute);
     }
-    return stash.create<TensorAttributeExecutor>(tensorAttribute);
+    if (tensorAttribute->supports_get_tensor_ref()) {
+        return stash.create<DirectTensorAttributeExecutor>(*tensorAttribute);
+    }
+    return stash.create<TensorAttributeExecutor>(*tensorAttribute);
 }
 
 bool

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "engine_or_factory.h"
 #include "function.h"
 #include "node_types.h"
 #include "lazy_params.h"
@@ -10,7 +11,6 @@
 namespace vespalib::eval {
 
 namespace nodes { struct Node; }
-struct TensorEngine;
 struct TensorFunction;
 class TensorSpec;
 
@@ -28,14 +28,14 @@ class InterpretedFunction
 {
 public:
     struct State {
-        const TensorEngine      &engine;
+        EngineOrFactory          engine;
         const LazyParams        *params;
         Stash                    stash;
         std::vector<Value::CREF> stack;
         uint32_t                 program_offset;
         uint32_t                 if_cnt;
 
-        State(const TensorEngine &engine_in);
+        State(EngineOrFactory engine_in);
         ~State();
 
         void init(const LazyParams &params_in);
@@ -68,9 +68,9 @@ public:
         op_function function;
         uint64_t    param;
     public:
-        explicit Instruction(op_function function_in)
+        explicit Instruction(op_function function_in) noexcept
             : function(function_in), param(0) {}
-        Instruction(op_function function_in, uint64_t param_in)
+        Instruction(op_function function_in, uint64_t param_in) noexcept
             : function(function_in), param(param_in) {}
         void perform(State &state) const {
             if (function == nullptr) {
@@ -87,14 +87,14 @@ public:
 private:
     std::vector<Instruction> _program;
     Stash                    _stash;
-    const TensorEngine      &_tensor_engine;
+    EngineOrFactory          _tensor_engine;
 
 public:
     typedef std::unique_ptr<InterpretedFunction> UP;
     // for testing; use with care; the tensor function must be kept alive
-    InterpretedFunction(const TensorEngine &engine, const TensorFunction &function);
-    InterpretedFunction(const TensorEngine &engine, const nodes::Node &root, const NodeTypes &types);
-    InterpretedFunction(const TensorEngine &engine, const Function &function, const NodeTypes &types)
+    InterpretedFunction(EngineOrFactory engine, const TensorFunction &function);
+    InterpretedFunction(EngineOrFactory engine, const nodes::Node &root, const NodeTypes &types);
+    InterpretedFunction(EngineOrFactory engine, const Function &function, const NodeTypes &types)
         : InterpretedFunction(engine, function.root(), types) {}
     InterpretedFunction(InterpretedFunction &&rhs) = default;
     ~InterpretedFunction();
@@ -102,6 +102,24 @@ public:
     const Value &eval(Context &ctx, const LazyParams &params) const;
     double estimate_cost_us(const std::vector<double> &params, double budget = 5.0) const;
     static Function::Issues detect_issues(const Function &function);
+
+    /**
+     * This inner class is used for testing and benchmarking. It runs
+     * a single interpreted instruction in isolation. Note that
+     * instructions manipulating the program counter may not be run in
+     * this way. Also note that the stack must contain exactly one
+     * value after the instruction is executed. The params object must
+     * be kept alive externally.
+     **/
+    class EvalSingle {
+    private:
+        State _state;
+        Instruction _op;
+    public:
+        EvalSingle(EngineOrFactory engine, Instruction op, const LazyParams &params);
+        EvalSingle(EngineOrFactory engine, Instruction op) : EvalSingle(engine, op, NoParams::params) {}
+        const Value &eval(const std::vector<Value::CREF> &stack);
+    };
 };
 
 }

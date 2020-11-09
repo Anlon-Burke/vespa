@@ -3,7 +3,6 @@ package com.yahoo.vespa.model;
 
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.api.HostInfo;
-import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.NodeResources;
 
@@ -48,7 +47,7 @@ public class HostResource implements Comparable<HostResource> {
     }
 
     /**
-     * Return the currently bounded {@link com.yahoo.vespa.model.Host}.
+     * Return the currently bound {@link com.yahoo.vespa.model.Host}.
      *
      * @return the {@link com.yahoo.vespa.model.Host} if bound, null if not.
      */
@@ -97,11 +96,6 @@ public class HostResource implements Comparable<HostResource> {
                 .map(Service::getServiceInfo)
                 .collect(Collectors.toSet()));
     }
-
-    /** Returns the flavor of this resource. Empty for self-hosted Vespa. */
-    // TODO: Remove when models older than 7.226 are gone
-    @Deprecated
-    public Optional<Flavor> getFlavor() { return spec.flavor(); }
 
     /** The real resources available for Vespa processes on this node, after subtracting infrastructure overhead. */
     public NodeResources realResources() { return spec.realResources(); }

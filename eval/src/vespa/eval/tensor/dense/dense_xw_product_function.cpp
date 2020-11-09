@@ -34,10 +34,10 @@ double my_dot_product(const LCT *lhs, const RCT *rhs, size_t vector_size, size_t
 
 template <typename LCT, typename RCT, bool common_inner>
 void my_xw_product_op(eval::InterpretedFunction::State &state, uint64_t param) {
-    const DenseXWProductFunction::Self &self = *((const DenseXWProductFunction::Self *)(param));
+    const DenseXWProductFunction::Self &self = unwrap_param<DenseXWProductFunction::Self>(param);
     using OCT = typename eval::UnifyCellTypes<LCT,RCT>::type;
-    auto vector_cells = DenseTensorView::typify_cells<LCT>(state.peek(1));
-    auto matrix_cells = DenseTensorView::typify_cells<RCT>(state.peek(0));
+    auto vector_cells = state.peek(1).cells().typify<LCT>();
+    auto matrix_cells = state.peek(0).cells().typify<RCT>();
     auto dst_cells = state.stash.create_array<OCT>(self.result_size);
     OCT *dst = dst_cells.begin();
     const RCT *matrix = matrix_cells.cbegin();
@@ -50,9 +50,9 @@ void my_xw_product_op(eval::InterpretedFunction::State &state, uint64_t param) {
 
 template <bool common_inner>
 void my_cblas_double_xw_product_op(eval::InterpretedFunction::State &state, uint64_t param) {
-    const DenseXWProductFunction::Self &self = *((const DenseXWProductFunction::Self *)(param));
-    auto vector_cells = DenseTensorView::typify_cells<double>(state.peek(1));
-    auto matrix_cells = DenseTensorView::typify_cells<double>(state.peek(0));
+    const DenseXWProductFunction::Self &self = unwrap_param<DenseXWProductFunction::Self>(param);
+    auto vector_cells = state.peek(1).cells().typify<double>();
+    auto matrix_cells = state.peek(0).cells().typify<double>();
     auto dst_cells = state.stash.create_array<double>(self.result_size);
     cblas_dgemv(CblasRowMajor, common_inner ? CblasNoTrans : CblasTrans,
                 common_inner ? self.result_size : self.vector_size,
@@ -64,9 +64,9 @@ void my_cblas_double_xw_product_op(eval::InterpretedFunction::State &state, uint
 
 template <bool common_inner>
 void my_cblas_float_xw_product_op(eval::InterpretedFunction::State &state, uint64_t param) {
-    const DenseXWProductFunction::Self &self = *((const DenseXWProductFunction::Self *)(param));
-    auto vector_cells = DenseTensorView::typify_cells<float>(state.peek(1));
-    auto matrix_cells = DenseTensorView::typify_cells<float>(state.peek(0));
+    const DenseXWProductFunction::Self &self = unwrap_param<DenseXWProductFunction::Self>(param);
+    auto vector_cells = state.peek(1).cells().typify<float>();
+    auto matrix_cells = state.peek(0).cells().typify<float>();
     auto dst_cells = state.stash.create_array<float>(self.result_size);
     cblas_sgemv(CblasRowMajor, common_inner ? CblasNoTrans : CblasTrans,
                 common_inner ? self.result_size : self.vector_size,
@@ -142,14 +142,14 @@ DenseXWProductFunction::DenseXWProductFunction(const eval::ValueType &result_typ
 }
 
 eval::InterpretedFunction::Instruction
-DenseXWProductFunction::compile_self(const TensorEngine &, Stash &stash) const
+DenseXWProductFunction::compile_self(eval::EngineOrFactory, Stash &stash) const
 {
     Self &self = stash.create<Self>(result_type(), _vector_size, _result_size);
     using MyTypify = TypifyValue<eval::TypifyCellType,vespalib::TypifyBool>;
     auto op = typify_invoke<3,MyTypify,MyXWProductOp>(lhs().result_type().cell_type(),
                                                       rhs().result_type().cell_type(),
                                                       _common_inner);
-    return eval::InterpretedFunction::Instruction(op, (uint64_t)(&self));
+    return eval::InterpretedFunction::Instruction(op, wrap_param<DenseXWProductFunction::Self>(self));
 }
 
 void

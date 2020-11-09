@@ -28,7 +28,6 @@ import com.yahoo.config.model.producer.AbstractConfigProducer;
 import com.yahoo.config.model.producer.AbstractConfigProducerRoot;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.Zone;
-import com.yahoo.container.handler.ThreadpoolConfig;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
 import com.yahoo.osgi.provider.model.ComponentModel;
 import com.yahoo.vespa.model.VespaModel;
@@ -56,9 +55,7 @@ import static com.yahoo.vespa.model.admin.metricsproxy.MetricsProxyContainerClus
 import static com.yahoo.vespa.model.admin.metricsproxy.MetricsProxyContainerCluster.AppDimensionNames.LEGACY_APPLICATION;
 import static com.yahoo.vespa.model.admin.metricsproxy.MetricsProxyContainerCluster.AppDimensionNames.SYSTEM;
 import static com.yahoo.vespa.model.admin.metricsproxy.MetricsProxyContainerCluster.AppDimensionNames.TENANT;
-import static com.yahoo.vespa.model.admin.monitoring.DefaultPublicConsumer.getDefaultPublicConsumer;
-import static com.yahoo.vespa.model.admin.monitoring.MetricSet.emptyMetricSet;
-import static com.yahoo.vespa.model.admin.monitoring.VespaMetricsConsumer.getVespaMetricsConsumer;
+import static com.yahoo.vespa.model.admin.monitoring.MetricSet.empty;
 
 /**
  * Container cluster for metrics proxy containers.
@@ -161,10 +158,10 @@ public class MetricsProxyContainerCluster extends ContainerCluster<MetricsProxyC
 
     @Override
     public void getConfig(ConsumersConfig.Builder builder) {
-        var amendedVespaConsumer = addMetrics(getVespaMetricsConsumer(), getAdditionalDefaultMetrics().getMetrics());
+        var amendedVespaConsumer = addMetrics(MetricsConsumer.vespa, getAdditionalDefaultMetrics().getMetrics());
         builder.consumer.addAll(generateConsumers(amendedVespaConsumer, getUserMetricsConsumers()));
 
-        builder.consumer.add(toConsumerBuilder(getDefaultPublicConsumer()));
+        builder.consumer.add(toConsumerBuilder(MetricsConsumer.defaultConsumer));
     }
 
     @Override
@@ -200,17 +197,12 @@ public class MetricsProxyContainerCluster extends ContainerCluster<MetricsProxyC
         }
     }
 
-    @Override
-    public void getConfig(ThreadpoolConfig.Builder builder) {
-        builder.maxthreads(10);
-    }
-
     protected boolean messageBusEnabled() { return false; }
 
     private MetricSet getAdditionalDefaultMetrics() {
         return getAdmin()
                 .map(Admin::getAdditionalDefaultMetrics)
-                .orElse(emptyMetricSet());
+                .orElse(empty());
     }
 
     // Returns the metrics consumers from services.xml

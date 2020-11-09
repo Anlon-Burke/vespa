@@ -18,6 +18,8 @@ struct Inspector;
 
 namespace eval {
 
+struct Value;
+
 /**
  * An implementation-independent specification of the type and
  * contents of a tensor.
@@ -66,18 +68,14 @@ public:
     TensorSpec(const TensorSpec &);
     TensorSpec & operator = (const TensorSpec &);
     ~TensorSpec();
-    TensorSpec &add(Address address, double value) {
-        auto res = _cells.emplace(std::move(address), value);
-        if (!res.second) {
-            res.first->second.value += value;
-        }
-        return *this;
-    }
+    TensorSpec &add(Address address, double value);
     const vespalib::string &type() const { return _type; }
     const Cells &cells() const { return _cells; }
     vespalib::string to_string() const;
     void to_slime(slime::Cursor &tensor) const;
     static TensorSpec from_slime(const slime::Inspector &tensor);
+    static TensorSpec from_value(const eval::Value &value);
+    static TensorSpec from_expr(const vespalib::string &expr);
 };
 
 bool operator==(const TensorSpec &lhs, const TensorSpec &rhs);

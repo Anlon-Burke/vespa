@@ -37,7 +37,7 @@ CombiningFeedView::CombiningFeedView(const std::vector<IFeedView::SP> &views,
       _views(views),
       _metaStores(),
       _calc(calc),
-      _clusterUp(calc.get() != NULL && calc->clusterUp()),
+      _clusterUp(calc && calc->clusterUp()),
       _forceReady(!_clusterUp || !hasNotReadyFeedView()),
       _bucketSpace(bucketSpace)
 {
@@ -45,21 +45,19 @@ CombiningFeedView::CombiningFeedView(const std::vector<IFeedView::SP> &views,
     for (const auto &view : views) {
         _metaStores.push_back(view->getDocumentMetaStorePtr());
     }
-    assert(getReadyFeedView() != NULL);
-    assert(getRemFeedView() != NULL);
+    assert(getReadyFeedView() != nullptr);
+    assert(getRemFeedView() != nullptr);
     if (hasNotReadyFeedView()) {
-        assert(getNotReadyFeedView() != NULL);
+        assert(getNotReadyFeedView() != nullptr);
     }
 }
 
-CombiningFeedView::~CombiningFeedView()
-{
-}
+CombiningFeedView::~CombiningFeedView() = default;
 
 const ISimpleDocumentMetaStore *
 CombiningFeedView::getDocumentMetaStorePtr() const
 {
-    return NULL;
+    return nullptr;
 }
 
 void
@@ -76,12 +74,11 @@ CombiningFeedView::findPrevDbdId(const document::GlobalId &gid,
         if (subDbId == skipSubDbId)
             continue;
         const documentmetastore::IStore *metaStore = _metaStores[subDbId];
-        if (metaStore == NULL)
+        if (metaStore == nullptr)
             continue;
-        documentmetastore::IStore::Result inspectRes(metaStore->inspectExisting(gid));
+        documentmetastore::IStore::Result inspectRes(const_cast<documentmetastore::IStore *>(metaStore)->inspectExisting(gid, op.get_prepare_serial_num()));
         if (inspectRes._found) {
-            op.setPrevDbDocumentId(DbDocumentId(subDbId,
-                                           inspectRes._lid));
+            op.setPrevDbDocumentId(DbDocumentId(subDbId, inspectRes._lid));
             op.setPrevMarkedAsRemoved(subDbId == getRemFeedViewId());
             op.setPrevTimestamp(inspectRes._timestamp);
             break;
@@ -229,10 +226,10 @@ CombiningFeedView::sync()
 }
 
 void
-CombiningFeedView::forceCommit(search::SerialNum serialNum)
+CombiningFeedView::forceCommit(search::SerialNum serialNum, DoneCallback onDone)
 {
     for (const auto &view : _views) {
-        view->forceCommit(serialNum);
+        view->forceCommit(serialNum, onDone);
     }
 }
 

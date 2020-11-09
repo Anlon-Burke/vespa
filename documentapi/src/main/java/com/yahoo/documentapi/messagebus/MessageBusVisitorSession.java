@@ -735,7 +735,7 @@ public class MessageBusVisitorSession implements VisitorSession {
                     String msg = "Got exception of type " + e.getClass().getName() +
                             " with message '" + e.getMessage() +
                             "' while processing reply in visitor session";
-                    e.printStackTrace();
+                    log.log(Level.WARNING, msg, e);
                     transitionTo(new StateDescription(State.FAILED, msg));
                 } catch (Throwable t) {
                     // We can't reliably handle this; take a nosedive
@@ -1152,7 +1152,7 @@ public class MessageBusVisitorSession implements VisitorSession {
                 synchronized (completionMonitor) {
                     // If we are destroying the session before it has completed (e.g. because
                     // waitUntilDone timed out or an interactive visiting was interrupted)
-                    // set us to aborted state so that we'll seize sending new visitors.
+                    // set us to aborted state so that we'll cease sending new visitors.
                     if (!done) {
                         transitionTo(new StateDescription(State.ABORTED, "Session explicitly destroyed before completion"));
                     }
@@ -1166,7 +1166,7 @@ public class MessageBusVisitorSession implements VisitorSession {
                 }
             }
         } catch (InterruptedException e) {
-            e.printStackTrace();
+            log.log(Level.WARNING, "Interrupted waiting for visitor session to be destroyed");
         } finally {
             try {
                 sender.destroy();

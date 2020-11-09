@@ -12,8 +12,8 @@
 #include <vespa/searchcommon/attribute/attributecontent.h>
 #include <vespa/searchcommon/attribute/iattributevector.h>
 #include <vespa/eval/eval/function.h>
-#include <vespa/eval/tensor/tensor.h>
 #include <vespa/eval/eval/value_type.h>
+#include <vespa/eval/tensor/sparse/direct_sparse_tensor_builder.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".features.tensor_from_weighted_set_feature");
@@ -106,7 +106,8 @@ createQueryExecutor(const search::fef::IQueryEnvironment &env,
     if (prop.found() && !prop.get().empty()) {
         WeightedStringVector vector;
         WeightedSetParser::parse(prop.get(), vector);
-        DirectSparseTensorBuilder tensorBuilder(type);
+        DirectSparseTensorBuilder<double> tensorBuilder(type);
+        tensorBuilder.reserve(vector._data.size());
         SparseTensorAddressBuilder address;
         for (const auto &elem : vector._data) {
             address.clear();

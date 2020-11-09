@@ -15,15 +15,10 @@ using namespace eval::tensor_function;
 
 namespace {
 
-TypedCells getCellsRef(const eval::Value &value) {
-    const DenseTensorView &denseTensor = static_cast<const DenseTensorView &>(value);
-    return denseTensor.cellsRef();
-}
-
 void my_replace_type_op(eval::InterpretedFunction::State &state, uint64_t param) {
-    const ValueType *type = (const ValueType *)(param);
-    TypedCells cells = getCellsRef(state.peek(0));
-    state.pop_push(state.stash.create<DenseTensorView>(*type, cells));
+    const ValueType &type = unwrap_param<ValueType>(param);
+    TypedCells cells = state.peek(0).cells();
+    state.pop_push(state.stash.create<DenseTensorView>(type, cells));
 }
 
 } // namespace vespalib::tensor::<unnamed>
@@ -39,9 +34,9 @@ DenseReplaceTypeFunction::~DenseReplaceTypeFunction()
 }
 
 eval::InterpretedFunction::Instruction
-DenseReplaceTypeFunction::compile_self(const TensorEngine &, Stash &) const
+DenseReplaceTypeFunction::compile_self(eval::EngineOrFactory, Stash &) const
 {
-    return eval::InterpretedFunction::Instruction(my_replace_type_op, (uint64_t)&(result_type()));
+    return eval::InterpretedFunction::Instruction(my_replace_type_op, wrap_param<ValueType>(result_type()));
 }
 
 const DenseReplaceTypeFunction &

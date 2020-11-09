@@ -20,18 +20,19 @@ public class MultiDockerTest {
     @Test
     public void test() {
         try (DockerTester tester = new DockerTester()) {
-            addAndWaitForNode(tester, "host1.test.yahoo.com", DockerImage.fromString("image1"));
+            DockerImage image1 = DockerImage.fromString("registry.example.com/image1");
+            addAndWaitForNode(tester, "host1.test.yahoo.com", image1);
             NodeSpec nodeSpec2 = addAndWaitForNode(
-                    tester, "host2.test.yahoo.com", DockerImage.fromString("image2"));
+                    tester, "host2.test.yahoo.com", DockerImage.fromString("registry.example.com/image2"));
 
             tester.addChildNodeRepositoryNode(NodeSpec.Builder.testSpec(nodeSpec2.hostname(), NodeState.dirty).build());
 
-            tester.inOrder(tester.docker).deleteContainer(eq(new ContainerName("host2")));
+            tester.inOrder(tester.containerEngine).deleteContainer(eq(new ContainerName("host2")));
             tester.inOrder(tester.storageMaintainer).archiveNodeStorage(
                     argThat(context -> context.containerName().equals(new ContainerName("host2"))));
             tester.inOrder(tester.nodeRepository).setNodeState(eq(nodeSpec2.hostname()), eq(NodeState.ready));
 
-            addAndWaitForNode(tester, "host3.test.yahoo.com", DockerImage.fromString("image1"));
+            addAndWaitForNode(tester, "host3.test.yahoo.com", image1);
         }
     }
 
@@ -40,8 +41,8 @@ public class MultiDockerTest {
         tester.addChildNodeRepositoryNode(nodeSpec);
 
         ContainerName containerName = ContainerName.fromHostname(hostName);
-        tester.inOrder(tester.docker).createContainerCommand(eq(dockerImage), eq(containerName));
-        tester.inOrder(tester.docker).executeInContainerAsUser(
+        tester.inOrder(tester.containerEngine).createContainerCommand(eq(dockerImage), eq(containerName));
+        tester.inOrder(tester.containerEngine).executeInContainerAsUser(
                 eq(containerName), eq("root"), any(), eq(DockerTester.NODE_PROGRAM), eq("resume"));
         tester.inOrder(tester.nodeRepository).updateNodeAttributes(eq(hostName),
                 eq(new NodeAttributes().withDockerImage(dockerImage).withVespaVersion(dockerImage.tagAsVersion())));

@@ -13,7 +13,7 @@ using vespalib::make_string;
 
 namespace proton {
 
-DocumentOperation::DocumentOperation(Type type)
+DocumentOperation::DocumentOperation(Type type) noexcept
     : FeedOperation(type),
       _bucketId(),
       _timestamp(),
@@ -21,12 +21,13 @@ DocumentOperation::DocumentOperation(Type type)
       _prevDbdId(),
       _prevMarkedAsRemoved(false),
       _prevTimestamp(),
-      _serializedDocSize(0)
+      _serializedDocSize(0),
+      _prepare_serial_num(0u)
 {
 }
 
 
-DocumentOperation::DocumentOperation(Type type, BucketId bucketId, Timestamp timestamp)
+DocumentOperation::DocumentOperation(Type type, BucketId bucketId, Timestamp timestamp) noexcept
     : FeedOperation(type),
       _bucketId(bucketId),
       _timestamp(timestamp),
@@ -34,7 +35,8 @@ DocumentOperation::DocumentOperation(Type type, BucketId bucketId, Timestamp tim
       _prevDbdId(),
       _prevMarkedAsRemoved(false),
       _prevTimestamp(),
-      _serializedDocSize(0)
+      _serializedDocSize(0),
+      _prepare_serial_num(0u)
 {
 }
 

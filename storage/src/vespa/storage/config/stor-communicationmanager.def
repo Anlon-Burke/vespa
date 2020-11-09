@@ -55,3 +55,28 @@ mbus.skip_request_thread bool default=false
 ## Skip communication manager thread on mbus requests
 ## Experimental
 skip_thread bool default=false
+
+## Whether to use direct P2P RPC protocol for all StorageAPI communication
+## instead of going via MessageBus.
+use_direct_storageapi_rpc bool default=false
+
+## The number of network (FNET) threads used by the shared rpc resource.
+rpc.num_network_threads int default=1
+
+## The number of (FNET) RPC targets to use per node in the cluster.
+##
+## The bucket id associated with a message is used to select the RPC target.
+## This ensures the same RPC target is used for all messages to the same bucket to the same node,
+## and the RPC target itself handles sequencing of these messages.
+## NB !! It is vital that this number is kept in sync with stor-filestor:num_network_threads.
+## Only skilled vespa core developers should touch this.
+rpc.num_targets_per_node int default=1
+
+# Minimum size of packets to compress (0 means no compression)
+rpc.compress.limit int default=1024
+
+## Compression level for packets
+rpc.compress.level int default=3
+
+## Compression type for packets.
+rpc.compress.type enum {NONE, LZ4, ZSTD} default=LZ4

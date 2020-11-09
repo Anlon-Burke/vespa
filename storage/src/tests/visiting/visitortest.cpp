@@ -1,9 +1,7 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/document/datatype/datatype.h>
 #include <vespa/document/fieldvalue/intfieldvalue.h>
 #include <vespa/document/fieldvalue/stringfieldvalue.h>
-#include <vespa/document/fieldvalue/rawfieldvalue.h>
 #include <vespa/document/test/make_bucket_space.h>
 #include <vespa/storageapi/message/datagram.h>
 #include <vespa/storageapi/message/persistence.h>
@@ -259,7 +257,7 @@ VisitorTest::getSession(uint32_t n)
             clock.getTimeInMillis() + framework::MilliSecTime(30 * 1000));
     while (true) {
         {
-            vespalib::LockGuard lock(_messageSessionFactory->_accessLock);
+            std::lock_guard lock(_messageSessionFactory->_accessLock);
             if (sessions.size() > n) {
                 return *sessions[n];
             }
@@ -286,7 +284,7 @@ VisitorTest::getMessagesAndReply(
         session.waitForMessages(1);
         mbus::Reply::UP reply;
         {
-            vespalib::MonitorGuard guard(session.getMonitor());
+            std::lock_guard guard(session.getMonitor());
             ASSERT_FALSE(session.sentMessages.empty());
             std::unique_ptr<documentapi::DocumentMessage> msg(std::move(session.sentMessages.front()));
             session.sentMessages.pop_front();
@@ -294,12 +292,10 @@ VisitorTest::getMessagesAndReply(
 
             switch (msg->getType()) {
             case documentapi::DocumentProtocol::MESSAGE_PUTDOCUMENT:
-                docs.push_back(
-                        static_cast<documentapi::PutDocumentMessage&>(*msg).getDocumentSP());
+                docs.push_back(static_cast<documentapi::PutDocumentMessage&>(*msg).getDocumentSP());
                 break;
             case documentapi::DocumentProtocol::MESSAGE_REMOVEDOCUMENT:
-                docIds.push_back(
-                        static_cast<documentapi::RemoveDocumentMessage&>(*msg).getDocumentId());
+                docIds.push_back(static_cast<documentapi::RemoveDocumentMessage&>(*msg).getDocumentId());
                 break;
             case documentapi::DocumentProtocol::MESSAGE_VISITORINFO:
                 infoMessages.push_back(static_cast<documentapi::VisitorInfoMessage&>(*msg).getErrorMessage());
@@ -311,7 +307,7 @@ VisitorTest::getMessagesAndReply(
             reply = msg->createReply();
             reply->swapState(*msg);
 
-            reply->setMessage(mbus::Message::UP(msg.release()));
+            reply->setMessage(std::move(msg));
 
             if (result != api::ReturnCode::OK) {
                 reply->addError(mbus::Error(result, "Generic error"));

@@ -11,7 +11,6 @@
 #include "documentdbconfig.h"
 #include "documentsubdbcollection.h"
 #include "executorthreadingservice.h"
-#include "feedhandler.h"
 #include "i_document_subdb_owner.h"
 #include "i_feed_handler_owner.h"
 #include "i_lid_space_compaction_handler.h"
@@ -19,8 +18,6 @@
 #include "ireplayconfig.h"
 #include "maintenancecontroller.h"
 #include "threading_service_config.h"
-#include "visibilityhandler.h"
-
 #include <vespa/metrics/updatehook.h>
 #include <vespa/searchcore/proton/attribute/attribute_usage_filter.h>
 #include <vespa/searchcore/proton/common/doctypename.h>
@@ -38,7 +35,10 @@
 
 namespace search {
     namespace common { class FileHeaderContext; }
-    namespace transactionlog { class TransLogClient; }
+    namespace transactionlog {
+        class TransLogClient;
+        class WriterFactory;
+    }
 }
 
 namespace vespa::config::search::core::internal { class InternalProtonType; }
@@ -136,11 +136,9 @@ private:
     DiskMemUsageForwarder         _dmUsageForwarder;
     AttributeUsageFilter          _writeFilter;
     std::shared_ptr<TransientMemoryUsageProvider> _transient_memory_usage_provider;
-    FeedHandler                   _feedHandler;
-
+    std::unique_ptr<FeedHandler>  _feedHandler;
     DocumentSubDBCollection       _subDBs;
     MaintenanceController         _maintenanceController;
-    VisibilityHandler             _visibility;
     ILidSpaceCompactionHandler::Vector _lidSpaceCompactionHandlers;
     DocumentDBJobTrackers         _jobTrackers;
     IBucketStateCalculator::SP    _calc;
@@ -202,7 +200,6 @@ private:
      * Implements IFeedHandlerOwner
      **/
     bool getAllowPrune() const override;
-
     void startTransactionLogReplay();
 
 
@@ -253,7 +250,7 @@ public:
                IDocumentDBOwner &owner,
                vespalib::SyncableThreadExecutor &warmupExecutor,
                vespalib::ThreadStackExecutorBase &sharedExecutor,
-               search::transactionlog::Writer &tlsDirectWriter,
+               const search::transactionlog::WriterFactory &tlsWriterFactory,
                MetricsWireService &metricsWireService,
                const search::common::FileHeaderContext &fileHeaderContext,
                ConfigStore::UP config_store,
@@ -340,7 +337,7 @@ public:
     /**
      * Returns the feed handler for this database.
      */
-    FeedHandler & getFeedHandler() { return _feedHandler; }
+    FeedHandler & getFeedHandler() { return *_feedHandler; }
 
     /**
      * Returns the bucket handler for this database.
@@ -373,24 +370,14 @@ public:
     virtual SerialNum getNewestFlushedSerial();
 
     std::unique_ptr<search::engine::SearchReply>
-    match(const search::engine::SearchRequest &req,
-          vespalib::ThreadBundle &threadBundle) const;
+    match(const search::engine::SearchRequest &req, vespalib::ThreadBundle &threadBundle) const;
 
     std::unique_ptr<search::engine::DocsumReply>
     getDocsums(const search::engine::DocsumRequest & request);
 
     IFlushTargetList getFlushTargets();
     void flushDone(SerialNum flushedSerial);
-
-    virtual SerialNum
-    getCurrentSerialNumber() const
-    {
-        // Called by flush scheduler thread, by executor task or
-        // visitor callback.
-        // XXX: Contains future value during replay.
-        return _feedHandler.getSerialNum();
-    }
-
+    virtual SerialNum getCurrentSerialNumber() const;
     StatusReportUP reportStatus() const;
 
     /**
@@ -440,6 +427,7 @@ public:
     void waitForOnlineState();
     IDiskMemUsageListener *diskMemUsageListener() { return &_dmUsageForwarder; }
     std::shared_ptr<const ITransientMemoryUsageProvider> transient_memory_usage_provider();
+    ExecutorThreadingService & getWriteService() { return _writeService; }
 };
 
 } // namespace proton

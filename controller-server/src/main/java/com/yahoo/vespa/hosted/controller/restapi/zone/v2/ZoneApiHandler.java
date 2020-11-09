@@ -108,11 +108,7 @@ public class ZoneApiHandler extends AuditLoggingRequestHandler {
     }
 
     private ProxyRequest proxyRequest(ZoneId zoneId, String path, HttpRequest request) {
-        // TODO: Use config server VIP for all zones that have one
-        if (zoneId.region().value().startsWith("aws-") || zoneId.region().value().contains("-aws-")) {
-            return ProxyRequest.tryOne(zoneRegistry.getConfigServerVipUri(zoneId), path, request);
-        }
-        return ProxyRequest.tryAll(zoneRegistry.getConfigServerUris(zoneId), path, request);
+        return ProxyRequest.tryOne(zoneRegistry.getConfigServerVipUri(zoneId), path, request);
     }
 
 }

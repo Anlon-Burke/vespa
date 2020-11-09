@@ -18,8 +18,6 @@ import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.zone.RoutingMethod;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.path.Path;
-import com.yahoo.vespa.flags.Flags;
-import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.DeployOptions;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.EndpointStatus;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
@@ -60,6 +58,7 @@ import static com.yahoo.vespa.hosted.controller.api.integration.deployment.JobTy
 import static com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType.productionUsWest1;
 import static com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType.stagingTest;
 import static com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType.systemTest;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -181,6 +180,26 @@ public class ControllerTest {
         assertNull("Zone was removed",
                    context.instance().deployments().get(productionUsWest1.zone(main)));
         assertNull("Deployment job was removed", context.instanceJobs().get(productionUsWest1));
+
+        // Submission has stored application meta.
+        assertNotNull(tester.controllerTester().serviceRegistry().applicationStore()
+                            .getMeta(context.instanceId())
+                            .get(tester.clock().instant()));
+
+        // Meta data tombstone placed on delete
+        tester.clock().advance(Duration.ofSeconds(1));
+        context.submit(ApplicationPackage.deploymentRemoval());
+        tester.clock().advance(Duration.ofSeconds(1));
+        context.submit(ApplicationPackage.deploymentRemoval());
+        tester.applications().deleteApplication(context.application().id(),
+                                                tester.controllerTester().credentialsFor(context.instanceId().tenant()));
+        assertArrayEquals(new byte[0],
+                          tester.controllerTester().serviceRegistry().applicationStore()
+                                .getMeta(context.instanceId())
+                                .get(tester.clock().instant()));
+
+        assertNull(tester.controllerTester().serviceRegistry().applicationStore()
+                         .getMeta(context.deploymentIdIn(productionUsWest1.zone(main))));
     }
 
     @Test
@@ -635,7 +654,7 @@ public class ControllerTest {
                    tester.configServer().application(context.instanceId(), zone).get().activated());
         assertTrue("No job status added",
                    context.instanceJobs().isEmpty());
-        assertEquals("DeploymentSpec is not persisted", DeploymentSpec.empty, context.application().deploymentSpec());
+        assertEquals("DeploymentSpec is not stored", DeploymentSpec.empty, context.application().deploymentSpec());
 
         // Verify zone supports shared layer 4 and shared routing methods
         Set<RoutingMethod> routingMethods = tester.controller().routing().endpointsOf(context.deploymentIdIn(zone))
@@ -644,6 +663,19 @@ public class ControllerTest {
                 .map(Endpoint::routingMethod)
                 .collect(Collectors.toSet());
         assertEquals(routingMethods, Set.of(RoutingMethod.shared, RoutingMethod.sharedLayer4));
+
+        // Deployment has stored application meta.
+        assertNotNull(tester.controllerTester().serviceRegistry().applicationStore()
+                            .getMeta(new DeploymentId(context.instanceId(), zone))
+                            .get(tester.clock().instant()));
+
+        // Meta data tombstone placed on delete
+        tester.clock().advance(Duration.ofSeconds(1));
+        tester.controller().applications().deactivate(context.instanceId(), zone);
+        assertArrayEquals(new byte[0],
+                          tester.controllerTester().serviceRegistry().applicationStore()
+                                .getMeta(new DeploymentId(context.instanceId(), zone))
+                                .get(tester.clock().instant()));
     }
 
     @Test
@@ -873,65 +905,27 @@ public class ControllerTest {
         context.submit(applicationPackageBuilder.build()).deploy();
         assertEquals(Set.of(RoutingMethod.shared), routingMethods.get());
 
-        // Without satisfying Athenz service requirement
-        context.submit(applicationPackageBuilder.compileVersion(RoutingController.DIRECT_ROUTING_MIN_VERSION).build())
-               .deploy();
+        // Without satisfying version requirement
+        applicationPackageBuilder = applicationPackageBuilder.athenzIdentity(AthenzDomain.from("domain"), AthenzService.from("service"));
+        context.submit(applicationPackageBuilder.build()).deploy();
         assertEquals(Set.of(RoutingMethod.shared), routingMethods.get());
 
-        // Satisfying all requirements
-        context.submit(applicationPackageBuilder.compileVersion(RoutingController.DIRECT_ROUTING_MIN_VERSION)
-                                                .athenzIdentity(AthenzDomain.from("domain"), AthenzService.from("service"))
-                                                .build()).deploy();
-        assertEquals(Set.of(RoutingMethod.shared, RoutingMethod.sharedLayer4), routingMethods.get());
+        // Package satisfying all requirements is submitted, but not deployed yet
+        applicationPackageBuilder = applicationPackageBuilder.compileVersion(RoutingController.DIRECT_ROUTING_MIN_VERSION);
+        var context2 = context.submit(applicationPackageBuilder.build());
+        assertEquals("Direct routing endpoint is available after submission and before deploy",
+                     Set.of(RoutingMethod.shared, RoutingMethod.sharedLayer4), routingMethods.get());
+        context2.deploy();
 
-        // Global endpoint is configured and includes directly routed endpoint name
+        // Global endpoint is added and includes directly routed endpoint name
         applicationPackageBuilder = applicationPackageBuilder.endpoint("default", "default");
-        context.submit(applicationPackageBuilder.build()).deploy();
+        context2.submit(applicationPackageBuilder.build()).deploy();
         for (var zone : List.of(zone1, zone2)) {
             assertEquals(Set.of("rotation-id-01",
                                 "application.tenant.global.vespa.oath.cloud",
                                 "application--tenant.global.vespa.oath.cloud"),
                          tester.configServer().rotationNames().get(context.deploymentIdIn(zone)));
         }
-    }
-
-    @Test
-    public void testDirectRoutingSupportHidingSharedEndpoint() {
-        // TODO (mortent): remove this test when shared routing is gone
-        var context = tester.newDeploymentContext();
-        var zone1 = ZoneId.from("prod", "us-west-1");
-        var zone2 = ZoneId.from("prod", "us-east-3");
-        var zone3 = ZoneId.from("staging", "us-east-3");
-        var zone4 = ZoneId.from("test", "us-east-1");
-        var applicationPackageBuilder = new ApplicationPackageBuilder()
-                .region(zone1.region())
-                .region(zone2.region());
-        tester.controllerTester().zoneRegistry()
-                .setRoutingMethod(ZoneApiMock.from(zone1), RoutingMethod.shared, RoutingMethod.sharedLayer4)
-                .setRoutingMethod(ZoneApiMock.from(zone2), RoutingMethod.shared, RoutingMethod.sharedLayer4)
-                .setRoutingMethod(ZoneApiMock.from(zone3), RoutingMethod.shared, RoutingMethod.sharedLayer4)
-                .setRoutingMethod(ZoneApiMock.from(zone4), RoutingMethod.shared, RoutingMethod.sharedLayer4);
-        Supplier<Set<RoutingMethod>> routingMethods = () -> tester.controller().routing().endpointsOf(context.deploymentIdIn(zone1))
-                .asList()
-                .stream()
-                .map(Endpoint::routingMethod)
-                .collect(Collectors.toSet());
-
-        ((InMemoryFlagSource)tester.controller().flagSource()).withBooleanFlag(Flags.HIDE_SHARED_ROUTING_ENDPOINT.id(), true);
-        // Without satisfying any requirement
-        context.submit(applicationPackageBuilder.build()).deploy();
-        assertEquals(Set.of(RoutingMethod.shared), routingMethods.get());
-
-        // Without satisfying Athenz service requirement
-        context.submit(applicationPackageBuilder.compileVersion(RoutingController.DIRECT_ROUTING_MIN_VERSION).build())
-                .deploy();
-        assertEquals(Set.of(RoutingMethod.shared), routingMethods.get());
-
-        // Satisfying all requirements
-        context.submit(applicationPackageBuilder.compileVersion(RoutingController.DIRECT_ROUTING_MIN_VERSION)
-                .athenzIdentity(AthenzDomain.from("domain"), AthenzService.from("service"))
-                .build()).deploy();
-        assertEquals(Set.of(RoutingMethod.sharedLayer4), routingMethods.get());
     }
 
     @Test

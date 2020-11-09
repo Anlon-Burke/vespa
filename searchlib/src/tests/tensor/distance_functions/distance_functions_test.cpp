@@ -1,6 +1,6 @@
 // Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/eval/tensor/dense/typed_cells.h>
+#include <vespa/eval/eval/typed_cells.h>
 #include <vespa/searchlib/tensor/distance_functions.h>
 #include <vespa/searchlib/tensor/distance_function_factory.h>
 #include <vespa/vespalib/gtest/gtest.h>
@@ -10,7 +10,7 @@
 LOG_SETUP("distance_function_test");
 
 using namespace search::tensor;
-using vespalib::tensor::TypedCells;
+using vespalib::eval::TypedCells;
 using search::attribute::DistanceMetric;
 
 TypedCells t(const std::vector<double> &v) { return TypedCells(v); }
@@ -140,6 +140,46 @@ TEST(DistanceFunctionsTest, innerproduct_gives_expected_score)
     double i44 = innerproduct->calc(t(p4), t(p4));
     EXPECT_GE(i44, 0.0);
     EXPECT_LT(i44, 0.000001);
+}
+
+TEST(DistanceFunctionsTest, hamming_gives_expected_score)
+{
+    auto ct = vespalib::eval::ValueType::CellType::DOUBLE;
+
+    auto hamming = make_distance_function(DistanceMetric::Hamming, ct);
+
+    std::vector<std::vector<double>>
+        points{{0.0, 0.0, 0.0},
+               {1.0, 0.0, 0.0},
+               {0.0, 1.0, 1.0},
+               {2.0, 2.0, 2.0},
+               {0.5, 0.5, 0.5},
+               {0.0,-1.0, 1.0},
+               {1.0, 1.0, 1.0}};
+    for (const auto & p : points) {
+        double h0 = hamming->calc(t(p), t(p));
+        EXPECT_EQ(h0, 0.0);
+        EXPECT_EQ(hamming->to_rawscore(h0), 1.0);
+    }
+    double d12 = hamming->calc(t(points[1]), t(points[2]));
+    EXPECT_EQ(d12, 3.0);
+    EXPECT_DOUBLE_EQ(hamming->to_rawscore(d12), 1.0/(1.0 + 3.0));
+
+    double d16 = hamming->calc(t(points[1]), t(points[6]));
+    EXPECT_EQ(d16, 2.0);
+    EXPECT_DOUBLE_EQ(hamming->to_rawscore(d16), 1.0/(1.0 + 2.0));
+
+    double d23 = hamming->calc(t(points[2]), t(points[3]));
+    EXPECT_EQ(d23, 3.0);
+    EXPECT_DOUBLE_EQ(hamming->to_rawscore(d23), 1.0/(1.0 + 3.0));
+
+    double d24 = hamming->calc(t(points[2]), t(points[4]));
+    EXPECT_EQ(d24, 3.0);
+    EXPECT_DOUBLE_EQ(hamming->to_rawscore(d24), 1.0/(1.0 + 3.0));
+
+    double d25 = hamming->calc(t(points[2]), t(points[5]));
+    EXPECT_EQ(d25, 1.0);
+    EXPECT_DOUBLE_EQ(hamming->to_rawscore(d25), 1.0/(1.0 + 1.0));
 }
 
 TEST(GeoDegreesTest, gives_expected_score)

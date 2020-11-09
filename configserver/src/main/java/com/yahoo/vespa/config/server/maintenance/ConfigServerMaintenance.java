@@ -6,37 +6,43 @@ import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.AbstractComponent;
 import com.yahoo.jdisc.Metric;
 import com.yahoo.vespa.config.server.ApplicationRepository;
+import com.yahoo.vespa.config.server.ConfigServerBootstrap;
+import com.yahoo.vespa.config.server.application.ConfigConvergenceChecker;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.flags.FlagSource;
 
+import java.time.Clock;
 import java.time.Duration;
 
 /**
  * Maintenance jobs of the config server.
  * Each maintenance job is a singleton instance of its implementing class, created and owned by this,
- * and running its own dedicated thread.
+ * and running its own dedicated thread. {@link ConfigServerBootstrap} is injected into this class, so
+ * no maintainers will run until bootstrapping is done
  *
  * @author hmusum
  */
 public class ConfigServerMaintenance extends AbstractComponent {
 
-    //private final TenantsMaintainer tenantsMaintainer;
+    private final TenantsMaintainer tenantsMaintainer;
     private final FileDistributionMaintainer fileDistributionMaintainer;
     private final SessionsMaintainer sessionsMaintainer;
     private final ApplicationPackageMaintainer applicationPackageMaintainer;
+    private final ReindexingMaintainer reindexingMaintainer;
 
     @Inject
-    public ConfigServerMaintenance(ConfigserverConfig configserverConfig,
+    public ConfigServerMaintenance(ConfigServerBootstrap configServerBootstrap,
+                                   ConfigserverConfig configserverConfig,
                                    ApplicationRepository applicationRepository,
                                    Curator curator,
                                    FlagSource flagSource,
-                                   Metric metric) {
+                                   ConfigConvergenceChecker convergence) {
         DefaultTimes defaults = new DefaultTimes(configserverConfig);
-        // TODO: Disabled until we have application metadata per tenant
-        //tenantsMaintainer = new TenantsMaintainer(applicationRepository, curator, defaults.tenantsMaintainerInterval);
+        tenantsMaintainer = new TenantsMaintainer(applicationRepository, curator, flagSource, defaults.defaultInterval, Clock.systemUTC());
         fileDistributionMaintainer = new FileDistributionMaintainer(applicationRepository, curator, defaults.defaultInterval, flagSource);
-        sessionsMaintainer = new SessionsMaintainer(applicationRepository, curator, Duration.ofMinutes(1), flagSource);
-        applicationPackageMaintainer = new ApplicationPackageMaintainer(applicationRepository, curator, Duration.ofMinutes(1), flagSource);
+        sessionsMaintainer = new SessionsMaintainer(applicationRepository, curator, Duration.ofSeconds(30), flagSource);
+        applicationPackageMaintainer = new ApplicationPackageMaintainer(applicationRepository, curator, Duration.ofSeconds(30), flagSource);
+        reindexingMaintainer = new ReindexingMaintainer(applicationRepository, curator, flagSource, Duration.ofMinutes(30), convergence, Clock.systemUTC());
     }
 
     @Override
@@ -44,6 +50,8 @@ public class ConfigServerMaintenance extends AbstractComponent {
         fileDistributionMaintainer.close();
         sessionsMaintainer.close();
         applicationPackageMaintainer.close();
+        tenantsMaintainer.close();
+        reindexingMaintainer.close();
     }
 
     /*
@@ -57,11 +65,6 @@ public class ConfigServerMaintenance extends AbstractComponent {
         DefaultTimes(ConfigserverConfig configserverConfig) {
             this.defaultInterval = Duration.ofMinutes(configserverConfig.maintainerIntervalMinutes());
         }
-    }
-
-    public void runBeforeBootstrap() {
-        fileDistributionMaintainer.maintain();
-        sessionsMaintainer.maintain();
     }
 
 }

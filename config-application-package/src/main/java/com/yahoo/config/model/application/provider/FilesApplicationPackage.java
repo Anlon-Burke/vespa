@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.model.application.provider;
 
 import com.yahoo.component.Version;
@@ -48,6 +48,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
 import java.io.StringReader;
+import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -61,6 +62,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 import static com.yahoo.text.Lowercase.toLowerCase;
 
@@ -78,7 +80,7 @@ public class FilesApplicationPackage implements ApplicationPackage {
      * The name of the subdirectory (below the original application package root)
      * where a preprocessed version of this application package is stored.
      * As it happens, the config model is first created with an application package in this subdirectory,
-     * and later used backed by an application package which is not in this subdirectory.
+     * and later backed by an application package which is not in this subdirectory.
      * To enable model code to correct for this, this constant must be publicly known.
      *
      * All of this stuff is Very Unfortunate and should be fixed. -Jon
@@ -304,34 +306,15 @@ public class FilesApplicationPackage implements ApplicationPackage {
 
     @Override
     public Collection<NamedReader> searchDefinitionContents() {
-        Map<String, NamedReader> ret = new LinkedHashMap<>();
-        Set<String> fileSds = new LinkedHashSet<>();
-        Set<String> bundleSds = new LinkedHashSet<>();
+        Set<NamedReader> ret = new LinkedHashSet<>();
         try {
             for (File f : getSearchDefinitionFiles()) {
-                fileSds.add(f.getName());
-                ret.put(f.getName(), new NamedReader(f.getName(), new FileReader(f)));
+                ret.add(new NamedReader(f.getName(), new FileReader(f)));
             }
         } catch (Exception e) {
             throw new IllegalArgumentException("Couldn't get search definition contents.", e);
         }
-        verifySdsDisjoint(fileSds, bundleSds);
-        return ret.values();
-    }
-
-    /**
-     * Verify that two sets of search definitions are disjoint (TODO: everything except error message is very generic).
-     *
-     * @param  fileSds Set of search definitions from file
-     * @param  bundleSds Set of search definitions from bundles
-     */
-    private void verifySdsDisjoint(Set<String> fileSds, Set<String> bundleSds) {
-        if (!Collections.disjoint(fileSds, bundleSds)) {
-            Collection<String> disjoint = new ArrayList<>(fileSds);
-            disjoint.retainAll(bundleSds);
-            throw new IllegalArgumentException("For the following search definitions names there are collisions between those specified inside " +
-            		                           "docproc bundles and those in searchdefinitions/ in application package: "+disjoint);
-        }
+        return ret;
     }
 
     /**
@@ -593,7 +576,7 @@ public class FilesApplicationPackage implements ApplicationPackage {
     @Override
     public void writeMetaData() throws IOException {
         File metaFile = new File(appDir, META_FILE_NAME);
-        IOUtils.writeFile(metaFile, metaData.asJsonString(), false);
+        IOUtils.writeFile(metaFile, metaData.asJsonBytes());
     }
 
     @Override
@@ -601,28 +584,38 @@ public class FilesApplicationPackage implements ApplicationPackage {
         return searchDefinitionContents();
     }
 
-    private void preprocessXML(File destination, File inputXml, Zone zone) throws ParserConfigurationException, TransformerException, SAXException, IOException {
-        Document document = new XmlPreProcessor(appDir,
-                                                inputXml,
-                                                metaData.getApplicationId().instance(),
-                                                zone.environment(),
-                                                zone.region()).run();
-        Transformer transformer = TransformerFactory.newInstance().newTransformer();
-        try (FileOutputStream outputStream = new FileOutputStream(destination)) {
-            transformer.transform(new DOMSource(document), new StreamResult(outputStream));
+    private void preprocessXML(File destination, File inputXml, Zone zone) throws IOException {
+        if ( ! inputXml.exists()) return;
+        try {
+            Document document = new XmlPreProcessor(appDir,
+                                                    inputXml,
+                                                    metaData.getApplicationId().instance(),
+                                                    zone.environment(),
+                                                    zone.region()).run();
+            Transformer transformer = TransformerFactory.newInstance().newTransformer();
+            try (FileOutputStream outputStream = new FileOutputStream(destination)) {
+                transformer.transform(new DOMSource(document), new StreamResult(outputStream));
+            }
+        } catch (TransformerException |ParserConfigurationException | SAXException e) {
+            // TODO: 2020-11-09, debugging what seems like missing or empty file while preprocessing. Remove afterwards
+            if (inputXml.canRead()) {
+                log.log(Level.WARNING, "Error preprocessing " + inputXml.getAbsolutePath() + ", file content: " + IOUtils.readFile(inputXml));
+                java.nio.file.Path dir = inputXml.getParentFile().toPath();
+                log.log(Level.INFO, "Files in " + dir + ":" + Files.list(dir).map(java.nio.file.Path::toString).collect(Collectors.joining(",")));
+            }
+            throw new RuntimeException("Error preprocessing " + inputXml.getAbsolutePath() + ": " + e.getMessage(), e);
         }
     }
 
     @Override
-    public ApplicationPackage preprocess(Zone zone, DeployLogger logger) throws IOException, TransformerException, ParserConfigurationException, SAXException {
+    public ApplicationPackage preprocess(Zone zone, DeployLogger logger) throws IOException {
         IOUtils.recursiveDeleteDir(preprocessedDir);
         IOUtils.copyDirectory(appDir, preprocessedDir, -1, (dir, name) -> ! name.equals(preprocessed) &&
                                                                                          ! name.equals(SERVICES) &&
                                                                                          ! name.equals(HOSTS) &&
                                                                                          ! name.equals(CONFIG_DEFINITIONS_DIR));
         preprocessXML(new File(preprocessedDir, SERVICES), getServicesFile(), zone);
-        if (getHostsFile().exists())
-            preprocessXML(new File(preprocessedDir, HOSTS), getHostsFile(), zone);
+        preprocessXML(new File(preprocessedDir, HOSTS), getHostsFile(), zone);
         FilesApplicationPackage preprocessed = FilesApplicationPackage.fromFile(preprocessedDir, includeSourceFiles);
         preprocessed.copyUserDefsIntoApplication();
         return preprocessed;

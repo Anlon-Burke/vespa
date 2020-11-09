@@ -2,9 +2,9 @@
 
 #include <tests/proton/common/dummydbowner.h>
 #include <vespa/config/helper/configgetter.hpp>
-#include <vespa/eval/tensor/tensor.h>
-#include <vespa/eval/tensor/default_tensor_engine.h>
-#include <vespa/eval/tensor/serialization/typed_binary_format.h>
+#include <vespa/eval/eval/engine_or_factory.h>
+#include <vespa/eval/eval/value.h>
+#include <vespa/eval/eval/test/value_compare.h>
 #include <vespa/document/repo/documenttyperepo.h>
 #include <vespa/document/test/make_bucket_space.h>
 #include <vespa/searchcore/proton/attribute/attribute_writer.h>
@@ -17,6 +17,7 @@
 #include <vespa/searchcore/proton/metrics/metricswireservice.h>
 #include <vespa/searchcore/proton/server/bootstrapconfig.h>
 #include <vespa/searchcore/proton/server/documentdb.h>
+#include <vespa/searchcore/proton/server/feedhandler.h>
 #include <vespa/searchcore/proton/server/documentdbconfigmanager.h>
 #include <vespa/searchcore/proton/server/idocumentsubdb.h>
 #include <vespa/searchcore/proton/server/memoryconfigstore.h>
@@ -31,6 +32,7 @@
 #include <vespa/searchlib/transactionlog/nosyncproxy.h>
 #include <vespa/searchlib/transactionlog/translogserver.h>
 #include <vespa/vespalib/data/slime/slime.h>
+#include <vespa/vespalib/data/simple_buffer.h>
 #include <vespa/vespalib/encoding/base64.h>
 #include <vespa/config-bucketspaces.h>
 #include <vespa/vespalib/testkit/testapp.h>
@@ -57,8 +59,7 @@ using storage::spi::Timestamp;
 using vespa::config::search::core::ProtonConfig;
 using vespa::config::content::core::BucketspacesConfig;
 using vespalib::eval::TensorSpec;
-using vespalib::tensor::Tensor;
-using vespalib::tensor::DefaultTensorEngine;
+using vespalib::eval::EngineOrFactory;
 using namespace vespalib::slime;
 
 typedef std::unique_ptr<GeneralResult> GeneralResultPtr;
@@ -96,7 +97,7 @@ public:
     BuildContext(const Schema &schema)
         : _dmk("summary"),
           _bld(schema),
-          _repo(new DocumentTypeRepo(_bld.getDocumentType())),
+          _repo(std::make_shared<DocumentTypeRepo>(_bld.getDocumentType())),
           _summaryExecutor(4, 128 * 1024),
           _noTlSyncer(),
           _str(_summaryExecutor, "summary",
@@ -124,7 +125,7 @@ public:
     }
 
     FieldCacheRepo::UP createFieldCacheRepo(const ResultConfig &resConfig) const {
-        return FieldCacheRepo::UP(new FieldCacheRepo(resConfig, _bld.getDocumentType()));
+        return std::make_unique<FieldCacheRepo>(resConfig, _bld.getDocumentType());
     }
 };
 
@@ -137,9 +138,8 @@ getDocTypeName()
     return "searchdocument";
 }
 
-Tensor::UP make_tensor(const TensorSpec &spec) {
-    auto tensor = DefaultTensorEngine::ref().from_spec(spec);
-    return Tensor::UP(dynamic_cast<Tensor*>(tensor.release()));
+vespalib::eval::Value::UP make_tensor(const TensorSpec &spec) {
+    return EngineOrFactory::get().from_spec(spec);
 }
 
 vespalib::string asVstring(vespalib::Memory str) {
@@ -150,8 +150,7 @@ vespalib::string asVstring(const Inspector &value) {
 }
 
 void decode(const ResEntry *entry, vespalib::Slime &slime) {
-    vespalib::Memory mem(entry->_dataval,
-                         entry->_datalen);
+    vespalib::Memory mem(entry->_dataval, entry->_datalen);
     size_t decodeRes = BinaryFormat::decode(mem, slime);
     ASSERT_EQUAL(decodeRes, mem.size);
 }
@@ -216,14 +215,14 @@ public:
         if (! FastOS_File::MakeDirectory((std::string("tmpdb/") + docTypeName).c_str())) {
             LOG_ABORT("should not be reached");
         }
-        _ddb.reset(new DocumentDB("tmpdb", _configMgr.getConfig(), "tcp/localhost:9013", _queryLimiter, _clock,
-                                  DocTypeName(docTypeName), makeBucketSpace(),
-				  *b->getProtonConfigSP(), *this, _summaryExecutor, _summaryExecutor,
-                                  _tls, _dummy, _fileHeaderContext, ConfigStore::UP(new MemoryConfigStore),
-                                  std::make_shared<vespalib::ThreadStackExecutor>(16, 128 * 1024), _hwInfo)),
+        _ddb = std::make_unique<DocumentDB>("tmpdb", _configMgr.getConfig(), "tcp/localhost:9013", _queryLimiter, _clock,
+                                            DocTypeName(docTypeName), makeBucketSpace(), *b->getProtonConfigSP(), *this,
+                                            _summaryExecutor, _summaryExecutor, _tls, _dummy, _fileHeaderContext,
+                                            std::make_unique<MemoryConfigStore>(),
+                                            std::make_shared<vespalib::ThreadStackExecutor>(16, 128 * 1024), _hwInfo),
         _ddb->start();
         _ddb->waitForOnlineState();
-        _aw = AttributeWriter::UP(new AttributeWriter(_ddb->getReadySubDB()->getAttributeManager()));
+        _aw = std::make_unique<AttributeWriter>(_ddb->getReadySubDB()->getAttributeManager());
         _sa = _ddb->getReadySubDB()->getSummaryAdapter();
     }
     ~DBContext()
@@ -243,10 +242,11 @@ public:
         IDocumentMetaStore &dms = _ddb->getReadySubDB()->getDocumentMetaStoreContext().get();
         uint32_t docSize = 1;
         PutRes putRes(dms.put(docId.getGlobalId(), BucketFactory::getBucketId(docId),
-                              Timestamp(0u), docSize, lid));
+                              Timestamp(0u), docSize, lid, 0u));
         LOG_ASSERT(putRes.ok());
         uint64_t serialNum = _ddb->getFeedHandler().incSerialNum();
-        _aw->put(serialNum, doc, lid, true, std::shared_ptr<IDestructorCallback>());
+        _aw->put(serialNum, doc, lid, std::shared_ptr<IDestructorCallback>());
+        _aw->forceCommit(serialNum, std::shared_ptr<IDestructorCallback>());
         _ddb->getReadySubDB()->getAttributeManager()->getAttributeFieldWriter().sync();
         _sa->put(serialNum, lid, doc);
         const GlobalId &gid = docId.getGlobalId();
@@ -255,11 +255,15 @@ public:
         storage::spi::Timestamp ts(0);
         DbDocumentId dbdId(lid);
         DbDocumentId prevDbdId(0);
-        PutOperation op(bucketId, ts, std::make_shared<document::Document>(doc));
-        op.setSerialNum(serialNum);
-        op.setDbDocumentId(dbdId);
-        op.setPrevDbDocumentId(prevDbdId);
-        _ddb->getFeedHandler().storeOperation(op, std::make_shared<search::IgnoreCallback>());
+        auto op = std::make_unique<PutOperation>(bucketId, ts, std::make_shared<document::Document>(doc));
+        op->setSerialNum(serialNum);
+        op->setDbDocumentId(dbdId);
+        op->setPrevDbDocumentId(prevDbdId);
+        vespalib::Gate commitDone;
+        _ddb->getWriteService().master().execute(vespalib::makeLambdaTask([this, op = std::move(op), &commitDone]() {
+            _ddb->getFeedHandler().appendOperation(*op, std::make_shared<search::GateCallback>(commitDone));
+        }));
+        commitDone.await();
         SearchView *sv(dynamic_cast<SearchView *>(_ddb->getReadySubDB()->getSearchView().get()));
         if (sv != nullptr) {
             // cf. FeedView::putAttributes()
@@ -270,12 +274,16 @@ public:
     }
 };
 
-class Test : public vespalib::TestApp
+class Fixture
 {
 private:
     std::unique_ptr<vespa::config::search::SummaryConfig> _summaryCfg;
-    ResultConfig          _resultCfg;
+    ResultConfig               _resultCfg;
     std::set<vespalib::string> _markupFields;
+
+public:
+    Fixture();
+    ~Fixture();
 
     const ResultConfig &getResultConfig() const{
         return _resultCfg;
@@ -284,43 +292,10 @@ private:
     const std::set<vespalib::string> &getMarkupFields() const{
         return _markupFields;
     }
-
-    GeneralResultPtr
-    getResult(DocumentStoreAdapter & dsa, uint32_t docId);
-
-    GeneralResultPtr
-    getResult(const DocsumReply & reply, uint32_t id, uint32_t resultClassID);
-
-    bool assertString(const std::string & exp, const std::string & fieldName, DocumentStoreAdapter &dsa, uint32_t id);
-
-    void assertTensor(const Tensor::UP &exp, const std::string &fieldName, const DocsumReply &reply,
-                      uint32_t id, uint32_t resultClassID);
-
-    bool assertSlime(const std::string &exp, const DocsumReply &reply, uint32_t id,bool relaxed = false);
-
-    void requireThatAdapterHandlesAllFieldTypes();
-    void requireThatAdapterHandlesMultipleDocuments();
-    void requireThatAdapterHandlesDocumentIdField();
-    void requireThatDocsumRequestIsProcessed();
-    void requireThatRewritersAreUsed();
-    void requireThatAttributesAreUsed();
-    void requireThatSummaryAdapterHandlesPutAndRemove();
-    void requireThatAnnotationsAreUsed();
-    void requireThatUrisAreUsed();
-    void requireThatPositionsAreUsed();
-    void requireThatRawFieldsWorks();
-    void requireThatFieldCacheRepoCanReturnDefaultFieldCache();
-    void requireThatSummariesTimeout();
-
-public:
-    Test();
-    ~Test();
-    int Main() override;
 };
 
-
 GeneralResultPtr
-Test::getResult(DocumentStoreAdapter & dsa, uint32_t docId)
+getResult(DocumentStoreAdapter & dsa, uint32_t docId)
 {
     DocsumStoreValue docsum = dsa.getMappedDocsum(docId);
     ASSERT_TRUE(docsum.pt() != nullptr);
@@ -330,20 +305,8 @@ Test::getResult(DocumentStoreAdapter & dsa, uint32_t docId)
     return retval;
 }
 
-
-GeneralResultPtr
-Test::getResult(const DocsumReply & reply, uint32_t id, uint32_t resultClassID)
-{
-    auto retval = std::make_unique<GeneralResult>(getResultConfig().LookupResultClass(resultClassID));
-    const DocsumReply::Docsum & docsum = reply.docsums[id];
-    // skip the 4 byte class id
-    ASSERT_TRUE(retval->unpack(docsum.data.c_str() + 4, docsum.data.size() - 4));
-    return retval;
-}
-
-
 bool
-Test::assertString(const std::string & exp, const std::string & fieldName,
+assertString(const std::string & exp, const std::string & fieldName,
                    DocumentStoreAdapter &dsa, uint32_t id)
 {
     GeneralResultPtr res = getResult(dsa, id);
@@ -352,7 +315,7 @@ Test::assertString(const std::string & exp, const std::string & fieldName,
 }
 
 void
-Test::assertTensor(const Tensor::UP & exp, const std::string & fieldName,
+assertTensor(const vespalib::eval::Value::UP & exp, const std::string & fieldName,
                    const DocsumReply & reply, uint32_t id, uint32_t)
 {
     const DocsumReply::Docsum & docsum = reply.docsums[id];
@@ -371,7 +334,7 @@ Test::assertTensor(const Tensor::UP & exp, const std::string & fieldName,
     EXPECT_EQUAL(exp.get() == nullptr, data.size == 0u);
     if (exp) {
         vespalib::nbostream x(data.data, data.size);
-        Tensor::UP tensor = vespalib::tensor::TypedBinaryFormat::deserialize(x);
+        auto tensor = EngineOrFactory::get().decode(x);
         EXPECT_TRUE(tensor.get() != nullptr);
         EXPECT_EQUAL(*exp, *tensor);
     }
@@ -402,7 +365,7 @@ getSlime(const DocsumReply &reply, uint32_t id, bool relaxed)
 }
 
 bool
-Test::assertSlime(const std::string &exp, const DocsumReply &reply, uint32_t id, bool relaxed)
+assertSlime(const std::string &exp, const DocsumReply &reply, uint32_t id, bool relaxed)
 {
     vespalib::Slime slime = getSlime(reply, id, relaxed);
     vespalib::Slime expSlime;
@@ -411,8 +374,7 @@ Test::assertSlime(const std::string &exp, const DocsumReply &reply, uint32_t id,
     return EXPECT_EQUAL(expSlime, slime);
 }
 
-void
-Test::requireThatAdapterHandlesAllFieldTypes()
+TEST_F("requireThatAdapterHandlesAllFieldTypes", Fixture)
 {
     Schema s;
     s.addSummaryField(Schema::SummaryField("a", schema::DataType::INT8));
@@ -446,9 +408,9 @@ Test::requireThatAdapterHandlesAllFieldTypes()
 
     DocumentStoreAdapter dsa(bc._str,
                              *bc._repo,
-                             getResultConfig(), "class0",
-                             bc.createFieldCacheRepo(getResultConfig())->getFieldCache("class0"),
-                             getMarkupFields());
+                             f.getResultConfig(), "class0",
+                             bc.createFieldCacheRepo(f.getResultConfig())->getFieldCache("class0"),
+                             f.getMarkupFields());
     GeneralResultPtr res = getResult(dsa, 0);
     EXPECT_EQUAL(255u,        res->GetEntry("a")->_intval);
     EXPECT_EQUAL(32767u,      res->GetEntry("b")->_intval);
@@ -471,8 +433,7 @@ Test::requireThatAdapterHandlesAllFieldTypes()
 }
 
 
-void
-Test::requireThatAdapterHandlesMultipleDocuments()
+TEST_F("requireThatAdapterHandlesMultipleDocuments", Fixture)
 {
     Schema s;
     s.addSummaryField(Schema::SummaryField("a", schema::DataType::INT32));
@@ -488,9 +449,9 @@ Test::requireThatAdapterHandlesMultipleDocuments()
         addInt(2000).endField();
     bc.endDocument(1);
 
-    DocumentStoreAdapter dsa(bc._str, *bc._repo, getResultConfig(), "class1",
-                             bc.createFieldCacheRepo(getResultConfig())->getFieldCache("class1"),
-                             getMarkupFields());
+    DocumentStoreAdapter dsa(bc._str, *bc._repo, f.getResultConfig(), "class1",
+                             bc.createFieldCacheRepo(f.getResultConfig())->getFieldCache("class1"),
+                             f.getMarkupFields());
     { // doc 0
         GeneralResultPtr res = getResult(dsa, 0);
         EXPECT_EQUAL(1000u, res->GetEntry("a")->_intval);
@@ -513,8 +474,7 @@ Test::requireThatAdapterHandlesMultipleDocuments()
 }
 
 
-void
-Test::requireThatAdapterHandlesDocumentIdField()
+TEST_F("requireThatAdapterHandlesDocumentIdField", Fixture)
 {
     Schema s;
     s.addSummaryField(Schema::SummaryField("documentid", schema::DataType::STRING));
@@ -524,9 +484,9 @@ Test::requireThatAdapterHandlesDocumentIdField()
         addStr("foo").
         endField();
     bc.endDocument(0);
-    DocumentStoreAdapter dsa(bc._str, *bc._repo, getResultConfig(), "class4",
-                             bc.createFieldCacheRepo(getResultConfig())->getFieldCache("class4"),
-                             getMarkupFields());
+    DocumentStoreAdapter dsa(bc._str, *bc._repo, f.getResultConfig(), "class4",
+                             bc.createFieldCacheRepo(f.getResultConfig())->getFieldCache("class4"),
+                             f.getMarkupFields());
     GeneralResultPtr res = getResult(dsa, 0);
     EXPECT_EQUAL("id:ns:searchdocument::0", std::string(res->GetEntry("documentid")->_stringval,
                                      res->GetEntry("documentid")->_stringlen));
@@ -539,8 +499,7 @@ GlobalId gid3 = DocumentId("id:ns:searchdocument::3").getGlobalId(); // lid 3
 GlobalId gid4 = DocumentId("id:ns:searchdocument::4").getGlobalId(); // lid 4
 GlobalId gid9 = DocumentId("id:ns:searchdocument::9").getGlobalId(); // not existing
 
-void
-Test::requireThatDocsumRequestIsProcessed()
+TEST("requireThatDocsumRequestIsProcessed")
 {
     Schema s;
     s.addSummaryField(Schema::SummaryField("a", schema::DataType::INT32));
@@ -598,8 +557,7 @@ Test::requireThatDocsumRequestIsProcessed()
 }
 
 
-void
-Test::requireThatRewritersAreUsed()
+TEST("requireThatRewritersAreUsed")
 {
     Schema s;
     s.addSummaryField(Schema::SummaryField("aa", schema::DataType::INT32));
@@ -625,8 +583,7 @@ Test::requireThatRewritersAreUsed()
     EXPECT_TRUE(assertSlime("{aa:20}", *rep, 0, false));
 }
 
-void
-Test::requireThatSummariesTimeout()
+TEST("requireThatSummariesTimeout")
 {
     Schema s;
     s.addSummaryField(Schema::SummaryField("aa", schema::DataType::INT32));
@@ -670,8 +627,7 @@ addField(Schema & s,
 }
 
 
-void
-Test::requireThatAttributesAreUsed()
+TEST("requireThatAttributesAreUsed")
 {
     Schema s;
     addField(s, "ba", schema::DataType::INT32, CollectionType::SINGLE);
@@ -784,7 +740,7 @@ Test::requireThatAttributesAreUsed()
 
     // empty doc
     EXPECT_TRUE(assertSlime("{}", *rep, 1, false));
-    TEST_DO(assertTensor(Tensor::UP(), "bj", *rep, 1, rclass));
+    TEST_DO(assertTensor(vespalib::eval::Value::UP(), "bj", *rep, 1, rclass));
 
     proton::IAttributeManager::SP attributeManager = dc._ddb->getReadySubDB()->getAttributeManager();
     vespalib::ISequencedTaskExecutor &attributeFieldWriter = attributeManager->getAttributeFieldWriter();
@@ -814,8 +770,7 @@ Test::requireThatAttributesAreUsed()
 }
 
 
-void
-Test::requireThatSummaryAdapterHandlesPutAndRemove()
+TEST("requireThatSummaryAdapterHandlesPutAndRemove")
 {
     Schema s;
     s.addSummaryField(Schema::SummaryField("f1", schema::DataType::STRING, CollectionType::SINGLE));
@@ -847,8 +802,7 @@ namespace
   const std::string empty;
 }
 
-void
-Test::requireThatAnnotationsAreUsed()
+TEST_F("requireThatAnnotationsAreUsed", Fixture)
 {
     Schema s;
     s.addIndexField(Schema::IndexField("g", schema::DataType::STRING, CollectionType::SINGLE));
@@ -888,9 +842,9 @@ Test::requireThatAnnotationsAreUsed()
     EXPECT_EQUAL("foo bar", act->getValue("g")->getAsString());
     EXPECT_EQUAL("foo bar", act->getValue("dynamicstring")->getAsString());
 
-    DocumentStoreAdapter dsa(store, *bc._repo, getResultConfig(), "class0",
-                             bc.createFieldCacheRepo(getResultConfig())->getFieldCache("class0"),
-                             getMarkupFields());
+    DocumentStoreAdapter dsa(store, *bc._repo, f.getResultConfig(), "class0",
+                             bc.createFieldCacheRepo(f.getResultConfig())->getFieldCache("class0"),
+                             f.getMarkupFields());
     EXPECT_TRUE(assertString("foo bar", "g", dsa, 1));
     EXPECT_TRUE(assertString(TERM_EMPTY + "foo" + TERM_SEP +
                             " " + TERM_SEP +
@@ -899,8 +853,7 @@ Test::requireThatAnnotationsAreUsed()
                             "dynamicstring", dsa, 1));
 }
 
-void
-Test::requireThatUrisAreUsed()
+TEST_F("requireThatUrisAreUsed", Fixture)
 {
     Schema s;
     s.addUriIndexFields(Schema::IndexField("urisingle", schema::DataType::STRING, CollectionType::SINGLE));
@@ -1040,9 +993,9 @@ Test::requireThatUrisAreUsed()
     EXPECT_TRUE(act.get() != nullptr);
     EXPECT_EQUAL(exp->getType(), act->getType());
 
-    DocumentStoreAdapter dsa(store, *bc._repo, getResultConfig(), "class0",
-                             bc.createFieldCacheRepo(getResultConfig())->getFieldCache("class0"),
-                             getMarkupFields());
+    DocumentStoreAdapter dsa(store, *bc._repo, f.getResultConfig(), "class0",
+                             bc.createFieldCacheRepo(f.getResultConfig())->getFieldCache("class0"),
+                             f.getMarkupFields());
 
     EXPECT_TRUE(assertString("http://www.example.com:81/fluke?ab=2#4", "urisingle", dsa, 1));
     GeneralResultPtr res = getResult(dsa, 1);
@@ -1067,8 +1020,7 @@ Test::requireThatUrisAreUsed()
 }
 
 
-void
-Test::requireThatPositionsAreUsed()
+TEST("requireThatPositionsAreUsed")
 {
     Schema s;
     s.addAttributeField(Schema::AttributeField("sp2", schema::DataType::INT64));
@@ -1092,10 +1044,9 @@ Test::requireThatPositionsAreUsed()
                        endDocument();
     dc.put(*exp, 1);
 
-    IDocumentStore & store =
-        dc._ddb->getReadySubDB()->getSummaryManager()->getBackingStore();
+    IDocumentStore & store = dc._ddb->getReadySubDB()->getSummaryManager()->getBackingStore();
     Document::UP act = store.read(1, *bc._repo);
-    EXPECT_TRUE(act.get() != nullptr);
+    EXPECT_TRUE(act);
     EXPECT_EQUAL(exp->getType(), act->getType());
 
     DocsumRequest req;
@@ -1119,8 +1070,7 @@ Test::requireThatPositionsAreUsed()
 }
 
 
-void
-Test::requireThatRawFieldsWorks()
+TEST_F("requireThatRawFieldsWorks", Fixture)
 {
     Schema s;
     s.addSummaryField(Schema::AttributeField("i", schema::DataType::RAW));
@@ -1177,9 +1127,9 @@ Test::requireThatRawFieldsWorks()
     EXPECT_TRUE(act.get() != nullptr);
     EXPECT_EQUAL(exp->getType(), act->getType());
 
-    DocumentStoreAdapter dsa(store, *bc._repo, getResultConfig(), "class0",
-                             bc.createFieldCacheRepo(getResultConfig())->getFieldCache("class0"),
-                             getMarkupFields());
+    DocumentStoreAdapter dsa(store, *bc._repo, f.getResultConfig(), "class0",
+                             bc.createFieldCacheRepo(f.getResultConfig())->getFieldCache("class0"),
+                             f.getMarkupFields());
 
     ASSERT_TRUE(assertString(raw1s, "i", dsa, 1));
 
@@ -1205,13 +1155,12 @@ Test::requireThatRawFieldsWorks()
 }
 
 
-void
-Test::requireThatFieldCacheRepoCanReturnDefaultFieldCache()
+TEST_F("requireThatFieldCacheRepoCanReturnDefaultFieldCache", Fixture)
 {
     Schema s;
     s.addSummaryField(Schema::SummaryField("a", schema::DataType::INT32));
     BuildContext bc(s);
-    FieldCacheRepo::UP repo = bc.createFieldCacheRepo(getResultConfig());
+    FieldCacheRepo::UP repo = bc.createFieldCacheRepo(f.getResultConfig());
     FieldCache::CSP cache = repo->getFieldCache("");
     EXPECT_TRUE(cache.get() == repo->getFieldCache("class1").get());
     EXPECT_EQUAL(1u, cache->size());
@@ -1219,7 +1168,7 @@ Test::requireThatFieldCacheRepoCanReturnDefaultFieldCache()
 }
 
 
-Test::Test()
+Fixture::Fixture()
     : _summaryCfg(),
       _resultCfg(),
       _markupFields()
@@ -1244,33 +1193,8 @@ Test::Test()
     }
 }
 
-Test::~Test() = default;
-
-int
-Test::Main()
-{
-    TEST_INIT("docsummary_test");
-
-    if (_argc > 0) {
-        DummyFileHeaderContext::setCreator(_argv[0]);
-    }
-    TEST_DO(requireThatSummaryAdapterHandlesPutAndRemove());
-    TEST_DO(requireThatAdapterHandlesAllFieldTypes());
-    TEST_DO(requireThatAdapterHandlesMultipleDocuments());
-    TEST_DO(requireThatAdapterHandlesDocumentIdField());
-    TEST_DO(requireThatDocsumRequestIsProcessed());
-    TEST_DO(requireThatRewritersAreUsed());
-    TEST_DO(requireThatAttributesAreUsed());
-    TEST_DO(requireThatAnnotationsAreUsed());
-    TEST_DO(requireThatUrisAreUsed());
-    TEST_DO(requireThatPositionsAreUsed());
-    TEST_DO(requireThatRawFieldsWorks());
-    TEST_DO(requireThatFieldCacheRepoCanReturnDefaultFieldCache());
-    TEST_DO(requireThatSummariesTimeout());
-
-    TEST_DONE();
-}
+Fixture::~Fixture() = default;
 
 }
 
-TEST_APPHOOK(proton::Test);
+TEST_MAIN() { TEST_RUN_ALL(); }

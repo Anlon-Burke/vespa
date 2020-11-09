@@ -1,53 +1,60 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
+#include "filestorhandlerimpl.h"
 #include "filestormanager.h"
-
-#include <vespa/storage/bucketdb/lockablemap.hpp>
+#include <vespa/storage/bucketdb/minimumusedbitstracker.h>
 #include <vespa/storage/common/bucketmessages.h>
-#include <vespa/storage/common/bucketoperationlogger.h>
 #include <vespa/storage/common/content_bucket_space_repo.h>
+#include <vespa/storage/common/doneinitializehandler.h>
 #include <vespa/vdslib/state/cluster_state_bundle.h>
 #include <vespa/storage/common/messagebucket.h>
 #include <vespa/storage/config/config-stor-server.h>
 #include <vespa/storage/persistence/bucketownershipnotifier.h>
 #include <vespa/storage/persistence/persistencethread.h>
+#include <vespa/storage/persistence/persistencehandler.h>
 #include <vespa/storageapi/message/bucketsplitting.h>
 #include <vespa/storageapi/message/state.h>
-#include <vespa/vespalib/stllike/hash_map.hpp>
+#include <vespa/storageapi/message/persistence.h>
+#include <vespa/storageapi/message/removelocation.h>
+#include <vespa/storageapi/message/stat.h>
+#include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/util/sequencedtaskexecutor.h>
+#include <thread>
 
 #include <vespa/log/bufferedlogger.h>
 LOG_SETUP(".persistence.filestor.manager");
 
 using std::shared_ptr;
 using document::BucketSpace;
+using vespalib::make_string_short::fmt;
 
 namespace storage {
 
 FileStorManager::
-FileStorManager(const config::ConfigUri & configUri, const spi::PartitionStateList& partitions,
-                spi::PersistenceProvider& provider, ServiceLayerComponentRegister& compReg)
+FileStorManager(const config::ConfigUri & configUri, spi::PersistenceProvider& provider,
+                ServiceLayerComponentRegister& compReg, DoneInitializeHandler& init_handler)
     : StorageLinkQueued("File store manager", compReg),
       framework::HtmlStatusReporter("filestorman", "File store manager"),
       _compReg(compReg),
       _component(compReg, "filestormanager"),
-      _partitions(partitions),
       _providerCore(provider),
       _providerErrorWrapper(_providerCore),
       _provider(&_providerErrorWrapper),
+      _init_handler(init_handler),
       _bucketIdFactory(_component.getBucketIdFactory()),
-      _configUri(configUri),
-      _disks(),
+      _persistenceHandlers(),
+      _threads(),
       _bucketOwnershipNotifier(std::make_unique<BucketOwnershipNotifier>(_component, *this)),
-      _configFetcher(_configUri.getContext()),
+      _configFetcher(configUri.getContext()),
       _threadLockCheckInterval(60),
       _failDiskOnError(false),
+      _use_async_message_handling_on_schedule(false),
       _metrics(std::make_unique<FileStorMetrics>(_component.getLoadTypes()->getMetricLoadTypes())),
-      _threadMonitor(),
-      _closed(false)
+      _closed(false),
+      _lock()
 {
-    _configFetcher.subscribe(_configUri.getConfigId(), this);
+    _configFetcher.subscribe(configUri.getConfigId(), this);
     _configFetcher.start();
     _component.registerMetric(*_metrics);
     _component.registerStatusPage(*this);
@@ -61,25 +68,21 @@ FileStorManager::~FileStorManager()
     LOG(debug, "Deleting link %s. Giving filestor threads stop signal.",
         toString().c_str());
 
-    for (uint32_t i = 0; i < _disks.size(); ++i) {
-        for (uint32_t j = 0; j < _disks[i].size(); ++j) {
-            if (_disks[i][j].get() != 0) {
-                _disks[i][j]->getThread().interrupt();
-            }
+    for (const auto & thread : _threads) {
+        if (thread) {
+            thread->getThread().interrupt();
         }
     }
-    for (uint32_t i = 0; i < _disks.size(); ++i) {
-        for (uint32_t j = 0; j < _disks[i].size(); ++j) {
-            if (_disks[i][j].get() != 0) {
-                _disks[i][j]->getThread().join();
-            }
+    for (const auto & thread : _threads) {
+        if (thread) {
+            thread->getThread().join();
         }
     }
     LOG(debug, "Closing all filestor queues, answering queued messages. New messages will be refused.");
     _filestorHandler->close();
     LOG(debug, "Deleting filestor threads. Waiting for their current operation "
                "to finish. Stop their threads and delete objects.");
-    _disks.clear();
+    _threads.clear();
 }
 
 void
@@ -92,7 +95,7 @@ FileStorManager::print(std::ostream& out, bool verbose, const std::string& inden
 namespace {
 
 uint32_t computeNumResponseThreads(int configured) {
-    return (configured < 0) ? std::max(1u, std::thread::hardware_concurrency()/4) : configured;
+    return (configured <= 0) ? std::max(1u, std::thread::hardware_concurrency()/4) : configured;
 }
 
 vespalib::Executor::OptimizeFor
@@ -108,6 +111,35 @@ selectSequencer(vespa::config::content::StorFilestorConfig::ResponseSequencerTyp
     }
 }
 
+#ifdef __PIC__
+#define TLS_LINKAGE __attribute__((visibility("hidden"), tls_model("initial-exec")))
+#else
+#define TLS_LINKAGE __attribute__((visibility("hidden"), tls_model("local-exec")))
+#endif
+
+thread_local PersistenceHandler * _G_threadLocalHandler TLS_LINKAGE = nullptr;
+
+}
+
+PersistenceHandler &
+FileStorManager::createRegisteredHandler(const ServiceLayerComponent & component)
+{
+    std::lock_guard guard(_lock);
+    size_t index = _persistenceHandlers.size();
+    assert(index < _metrics->disk->threads.size());
+    _persistenceHandlers.push_back(
+            std::make_unique<PersistenceHandler>(*_sequencedExecutor, component,
+                                                 *_config, *_provider, *_filestorHandler,
+                                                 *_bucketOwnershipNotifier, *_metrics->disk->threads[index]));
+    return *_persistenceHandlers.back();
+}
+
+PersistenceHandler &
+FileStorManager::getThreadLocalHandler() {
+    if (_G_threadLocalHandler == nullptr) {
+        _G_threadLocalHandler = & createRegisteredHandler(_component);
+    }
+    return *_G_threadLocalHandler;
 }
 /**
  * If live configuration, assuming storageserver makes sure no messages are
@@ -117,33 +149,27 @@ void
 FileStorManager::configure(std::unique_ptr<vespa::config::content::StorFilestorConfig> config)
 {
     // If true, this is not the first configure.
-    bool liveUpdate = (_disks.size() != 0);
+    bool liveUpdate = ! _threads.empty();
 
     _threadLockCheckInterval = config->diskOperationTimeout;
     _failDiskOnError = (config->failDiskAfterErrorCount > 0);
+    _use_async_message_handling_on_schedule = config->useAsyncMessageHandlingOnSchedule;
 
     if (!liveUpdate) {
         _config = std::move(config);
-        _disks.resize(_component.getDiskCount());
         size_t numThreads = _config->numThreads;
         size_t numStripes = std::max(size_t(1u), numThreads / 2);
-        _metrics->initDiskMetrics(_disks.size(), _component.getLoadTypes()->getMetricLoadTypes(), numStripes, numThreads);
+        _metrics->initDiskMetrics(_component.getLoadTypes()->getMetricLoadTypes(), numStripes,
+                                  numThreads + _config->numResponseThreads + _config->numNetworkThreads);
 
-        _filestorHandler = std::make_unique<FileStorHandler>(numThreads, numStripes, *this, *_metrics, _partitions, _compReg);
+        _filestorHandler = std::make_unique<FileStorHandlerImpl>(numThreads, numStripes, *this, *_metrics, _compReg);
         uint32_t numResponseThreads = computeNumResponseThreads(_config->numResponseThreads);
-        if (numResponseThreads > 0) {
-            _sequencedExecutor = vespalib::SequencedTaskExecutor::create(numResponseThreads, 10000, selectSequencer(_config->responseSequencerType));
-        }
-        for (uint32_t i=0; i<_component.getDiskCount(); ++i) {
-            if (_partitions[i].isUp()) {
-                LOG(spam, "Setting up disk %u", i);
-                for (uint32_t j = 0; j < numThreads; j++) {
-                    _disks[i].push_back(std::make_shared<PersistenceThread>(_sequencedExecutor.get(), _compReg, _configUri, *_provider,
-                                                                            *_filestorHandler, *_metrics->disks[i]->threads[j], i));
-                }
-            } else {
-                _filestorHandler->disable(i);
-            }
+        _sequencedExecutor = vespalib::SequencedTaskExecutor::create(numResponseThreads, 10000, selectSequencer(_config->responseSequencerType));
+        assert(_sequencedExecutor);
+        LOG(spam, "Setting up the disk");
+        for (uint32_t i = 0; i < numThreads; i++) {
+            _threads.push_back(std::make_unique<PersistenceThread>(createRegisteredHandler(_component),
+                                                                   *_filestorHandler, i % numStripes, _component));
         }
     }
 }
@@ -230,35 +256,38 @@ FileStorManager::mapOperationToBucketAndDisk(api::BucketCommand& cmd, const docu
 }
 
 bool
-FileStorManager::handlePersistenceMessage( const shared_ptr<api::StorageMessage>& msg, uint16_t disk)
+FileStorManager::handlePersistenceMessage(const shared_ptr<api::StorageMessage>& msg)
 {
     api::ReturnCode errorCode(api::ReturnCode::OK);
-    do {
-        LOG(spam, "Received %s. Attempting to queue it to disk %u.", msg->getType().getName().c_str(), disk);
+    LOG(spam, "Received %s. Attempting to queue it.", msg->getType().getName().c_str());
 
-        LOG_BUCKET_OPERATION_NO_LOCK(
-                getStorageMessageBucket(*msg).getBucketId(),
-                vespalib::make_string("Attempting to queue %s to disk %u", msg->toString().c_str(), disk));
-
-
-        if (_filestorHandler->schedule(msg, disk)) {
-            LOG(spam, "Received persistence message %s. Queued it to disk %u",
-                msg->getType().getName().c_str(), disk);
+    if (_use_async_message_handling_on_schedule) {
+       auto result = _filestorHandler->schedule_and_get_next_async_message(msg);
+       if (result.was_scheduled()) {
+           if (result.has_async_message()) {
+               getThreadLocalHandler().processLockedMessage(result.release_async_message());
+           }
+           return true;
+       }
+    } else {
+        if (_filestorHandler->schedule(msg)) {
+            LOG(spam, "Received persistence message %s. Queued it to disk",
+                msg->getType().getName().c_str());
             return true;
         }
-        switch (_filestorHandler->getDiskState(disk)) {
-            case FileStorHandler::DISABLED:
-                errorCode = api::ReturnCode(api::ReturnCode::DISK_FAILURE, "Disk disabled");
-                break;
-            case FileStorHandler::CLOSED:
-                errorCode = api::ReturnCode(api::ReturnCode::ABORTED, "Shutting down storage node.");
-                break;
-            case FileStorHandler::AVAILABLE:
-                assert(false);
-        }
-    } while(0);
-        // If we get here, we failed to schedule message. errorCode says why
-        // We need to reply to message (while not having bucket lock)
+    }
+    switch (_filestorHandler->getDiskState()) {
+        case FileStorHandler::DISABLED:
+            errorCode = api::ReturnCode(api::ReturnCode::DISK_FAILURE, "Disk disabled");
+            break;
+        case FileStorHandler::CLOSED:
+            errorCode = api::ReturnCode(api::ReturnCode::ABORTED, "Shutting down storage node.");
+            break;
+        case FileStorHandler::AVAILABLE:
+            assert(false);
+    }
+    // If we get here, we failed to schedule message. errorCode says why
+    // We need to reply to message (while not having bucket lock)
     if (!msg->getType().isReply()) {
         std::shared_ptr<api::StorageReply> reply = static_cast<api::StorageCommand&>(*msg).makeReply();
         reply->setResult(errorCode);
@@ -283,7 +312,7 @@ FileStorManager::onPut(const shared_ptr<api::PutCommand>& cmd)
     }
     StorBucketDatabase::WrappedEntry entry(mapOperationToBucketAndDisk(*cmd, &cmd->getDocumentId()));
     if (entry.exist()) {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
@@ -302,7 +331,7 @@ FileStorManager::onUpdate(const shared_ptr<api::UpdateCommand>& cmd)
     }
     StorBucketDatabase::WrappedEntry entry(mapOperationToBucketAndDisk(*cmd, &cmd->getDocumentId()));
     if (entry.exist()) {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
@@ -312,7 +341,7 @@ FileStorManager::onGet(const shared_ptr<api::GetCommand>& cmd)
 {
     StorBucketDatabase::WrappedEntry entry(mapOperationToBucketAndDisk(*cmd, &cmd->getDocumentId()));
     if (entry.exist()) {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
@@ -331,7 +360,7 @@ FileStorManager::onRemove(const shared_ptr<api::RemoveCommand>& cmd)
     }
     StorBucketDatabase::WrappedEntry entry(mapOperationToBucketAndDisk(*cmd, &cmd->getDocumentId()));
     if (entry.exist()) {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
@@ -341,7 +370,7 @@ FileStorManager::onRevert(const shared_ptr<api::RevertCommand>& cmd)
 {
     StorBucketDatabase::WrappedEntry entry(mapOperationToBucketAndDisk(*cmd, 0));
     if (entry.exist()) {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
@@ -351,7 +380,7 @@ FileStorManager::onRemoveLocation(const std::shared_ptr<api::RemoveLocationComma
 {
     StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*cmd, cmd->getBucket()));
     if (entry.exist()) {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
@@ -361,7 +390,7 @@ FileStorManager::onStatBucket(const std::shared_ptr<api::StatBucketCommand>& cmd
 {
     StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*cmd, cmd->getBucket()));
     if (entry.exist()) {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
@@ -383,25 +412,15 @@ FileStorManager::onCreateBucket(
                 entry->getBucketInfo().toString().c_str());
             code = api::ReturnCode(api::ReturnCode::EXISTS, "Bucket already exist");
         } else {
-            entry->disk = _component.getIdealPartition(cmd->getBucket());
-            if (_partitions[entry->disk].isUp()) {
-                // Newly created buckets are ready but not active, unless
-                // explicitly marked as such by the distributor.
-                entry->setBucketInfo(api::BucketInfo(
-                        0, 0, 0, 0, 0, true, cmd->getActive()));
-                cmd->setPriority(0);
-                handlePersistenceMessage(cmd, entry->disk);
-                entry.write();
-                LOG(debug, "Created bucket %s on disk %d (node index is %d)",
-                    cmd->getBucketId().toString().c_str(),
-                    entry->disk, _component.getIndex());
-                return true;
-            } else {
-                entry.remove();
-                code = api::ReturnCode(api::ReturnCode::IO_FAILURE,
-                                       vespalib::make_string("Trying to create bucket %s on disabled disk %d",
-                                                             cmd->getBucketId().toString().c_str(), entry->disk));
-            }
+            // Newly created buckets are ready but not active, unless
+            // explicitly marked as such by the distributor.
+            entry->setBucketInfo(api::BucketInfo(0, 0, 0, 0, 0, true, cmd->getActive()));
+            cmd->setPriority(0);
+            handlePersistenceMessage(cmd);
+            entry.write();
+            LOG(debug, "Created bucket %s (node index is %d)",
+                cmd->getBucketId().toString().c_str(), _component.getIndex());
+            return true;
         }
     }
     std::shared_ptr<api::CreateBucketReply> reply((api::CreateBucketReply*)cmd->makeReply().release());
@@ -414,7 +433,6 @@ FileStorManager::onCreateBucket(
 bool
 FileStorManager::onDeleteBucket(const shared_ptr<api::DeleteBucketCommand>& cmd)
 {
-    uint16_t disk;
     {
         document::Bucket bucket(cmd->getBucket());
         StorBucketDatabase::WrappedEntry entry(_component.getBucketDatabase(bucket.getBucketSpace()).get(bucket.getBucketId(),
@@ -456,14 +474,13 @@ FileStorManager::onDeleteBucket(const shared_ptr<api::DeleteBucketCommand>& cmd)
         // higher priority.
         cmd->setPriority(0);
         LOG(debug, "Deleting %s", cmd->getBucketId().toString().c_str());
-        handlePersistenceMessage(cmd, entry->disk);
-        disk = entry->disk;
+        handlePersistenceMessage(cmd);
         entry.remove();
     }
-    _filestorHandler->failOperations(cmd->getBucket(), disk,
+    _filestorHandler->failOperations(cmd->getBucket(),
                                      api::ReturnCode(api::ReturnCode::BUCKET_DELETED,
-                                                     vespalib::make_string("Bucket %s about to be deleted anyway",
-                                                                           cmd->getBucketId().toString().c_str())));
+                                                     fmt("Bucket %s about to be deleted anyway",
+                                                         cmd->getBucketId().toString().c_str())));
     return true;
 }
 
@@ -499,68 +516,38 @@ FileStorManager::onMergeBucket(const shared_ptr<api::MergeBucketCommand>& cmd)
     }
 
     if (!entry.preExisted()) {
-        entry->disk = _component.getIdealPartition(cmd->getBucket());
-        if (_partitions[entry->disk].isUp()) {
-            entry->info = api::BucketInfo(0, 0, 0, 0, 0, true, false);
-            LOG(debug, "Created bucket %s on disk %d (node index is %d) due to merge being received.",
-                cmd->getBucketId().toString().c_str(), entry->disk, _component.getIndex());
-                // Call before writing bucket entry as we need to have bucket
-                // lock while calling
-            handlePersistenceMessage(cmd, entry->disk);
-            entry.write();
-        } else {
-            entry.remove();
-            api::ReturnCode code(api::ReturnCode::IO_FAILURE,
-                    vespalib::make_string(
-                            "Trying to perform merge %s whose bucket belongs on target disk %d, which is down. Cluster state version of command is %d, our system state version is %d",
-                            cmd->toString().c_str(), entry->disk, cmd->getClusterStateVersion(),
-                            _component.getStateUpdater().getClusterStateBundle()->getVersion()));
-            LOGBT(debug, cmd->getBucketId().toString(), "%s", code.getMessage().c_str());
-            auto reply = std::make_shared<api::MergeBucketReply>(*cmd);
-            reply->setResult(code);
-            sendUp(reply);
-            return true;
-        }
+        entry->info = api::BucketInfo(0, 0, 0, 0, 0, true, false);
+        LOG(debug, "Created bucket %s (node index is %d) due to merge being received.",
+            cmd->getBucketId().toString().c_str(), _component.getIndex());
+        // Call before writing bucket entry as we need to have bucket
+        // lock while calling
+        handlePersistenceMessage(cmd);
+        entry.write();
     } else {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
 
 bool
-FileStorManager::onGetBucketDiff(
-        const shared_ptr<api::GetBucketDiffCommand>& cmd)
+FileStorManager::onGetBucketDiff(const shared_ptr<api::GetBucketDiffCommand>& cmd)
 {
     StorBucketDatabase::WrappedEntry entry(ensureConsistentBucket(cmd->getBucket(), *cmd, "FileStorManager::onGetBucketDiff"));
     if (!entry.exist()) {
         return true;
     }
     if (!entry.preExisted()) {
-        entry->disk = _component.getIdealPartition(cmd->getBucket());
-        if (_partitions[entry->disk].isUp()) {
-            LOG(debug, "Created bucket %s on disk %d (node index is %d) due to get bucket diff being received.",
-                cmd->getBucketId().toString().c_str(), entry->disk, _component.getIndex());
-            entry->info.setTotalDocumentSize(0);
-            entry->info.setUsedFileSize(0);
-            entry->info.setReady(true);
-            // Call before writing bucket entry as we need to have bucket
-            // lock while calling
-            handlePersistenceMessage(cmd, entry->disk);
-            entry.write();
-        } else {
-            entry.remove();
-            api::ReturnCode code(api::ReturnCode::IO_FAILURE,
-                        vespalib::make_string(
-                            "Trying to merge non-existing bucket %s, which can't be created because target disk %d is down",
-                            cmd->getBucketId().toString().c_str(), entry->disk));
-            LOGBT(warning, cmd->getBucketId().toString(), "%s", code.getMessage().c_str());
-            auto reply = std::make_shared<api::GetBucketDiffReply>(*cmd);
-            reply->setResult(code);
-            sendUp(reply);
-            return true;
-        }
+        LOG(debug, "Created bucket %s (node index is %d) due to get bucket diff being received.",
+            cmd->getBucketId().toString().c_str(), _component.getIndex());
+        entry->info.setTotalDocumentSize(0);
+        entry->info.setUsedFileSize(0);
+        entry->info.setReady(true);
+        // Call before writing bucket entry as we need to have bucket
+        // lock while calling
+        handlePersistenceMessage(cmd);
+        entry.write();
     } else {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
@@ -602,7 +589,7 @@ FileStorManager::onGetBucketDiffReply(const shared_ptr<api::GetBucketDiffReply>&
 {
     StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*reply, reply->getBucket()));
     if (validateDiffReplyBucket(entry, reply->getBucket())) {
-        handlePersistenceMessage(reply, entry->disk);
+        handlePersistenceMessage(reply);
     }
     return true;
 }
@@ -612,7 +599,7 @@ FileStorManager::onApplyBucketDiff(const shared_ptr<api::ApplyBucketDiffCommand>
 {
     StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*cmd, cmd->getBucket()));
     if (validateApplyDiffCommandBucket(*cmd, entry)) {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
@@ -620,10 +607,9 @@ FileStorManager::onApplyBucketDiff(const shared_ptr<api::ApplyBucketDiffCommand>
 bool
 FileStorManager::onApplyBucketDiffReply(const shared_ptr<api::ApplyBucketDiffReply>& reply)
 {
-    StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(
-                *reply, reply->getBucket()));
+    StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*reply, reply->getBucket()));
     if (validateDiffReplyBucket(entry, reply->getBucket())) {
-        handlePersistenceMessage(reply, entry->disk);
+        handlePersistenceMessage(reply);
     }
     return true;
 }
@@ -634,13 +620,7 @@ FileStorManager::onJoinBuckets(const std::shared_ptr<api::JoinBucketsCommand>& c
     document::Bucket bucket(cmd->getBucket());
     StorBucketDatabase::WrappedEntry entry(_component.getBucketDatabase(bucket.getBucketSpace()).get(
                 bucket.getBucketId(), "FileStorManager::onJoinBuckets"));
-    uint16_t disk;
-    if (entry.exist()) {
-        disk = entry->disk;
-    } else {
-        disk = _component.getPreferredAvailablePartition(bucket);
-    }
-    return handlePersistenceMessage(cmd, disk);
+    return handlePersistenceMessage(cmd);
 }
 
 bool
@@ -648,7 +628,7 @@ FileStorManager::onSplitBucket(const std::shared_ptr<api::SplitBucketCommand>& c
 {
     StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*cmd, cmd->getBucket()));
     if (entry.exist()) {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
@@ -658,7 +638,7 @@ FileStorManager::onSetBucketState(const std::shared_ptr<api::SetBucketStateComma
 {
     StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*cmd, cmd->getBucket()));
     if (entry.exist()) {
-        handlePersistenceMessage(cmd, entry->disk);
+        handlePersistenceMessage(cmd);
     }
     return true;
 }
@@ -672,7 +652,7 @@ FileStorManager::onInternal(const shared_ptr<api::InternalCommand>& msg)
         shared_ptr<GetIterCommand> cmd(std::static_pointer_cast<GetIterCommand>(msg));
         StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*cmd, cmd->getBucket()));
         if (entry.exist()) {
-            handlePersistenceMessage(cmd, entry->disk);
+            handlePersistenceMessage(cmd);
         }
         return true;
     }
@@ -681,7 +661,7 @@ FileStorManager::onInternal(const shared_ptr<api::InternalCommand>& msg)
         shared_ptr<CreateIteratorCommand> cmd(std::static_pointer_cast<CreateIteratorCommand>(msg));
         StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*cmd, cmd->getBucket()));
         if (entry.exist()) {
-            handlePersistenceMessage(cmd, entry->disk);
+            handlePersistenceMessage(cmd);
         }
         return true;
     }
@@ -696,7 +676,7 @@ FileStorManager::onInternal(const shared_ptr<api::InternalCommand>& msg)
     case ReadBucketList::ID:
     {
         shared_ptr<ReadBucketList> cmd(std::static_pointer_cast<ReadBucketList>(msg));
-        handlePersistenceMessage(cmd, cmd->getPartition());
+        handlePersistenceMessage(cmd);
         return true;
     }
     case ReadBucketInfo::ID:
@@ -704,7 +684,7 @@ FileStorManager::onInternal(const shared_ptr<api::InternalCommand>& msg)
         shared_ptr<ReadBucketInfo> cmd(std::static_pointer_cast<ReadBucketInfo>(msg));
         StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*cmd, cmd->getBucket()));
         if (entry.exist()) {
-            handlePersistenceMessage(cmd, entry->disk);
+            handlePersistenceMessage(cmd);
         }
         return true;
     }
@@ -713,7 +693,7 @@ FileStorManager::onInternal(const shared_ptr<api::InternalCommand>& msg)
         shared_ptr<InternalBucketJoinCommand> cmd(std::static_pointer_cast<InternalBucketJoinCommand>(msg));
         StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*cmd, cmd->getBucket()));
         if (entry.exist()) {
-            handlePersistenceMessage(cmd, entry->disk);
+            handlePersistenceMessage(cmd);
         }
         return true;
     }
@@ -722,7 +702,7 @@ FileStorManager::onInternal(const shared_ptr<api::InternalCommand>& msg)
         shared_ptr<RecheckBucketInfoCommand> cmd(std::static_pointer_cast<RecheckBucketInfoCommand>(msg));
         StorBucketDatabase::WrappedEntry entry(mapOperationToDisk(*cmd, cmd->getBucket()));
         if (entry.exist()) {
-            handlePersistenceMessage(cmd, entry->disk);
+            handlePersistenceMessage(cmd);
         }
         return true;
     }
@@ -788,7 +768,7 @@ FileStorManager::sendReplyDirectly(const std::shared_ptr<api::StorageReply>& rep
 
     if (reply->getType() == api::MessageType::INTERNAL_REPLY) {
         std::shared_ptr<api::InternalReply> rep(std::dynamic_pointer_cast<api::InternalReply>(reply));
-        assert(rep.get());
+        assert(rep);
         if (onInternalReply(rep)) return;
     }
     sendUp(reply);
@@ -820,12 +800,10 @@ void FileStorManager::onFlush(bool downwards)
     LOG(debug, "Start Flushing");
     _filestorHandler->flush(!downwards);
     LOG(debug, "Flushed _filestorHandler->flush(!downwards);");
-    for (uint32_t i = 0; i < _disks.size(); ++i) {
-        for (uint32_t j = 0; j < _disks[i].size(); ++j) {
-            if (_disks[i][j]) {
-                _disks[i][j]->flush();
-                LOG(debug, "flushed disk[%d][%d]", i, j);
-            }
+    for (const auto & thread : _threads) {
+        if (thread) {
+            thread->flush();
+            LOG(debug, "flushed thread[%s]", thread->getThread().getId().c_str());
         }
     }
     uint32_t queueSize = _filestorHandler->getQueueSize();
@@ -862,16 +840,14 @@ FileStorManager::reportHtmlStatus(std::ostream& out, const framework::HttpUrlPat
     out << "\">" << (verbose ? "Less verbose" : "More verbose") << "</a>\n"
         << " ]</font><br><br>\n";
 
-    if (_disks.size()) {
-        out << "<p>Using " << _disks[0].size() << " threads per disk</p>\n";
-    }
+    out << "<p>Using " << _threads.size() << " threads</p>\n";
 
     _filestorHandler->getStatus(out, path);
 }
 
 namespace {
     struct Deactivator {
-        StorBucketDatabase::Decision operator()(document::BucketId::Type, StorBucketDatabase::Entry& data)
+        StorBucketDatabase::Decision operator() (document::BucketId::Type, StorBucketDatabase::Entry& data) noexcept
         {
             data.info.setActive(false);
             return StorBucketDatabase::Decision::UPDATE;
@@ -896,7 +872,7 @@ FileStorManager::updateState()
         if (contentBucketSpace.getNodeUpInLastNodeStateSeenByProvider() && !nodeUp) {
             LOG(debug, "Received cluster state where this node is down; de-activating all buckets in database for bucket space %s", bucketSpace.toString().c_str());
             Deactivator deactivator;
-            contentBucketSpace.bucketDatabase().for_each_mutable(
+            contentBucketSpace.bucketDatabase().for_each_mutable_unordered(
                     std::ref(deactivator), "FileStorManager::updateState");
         }
         contentBucketSpace.setNodeUpInLastNodeStateSeenByProvider(nodeUp);
@@ -926,6 +902,48 @@ FileStorManager::handleNewState()
     propagateClusterStates();
     //TODO: Don't update if it isn't necessary (distributor-only change)
     updateState();
+}
+
+void FileStorManager::update_reported_state_after_db_init() {
+    auto state_lock = _component.getStateUpdater().grabStateChangeLock();
+    auto ns = *_component.getStateUpdater().getReportedNodeState();
+    ns.setInitProgress(1.0);
+    ns.setMinUsedBits(_component.getMinUsedBitsTracker().getMinUsedBits());
+    _component.getStateUpdater().setReportedNodeState(ns);
+}
+
+void FileStorManager::initialize_bucket_databases_from_provider() {
+    framework::MilliSecTimer start_time(_component.getClock());
+    size_t bucket_count = 0;
+    for (const auto& elem : _component.getBucketSpaceRepo()) {
+        const auto bucket_space = elem.first;
+        const auto bucket_result = _provider->listBuckets(bucket_space);
+        assert(!bucket_result.hasError());
+        const auto& buckets = bucket_result.getList();
+        LOG(debug, "Fetching bucket info for %zu buckets in space '%s'",
+            buckets.size(), elem.first.toString().c_str());
+        auto& db = elem.second->bucketDatabase();
+
+        for (const auto& bucket : buckets) {
+            _component.getMinUsedBitsTracker().update(bucket);
+            // TODO replace with far more efficient bulk insert API
+            auto entry = db.get(bucket, "FileStorManager::initialize_bucket_databases_from_provider",
+                                StorBucketDatabase::CREATE_IF_NONEXISTING);
+            assert(!entry.preExisted());
+            auto spi_bucket = spi::Bucket(document::Bucket(bucket_space, bucket));
+            auto provider_result = _provider->getBucketInfo(spi_bucket);
+            assert(!provider_result.hasError());
+            entry->setBucketInfo(PersistenceUtil::convertBucketInfo(provider_result.getBucketInfo()));
+            entry.write();
+        }
+        bucket_count += buckets.size();
+    }
+    const double elapsed = start_time.getElapsedTimeAsDouble();
+    LOG(info, "Completed listing of %zu buckets in %.2g milliseconds", bucket_count, elapsed);
+    _metrics->bucket_db_init_latency.addValue(elapsed);
+
+    update_reported_state_after_db_init();
+    _init_handler.notifyDoneInitializing();
 }
 
 } // storage

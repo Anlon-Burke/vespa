@@ -7,17 +7,20 @@ import com.yahoo.config.FileReference;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.api.ConfigDefinitionRepo;
+import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.DockerImage;
-import com.yahoo.config.provision.NodeFlavors;
+import com.yahoo.config.provision.TenantName;
 import com.yahoo.path.Path;
+import com.yahoo.slime.SlimeUtils;
 import com.yahoo.text.Utf8;
 import com.yahoo.transaction.Transaction;
 import com.yahoo.vespa.config.server.UserConfigDefinitionRepo;
 import com.yahoo.vespa.config.server.deploy.ZooKeeperClient;
 import com.yahoo.vespa.config.server.deploy.ZooKeeperDeployer;
+import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.config.server.zookeeper.ConfigCurator;
 import com.yahoo.vespa.config.server.zookeeper.ZKApplicationPackage;
 import com.yahoo.vespa.curator.Curator;
@@ -27,6 +30,8 @@ import com.yahoo.vespa.curator.transaction.CuratorTransaction;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.logging.Level;
+
+import static com.yahoo.yolean.Exceptions.uncheck;
 
 /**
  * Zookeeper client for a specific session. Path for a session is /config/v2/tenants/&lt;tenant&gt;/sessions/&lt;sessionid&gt;
@@ -46,25 +51,23 @@ public class SessionZooKeeperClient {
     private static final String CREATE_TIME_PATH = "createTime";
     private static final String DOCKER_IMAGE_REPOSITORY_PATH = "dockerImageRepository";
     private static final String ATHENZ_DOMAIN = "athenzDomain";
+    private static final String QUOTA_PATH = "quota";
     private final Curator curator;
     private final ConfigCurator configCurator;
+    private final TenantName tenantName;
     private final Path sessionPath;
     private final Path sessionStatusPath;
     private final String serverId;  // hostname
 
-    // Only for testing
-    // TODO: Remove, use the constructor below
-    public SessionZooKeeperClient(Curator curator, Path sessionPath) {
-        this(curator, ConfigCurator.create(curator), sessionPath, "1");
-    }
-
     public SessionZooKeeperClient(Curator curator,
                                   ConfigCurator configCurator,
-                                  Path sessionPath,
+                                  TenantName tenantName,
+                                  long sessionId,
                                   String serverId) {
         this.curator = curator;
         this.configCurator = configCurator;
-        this.sessionPath = sessionPath;
+        this.tenantName = tenantName;
+        this.sessionPath = getSessionPath(tenantName, sessionId);
         this.serverId = serverId;
         this.sessionStatusPath = sessionPath.append(ConfigCurator.SESSIONSTATE_ZK_SUBPATH);
     }
@@ -144,16 +147,21 @@ public class SessionZooKeeperClient {
     }
 
     public void writeApplicationId(ApplicationId id) {
+        if ( ! id.tenant().equals(tenantName))
+            throw new IllegalArgumentException("Cannot write application id '" + id + "' for tenant '" + tenantName + "'");
         configCurator.putData(applicationIdPath(), id.serializedForm());
     }
 
-    public ApplicationId readApplicationId() {
+    public Optional<ApplicationId> readApplicationId() {
         String idString = configCurator.getData(applicationIdPath());
-        return idString == null ? null : ApplicationId.fromSerializedForm(idString);
+        return (idString == null)
+                ? Optional.empty()
+                : Optional.of(ApplicationId.fromSerializedForm(idString));
     }
 
-    void writeApplicationPackageReference(FileReference applicationPackageReference) {
-        configCurator.putData(applicationPackageReferencePath(), applicationPackageReference.value());
+    void writeApplicationPackageReference(Optional<FileReference> applicationPackageReference) {
+        applicationPackageReference.ifPresent(
+                reference -> configCurator.putData(applicationPackageReferencePath(), reference.value()));
     }
 
     FileReference readApplicationPackageReference() {
@@ -177,6 +185,10 @@ public class SessionZooKeeperClient {
         return sessionPath.append(ATHENZ_DOMAIN).getAbsolute();
     }
 
+    private String quotaPath() {
+        return sessionPath.append(QUOTA_PATH).getAbsolute();
+    }
+
     public void writeVespaVersion(Version version) {
         configCurator.putData(versionPath(), version.toString());
     }
@@ -193,7 +205,7 @@ public class SessionZooKeeperClient {
     }
 
     public void writeDockerImageRepository(Optional<DockerImage> dockerImageRepository) {
-        dockerImageRepository.ifPresent(repo -> configCurator.putData(dockerImageRepositoryPath(), repo.repository()));
+        dockerImageRepository.ifPresent(repo -> configCurator.putData(dockerImageRepositoryPath(), repo.untagged()));
     }
 
     public Instant readCreateTime() {
@@ -238,6 +250,20 @@ public class SessionZooKeeperClient {
                 .map(AthenzDomain::from);
     }
 
+    public void writeQuota(Optional<Quota> maybeQuota) {
+        maybeQuota.ifPresent(quota -> {
+            var bytes = uncheck(() -> SlimeUtils.toJsonBytes(quota.toSlime()));
+            configCurator.putData(quotaPath(), bytes);
+        });
+    }
+
+    public Optional<Quota> readQuota() {
+        if ( ! configCurator.exists(quotaPath())) return Optional.empty();
+        return Optional.ofNullable(configCurator.getData(quotaPath()))
+                .map(SlimeUtils::jsonToSlime)
+                .map(slime -> Quota.fromSlime(slime.get()));
+    }
+
     /**
      * Create necessary paths atomically for a new session.
      *
@@ -250,6 +276,10 @@ public class SessionZooKeeperClient {
         transaction.add(createWriteStatusTransaction(Session.Status.NEW).operations());
         transaction.add(CuratorOperations.create(getCreateTimePath(), Utf8.toBytes(String.valueOf(createTime.getEpochSecond()))));
         transaction.commit();
+    }
+
+    private static Path getSessionPath(TenantName tenantName, long sessionId) {
+        return TenantRepository.getSessionsPath(tenantName).append(String.valueOf(sessionId));
     }
 
 }

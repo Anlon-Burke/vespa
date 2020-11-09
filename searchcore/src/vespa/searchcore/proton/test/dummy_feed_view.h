@@ -16,7 +16,7 @@ struct DummyFeedView : public IFeedView
         return _docTypeRepo;
     }
     const ISimpleDocumentMetaStore *getDocumentMetaStorePtr() const override {
-        return std::nullptr_t();
+        return nullptr;
     }
     void preparePut(PutOperation &) override {}
     void handlePut(FeedToken, const PutOperation &) override {}
@@ -32,7 +32,7 @@ struct DummyFeedView : public IFeedView
     void sync() override {}
     void handlePruneRemovedDocuments(const PruneRemovedDocumentsOperation &) override {}
     void handleCompactLidSpace(const CompactLidSpaceOperation &) override {}
-    void forceCommit(search::SerialNum) override { }
+    void forceCommit(search::SerialNum, DoneCallback) override { }
 };
 
 }

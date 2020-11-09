@@ -46,9 +46,12 @@ MoveOperation::UP
 LidSpaceCompactionHandler::createMoveOperation(const search::DocumentMetaData &document, uint32_t moveToLid) const
 {
     const uint32_t moveFromLid = document.lid;
+    if (_subDb.lidNeedsCommit(moveFromLid)) {
+        return MoveOperation::UP();
+    }
     auto doc = _subDb.retriever()->getFullDocument(moveFromLid);
     auto op = std::make_unique<MoveOperation>(document.bucketId, document.timestamp,
-                                              Document::SP(doc.release()),
+                                              std::move(doc),
                                               DbDocumentId(_subDb.sub_db_id(), moveFromLid),
                                               _subDb.sub_db_id());
     op->setTargetLid(moveToLid);
@@ -62,10 +65,11 @@ LidSpaceCompactionHandler::handleMove(const MoveOperation& op, IDestructorCallba
 }
 
 void
-LidSpaceCompactionHandler::handleCompactLidSpace(const CompactLidSpaceOperation &op)
+LidSpaceCompactionHandler::handleCompactLidSpace(const CompactLidSpaceOperation &op, std::shared_ptr<IDestructorCallback> compact_done_context)
 {
     assert(_subDb.sub_db_id() == op.getSubDbId());
     _subDb.feed_view()->handleCompactLidSpace(op);
+    _subDb.feed_view()->forceCommit(op.getSerialNum(), std::move(compact_done_context));
 }
 
 } // namespace proton

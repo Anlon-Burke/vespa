@@ -10,12 +10,14 @@
 #include "tlswriter.h"
 #include "transactionlogmanager.h"
 #include <persistence/spi/types.h>
+#include <vespa/document/bucket/bucketid.h>
 #include <vespa/searchcore/proton/common/doctypename.h>
 #include <vespa/searchcore/proton/common/feedtoken.h>
-#include <vespa/searchlib/transactionlog/translogclient.h>
-#include <mutex>
+#include <vespa/searchlib/transactionlog/client_common.h>
+#include <shared_mutex>
 
-namespace searchcorespi { namespace index { struct IThreadingService; } }
+namespace searchcorespi::index { struct IThreadingService; }
+namespace document { class DocumentTypeRepo; }
 
 namespace proton {
 struct ConfigStore;
@@ -41,7 +43,7 @@ namespace bucketdb { class IBucketDBHandler; }
  * Class handling all aspects of feeding for a document database.
  * In addition to regular feeding this also includes handling the transaction log.
  */
-class FeedHandler: private search::transactionlog::TransLogClient::Session::Callback,
+class FeedHandler: private search::transactionlog::client::Callback,
                    public IDocumentMoveHandler,
                    public IPruneRemovedDocumentsHandler,
                    public IHeartBeatHandler,
@@ -49,28 +51,17 @@ class FeedHandler: private search::transactionlog::TransLogClient::Session::Call
                    public IGetSerialNum
 {
 private:
-    typedef search::transactionlog::Packet  Packet;
-    typedef search::transactionlog::RPC     RPC;
-    typedef search::SerialNum               SerialNum;
-    typedef storage::spi::Timestamp         Timestamp;
-    typedef document::BucketId              BucketId;
+    using Packet = search::transactionlog::Packet;
+    using RPC = search::transactionlog::client::RPC;
+    using SerialNum = search::SerialNum;
+    using Timestamp = storage::spi::Timestamp;
+    using BucketId =  document::BucketId;
     using FeedStateSP = std::shared_ptr<FeedState>;
     using FeedOperationUP = std::unique_ptr<FeedOperation>;
-
-    class TlsMgrWriter : public TlsWriter {
-        TransactionLogManager &_tls_mgr;
-        search::transactionlog::Writer *_tlsDirectWriter;
-    public:
-        TlsMgrWriter(TransactionLogManager &tls_mgr,
-                     search::transactionlog::Writer * tlsDirectWriter) :
-            _tls_mgr(tls_mgr),
-            _tlsDirectWriter(tlsDirectWriter)
-        { }
-        void storeOperation(const FeedOperation &op, DoneCallback onDone) override;
-        bool erase(SerialNum oldest_to_keep) override;
-        SerialNum sync(SerialNum syncTo) override;
-    };
-    typedef searchcorespi::index::IThreadingService IThreadingService;
+    using ReadGuard = std::shared_lock<std::shared_mutex>;
+    using WriteGuard = std::unique_lock<std::shared_mutex>;
+    using IThreadingService = searchcorespi::index::IThreadingService;
+    using TlsWriterFactory = search::transactionlog::WriterFactory;
 
     IThreadingService                     &_writeService;
     DocTypeName                            _docTypeName;
@@ -78,14 +69,19 @@ private:
     const IResourceWriteFilter            &_writeFilter;
     IReplayConfig                         &_replayConfig;
     TransactionLogManager                  _tlsMgr;
-    TlsMgrWriter                           _tlsMgrWriter;
-    TlsWriter                             &_tlsWriter;
+    const TlsWriterFactory                &_tlsWriterfactory;
+    std::unique_ptr<TlsWriter>             _tlsMgrWriter;
+    TlsWriter                             *_tlsWriter;
     TlsReplayProgress::UP                  _tlsReplayProgress;
     // the serial num of the last message in the transaction log
     SerialNum                              _serialNum;
     SerialNum                              _prunedSerialNum;
+    uint64_t                               _prepare_serial_num;
+    size_t                                 _numOperationsPendingCommit;
+    size_t                                 _numOperationsCompleted;
+    size_t                                 _numCommitsCompleted;
     bool                                   _delayedPrune;
-    mutable std::mutex                     _feedLock;
+    mutable std::shared_mutex              _feedLock;
     FeedStateSP                            _feedState;
     // used by master write thread tasks
     IFeedView                             *_activeFeedView;
@@ -132,7 +128,10 @@ private:
 
     FeedStateSP getFeedState() const;
     void changeFeedState(FeedStateSP newState);
-    void changeFeedState(FeedStateSP newState, const std::lock_guard<std::mutex> &feedGuard);
+    void doChangeFeedState(FeedStateSP newState);
+    void onCommitDone(size_t numPendingAtStart);
+    void initiateCommit();
+    void enqueCommitTask();
 public:
     FeedHandler(const FeedHandler &) = delete;
     FeedHandler & operator = (const FeedHandler &) = delete;
@@ -142,7 +141,6 @@ public:
      * @param writeService  The thread service used for all write tasks.
      * @param tlsSpec       The spec to connect to the transaction log server.
      * @param docTypeName   The name and version of the document type we are feed handler for.
-     * @param state         Document db state
      * @param owner         Reference to the owner of this feed handler.
      * @param replayConfig  Reference to interface used for replaying config changes.
      * @param writer        Inject writer for tls, or nullptr to use internal.
@@ -150,11 +148,10 @@ public:
     FeedHandler(IThreadingService &writeService,
                 const vespalib::string &tlsSpec,
                 const DocTypeName &docTypeName,
-                DDBState &state,
                 IFeedHandlerOwner &owner,
                 const IResourceWriteFilter &writerFilter,
                 IReplayConfig &replayConfig,
-                search::transactionlog::Writer & writer,
+                const TlsWriterFactory & writer,
                 TlsWriter * tlsWriter = nullptr);
 
     ~FeedHandler() override;
@@ -214,6 +211,7 @@ public:
     SerialNum incSerialNum() { return ++_serialNum; }
     SerialNum getSerialNum() const override { return _serialNum; }
     SerialNum getPrunedSerialNum() const { return _prunedSerialNum; }
+    uint64_t  inc_prepare_serial_num() { return ++_prepare_serial_num; }
 
     bool isDoingReplay() const;
     float getReplayProgress() const {
@@ -229,14 +227,15 @@ public:
     void handleMove(MoveOperation &op, std::shared_ptr<search::IDestructorCallback> moveDoneCtx) override;
     void heartBeat() override;
 
-    virtual void sync();
+    void sync();
     RPC::Result receive(const Packet &packet) override;
 
     void eof() override;
     void performPruneRemovedDocuments(PruneRemovedDocumentsOperation &pruneOp) override;
     void syncTls(SerialNum syncTo);
-    void storeOperation(const FeedOperation &op, DoneCallback onDone) override;
-    void storeOperationSync(const FeedOperation & op);
+    void appendOperation(const FeedOperation &op, DoneCallback onDone) override;
+    [[nodiscard]] CommitResult startCommit(DoneCallback onDone) override;
+    [[nodiscard]] CommitResult storeOperationSync(const FeedOperation & op);
     void considerDelayedPrune();
 };
 

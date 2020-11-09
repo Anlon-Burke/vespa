@@ -17,16 +17,8 @@ search test {
             expression: attribute(argument)
         }
 
-        function mnist_tensorflow() {
-            expression: tensorflow("mnist/saved")
-        }
-
-        function mnist_softmax_tensorflow() {
-            expression: tensorflow("mnist_softmax/saved")
-        }
-
         function mnist_softmax_onnx() {
-            expression: onnx("mnist_softmax")
+            expression: onnx_vespa("mnist_softmax")
         }
 
         function my_xgboost() {
@@ -38,7 +30,7 @@ search test {
         }
 
         first-phase {
-            expression: mnist_tensorflow + mnist_softmax_tensorflow + mnist_softmax_onnx + my_xgboost + my_lightgbm
+            expression: mnist_softmax_onnx + my_xgboost + my_lightgbm
         }
 
     }

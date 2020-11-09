@@ -11,11 +11,13 @@ import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.jdisc.Metric;
 import com.yahoo.test.ManualClock;
+import com.yahoo.transaction.Mutex;
 import com.yahoo.transaction.NestedTransaction;
 import com.yahoo.vespa.applicationmodel.ApplicationInstance;
 import com.yahoo.vespa.applicationmodel.ApplicationInstanceReference;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.curator.mock.MockCurator;
+import com.yahoo.vespa.curator.stats.LockStats;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.provision.LockedNodeList;
 import com.yahoo.vespa.hosted.provision.Node;
@@ -26,6 +28,7 @@ import com.yahoo.vespa.hosted.provision.node.Generation;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.provisioning.EmptyProvisionServiceProvider;
 import com.yahoo.vespa.hosted.provision.provisioning.FlavorConfigBuilder;
+import com.yahoo.vespa.hosted.provision.provisioning.ProvisioningTester;
 import com.yahoo.vespa.hosted.provision.testutils.MockNameResolver;
 import com.yahoo.vespa.orchestrator.Orchestrator;
 import com.yahoo.vespa.orchestrator.status.HostInfo;
@@ -38,11 +41,11 @@ import org.junit.Test;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -72,29 +75,18 @@ public class MetricsReporterTest {
         ApplicationInstance applicationInstance = mock(ApplicationInstance.class);
         when(serviceModel.getApplication(any())).thenReturn(Optional.of(applicationInstance));
         when(applicationInstance.reference()).thenReturn(reference);
+        LockStats.clearForTesting();
     }
 
     @Test
     public void test_registered_metric() {
         NodeFlavors nodeFlavors = FlavorConfigBuilder.createDummies("default");
-        Curator curator = new MockCurator();
-        NodeRepository nodeRepository = new NodeRepository(nodeFlavors,
-                                                           new EmptyProvisionServiceProvider().getHostResourcesCalculator(),
-                                                           curator,
-                                                           Clock.systemUTC(),
-                                                           Zone.defaultZone(),
-                                                           new MockNameResolver().mockAnyLookup(),
-                                                           DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa"),
-                                                           new InMemoryFlagSource(),
-                                                           true,
-                                                           false,
-                                                           0);
-        Node node = nodeRepository.createNode("openStackId", "hostname", Optional.empty(), nodeFlavors.getFlavorOrThrow("default"), NodeType.tenant);
-        nodeRepository.addNodes(List.of(node), Agent.system);
-        Node hostNode = nodeRepository.createNode("openStackId2", "parent", Optional.empty(), nodeFlavors.getFlavorOrThrow("default"), NodeType.proxy);
-        nodeRepository.addNodes(List.of(hostNode), Agent.system);
+        ProvisioningTester tester = new ProvisioningTester.Builder().flavors(nodeFlavors.getFlavors()).build();
+        NodeRepository nodeRepository = tester.nodeRepository();
+        tester.makeProvisionedNodes(1, "default", NodeType.tenant, 0);
+        tester.makeProvisionedNodes(1, "default", NodeType.proxy, 0);
 
-        Map<String, Number> expectedMetrics = new HashMap<>();
+        Map<String, Number> expectedMetrics = new TreeMap<>();
         expectedMetrics.put("hostedVespa.provisionedHosts", 1);
         expectedMetrics.put("hostedVespa.parkedHosts", 0);
         expectedMetrics.put("hostedVespa.readyHosts", 0);
@@ -104,6 +96,7 @@ public class MetricsReporterTest {
         expectedMetrics.put("hostedVespa.dirtyHosts", 0);
         expectedMetrics.put("hostedVespa.failedHosts", 0);
         expectedMetrics.put("hostedVespa.deprovisionedHosts", 0);
+        expectedMetrics.put("hostedVespa.breakfixedHosts", 0);
         expectedMetrics.put("hostedVespa.pendingRedeployments", 42);
         expectedMetrics.put("hostedVespa.docker.totalCapacityDisk", 0.0);
         expectedMetrics.put("hostedVespa.docker.totalCapacityMem", 0.0);
@@ -123,6 +116,15 @@ public class MetricsReporterTest {
         expectedMetrics.put("suspendedSeconds", 123L);
         expectedMetrics.put("numberOfServices", 0L);
 
+        expectedMetrics.put("cache.nodeObject.hitRate", 0.6D);
+        expectedMetrics.put("cache.nodeObject.evictionCount", 0L);
+        expectedMetrics.put("cache.nodeObject.size", 2L);
+
+        nodeRepository.list();
+        expectedMetrics.put("cache.curator.hitRate", 0.5D);
+        expectedMetrics.put("cache.curator.evictionCount", 0L);
+        expectedMetrics.put("cache.curator.size", 12L);
+
         ManualClock clock = new ManualClock(Instant.ofEpochSecond(124));
 
         Orchestrator orchestrator = mock(Orchestrator.class);
@@ -140,7 +142,34 @@ public class MetricsReporterTest {
                 clock);
         metricsReporter.maintain();
 
-        assertEquals(expectedMetrics, metric.values);
+        // Verify sum of values across dimensions, and remove these metrics to avoid checking against
+        // metric.values below, which is not sensitive to dimensions.
+        verifyAndRemoveIntegerMetricSum(metric, "lockAttempt.acquire", 3);
+        verifyAndRemoveIntegerMetricSum(metric, "lockAttempt.acquireFailed", 0);
+        verifyAndRemoveIntegerMetricSum(metric, "lockAttempt.acquireTimedOut", 0);
+        verifyAndRemoveIntegerMetricSum(metric, "lockAttempt.locked", 3);
+        verifyAndRemoveIntegerMetricSum(metric, "lockAttempt.release", 3);
+        verifyAndRemoveIntegerMetricSum(metric, "lockAttempt.releaseFailed", 0);
+        verifyAndRemoveIntegerMetricSum(metric, "lockAttempt.reentry", 0);
+        verifyAndRemoveIntegerMetricSum(metric, "lockAttempt.deadlock", 0);
+        verifyAndRemoveIntegerMetricSum(metric, "lockAttempt.nakedRelease", 0);
+        verifyAndRemoveIntegerMetricSum(metric, "lockAttempt.acquireWithoutRelease", 0);
+        verifyAndRemoveIntegerMetricSum(metric, "lockAttempt.foreignRelease", 0);
+        metric.remove("lockAttempt.acquireLatency");
+        metric.remove("lockAttempt.acquireMaxActiveLatency");
+        metric.remove("lockAttempt.acquireHz");
+        metric.remove("lockAttempt.acquireLoad");
+        metric.remove("lockAttempt.lockedLatency");
+        metric.remove("lockAttempt.lockedMaxActiveLatency");
+        metric.remove("lockAttempt.lockedHz");
+        metric.remove("lockAttempt.lockedLoad");
+
+        assertEquals(expectedMetrics, new TreeMap<>(metric.values));
+    }
+
+    private void verifyAndRemoveIntegerMetricSum(TestMetric metric, String key, int expected) {
+        assertEquals(expected, (int) metric.sumNumberValues(key));
+        metric.remove(key);
     }
 
     @Test
@@ -148,7 +177,7 @@ public class MetricsReporterTest {
         NodeFlavors nodeFlavors = FlavorConfigBuilder.createDummies("host", "docker", "docker2");
         Curator curator = new MockCurator();
         NodeRepository nodeRepository = new NodeRepository(nodeFlavors,
-                                                           new EmptyProvisionServiceProvider().getHostResourcesCalculator(),
+                                                           new EmptyProvisionServiceProvider(),
                                                            curator,
                                                            Clock.systemUTC(),
                                                            Zone.defaultZone(),
@@ -156,27 +185,30 @@ public class MetricsReporterTest {
                                                            DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa"),
                                                            new InMemoryFlagSource(),
                                                            true,
-                                                           false,
-                                                           0);
+                                                           0, 1000);
 
         // Allow 4 containers
         Set<String> ipAddressPool = Set.of("::2", "::3", "::4", "::5");
 
         Node dockerHost = Node.create("openStackId1", new IP.Config(Set.of("::1"), ipAddressPool), "dockerHost",
-                                      Optional.empty(), Optional.empty(), nodeFlavors.getFlavorOrThrow("host"), Optional.empty(), NodeType.host);
+                                      nodeFlavors.getFlavorOrThrow("host"), NodeType.host).build();
         nodeRepository.addNodes(List.of(dockerHost), Agent.system);
         nodeRepository.dirtyRecursively("dockerHost", Agent.system, getClass().getSimpleName());
         nodeRepository.setReady("dockerHost", Agent.system, getClass().getSimpleName());
 
         Node container1 = Node.createDockerNode(Set.of("::2"), "container1",
-                                                "dockerHost", new NodeResources(1, 3, 2, 1), NodeType.tenant);
+                                                "dockerHost", new NodeResources(1, 3, 2, 1), NodeType.tenant).build();
         container1 = container1.with(allocation(Optional.of("app1"), container1).get());
-        nodeRepository.addDockerNodes(new LockedNodeList(List.of(container1), nodeRepository.lockUnallocated()));
+        try (Mutex lock = nodeRepository.lockUnallocated()) {
+            nodeRepository.addDockerNodes(new LockedNodeList(List.of(container1), lock));
+        }
 
         Node container2 = Node.createDockerNode(Set.of("::3"), "container2",
-                                                "dockerHost", new NodeResources(2, 4, 4, 1), NodeType.tenant);
+                                                "dockerHost", new NodeResources(2, 4, 4, 1), NodeType.tenant).build();
         container2 = container2.with(allocation(Optional.of("app2"), container2).get());
-        nodeRepository.addDockerNodes(new LockedNodeList(List.of(container2), nodeRepository.lockUnallocated()));
+        try (Mutex lock = nodeRepository.lockUnallocated()) {
+            nodeRepository.addDockerNodes(new LockedNodeList(List.of(container2), lock));
+        }
 
         NestedTransaction transaction = new NestedTransaction();
         nodeRepository.activate(nodeRepository.getNodes(NodeType.host), transaction);

@@ -20,7 +20,6 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationV
 import com.yahoo.vespa.hosted.controller.api.integration.dns.Record;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.RecordData;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.RecordName;
-import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.Endpoint;
 import com.yahoo.vespa.hosted.controller.application.Endpoint.Port;
 import com.yahoo.vespa.hosted.controller.application.EndpointList;
@@ -44,7 +43,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
@@ -89,12 +87,9 @@ public class RoutingController {
         boolean isSystemApplication = SystemApplication.matching(deployment.applicationId()).isPresent();
         // Avoid reading application more than once per call to this
         var application = Suppliers.memoize(() -> controller.applications().requireApplication(TenantAndApplicationId.from(deployment.applicationId())));
-        var hideSharedEndpoints = hideSharedRoutingEndpoint.with(FetchVector.Dimension.APPLICATION_ID, deployment.applicationId().serializedForm()).value();
         for (var policy : routingPolicies.get(deployment).values()) {
             if (!policy.status().isActive()) continue;
             for (var routingMethod :  controller.zoneRegistry().routingMethods(policy.id().zone())) {
-                // Hide shared endpoints if configured for application, and the application can be routed to directly
-                if (hideSharedEndpoints && !routingMethod.isDirect() && !isSystemApplication && canRouteDirectlyTo(deployment, application.get())) continue;
                 if (routingMethod.isDirect() && !isSystemApplication && !canRouteDirectlyTo(deployment, application.get())) continue;
                 endpoints.add(policy.endpointIn(controller.system(), routingMethod, controller.zoneRegistry()));
                 endpoints.add(policy.regionEndpointIn(controller.system(), routingMethod));
@@ -144,9 +139,10 @@ public class RoutingController {
     public Map<ZoneId, List<Endpoint>> zoneEndpointsOf(Collection<DeploymentId> deployments) {
         var endpoints = new TreeMap<ZoneId, List<Endpoint>>(Comparator.comparing(ZoneId::value));
         for (var deployment : deployments) {
-            var zoneEndpoints = endpointsOf(deployment).scope(Endpoint.Scope.zone).asList();
+            EndpointList zoneEndpoints = endpointsOf(deployment).scope(Endpoint.Scope.zone);
+            zoneEndpoints = directEndpoints(zoneEndpoints, deployment.applicationId());
             if  ( ! zoneEndpoints.isEmpty()) {
-                endpoints.put(deployment.zoneId(), zoneEndpoints);
+                endpoints.put(deployment.zoneId(), zoneEndpoints.asList());
             }
         }
         return Collections.unmodifiableMap(endpoints);
@@ -280,14 +276,7 @@ public class RoutingController {
         if (athenzService.isEmpty()) return false;
 
         // Check minimum required compile-version
-        var instance = application.require(deploymentId.applicationId().instance());
-        var compileVersion = Optional.ofNullable(instance.deployments().get(deploymentId.zoneId()))
-                                     .map(Deployment::applicationVersion)
-                                     // Use compile version of the deployed version
-                                     .flatMap(ApplicationVersion::compileVersion)
-                                     // ... or compile version of the last submitted application package. This is the
-                                     //     case for initial deployments.
-                                     .or(() -> application.latestVersion().flatMap(ApplicationVersion::compileVersion));
+        var compileVersion = application.latestVersion().flatMap(ApplicationVersion::compileVersion);
         if (compileVersion.isEmpty()) return false;
         if (compileVersion.get().isBefore(DIRECT_ROUTING_MIN_VERSION)) return false;
         return true;
@@ -298,7 +287,9 @@ public class RoutingController {
         var endpoints = new ArrayList<Endpoint>();
         var directMethods = 0;
         var zones = deployments.stream().map(DeploymentId::zoneId).collect(Collectors.toList());
-        for (var method : routingMethodsOfAll(deployments, application)) {
+        var availableRoutingMethods = routingMethodsOfAll(deployments, application);
+
+        for (var method : availableRoutingMethods) {
             if (method.isDirect() && ++directMethods > 1) {
                 throw new IllegalArgumentException("Invalid routing methods for " + routingId + ": Exceeded maximum " +
                                                    "direct methods");
@@ -352,5 +343,17 @@ public class RoutingController {
         }
 
     }
+
+    /** Returns direct routing endpoints if any exist and feature flag is set for given application */
+    // TODO: Remove this when feature flag is removed, and in-line .direct() filter where relevant
+    public EndpointList directEndpoints(EndpointList endpoints, ApplicationId application) {
+        boolean hideSharedEndpoint = hideSharedRoutingEndpoint.with(FetchVector.Dimension.APPLICATION_ID, application.serializedForm()).value();
+        EndpointList directEndpoints = endpoints.direct();
+        if (hideSharedEndpoint && !directEndpoints.isEmpty()) {
+            return directEndpoints;
+        }
+        return endpoints;
+    }
+
 
 }

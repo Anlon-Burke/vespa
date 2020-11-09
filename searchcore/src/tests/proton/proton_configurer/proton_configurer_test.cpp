@@ -17,8 +17,10 @@
 #include <vespa/searchcore/proton/server/proton_configurer.h>
 #include <vespa/searchcore/proton/server/i_proton_configurer_owner.h>
 #include <vespa/searchcore/proton/server/i_proton_disk_layout.h>
+#include <vespa/searchcore/proton/server/threading_service_config.h>
 #include <vespa/searchsummary/config/config-juniperrc.h>
 #include <vespa/searchcore/config/config-ranking-constants.h>
+#include <vespa/searchcore/config/config-onnx-models.h>
 #include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/searchcommon/common/schemaconfigurer.h>
 #include <vespa/vespalib/util/threadstackexecutor.h>
@@ -44,12 +46,14 @@ using std::map;
 using search::index::Schema;
 using search::index::SchemaBuilder;
 using proton::matching::RankingConstants;
+using proton::matching::OnnxModels;
 
 struct DBConfigFixture {
     using UP = std::unique_ptr<DBConfigFixture>;
     AttributesConfigBuilder _attributesBuilder;
     RankProfilesConfigBuilder _rankProfilesBuilder;
     RankingConstantsConfigBuilder _rankingConstantsBuilder;
+    OnnxModelsConfigBuilder _onnxModelsBuilder;
     IndexschemaConfigBuilder _indexschemaBuilder;
     SummaryConfigBuilder _summaryBuilder;
     SummarymapConfigBuilder _summarymapBuilder;
@@ -70,6 +74,11 @@ struct DBConfigFixture {
         return std::make_shared<RankingConstants>();
     }
 
+    OnnxModels::SP buildOnnxModels()
+    {
+        return std::make_shared<OnnxModels>();
+    }
+
     DocumentDBConfig::SP getConfig(int64_t generation,
                                    std::shared_ptr<DocumenttypesConfig> documentTypes,
                                    std::shared_ptr<const DocumentTypeRepo> repo,
@@ -80,6 +89,7 @@ struct DBConfigFixture {
             (generation,
              std::make_shared<RankProfilesConfig>(_rankProfilesBuilder),
              buildRankingConstants(),
+             buildOnnxModels(),
              std::make_shared<IndexschemaConfig>(_indexschemaBuilder),
              std::make_shared<AttributesConfig>(_attributesBuilder),
              std::make_shared<SummaryConfig>(_summaryBuilder),
@@ -92,6 +102,7 @@ struct DBConfigFixture {
              buildSchema(),
              std::make_shared<DocumentDBMaintenanceConfig>(),
              search::LogDocumentStore::Config(),
+             std::make_shared<const ThreadingServiceConfig>(ThreadingServiceConfig::make(1)),
              configId,
              docTypeName);
     }

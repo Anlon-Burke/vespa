@@ -2,7 +2,6 @@
 
 #include "bucketmanager.h"
 #include "minimumusedbitstracker.h"
-#include "lockablemap.hpp"
 #include <iomanip>
 #include <vespa/storage/common/content_bucket_space_repo.h>
 #include <vespa/storage/common/nodestateupdater.h>
@@ -22,6 +21,7 @@
 #include <vespa/config/config.h>
 #include <vespa/config/helper/configgetter.hpp>
 #include <chrono>
+#include <thread>
 
 #include <vespa/log/bufferedlogger.h>
 LOG_SETUP(".storage.bucketdb.manager");
@@ -50,7 +50,6 @@ BucketManager::BucketManager(const config::ConfigUri & configUri,
       _metrics(std::make_shared<BucketManagerMetrics>(_component.getBucketSpaceRepo())),
       _simulated_processing_delay(0)
 {
-    _metrics->setDisks(_component.getDiskCount());
     _component.registerStatusPage(*this);
     _component.registerMetric(*_metrics);
     _component.registerMetricUpdateHook(*this, framework::SecondTime(300));
@@ -82,7 +81,7 @@ void BucketManager::onClose()
 {
     // Stop internal thread such that we don't send any more messages down.
     if (_thread) {
-        _thread->interruptAndJoin(_workerLock, _workerCond);
+        _thread->interruptAndJoin(_workerCond);
         _thread.reset();
     }
 }
@@ -184,16 +183,15 @@ namespace {
                     document::BucketId::keyToBucketId(bucketId));
 
             if (data.valid()) {
-                assert(data.disk < diskCount);
-                ++disk[data.disk].buckets;
+                ++disk[0].buckets;
                 if (data.getBucketInfo().isActive()) {
-                    ++disk[data.disk].active;
+                    ++disk[0].active;
                 }
                 if (data.getBucketInfo().isReady()) {
-                    ++disk[data.disk].ready;
+                    ++disk[0].ready;
                 }
-                disk[data.disk].docs += data.getBucketInfo().getDocumentCount();
-                disk[data.disk].bytes += data.getBucketInfo().getTotalDocumentSize();
+                disk[0].docs += data.getBucketInfo().getDocumentCount();
+                disk[0].bytes += data.getBucketInfo().getTotalDocumentSize();
 
                 if (bucket.getUsedBits() < lowestUsedBit) {
                     lowestUsedBit = bucket.getUsedBits();
@@ -232,8 +230,7 @@ BucketManager::updateMetrics(bool updateDocCount)
         updateDocCount ? "" : ", minusedbits only",
         _doneInitialized ? "" : ", server is not done initializing");
 
-    uint16_t diskCount = _component.getDiskCount();
-    assert(diskCount >= 1);
+    const uint16_t diskCount = 1;
     if (!updateDocCount || _doneInitialized) {
         MetricsUpdater total(diskCount);
         for (auto& space : _component.getBucketSpaceRepo()) {
@@ -254,20 +251,29 @@ BucketManager::updateMetrics(bool updateDocCount)
             }
         }
         if (updateDocCount) {
-            for (uint16_t i = 0; i< diskCount; i++) {
-                _metrics->disks[i]->buckets.addValue(total.disk[i].buckets);
-                _metrics->disks[i]->docs.addValue(total.disk[i].docs);
-                _metrics->disks[i]->bytes.addValue(total.disk[i].bytes);
-                _metrics->disks[i]->active.addValue(total.disk[i].active);
-                _metrics->disks[i]->ready.addValue(total.disk[i].ready);
-            }
+            auto & dest = *_metrics->disk;
+            const auto & src = total.disk[0];
+            dest.buckets.addValue(src.buckets);
+            dest.docs.addValue(src.docs);
+            dest.bytes.addValue(src.bytes);
+            dest.active.addValue(src.active);
+            dest.ready.addValue(src.ready);
         }
+    }
+    update_bucket_db_memory_usage_metrics();
+}
+
+void BucketManager::update_bucket_db_memory_usage_metrics() {
+    for (auto& space : _component.getBucketSpaceRepo()) {
+        auto bm = _metrics->bucket_spaces.find(space.first);
+        bm->second->bucket_db_metrics.memory_usage.update(
+                space.second->bucketDatabase().detailed_memory_usage());
     }
 }
 
 void BucketManager::updateMinUsedBits()
 {
-    MetricsUpdater m(_component.getDiskCount());
+    MetricsUpdater m(1);
     _component.getBucketSpaceRepo().for_each_bucket(std::ref(m));
     // When going through to get sizes, we also record min bits
     MinimumUsedBitsTracker& bitTracker(_component.getMinUsedBitsTracker());
@@ -348,7 +354,6 @@ namespace {
             _xos << XmlTag("bucket")
                  << XmlAttribute("id", ost.str());
             info.getBucketInfo().printXml(_xos);
-            _xos << XmlAttribute("disk", info.disk);
             _xos << XmlEndTag();
         };
     };
@@ -405,9 +410,7 @@ void BucketManager::onOpen()
 
 void BucketManager::startWorkerThread()
 {
-    framework::MilliSecTime maxProcessingTime(30 * 1000);
-    framework::MilliSecTime waitTime(1000);
-    _thread = _component.startThread(*this, maxProcessingTime, waitTime);
+    _thread = _component.startThread(*this, 30s, 1s);
 }
 
 // --------- Commands --------- //

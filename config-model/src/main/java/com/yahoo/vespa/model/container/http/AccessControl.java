@@ -26,13 +26,15 @@ import java.util.Set;
  */
 public class AccessControl {
 
+    public enum ClientAuthentication { want, need }
+
     public static final ComponentId ACCESS_CONTROL_CHAIN_ID = ComponentId.fromString("access-control-chain");
     public static final ComponentId ACCESS_CONTROL_EXCLUDED_CHAIN_ID = ComponentId.fromString("access-control-excluded-chain");
 
     private static final int HOSTED_CONTAINER_PORT = 4443;
 
     // Handlers that are excluded from access control
-    private static final List<String> EXCLUDED_HANDLERS = List.of(
+    public static final List<String> EXCLUDED_HANDLERS = List.of(
             FileStatusHandlerComponent.CLASS,
             ContainerCluster.APPLICATION_STATUS_HANDLER_CLASS,
             ContainerCluster.BINDINGS_OVERVIEW_HANDLER_CLASS,
@@ -46,6 +48,7 @@ public class AccessControl {
         private final String domain;
         private boolean readEnabled = false;
         private boolean writeEnabled = true;
+        private ClientAuthentication clientAuthentication = ClientAuthentication.need;
         private final Set<BindingPattern> excludeBindings = new LinkedHashSet<>();
         private Collection<Handler<?>> handlers = Collections.emptyList();
 
@@ -73,25 +76,33 @@ public class AccessControl {
             return this;
         }
 
+        public Builder clientAuthentication(ClientAuthentication clientAuthentication) {
+            this.clientAuthentication = clientAuthentication;
+            return this;
+        }
+
         public AccessControl build() {
-            return new AccessControl(domain, writeEnabled, readEnabled, excludeBindings, handlers);
+            return new AccessControl(domain, writeEnabled, readEnabled, clientAuthentication, excludeBindings, handlers);
         }
     }
 
     public final String domain;
     public final boolean readEnabled;
     public final boolean writeEnabled;
+    public final ClientAuthentication clientAuthentication;
     private final Set<BindingPattern> excludedBindings;
     private final Collection<Handler<?>> handlers;
 
     private AccessControl(String domain,
                           boolean writeEnabled,
                           boolean readEnabled,
+                          ClientAuthentication clientAuthentication,
                           Set<BindingPattern> excludedBindings,
                           Collection<Handler<?>> handlers) {
         this.domain = domain;
         this.readEnabled = readEnabled;
         this.writeEnabled = writeEnabled;
+        this.clientAuthentication = clientAuthentication;
         this.excludedBindings = Collections.unmodifiableSet(excludedBindings);
         this.handlers = handlers;
     }
@@ -102,6 +113,12 @@ public class AccessControl {
         addAccessControlExcludedChain(http);
         removeDuplicateBindingsFromAccessControlChain(http);
     }
+
+    /** returns the excluded bindings as specified in 'access-control' in services.xml **/
+    public Set<BindingPattern> excludedBindings() { return excludedBindings; }
+
+    /** all handlers (that are known by the access control components) **/
+    public Collection<Handler<?>> handlers() { return handlers; }
 
     public static boolean hasHandlerThatNeedsProtection(ApplicationContainerCluster cluster) {
         return cluster.getHandlers().stream()
@@ -129,12 +146,16 @@ public class AccessControl {
 
     // Remove bindings from access control chain that have binding pattern as a different filter chain
     private void removeDuplicateBindingsFromAccessControlChain(Http http) {
+        removeDuplicateBindingsFromChain(http, ACCESS_CONTROL_CHAIN_ID);
+        removeDuplicateBindingsFromChain(http, ACCESS_CONTROL_EXCLUDED_CHAIN_ID);
+    }
+
+    private void removeDuplicateBindingsFromChain(Http http, ComponentId chainId) {
         Set<FilterBinding> duplicateBindings = new HashSet<>();
         for (FilterBinding binding : http.getBindings()) {
-            if (binding.chainId().toId().equals(ACCESS_CONTROL_CHAIN_ID)) {
+            if (binding.chainId().toId().equals(chainId)) {
                 for (FilterBinding otherBinding : http.getBindings()) {
-                    if (!binding.chainId().equals(otherBinding.chainId())
-                            && binding.binding().equals(otherBinding.binding())) {
+                    if (effectivelyDuplicateOf(binding, otherBinding)) {
                         duplicateBindings.add(binding);
                     }
                 }
@@ -143,8 +164,17 @@ public class AccessControl {
         duplicateBindings.forEach(http.getBindings()::remove);
     }
 
+    private static boolean effectivelyDuplicateOf(FilterBinding accessControlBinding, FilterBinding other) {
+        if (accessControlBinding.chainId().equals(other.chainId())) return false; // Same filter chain
+        if (other.type() == FilterBinding.Type.RESPONSE) return false;
+        return accessControlBinding.binding().equals(other.binding())
+                || (accessControlBinding.binding().path().equals(other.binding().path()) && other.binding().matchesAnyPort());
+    }
+
+
     private static FilterBinding createAccessControlBinding(String path) {
         return FilterBinding.create(
+                FilterBinding.Type.REQUEST,
                 new ComponentSpecification(ACCESS_CONTROL_CHAIN_ID.stringValue()),
                 SystemBindingPattern.fromHttpPortAndPath(Integer.toString(HOSTED_CONTAINER_PORT), path));
     }
@@ -153,6 +183,7 @@ public class AccessControl {
         BindingPattern rewrittenBinding = SystemBindingPattern.fromHttpPortAndPath(
                 Integer.toString(HOSTED_CONTAINER_PORT), excludedBinding.path()); // only keep path from excluded binding
         return FilterBinding.create(
+                FilterBinding.Type.REQUEST,
                 new ComponentSpecification(ACCESS_CONTROL_EXCLUDED_CHAIN_ID.stringValue()),
                 rewrittenBinding);
     }

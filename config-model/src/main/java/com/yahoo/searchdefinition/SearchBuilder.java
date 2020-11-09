@@ -165,16 +165,15 @@ public class SearchBuilder {
     }
 
     private String importString(String str, String searchDefDir, DeployLogger deployLogger) throws ParseException {
-        Search search;
         SimpleCharStream stream = new SimpleCharStream(str);
         try {
-            search = new SDParser(stream, deployLogger, app, rankProfileRegistry, documentsOnly).search(docTypeMgr, searchDefDir);
+            return importRawSearch(new SDParser(stream, deployLogger, app, rankProfileRegistry, documentsOnly)
+                                           .search(docTypeMgr, searchDefDir));
         } catch (TokenMgrException e) {
             throw new ParseException("Unknown symbol: " + e.getMessage());
         } catch (ParseException pe) {
             throw new ParseException(stream.formatException(Exceptions.toMessageString(pe)));
         }
-        return importRawSearch(search);
     }
 
     /**
@@ -408,7 +407,15 @@ public class SearchBuilder {
                                                     RankProfileRegistry rankProfileRegistry,
                                                     QueryProfileRegistry queryProfileRegistry,
                                                     DeployLogger logger) throws IOException, ParseException {
-        SearchBuilder builder = new SearchBuilder(MockApplicationPackage.fromSearchDefinitionDirectory(dir),
+        return createFromDirectory(dir, rankProfileRegistry, queryProfileRegistry, logger, MockApplicationPackage.fromSearchDefinitionDirectory(dir));
+    }
+
+    public static SearchBuilder createFromDirectory(String dir,
+                                                    RankProfileRegistry rankProfileRegistry,
+                                                    QueryProfileRegistry queryProfileRegistry,
+                                                    DeployLogger logger,
+                                                    ApplicationPackage applicationPackage) throws IOException, ParseException {
+        SearchBuilder builder = new SearchBuilder(applicationPackage,
                                                   rankProfileRegistry,
                                                   queryProfileRegistry);
         for (Iterator<Path> i = Files.list(new File(dir).toPath()).filter(p -> p.getFileName().toString().endsWith(".sd")).iterator(); i.hasNext(); ) {

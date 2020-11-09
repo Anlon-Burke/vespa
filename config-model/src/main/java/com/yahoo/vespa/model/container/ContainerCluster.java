@@ -11,6 +11,7 @@ import com.yahoo.config.docproc.SchemamappingConfig;
 import com.yahoo.config.model.ApplicationConfigProducerRoot;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.AbstractConfigProducer;
+import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.container.ComponentsConfig;
 import com.yahoo.container.QrSearchersConfig;
@@ -18,7 +19,6 @@ import com.yahoo.container.bundle.BundleInstantiationSpecification;
 import com.yahoo.container.core.ApplicationMetadataConfig;
 import com.yahoo.container.core.document.ContainerDocumentConfig;
 import com.yahoo.container.di.config.PlatformBundlesConfig;
-import com.yahoo.container.handler.ThreadpoolConfig;
 import com.yahoo.container.jdisc.JdiscBindingsConfig;
 import com.yahoo.container.jdisc.config.HealthMonitorConfig;
 import com.yahoo.container.jdisc.state.StateHandler;
@@ -69,6 +69,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.Set;
 
 /**
@@ -99,8 +100,7 @@ public abstract class ContainerCluster<CONTAINER extends Container>
         DocprocConfig.Producer,
         ClusterInfoConfig.Producer,
         RoutingProviderConfig.Producer,
-        ConfigserverConfig.Producer,
-        ThreadpoolConfig.Producer
+        ConfigserverConfig.Producer
 {
 
     /**
@@ -148,7 +148,7 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     private final ComponentGroup<Component<?, ?>> componentGroup;
     private final boolean isHostedVespa;
 
-    private Map<String, String> concreteDocumentTypes = new LinkedHashMap<>();
+    private final Map<String, String> concreteDocumentTypes = new LinkedHashMap<>();
 
     private ApplicationMetaData applicationMetaData = null;
 
@@ -159,23 +159,19 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     private String jvmGCOptions = null;
     private String environmentVars = null;
 
-    private final double threadPoolSizeFactor;
-    private final double queueSizeFactor;
+    private boolean deferChangesUntilRestart = false;
 
-
-    public ContainerCluster(AbstractConfigProducer<?> parent, String subId, String name, DeployState deployState) {
-        super(parent, subId);
-        this.name = name;
+    public ContainerCluster(AbstractConfigProducer<?> parent, String configSubId, String clusterId, DeployState deployState) {
+        super(parent, configSubId);
+        this.name = clusterId;
         this.isHostedVespa = stateIsHosted(deployState);
         this.zone = (deployState != null) ? deployState.zone() : Zone.defaultZone();
-        this.threadPoolSizeFactor = deployState.getProperties().threadPoolSizeFactor();
-        this.queueSizeFactor = deployState.getProperties().queueSizeFactor();
 
         componentGroup = new ComponentGroup<>(this, "component");
 
         addComponent(new StatisticsComponent());
         addSimpleComponent(AccessLog.class);
-        addComponent(new ThreadPoolExecutorComponent.Builder("default-pool").build());
+        addComponent(new DefaultThreadpoolProvider(this, deployState));
         addSimpleComponent(com.yahoo.concurrent.classlock.ClassLocking.class);
         addSimpleComponent(SecurityFilterInvoker.class);
         addSimpleComponent("com.yahoo.container.jdisc.metric.MetricConsumerProviderProvider");
@@ -191,13 +187,7 @@ public abstract class ContainerCluster<CONTAINER extends Container>
         addJaxProviders();
     }
 
-    public double getThreadPoolSizeFactor() {
-        return threadPoolSizeFactor;
-    }
-
-    public double getQueueSizeFactor() {
-        return queueSizeFactor;
-    }
+    public ClusterSpec.Id id() { return ClusterSpec.Id.from(getName()); }
 
     public void setZone(Zone zone) {
         this.zone = zone;
@@ -301,6 +291,7 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     }
 
     public void addContainer(CONTAINER container) {
+        container.setOwner(this);
         container.setClusterName(name);
         container.setProp("clustername", name)
                  .setProp("index", this.containers.size());
@@ -629,5 +620,23 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     }
 
     protected abstract boolean messageBusEnabled();
+
+    /**
+     * Mark whether the config emitted by this cluster currently should be applied by clients already running with
+     * a previous generation of it only by restarting the consuming processes.
+     */
+    public void setDeferChangesUntilRestart(boolean deferChangesUntilRestart) {
+        this.deferChangesUntilRestart = deferChangesUntilRestart;
+    }
+
+    public boolean getDeferChangesUntilRestart() { return deferChangesUntilRestart; }
+
+    /** Effective vcpu for the containers in cluster. Use this value as scale factor for performance/resource tuning. **/
+    public OptionalDouble vcpu() {
+        return getContainers().stream()
+                .filter(c -> c.getHostResource() != null && c.getHostResource().realResources() != null)
+                .mapToDouble(c -> c.getHostResource().realResources().vcpu())
+                .max(); // Use highest vcpu as scale factor
+    }
 
 }

@@ -24,6 +24,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.stream.Collectors;
@@ -628,7 +629,7 @@ public class DeploymentTriggerTest {
                 .environment(Environment.prod)
                 .region("us-west-1")
                 .build();
-        Version version1 = tester.controller().versionStatus().systemVersion().get().versionNumber();
+        Version version1 = tester.controller().readSystemVersion();
         var app1 = tester.newDeploymentContext();
 
         // First deployment: An application change
@@ -1170,6 +1171,88 @@ public class DeploymentTriggerTest {
         conservative.runJob(productionEuWest1)
                     .runJob(testEuWest1);
 
+    }
+
+    @Test
+    public void testEagerTests() {
+        var app = tester.newDeploymentContext().submit().deploy();
+
+        // Start upgrade, then receive new submission.
+        Version version1 = new Version("7.8.9");
+        ApplicationVersion build1 = app.lastSubmission().get();
+        tester.controllerTester().upgradeSystem(version1);
+        tester.upgrader().maintain();
+        app.runJob(stagingTest);
+        app.submit();
+        ApplicationVersion build2 = app.lastSubmission().get();
+        assertNotEquals(build1, build2);
+
+        // App now free to start system tests eagerly, for new submission. These should run assuming upgrade succeeds.
+        tester.triggerJobs();
+        app.assertRunning(stagingTest);
+        assertEquals(version1,
+                     app.instanceJobs().get(stagingTest).lastCompleted().get().versions().targetPlatform());
+        assertEquals(build1,
+                     app.instanceJobs().get(stagingTest).lastCompleted().get().versions().targetApplication());
+
+        assertEquals(version1,
+                     app.instanceJobs().get(stagingTest).lastTriggered().get().versions().sourcePlatform().get());
+        assertEquals(build1,
+                     app.instanceJobs().get(stagingTest).lastTriggered().get().versions().sourceApplication().get());
+        assertEquals(version1,
+                     app.instanceJobs().get(stagingTest).lastTriggered().get().versions().targetPlatform());
+        assertEquals(build2,
+                     app.instanceJobs().get(stagingTest).lastTriggered().get().versions().targetApplication());
+
+        // App completes upgrade, and outstanding change is triggered. This should let relevant, running jobs finish.
+        app.runJob(systemTest)
+           .runJob(productionUsCentral1)
+           .runJob(productionUsEast3)
+           .runJob(productionUsWest1);
+        tester.outstandingChangeDeployer().run();
+
+        assertEquals(RunStatus.running, tester.jobs().last(app.instanceId(), stagingTest).get().status());
+        app.runJob(stagingTest);
+        tester.triggerJobs();
+        app.assertNotRunning(stagingTest);
+    }
+
+    @Test
+    public void testTriggeringOfIdleTestJobsWhenFirstDeploymentIsOnNewerVersionThanChange() {
+        ApplicationPackage applicationPackage = new ApplicationPackageBuilder().systemTest()
+                                                                               .stagingTest()
+                                                                               .region("us-east-3")
+                                                                               .region("us-west-1")
+                                                                               .build();
+        var app = tester.newDeploymentContext().submit(applicationPackage).deploy();
+        var appToAvoidVersionGC = tester.newDeploymentContext("g", "c", "default").submit().deploy();
+
+        Version version2 = new Version("7.8.9");
+        Version version3 = new Version("8.9.10");
+        tester.controllerTester().upgradeSystem(version2);
+        tester.deploymentTrigger().triggerChange(appToAvoidVersionGC.instanceId(), Change.of(version2));
+        appToAvoidVersionGC.deployPlatform(version2);
+
+        // app upgrades first zone to version3, and then the other two to version2.
+        tester.controllerTester().upgradeSystem(version3);
+        tester.deploymentTrigger().triggerChange(app.instanceId(), Change.of(version3));
+        app.runJob(systemTest).runJob(stagingTest);
+        tester.triggerJobs();
+        tester.upgrader().overrideConfidence(version3, VespaVersion.Confidence.broken);
+        tester.controllerTester().computeVersionStatus();
+        tester.upgrader().run();
+        assertEquals(Optional.of(version2), app.instance().change().platform());
+
+        app.runJob(systemTest)
+           .runJob(productionUsEast3)
+           .runJob(stagingTest)
+           .runJob(productionUsWest1);
+
+        assertEquals(version3, app.instanceJobs().get(productionUsEast3).lastSuccess().get().versions().targetPlatform());
+        assertEquals(version2, app.instanceJobs().get(productionUsWest1).lastSuccess().get().versions().targetPlatform());
+        assertEquals(Map.of(), app.deploymentStatus().jobsToRun());
+        assertEquals(Change.empty(), app.instance().change());
+        assertEquals(List.of(), tester.jobs().active());
     }
 
 }

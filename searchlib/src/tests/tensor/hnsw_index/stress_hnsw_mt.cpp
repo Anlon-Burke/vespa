@@ -1,16 +1,14 @@
 // Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <fcntl.h>
-#include <stdio.h>
+#include <cstdio>
 #include <unistd.h>
 #include <chrono>
 #include <cstdlib>
 #include <future>
 #include <vector>
 
-#include <vespa/eval/tensor/dense/typed_cells.h>
+#include <vespa/eval/eval/typed_cells.h>
 #include <vespa/searchlib/common/bitvector.h>
 #include <vespa/searchlib/tensor/distance_functions.h>
 #include <vespa/searchlib/tensor/doc_vector_access.h>
@@ -24,6 +22,7 @@
 #include <vespa/vespalib/util/blockingthreadstackexecutor.h>
 #include <vespa/vespalib/util/generationhandler.h>
 #include <vespa/vespalib/util/lambdatask.h>
+#include <vespa/vespalib/data/simple_buffer.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("stress_hnsw_mt");
@@ -110,10 +109,10 @@ public:
         memcpy(&_vectors[docid], vec.cbegin(), sizeof(MallocPointVector));
         return *this;
     }
-    vespalib::tensor::TypedCells get_vector(uint32_t docid) const override {
+    vespalib::eval::TypedCells get_vector(uint32_t docid) const override {
         assert(docid < NUM_POSSIBLE_DOCS);
         ConstVectorRef ref(_vectors[docid]);
-        return vespalib::tensor::TypedCells(ref);
+        return vespalib::eval::TypedCells(ref);
     }
 };
 
@@ -176,7 +175,7 @@ public:
             return result_promise.get_future();
         }
         void run() override {
-            auto v = vespalib::tensor::TypedCells(vec);
+            auto v = vespalib::eval::TypedCells(vec);
             auto up = parent.index->prepare_add_document(docid, v, read_guard);
             result_promise.set_value(std::move(up));
         }

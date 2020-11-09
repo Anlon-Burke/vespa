@@ -4,15 +4,16 @@ package com.yahoo.vespa.hosted.provision;
 import com.yahoo.collections.AbstractFilteringList;
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -51,13 +52,8 @@ public class NodeList extends AbstractFilteringList<Node, NodeList> {
     /** Returns the subset of nodes which satisfy the given resources */
     public NodeList satisfies(NodeResources resources) { return matching(node -> node.resources().satisfies(resources)); }
 
-    /** Returns the subset of nodes of the given flavor */
-    public NodeList flavor(String flavor) {
-        return matching(node -> node.flavor().name().equals(flavor));
-    }
-
-    /** Returns the subset of nodes not in the given collection */
-    public NodeList except(Collection<Node> nodes) {
+    /** Returns the subset of nodes not in the given set */
+    public NodeList except(Set<Node> nodes) {
         return matching(node -> ! nodes.contains(node));
     }
 
@@ -96,6 +92,11 @@ public class NodeList extends AbstractFilteringList<Node, NodeList> {
                                                          .orElse(Version.emptyVersion)));
     }
 
+    /** Returns the subset of nodes that are currently on a lower version than the given version */
+    public NodeList osVersionIsBefore(Version version) {
+        return matching(node -> node.status().osVersion().isBefore(version));
+    }
+
     /** Returns the subset of nodes that are currently on the given OS version */
     public NodeList onOsVersion(Version version) {
         return matching(node -> node.status().osVersion().matches(version));
@@ -113,23 +114,26 @@ public class NodeList extends AbstractFilteringList<Node, NodeList> {
 
     /** Returns the subset of nodes matching the given node type(s) */
     public NodeList nodeType(NodeType first, NodeType... rest) {
+        if (rest.length == 0) {
+            return matching(node -> node.type() == first);
+        }
         EnumSet<NodeType> nodeTypes = EnumSet.of(first, rest);
         return matching(node -> nodeTypes.contains(node.type()));
     }
 
     /** Returns the subset of nodes of the host type */
     public NodeList hosts() {
-        return matching(node -> node.type() == NodeType.host);
+        return nodeType(NodeType.host);
     }
 
     /** Returns the subset of nodes that are parents */
     public NodeList parents() {
-        return matching(n -> n.parentHostname().isEmpty());
+        return matching(node -> node.parentHostname().isEmpty());
     }
 
     /** Returns the child nodes of the given parent node */
     public NodeList childrenOf(String hostname) {
-        return matching(n -> n.parentHostname().map(hostname::equals).orElse(false));
+        return matching(node -> node.hasParent(hostname));
     }
 
     public NodeList childrenOf(Node parent) {
@@ -138,21 +142,24 @@ public class NodeList extends AbstractFilteringList<Node, NodeList> {
 
     /** Returns the subset of nodes that are in any of the given state(s) */
     public NodeList state(Node.State first, Node.State... rest) {
+        if (rest.length == 0) {
+            return matching(node -> node.state() == first);
+        }
         return state(EnumSet.of(first, rest));
     }
 
     /** Returns the subset of nodes that are in any of the given state(s) */
-    public NodeList state(Collection<Node.State> nodeStates) {
+    public NodeList state(Set<Node.State> nodeStates) {
         return matching(node -> nodeStates.contains(node.state()));
     }
 
     /** Returns the subset of nodes which wantToRetire set true */
     public NodeList wantToRetire() {
-        return matching((node -> node.status().wantToRetire()));
+        return matching(node -> node.status().wantToRetire());
     }
 
     /** Returns the parent nodes of the given child nodes */
-    public NodeList parentsOf(Collection<Node> children) {
+    public NodeList parentsOf(NodeList children) {
         return children.stream()
                        .map(this::parentOf)
                        .filter(Optional::isPresent)
@@ -160,9 +167,10 @@ public class NodeList extends AbstractFilteringList<Node, NodeList> {
                        .collect(collectingAndThen(Collectors.toList(), NodeList::copyOf));
     }
 
+    /** Returns the nodes contained in the group identified by given index */
     public NodeList group(int index) {
-        return matching(n -> ( n.allocation().isPresent() &&
-                               n.allocation().get().membership().cluster().group().equals(Optional.of(ClusterSpec.Group.from(index)))));
+        return matching(n -> n.allocation().isPresent() &&
+                             n.allocation().get().membership().cluster().group().equals(Optional.of(ClusterSpec.Group.from(index))));
     }
 
     /** Returns the parent node of the given child node */
@@ -170,6 +178,15 @@ public class NodeList extends AbstractFilteringList<Node, NodeList> {
         return child.parentHostname()
                     .flatMap(parentHostname -> stream().filter(node -> node.hostname().equals(parentHostname))
                                                        .findFirst());
+    }
+
+    public ClusterResources toResources() {
+        if (isEmpty()) return new ClusterResources(0, 0, NodeResources.unspecified());
+        return new ClusterResources(size(),
+                                    (int)stream().map(node -> node.allocation().get().membership().cluster().group().get())
+                                                 .distinct()
+                                                 .count(),
+                                    first().get().resources());
     }
 
     /** Returns the nodes of this as a stream */

@@ -29,7 +29,7 @@ public class AclProvisioningTest {
 
     private final NodeResources nodeResources = new NodeResources(2, 8, 50, 1);
 
-    private ProvisioningTester tester = new ProvisioningTester.Builder().build();
+    private final ProvisioningTester tester = new ProvisioningTester.Builder().build();
 
     @Test
     public void trusted_nodes_for_allocated_node() {
@@ -38,14 +38,14 @@ public class AclProvisioningTest {
         // Populate repo
         tester.makeReadyNodes(10, new NodeResources(1, 4, 10, 1));
         List<Node> dockerHost = tester.makeReadyNodes(1, new NodeResources(1, 4, 10, 1), NodeType.host);
-        ApplicationId zoneApplication = tester.makeApplicationId();
+        ApplicationId zoneApplication = ProvisioningTester.makeApplicationId();
         tester.deploy(zoneApplication, Capacity.fromRequiredNodeType(NodeType.host));
         tester.makeReadyVirtualDockerNodes(1,new NodeResources(1, 4, 10, 1),
                                            dockerHost.get(0).hostname());
         List<Node> proxyNodes = tester.makeReadyNodes(3, new NodeResources(1, 4, 10, 1), NodeType.proxy);
 
         // Allocate 2 nodes
-        ApplicationId application = tester.makeApplicationId();
+        ApplicationId application = ProvisioningTester.makeApplicationId();
         List<Node> activeNodes = tester.deploy(application, Capacity.from(new ClusterResources(2, 1, new NodeResources(1, 4, 10, 1)), false, true));
         assertEquals(2, activeNodes.size());
 
@@ -110,7 +110,7 @@ public class AclProvisioningTest {
         tester.makeReadyNodes(3, "default", NodeType.proxy);
 
         // Deploy zone application
-        ApplicationId zoneApplication = tester.makeApplicationId();
+        ApplicationId zoneApplication = ProvisioningTester.makeApplicationId();
         tester.deploy(zoneApplication, Capacity.fromRequiredNodeType(NodeType.proxy));
 
         // Get trusted nodes for first proxy node
@@ -152,7 +152,7 @@ public class AclProvisioningTest {
         tester.makeReadyNodes(3, "default", NodeType.controller);
 
         // Allocate
-        ApplicationId controllerApplication = tester.makeApplicationId();
+        ApplicationId controllerApplication = ProvisioningTester.makeApplicationId();
         List<Node> controllers = tester.deploy(controllerApplication, Capacity.fromRequiredNodeType(NodeType.controller));
 
         // Controllers and hosts all trust each other
@@ -165,14 +165,14 @@ public class AclProvisioningTest {
     public void trusted_nodes_for_application_with_load_balancer() {
         // Provision hosts and containers
         var hosts = tester.makeReadyNodes(2, "default", NodeType.host);
-        tester.deployZoneApp();
+        tester.activateTenantHosts();
         for (var host : hosts) {
             tester.makeReadyVirtualDockerNodes(2, new NodeResources(2, 8, 50, 1),
                                                host.hostname());
         }
 
         // Deploy application
-        var application = tester.makeApplicationId();
+        var application = ProvisioningTester.makeApplicationId();
         List<Node> activeNodes = deploy(application, 2);
         assertEquals(2, activeNodes.size());
 
@@ -207,7 +207,7 @@ public class AclProvisioningTest {
     }
 
     private List<Node> deploy(int nodeCount) {
-        return deploy(tester.makeApplicationId(), nodeCount);
+        return deploy(ProvisioningTester.makeApplicationId(), nodeCount);
     }
 
     private List<Node> deploy(ApplicationId application, int nodeCount) {

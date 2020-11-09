@@ -3,6 +3,7 @@
 #pragma once
 
 #include <vespa/eval/eval/tensor_function.h>
+#include <vespa/eval/eval/operation.h>
 
 namespace vespalib::tensor {
 
@@ -15,7 +16,7 @@ class DenseSimpleJoinFunction : public eval::tensor_function::Join
 public:
     enum class Primary : uint8_t { LHS, RHS };
     enum class Overlap : uint8_t { INNER, OUTER, FULL };
-    using join_fun_t = ::vespalib::eval::tensor_function::join_fun_t;
+    using join_fun_t = vespalib::eval::operation::op2_t;
 private:
     Primary _primary;
     Overlap _overlap;
@@ -31,7 +32,7 @@ public:
     Overlap overlap() const { return _overlap; }
     bool primary_is_mutable() const;
     size_t factor() const;
-    eval::InterpretedFunction::Instruction compile_self(const eval::TensorEngine &engine, Stash &stash) const override;
+    eval::InterpretedFunction::Instruction compile_self(eval::EngineOrFactory engine, Stash &stash) const override;
     static const eval::TensorFunction &optimize(const eval::TensorFunction &expr, Stash &stash);
 };
 

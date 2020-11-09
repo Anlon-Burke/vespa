@@ -1,4 +1,6 @@
 // Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+#pragma once
+
 #include "btree_lockable_map.h"
 #include "generic_btree_bucket_database.hpp"
 #include <vespa/vespalib/btree/btreebuilder.h>
@@ -34,6 +36,9 @@ struct BTreeLockableMap<T>::ValueTraits {
     using ConstValueRef = const T&;
     using DataStoreType = vespalib::datastore::DataStore<ValueType>;
 
+    static void init_data_store(DataStoreType& store) {
+        store.enableFreeLists();
+    }
     static EntryRef entry_ref_from_value(uint64_t value) {
         return EntryRef(value & 0xffffffffULL);
     }
@@ -56,7 +61,7 @@ struct BTreeLockableMap<T>::ValueTraits {
 
 template <typename T>
 BTreeLockableMap<T>::BTreeLockableMap()
-    : _impl(std::make_unique<GenericBTreeBucketDatabase<ValueTraits>>())
+    : _impl(std::make_unique<GenericBTreeBucketDatabase<ValueTraits>>(1024/*data store array count*/))
 {}
 
 template <typename T>
@@ -144,6 +149,12 @@ size_t BTreeLockableMap<T>::getMemoryUsage() const noexcept {
     const auto impl_usage = _impl->memory_usage();
     return (impl_usage.allocatedBytes() + _lockedKeys.getMemoryUsage() +
             sizeof(std::mutex) + sizeof(std::condition_variable));
+}
+
+template <typename T>
+vespalib::MemoryUsage BTreeLockableMap<T>::detailed_memory_usage() const noexcept {
+    std::lock_guard guard(_lock);
+    return _impl->memory_usage();
 }
 
 template <typename T>
@@ -264,16 +275,14 @@ bool BTreeLockableMap<T>::handleDecision(key_type& key, mapped_type& val,
 }
 
 template <typename T>
-void BTreeLockableMap<T>::do_for_each_mutable(std::function<Decision(uint64_t, mapped_type&)> func,
-                                              const char* clientId,
-                                              const key_type& first,
-                                              const key_type& last)
+void BTreeLockableMap<T>::do_for_each_mutable_unordered(std::function<Decision(uint64_t, mapped_type&)> func,
+                                                        const char* clientId)
 {
-    key_type key = first;
+    key_type key = 0;
     mapped_type val;
     std::unique_lock guard(_lock);
     while (true) {
-        if (findNextKey(key, val, clientId, guard) || key > last) {
+        if (findNextKey(key, val, clientId, guard)) {
             return;
         }
         Decision d(func(key, val));
@@ -286,15 +295,13 @@ void BTreeLockableMap<T>::do_for_each_mutable(std::function<Decision(uint64_t, m
 
 template <typename T>
 void BTreeLockableMap<T>::do_for_each(std::function<Decision(uint64_t, const mapped_type&)> func,
-                                      const char* clientId,
-                                      const key_type& first,
-                                      const key_type& last)
+                                      const char* clientId)
 {
-    key_type key = first;
+    key_type key = 0;
     mapped_type val;
     std::unique_lock guard(_lock);
     while (true) {
-        if (findNextKey(key, val, clientId, guard) || key > last) {
+        if (findNextKey(key, val, clientId, guard)) {
             return;
         }
         Decision d(func(key, val));
@@ -356,6 +363,7 @@ public:
     std::vector<T> find_parents_and_self(const document::BucketId& bucket) const override;
     std::vector<T> find_parents_self_and_children(const document::BucketId& bucket) const override;
     void for_each(std::function<void(uint64_t, const T&)> func) const override;
+    std::unique_ptr<ConstIterator<const T&>> create_iterator() const override;
     [[nodiscard]] uint64_t generation() const noexcept override;
 };
 
@@ -394,6 +402,12 @@ BTreeLockableMap<T>::ReadGuardImpl::find_parents_self_and_children(const documen
 template <typename T>
 void BTreeLockableMap<T>::ReadGuardImpl::for_each(std::function<void(uint64_t, const T&)> func) const {
     _snapshot.template for_each<ByConstRef>(std::move(func));
+}
+
+template <typename T>
+std::unique_ptr<ConstIterator<const T&>>
+BTreeLockableMap<T>::ReadGuardImpl::create_iterator() const {
+    return _snapshot.create_iterator(); // TODO test
 }
 
 template <typename T>

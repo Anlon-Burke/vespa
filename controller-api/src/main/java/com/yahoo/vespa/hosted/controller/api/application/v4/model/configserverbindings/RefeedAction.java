@@ -12,6 +12,7 @@ import java.util.List;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class RefeedAction {
+
     public final String name;
     public final boolean allowed;
     public final String documentType;
@@ -45,4 +46,5 @@ public class RefeedAction {
                 ", messages=" + messages +
                 '}';
     }
+
 }

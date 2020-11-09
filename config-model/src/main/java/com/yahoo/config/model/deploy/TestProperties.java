@@ -7,6 +7,7 @@ import com.yahoo.config.model.api.ConfigServerSpec;
 import com.yahoo.config.model.api.ContainerEndpoint;
 import com.yahoo.config.model.api.EndpointCertificateSecrets;
 import com.yahoo.config.model.api.ModelContext;
+import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.HostName;
@@ -25,7 +26,7 @@ import java.util.Set;
  *
  * @author hakonhall
  */
-public class TestProperties implements ModelContext.Properties {
+public class TestProperties implements ModelContext.Properties, ModelContext.FeatureFlags {
 
     private boolean multitenant = false;
     private ApplicationId applicationId = ApplicationId.defaultId();
@@ -34,11 +35,10 @@ public class TestProperties implements ModelContext.Properties {
     private Zone zone;
     private final Set<ContainerEndpoint> endpoints = Collections.emptySet();
     private boolean useDedicatedNodeForLogserver = false;
-    private boolean useContentNodeBtreeDb = false;
     private boolean useThreePhaseUpdates = false;
+    private boolean useDirectStorageApiRpc = false;
+    private boolean useFastValueTensorImplementation = false;
     private double defaultTermwiseLimit = 1.0;
-    private double threadPoolSizeFactor = 0.0;
-    private double queueSizeFactor = 0.0;
     private String jvmGCOptions = null;
     private String sequencerType = "LATENCY";
     private String responseSequencerType = "ADAPTIVE";
@@ -46,7 +46,13 @@ public class TestProperties implements ModelContext.Properties {
     private Optional<EndpointCertificateSecrets> endpointCertificateSecrets = Optional.empty();
     private AthenzDomain athenzDomain;
     private ApplicationRoles applicationRoles;
+    private Quota quota = Quota.unlimited();
+    private boolean useAccessControlTlsHandshakeClientAuth;
+    private boolean useAsyncMessageHandlingOnSchedule = false;
+    private int contentNodeBucketDBStripeBits = 0;
+    private int mergeChunkSize = 0x400000 - 0x1000; // 4M -4k
 
+    @Override public ModelContext.FeatureFlags featureFlags() { return this; }
     @Override public boolean multitenant() { return multitenant; }
     @Override public ApplicationId applicationId() { return applicationId; }
     @Override public List<ConfigServerSpec> configServerSpecs() { return configServerSpecs; }
@@ -63,14 +69,9 @@ public class TestProperties implements ModelContext.Properties {
     @Override public boolean useDedicatedNodeForLogserver() { return useDedicatedNodeForLogserver; }
     @Override public Optional<EndpointCertificateSecrets> endpointCertificateSecrets() { return endpointCertificateSecrets; }
     @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
-    @Override public double threadPoolSizeFactor() {
-        return threadPoolSizeFactor;
-    }
-    @Override public double queueSizeFactor() {
-        return queueSizeFactor;
-    }
-    @Override public boolean useContentNodeBtreeDb() { return useContentNodeBtreeDb; }
     @Override public boolean useThreePhaseUpdates() { return useThreePhaseUpdates; }
+    @Override public boolean useDirectStorageApiRpc() { return useDirectStorageApiRpc; }
+    @Override public boolean useFastValueTensorImplementation() { return useFastValueTensorImplementation; }
     @Override public Optional<AthenzDomain> athenzDomain() { return Optional.ofNullable(athenzDomain); }
     @Override public Optional<ApplicationRoles> applicationRoles() { return Optional.ofNullable(applicationRoles); }
     @Override public String responseSequencerType() { return responseSequencerType; }
@@ -78,6 +79,25 @@ public class TestProperties implements ModelContext.Properties {
     @Override public boolean skipCommunicationManagerThread() { return false; }
     @Override public boolean skipMbusRequestThread() { return false; }
     @Override public boolean skipMbusReplyThread() { return false; }
+    @Override public Quota quota() { return quota; }
+    @Override public boolean useAccessControlTlsHandshakeClientAuth() { return useAccessControlTlsHandshakeClientAuth; }
+    @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
+    @Override public int contentNodeBucketDBStripeBits() { return contentNodeBucketDBStripeBits; }
+    @Override public int mergeChunkSize() { return mergeChunkSize; }
+
+    public TestProperties setMergeChunkSize(int size) {
+        mergeChunkSize = size;
+        return this;
+    }
+    public TestProperties setContentNodeBucketDBStripeBits(int bits) {
+        contentNodeBucketDBStripeBits = bits;
+        return this;
+    }
+
+    public TestProperties setAsyncMessageHandlingOnSchedule(boolean value) {
+        useAsyncMessageHandlingOnSchedule = value;
+        return this;
+    }
 
     public TestProperties setJvmGCOptions(String gcOptions) {
         jvmGCOptions = gcOptions;
@@ -100,25 +120,21 @@ public class TestProperties implements ModelContext.Properties {
         return this;
     }
 
-    public TestProperties setUseContentNodeBtreeDB(boolean useBtreeDb) {
-        useContentNodeBtreeDb = useBtreeDb;
-        return this;
-    }
-
     public TestProperties setUseThreePhaseUpdates(boolean useThreePhaseUpdates) {
         this.useThreePhaseUpdates = useThreePhaseUpdates;
         return this;
     }
 
-    public TestProperties setThreadPoolSizeFactor(double threadPoolSizeFactor) {
-        this.threadPoolSizeFactor = threadPoolSizeFactor;
+    public TestProperties setUseDirectStorageApiRpc(boolean useDirectStorageApiRpc) {
+        this.useDirectStorageApiRpc = useDirectStorageApiRpc;
         return this;
     }
 
-    public TestProperties setQueueSizeFactor(double queueSizeFactor) {
-        this.queueSizeFactor = queueSizeFactor;
+    public TestProperties setUseFastValueTensorImplementation(boolean useFastValueTensorImplementation) {
+        this.useFastValueTensorImplementation = useFastValueTensorImplementation;
         return this;
     }
+
     public TestProperties setApplicationId(ApplicationId applicationId) {
         this.applicationId = applicationId;
         return this;
@@ -161,6 +177,16 @@ public class TestProperties implements ModelContext.Properties {
 
     public TestProperties setApplicationRoles(ApplicationRoles applicationRoles) {
         this.applicationRoles = applicationRoles;
+        return this;
+    }
+
+    public TestProperties setQuota(Quota quota) {
+        this.quota = quota;
+        return this;
+    }
+
+    public TestProperties useAccessControlTlsHandshakeClientAuth(boolean useAccessControlTlsHandshakeClientAuth) {
+        this.useAccessControlTlsHandshakeClientAuth = useAccessControlTlsHandshakeClientAuth;
         return this;
     }
 

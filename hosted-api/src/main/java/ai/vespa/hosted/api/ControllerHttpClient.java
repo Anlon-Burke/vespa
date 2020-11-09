@@ -12,14 +12,13 @@ import com.yahoo.security.X509CertificateUtils;
 import com.yahoo.slime.ArrayTraverser;
 import com.yahoo.slime.Cursor;
 import com.yahoo.slime.Inspector;
-import com.yahoo.slime.JsonDecoder;
-import com.yahoo.slime.JsonFormat;
 import com.yahoo.slime.ObjectTraverser;
 import com.yahoo.slime.Slime;
+import com.yahoo.slime.SlimeUtils;
+import com.yahoo.text.Utf8;
 
 import javax.net.ssl.SSLContext;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -276,10 +275,13 @@ public abstract class ControllerHttpClient {
                                  (rootObject.field("error-code").valid() ? " (" + rootObject.field("error-code").asString() + ")" : "") +
                                  ": " + rootObject.field("message").asString();
 
-                if (response.statusCode() / 100 == 4)
-                    throw new IllegalArgumentException(message);
+                if (response.statusCode() == 403)
+                    throw new IllegalArgumentException("Access denied for " + request + ": " + message);
 
-                throw new IOException(message);
+                if (response.statusCode() / 100 == 4)
+                    throw new IllegalArgumentException("Bad request for " + request + ": " + message);
+
+                throw new IOException("Failed " + request + ": " + message);
 
             }
             catch (IOException e) { // Catches the above, and timeout exceptions from the client.
@@ -290,7 +292,7 @@ public abstract class ControllerHttpClient {
 
                 if (attempt < 10)
                     try {
-                        Thread.sleep(100 << attempt);
+                        Thread.sleep(10 << attempt);
                     }
                     catch (InterruptedException f) {
                         throw new RuntimeException(f);
@@ -381,14 +383,12 @@ public abstract class ControllerHttpClient {
     }
 
     private static Slime toSlime(byte[] data) {
-        return new JsonDecoder().decode(new Slime(), data);
+        return SlimeUtils.jsonToSlime(data);
     }
 
     private static String toJson(Slime slime) {
         try {
-            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-            new JsonFormat(true).encode(buffer, slime);
-            return buffer.toString(UTF_8);
+            return Utf8.toString(SlimeUtils.toJsonBytes(slime));
         }
         catch (IOException e) {
             throw new UncheckedIOException(e);

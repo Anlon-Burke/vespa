@@ -15,7 +15,8 @@ namespace storage {
 struct MergeBlockingTest : public FileStorTestFixture {
     void setupDisks() {
         FileStorTestFixture::setupPersistenceThreads(1);
-        _node->setPersistenceProvider(std::make_unique<spi::dummy::DummyPersistence>(_node->getTypeRepo(), 1));
+        _node->setPersistenceProvider(std::make_unique<spi::dummy::DummyPersistence>(_node->getTypeRepo()));
+        _node->getPersistenceProvider().initialize();
     }
 
     void SetUp() override;
@@ -71,7 +72,7 @@ createGetDiff(const document::BucketId& bucket,
 std::shared_ptr<api::ApplyBucketDiffCommand>
 createApplyDiff(const document::BucketId& bucket,
                 const std::vector<api::MergeBucketCommand::Node>& nodes) {
-    auto cmd = std::make_shared<api::ApplyBucketDiffCommand>(makeDocumentBucket(bucket), nodes, 1024*1024);
+    auto cmd = std::make_shared<api::ApplyBucketDiffCommand>(makeDocumentBucket(bucket), nodes);
     assignCommandMeta(*cmd);
     return cmd;
 }

@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.rpc;
 
 import com.google.inject.Inject;
@@ -133,7 +133,7 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
         BlockingQueue<Runnable> workQueue = new LinkedBlockingQueue<>(config.maxgetconfigclients());
         int rpcWorkerThreads = (config.numRpcThreads() == 0) ? threadsToUse() : config.numRpcThreads();
         executorService = new ThreadPoolExecutor(rpcWorkerThreads, rpcWorkerThreads,
-                0, TimeUnit.SECONDS, workQueue, ThreadFactoryFactory.getThreadFactory(THREADPOOL_NAME));
+                0, TimeUnit.SECONDS, workQueue, ThreadFactoryFactory.getDaemonThreadFactory(THREADPOOL_NAME));
         delayedConfigResponses = new DelayedConfigResponses(this, config.numDelayedResponseThreads());
         spec = new Spec(null, config.rpcport());
         hostRegistry = hostRegistries.getTenantHostRegistry();
@@ -567,7 +567,9 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
                     Stream.of(fileReferenceStrings)
                             .map(FileReference::new)
                             .forEach(fileReference -> downloader.downloadIfNeeded(
-                                    new FileReferenceDownload(fileReference, false /* downloadFromOtherSourceIfNotFound */)));
+                                    new FileReferenceDownload(fileReference,
+                                                              false, /* downloadFromOtherSourceIfNotFound */
+                                                              req.target().toString())));
                     req.returnValues().add(new Int32Value(0));
                 });
     }

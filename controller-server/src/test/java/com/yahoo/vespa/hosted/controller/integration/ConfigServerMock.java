@@ -30,11 +30,13 @@ import com.yahoo.vespa.hosted.controller.api.integration.configserver.Log;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Node;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.NotFoundException;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.PrepareResponse;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.ProxyResponse;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.QuotaUsage;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ServiceConvergence;
+import com.yahoo.vespa.hosted.controller.api.integration.deployment.TestReport;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.TesterCloud;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartFilter;
 import com.yahoo.vespa.hosted.controller.application.ApplicationPackage;
-import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.SystemApplication;
 import com.yahoo.vespa.serviceview.bindings.ApplicationView;
 import com.yahoo.vespa.serviceview.bindings.ClusterView;
@@ -42,6 +44,7 @@ import com.yahoo.vespa.serviceview.bindings.ServiceView;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -59,7 +62,6 @@ import java.util.UUID;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import org.json.JSONObject;
 
 import static com.yahoo.config.provision.NodeResources.DiskSpeed.slow;
 import static com.yahoo.config.provision.NodeResources.StorageType.remote;
@@ -77,7 +79,7 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
     private final Map<DeploymentId, ServiceConvergence> serviceStatus = new HashMap<>();
     private final Set<ApplicationId> disallowConvergenceCheckApplications = new HashSet<>();
     private final Version initialVersion = new Version(6, 1, 0);
-    private final DockerImage initialDockerImage = DockerImage.fromString("dockerImage:6.1.0");
+    private final DockerImage initialDockerImage = DockerImage.fromString("registry.example.com/vespa/vespa:6.1.0");
     private final Set<DeploymentId> suspendedApplications = new HashSet<>();
     private final Map<ZoneId, Set<LoadBalancer>> loadBalancers = new HashMap<>();
     private final Set<Environment> deferLoadBalancerProvisioning = new HashSet<>();
@@ -90,6 +92,7 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
     private RuntimeException prepareException = null;
     private ConfigChangeActions configChangeActions = null;
     private String log = "INFO - All good";
+    private Map<DeploymentId, TestReport> testReport = new HashMap<>();
 
     @Inject
     public ConfigServerMock(ZoneRegistryMock zoneRegistry) {
@@ -326,6 +329,14 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
         return false;
     }
 
+    @Override
+    public Optional<TestReport> getTestReport(DeploymentId deployment) {
+        return Optional.ofNullable(testReport.get(deployment));
+    }
+    public void setTestReport(DeploymentId deploymentId, TestReport report) {
+        testReport.put(deploymentId, report);
+    }
+
     /** Add any of given loadBalancers that do not already exist to the load balancers in zone */
     public void putLoadBalancers(ZoneId zone, List<LoadBalancer> loadBalancers) {
         this.loadBalancers.putIfAbsent(zone, new LinkedHashSet<>());
@@ -394,8 +405,7 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
             prepareResponse.message = "foo";
             prepareResponse.configChangeActions = configChangeActions != null
                     ? configChangeActions
-                    : new ConfigChangeActions(Collections.emptyList(),
-                                              Collections.emptyList());
+                    : new ConfigChangeActions(List.of(), List.of(), List.of());
             setConfigChangeActions(null);
             prepareResponse.tenant = new TenantId("tenant");
             prepareResponse.log = warnings.getOrDefault(id, Collections.emptyList());
@@ -508,6 +518,11 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
         return new ByteArrayInputStream(log.getBytes(StandardCharsets.UTF_8));
     }
 
+    @Override
+    public ProxyResponse getApplicationPackageContent(DeploymentId deployment, String path, URI requestUri) {
+        return new ProxyResponse("{\"path\":\"" + path + "\"}", "application/json", 200);
+    }
+
     public void setLogStream(String log) {
         this.log = log;
     }
@@ -515,6 +530,13 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
     @Override
     public List<String> getContentClusters(DeploymentId deployment) {
         return Collections.singletonList("music");
+    }
+
+    @Override
+    public QuotaUsage getQuotaUsage(DeploymentId deploymentId) {
+        var q = new QuotaUsage();
+        q.rate = 42.42;
+        return q;
     }
 
     public static class Application {

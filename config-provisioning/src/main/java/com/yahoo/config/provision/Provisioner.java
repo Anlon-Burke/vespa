@@ -1,8 +1,6 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.provision;
 
-import com.yahoo.transaction.NestedTransaction;
-
 import java.util.Collection;
 import java.util.List;
 
@@ -24,22 +22,11 @@ public interface Provisioner {
      */
     List<HostSpec> prepare(ApplicationId applicationId, ClusterSpec cluster, Capacity capacity, ProvisionLogger logger);
 
-    /**
-     * Activates the allocation of nodes to this application captured in the hosts argument.
-     *
-     * @param transaction Transaction with operations to commit together with any operations done within the provisioner.
-     * @param application The {@link ApplicationId} that was activated.
-     * @param hosts a set of {@link HostSpec}.
-     */
-    void activate(NestedTransaction transaction, ApplicationId application, Collection<HostSpec> hosts);
+    /** Activates the allocation of nodes to this application captured in the hosts argument. */
+    void activate(Collection<HostSpec> hosts, ActivationContext context, ApplicationTransaction transaction);
 
-    /**
-     * Transactionally remove this application.
-     *
-     * @param transaction Transaction with operations to commit together with any operations done within the provisioner.
-     * @param application the application to remove
-     */
-    void remove(NestedTransaction transaction, ApplicationId application);
+    /** Transactionally remove an application under lock. */
+    void remove(ApplicationTransaction transaction);
 
     /**
      * Requests a restart of the services of the given application
@@ -48,5 +35,8 @@ public interface Provisioner {
      * @param filter a filter which matches the application nodes to restart
      */
     void restart(ApplicationId application, HostFilter filter);
+
+    /** Returns a provision lock for the given application */
+    ProvisionLock lock(ApplicationId application);
 
 }

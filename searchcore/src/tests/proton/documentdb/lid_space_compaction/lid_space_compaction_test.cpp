@@ -136,7 +136,7 @@ struct MyHandler : public ILidSpaceCompactionHandler {
             _moveDoneContexts.push_back(std::move(moveDoneCtx));
         }
     }
-    void handleCompactLidSpace(const CompactLidSpaceOperation &op) override {
+    void handleCompactLidSpace(const CompactLidSpaceOperation &op, std::shared_ptr<IDestructorCallback>) override {
         _wantedSubDbId = op.getSubDbId();
         _wantedLidLimit = op.getLidLimit();
     }
@@ -165,12 +165,15 @@ struct MyStorer : public IOperationStorer {
         : _moveCnt(0),
           _compactCnt(0)
     {}
-    void storeOperation(const FeedOperation &op, DoneCallback) override {
+    void appendOperation(const FeedOperation &op, DoneCallback) override {
         if (op.getType() == FeedOperation::MOVE) {
             ++ _moveCnt;
         } else if (op.getType() == FeedOperation::COMPACT_LID_SPACE) {
             ++_compactCnt;
         }
+    }
+    CommitResult startCommit(DoneCallback) override {
+        return CommitResult();
     }
 };
 
@@ -209,11 +212,10 @@ MyDocumentStore::~MyDocumentStore() = default;
 struct MyDocumentRetriever : public DocumentRetrieverBaseForTest {
     std::shared_ptr<const DocumentTypeRepo> repo;
     const MyDocumentStore& store;
-    MyDocumentRetriever(std::shared_ptr<const DocumentTypeRepo> repo_in, const MyDocumentStore& store_in)
+    MyDocumentRetriever(std::shared_ptr<const DocumentTypeRepo> repo_in, const MyDocumentStore& store_in) noexcept
         : repo(std::move(repo_in)),
           store(store_in)
-    {
-    }
+    {}
     const document::DocumentTypeRepo& getDocumentTypeRepo() const override { return *repo; }
     void getBucketMetaData(const storage::spi::Bucket&, DocumentMetaData::Vector&) const override { abort(); }
     DocumentMetaData getDocumentMetaData(const DocumentId&) const override { abort(); }
@@ -226,6 +228,7 @@ struct MyDocumentRetriever : public DocumentRetrieverBaseForTest {
 struct MySubDb {
     test::DummyDocumentSubDb sub_db;
     MaintenanceDocumentSubDB maintenance_sub_db;
+    PendingLidTracker _pendingLidsForCommit;
     MySubDb(std::shared_ptr<BucketDBOwner> bucket_db, const MyDocumentStore& store, const std::shared_ptr<const DocumentTypeRepo> & repo);
     ~MySubDb();
 };
@@ -234,7 +237,8 @@ MySubDb::MySubDb(std::shared_ptr<BucketDBOwner> bucket_db, const MyDocumentStore
     : sub_db(std::move(bucket_db), SUBDB_ID),
       maintenance_sub_db(sub_db.getName(), sub_db.getSubDbId(), sub_db.getDocumentMetaStoreContext().getSP(),
                          std::make_shared<MyDocumentRetriever>(repo, store),
-                         std::make_shared<MyFeedView>(repo))
+                         std::make_shared<MyFeedView>(repo),
+                         &_pendingLidsForCommit)
 {
 }
 
@@ -530,7 +534,16 @@ TEST_F(HandlerTest, createMoveOperation_works_as_expected)
     const BucketId bucketId(100);
     const Timestamp timestamp(200);
     DocumentMetaData document(moveFromLid, timestamp, bucketId, GlobalId());
+    {
+        EXPECT_FALSE(_subDb.maintenance_sub_db.lidNeedsCommit(moveFromLid));
+        IPendingLidTracker::Token token = _subDb._pendingLidsForCommit.produce(moveFromLid);
+        EXPECT_TRUE(_subDb.maintenance_sub_db.lidNeedsCommit(moveFromLid));
+        MoveOperation::UP op = _handler.createMoveOperation(document, moveToLid);
+        ASSERT_FALSE(op);
+    }
+    EXPECT_FALSE(_subDb.maintenance_sub_db.lidNeedsCommit(moveFromLid));
     MoveOperation::UP op = _handler.createMoveOperation(document, moveToLid);
+    ASSERT_TRUE(op);
     EXPECT_EQ(10u, _docStore._readLid);
     EXPECT_EQ(DbDocumentId(SUBDB_ID, moveFromLid).toString(),
               op->getPrevDbDocumentId().toString()); // source

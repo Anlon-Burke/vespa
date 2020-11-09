@@ -10,9 +10,6 @@ import com.yahoo.config.provision.Deployment;
 import com.yahoo.config.provision.TransientException;
 import com.yahoo.container.handler.VipStatus;
 import com.yahoo.container.jdisc.state.StateMonitor;
-import java.util.logging.Level;
-
-import com.yahoo.vespa.config.server.maintenance.ConfigServerMaintenance;
 import com.yahoo.vespa.config.server.rpc.RpcServer;
 import com.yahoo.vespa.config.server.version.VersionState;
 import com.yahoo.yolean.Exceptions;
@@ -21,7 +18,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -30,7 +26,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 import static com.yahoo.vespa.config.server.ConfigServerBootstrap.Mode.BOOTSTRAP_IN_CONSTRUCTOR;
 import static com.yahoo.vespa.config.server.ConfigServerBootstrap.RedeployingApplicationsFails.CONTINUE;
@@ -59,7 +57,6 @@ public class ConfigServerBootstrap extends AbstractComponent implements Runnable
 
     private final ApplicationRepository applicationRepository;
     private final RpcServer server;
-    private final Optional<Thread> serverThread;
     private final VersionState versionState;
     private final StateMonitor stateMonitor;
     private final VipStatus vipStatus;
@@ -68,29 +65,27 @@ public class ConfigServerBootstrap extends AbstractComponent implements Runnable
     private final Duration sleepTimeWhenRedeployingFails;
     private final RedeployingApplicationsFails exitIfRedeployingApplicationsFails;
     private final ExecutorService rpcServerExecutor;
+    private final Optional<ExecutorService> bootstrapExecutor;
 
-    @SuppressWarnings("unused")
     @Inject
     public ConfigServerBootstrap(ApplicationRepository applicationRepository, RpcServer server,
-                                 VersionState versionState, StateMonitor stateMonitor, VipStatus vipStatus,
-                                 ConfigServerMaintenance configServerMaintenance) {
+                                 VersionState versionState, StateMonitor stateMonitor, VipStatus vipStatus) {
         this(applicationRepository, server, versionState, stateMonitor, vipStatus, BOOTSTRAP_IN_CONSTRUCTOR, EXIT_JVM,
              applicationRepository.configserverConfig().hostedVespa()
                      ? VipStatusMode.VIP_STATUS_FILE
-                     : VipStatusMode.VIP_STATUS_PROGRAMMATICALLY,
-             Optional.of(configServerMaintenance));
+                     : VipStatusMode.VIP_STATUS_PROGRAMMATICALLY);
     }
 
     // For testing only
     ConfigServerBootstrap(ApplicationRepository applicationRepository, RpcServer server, VersionState versionState,
                           StateMonitor stateMonitor, VipStatus vipStatus, Mode mode, VipStatusMode vipStatusMode) {
-        this(applicationRepository, server, versionState, stateMonitor, vipStatus, mode, CONTINUE, vipStatusMode, Optional.empty());
+        this(applicationRepository, server, versionState, stateMonitor, vipStatus, mode, CONTINUE, vipStatusMode);
     }
 
     private ConfigServerBootstrap(ApplicationRepository applicationRepository, RpcServer server,
                                   VersionState versionState, StateMonitor stateMonitor, VipStatus vipStatus,
                                   Mode mode, RedeployingApplicationsFails exitIfRedeployingApplicationsFails,
-                                  VipStatusMode vipStatusMode, Optional<ConfigServerMaintenance> configServerMaintenance) {
+                                  VipStatusMode vipStatusMode) {
         this.applicationRepository = applicationRepository;
         this.server = server;
         this.versionState = versionState;
@@ -101,23 +96,21 @@ public class ConfigServerBootstrap extends AbstractComponent implements Runnable
         this.sleepTimeWhenRedeployingFails = Duration.ofSeconds(configserverConfig.sleepTimeWhenRedeployingFails());
         this.exitIfRedeployingApplicationsFails = exitIfRedeployingApplicationsFails;
         rpcServerExecutor = Executors.newSingleThreadExecutor(new DaemonThreadFactory("config server RPC server"));
+
         log.log(Level.FINE, "Bootstrap mode: " + mode + ", VIP status mode: " + vipStatusMode);
         initializing(vipStatusMode);
 
-        // Run maintainers that cleans up zookeeper and disk usage before bootstrapping
-        configServerMaintenance.ifPresent(ConfigServerMaintenance::runBeforeBootstrap);
-
         switch (mode) {
             case BOOTSTRAP_IN_SEPARATE_THREAD:
-                this.serverThread = Optional.of(new Thread(this, "config server bootstrap thread"));
-                serverThread.get().start();
+                bootstrapExecutor = Optional.of(Executors.newSingleThreadExecutor(new DaemonThreadFactory("config server bootstrap")));
+                bootstrapExecutor.get().execute(this);
                 break;
             case BOOTSTRAP_IN_CONSTRUCTOR:
-                this.serverThread = Optional.empty();
+                bootstrapExecutor = Optional.empty();
                 start();
                 break;
             case INITIALIZE_ONLY:
-                this.serverThread = Optional.empty();
+                bootstrapExecutor = Optional.empty();
                 break;
             default:
                 throw new IllegalArgumentException("Unknown bootstrap mode " + mode + ", legal values: " + Arrays.toString(Mode.values()));
@@ -131,13 +124,7 @@ public class ConfigServerBootstrap extends AbstractComponent implements Runnable
         server.stop();
         log.log(Level.FINE, "RPC server stopped");
         rpcServerExecutor.shutdown();
-        serverThread.ifPresent(thread -> {
-            try {
-                thread.join();
-            } catch (InterruptedException e) {
-                log.log(Level.WARNING, "Error joining server thread on shutdown: " + e.getMessage());
-            }
-        });
+        bootstrapExecutor.ifPresent(ExecutorService::shutdownNow);
     }
 
     @Override
@@ -171,6 +158,7 @@ public class ConfigServerBootstrap extends AbstractComponent implements Runnable
                 return; // Status will not be set to 'up' since we return here
             }
         }
+        applicationRepository.bootstrappingDone();
         startRpcServer();
         up();
     }
@@ -220,12 +208,10 @@ public class ConfigServerBootstrap extends AbstractComponent implements Runnable
         do {
             applicationsNotRedeployed = redeployApplications(applicationsNotRedeployed);
             if ( ! applicationsNotRedeployed.isEmpty() && ! sleepTimeWhenRedeployingFails.isZero()) {
-                failCount++;
-                Duration sleepTime = sleepTimeWhenRedeployingFails.multipliedBy(failCount);
+                Duration sleepTime = sleepTimeWhenRedeployingFails.multipliedBy(++failCount);
                 if (sleepTime.compareTo(Duration.ofMinutes(10)) > 0)
                     sleepTime = Duration.ofMinutes(10);
-                log.log(Level.INFO, "Redeployment of " + applicationsNotRedeployed +
-                                    " failed (" + failCount + " failures), will retry in " + sleepTime);
+                log.log(Level.INFO, "Redeployment of " + applicationsNotRedeployed + " not finished, will retry in " + sleepTime);
                 Thread.sleep(sleepTime.toMillis());
             }
         } while ( ! applicationsNotRedeployed.isEmpty() && Instant.now().isBefore(end));
@@ -243,30 +229,39 @@ public class ConfigServerBootstrap extends AbstractComponent implements Runnable
         ExecutorService executor = Executors.newFixedThreadPool(configserverConfig.numParallelTenantLoaders(),
                                                                 new DaemonThreadFactory("redeploy apps"));
         // Keep track of deployment per application
-        Map<ApplicationId, Future<?>> futures = new HashMap<>();
-        applicationIds.forEach(applicationId -> futures.put(applicationId, executor.submit(() -> {
-            applicationRepository.deployFromLocalActive(applicationId, true /* bootstrap */)
-                    .ifPresent(Deployment::activate);
-        })));
+        Map<ApplicationId, Future<?>> deployments = new HashMap<>();
+        log.log(Level.INFO, () -> "Redeploying " + applicationIds);
+        applicationIds.forEach(appId -> deployments.put(appId,
+                                                    executor.submit(() -> applicationRepository.deployFromLocalActive(appId, true /* bootstrap */)
+                                .ifPresent(Deployment::activate))));
 
-        Set<ApplicationId> failedDeployments = new HashSet<>();
-        for (Map.Entry<ApplicationId, Future<?>> f : futures.entrySet()) {
-            try {
-                f.getValue().get();
-            } catch (ExecutionException e) {
-                ApplicationId app = f.getKey();
-                if (e.getCause() instanceof TransientException) {
-                    log.log(Level.INFO, "Redeploying " + app +
-                            " failed with transient error, will retry after bootstrap: " + Exceptions.toMessageString(e));
-                } else {
-                    log.log(Level.WARNING, "Redeploying " + app + " failed, will retry", e);
-                    failedDeployments.add(app);
-                }
-            }
-        }
+        Set<ApplicationId> failedDeployments =
+                deployments.entrySet().stream()
+                        .map(entry -> checkDeployment(entry.getKey(), entry.getValue()))
+                        .filter(Optional::isPresent)
+                        .map(Optional::get)
+                        .collect(Collectors.toSet());
+
         executor.shutdown();
         executor.awaitTermination(365, TimeUnit.DAYS); // Timeout should never happen
         return failedDeployments;
+    }
+
+    // Returns an application id if deployment failed
+    private Optional<ApplicationId> checkDeployment(ApplicationId applicationId, Future<?> future) {
+        try {
+            future.get();
+            log.log(Level.INFO, () -> applicationId + " redeployed");
+        } catch (ExecutionException | InterruptedException e) {
+            if (e.getCause() instanceof TransientException) {
+                log.log(Level.INFO, "Redeploying " + applicationId +
+                                    " failed with transient error, will retry after bootstrap: " + Exceptions.toMessageString(e));
+            } else {
+                log.log(Level.WARNING, "Redeploying " + applicationId + " failed, will retry", e);
+                return Optional.of(applicationId);
+            }
+        }
+        return Optional.empty();
     }
 
 }

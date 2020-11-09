@@ -29,9 +29,6 @@ private:
     using IncludedVersions = storage::spi::IncludedVersions;
     using IterateResult = storage::spi::IterateResult;
     using IteratorId = storage::spi::IteratorId;
-    using MaintenanceLevel = storage::spi::MaintenanceLevel;
-    using PartitionId = storage::spi::PartitionId;
-    using PartitionStateListResult = storage::spi::PartitionStateListResult;
     using RemoveResult = storage::spi::RemoveResult;
     using Result = storage::spi::Result;
     using Selection = storage::spi::Selection;
@@ -71,10 +68,10 @@ private:
     const IResourceWriteFilter             &_writeFilter;
     std::unordered_map<BucketSpace, ClusterState::SP, BucketSpace::hash> _clusterStates;
     mutable ExtraModifiedBuckets            _extraModifiedBuckets;
-    mutable std::shared_timed_mutex         _rwMutex;
+    mutable std::shared_mutex         _rwMutex;
 
-    using ReadGuard = std::shared_lock<std::shared_timed_mutex>;
-    using WriteGuard = std::unique_lock<std::shared_timed_mutex>;
+    using ReadGuard = std::shared_lock<std::shared_mutex>;
+    using WriteGuard = std::unique_lock<std::shared_mutex>;
 
     IPersistenceHandler * getHandler(const ReadGuard & guard, document::BucketSpace bucketSpace, const DocTypeName &docType) const;
     HandlerSnapshot getHandlerSnapshot(const WriteGuard & guard) const;
@@ -96,8 +93,7 @@ public:
 
     // Implements PersistenceProvider
     Result initialize() override;
-    PartitionStateListResult getPartitionStates() const override;
-    BucketIdListResult listBuckets(BucketSpace bucketSpace, PartitionId) const override;
+    BucketIdListResult listBuckets(BucketSpace bucketSpace) const override;
     Result setClusterState(BucketSpace bucketSpace, const ClusterState& calc) override;
     Result setActiveState(const Bucket& bucket, BucketInfo::ActiveState newState) override;
     BucketInfoResult getBucketInfo(const Bucket&) const override;

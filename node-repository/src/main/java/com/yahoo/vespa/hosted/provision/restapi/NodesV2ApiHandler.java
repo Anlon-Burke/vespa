@@ -24,7 +24,6 @@ import com.yahoo.slime.Cursor;
 import com.yahoo.slime.Inspector;
 import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
-import com.yahoo.slime.Type;
 import com.yahoo.transaction.Mutex;
 import com.yahoo.vespa.hosted.provision.NoSuchNodeException;
 import com.yahoo.vespa.hosted.provision.Node;
@@ -116,8 +115,9 @@ public class NodesV2ApiHandler extends LoggingRequestHandler {
         if (pathS.startsWith("/nodes/v2/state/")) return new NodesResponse(ResponseType.nodesInStateList, request, orchestrator, nodeRepository);
         if (pathS.startsWith("/nodes/v2/acl/")) return new NodeAclResponse(request, nodeRepository);
         if (pathS.equals(    "/nodes/v2/command/")) return new ResourceResponse(request.getUri(), "restart", "reboot");
+        if (pathS.equals(    "/nodes/v2/locks")) return new LocksResponse();
         if (pathS.equals(    "/nodes/v2/maintenance/")) return new JobsResponse(nodeRepository.jobControl());
-        if (pathS.equals(    "/nodes/v2/upgrade/")) return new UpgradeResponse(nodeRepository.infrastructureVersions(), nodeRepository.osVersions(), nodeRepository.dockerImages());
+        if (pathS.equals(    "/nodes/v2/upgrade/")) return new UpgradeResponse(nodeRepository.infrastructureVersions(), nodeRepository.osVersions(), nodeRepository.containerImages());
         if (pathS.startsWith("/nodes/v2/capacity")) return new HostCapacityResponse(nodeRepository, request);
         if (path.matches("/nodes/v2/application")) return applicationList(request.getUri());
         if (path.matches("/nodes/v2/application/{applicationId}")) return application(path.get("applicationId"), request.getUri());
@@ -147,6 +147,10 @@ public class NodesV2ApiHandler extends LoggingRequestHandler {
         else if (path.startsWith("/nodes/v2/state/active/")) {
             nodeRepository.reactivate(lastElement(path), Agent.operator, "Reactivated through nodes/v2 API");
             return new MessageResponse("Moved " + lastElement(path) + " to active");
+        }
+        else if (path.startsWith("/nodes/v2/state/breakfixed/")) {
+            List<Node> breakfixedNodes = nodeRepository.breakfixRecursively(lastElement(path), Agent.operator, "Breakfixed through the nodes/v2 API");
+            return new MessageResponse("Breakfixed " + hostnamesAsString(breakfixedNodes));
         }
 
         throw new NotFoundException("Cannot put to path '" + path + "'");
@@ -247,22 +251,22 @@ public class NodesV2ApiHandler extends LoggingRequestHandler {
     }
 
     private Node createNode(Inspector inspector) {
-        Optional<String> parentHostname = optionalString(inspector.field("parentHostname"));
-        Optional<String> modelName = optionalString(inspector.field("modelName"));
         Set<String> ipAddresses = new HashSet<>();
         inspector.field("ipAddresses").traverse((ArrayTraverser) (i, item) -> ipAddresses.add(item.asString()));
         Set<String> ipAddressPool = new HashSet<>();
         inspector.field("additionalIpAddresses").traverse((ArrayTraverser) (i, item) -> ipAddressPool.add(item.asString()));
 
-        return Node.create(inspector.field("openStackId").asString(),
-                           new IP.Config(ipAddresses, ipAddressPool),
-                           inspector.field("hostname").asString(),
-                           parentHostname,
-                           modelName,
-                           flavorFromSlime(inspector),
-                           reservedToFromSlime(inspector.field("reservedTo")),
-                           nodeTypeFromSlime(inspector.field("type"))
-        );
+        Node.Builder builder = Node.create(inspector.field("openStackId").asString(),
+                                           new IP.Config(ipAddresses, ipAddressPool),
+                                           inspector.field("hostname").asString(),
+                                           flavorFromSlime(inspector),
+                                           nodeTypeFromSlime(inspector.field("type")));
+        optionalString(inspector.field("parentHostname")).ifPresent(builder::parentHostname);
+        optionalString(inspector.field("modelName")).ifPresent(builder::modelName);
+        optionalString(inspector.field("reservedTo")).map(TenantName::from).ifPresent(builder::reservedTo);
+        optionalString(inspector.field("exclusiveTo")).map(ApplicationId::fromSerializedForm).ifPresent(builder::exclusiveTo);
+        optionalString(inspector.field("switchHostname")).ifPresent(builder::switchHostname);
+        return builder.build();
     }
 
     private Flavor flavorFromSlime(Inspector inspector) {
@@ -305,13 +309,6 @@ public class NodesV2ApiHandler extends LoggingRequestHandler {
     private NodeType nodeTypeFromSlime(Inspector object) {
         if (! object.valid()) return NodeType.tenant; // default
         return NodeSerializer.typeFrom(object.asString());
-    }
-
-    private Optional<TenantName> reservedToFromSlime(Inspector object) {
-        if (! object.valid()) return Optional.empty();
-        if ( object.type() != Type.STRING)
-            throw new IllegalArgumentException("Expected 'reservedTo' to be a string but is " + object);
-        return Optional.of(TenantName.from(object.asString()));
     }
 
     public static NodeFilter toNodeFilter(HttpRequest request) {
@@ -357,7 +354,7 @@ public class NodesV2ApiHandler extends LoggingRequestHandler {
         boolean force = inspector.field("force").asBool();
         Inspector versionField = inspector.field("version");
         Inspector osVersionField = inspector.field("osVersion");
-        Inspector dockerImageField = inspector.field("dockerImage");
+        Inspector containerImageField = inspector.field("dockerImage");
         Inspector upgradeBudgetField = inspector.field("upgradeBudget");
 
         if (versionField.valid()) {
@@ -389,12 +386,12 @@ public class NodesV2ApiHandler extends LoggingRequestHandler {
             }
         }
 
-        if (dockerImageField.valid()) {
-            Optional<DockerImage> dockerImage = Optional.of(dockerImageField.asString())
+        if (containerImageField.valid()) {
+            Optional<DockerImage> dockerImage = Optional.of(containerImageField.asString())
                     .filter(s -> !s.isEmpty())
                     .map(DockerImage::fromString);
-            nodeRepository.dockerImages().setDockerImage(nodeType, dockerImage);
-            messageParts.add("docker image to " + dockerImage.map(DockerImage::asString).orElse(null));
+            nodeRepository.containerImages().setImage(nodeType, dockerImage);
+            messageParts.add("container image to " + dockerImage.map(DockerImage::asString).orElse(null));
         }
 
         if (messageParts.isEmpty()) {
@@ -425,7 +422,7 @@ public class NodesV2ApiHandler extends LoggingRequestHandler {
         Cursor applications = root.setArray("applications");
         for (ApplicationId id : nodeRepository.applications().ids()) {
             Cursor application = applications.addObject();
-            application.setString("url", withPath("/nodes/v2/applications/" + id.toFullString(), uri).toString());
+            application.setString("url", withPath("/nodes/v2/application/" + id.toFullString(), uri).toString());
             application.setString("id", id.toFullString());
         }
         return new SlimeJsonResponse(slime);

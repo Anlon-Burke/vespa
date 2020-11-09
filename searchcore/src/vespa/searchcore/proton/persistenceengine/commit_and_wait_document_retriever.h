@@ -3,7 +3,7 @@
 #pragma once
 
 #include "i_document_retriever.h"
-#include <vespa/searchcore/proton/common/icommitable.h>
+#include <vespa/searchcore/proton/common/ipendinglidtracker.h>
 
 namespace proton {
 
@@ -15,10 +15,10 @@ namespace proton {
 class CommitAndWaitDocumentRetriever : public IDocumentRetriever
 {
     IDocumentRetriever::SP _retriever;
-    ICommitable           &_commit;
+    ILidCommitState       &_uncommittedLidsTracker;
     using Bucket = storage::spi::Bucket;
 public:
-    CommitAndWaitDocumentRetriever(IDocumentRetriever::SP retriever, ICommitable &commit);
+    CommitAndWaitDocumentRetriever(IDocumentRetriever::SP retriever, ILidCommitState & unCommittedLidTracker);
     ~CommitAndWaitDocumentRetriever() override;
 
     const document::DocumentTypeRepo &getDocumentTypeRepo() const override;

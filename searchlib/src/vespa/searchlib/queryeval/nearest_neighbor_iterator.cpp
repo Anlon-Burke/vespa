@@ -5,9 +5,8 @@
 
 using search::tensor::DenseTensorAttribute;
 using vespalib::ConstArrayRef;
-using vespalib::tensor::DenseTensorView;
 using vespalib::tensor::MutableDenseTensorView;
-using vespalib::tensor::TypedCells;
+using vespalib::eval::TypedCells;
 
 using CellType = vespalib::eval::ValueType::CellType;
 
@@ -37,11 +36,11 @@ public:
 
     NearestNeighborImpl(Params params_in)
         : NearestNeighborIterator(params_in),
-          _lhs(params().queryTensor.cellsRef()),
+          _lhs(params().queryTensor.cells()),
           _fieldTensor(params().tensorAttribute.getTensorType()),
           _lastScore(0.0)
     {
-        assert(is_compatible(_fieldTensor.fast_type(), params().queryTensor.fast_type()));
+        assert(is_compatible(_fieldTensor.fast_type(), params().queryTensor.type()));
     }
 
     ~NearestNeighborImpl();
@@ -76,8 +75,8 @@ public:
 
 private:
     double computeDistance(uint32_t docId, double limit) {
-        params().tensorAttribute.getTensor(docId, _fieldTensor);
-        auto rhs = _fieldTensor.cellsRef();
+        params().tensorAttribute.extract_dense_view(docId, _fieldTensor);
+        auto rhs = _fieldTensor.cells();
         return params().distanceFunction->calc_with_limit(_lhs, rhs, limit);
     }
 
@@ -95,7 +94,7 @@ template <bool has_filter>
 std::unique_ptr<NearestNeighborIterator>
 resolve_strict(bool strict, const NearestNeighborIterator::Params &params)
 {
-    CellType lct = params.queryTensor.fast_type().cell_type();
+    CellType lct = params.queryTensor.type().cell_type();
     CellType rct = params.tensorAttribute.getTensorType().cell_type();
     if (lct != rct) abort();
     if (strict) {
@@ -113,7 +112,7 @@ std::unique_ptr<NearestNeighborIterator>
 NearestNeighborIterator::create(
         bool strict,
         fef::TermFieldMatchData &tfmd,
-        const vespalib::tensor::DenseTensorView &queryTensor,
+        const vespalib::eval::Value &queryTensor,
         const search::tensor::DenseTensorAttribute &tensorAttribute,
         NearestNeighborDistanceHeap &distanceHeap,
         const search::BitVector *filter,

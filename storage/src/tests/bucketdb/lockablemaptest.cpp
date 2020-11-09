@@ -1,10 +1,8 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/vespalib/util/document_runnable.h>
-#include <vespa/storage/bucketdb/judymultimap.h>
-#include <vespa/storage/bucketdb/judymultimap.hpp>
-#include <vespa/storage/bucketdb/lockablemap.hpp>
 #include <vespa/storage/bucketdb/btree_lockable_map.hpp>
+#include <vespa/storage/bucketdb/striped_btree_lockable_map.hpp>
 #include <vespa/vespalib/gtest/gtest.h>
 #include <gmock/gmock.h>
 
@@ -12,6 +10,8 @@
 LOG_SETUP(".lockable_map_test");
 
 // FIXME these old tests may have the least obvious semantics and worst naming in the entire storage module
+// FIXME the non-bucket ID based tests only "accidentally" work with the striped DB implementation
+// since they just all happen to look like zero-buckets with count-bits above the minimum threshold.
 
 using namespace ::testing;
 using document::BucketId;
@@ -58,7 +58,7 @@ struct LockableMapTest : ::testing::Test {
     using Map = MapT;
 };
 
-using MapTypes = ::testing::Types<LockableMap<JudyMultiMap<A>>, bucketdb::BTreeLockableMap<A>>;
+using MapTypes = ::testing::Types<bucketdb::BTreeLockableMap<A>, bucketdb::StripedBTreeLockableMap<A>>;
 VESPA_GTEST_TYPED_TEST_SUITE(LockableMapTest, MapTypes);
 
 // Disable warnings emitted by gtest generated files when using typed tests
@@ -104,51 +104,11 @@ TYPED_TEST(LockableMapTest, simple_usage) {
     EXPECT_TRUE(map.empty());
 }
 
-TYPED_TEST(LockableMapTest, comparison) {
-    TypeParam map1;
-    TypeParam map2;
-    bool preExisted;
-
-    // Check empty state is correct
-    EXPECT_EQ(map1, map2);
-    EXPECT_FALSE(map1 < map2);
-    EXPECT_FALSE(map1 != map2);
-
-    // Check that different lengths are ok
-    map1.insert(4, A(1, 2, 3), "foo", preExisted);
-    EXPECT_FALSE(map1 == map2);
-    EXPECT_FALSE(map1 < map2);
-    EXPECT_LT(map2, map1);
-    EXPECT_NE(map1, map2);
-
-    // Check that equal elements are ok
-    map2.insert(4, A(1, 2, 3), "foo", preExisted);
-    EXPECT_EQ(map1, map2);
-    EXPECT_FALSE(map1 < map2);
-    EXPECT_FALSE(map1 != map2);
-
-    // Check that non-equal values are ok
-    map1.insert(6, A(1, 2, 6), "foo", preExisted);
-    map2.insert(6, A(1, 2, 3), "foo", preExisted);
-    EXPECT_FALSE(map1 == map2);
-    EXPECT_FALSE(map1 < map2);
-    EXPECT_LT(map2, map1);
-    EXPECT_NE(map1, map2);
-
-    // Check that non-equal keys are ok
-    map1.erase(6, "foo");
-    map1.insert(7, A(1, 2, 3), "foo", preExisted);
-    EXPECT_FALSE(map1 == map2);
-    EXPECT_FALSE(map1 < map2);
-    EXPECT_LT(map2, map1);
-    EXPECT_NE(map1, map2);
-}
-
 namespace {
 
 template <typename Map>
 struct NonConstProcessor {
-    typename Map::Decision operator()(int key, A& a) {
+    typename Map::Decision operator() (int key, A& a) const noexcept {
         (void) key;
         ++a._val2;
         return Map::UPDATE;
@@ -251,11 +211,11 @@ TYPED_TEST(LockableMapTest, iterating) {
     // Test that we can use functor with non-const function
     {
         NonConstProcessor<TypeParam> ncproc;
-        map.for_each_mutable(std::ref(ncproc), "foo"); // First round of mutating functor for `all`
+        map.for_each_mutable_unordered(std::ref(ncproc), "foo"); // First round of mutating functor for `all`
         EXPECT_EQ(A(4, 7, 0), *map.get(11, "foo"));
         EXPECT_EQ(A(42,1, 0), *map.get(14, "foo"));
         EXPECT_EQ(A(1, 3, 3), *map.get(16, "foo"));
-        map.for_each_mutable(std::ref(ncproc), "foo"); // Once more, with feeling.
+        map.for_each_mutable_unordered(std::ref(ncproc), "foo"); // Once more, with feeling.
         EXPECT_EQ(A(4, 8, 0), *map.get(11, "foo"));
         EXPECT_EQ(A(42,2, 0), *map.get(14, "foo"));
         EXPECT_EQ(A(1, 4, 3), *map.get(16, "foo"));
@@ -272,27 +232,13 @@ TYPED_TEST(LockableMapTest, iterating) {
     // Test that we can use const functors directly..
     map.for_each(ConstProcessor<TypeParam>(), "foo");
 
-    // Test iterator bounds
-    {
-        EntryProcessor<TypeParam> proc;
-        map.for_each_mutable(std::ref(proc), "foo", 11, 16);
-        std::string expected("11 - A(4, 8, 0)\n"
-                             "14 - A(42, 2, 0)\n"
-                             "16 - A(1, 4, 3)\n");
-        EXPECT_EQ(expected, proc.toString());
-
-        EntryProcessor<TypeParam> proc2;
-        map.for_each_mutable(std::ref(proc2), "foo", 12, 15);
-        expected = "14 - A(42, 2, 0)\n";
-        EXPECT_EQ(expected, proc2.toString());
-    }
-        // Test that we can abort iterating
+    // Test that we can abort iterating
     {
         std::vector<typename TypeParam::Decision> decisions;
         decisions.push_back(TypeParam::CONTINUE);
         decisions.push_back(TypeParam::ABORT);
         EntryProcessor<TypeParam> proc(decisions);
-        map.for_each_mutable(std::ref(proc), "foo");
+        map.for_each_mutable_unordered(std::ref(proc), "foo");
         std::string expected("11 - A(4, 8, 0)\n"
                              "14 - A(42, 2, 0)\n");
         EXPECT_EQ(expected, proc.toString());
@@ -303,7 +249,7 @@ TYPED_TEST(LockableMapTest, iterating) {
         decisions.push_back(TypeParam::CONTINUE);
         decisions.push_back(TypeParam::REMOVE); // TODO consider removing; not used
         EntryProcessor<TypeParam> proc(decisions);
-        map.for_each_mutable(std::ref(proc), "foo");
+        map.for_each_mutable_unordered(std::ref(proc), "foo");
         std::string expected("11 - A(4, 8, 0)\n"
                              "14 - A(42, 2, 0)\n"
                              "16 - A(1, 4, 3)\n");
@@ -314,6 +260,29 @@ TYPED_TEST(LockableMapTest, iterating) {
         auto entry = map.get(14, "foo");
         EXPECT_FALSE(entry.exist());
     }
+}
+
+TYPED_TEST(LockableMapTest, explicit_iterator_is_key_ordered) {
+    TypeParam map;
+    bool preExisted;
+    map.insert(16, A(16, 0, 0), "foo", preExisted);
+    map.insert(18, A(18, 0, 0), "foo", preExisted);
+    map.insert(11, A(11, 0, 0), "foo", preExisted);
+    map.insert(14, A(14, 0, 0), "foo", preExisted);
+    map.insert(20, A(20, 0, 0), "foo", preExisted);
+
+    std::string expected("11 - A(11, 0, 0)\n"
+                         "14 - A(14, 0, 0)\n"
+                         "16 - A(16, 0, 0)\n"
+                         "18 - A(18, 0, 0)\n"
+                         "20 - A(20, 0, 0)\n");
+    ConstProcessor<TypeParam> cproc;
+
+    auto guard = map.acquire_read_guard();
+    for (auto iter = guard->create_iterator(); iter->valid(); iter->next()) {
+        cproc(iter->key(), iter->value());
+    }
+    EXPECT_EQ(expected, cproc.toString());
 }
 
 TYPED_TEST(LockableMapTest, chunked_iteration_is_transparent_across_chunk_sizes) {
@@ -737,16 +706,16 @@ TYPED_TEST(LockableMapTest, find_all_inconsistently_split_6) {
 TYPED_TEST(LockableMapTest, find_all_inconsistent_below_16_bits) {
     TypeParam map;
 
-    document::BucketId id1(1, 0x1); // contains id2-id3
-    document::BucketId id2(3, 0x1);
-    document::BucketId id3(4, 0xD);
+    document::BucketId id1(8,  0b0000'0000'0001); // contains id2-id3
+    document::BucketId id2(10, 0b0011'0000'0001);
+    document::BucketId id3(11, 0b0101'0000'0001);
 
     bool preExisted;
     map.insert(id1.stripUnused().toKey(), A(1,2,3), "foo", preExisted);
     map.insert(id2.stripUnused().toKey(), A(2,3,4), "foo", preExisted);
     map.insert(id3.stripUnused().toKey(), A(3,4,5), "foo", preExisted);
 
-    document::BucketId id(3, 0x5);
+    document::BucketId id(10, 0b0001'0000'0001);
 
     auto results = map.getAll(id, "foo");
 

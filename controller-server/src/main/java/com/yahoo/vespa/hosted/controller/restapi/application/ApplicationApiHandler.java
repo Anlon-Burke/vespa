@@ -47,6 +47,7 @@ import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbi
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbindings.ServiceInfo;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.identifiers.TenantId;
+import com.yahoo.vespa.hosted.controller.api.integration.billing.Quota;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Application;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Cluster;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServerException;
@@ -70,6 +71,8 @@ import com.yahoo.vespa.hosted.controller.application.Change;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.DeploymentMetrics;
 import com.yahoo.vespa.hosted.controller.application.Endpoint;
+import com.yahoo.vespa.hosted.controller.application.EndpointList;
+import com.yahoo.vespa.hosted.controller.application.QuotaUsage;
 import com.yahoo.vespa.hosted.controller.application.SystemApplication;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentStatus;
@@ -88,10 +91,16 @@ import com.yahoo.vespa.hosted.controller.security.Credentials;
 import com.yahoo.vespa.hosted.controller.tenant.AthenzTenant;
 import com.yahoo.vespa.hosted.controller.tenant.CloudTenant;
 import com.yahoo.vespa.hosted.controller.tenant.Tenant;
+import com.yahoo.vespa.hosted.controller.tenant.TenantInfo;
+import com.yahoo.vespa.hosted.controller.tenant.TenantInfoAddress;
+import com.yahoo.vespa.hosted.controller.tenant.TenantInfoBillingContact;
 import com.yahoo.vespa.hosted.controller.versions.VersionStatus;
 import com.yahoo.vespa.hosted.controller.versions.VespaVersion;
 import com.yahoo.vespa.serviceview.bindings.ApplicationView;
 import com.yahoo.yolean.Exceptions;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import javax.ws.rs.ForbiddenException;
 import javax.ws.rs.InternalServerErrorException;
@@ -120,9 +129,6 @@ import java.util.Scanner;
 import java.util.StringJoiner;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import static com.yahoo.jdisc.Response.Status.BAD_REQUEST;
 import static com.yahoo.jdisc.Response.Status.CONFLICT;
@@ -209,6 +215,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         if (path.matches("/application/v4/")) return root(request);
         if (path.matches("/application/v4/tenant")) return tenants(request);
         if (path.matches("/application/v4/tenant/{tenant}")) return tenant(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/info")) return tenantInfo(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application")) return applications(path.get("tenant"), Optional.empty(), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}")) return application(path.get("tenant"), path.get("application"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/compile-version")) return compileVersion(path.get("tenant"), path.get("application"));
@@ -232,6 +239,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/service/{service}/{*}")) return service(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("service"), path.getRest(), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/nodes")) return nodes(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/clusters")) return clusters(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/content/{*}")) return content(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.getRest(), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/logs")) return logs(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request.propertyMap());
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/metrics")) return metrics(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/global-rotation")) return rotationStatus(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), Optional.ofNullable(request.getProperty("endpointId")));
@@ -251,6 +259,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
 
     private HttpResponse handlePUT(Path path, HttpRequest request) {
         if (path.matches("/application/v4/tenant/{tenant}")) return updateTenant(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/info")) return updateTenantInfo(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/global-rotation/override")) return setGlobalRotationOverride(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), false, request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/global-rotation/override")) return setGlobalRotationOverride(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), false, request);
         return ErrorResponse.notFoundError("Nothing at " + path);
@@ -348,6 +357,105 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         Slime slime = new Slime();
         toSlime(slime.setObject(), tenant, request);
         return new SlimeJsonResponse(slime);
+    }
+
+    private HttpResponse tenantInfo(String tenantName, HttpRequest request) {
+        return controller.tenants().get(TenantName.from(tenantName))
+                .filter(tenant -> tenant.type() == Tenant.Type.cloud)
+                .map(tenant -> tenantInfo(((CloudTenant)tenant).info(), request))
+                .orElseGet(() -> ErrorResponse.notFoundError("Tenant '" + tenantName + "' does not exist or does not support this"));
+    }
+
+    private SlimeJsonResponse tenantInfo(TenantInfo info, HttpRequest request) {
+        Slime slime = new Slime();
+        Cursor infoCursor = slime.setObject();
+        if (!info.isEmpty()) {
+            infoCursor.setString("name", info.name());
+            infoCursor.setString("email", info.email());
+            infoCursor.setString("website", info.website());
+            infoCursor.setString("invoiceEmail", info.invoiceEmail());
+            infoCursor.setString("contactName", info.contactName());
+            infoCursor.setString("contactEmail", info.contactEmail());
+            toSlime(info.address(), infoCursor);
+            toSlime(info.billingContact(), infoCursor);
+        }
+
+        return new SlimeJsonResponse(slime);
+    }
+
+    private void toSlime(TenantInfoAddress address, Cursor parentCursor) {
+        if (address.isEmpty()) return;
+
+        Cursor addressCursor = parentCursor.setObject("address");
+        addressCursor.setString("addressLines", address.addressLines());
+        addressCursor.setString("postalCodeOrZip", address.postalCodeOrZip());
+        addressCursor.setString("city", address.city());
+        addressCursor.setString("stateRegionProvince", address.stateRegionProvince());
+        addressCursor.setString("country", address.country());
+    }
+
+    private void toSlime(TenantInfoBillingContact billingContact, Cursor parentCursor) {
+        if (billingContact.isEmpty()) return;
+
+        Cursor addressCursor = parentCursor.setObject("billingContact");
+        addressCursor.setString("name", billingContact.name());
+        addressCursor.setString("email", billingContact.email());
+        addressCursor.setString("phone", billingContact.phone());
+        toSlime(billingContact.address(), addressCursor);
+    }
+
+    private HttpResponse updateTenantInfo(String tenantName, HttpRequest request) {
+        return controller.tenants().get(TenantName.from(tenantName))
+                .filter(tenant -> tenant.type() == Tenant.Type.cloud)
+                .map(tenant -> updateTenantInfo(((CloudTenant)tenant), request))
+                .orElseGet(() -> ErrorResponse.notFoundError("Tenant '" + tenantName + "' does not exist or does not support this"));
+    }
+
+    private String getString(Inspector field, String defaultVale) {
+        return field.valid() ? field.asString() : defaultVale;
+    }
+
+    private SlimeJsonResponse updateTenantInfo(CloudTenant tenant, HttpRequest request) {
+        TenantInfo oldInfo = tenant.info();
+
+        // Merge info from request with the existing info
+        Inspector insp = toSlime(request.getData()).get();
+        TenantInfo mergedInfo = TenantInfo.EMPTY
+                .withName(getString(insp.field("name"), oldInfo.name()))
+                .withEmail(getString(insp.field("email"),  oldInfo.email()))
+                .withWebsite(getString(insp.field("website"),  oldInfo.email()))
+                .withInvoiceEmail(getString(insp.field("invoiceEmail"), oldInfo.invoiceEmail()))
+                .withContactName(getString(insp.field("contactName"), oldInfo.contactName()))
+                .withContactEmail(getString(insp.field("contactEmail"), oldInfo.contactName()))
+                .withAddress(updateTenantInfoAddress(insp.field("address"), oldInfo.address()))
+                .withBillingContact(updateTenantInfoBillingContact(insp.field("billingContact"), oldInfo.billingContact()));
+
+        // Store changes
+        controller.tenants().lockOrThrow(tenant.name(), LockedTenant.Cloud.class, lockedTenant -> {
+            lockedTenant = lockedTenant.withInfo(mergedInfo);
+            controller.tenants().store(lockedTenant);
+        });
+
+        return new MessageResponse("Tenant info updated");
+    }
+
+    private TenantInfoAddress updateTenantInfoAddress(Inspector insp, TenantInfoAddress oldAddress) {
+        if (!insp.valid()) return oldAddress;
+        return TenantInfoAddress.EMPTY
+                .withCountry(getString(insp.field("country"), oldAddress.country()))
+                .withStateRegionProvince(getString(insp.field("stateRegionProvince"), oldAddress.stateRegionProvince()))
+                .withCity(getString(insp.field("city"), oldAddress.city()))
+                .withPostalCodeOrZip(getString(insp.field("postalCodeOrZip"), oldAddress.postalCodeOrZip()))
+                .withAddressLines(getString(insp.field("addressLines"), oldAddress.addressLines()));
+    }
+
+    private TenantInfoBillingContact updateTenantInfoBillingContact(Inspector insp, TenantInfoBillingContact oldContact) {
+        if (!insp.valid()) return oldContact;
+        return TenantInfoBillingContact.EMPTY
+                .withName(getString(insp.field("name"), oldContact.name()))
+                .withEmail(getString(insp.field("email"), oldContact.email()))
+                .withPhone(getString(insp.field("phone"), oldContact.phone()))
+                .withAddress(updateTenantInfoAddress(insp.field("address"), oldContact.address()));
     }
 
     private HttpResponse applications(String tenantName, Optional<String> applicationName, HttpRequest request) {
@@ -1005,16 +1113,17 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
 
         // Add zone endpoints
         var endpointArray = response.setArray("endpoints");
-        for (var endpoint : controller.routing().endpointsOf(deploymentId)
-                                      .scope(Endpoint.Scope.zone)
-                                      .not().legacy()) {
+        EndpointList zoneEndpoints = controller.routing().endpointsOf(deploymentId)
+                                               .scope(Endpoint.Scope.zone)
+                                               .not().legacy();
+        for (var endpoint : controller.routing().directEndpoints(zoneEndpoints, deploymentId.applicationId())) {
             toSlime(endpoint, endpointArray.addObject());
         }
         // Add global endpoints
-        var globalEndpoints = controller.routing().endpointsOf(application, deploymentId.applicationId().instance())
-                                        .not().legacy()
-                                        .targets(deploymentId.zoneId());
-        for (var endpoint : globalEndpoints) {
+        EndpointList globalEndpoints = controller.routing().endpointsOf(application, deploymentId.applicationId().instance())
+                                                 .not().legacy()
+                                                 .targets(deploymentId.zoneId());
+        for (var endpoint : controller.routing().directEndpoints(globalEndpoints, deploymentId.applicationId())) {
             toSlime(endpoint, endpointArray.addObject());
         }
 
@@ -1115,7 +1224,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
      */
     private Version compileVersion(TenantAndApplicationId id) {
         Version oldestPlatform = controller.applications().oldestInstalledPlatform(id);
-        VersionStatus versionStatus = controller.versionStatus();
+        VersionStatus versionStatus = controller.readVersionStatus();
         return versionStatus.versions().stream()
                             .filter(version -> version.confidence().equalOrHigherThan(VespaVersion.Confidence.low))
                             .filter(VespaVersion::isReleased)
@@ -1316,6 +1425,11 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         return response;
     }
 
+    private HttpResponse content(String tenantName, String applicationName, String instanceName, String environment, String region, String restPath, HttpRequest request) {
+        DeploymentId deploymentId = new DeploymentId(ApplicationId.from(tenantName, applicationName, instanceName), ZoneId.from(environment, region));
+        return controller.serviceRegistry().configServer().getApplicationPackageContent(deploymentId, "/" + restPath, request.getUri());
+    }
+
     private HttpResponse updateTenant(String tenantName, HttpRequest request) {
         getTenantOrThrow(tenantName);
         TenantName tenant = TenantName.from(tenantName);
@@ -1364,16 +1478,17 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         StringBuilder response = new StringBuilder();
         controller.applications().lockApplicationOrThrow(TenantAndApplicationId.from(id), application -> {
             Version version = Version.fromString(versionString);
+            VersionStatus versionStatus = controller.readVersionStatus();
             if (version.equals(Version.emptyVersion))
-                version = controller.systemVersion();
-            if ( ! systemHasVersion(version))
+                version = controller.systemVersion(versionStatus);
+            if (!versionStatus.isActive(version))
                 throw new IllegalArgumentException("Cannot trigger deployment of version '" + version + "': " +
                                                    "Version is not active in this system. " +
-                                                   "Active versions: " + controller.versionStatus().versions()
-                                                                                   .stream()
-                                                                                   .map(VespaVersion::versionNumber)
-                                                                                   .map(Version::toString)
-                                                                                   .collect(joining(", ")));
+                                                   "Active versions: " + versionStatus.versions()
+                                                                                      .stream()
+                                                                                      .map(VespaVersion::versionNumber)
+                                                                                      .map(Version::toString)
+                                                                                      .collect(joining(", ")));
             Change change = Change.of(version);
             if (pin)
                 change = change.withPin();
@@ -1484,10 +1599,11 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
             }
             // To avoid second guessing the orchestrated upgrades of system applications
             // we don't allow to deploy these during an system upgrade (i.e when new vespa is being rolled out)
-            if (controller.versionStatus().isUpgrading()) {
+            VersionStatus versionStatus = controller.readVersionStatus();
+            if (versionStatus.isUpgrading()) {
                 throw new IllegalArgumentException("Deployment of system applications during a system upgrade is not allowed");
             }
-            Optional<VespaVersion> systemVersion = controller.versionStatus().systemVersion();
+            Optional<VespaVersion> systemVersion = versionStatus.systemVersion();
             if (systemVersion.isEmpty()) {
                 throw new IllegalArgumentException("Deployment of system applications is not permitted until system version is determined");
             }
@@ -1674,6 +1790,13 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
                     keyObject.setString("user", user.getName());
                 });
 
+                var tenantQuota = controller.serviceRegistry().billingController().getQuota(tenant.name());
+                var usedQuota = applications.stream()
+                        .map(com.yahoo.vespa.hosted.controller.Application::quotaUsage)
+                        .reduce(QuotaUsage.none, QuotaUsage::add);
+
+                toSlime(tenantQuota, usedQuota, object.setObject("quota"));
+
                 break;
             }
             default: throw new IllegalArgumentException("Unexpected tenant type '" + tenant.type() + "'.");
@@ -1689,6 +1812,17 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
                 else
                     toSlime(instance.id(), applicationArray.addObject(), request);
         }
+    }
+
+    private void toSlime(Quota quota, QuotaUsage usage, Cursor object) {
+        quota.budget().ifPresentOrElse(
+                budget -> object.setDouble("budget", budget.doubleValue()),
+                () -> object.setNix("budget")
+        );
+        object.setDouble("budgetUsed", usage.rate());
+
+        // TODO: Retire when we no longer use maxClusterSize as a meaningful limit
+        quota.maxClusterSize().ifPresent(maxClusterSize -> object.setLong("clusterSize", maxClusterSize));
     }
 
     private void toSlime(ClusterResources resources, Cursor object) {
@@ -1869,10 +2003,6 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         return scanner.next();
     }
 
-    private boolean systemHasVersion(Version version) {
-        return controller.versionStatus().versions().stream().anyMatch(v -> v.versionNumber().equals(version));
-    }
-
     private static boolean recurseOverTenants(HttpRequest request) {
         return recurseOverApplications(request) || "tenant".equals(request.getProperty("recursive"));
     }
@@ -1955,7 +2085,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     }
 
     private static Map<String, byte[]> parseDataParts(HttpRequest request) {
-        String contentHash = request.getHeader("x-Content-Hash");
+        String contentHash = request.getHeader("X-Content-Hash");
         if (contentHash == null)
             return new MultipartParser().parse(request);
 

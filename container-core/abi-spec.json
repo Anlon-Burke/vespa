@@ -114,7 +114,8 @@
     ],
     "methods": [
       "public void <init>(java.util.concurrent.Executor, com.yahoo.container.core.LogHandlerConfig)",
-      "public com.yahoo.container.jdisc.HttpResponse handle(com.yahoo.container.jdisc.HttpRequest)"
+      "public com.yahoo.container.jdisc.AsyncHttpResponse handle(com.yahoo.container.jdisc.HttpRequest)",
+      "public bridge synthetic com.yahoo.container.jdisc.HttpResponse handle(com.yahoo.container.jdisc.HttpRequest)"
     ],
     "fields": []
   },
@@ -463,7 +464,9 @@
       "public java.lang.String getCharacterEncoding()",
       "public void populateAccessLogEntry(com.yahoo.container.logging.AccessLogEntry)",
       "public void complete()",
-      "public java.lang.Iterable getLogValues()"
+      "public java.lang.Iterable getLogValues()",
+      "public void setRequestType(com.yahoo.jdisc.Request$RequestType)",
+      "public com.yahoo.jdisc.Request$RequestType getRequestType()"
     ],
     "fields": [
       "public static final java.lang.String DEFAULT_MIME_TYPE",
@@ -627,8 +630,11 @@
       "protected void <init>(java.util.concurrent.Executor, com.yahoo.jdisc.Metric)",
       "protected void <init>(java.util.concurrent.Executor, com.yahoo.jdisc.Metric, boolean)",
       "public final com.yahoo.jdisc.handler.ContentChannel handleRequest(com.yahoo.jdisc.Request, com.yahoo.jdisc.handler.ResponseHandler)",
+      "protected java.util.Optional getRequestType()",
       "public java.time.Duration getTimeout()",
-      "protected abstract void handleRequest(com.yahoo.jdisc.Request, com.yahoo.jdisc.handler.BufferedContentChannel, com.yahoo.jdisc.handler.ResponseHandler)"
+      "public java.util.concurrent.Executor executor()",
+      "protected abstract void handleRequest(com.yahoo.jdisc.Request, com.yahoo.jdisc.handler.BufferedContentChannel, com.yahoo.jdisc.handler.ResponseHandler)",
+      "protected void writeErrorResponseOnOverload(com.yahoo.jdisc.Request, com.yahoo.jdisc.handler.ResponseHandler)"
     ],
     "fields": [
       "protected final com.yahoo.jdisc.Metric metric"

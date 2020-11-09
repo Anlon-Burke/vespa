@@ -90,6 +90,10 @@ public interface NodeRepository {
 
     void retireAndDeprovision(ZoneId zoneId, String hostName);
 
+    void patchNode(ZoneId zoneId, String hostName, NodeRepositoryNode node);
+
+    void reboot(ZoneId zoneId, String hostName);
+
     private static Node toNode(NodeRepositoryNode node) {
         var application = Optional.ofNullable(node.getOwner())
                                   .map(owner -> ApplicationId.from(owner.getTenant(), owner.getApplication(),
@@ -127,8 +131,11 @@ public interface NodeRepository {
                         node.getWantToRetire(),
                         node.getWantToDeprovision(),
                         Optional.ofNullable(node.getReservedTo()).map(TenantName::from),
+                        Optional.ofNullable(node.getExclusiveTo()).map(ApplicationId::fromSerializedForm),
                         dockerImageFrom(node.getWantedDockerImage()),
-                        dockerImageFrom(node.getCurrentDockerImage()));
+                        dockerImageFrom(node.getCurrentDockerImage()),
+                        node.getReports(),
+                        node.getHistory());
     }
 
     private static String clusterIdOf(NodeMembership nodeMembership) {
@@ -169,6 +176,7 @@ public interface NodeRepository {
             case dirty: return Node.State.dirty;
             case failed: return Node.State.failed;
             case parked: return Node.State.parked;
+            case breakfixed: return Node.State.breakfixed;
         }
         return Node.State.unknown;
     }

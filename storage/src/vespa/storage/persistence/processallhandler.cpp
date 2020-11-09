@@ -2,6 +2,9 @@
 
 #include "processallhandler.h"
 #include "bucketprocessor.h"
+#include "persistenceutil.h"
+#include <vespa/persistence/spi/persistenceprovider.h>
+#include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/stllike/hash_map.hpp>
 
 #include <vespa/log/log.h>
@@ -9,8 +12,7 @@ LOG_SETUP(".persistence.processall");
 
 namespace storage {
 
-ProcessAllHandler::ProcessAllHandler(PersistenceUtil& env,
-                                     spi::PersistenceProvider& spi)
+ProcessAllHandler::ProcessAllHandler(const PersistenceUtil& env, spi::PersistenceProvider& spi)
     : _env(env),
       _spi(spi)
 {
@@ -36,17 +38,9 @@ public:
     {}
 
     void process(spi::DocEntry& entry) override {
-        spi::RemoveResult removeResult = _provider.remove(
-                _bucket,
-                entry.getTimestamp(),
-                *entry.getDocumentId(),
-                _context);
-
+        spi::RemoveResult removeResult = _provider.remove(_bucket, entry.getTimestamp(), *entry.getDocumentId(),_context);
         if (removeResult.getErrorCode() != spi::Result::ErrorType::NONE) {
-            std::ostringstream ss;
-            ss << "Failed to do remove for removelocation: "
-               << removeResult.getErrorMessage();
-            throw std::runtime_error(ss.str());
+            throw std::runtime_error(vespalib::make_string("Failed to do remove for removelocation: %s", removeResult.getErrorMessage().c_str()));
         }
         ++_n_removed;
     }
@@ -80,7 +74,7 @@ public:
 }
 
 MessageTracker::UP
-ProcessAllHandler::handleRemoveLocation(api::RemoveLocationCommand& cmd, MessageTracker::UP tracker)
+ProcessAllHandler::handleRemoveLocation(api::RemoveLocationCommand& cmd, MessageTracker::UP tracker) const
 {
     tracker->setMetric(_env._metrics.removeLocation[cmd.getLoadType()]);
 
@@ -88,7 +82,7 @@ ProcessAllHandler::handleRemoveLocation(api::RemoveLocationCommand& cmd, Message
         cmd.getBucketId().toString().c_str(),
         cmd.getDocumentSelection().c_str());
 
-    spi::Bucket bucket(cmd.getBucket(), spi::PartitionId(_env._partition));
+    spi::Bucket bucket(cmd.getBucket());
     UnrevertableRemoveEntryProcessor processor(_spi, bucket, tracker->context());
     BucketProcessor::iterateAll(_spi, bucket, cmd.getDocumentSelection(),
                                 processor, spi::NEWEST_DOCUMENT_ONLY,tracker->context());
@@ -99,15 +93,13 @@ ProcessAllHandler::handleRemoveLocation(api::RemoveLocationCommand& cmd, Message
 }
 
 MessageTracker::UP
-ProcessAllHandler::handleStatBucket(api::StatBucketCommand& cmd, MessageTracker::UP tracker)
+ProcessAllHandler::handleStatBucket(api::StatBucketCommand& cmd, MessageTracker::UP tracker) const
 {
     tracker->setMetric(_env._metrics.statBucket[cmd.getLoadType()]);
     std::ostringstream ost;
+    ost << "Persistence bucket " << cmd.getBucketId() << "\n";
 
-    ost << "Persistence bucket " << cmd.getBucketId()
-        << ", partition " << _env._partition << "\n";
-
-    spi::Bucket bucket(cmd.getBucket(), spi::PartitionId(_env._partition));
+    spi::Bucket bucket(cmd.getBucket());
     StatEntryProcessor processor(ost);
     BucketProcessor::iterateAll(_spi, bucket, cmd.getDocumentSelection(),
                                 processor, spi::ALL_VERSIONS,tracker->context());

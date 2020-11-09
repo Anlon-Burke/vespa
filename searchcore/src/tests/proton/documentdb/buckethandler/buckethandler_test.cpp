@@ -14,13 +14,11 @@ using document::BucketId;
 using document::GlobalId;
 using storage::spi::Bucket;
 using storage::spi::BucketInfo;
-using storage::spi::PartitionId;
 using storage::spi::Timestamp;
 using storage::spi::test::makeSpiBucket;
 using vespalib::ThreadStackExecutor;
 using proton::test::BucketStateCalculator;
 
-const PartitionId PART_ID(0);
 const GlobalId GID_1("111111111111");
 const BucketId BUCKET_1(8, GID_1.convertToBucketId().getRawId());
 const Timestamp TIME_1(1u);
@@ -47,7 +45,7 @@ struct MySubDb
             for (size_t i = 0; i < bucketDocs.getDocs().size(); ++i) {
                 const test::Document &testDoc = bucketDocs.getDocs()[i];
                 _metaStore.put(testDoc.getGid(), testDoc.getBucket(),
-                               testDoc.getTimestamp(), testDoc.getDocSize(), testDoc.getLid());
+                               testDoc.getTimestamp(), testDoc.getDocSize(), testDoc.getLid(), 0u);
             }
         }
     }
@@ -147,7 +145,7 @@ struct Fixture
     }
     void sync() { _exec.sync(); }
     void handleGetBucketInfo(const BucketId &bucket) {
-        _handler.handleGetBucketInfo(makeSpiBucket(bucket, PART_ID), _bucketInfo);
+        _handler.handleGetBucketInfo(makeSpiBucket(bucket), _bucketInfo);
     }
     void
     setNodeUp(bool value)

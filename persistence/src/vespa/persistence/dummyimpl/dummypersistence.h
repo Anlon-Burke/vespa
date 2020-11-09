@@ -11,10 +11,11 @@
 #include <vespa/persistence/spi/abstractpersistenceprovider.h>
 #include <vespa/document/base/globalid.h>
 #include <vespa/document/fieldset/fieldsets.h>
-#include <vespa/vespalib/util/sync.h>
 #include <vespa/vespalib/stllike/hash_map.h>
 #include <atomic>
 #include <map>
+#include <mutex>
+#include <condition_variable>
 
 namespace document {
 class DocumentTypeRepo;
@@ -135,14 +136,17 @@ private:
 class DummyPersistence : public AbstractPersistenceProvider
 {
 public:
-    DummyPersistence(const std::shared_ptr<const document::DocumentTypeRepo>& repo,
-                     uint16_t partitionCount = 1);
+    DummyPersistence(const std::shared_ptr<const document::DocumentTypeRepo>& repo);
     ~DummyPersistence();
 
-    PartitionStateListResult getPartitionStates() const override;
-    BucketIdListResult listBuckets(BucketSpace bucketSpace, PartitionId) const override;
+    Result initialize() override;
+    BucketIdListResult listBuckets(BucketSpace bucketSpace) const override;
 
     void setModifiedBuckets(const BucketIdListResult::List& result);
+
+    // Important: any subsequent mutations to the bucket set in fake_info will reset
+    // the bucket info due to implicit recalculation of bucket info.
+    void set_fake_bucket_set(const std::vector<std::pair<Bucket, BucketInfo>>& fake_info);
 
     /**
      * Returns the list set by setModifiedBuckets(), then clears
@@ -200,14 +204,13 @@ private:
 
     mutable bool _initialized;
     std::shared_ptr<const document::DocumentTypeRepo> _repo;
-    PartitionStateList _partitions;
-    typedef vespalib::hash_map<Bucket, BucketContent::SP, document::BucketId::hash>
-    PartitionContent;
+    using Content = vespalib::hash_map<Bucket, BucketContent::SP, document::BucketId::hash>;
 
-    std::vector<PartitionContent> _content;
+    Content _content;
     IteratorId _nextIterator;
     mutable std::map<IteratorId, Iterator::UP> _iterators;
-    vespalib::Monitor _monitor;
+    mutable std::mutex      _monitor;
+    std::condition_variable _cond;
 
     std::unique_ptr<ClusterState> _clusterState;
 

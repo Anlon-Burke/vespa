@@ -1,6 +1,7 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.search;
 
+import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.searchlib.TranslogserverConfig;
 import com.yahoo.config.model.producer.AbstractConfigProducer;
@@ -16,6 +17,14 @@ public class TransactionLogServer extends AbstractService  {
 
     private static final long serialVersionUID = 1L;
 
+    private static TranslogserverConfig.Compression.Type.Enum convertCompressionType(String type) {
+        try {
+            return TranslogserverConfig.Compression.Type.Enum.valueOf(type);
+        } catch (Throwable t) {
+            return TranslogserverConfig.Compression.Type.NONE;
+        }
+    }
+
     public TransactionLogServer(AbstractConfigProducer searchNode, String clusterName) {
         super(searchNode, "transactionlogserver");
         portsMeta.on(0).tag("tls");
@@ -24,6 +33,7 @@ public class TransactionLogServer extends AbstractService  {
     }
 
     public static class Builder extends VespaDomBuilder.DomConfigProducerBuilder<TransactionLogServer> {
+
         private final String clusterName;
         public Builder(String clusterName) {
             this.clusterName = clusterName;
@@ -33,6 +43,7 @@ public class TransactionLogServer extends AbstractService  {
         protected TransactionLogServer doBuild(DeployState deployState, AbstractConfigProducer ancestor, Element producerSpec) {
             return new TransactionLogServer(ancestor, clusterName);
         }
+
     }
 
     public int getPortCount() {
@@ -65,6 +76,7 @@ public class TransactionLogServer extends AbstractService  {
 
     public void getConfig(TranslogserverConfig.Builder builder) {
         builder.listenport(getTlsPort()).basedir(getTlsDir());
+
     }
 
 }

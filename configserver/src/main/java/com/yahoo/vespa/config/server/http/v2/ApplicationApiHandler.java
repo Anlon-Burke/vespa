@@ -13,11 +13,9 @@ import com.yahoo.vespa.config.server.application.CompressedApplicationInputStrea
 import com.yahoo.vespa.config.server.http.SessionHandler;
 import com.yahoo.vespa.config.server.http.Utils;
 import com.yahoo.vespa.config.server.session.PrepareParams;
-import com.yahoo.vespa.config.server.tenant.Tenant;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 
 import java.time.Duration;
-import java.time.Instant;
 
 import static com.yahoo.vespa.config.server.application.CompressedApplicationInputStream.createFromCompressedStream;
 import static com.yahoo.vespa.config.server.http.Utils.checkThatTenantExists;
@@ -53,13 +51,10 @@ public class ApplicationApiHandler extends SessionHandler {
     @Override
     protected HttpResponse handlePOST(HttpRequest request) {
         validateDataAndHeader(request);
-        Tenant tenant = validateTenant(request);
-        PrepareParams prepareParams = PrepareParams.fromHttpRequest(request, tenant.getName(), zookeeperBarrierTimeout);
+        TenantName tenantName = validateTenant(request);
+        PrepareParams prepareParams = PrepareParams.fromHttpRequest(request, tenantName, zookeeperBarrierTimeout);
         CompressedApplicationInputStream compressedStream = createFromCompressedStream(request.getData(), request.getHeader(contentTypeHeader));
-        PrepareResult result = applicationRepository.deploy(compressedStream,
-                                                            prepareParams,
-                                                            shouldIgnoreSessionStaleFailure(request),
-                                                            Instant.now());
+        PrepareResult result = applicationRepository.deploy(compressedStream, prepareParams);
         return new SessionPrepareAndActivateResponse(result, request, prepareParams.getApplicationId(), zone);
     }
 
@@ -68,10 +63,10 @@ public class ApplicationApiHandler extends SessionHandler {
         return zookeeperBarrierTimeout.plus(Duration.ofSeconds(10));
     }
 
-    private Tenant validateTenant(HttpRequest request) {
+    private TenantName validateTenant(HttpRequest request) {
         TenantName tenantName = getTenantNameFromRequest(request);
         checkThatTenantExists(tenantRepository, tenantName);
-        return tenantRepository.getTenant(tenantName);
+        return tenantName;
     }
 
     public static TenantName getTenantNameFromRequest(HttpRequest request) {

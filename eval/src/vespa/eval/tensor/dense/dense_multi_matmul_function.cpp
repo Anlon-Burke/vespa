@@ -27,13 +27,13 @@ namespace {
 
 void my_cblas_double_multi_matmul_op(InterpretedFunction::State &state, uint64_t param) {
     using CT = double;
-    const DenseMultiMatMulFunction &self = *((const DenseMultiMatMulFunction *)(param));
+    const DenseMultiMatMulFunction &self = unwrap_param<DenseMultiMatMulFunction>(param);
     size_t lhs_block_size = self.lhs_size() * self.common_size();
     size_t rhs_block_size = self.rhs_size() * self.common_size();
     size_t dst_block_size = self.lhs_size() * self.rhs_size();
     size_t num_blocks = self.matmul_cnt();
-    const CT *lhs = DenseTensorView::typify_cells<CT>(state.peek(1)).cbegin();
-    const CT *rhs = DenseTensorView::typify_cells<CT>(state.peek(0)).cbegin();
+    const CT *lhs = state.peek(1).cells().typify<CT>().cbegin();
+    const CT *rhs = state.peek(0).cells().typify<CT>().cbegin();
     auto dst_cells = state.stash.create_array<CT>(dst_block_size * num_blocks);
     CT *dst = dst_cells.begin();
     for (size_t i = 0; i < num_blocks; ++i, lhs += lhs_block_size, rhs += rhs_block_size, dst += dst_block_size) {
@@ -48,13 +48,13 @@ void my_cblas_double_multi_matmul_op(InterpretedFunction::State &state, uint64_t
 
 void my_cblas_float_multi_matmul_op(InterpretedFunction::State &state, uint64_t param) {
     using CT = float;
-    const DenseMultiMatMulFunction &self = *((const DenseMultiMatMulFunction *)(param));
+    const DenseMultiMatMulFunction &self = unwrap_param<DenseMultiMatMulFunction>(param);
     size_t lhs_block_size = self.lhs_size() * self.common_size();
     size_t rhs_block_size = self.rhs_size() * self.common_size();
     size_t dst_block_size = self.lhs_size() * self.rhs_size();
     size_t num_blocks = self.matmul_cnt();
-    const CT *lhs = DenseTensorView::typify_cells<CT>(state.peek(1)).cbegin();
-    const CT *rhs = DenseTensorView::typify_cells<CT>(state.peek(0)).cbegin();
+    const CT *lhs = state.peek(1).cells().typify<CT>().cbegin();
+    const CT *rhs = state.peek(0).cells().typify<CT>().cbegin();
     auto dst_cells = state.stash.create_array<CT>(dst_block_size * num_blocks);
     CT *dst = dst_cells.begin();
     for (size_t i = 0; i < num_blocks; ++i, lhs += lhs_block_size, rhs += rhs_block_size, dst += dst_block_size) {
@@ -128,8 +128,8 @@ bool check_input_type(const ValueType &type, const DimList &relevant) {
 }
 
 bool is_multi_matmul(const ValueType &a, const ValueType &b, const vespalib::string &reduce_dim) {
-    auto dims_a = a.nontrivial_dimensions();
-    auto dims_b = b.nontrivial_dimensions();
+    auto dims_a = a.nontrivial_indexed_dimensions();
+    auto dims_b = b.nontrivial_indexed_dimensions();
     if (check_input_type(a, dims_a) && check_input_type(b, dims_b) && (a.cell_type() == b.cell_type())) {
         CommonDim cd_a(dims_a, reduce_dim);
         CommonDim cd_b(dims_b, reduce_dim);
@@ -144,8 +144,8 @@ bool is_multi_matmul(const ValueType &a, const ValueType &b, const vespalib::str
 const TensorFunction &create_multi_matmul(const TensorFunction &a, const TensorFunction &b,
                                           const vespalib::string &reduce_dim, const ValueType &result_type, Stash &stash)
 {
-    auto dims_a = a.result_type().nontrivial_dimensions();
-    auto dims_b = b.result_type().nontrivial_dimensions();
+    auto dims_a = a.result_type().nontrivial_indexed_dimensions();
+    auto dims_b = b.result_type().nontrivial_indexed_dimensions();
     CommonDim cd_a(dims_a, reduce_dim);
     CommonDim cd_b(dims_b, reduce_dim);
     DimPrefix prefix(dims_a, dims_b);
@@ -184,10 +184,10 @@ DenseMultiMatMulFunction::DenseMultiMatMulFunction(const ValueType &result_type,
 DenseMultiMatMulFunction::~DenseMultiMatMulFunction() = default;
 
 InterpretedFunction::Instruction
-DenseMultiMatMulFunction::compile_self(const TensorEngine &, Stash &) const
+DenseMultiMatMulFunction::compile_self(eval::EngineOrFactory, Stash &) const
 {
     auto op = my_select(lhs().result_type().cell_type());
-    return InterpretedFunction::Instruction(op, (uint64_t)(this));
+    return InterpretedFunction::Instruction(op, wrap_param<DenseMultiMatMulFunction>(*this));
 }
 
 void

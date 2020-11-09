@@ -99,7 +99,7 @@ size_t encodeCells(nbostream &stream, const Tensor &tensor, CellType cell_type) 
 }
 
 template<typename T>
-void decodeCells(nbostream &stream, size_t dimensionsSize, size_t cellsSize, DirectSparseTensorBuilder &builder) {
+void decodeCells(nbostream &stream, size_t dimensionsSize, size_t cellsSize, DirectSparseTensorBuilder<T> &builder) {
     T cellValue = 0.0;
     vespalib::string str;
     SparseTensorAddressBuilder address;
@@ -118,17 +118,6 @@ void decodeCells(nbostream &stream, size_t dimensionsSize, size_t cellsSize, Dir
     }
 }
 
-void decodeCells(CellType cell_type, nbostream &stream, size_t dimensionsSize, size_t cellsSize, DirectSparseTensorBuilder &builder) {
-    switch (cell_type) {
-    case CellType::DOUBLE:
-        decodeCells<double>(stream, dimensionsSize, cellsSize, builder);
-        break;
-    case CellType::FLOAT:
-        decodeCells<float>(stream, dimensionsSize, cellsSize, builder);
-        break;
-    }
-}
-
 }
 
 void
@@ -142,6 +131,24 @@ SparseBinaryFormat::serialize(nbostream &stream, const Tensor &tensor)
     stream.write(cells.peek(), cells.size());
 }
 
+struct BuildSparseCells {
+    template<typename CT>
+    static Tensor::UP invoke(ValueType type, nbostream &stream,
+                             size_t dimensionsSize, 
+                             size_t cellsSize)
+    {
+        DirectSparseTensorBuilder<CT> builder(std::move(type));
+        builder.reserve(cellsSize);
+        decodeCells<CT>(stream, dimensionsSize, cellsSize, builder);
+        auto retval = builder.build();
+        if (retval->should_shrink()) {
+            return retval->shrink();
+        } else {
+            return retval;
+        }
+    }
+};
+
 std::unique_ptr<Tensor>
 SparseBinaryFormat::deserialize(nbostream &stream, CellType cell_type)
 {
@@ -152,11 +159,10 @@ SparseBinaryFormat::deserialize(nbostream &stream, CellType cell_type)
         stream.readSmallString(str);
         dimensions.emplace_back(str);
     }
-    ValueType type = ValueType::tensor_type(std::move(dimensions), cell_type);
-    DirectSparseTensorBuilder builder(type);
     size_t cellsSize = stream.getInt1_4Bytes();
-    decodeCells(cell_type, stream, dimensionsSize, cellsSize, builder);
-    return builder.build();
+    ValueType type = ValueType::tensor_type(std::move(dimensions), cell_type);
+    return typify_invoke<1,eval::TypifyCellType,BuildSparseCells>(cell_type,
+        std::move(type), stream, dimensionsSize, cellsSize);
 }
 
-}
+} // namespace

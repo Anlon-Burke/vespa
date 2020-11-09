@@ -11,7 +11,6 @@ LOG_SETUP(".proton.server.clusterstatehandler");
 using storage::spi::Bucket;
 using storage::spi::BucketIdListResult;
 using storage::spi::ClusterState;
-using storage::spi::PartitionId;
 using storage::spi::Result;
 using vespalib::Executor;
 using vespalib::makeTask;
@@ -40,7 +39,7 @@ public:
     {
     }
     bool shouldBeReady(const document::Bucket &bucket) const override {
-        return _calc.shouldBeReady(Bucket(bucket, PartitionId(0)));
+        return _calc.shouldBeReady(Bucket(bucket));
     }
     bool clusterUp() const override { return _clusterUp; }
     bool nodeUp() const override { return _nodeUp; }

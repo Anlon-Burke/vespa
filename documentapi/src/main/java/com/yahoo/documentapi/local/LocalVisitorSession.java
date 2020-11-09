@@ -1,11 +1,8 @@
 package com.yahoo.documentapi.local;
 
 import com.yahoo.document.Document;
-import com.yahoo.document.DocumentGet;
 import com.yahoo.document.DocumentId;
 import com.yahoo.document.DocumentPut;
-import com.yahoo.document.Field;
-import com.yahoo.document.fieldset.FieldCollection;
 import com.yahoo.document.fieldset.FieldSet;
 import com.yahoo.document.fieldset.FieldSetRepo;
 import com.yahoo.document.select.DocumentSelector;
@@ -26,11 +23,12 @@ import com.yahoo.yolean.Exceptions;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.Phaser;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Local visitor session that copies and iterates through all items in the local document access.
- * Each document must be ack'ed for the session to be done visiting.
+ * Each document must be ack'ed for the session to be done visiting, unless the destination is remote.
  * Only document puts are sent by this session, and this is done from a separate thread.
  *
  * @author jonmv
@@ -45,20 +43,24 @@ public class LocalVisitorSession implements VisitorSession {
     private final DocumentSelector selector;
     private final FieldSet fieldSet;
     private final AtomicReference<State> state;
+    private final AtomicReference<Phaser> phaser;
+    private final ProgressToken token;
 
     public LocalVisitorSession(LocalDocumentAccess access, VisitorParameters parameters) throws ParseException {
-        if (parameters.getResumeToken() != null)
-            throw new UnsupportedOperationException("Continuation via progress tokens is not supported");
-
-        if (parameters.getRemoteDataHandler() != null)
-            throw new UnsupportedOperationException("Remote data handlers are not supported");
-
         this.selector = new DocumentSelector(parameters.getDocumentSelection());
         this.fieldSet = new FieldSetRepo().parse(access.getDocumentTypeManager(), parameters.fieldSet());
+        this.token = parameters.getResumeToken();
 
-        this.data = parameters.getLocalDataHandler() == null ? new VisitorDataQueue() : parameters.getLocalDataHandler();
-        this.data.reset();
-        this.data.setSession(this);
+        if (parameters.getRemoteDataHandler() == null) {
+            this.data = parameters.getLocalDataHandler() == null ? new VisitorDataQueue() : parameters.getLocalDataHandler();
+            this.data.reset();
+            this.data.setSession(this);
+        }
+        else {
+            if (parameters.getLocalDataHandler() != null)
+                throw new IllegalArgumentException("Cannot have both a remote and a local data handler");
+            this.data = null;
+        }
 
         this.control = parameters.getControlHandler() == null ? new VisitorControlHandler() : parameters.getControlHandler();
         this.control.reset();
@@ -67,11 +69,16 @@ public class LocalVisitorSession implements VisitorSession {
         this.outstanding = new ConcurrentSkipListMap<>(Comparator.comparing(DocumentId::toString));
         this.outstanding.putAll(access.documents);
         this.state = new AtomicReference<>(State.RUNNING);
+        this.phaser = access.phaser;
 
         start();
     }
 
     void start() {
+        Phaser synchronizer = phaser.get();
+        if (synchronizer != null)
+            synchronizer.register();
+
         new Thread(() -> {
             try {
                 // Iterate through all documents and pass on to data handler
@@ -79,14 +86,29 @@ public class LocalVisitorSession implements VisitorSession {
                     if (state.get() != State.RUNNING)
                         return;
 
-                    if (selector.accepts(new DocumentPut(document)) != Result.TRUE)
+                    try {
+                        if (selector.accepts(new DocumentPut(document)) != Result.TRUE)
+                            return;
+                    }
+                    catch (RuntimeException e) {
                         return;
+                    }
 
                     Document copy = new Document(document.getDataType(), document.getId());
                     new FieldSetRepo().copyFields(document, copy, fieldSet);
 
-                    data.onMessage(new PutDocumentMessage(new DocumentPut(copy)),
-                                   new AckToken(id));
+
+                    if (synchronizer != null)
+                        synchronizer.arriveAndAwaitAdvance();
+
+                    if (data != null)
+                        data.onMessage(new PutDocumentMessage(new DocumentPut(copy)),
+                                       new AckToken(id));
+                    else
+                        outstanding.remove(id);
+
+                    if (synchronizer != null)
+                        synchronizer.arriveAndAwaitAdvance();
                 });
                 // Transition to a terminal state when done
                 state.updateAndGet(current -> {
@@ -110,7 +132,10 @@ public class LocalVisitorSession implements VisitorSession {
                 control.onDone(VisitorControlHandler.CompletionCode.FAILURE, Exceptions.toMessageString(e));
             }
             finally {
-                data.onDone();
+                if (synchronizer != null)
+                    synchronizer.awaitAdvance(synchronizer.arriveAndDeregister());
+                if (data != null)
+                    data.onDone();
             }
         }).start();
     }
@@ -121,9 +146,10 @@ public class LocalVisitorSession implements VisitorSession {
                && control.isDone();     // Control handler has been notified
     }
 
+    /** Returns the token set in the parameters used to create this. */
     @Override
     public ProgressToken getProgress() {
-        throw new UnsupportedOperationException("Progress tokens are not supported");
+        return token;
     }
 
     @Override
@@ -160,6 +186,12 @@ public class LocalVisitorSession implements VisitorSession {
     @Override
     public void destroy() {
         abort();
+        try {
+            control.waitUntilDone(0);
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
 }

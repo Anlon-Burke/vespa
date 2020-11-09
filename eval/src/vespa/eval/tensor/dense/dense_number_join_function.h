@@ -3,6 +3,7 @@
 #pragma once
 
 #include <vespa/eval/eval/tensor_function.h>
+#include <vespa/eval/eval/operation.h>
 
 namespace vespalib::tensor {
 
@@ -14,7 +15,7 @@ class DenseNumberJoinFunction : public eval::tensor_function::Join
 {
 public:
     enum class Primary : uint8_t { LHS, RHS };
-    using join_fun_t = ::vespalib::eval::tensor_function::join_fun_t;
+    using join_fun_t = vespalib::eval::operation::op2_t;
 private:
     Primary _primary;
 public:
@@ -26,7 +27,7 @@ public:
     ~DenseNumberJoinFunction() override;
     Primary primary() const { return _primary; }
     bool inplace() const;
-    eval::InterpretedFunction::Instruction compile_self(const eval::TensorEngine &engine, Stash &stash) const override;
+    eval::InterpretedFunction::Instruction compile_self(eval::EngineOrFactory engine, Stash &stash) const override;
     static const eval::TensorFunction &optimize(const eval::TensorFunction &expr, Stash &stash);
 };
 

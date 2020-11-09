@@ -20,7 +20,9 @@
 #include <vespa/document/fieldset/fieldsets.h>
 #include <vespa/document/repo/configbuilder.h>
 #include <vespa/document/repo/documenttyperepo.h>
-#include <vespa/eval/tensor/tensor.h>
+#include <vespa/eval/eval/engine_or_factory.h>
+#include <vespa/eval/eval/value.h>
+#include <vespa/eval/eval/test/value_compare.h>
 #include <vespa/eval/tensor/test/test_utils.h>
 #include <vespa/persistence/spi/bucket.h>
 #include <vespa/persistence/spi/test.h>
@@ -83,15 +85,15 @@ using search::index::schema::DataType;
 using search::tensor::TensorAttribute;
 using storage::spi::Bucket;
 using storage::spi::GetResult;
-using storage::spi::PartitionId;
 using storage::spi::Timestamp;
 using storage::spi::test::makeSpiBucket;
 using vespalib::make_string;
 using vespalib::string;
+using vespalib::eval::EngineOrFactory;
 using vespalib::eval::TensorSpec;
 using vespalib::eval::ValueType;
+using vespalib::eval::Value;
 using vespalib::tensor::test::makeTensor;
-using vespalib::tensor::Tensor;
 using namespace document::config_builder;
 using namespace search::index;
 
@@ -110,8 +112,8 @@ const char dyn_field_nas[] = "dynamic null attr string field"; // in document, n
 const char position_field[] = "position_field";
 vespalib::string dyn_field_tensor("dynamic_tensor_field");
 vespalib::string tensor_spec("tensor(x{})");
-std::unique_ptr<Tensor> static_tensor = makeTensor<Tensor>(TensorSpec(tensor_spec).add({{"x", "1"}}, 1.5));
-std::unique_ptr<Tensor> dynamic_tensor = makeTensor<Tensor>(TensorSpec(tensor_spec).add({{"x", "2"}}, 3.5));
+std::unique_ptr<Value> static_tensor = makeTensor<Value>(TensorSpec(tensor_spec).add({{"x", "1"}}, 1.5));
+std::unique_ptr<Value> dynamic_tensor = makeTensor<Value>(TensorSpec(tensor_spec).add({{"x", "2"}}, 3.5));
 const char zcurve_field[] = "position_field_zcurve";
 const char position_array_field[] = "position_array";
 const char zcurve_array_field[] = "position_array_zcurve";
@@ -167,7 +169,7 @@ struct MyDocumentStore : proton::test::DummyDocumentStore {
         doc->set(zcurve_field, static_zcurve_value);
         doc->setValue(dyn_field_p, static_value_p);
         TensorFieldValue tensorFieldValue(tensorDataType);
-        tensorFieldValue = static_tensor->clone();
+        tensorFieldValue = EngineOrFactory::get().copy(*static_tensor);
         doc->setValue(dyn_field_tensor, tensorFieldValue);
         if (_set_position_struct_field) {
             FieldValue::UP fv = PositionDataType::getInstance().createFieldValue();
@@ -307,7 +309,7 @@ struct Fixture {
         }
         attr->commit();
     }
-    void addTensorAttribute(const char *name, const Tensor &val) {
+    void addTensorAttribute(const char *name, const Value &val) {
         auto * attr = addAttribute<TensorAttribute>(name, schema::DataType::TENSOR, schema::CollectionType::SINGLE);
         attr->setTensor(lid, val);
         attr->commit();
@@ -339,9 +341,9 @@ struct Fixture {
     {
         typedef DocumentMetaStore::Result Result;
         meta_store.constructFreeList();
-        Result inspect = meta_store.get().inspect(gid);
+        Result inspect = meta_store.get().inspect(gid, 0u);
         uint32_t docSize = 1;
-        Result putRes(meta_store.get().put(gid, bucket_id, timestamp, docSize, inspect.getLid()));
+        Result putRes(meta_store.get().put(gid, bucket_id, timestamp, docSize, inspect.getLid(), 0u));
         lid = putRes.getLid();
         ASSERT_TRUE(putRes.ok());
         schema::CollectionType ct = schema::CollectionType::SINGLE;
@@ -387,13 +389,12 @@ TEST_F("require that document retriever can retrieve document meta data", Fixtur
 
 TEST_F("require that document retriever can retrieve bucket meta data", Fixture) {
     DocumentMetaData::Vector result;
-    f._retriever->getBucketMetaData(makeSpiBucket(f.bucket_id, PartitionId(0)), result);
+    f._retriever->getBucketMetaData(makeSpiBucket(f.bucket_id), result);
     ASSERT_EQUAL(1u, result.size());
     EXPECT_EQUAL(f.lid, result[0].lid);
     EXPECT_EQUAL(f.timestamp, result[0].timestamp);
     result.clear();
-    f._retriever->getBucketMetaData(makeSpiBucket(BucketId(f.bucket_id.getId() + 1),
-                                         PartitionId(0)), result);
+    f._retriever->getBucketMetaData(makeSpiBucket(BucketId(f.bucket_id.getId() + 1)), result);
     EXPECT_EQUAL(0u, result.size());
 }
 
@@ -575,7 +576,7 @@ TEST_F("require that tensor attribute can be retrieved", Fixture) {
     FieldValue::UP value = doc->getValue(dyn_field_tensor);
     ASSERT_TRUE(value);
     auto * tensor_value = dynamic_cast<TensorFieldValue *>(value.get());
-    ASSERT_TRUE(tensor_value->getAsTensorPtr()->equals(*dynamic_tensor));
+    ASSERT_EQUAL(*tensor_value->getAsTensorPtr(), *dynamic_tensor);
 }
 
 struct Lookup : public IFieldInfo

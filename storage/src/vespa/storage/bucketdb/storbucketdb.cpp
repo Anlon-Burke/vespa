@@ -2,8 +2,8 @@
 
 #include "storbucketdb.h"
 #include "btree_lockable_map.h"
-#include "judymultimap.hpp"
-#include "lockablemap.h"
+#include "striped_btree_lockable_map.h"
+#include <vespa/storage/common/content_bucket_db_options.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".storage.bucketdb.stor_bucket_db");
@@ -17,19 +17,19 @@ void
 StorageBucketInfo::
 print(std::ostream& out, bool, const std::string&) const
 {
-    out << info << ", disk " << disk;
+    out << info;
 }
 
-bool StorageBucketInfo::operator==(const StorageBucketInfo& b) const {
-    return disk == b.disk;
+bool StorageBucketInfo::operator==(const StorageBucketInfo& ) const {
+    return true;
 }
 
 bool StorageBucketInfo::operator!=(const StorageBucketInfo& b) const {
     return !(*this == b);
 }
 
-bool StorageBucketInfo::operator<(const StorageBucketInfo& b) const {
-    return disk < b.disk;
+bool StorageBucketInfo::operator<(const StorageBucketInfo& ) const {
+    return false;
 }
 
 std::ostream&
@@ -40,21 +40,21 @@ operator<<(std::ostream& out, const StorageBucketInfo& info) {
 
 namespace {
 
-std::unique_ptr<AbstractBucketMap<StorageBucketInfo>> make_legacy_db_impl() {
-    return std::make_unique<LockableMap<JudyMultiMap<StorageBucketInfo>>>();
-}
-
 std::unique_ptr<AbstractBucketMap<StorageBucketInfo>> make_btree_db_impl() {
     return std::make_unique<BTreeLockableMap<StorageBucketInfo>>();
+}
+
+std::unique_ptr<AbstractBucketMap<StorageBucketInfo>> make_striped_btree_db_impl(uint8_t n_stripes) {
+    return std::make_unique<StripedBTreeLockableMap<StorageBucketInfo>>(n_stripes);
 }
 
 }
 
 } // bucketdb
 
-StorBucketDatabase::StorBucketDatabase(bool use_btree_db)
-    : _impl(use_btree_db ? bucketdb::make_btree_db_impl()
-                         : bucketdb::make_legacy_db_impl())
+StorBucketDatabase::StorBucketDatabase(const ContentBucketDbOptions& opts)
+    : _impl((opts.n_stripe_bits > 0) ? bucketdb::make_striped_btree_db_impl(opts.n_stripe_bits)
+                                     : bucketdb::make_btree_db_impl())
 {}
 
 void
@@ -62,7 +62,6 @@ StorBucketDatabase::insert(const document::BucketId& bucket,
                            const bucketdb::StorageBucketInfo& entry,
                            const char* clientId)
 {
-    assert(entry.disk != 0xff);
     bool preExisted;
     return _impl->insert(bucket.toKey(), entry, clientId, false, preExisted);
 }
@@ -89,6 +88,10 @@ size_t StorBucketDatabase::size() const {
 
 size_t StorBucketDatabase::getMemoryUsage() const {
     return _impl->getMemoryUsage();
+}
+
+vespalib::MemoryUsage StorBucketDatabase::detailed_memory_usage() const noexcept {
+    return _impl->detailed_memory_usage();
 }
 
 void StorBucketDatabase::showLockClients(vespalib::asciistream& out) const {
@@ -118,29 +121,23 @@ void StorBucketDatabase::for_each_chunked(
     _impl->for_each_chunked(std::move(func), clientId, yieldTime, chunkSize);
 }
 
-void StorBucketDatabase::for_each_mutable(
+void StorBucketDatabase::for_each_mutable_unordered(
         std::function<Decision(uint64_t, bucketdb::StorageBucketInfo&)> func,
-        const char* clientId,
-        const key_type& first,
-        const key_type& last)
+        const char* clientId)
 {
-    _impl->for_each_mutable(std::move(func), clientId, first, last);
+    _impl->for_each_mutable_unordered(std::move(func), clientId);
 }
 
 void StorBucketDatabase::for_each(
         std::function<Decision(uint64_t, const bucketdb::StorageBucketInfo&)> func,
-        const char* clientId,
-        const key_type& first,
-        const key_type& last)
+        const char* clientId)
 {
-    _impl->for_each(std::move(func), clientId, first, last);
+    _impl->for_each(std::move(func), clientId);
 }
 
 std::unique_ptr<bucketdb::ReadGuard<StorBucketDatabase::Entry>>
 StorBucketDatabase::acquire_read_guard() const {
     return _impl->acquire_read_guard();
 }
-
-template class JudyMultiMap<bucketdb::StorageBucketInfo>;
 
 } // storage

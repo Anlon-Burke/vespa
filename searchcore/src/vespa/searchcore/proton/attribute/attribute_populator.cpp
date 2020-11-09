@@ -3,6 +3,8 @@
 #include "attribute_populator.h"
 #include <vespa/searchcore/proton/common/eventlogger.h>
 #include <vespa/searchlib/common/idestructorcallback.h>
+#include <vespa/searchlib/common/gatecallback.h>
+#include <vespa/vespalib/util/gate.h>
 #include <vespa/searchlib/attribute/attributevector.h>
 
 #include <vespa/log/log.h>
@@ -18,7 +20,7 @@ class PopulateDoneContext : public IDestructorCallback
 {
     std::shared_ptr<document::Document> _doc;
 public:
-    PopulateDoneContext(std::shared_ptr<document::Document> doc)
+    PopulateDoneContext(std::shared_ptr<document::Document> doc) noexcept
         : _doc(std::move(doc))
     {
     }
@@ -65,8 +67,7 @@ AttributePopulator::AttributePopulator(const proton::IAttributeManager::SP &mgr,
 AttributePopulator::~AttributePopulator()
 {
     if (LOG_WOULD_LOG(event)) {
-        EventLogger::populateAttributeComplete(getNames(),
-                _currSerialNum - _initSerialNum);
+        EventLogger::populateAttributeComplete(getNames(),_currSerialNum - _initSerialNum);
     }
 }
 
@@ -74,8 +75,10 @@ void
 AttributePopulator::handleExisting(uint32_t lid, const std::shared_ptr<document::Document> &doc)
 {
     search::SerialNum serialNum(nextSerialNum());
-    auto populateDoneContext = std::make_shared<PopulateDoneContext>(doc);
-    _writer.put(serialNum, *doc, lid, true, populateDoneContext);
+    _writer.put(serialNum, *doc, lid, std::make_shared<PopulateDoneContext>(doc));
+    vespalib::Gate gate;
+    _writer.forceCommit(serialNum, std::make_shared<search::GateCallback>(gate));
+    gate.await();
 }
 
 void

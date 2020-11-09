@@ -5,6 +5,7 @@ import com.google.common.util.concurrent.UncheckedTimeoutException;
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationLockException;
+import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeFlavors;
@@ -61,13 +62,12 @@ public class CuratorDatabaseClient {
 
     private static final Path root = Path.fromString("/provision/v1");
     private static final Path lockPath = root.append("locks");
-    private static final Path configLockPath = Path.fromString("/config/v2/locks/");
     private static final Path loadBalancersPath = root.append("loadBalancers");
     private static final Path applicationsPath = root.append("applications");
     private static final Path inactiveJobsPath = root.append("inactiveJobs");
     private static final Path infrastructureVersionsPath = root.append("infrastructureVersions");
     private static final Path osVersionsPath = root.append("osVersions");
-    private static final Path dockerImagesPath = root.append("dockerImages");
+    private static final Path containerImagesPath = root.append("dockerImages");
     private static final Path firmwareCheckPath = root.append("firmwareCheck");
 
     private static final Duration defaultLockTimeout = Duration.ofMinutes(2);
@@ -77,15 +77,14 @@ public class CuratorDatabaseClient {
     private final Clock clock;
     private final Zone zone;
     private final CuratorCounter provisionIndexCounter;
-    private final boolean logStackTracesOnLockTimeout;
 
-    public CuratorDatabaseClient(NodeFlavors flavors, Curator curator, Clock clock, Zone zone, boolean useCache, boolean logStackTracesOnLockTimeout) {
-        this.nodeSerializer = new NodeSerializer(flavors);
+    public CuratorDatabaseClient(NodeFlavors flavors, Curator curator, Clock clock, Zone zone, boolean useCache,
+                                 long nodeCacheSize) {
+        this.nodeSerializer = new NodeSerializer(flavors, nodeCacheSize);
         this.zone = zone;
         this.db = new CuratorDatabase(curator, root, useCache);
         this.clock = clock;
         this.provisionIndexCounter = new CuratorCounter(curator, root.append("provisionIndexCounter").getAbsolute());
-        this.logStackTracesOnLockTimeout = logStackTracesOnLockTimeout;
         initZK();
     }
 
@@ -101,23 +100,21 @@ public class CuratorDatabaseClient {
         db.create(inactiveJobsPath);
         db.create(infrastructureVersionsPath);
         db.create(osVersionsPath);
-        db.create(dockerImagesPath);
+        db.create(containerImagesPath);
         db.create(firmwareCheckPath);
         db.create(loadBalancersPath);
         provisionIndexCounter.initialize(100);
     }
 
-    /**
-     * Adds a set of nodes. Rollbacks/fails transaction if any node is not in the expected state.
-     */
-    public List<Node> addNodesInState(List<Node> nodes, Node.State expectedState) {
+    /** Adds a set of nodes. Rollbacks/fails transaction if any node is not in the expected state. */
+    public List<Node> addNodesInState(List<Node> nodes, Node.State expectedState, Agent agent) {
         NestedTransaction transaction = new NestedTransaction();
         CuratorTransaction curatorTransaction = db.newCuratorTransactionIn(transaction);
         for (Node node : nodes) {
             if (node.state() != expectedState)
                 throw new IllegalArgumentException(node + " is not in the " + expectedState + " state");
 
-            node = node.with(node.history().recordStateTransition(null, expectedState, Agent.system, clock.instant()));
+            node = node.with(node.history().recordStateTransition(null, expectedState, agent, clock.instant()));
             curatorTransaction.add(CuratorOperations.create(toPath(node).getAbsolute(), nodeSerializer.toJson(node)));
         }
         transaction.commit();
@@ -216,7 +213,8 @@ public class CuratorDatabaseClient {
                                     toState,
                                     toState.isAllocated() ? node.allocation() : Optional.empty(),
                                     node.history().recordStateTransition(node.state(), toState, agent, clock.instant()),
-                                    node.type(), node.reports(), node.modelName(), node.reservedTo());
+                                    node.type(), node.reports(), node.modelName(), node.reservedTo(),
+                                    node.exclusiveTo(), node.switchHostname());
             writeNode(toState, curatorTransaction, node, newNode);
             writtenNodes.add(newNode);
         }
@@ -289,7 +287,7 @@ public class CuratorDatabaseClient {
     }
 
     /**
-     * Returns a particular node, or empty if this noe is not in any of the given states.
+     * Returns a particular node, or empty if this node is not in any of the given states.
      * If no states are given this returns the node if it is present in any state.
      */
     public Optional<Node> readNode(CuratorDatabase.Session session, String hostname, Node.State ... states) {
@@ -322,21 +320,10 @@ public class CuratorDatabaseClient {
     }
 
     /** Creates and returns the path to the lock for this application */
-    // TODO(mpolden): Remove when all config servers take the new lock
-    private Path legacyLockPath(ApplicationId application) {
-        Path lockPath =
-                CuratorDatabaseClient.lockPath
-                .append(application.tenant().value())
-                .append(application.application().value())
-                .append(application.instance().value());
-        db.create(lockPath);
-        return lockPath;
-    }
-
-    /** Creates and returns the lock path for this application */
     private Path lockPath(ApplicationId application) {
-        // This must match the lock path used by com.yahoo.vespa.config.server.application.TenantApplications
-        Path lockPath = configLockPath.append(application.tenant().value()).append(application.serializedForm());
+        Path lockPath = CuratorDatabaseClient.lockPath.append(application.tenant().value())
+                                                      .append(application.application().value())
+                                                      .append(application.instance().value());
         db.create(lockPath);
         return lockPath;
     }
@@ -352,6 +339,7 @@ public class CuratorDatabaseClient {
             case ready: return "ready";
             case reserved: return "reserved";
             case deprovisioned: return "deprovisioned";
+            case breakfixed: return "breakfixed";
             default: throw new RuntimeException("Node state " + state + " does not map to a directory name");
         }
     }
@@ -362,69 +350,25 @@ public class CuratorDatabaseClient {
     }
 
     /** Acquires the single cluster-global, reentrant lock for active nodes of this application */
-    // TODO(mpolden): Remove when all config servers take the new lock
-    public Lock legacyLock(ApplicationId application) {
-        return legacyLock(application, defaultLockTimeout);
+    public Lock lock(ApplicationId application) {
+        return lock(application, defaultLockTimeout);
     }
 
     /** Acquires the single cluster-global, reentrant lock with the specified timeout for active nodes of this application */
-    // TODO(mpolden): Remove when all config servers take the new lock
-    public Lock legacyLock(ApplicationId application, Duration timeout) {
+    public Lock lock(ApplicationId application, Duration timeout) {
         try {
-            return db.lock(legacyLockPath(application), timeout);
+            return db.lock(lockPath(application), timeout);
         }
         catch (UncheckedTimeoutException e) {
             throw new ApplicationLockException(e);
         }
     }
 
-    /**
-     * Acquires the single cluster-global, re-entrant lock for given application. Note that this is the same lock
-     * that configserver itself takes when modifying applications.
-     *
-     * This lock must be taken when writes to paths owned by this class may happen on both the configserver and
-     * node-repository side. This behaviour is obviously wrong, but since we pass a NestedTransaction across the
-     * configserver and node-repository boundary, the ownership semantics of the transaction (and its operations)
-     * becomes unclear.
-     *
-     * Example of when to use: The config server creates a new transaction and passes the transaction to
-     * {@link com.yahoo.vespa.hosted.provision.provisioning.NodeRepositoryProvisioner}, which appends operations to the
-     * transaction. The config server then commits (writes) the transaction which may include operations that modify
-     * data in paths owned by this class.
-     */
-    public Lock lock(ApplicationId application, Duration timeout) {
-        try {
-            return db.lock(lockPath(application), timeout);
-        } catch (UncheckedTimeoutException e) {
-            if (logStackTracesOnLockTimeout) {
-                log.log(Level.WARNING, "Logging stack trace from all threads due to lock timeout");
-                Map<Thread, StackTraceElement[]> stackTraces = Thread.getAllStackTraces();
-                for (Map.Entry<Thread, StackTraceElement[]> kv : stackTraces.entrySet()) {
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("Thread '")
-                      .append(kv.getKey().getName())
-                      .append("'\n");
-                    for (var stackTraceElement : kv.getValue()) {
-                        sb.append("\tat ")
-                          .append(stackTraceElement)
-                          .append("\n");
-                    }
-                    log.log(Level.WARNING, sb.toString());
-                }
-            }
-            throw new ApplicationLockException(e);
-        }
-    }
-
-    public Lock lock(ApplicationId application) {
-        return lock(application, defaultLockTimeout);
-    }
-
     // Applications -----------------------------------------------------------
 
     public List<ApplicationId> readApplicationIds() {
         return db.getChildren(applicationsPath).stream()
-                 .map(path -> ApplicationId.fromSerializedForm(path))
+                 .map(ApplicationId::fromSerializedForm)
                  .collect(Collectors.toList());
     }
 
@@ -438,10 +382,10 @@ public class CuratorDatabaseClient {
                                         ApplicationSerializer.toJson(application)));
     }
 
-    public void deleteApplication(ApplicationId application, NestedTransaction transaction) {
-        if (db.exists(applicationPath(application)))
-            db.newCuratorTransactionIn(transaction)
-              .add(CuratorOperations.delete(applicationPath(application).getAbsolute()));
+    public void deleteApplication(ApplicationTransaction transaction) {
+        if (db.exists(applicationPath(transaction.application())))
+            db.newCuratorTransactionIn(transaction.nested())
+              .add(CuratorOperations.delete(applicationPath(transaction.application()).getAbsolute()));
     }
 
     private Path applicationPath(ApplicationId id) {
@@ -490,21 +434,21 @@ public class CuratorDatabaseClient {
         return db.lock(lockPath.append("osVersionsLock"), defaultLockTimeout);
     }
 
-    // Docker images -----------------------------------------------------------
+    // Container images -----------------------------------------------------------
 
-    public Map<NodeType, DockerImage> readDockerImages() {
-        return read(dockerImagesPath, NodeTypeDockerImagesSerializer::fromJson).orElseGet(TreeMap::new);
+    public Map<NodeType, DockerImage> readContainerImages() {
+        return read(containerImagesPath, NodeTypeContainerImagesSerializer::fromJson).orElseGet(TreeMap::new);
     }
 
-    public void writeDockerImages(Map<NodeType, DockerImage> dockerImages) {
+    public void writeContainerImages(Map<NodeType, DockerImage> images) {
         NestedTransaction transaction = new NestedTransaction();
         CuratorTransaction curatorTransaction = db.newCuratorTransactionIn(transaction);
-        curatorTransaction.add(CuratorOperations.setData(dockerImagesPath.getAbsolute(),
-                NodeTypeDockerImagesSerializer.toJson(dockerImages)));
+        curatorTransaction.add(CuratorOperations.setData(containerImagesPath.getAbsolute(),
+                                                         NodeTypeContainerImagesSerializer.toJson(images)));
         transaction.commit();
     }
 
-    public Lock lockDockerImages() {
+    public Lock lockContainerImages() {
         return db.lock(lockPath.append("dockerImagesLock"), defaultLockTimeout);
     }
 
@@ -585,6 +529,14 @@ public class CuratorDatabaseClient {
         return IntStream.range(0, numIndexes)
                 .mapToObj(i -> firstProvisionIndex + i)
                 .collect(Collectors.toList());
+    }
+
+    public CacheStats cacheStats() {
+        return db.cacheStats();
+    }
+
+    public CacheStats nodeSerializerCacheStats() {
+        return nodeSerializer.cacheStats();
     }
 
     private <T> Optional<T> read(Path path, Function<byte[], T> mapper) {

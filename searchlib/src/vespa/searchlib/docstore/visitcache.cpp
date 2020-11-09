@@ -11,7 +11,6 @@
 namespace search::docstore {
 
 using vespalib::ConstBufferRef;
-using vespalib::LockGuard;
 using vespalib::DataBuffer;
 using vespalib::alloc::Alloc;
 using vespalib::alloc::MemoryAllocator;
@@ -109,7 +108,7 @@ CompressedBlobSet::getBlobSet() const
         decompress(_compression, getBufferSize(_positions),
                    ConstBufferRef(_buffer->c_str(), _buffer->size()), uncompressed, false);
     }
-    return BlobSet(_positions, uncompressed.stealBuffer());
+    return BlobSet(_positions, std::move(uncompressed).stealBuffer());
 }
 
 size_t CompressedBlobSet::size() const {
@@ -167,7 +166,7 @@ VisitCache::reconfigure(size_t cacheSize, const CompressionConfig &compression) 
 
 
 VisitCache::Cache::IdSet
-VisitCache::Cache::findSetsContaining(const LockGuard &, const KeySet & keys) const {
+VisitCache::Cache::findSetsContaining(const UniqueLock &, const KeySet & keys) const {
     IdSet found;
     for (uint32_t subKey : keys.getKeys()) {
         const auto foundLid = _lid2Id.find(subKey);
@@ -194,7 +193,7 @@ VisitCache::Cache::readSet(const KeySet & key)
 }
 
 void
-VisitCache::Cache::locateAndInvalidateOtherSubsets(const LockGuard & cacheGuard, const KeySet & keys)
+VisitCache::Cache::locateAndInvalidateOtherSubsets(const UniqueLock & cacheGuard, const KeySet & keys)
 {
     // Due to the implementation of insert where the global lock is released and the fact
     // that 2 overlapping keysets kan have different keys and use different ValueLock

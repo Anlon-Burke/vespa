@@ -26,11 +26,13 @@ vespa_add_library(eval_tensor_dense OBJECT
     dense_tensor_modify.cpp
     dense_tensor_peek_function.cpp
     dense_tensor_reduce.cpp
+    dense_tensor_value_builder.cpp
     dense_tensor_view.cpp
     dense_xw_product_function.cpp
     index_lookup_table.cpp
     mutable_dense_tensor_view.cpp
-    typed_cells.cpp
+    onnx_wrapper.cpp
+    typed_cells_dispatch.cpp
     typed_dense_tensor_builder.cpp
     vector_from_doubles_function.cpp
 )

@@ -23,7 +23,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
 
 /**
  * Represents an application package, that is, used as input when creating a VespaModel and as
@@ -200,11 +199,6 @@ public interface ApplicationPackage {
      */
     Reader getRankingExpression(String name);
 
-    // TODO: Unused, remove when 7.264 is latest version in use
-    static Map<String, String> getBundleSdFiles(String path, JarFile bundle) throws IOException {
-        return Map.of();
-    }
-
     /**
      * The name of an SD in a JarEntry
      */
@@ -256,6 +250,7 @@ public interface ApplicationPackage {
      *
      * @return A new application package instance pointing to a new location
      */
+    // TODO: TransformerException, ParserConfigurationException, SAXException can be removed from 'throws' when 7.308 is latest version in use
     default ApplicationPackage preprocess(Zone zone, DeployLogger logger)
             throws IOException, TransformerException, ParserConfigurationException, SAXException {
         throw new UnsupportedOperationException("This application package does not support preprocessing");

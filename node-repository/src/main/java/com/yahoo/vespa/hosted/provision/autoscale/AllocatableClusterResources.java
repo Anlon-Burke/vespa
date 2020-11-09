@@ -7,7 +7,6 @@ import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
-import com.yahoo.vespa.hosted.provision.provisioning.HostResourcesCalculator;
 import com.yahoo.vespa.hosted.provision.provisioning.NodeResourceLimits;
 
 import java.util.List;
@@ -34,19 +33,20 @@ public class AllocatableClusterResources {
     /** Fake allocatable resources from requested capacity */
     public AllocatableClusterResources(ClusterResources requested,
                                        ClusterSpec.Type clusterType,
+                                       boolean exclusive,
                                        NodeRepository nodeRepository) {
         this.nodes = requested.nodes();
         this.groups = requested.groups();
-        this.realResources = nodeRepository.resourcesCalculator().requestToReal(requested.nodeResources());
+        this.realResources = nodeRepository.resourcesCalculator().requestToReal(requested.nodeResources(), exclusive);
         this.advertisedResources = requested.nodeResources();
         this.clusterType = clusterType;
         this.fulfilment = 1;
     }
 
-    public AllocatableClusterResources(List<Node> nodes, NodeRepository nodeRepository) {
+    public AllocatableClusterResources(List<Node> nodes, NodeRepository nodeRepository, boolean exclusive) {
         this.nodes = nodes.size();
         this.groups = (int)nodes.stream().map(node -> node.allocation().get().membership().cluster().group()).distinct().count();
-        this.realResources = averageRealResourcesOf(nodes, nodeRepository); // Average since we average metrics over nodes
+        this.realResources = averageRealResourcesOf(nodes, nodeRepository, exclusive); // Average since we average metrics over nodes
         this.advertisedResources = nodes.get(0).resources();
         this.clusterType = nodes.get(0).allocation().get().membership().cluster().type();
         this.fulfilment = 1;
@@ -121,10 +121,10 @@ public class AllocatableClusterResources {
                (fulfilment < 1.0 ? " (fulfilment " + fulfilment + ")" : "");
     }
 
-    private static NodeResources averageRealResourcesOf(List<Node> nodes, NodeRepository nodeRepository) {
+    private static NodeResources averageRealResourcesOf(List<Node> nodes, NodeRepository nodeRepository, boolean exclusive) {
         NodeResources sum = new NodeResources(0, 0, 0, 0);
         for (Node node : nodes)
-            sum = sum.add(nodeRepository.resourcesCalculator().realResourcesOf(node, nodeRepository).justNumbers());
+            sum = sum.add(nodeRepository.resourcesCalculator().realResourcesOf(node, nodeRepository, exclusive).justNumbers());
         return nodes.get(0).resources().justNonNumbers()
                                        .withVcpu(sum.vcpu() / nodes.size())
                                        .withMemoryGb(sum.memoryGb() / nodes.size())
@@ -138,21 +138,20 @@ public class AllocatableClusterResources {
                                                              Limits applicationLimits,
                                                              NodeRepository nodeRepository) {
         var systemLimits = new NodeResourceLimits(nodeRepository);
-        if ( !exclusive && nodeRepository.zone().getCloud().allowHostSharing()) { // Check if any flavor can fit these hosts
+        if ( !exclusive && !nodeRepository.zone().getCloud().dynamicProvisioning()) {
             // We decide resources: Add overhead to what we'll request (advertised) to make sure real becomes (at least) cappedNodeResources
-            NodeResources advertisedResources = nodeRepository.resourcesCalculator().realToRequest(wantedResources.nodeResources());
-            advertisedResources = systemLimits.enlargeToLegal(advertisedResources, clusterType); // Attempt to ask for something legal
+            NodeResources advertisedResources = nodeRepository.resourcesCalculator().realToRequest(wantedResources.nodeResources(), exclusive);
+            advertisedResources = systemLimits.enlargeToLegal(advertisedResources, clusterType, exclusive); // Attempt to ask for something legal
             advertisedResources = applicationLimits.cap(advertisedResources); // Overrides other conditions, even if it will then fail
-            NodeResources realResources = nodeRepository.resourcesCalculator().requestToReal(advertisedResources); // ... thus, what we really get may change
+            NodeResources realResources = nodeRepository.resourcesCalculator().requestToReal(advertisedResources, exclusive); // ... thus, what we really get may change
             if ( ! systemLimits.isWithinRealLimits(realResources, clusterType)) return Optional.empty();
-            for (Flavor flavor : nodeRepository.flavors().getFlavors()) {
-                if (flavor.resources().satisfies(advertisedResources))
+            if (matchesAny(nodeRepository.flavors().getFlavors(), advertisedResources))
                     return Optional.of(new AllocatableClusterResources(wantedResources.with(realResources),
                                                                        advertisedResources,
                                                                        wantedResources.nodeResources(),
                                                                        clusterType));
-            }
-            return Optional.empty();
+            else
+                return Optional.empty();
         }
         else { // Return the cheapest flavor satisfying the requested resources, if any
             NodeResources cappedWantedResources = applicationLimits.cap(wantedResources.nodeResources());
@@ -160,7 +159,7 @@ public class AllocatableClusterResources {
             for (Flavor flavor : nodeRepository.flavors().getFlavors()) {
                 // Flavor decide resources: Real resources are the worst case real resources we'll get if we ask for these advertised resources
                 NodeResources advertisedResources = nodeRepository.resourcesCalculator().advertisedResourcesOf(flavor);
-                NodeResources realResources = nodeRepository.resourcesCalculator().requestToReal(advertisedResources);
+                NodeResources realResources = nodeRepository.resourcesCalculator().requestToReal(advertisedResources, exclusive);
 
                 // Adjust where we don't need exact match to the flavor
                 if (flavor.resources().storageType() == NodeResources.StorageType.remote) {
@@ -183,6 +182,14 @@ public class AllocatableClusterResources {
             }
             return best;
         }
+    }
+
+    /** Returns true if the given resources could be allocated on any of the given flavors */
+    private static boolean matchesAny(List<Flavor> flavors, NodeResources advertisedResources) {
+        // Tenant nodes should not consume more than half the resources of the biggest hosts
+        // to make it easier to shift them between hosts.
+        return flavors.stream().anyMatch(flavor -> flavor.resources().withVcpu(flavor.resources().vcpu() / 2)
+                                                         .satisfies(advertisedResources));
     }
 
     private static boolean between(NodeResources min, NodeResources max, NodeResources r) {

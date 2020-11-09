@@ -1,7 +1,6 @@
 // Copyright 2019 Oath Inc. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.provision;
 
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -13,12 +12,11 @@ import java.util.Optional;
 public class NodeResources {
 
     // Standard unit cost in dollars per hour
-    private static final double cpuUnitCost =    0.12;
-    private static final double memoryUnitCost = 0.012;
-    private static final double diskUnitCost =   0.0004;
+    private static final double cpuUnitCost =    0.09;
+    private static final double memoryUnitCost = 0.009;
+    private static final double diskUnitCost =   0.0003;
 
-    // TODO: Remove when models older than 7.226 are gone
-    public static final NodeResources unspecified = new NodeResources(0, 0, 0, 0);
+    private static final NodeResources unspecified = new NodeResources(0, 0, 0, 0);
 
     public enum DiskSpeed {
 
@@ -215,13 +213,33 @@ public class NodeResources {
         return Objects.hash(vcpu, memoryGb, diskGb, bandwidthGbps, diskSpeed, storageType);
     }
 
+    private static StringBuffer appendDouble(StringBuffer sb, double d) {
+        long x10 = Math.round(d*10);
+        sb.append(x10/10).append('.').append(x10%10);
+        return sb;
+    }
     @Override
     public String toString() {
-        return String.format(Locale.ENGLISH, "[vcpu: %1$.1f, memory: %2$.1f Gb, disk %3$.1f Gb" +
-                            (bandwidthGbps > 0 ? ", bandwidth: %4$.1f Gbps" : "") +
-                            ( ! diskSpeed.isDefault() ? ", disk speed: " + diskSpeed : "") +
-                            ( ! storageType.isDefault() ? ", storage type: " + storageType : "") + "]",
-                            vcpu, memoryGb, diskGb, bandwidthGbps);
+        StringBuffer sb = new StringBuffer("[vcpu: ");
+        appendDouble(sb, vcpu);
+        sb.append(", memory: ");
+        appendDouble(sb, memoryGb);
+        sb.append(" Gb, disk ");
+        appendDouble(sb, diskGb);
+        sb.append(" Gb");
+        if (bandwidthGbps > 0) {
+            sb.append(", bandwidth: ");
+            appendDouble(sb, bandwidthGbps);
+            sb.append(" Gbps");
+        }
+        if ( !diskSpeed.isDefault()) {
+            sb.append(", disk speed: ").append(diskSpeed);
+        }
+        if ( !storageType.isDefault()) {
+            sb.append(", storage type: ").append(storageType);
+        }
+        sb.append(']');
+        return sb.toString();
     }
 
     /** Returns true if all the resources of this are the same or larger than the given resources */

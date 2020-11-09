@@ -27,7 +27,6 @@ vespa_add_library(searchcore_server STATIC
     document_subdb_initializer_result.cpp
     documentbucketmover.cpp
     documentdb.cpp
-    documentdb_commit_job.cpp
     documentdb_metrics_updater.cpp
     documentdbconfig.cpp
     documentdbconfigmanager.cpp
@@ -70,7 +69,6 @@ vespa_add_library(searchcore_server STATIC
     minimal_document_retriever.cpp
     move_operation_limiter.cpp
     operationdonecontext.cpp
-    pendinglidtracker.cpp
     persistencehandlerproxy.cpp
     prepare_restart_handler.cpp
     proton.cpp
@@ -101,12 +99,10 @@ vespa_add_library(searchcore_server STATIC
     storeonlyfeedview.cpp
     summaryadapter.cpp
     threading_service_config.cpp
-    tlcproxy.cpp
     tlssyncer.cpp
     transactionlogmanager.cpp
     transactionlogmanagerbase.cpp
     updatedonecontext.cpp
-    visibilityhandler.cpp
     DEPENDS
     searchcore_attribute
     searchcore_bucketdb

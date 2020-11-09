@@ -24,10 +24,16 @@ public class MockBillingController implements BillingController {
     Map<TenantName, List<Invoice>> committedInvoices = new HashMap<>();
     Map<TenantName, Invoice> uncommittedInvoices = new HashMap<>();
     Map<TenantName, List<Invoice.LineItem>> unusedLineItems = new HashMap<>();
+    Map<TenantName, CollectionMethod> collectionMethod = new HashMap<>();
 
     @Override
     public PlanId getPlan(TenantName tenant) {
         return plans.getOrDefault(tenant, PlanId.from("trial"));
+    }
+
+    @Override
+    public Quota getQuota(TenantName tenant) {
+        return Quota.unlimited().withMaxClusterSize(5);
     }
 
     @Override
@@ -129,6 +135,17 @@ public class MockBillingController implements BillingController {
 
     @Override
     public void deleteBillingInfo(TenantName tenant, Set<User> users, boolean isPrivileged) {}
+
+    @Override
+    public CollectionMethod getCollectionMethod(TenantName tenant) {
+        return collectionMethod.getOrDefault(tenant, CollectionMethod.AUTO);
+    }
+
+    @Override
+    public CollectionResult setCollectionMethod(TenantName tenant, CollectionMethod method) {
+        collectionMethod.put(tenant, method);
+        return CollectionResult.success();
+    }
 
     private PaymentInstrument createInstrument(String id) {
         return new PaymentInstrument(id,

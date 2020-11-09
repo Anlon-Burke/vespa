@@ -33,6 +33,7 @@
 #include <vespa/searchcore/proton/matching/match_tools.h>
 #include <vespa/searchcore/proton/matching/match_context.h>
 #include <vespa/eval/eval/tensor_spec.h>
+#include <vespa/eval/eval/engine_or_factory.h>
 #include <vespa/eval/tensor/default_tensor_engine.h>
 #include <vespa/vespalib/objects/nbostream.h>
 
@@ -59,7 +60,7 @@ using search::fef::indexproperties::hitcollector::HeapSize;
 
 using vespalib::nbostream;
 using vespalib::eval::TensorSpec;
-using vespalib::tensor::DefaultTensorEngine;
+using vespalib::eval::EngineOrFactory;
 
 void inject_match_phase_limiting(Properties &setup, const vespalib::string &attribute, size_t max_hits, bool descending)
 {
@@ -198,7 +199,7 @@ struct MyWorld {
             const document::GlobalId &gid = docId.getGlobalId();
             document::BucketId bucketId(BucketFactory::getBucketId(docId));
             uint32_t docSize = 1;
-            metaStore.put(gid, bucketId, Timestamp(0u), docSize, i);
+            metaStore.put(gid, bucketId, Timestamp(0u), docSize, i, 0u);
             metaStore.setBucketState(bucketId, true);
         }
     }
@@ -278,13 +279,13 @@ struct MyWorld {
     }
 
     Matcher::SP createMatcher() {
-        return std::make_shared<Matcher>(schema, config, clock, queryLimiter, constantValueRepo, 0);
+        return std::make_shared<Matcher>(schema, config, clock, queryLimiter, constantValueRepo, OnnxModels(), 0);
     }
 
     struct MySearchHandler : ISearchHandler {
         Matcher::SP _matcher;
 
-        MySearchHandler(Matcher::SP matcher) : _matcher(matcher) {}
+        MySearchHandler(Matcher::SP matcher) noexcept : _matcher(std::move(matcher)) {}
 
         DocsumReply::UP getDocsums(const DocsumRequest &) override {
             return DocsumReply::UP();
@@ -666,7 +667,7 @@ TEST("require that summary features are filled") {
     EXPECT_TRUE(!f[2].is_double());
     EXPECT_TRUE(f[2].is_data());
     {
-        auto &engine = DefaultTensorEngine::ref();
+        auto engine = EngineOrFactory::get();
         nbostream buf(f[2].as_data().data, f[2].as_data().size);
         auto actual = engine.to_spec(*engine.decode(buf));
         auto expect = TensorSpec("tensor(x[3])").add({{"x", 0}}, 0).add({{"x", 1}}, 1).add({{"x", 2}}, 2);

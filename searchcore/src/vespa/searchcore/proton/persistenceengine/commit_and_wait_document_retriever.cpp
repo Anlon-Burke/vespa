@@ -5,9 +5,10 @@
 
 namespace proton {
 
-CommitAndWaitDocumentRetriever::CommitAndWaitDocumentRetriever(IDocumentRetriever::SP retriever, ICommitable &commit)
+CommitAndWaitDocumentRetriever::CommitAndWaitDocumentRetriever(IDocumentRetriever::SP retriever,
+                                                               ILidCommitState & unCommittedLidTracker)
     : _retriever(std::move(retriever)),
-      _commit(commit)
+      _uncommittedLidsTracker(unCommittedLidTracker)
 { }
 
 CommitAndWaitDocumentRetriever::~CommitAndWaitDocumentRetriever() = default;
@@ -30,7 +31,7 @@ CommitAndWaitDocumentRetriever::getDocumentMetaData(const document::DocumentId &
 document::Document::UP
 CommitAndWaitDocumentRetriever::getFullDocument(search::DocumentIdT lid) const {
     // Ensure that attribute vectors are committed
-    _commit.commitAndWait();
+    _uncommittedLidsTracker.waitComplete(lid);
     return _retriever->getFullDocument(lid);
 }
 
@@ -38,7 +39,7 @@ document::Document::UP
 CommitAndWaitDocumentRetriever::getPartialDocument(search::DocumentIdT lid, const document::DocumentId & docId,
                                                    const document::FieldSet & fieldSet) const
 {
-    _commit.commitAndWait();
+    _uncommittedLidsTracker.waitComplete(lid);
     return _retriever->getPartialDocument(lid, docId, fieldSet);
 }
 
@@ -46,7 +47,7 @@ void
 CommitAndWaitDocumentRetriever::visitDocuments(const LidVector &lids, search::IDocumentVisitor &visitor,
                                                ReadConsistency readConsistency) const
 {
-    _commit.commitAndWait();
+    _uncommittedLidsTracker.waitComplete(lids);
     _retriever->visitDocuments(lids, visitor, readConsistency);
 }
 

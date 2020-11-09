@@ -38,13 +38,20 @@
     "methods": [
       "public abstract com.yahoo.documentapi.Result put(com.yahoo.document.Document)",
       "public com.yahoo.documentapi.Result put(com.yahoo.document.Document, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result put(com.yahoo.document.DocumentPut)",
+      "public com.yahoo.documentapi.Result put(com.yahoo.document.DocumentPut, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result put(com.yahoo.document.DocumentPut, com.yahoo.documentapi.DocumentOperationParameters)",
       "public abstract com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId)",
       "public com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId, boolean, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
       "public com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId, com.yahoo.documentapi.DocumentOperationParameters)",
       "public abstract com.yahoo.documentapi.Result remove(com.yahoo.document.DocumentId)",
       "public com.yahoo.documentapi.Result remove(com.yahoo.document.DocumentId, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result remove(com.yahoo.document.DocumentId, com.yahoo.documentapi.DocumentOperationParameters)",
+      "public com.yahoo.documentapi.Result remove(com.yahoo.document.DocumentRemove, com.yahoo.documentapi.DocumentOperationParameters)",
       "public abstract com.yahoo.documentapi.Result update(com.yahoo.document.DocumentUpdate)",
       "public com.yahoo.documentapi.Result update(com.yahoo.document.DocumentUpdate, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result update(com.yahoo.document.DocumentUpdate, com.yahoo.documentapi.DocumentOperationParameters)",
       "public abstract double getCurrentWindowSize()"
     ],
     "fields": []
@@ -71,6 +78,7 @@
     ],
     "methods": [
       "public static com.yahoo.documentapi.DocumentAccess createDefault()",
+      "public static com.yahoo.documentapi.DocumentAccess createForNonContainer()",
       "protected void <init>(com.yahoo.documentapi.DocumentAccessParams)",
       "public abstract com.yahoo.documentapi.SyncSession createSyncSession(com.yahoo.documentapi.SyncParameters)",
       "public abstract com.yahoo.documentapi.AsyncSession createAsyncSession(com.yahoo.documentapi.AsyncParameters)",
@@ -126,6 +134,8 @@
       "public void <init>(long, com.yahoo.document.DocumentId)",
       "public void <init>(long, java.lang.String, boolean)",
       "public void <init>(long, com.yahoo.document.DocumentId, java.lang.String, boolean)",
+      "public void <init>(long, com.yahoo.document.DocumentId, java.lang.String, com.yahoo.documentapi.Response$Outcome)",
+      "public void <init>(long, com.yahoo.document.DocumentId, java.lang.String, com.yahoo.documentapi.Response$Outcome, com.yahoo.messagebus.Trace)",
       "public com.yahoo.document.DocumentId getDocumentId()",
       "public int hashCode()",
       "public boolean equals(java.lang.Object)",
@@ -145,6 +155,31 @@
     ],
     "fields": []
   },
+  "com.yahoo.documentapi.DocumentOperationParameters": {
+    "superClass": "java.lang.Object",
+    "interfaces": [],
+    "attributes": [
+      "public"
+    ],
+    "methods": [
+      "public static com.yahoo.documentapi.DocumentOperationParameters parameters()",
+      "public com.yahoo.documentapi.DocumentOperationParameters withPriority(com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.DocumentOperationParameters withFieldSet(com.yahoo.document.fieldset.FieldSet)",
+      "public com.yahoo.documentapi.DocumentOperationParameters withFieldSet(java.lang.String)",
+      "public com.yahoo.documentapi.DocumentOperationParameters withRoute(java.lang.String)",
+      "public com.yahoo.documentapi.DocumentOperationParameters withTraceLevel(int)",
+      "public com.yahoo.documentapi.DocumentOperationParameters withResponseHandler(com.yahoo.documentapi.ResponseHandler)",
+      "public java.util.Optional priority()",
+      "public java.util.Optional fieldSet()",
+      "public java.util.Optional route()",
+      "public java.util.OptionalInt traceLevel()",
+      "public java.util.Optional responseHandler()",
+      "public boolean equals(java.lang.Object)",
+      "public int hashCode()",
+      "public java.lang.String toString()"
+    ],
+    "fields": []
+  },
   "com.yahoo.documentapi.DocumentResponse": {
     "superClass": "com.yahoo.documentapi.Response",
     "interfaces": [],
@@ -154,9 +189,13 @@
     "methods": [
       "public void <init>(long)",
       "public void <init>(long, com.yahoo.document.Document)",
+      "public void <init>(long, com.yahoo.document.Document, com.yahoo.messagebus.Trace)",
       "public void <init>(long, java.lang.String, boolean)",
       "public void <init>(long, com.yahoo.document.Document, java.lang.String, boolean)",
+      "public void <init>(long, com.yahoo.document.Document, java.lang.String, com.yahoo.documentapi.Response$Outcome)",
+      "public void <init>(long, com.yahoo.document.Document, java.lang.String, com.yahoo.documentapi.Response$Outcome, com.yahoo.messagebus.Trace)",
       "public com.yahoo.document.Document getDocument()",
+      "public boolean isSuccess()",
       "public int hashCode()",
       "public boolean equals(java.lang.Object)",
       "public java.lang.String toString()"
@@ -173,7 +212,10 @@
       "public void <init>(long)",
       "public void <init>(long, com.yahoo.document.DocumentUpdate)",
       "public void <init>(long, java.lang.String, boolean)",
+      "public void <init>(long, java.lang.String, com.yahoo.documentapi.Response$Outcome)",
       "public void <init>(long, com.yahoo.document.DocumentUpdate, java.lang.String, boolean)",
+      "public void <init>(long, com.yahoo.document.DocumentUpdate, java.lang.String, com.yahoo.documentapi.Response$Outcome)",
+      "public void <init>(long, com.yahoo.document.DocumentUpdate, java.lang.String, com.yahoo.documentapi.Response$Outcome, com.yahoo.messagebus.Trace)",
       "public com.yahoo.document.DocumentUpdate getDocumentUpdate()",
       "public int hashCode()",
       "public boolean equals(java.lang.Object)",
@@ -346,12 +388,34 @@
     ],
     "methods": [
       "public void <init>(long, boolean)",
+      "public void <init>(long, boolean, com.yahoo.messagebus.Trace)",
       "public boolean wasFound()",
+      "public boolean isSuccess()",
       "public int hashCode()",
       "public boolean equals(java.lang.Object)",
       "public java.lang.String toString()"
     ],
     "fields": []
+  },
+  "com.yahoo.documentapi.Response$Outcome": {
+    "superClass": "java.lang.Enum",
+    "interfaces": [],
+    "attributes": [
+      "public",
+      "final",
+      "enum"
+    ],
+    "methods": [
+      "public static com.yahoo.documentapi.Response$Outcome[] values()",
+      "public static com.yahoo.documentapi.Response$Outcome valueOf(java.lang.String)"
+    ],
+    "fields": [
+      "public static final enum com.yahoo.documentapi.Response$Outcome SUCCESS",
+      "public static final enum com.yahoo.documentapi.Response$Outcome CONDITION_FAILED",
+      "public static final enum com.yahoo.documentapi.Response$Outcome NOT_FOUND",
+      "public static final enum com.yahoo.documentapi.Response$Outcome INSUFFICIENT_STORAGE",
+      "public static final enum com.yahoo.documentapi.Response$Outcome ERROR"
+    ]
   },
   "com.yahoo.documentapi.Response": {
     "superClass": "java.lang.Object",
@@ -363,11 +427,15 @@
       "public void <init>(long)",
       "public void <init>(long, java.lang.String)",
       "public void <init>(long, java.lang.String, boolean)",
+      "public void <init>(long, java.lang.String, com.yahoo.documentapi.Response$Outcome)",
+      "public void <init>(long, java.lang.String, com.yahoo.documentapi.Response$Outcome, com.yahoo.messagebus.Trace)",
       "public java.lang.String getTextMessage()",
       "public boolean isSuccess()",
+      "public com.yahoo.documentapi.Response$Outcome outcome()",
       "public long getRequestId()",
-      "public int hashCode()",
+      "public com.yahoo.messagebus.Trace getTrace()",
       "public boolean equals(java.lang.Object)",
+      "public int hashCode()",
       "public java.lang.String toString()"
     ],
     "fields": []
@@ -513,14 +581,18 @@
     "methods": [
       "public abstract void put(com.yahoo.document.DocumentPut)",
       "public void put(com.yahoo.document.DocumentPut, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public void put(com.yahoo.document.DocumentPut, com.yahoo.documentapi.DocumentOperationParameters)",
       "public com.yahoo.document.Document get(com.yahoo.document.DocumentId)",
       "public com.yahoo.document.Document get(com.yahoo.document.DocumentId, java.lang.String, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
       "public abstract com.yahoo.document.Document get(com.yahoo.document.DocumentId, java.time.Duration)",
       "public abstract com.yahoo.document.Document get(com.yahoo.document.DocumentId, java.lang.String, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority, java.time.Duration)",
+      "public com.yahoo.document.Document get(com.yahoo.document.DocumentId, com.yahoo.documentapi.DocumentOperationParameters, java.time.Duration)",
       "public abstract boolean remove(com.yahoo.document.DocumentRemove)",
       "public abstract boolean remove(com.yahoo.document.DocumentRemove, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public boolean remove(com.yahoo.document.DocumentRemove, com.yahoo.documentapi.DocumentOperationParameters)",
       "public abstract boolean update(com.yahoo.document.DocumentUpdate)",
-      "public abstract boolean update(com.yahoo.document.DocumentUpdate, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)"
+      "public abstract boolean update(com.yahoo.document.DocumentUpdate, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public boolean update(com.yahoo.document.DocumentUpdate, com.yahoo.documentapi.DocumentOperationParameters)"
     ],
     "fields": []
   },
@@ -532,7 +604,9 @@
     ],
     "methods": [
       "public void <init>(long, boolean)",
+      "public void <init>(long, boolean, com.yahoo.messagebus.Trace)",
       "public boolean wasFound()",
+      "public boolean isSuccess()",
       "public int hashCode()",
       "public boolean equals(java.lang.Object)",
       "public java.lang.String toString()"
@@ -902,17 +976,17 @@
       "public void <init>(com.yahoo.documentapi.AsyncParameters, com.yahoo.documentapi.local.LocalDocumentAccess)",
       "public double getCurrentWindowSize()",
       "public com.yahoo.documentapi.Result put(com.yahoo.document.Document)",
-      "public com.yahoo.documentapi.Result put(com.yahoo.document.Document, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result put(com.yahoo.document.DocumentPut, com.yahoo.documentapi.DocumentOperationParameters)",
       "public com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId)",
-      "public com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId, boolean, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
-      "public com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId, com.yahoo.documentapi.DocumentOperationParameters)",
       "public com.yahoo.documentapi.Result remove(com.yahoo.document.DocumentId)",
-      "public com.yahoo.documentapi.Result remove(com.yahoo.document.DocumentId, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result remove(com.yahoo.document.DocumentRemove, com.yahoo.documentapi.DocumentOperationParameters)",
       "public com.yahoo.documentapi.Result update(com.yahoo.document.DocumentUpdate)",
-      "public com.yahoo.documentapi.Result update(com.yahoo.document.DocumentUpdate, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result update(com.yahoo.document.DocumentUpdate, com.yahoo.documentapi.DocumentOperationParameters)",
       "public com.yahoo.documentapi.Response getNext()",
       "public com.yahoo.documentapi.Response getNext(int)",
-      "public void destroy()"
+      "public void destroy()",
+      "public void setResultType(com.yahoo.documentapi.Result$ResultType)"
     ],
     "fields": []
   },
@@ -924,12 +998,16 @@
     ],
     "methods": [
       "public void <init>(com.yahoo.documentapi.DocumentAccessParams)",
-      "public com.yahoo.documentapi.SyncSession createSyncSession(com.yahoo.documentapi.SyncParameters)",
-      "public com.yahoo.documentapi.AsyncSession createAsyncSession(com.yahoo.documentapi.AsyncParameters)",
-      "public com.yahoo.documentapi.VisitorSession createVisitorSession(com.yahoo.documentapi.VisitorParameters)",
+      "public com.yahoo.documentapi.local.LocalSyncSession createSyncSession(com.yahoo.documentapi.SyncParameters)",
+      "public com.yahoo.documentapi.local.LocalAsyncSession createAsyncSession(com.yahoo.documentapi.AsyncParameters)",
+      "public com.yahoo.documentapi.local.LocalVisitorSession createVisitorSession(com.yahoo.documentapi.VisitorParameters)",
       "public com.yahoo.documentapi.VisitorDestinationSession createVisitorDestinationSession(com.yahoo.documentapi.VisitorDestinationParameters)",
       "public com.yahoo.documentapi.SubscriptionSession createSubscription(com.yahoo.documentapi.SubscriptionParameters)",
-      "public com.yahoo.documentapi.SubscriptionSession openSubscription(com.yahoo.documentapi.SubscriptionParameters)"
+      "public com.yahoo.documentapi.SubscriptionSession openSubscription(com.yahoo.documentapi.SubscriptionParameters)",
+      "public void setPhaser(java.util.concurrent.Phaser)",
+      "public bridge synthetic com.yahoo.documentapi.VisitorSession createVisitorSession(com.yahoo.documentapi.VisitorParameters)",
+      "public bridge synthetic com.yahoo.documentapi.AsyncSession createAsyncSession(com.yahoo.documentapi.AsyncParameters)",
+      "public bridge synthetic com.yahoo.documentapi.SyncSession createSyncSession(com.yahoo.documentapi.SyncParameters)"
     ],
     "fields": []
   },
@@ -990,14 +1068,14 @@
     ],
     "methods": [
       "public com.yahoo.documentapi.Result put(com.yahoo.document.Document)",
-      "public com.yahoo.documentapi.Result put(com.yahoo.document.Document, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result put(com.yahoo.document.DocumentPut, com.yahoo.documentapi.DocumentOperationParameters)",
       "public com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId)",
       "public com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId, boolean, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
-      "public com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result get(com.yahoo.document.DocumentId, com.yahoo.documentapi.DocumentOperationParameters)",
       "public com.yahoo.documentapi.Result remove(com.yahoo.document.DocumentId)",
-      "public com.yahoo.documentapi.Result remove(com.yahoo.document.DocumentId, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result remove(com.yahoo.document.DocumentRemove, com.yahoo.documentapi.DocumentOperationParameters)",
       "public com.yahoo.documentapi.Result update(com.yahoo.document.DocumentUpdate)",
-      "public com.yahoo.documentapi.Result update(com.yahoo.document.DocumentUpdate, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public com.yahoo.documentapi.Result update(com.yahoo.document.DocumentUpdate, com.yahoo.documentapi.DocumentOperationParameters)",
       "public com.yahoo.documentapi.Result send(com.yahoo.messagebus.Message)",
       "public com.yahoo.documentapi.Response getNext()",
       "public com.yahoo.documentapi.Response getNext(int)",
@@ -1101,14 +1179,16 @@
       "public com.yahoo.messagebus.Reply syncSend(com.yahoo.messagebus.Message)",
       "public void put(com.yahoo.document.DocumentPut)",
       "public void put(com.yahoo.document.DocumentPut, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
-      "public com.yahoo.document.Document get(com.yahoo.document.DocumentId)",
-      "public com.yahoo.document.Document get(com.yahoo.document.DocumentId, java.lang.String, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public void put(com.yahoo.document.DocumentPut, com.yahoo.documentapi.DocumentOperationParameters)",
       "public com.yahoo.document.Document get(com.yahoo.document.DocumentId, java.time.Duration)",
       "public com.yahoo.document.Document get(com.yahoo.document.DocumentId, java.lang.String, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority, java.time.Duration)",
+      "public com.yahoo.document.Document get(com.yahoo.document.DocumentId, com.yahoo.documentapi.DocumentOperationParameters, java.time.Duration)",
       "public boolean remove(com.yahoo.document.DocumentRemove)",
       "public boolean remove(com.yahoo.document.DocumentRemove, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public boolean remove(com.yahoo.document.DocumentRemove, com.yahoo.documentapi.DocumentOperationParameters)",
       "public boolean update(com.yahoo.document.DocumentUpdate)",
       "public boolean update(com.yahoo.document.DocumentUpdate, com.yahoo.documentapi.messagebus.protocol.DocumentProtocol$Priority)",
+      "public boolean update(com.yahoo.document.DocumentUpdate, com.yahoo.documentapi.DocumentOperationParameters)",
       "public java.lang.String getRoute()",
       "public void setRoute(java.lang.String)",
       "public int getTraceLevel()",

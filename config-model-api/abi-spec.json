@@ -83,7 +83,8 @@
       "public java.lang.String toString()",
       "public static com.yahoo.config.application.api.ApplicationMetaData fromJsonString(java.lang.String)",
       "public com.yahoo.slime.Slime getSlime()",
-      "public java.lang.String asJsonString()"
+      "public java.lang.String asJsonString()",
+      "public byte[] asJsonBytes()"
     ],
     "fields": []
   },
@@ -118,7 +119,6 @@
       "public abstract java.util.Optional getValidationOverrides()",
       "public abstract java.util.List getComponentsInfo(com.yahoo.component.Version)",
       "public abstract java.io.Reader getRankingExpression(java.lang.String)",
-      "public static java.util.Map getBundleSdFiles(java.lang.String, java.util.jar.JarFile)",
       "public static java.lang.String getFileName(java.util.jar.JarEntry)",
       "public abstract com.yahoo.config.application.api.ApplicationMetaData getMetaData()",
       "public abstract java.io.File getFileReference(com.yahoo.path.Path)",
@@ -592,7 +592,7 @@
     "methods": [
       "public void <init>(java.util.List)",
       "public void invalid(com.yahoo.config.application.api.ValidationId, java.lang.String, java.time.Instant)",
-      "public final boolean allows(java.lang.String, java.time.Instant)",
+      "public boolean allows(java.lang.String, java.time.Instant)",
       "public boolean allows(com.yahoo.config.application.api.ValidationId, java.time.Instant)",
       "public java.lang.String xmlForm()",
       "public static java.lang.String toAllowMessage(com.yahoo.config.application.api.ValidationId)",

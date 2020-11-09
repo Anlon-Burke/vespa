@@ -16,6 +16,7 @@ import com.yahoo.vespa.config.content.AllClustersBucketSpacesConfig;
 import com.yahoo.vespa.config.content.FleetcontrollerConfig;
 import com.yahoo.vespa.config.content.StorDistributionConfig;
 import com.yahoo.vespa.config.content.StorFilestorConfig;
+import com.yahoo.vespa.config.content.core.StorCommunicationmanagerConfig;
 import com.yahoo.vespa.config.content.core.StorDistributormanagerConfig;
 import com.yahoo.vespa.config.content.core.StorServerConfig;
 import com.yahoo.vespa.config.search.DispatchConfig;
@@ -29,6 +30,7 @@ import com.yahoo.vespa.model.content.utils.ContentClusterUtils;
 import com.yahoo.vespa.model.content.utils.SchemaBuilder;
 import com.yahoo.vespa.model.routing.DocumentProtocol;
 import com.yahoo.vespa.model.routing.Routing;
+import com.yahoo.vespa.model.search.SearchNode;
 import com.yahoo.vespa.model.test.utils.ApplicationPackageUtils;
 import com.yahoo.vespa.model.test.utils.VespaModelCreatorWithMockPkg;
 import org.junit.Rule;
@@ -948,22 +950,6 @@ public class ContentClusterTest extends ContentBaseTest {
         verifyTopKProbabilityPropertiesControl();
     }
 
-    private boolean resolveContentNodeBtreeDbConfigWithFeatureFlag(boolean flagEnabledBtreeDb) {
-        VespaModel model = createEnd2EndOneNode(new TestProperties().setUseContentNodeBtreeDB(flagEnabledBtreeDb));
-
-        ContentCluster cc = model.getContentClusters().get("storage");
-        var builder = new StorServerConfig.Builder();
-        cc.getStorageNodes().getConfig(builder);
-
-        return (new StorServerConfig(builder)).use_content_node_btree_bucket_db();
-    }
-
-    @Test
-    public void default_content_node_btree_usage_controlled_by_properties() {
-        assertFalse(resolveContentNodeBtreeDbConfigWithFeatureFlag(false));
-        assertTrue(resolveContentNodeBtreeDbConfigWithFeatureFlag(true));
-    }
-
     private boolean resolveThreePhaseUpdateConfigWithFeatureFlag(boolean flagEnableThreePhase) {
         VespaModel model = createEnd2EndOneNode(new TestProperties().setUseThreePhaseUpdates(flagEnableThreePhase));
 
@@ -978,6 +964,58 @@ public class ContentClusterTest extends ContentBaseTest {
     public void default_distributor_three_phase_update_config_controlled_by_properties() {
         assertFalse(resolveThreePhaseUpdateConfigWithFeatureFlag(false));
         assertTrue(resolveThreePhaseUpdateConfigWithFeatureFlag(true));
+    }
+
+    void assertDirectStorageApiRpcConfig(boolean expUseDirectStorageApiRpc, ContentNode node) {
+        var builder = new StorCommunicationmanagerConfig.Builder();
+        node.getConfig(builder);
+        var config = new StorCommunicationmanagerConfig(builder);
+        assertEquals(expUseDirectStorageApiRpc, config.use_direct_storageapi_rpc());
+    }
+
+    void assertDirectStorageApiRpcFlagIsPropagatedToConfig(boolean useDirectStorageApiRpc) {
+        VespaModel model = createEnd2EndOneNode(new TestProperties().setUseDirectStorageApiRpc(useDirectStorageApiRpc));
+
+        ContentCluster cc = model.getContentClusters().get("storage");
+        assertFalse(cc.getDistributorNodes().getChildren().isEmpty());
+        for (Distributor d : cc.getDistributorNodes().getChildren().values()) {
+            assertDirectStorageApiRpcConfig(useDirectStorageApiRpc, d);
+        }
+        assertFalse(cc.getStorageNodes().getChildren().isEmpty());
+        for (StorageNode node : cc.getStorageNodes().getChildren().values()) {
+            assertDirectStorageApiRpcConfig(useDirectStorageApiRpc, node);
+        }
+    }
+
+    @Test
+    public void use_direct_storage_api_rpc_config_is_controlled_by_properties() {
+        assertDirectStorageApiRpcFlagIsPropagatedToConfig(false);
+        assertDirectStorageApiRpcFlagIsPropagatedToConfig(true);
+    }
+
+
+    @Test
+    public void use_fast_value_tensor_implementation_config_is_controlled_by_properties() {
+        assertUseFastValueTensorImplementationFlagIsPropagatedToConfig(false);
+        assertUseFastValueTensorImplementationFlagIsPropagatedToConfig(true);
+    }
+
+    void assertUseFastValueTensorImplementationFlagIsPropagatedToConfig(boolean useFastValueTensorImplementation) {
+        VespaModel model = createEnd2EndOneNode(new TestProperties().setUseFastValueTensorImplementation(useFastValueTensorImplementation));
+        ContentCluster cc = model.getContentClusters().get("storage");
+        var node = cc.getSearch().getSearchNodes().get(0);
+        if (useFastValueTensorImplementation) {
+            assertTensorImplementationConfig(ProtonConfig.Tensor_implementation.FAST_VALUE, node);
+        } else {
+            assertTensorImplementationConfig(ProtonConfig.Tensor_implementation.TENSOR_ENGINE, node);
+        }
+    }
+
+    void assertTensorImplementationConfig(ProtonConfig.Tensor_implementation.Enum exp, SearchNode node) {
+        var builder = new ProtonConfig.Builder();
+        node.getConfig(builder);
+        var config = new ProtonConfig(builder);
+        assertEquals(exp, config.tensor_implementation());
     }
 
 }

@@ -104,10 +104,10 @@ public:
         uint16_t index;
         bool sourceOnly;
 
-        Node(uint16_t index_, bool sourceOnly_ = false)
+        Node(uint16_t index_, bool sourceOnly_ = false) noexcept
             : index(index_), sourceOnly(sourceOnly_) {}
 
-        bool operator==(const Node& n) const
+        bool operator==(const Node& n) const noexcept
             { return (index == n.index && sourceOnly == n.sourceOnly); }
     };
 
@@ -123,7 +123,7 @@ public:
                        Timestamp maxTimestamp,
                        uint32_t clusterStateVersion = 0,
                        const std::vector<uint16_t>& chain = std::vector<uint16_t>());
-    ~MergeBucketCommand();
+    ~MergeBucketCommand() override;
 
     const std::vector<Node>& getNodes() const { return _nodes; }
     Timestamp getMaxTimestamp() const { return _maxTimestamp; }
@@ -274,22 +274,15 @@ public:
 private:
     std::vector<Node> _nodes;
     std::vector<Entry> _diff;
-        // We may send more metadata entries that should fit in one apply bucket
-        // diff command, to let node pick which ones it wants to fill in first.
-        // Nodes should verify that they don't fill a command up with more than
-        // this number of bytes.
-    uint32_t _maxBufferSize;
 
 public:
     ApplyBucketDiffCommand(const document::Bucket &bucket,
-                           const std::vector<Node>& nodes,
-                           uint32_t maxBufferSize);
+                           const std::vector<Node>& nodes);
     ~ApplyBucketDiffCommand() override;
 
     const std::vector<Node>& getNodes() const { return _nodes; }
     const std::vector<Entry>& getDiff() const { return _diff; }
     std::vector<Entry>& getDiff() { return _diff; }
-    uint32_t getMaxBufferSize() const { return _maxBufferSize; }
     void print(std::ostream& out, bool verbose, const std::string& indent) const override;
 
     DECLARE_STORAGECOMMAND(ApplyBucketDiffCommand, onApplyBucketDiff)
@@ -309,16 +302,14 @@ public:
 private:
     std::vector<Node> _nodes;
     std::vector<Entry> _diff;
-    uint32_t _maxBufferSize;
 
 public:
     explicit ApplyBucketDiffReply(const ApplyBucketDiffCommand& cmd);
-    ~ApplyBucketDiffReply();
+    ~ApplyBucketDiffReply() override;
 
     const std::vector<Node>& getNodes() const { return _nodes; }
     const std::vector<Entry>& getDiff() const { return _diff; }
     std::vector<Entry>& getDiff() { return _diff; }
-    uint32_t getMaxBufferSize() const { return _maxBufferSize; }
 
     void print(std::ostream& out, bool verbose, const std::string& indent) const override;
 

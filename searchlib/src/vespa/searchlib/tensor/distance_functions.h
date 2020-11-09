@@ -3,7 +3,7 @@
 #pragma once
 
 #include "distance_function.h"
-#include <vespa/eval/tensor/dense/typed_cells.h>
+#include <vespa/eval/eval/typed_cells.h>
 #include <vespa/vespalib/hwaccelrated/iaccelrated.h>
 #include <cmath>
 
@@ -19,7 +19,7 @@ public:
     SquaredEuclideanDistance()
         : _computer(vespalib::hwaccelrated::IAccelrated::getAccelerator())
     {}
-    double calc(const vespalib::tensor::TypedCells& lhs, const vespalib::tensor::TypedCells& rhs) const override {
+    double calc(const vespalib::eval::TypedCells& lhs, const vespalib::eval::TypedCells& rhs) const override {
         auto lhs_vector = lhs.typify<FloatType>();
         auto rhs_vector = rhs.typify<FloatType>();
         size_t sz = lhs_vector.size();
@@ -31,8 +31,8 @@ public:
         double score = 1.0 / (1.0 + d);
         return score;
     }
-    double calc_with_limit(const vespalib::tensor::TypedCells& lhs,
-                           const vespalib::tensor::TypedCells& rhs,
+    double calc_with_limit(const vespalib::eval::TypedCells& lhs,
+                           const vespalib::eval::TypedCells& rhs,
                            double limit) const override
     {
         auto lhs_vector = lhs.typify<FloatType>();
@@ -59,7 +59,7 @@ public:
     AngularDistance()
         : _computer(vespalib::hwaccelrated::IAccelrated::getAccelerator())
     {}
-    double calc(const vespalib::tensor::TypedCells& lhs, const vespalib::tensor::TypedCells& rhs) const override {
+    double calc(const vespalib::eval::TypedCells& lhs, const vespalib::eval::TypedCells& rhs) const override {
         auto lhs_vector = lhs.typify<FloatType>();
         auto rhs_vector = rhs.typify<FloatType>();
         size_t sz = lhs_vector.size();
@@ -84,8 +84,8 @@ public:
         double score = 1.0 / (1.0 + angle_distance);
         return score;
     }
-    double calc_with_limit(const vespalib::tensor::TypedCells& lhs,
-                           const vespalib::tensor::TypedCells& rhs,
+    double calc_with_limit(const vespalib::eval::TypedCells& lhs,
+                           const vespalib::eval::TypedCells& rhs,
                            double /*limit*/) const override
     {
         return calc(lhs, rhs);
@@ -104,7 +104,7 @@ public:
     InnerProductDistance()
         : _computer(vespalib::hwaccelrated::IAccelrated::getAccelerator())
     {}
-    double calc(const vespalib::tensor::TypedCells& lhs, const vespalib::tensor::TypedCells& rhs) const override {
+    double calc(const vespalib::eval::TypedCells& lhs, const vespalib::eval::TypedCells& rhs) const override {
         auto lhs_vector = lhs.typify<FloatType>();
         auto rhs_vector = rhs.typify<FloatType>();
         size_t sz = lhs_vector.size();
@@ -116,8 +116,8 @@ public:
         double score = 1.0 / (1.0 + distance);
         return score;
     }
-    double calc_with_limit(const vespalib::tensor::TypedCells& lhs,
-                           const vespalib::tensor::TypedCells& rhs,
+    double calc_with_limit(const vespalib::eval::TypedCells& lhs,
+                           const vespalib::eval::TypedCells& rhs,
                            double /*limit*/) const override
     {
         return calc(lhs, rhs);
@@ -141,7 +141,7 @@ public:
         double s = sin(0.5*angle);
         return s*s;
     }
-    double calc(const vespalib::tensor::TypedCells& lhs, const vespalib::tensor::TypedCells& rhs) const override {
+    double calc(const vespalib::eval::TypedCells& lhs, const vespalib::eval::TypedCells& rhs) const override {
         auto lhs_vector = lhs.typify<FloatType>();
         auto rhs_vector = rhs.typify<FloatType>();
         assert(2 == lhs_vector.size());
@@ -169,13 +169,53 @@ public:
         double d = 2 * asin(hav_diff) * 6371.0088; // Earth mean radius
         return 1.0 / (1.0 + d);
     }
-    double calc_with_limit(const vespalib::tensor::TypedCells& lhs,
-                           const vespalib::tensor::TypedCells& rhs,
+    double calc_with_limit(const vespalib::eval::TypedCells& lhs,
+                           const vespalib::eval::TypedCells& rhs,
                            double /*limit*/) const override
     {
         return calc(lhs, rhs);
     }
 
 };
+
+/**
+ * Calculates the Hamming distance defined as
+ * "number of cells where the values are different"
+ */
+template <typename FloatType>
+class HammingDistance : public DistanceFunction {
+public:
+    HammingDistance() {}
+    double calc(const vespalib::eval::TypedCells& lhs, const vespalib::eval::TypedCells& rhs) const override {
+        auto lhs_vector = lhs.typify<FloatType>();
+        auto rhs_vector = rhs.typify<FloatType>();
+        size_t sz = lhs_vector.size();
+        assert(sz == rhs_vector.size());
+        size_t sum = 0;
+        for (size_t i = 0; i < sz; ++i) {
+            sum += (lhs_vector[i] == rhs_vector[i]) ? 0 : 1;
+        }
+        return (double)sum;
+    }
+    double to_rawscore(double distance) const override {
+        double score = 1.0 / (1.0 + distance);
+        return score;
+    }
+    double calc_with_limit(const vespalib::eval::TypedCells& lhs,
+                           const vespalib::eval::TypedCells& rhs,
+                           double limit) const override
+    {
+        auto lhs_vector = lhs.typify<FloatType>();
+        auto rhs_vector = rhs.typify<FloatType>();
+        size_t sz = lhs_vector.size();
+        assert(sz == rhs_vector.size());
+        size_t sum = 0;
+        for (size_t i = 0; i < sz && sum <= limit; ++i) {
+            sum += (lhs_vector[i] == rhs_vector[i]) ? 0 : 1;
+        }
+        return (double)sum;
+    }
+};
+
 
 }

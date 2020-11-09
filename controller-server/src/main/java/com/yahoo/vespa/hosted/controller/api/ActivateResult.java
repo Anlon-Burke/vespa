@@ -31,5 +31,4 @@ public class ActivateResult {
     public PrepareResponse prepareResponse() {
         return prepareResponse;
     }
-
 }

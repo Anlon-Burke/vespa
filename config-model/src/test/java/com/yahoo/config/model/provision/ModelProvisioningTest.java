@@ -103,7 +103,7 @@ public class ModelProvisioningTest {
                 + " </host>"
                 + "</hosts>";
         VespaModelCreatorWithMockPkg creator = new VespaModelCreatorWithMockPkg(null, services);
-        VespaModel model = creator.create(new DeployState.Builder().modelHostProvisioner(new InMemoryProvisioner(Hosts.readFrom(new StringReader(hosts)), true)));
+        VespaModel model = creator.create(new DeployState.Builder().modelHostProvisioner(new InMemoryProvisioner(Hosts.readFrom(new StringReader(hosts)), true, false)));
         ApplicationContainerCluster mydisc = model.getContainerClusters().get("mydisc");
         ApplicationContainerCluster mydisc2 = model.getContainerClusters().get("mydisc2");
         assertEquals(3, mydisc.getContainers().size());
@@ -444,12 +444,14 @@ public class ModelProvisioningTest {
 
         // Check container cluster
         assertEquals(1, model.getContainerClusters().size());
-        Set<com.yahoo.vespa.model.Host> containerHosts = model.getContainerClusters().get("foo").getContainers().stream().map(Container::getHost).collect(Collectors.toSet());
+        Set<HostResource> containerHosts = model.getContainerClusters().get("foo").getContainers().stream()
+                                                .map(Container::getHost)
+                                                .collect(Collectors.toSet());
         assertEquals(10, containerHosts.size());
 
         // Check admin clusters
         Admin admin = model.getAdmin();
-        Set<com.yahoo.vespa.model.Host> slobrokHosts = admin.getSlobroks().stream().map(Slobrok::getHost).collect(Collectors.toSet());
+        Set<HostResource> slobrokHosts = admin.getSlobroks().stream().map(Slobrok::getHost).collect(Collectors.toSet());
         assertEquals(3, slobrokHosts.size());
         assertTrue("Slobroks are assigned from container nodes", containerHosts.containsAll(slobrokHosts));
         assertTrue("Logserver is assigned from container nodes", containerHosts.contains(admin.getLogserver().getHost()));
@@ -1137,6 +1139,30 @@ public class ModelProvisioningTest {
         VespaModelTester tester = new VespaModelTester();
         tester.addHosts(numberOfHosts);
         tester.createModel(services, false);
+    }
+
+    @Test
+    public void testExclusiveNodes() {
+        String services =
+                "<?xml version='1.0' encoding='utf-8' ?>\n" +
+                "<services>" +
+                "<container version='1.0' id='container'>" +
+                "      <nodes count='2' exclusive='true'/>" +
+                "   </container>" +
+                "  <content version='1.0' id='bar'>" +
+                "     <redundancy>1</redundancy>" +
+                "     <documents>" +
+                "       <document type='type1' mode='index'/>" +
+                "     </documents>" +
+                "     <nodes count='3' exclusive='true'/>" +
+                "  </content>" +
+                "</services>";
+
+        int numberOfHosts = 5;
+        VespaModelTester tester = new VespaModelTester();
+        tester.addHosts(numberOfHosts);
+        VespaModel model = tester.createModel(services, false);
+        model.hostSystem().getHosts().forEach(host -> assertTrue(host.spec().membership().get().cluster().isExclusive()));
     }
 
     @Test

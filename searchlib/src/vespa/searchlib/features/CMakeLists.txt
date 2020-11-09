@@ -11,6 +11,7 @@ vespa_add_library(searchlib_features OBJECT
     debug_attribute_wait.cpp
     debug_wait.cpp
     dense_tensor_attribute_executor.cpp
+    direct_tensor_attribute_executor.cpp
     distancefeature.cpp
     distancetopathfeature.cpp
     documenttestutils.cpp
@@ -40,6 +41,7 @@ vespa_add_library(searchlib_features OBJECT
     nativeproximityfeature.cpp
     nativerankfeature.cpp
     nowfeature.cpp
+    onnx_feature.cpp
     proximityfeature.cpp
     querycompletenessfeature.cpp
     queryfeature.cpp

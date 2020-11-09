@@ -21,7 +21,6 @@ import com.yahoo.jdisc.application.OsgiFramework;
 import com.yahoo.jdisc.handler.RequestHandler;
 import com.yahoo.jdisc.service.ClientProvider;
 import com.yahoo.jdisc.service.ServerProvider;
-import java.util.logging.Level;
 import com.yahoo.osgi.OsgiImpl;
 import com.yahoo.osgi.OsgiWrapper;
 import com.yahoo.statistics.Statistics;
@@ -30,13 +29,13 @@ import org.osgi.framework.wiring.BundleWiring;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.Set;
 
 import static com.yahoo.collections.CollectionUtil.first;
-import static com.yahoo.container.util.Util.quote;
 
 
 /**
@@ -49,24 +48,6 @@ import static com.yahoo.container.util.Util.quote;
 public class HandlersConfigurerDi {
 
     private static final Logger log = Logger.getLogger(HandlersConfigurerDi.class.getName());
-
-    public static class RegistriesHack {
-
-        @Inject
-        public RegistriesHack(com.yahoo.container.Container vespaContainer,
-                              ComponentRegistry<AbstractComponent> allComponents,
-                              ComponentRegistry<RequestHandler> requestHandlerRegistry,
-                              ComponentRegistry<ClientProvider> clientProviderRegistry,
-                              ComponentRegistry<ServerProvider> serverProviderRegistry) {
-            log.log(Level.FINE, "RegistriesHack.init " + System.identityHashCode(this));
-
-            vespaContainer.setComponentRegistry(allComponents);
-            vespaContainer.setRequestHandlerRegistry(requestHandlerRegistry);
-            vespaContainer.setClientProviderRegistry(clientProviderRegistry);
-            vespaContainer.setServerProviderRegistry(serverProviderRegistry);
-        }
-
-    }
 
     private final com.yahoo.container.Container vespaContainer;
     private final Container container;
@@ -107,9 +88,8 @@ public class HandlersConfigurerDi {
             super(osgiFramework);
             this.osgiFramework = osgiFramework;
 
-            OsgiImpl osgi = new OsgiImpl(osgiFramework);
-            applicationBundleLoader = new ApplicationBundleLoader(osgi, new FileAcquirerBundleInstaller(fileAcquirer));
-            platformBundleLoader = new PlatformBundleLoader(osgi);
+            applicationBundleLoader = new ApplicationBundleLoader(this, new FileAcquirerBundleInstaller(fileAcquirer));
+            platformBundleLoader = new PlatformBundleLoader(this);
         }
 
 
@@ -127,7 +107,7 @@ public class HandlersConfigurerDi {
             } else {
                 Bundle bundle = getBundle(bundleSpec);
                 if (bundle == null)
-                    throw new RuntimeException("No bundle matching " + quote(bundleSpec));
+                    throw new RuntimeException("No bundle matching '" + bundleSpec + "'");
 
                 return new BundleClasses(bundle, OsgiUtil.getClassEntriesInBundleClassPath(bundle, packagesToScan));
             }
@@ -155,7 +135,6 @@ public class HandlersConfigurerDi {
                                                       restartOnRedeploy);
     }
 
-    @SuppressWarnings("deprecation")
     private Injector createFallbackInjector(com.yahoo.container.Container vespaContainer, Injector discInjector) {
         return discInjector.createChildInjector(new AbstractModule() {
             @Override
@@ -181,6 +160,27 @@ public class HandlersConfigurerDi {
 
     public void shutdown(ComponentDeconstructor deconstructor) {
         container.shutdown(currentGraph, deconstructor);
+    }
+
+    /** Returns the currently active application configuration generation */
+    public long generation() { return currentGraph.generation(); }
+
+    public static class RegistriesHack {
+
+        @Inject
+        public RegistriesHack(com.yahoo.container.Container vespaContainer,
+                              ComponentRegistry<AbstractComponent> allComponents,
+                              ComponentRegistry<RequestHandler> requestHandlerRegistry,
+                              ComponentRegistry<ClientProvider> clientProviderRegistry,
+                              ComponentRegistry<ServerProvider> serverProviderRegistry) {
+            log.log(Level.FINE, "RegistriesHack.init " + System.identityHashCode(this));
+
+            vespaContainer.setComponentRegistry(allComponents);
+            vespaContainer.setRequestHandlerRegistry(requestHandlerRegistry);
+            vespaContainer.setClientProviderRegistry(clientProviderRegistry);
+            vespaContainer.setServerProviderRegistry(serverProviderRegistry);
+        }
+
     }
 
 }

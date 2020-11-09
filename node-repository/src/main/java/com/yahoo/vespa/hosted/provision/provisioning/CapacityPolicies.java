@@ -14,6 +14,7 @@ import com.yahoo.vespa.hosted.provision.NodeRepository;
  * Defines the policies for assigning cluster capacity in various environments
  *
  * @author bratseth
+ * @see NodeResourceLimits
  */
 public class CapacityPolicies {
 
@@ -43,13 +44,13 @@ public class CapacityPolicies {
 
         if (capacity.isRequired()) return target;
 
+        // Dev does not cap the cpu of containers since usage is spotty: Allocate just a small amount exclusively
+        if (zone.environment() == Environment.dev && !zone.getCloud().dynamicProvisioning())
+            target = target.withVcpu(0.1);
+
         // Allow slow storage in zones which are not performance sensitive
         if (zone.system().isCd() || zone.environment() == Environment.dev || zone.environment() == Environment.test)
             target = target.with(NodeResources.DiskSpeed.any).with(NodeResources.StorageType.any);
-
-        // Dev does not cap the cpu of containers since usage is spotty: Allocate just a small amount exclusively
-        if (zone.environment() == Environment.dev && zone.getCloud().allowHostSharing())
-            target = target.withVcpu(0.1);
 
         return target;
     }
@@ -60,22 +61,22 @@ public class CapacityPolicies {
                 // Use small logserver in dev system
                 return new NodeResources(0.1, 1, 10, 0.3);
             }
-            return zone.getCloud().allowHostSharing() ?
-                   new NodeResources(0.5, 2, 50, 0.3) :
-                   new NodeResources(0.5, 4, 50, 0.3);
+            return zone.getCloud().dynamicProvisioning() ?
+                   new NodeResources(0.5, 4, 50, 0.3) :
+                   new NodeResources(0.5, 2, 50, 0.3);
         }
 
-        return zone.getCloud().allowHostSharing() ?
-                new NodeResources(1.5, 8, 50, 0.3) :
-                new NodeResources(2.0, 8, 50, 0.3);
+        return zone.getCloud().dynamicProvisioning() ?
+                new NodeResources(2.0, 8, 50, 0.3) :
+                new NodeResources(1.5, 8, 50, 0.3);
     }
 
     /**
      * Whether or not the nodes requested can share physical host with other applications.
      * A security feature which only makes sense for prod.
      */
-    public boolean decideExclusivity(boolean requestedExclusivity) {
-        return requestedExclusivity && zone.environment() == Environment.prod;
+    public boolean decideExclusivity(Capacity capacity, boolean requestedExclusivity) {
+        return requestedExclusivity && (capacity.isRequired() || zone.environment() == Environment.prod);
     }
 
     /**

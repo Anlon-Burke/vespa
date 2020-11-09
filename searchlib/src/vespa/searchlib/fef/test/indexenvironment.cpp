@@ -54,4 +54,21 @@ IndexEnvironment::addConstantValue(const vespalib::string &name,
     (void) insertRes;
 }
 
+const OnnxModel *
+IndexEnvironment::getOnnxModel(const vespalib::string &name) const
+{
+    auto pos = _models.find(name);
+    if (pos != _models.end()) {
+        return &pos->second;
+    }
+    return nullptr;
+}
+
+void
+IndexEnvironment::addOnnxModel(const OnnxModel &model)
+{
+    _models.insert_or_assign(model.name(), model);
+}
+
+
 }

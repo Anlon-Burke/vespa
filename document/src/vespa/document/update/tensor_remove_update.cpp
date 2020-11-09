@@ -6,18 +6,23 @@
 #include <vespa/document/fieldvalue/document.h>
 #include <vespa/document/fieldvalue/tensorfieldvalue.h>
 #include <vespa/document/serialization/vespadocumentdeserializer.h>
+#include <vespa/eval/eval/engine_or_factory.h>
+#include <vespa/eval/tensor/partial_update.h>
+#include <vespa/eval/tensor/tensor.h>
 #include <vespa/eval/tensor/cell_values.h>
 #include <vespa/eval/tensor/sparse/sparse_tensor.h>
-#include <vespa/eval/tensor/tensor.h>
+#include <vespa/eval/eval/value.h>
 #include <vespa/vespalib/objects/nbostream.h>
 #include <vespa/vespalib/util/xmlstream.h>
 #include <ostream>
+#include <cassert>
 
 using vespalib::IllegalArgumentException;
 using vespalib::IllegalStateException;
-using vespalib::tensor::Tensor;
 using vespalib::make_string;
 using vespalib::eval::ValueType;
+using vespalib::eval::EngineOrFactory;
+using vespalib::tensor::TensorPartialUpdate;
 
 namespace document {
 
@@ -102,16 +107,15 @@ TensorRemoveUpdate::checkCompatibility(const Field &field) const
     }
 }
 
-std::unique_ptr<Tensor>
-TensorRemoveUpdate::applyTo(const Tensor &tensor) const
+std::unique_ptr<vespalib::eval::Value>
+TensorRemoveUpdate::applyTo(const vespalib::eval::Value &tensor) const
 {
-    auto &addressTensor = _tensor->getAsTensorPtr();
+    auto addressTensor = _tensor->getAsTensorPtr();
     if (addressTensor) {
-        // Address tensor being sparse was validated during deserialize().
-        vespalib::tensor::CellValues cellAddresses(static_cast<const vespalib::tensor::SparseTensor &>(*addressTensor));
-        return tensor.remove(cellAddresses);
+        auto engine = EngineOrFactory::get();
+        return TensorPartialUpdate::remove(tensor, *addressTensor, engine);
     }
-    return std::unique_ptr<Tensor>();
+    return {};
 }
 
 bool
@@ -119,7 +123,7 @@ TensorRemoveUpdate::applyTo(FieldValue &value) const
 {
     if (value.inherits(TensorFieldValue::classId)) {
         TensorFieldValue &tensorFieldValue = static_cast<TensorFieldValue &>(value);
-        auto &oldTensor = tensorFieldValue.getAsTensorPtr();
+        auto oldTensor = tensorFieldValue.getAsTensorPtr();
         if (oldTensor) {
             auto newTensor = applyTo(*oldTensor);
             if (newTensor) {
@@ -153,14 +157,20 @@ TensorRemoveUpdate::print(std::ostream &out, bool verbose, const std::string &in
 namespace {
 
 void
-verifyAddressTensorIsSparse(const std::unique_ptr<Tensor> &addressTensor)
+verifyAddressTensorIsSparse(const vespalib::eval::Value *addressTensor)
 {
-    if (addressTensor && !dynamic_cast<const vespalib::tensor::SparseTensor *>(addressTensor.get())) {
-        vespalib::string err = make_string("Expected address tensor to be sparse, but has type '%s'",
-                                           addressTensor->type().to_spec().c_str());
-        throw IllegalStateException(err, VESPA_STRLOC);
+    if (addressTensor == nullptr) {
+        return;
     }
+    auto engine = EngineOrFactory::get();
+    if (TensorPartialUpdate::check_suitably_sparse(*addressTensor, engine)) {
+        return;
+    }
+    vespalib::string err = make_string("Expected address tensor to be sparse, but has type '%s'",
+                                       addressTensor->type().to_spec().c_str());
+    throw IllegalStateException(err, VESPA_STRLOC);
 }
+
 
 }
 

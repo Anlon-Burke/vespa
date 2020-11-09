@@ -31,6 +31,11 @@ num_threads int default=8 restart
 ## Negative number will choose a good number based on # cores.
 num_response_threads int default=2 restart
 
+## Number of handler objects that might be created by networkthreads
+## This is a temporary setting that only skilled vespa developers should modify
+## This must be kept in line with stor-communicationmanager:rpc.num_network_threads
+num_network_threads int default=1 restart
+
 ## Type of sequenced thread executor use for persistence replies.
 response_sequencer_type enum {LATENCY, THROUGHPUT, ADAPTIVE} default=ADAPTIVE restart
 
@@ -41,9 +46,8 @@ common_merge_chain_optimalization_minimum_size int default=64 restart
 
 ## Chunksize to use while merging buckets between nodes.
 ##
-## Default is set to 4 MB - 4k. This is to allow for malloc to waste some bytes
-## with tracking info or to align to 512b without passing allocation limit,
-## while still reading 4k blocks from disk.
+## Default is set to 4 MB.
+## Note that this will gradually be increased to reach stor-distributormanager:splitsize which is currently at 32M
 bucket_merge_chunk_size int default=4190208 restart
 
 ## When merging, it is possible to send more metadata than needed in order to
@@ -52,9 +56,18 @@ bucket_merge_chunk_size int default=4190208 restart
 ## consumption might increase in a 4.1 to 4.2 upgrade due to this, as 4.1
 ## dont support to only fill in part of the metadata provided and will always
 ## fill all.
+## NB unused and will be removed shortly.
 enable_merge_local_node_choose_docs_optimalization bool default=true restart
 
 ## Whether or not to enable the multibit split optimalization. This is useful
 ## if splitting is expensive, but listing document identifiers is fairly cheap.
 ## This is true for memfile persistence layer, but not for vespa search.
 enable_multibit_split_optimalization bool default=true restart
+
+## Whether or not to use async message handling when scheduling storage messages from FileStorManager.
+##
+## When turned on, the calling thread (e.g. FNET network thread when using Storage API RPC)
+## gets the next async message to handle (if any) as part of scheduling a storage message.
+## This async message is then handled by the calling thread immediately,
+## instead of going via a persistence thread.
+use_async_message_handling_on_schedule bool default=false restart

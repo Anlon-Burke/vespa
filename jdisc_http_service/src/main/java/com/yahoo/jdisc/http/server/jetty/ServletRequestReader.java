@@ -28,6 +28,7 @@ import java.util.logging.Logger;
  * it's important that errors are delivered synchronously.
  */
 class ServletRequestReader implements ReadListener {
+
     private enum State {
         READING, ALL_DATA_READ, REQUEST_CONTENT_CLOSED
     }
@@ -42,7 +43,7 @@ class ServletRequestReader implements ReadListener {
     private final ContentChannel requestContentChannel;
 
     private final Executor executor;
-    private final MetricReporter metricReporter;
+    private final RequestMetricReporter metricReporter;
 
     private int bytesRead;
 
@@ -93,7 +94,7 @@ class ServletRequestReader implements ReadListener {
             ServletInputStream servletInputStream,
             ContentChannel requestContentChannel,
             Executor executor,
-            MetricReporter metricReporter) {
+            RequestMetricReporter metricReporter) {
 
         Preconditions.checkNotNull(servletInputStream);
         Preconditions.checkNotNull(requestContentChannel);
@@ -110,42 +111,42 @@ class ServletRequestReader implements ReadListener {
     public void onDataAvailable() throws IOException {
         while (servletInputStream.isReady()) {
             final byte[] buffer = new byte[BUFFER_SIZE_BYTES];
-            final int numBytesRead = servletInputStream.read(buffer);
-            if (numBytesRead < 0) {
-                // End of stream; there should be no more data available, ever.
-                return;
-            }
-            writeRequestContent(ByteBuffer.wrap(buffer, 0, numBytesRead));
-        }
-    }
+            int numBytesRead;
 
-    private void writeRequestContent(final ByteBuffer buf) {
-        synchronized (monitor) {
-            if (state != State.READING) {
-                //We have a failure, so no point in giving the buffer to the user.
-                assert finishedFuture.isCompletedExceptionally();
-                return;
+            synchronized (monitor) {
+                numBytesRead = servletInputStream.read(buffer);
+                if (numBytesRead < 0) {
+                    // End of stream; there should be no more data available, ever.
+                    return;
+                }
+                if (state != State.READING) {
+                    //We have a failure, so no point in giving the buffer to the user.
+                    assert finishedFuture.isCompletedExceptionally();
+                    return;
+                }
+                //wait for both
+                //  - requestContentChannel.write to finish
+                //  - the write completion handler to be called
+                numberOfOutstandingUserCalls += 2;
+                bytesRead += numBytesRead;
             }
-            //wait for both
-            //  - requestContentChannel.write to finish
-            //  - the write completion handler to be called
-            numberOfOutstandingUserCalls += 2;
-        }
-        try {
-            int bytesReceived = buf.remaining();
-            requestContentChannel.write(buf, writeCompletionHandler);
-            metricReporter.successfulRead(bytesReceived);
-            bytesRead += bytesReceived;
-        } catch (final Throwable t) {
-            finishedFuture.completeExceptionally(t);
-        } finally {
-            //decrease due to this method completing.
-            decreaseOutstandingUserCallsAndCloseRequestContentChannelConditionally();
+
+            try {
+                requestContentChannel.write(ByteBuffer.wrap(buffer, 0, numBytesRead), writeCompletionHandler);
+                metricReporter.successfulRead(numBytesRead);
+            }
+            catch (Throwable t) {
+                finishedFuture.completeExceptionally(t);
+            }
+            finally {
+                //decrease due to this method completing.
+                decreaseOutstandingUserCallsAndCloseRequestContentChannelConditionally();
+            }
         }
     }
 
     private void decreaseOutstandingUserCallsAndCloseRequestContentChannelConditionally() {
-        final boolean shouldCloseRequestContentChannel;
+        boolean shouldCloseRequestContentChannel;
 
         synchronized (monitor) {
             assertStateNotEquals(state, State.REQUEST_CONTENT_CLOSED);
@@ -154,7 +155,7 @@ class ServletRequestReader implements ReadListener {
             numberOfOutstandingUserCalls -= 1;
 
             shouldCloseRequestContentChannel = numberOfOutstandingUserCalls == 0 &&
-                    (finishedFuture.isDone() || state == State.ALL_DATA_READ);
+                                               (finishedFuture.isDone() || state == State.ALL_DATA_READ);
 
             if (shouldCloseRequestContentChannel) {
                 state = State.REQUEST_CONTENT_CLOSED;

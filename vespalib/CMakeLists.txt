@@ -26,6 +26,7 @@ vespa_define_module(
     src/tests/benchmark_timer
     src/tests/box
     src/tests/btree
+    src/tests/child_process
     src/tests/closure
     src/tests/component
     src/tests/compress
@@ -45,7 +46,7 @@ vespa_define_module(
     src/tests/datastore/unique_store
     src/tests/datastore/unique_store_dictionary
     src/tests/datastore/unique_store_string_allocator
-    src/tests/delegatelist
+    src/tests/detect_type_benchmark
     src/tests/dotproduct
     src/tests/drop-file-from-cache
     src/tests/dual_merge_director
@@ -92,12 +93,10 @@ vespa_define_module(
     src/tests/regex
     src/tests/rendezvous
     src/tests/runnable_pair
-    src/tests/rwlock
     src/tests/sha1
     src/tests/sharedptr
     src/tests/signalhandler
     src/tests/simple_thread_bundle
-    src/tests/child_process
     src/tests/slime
     src/tests/slime/external_data_value
     src/tests/slime/summary-feature-benchmark

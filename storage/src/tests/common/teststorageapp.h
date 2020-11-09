@@ -29,20 +29,20 @@
 #include <vespa/persistence/spi/persistenceprovider.h>
 #include <vespa/document/bucket/fixed_bucket_spaces.h>
 #include <vespa/document/base/testdocman.h>
+#include <vespa/vespalib/util/sequencedtaskexecutor.h>
 #include <atomic>
 
 namespace storage {
 
 class StorageBucketDBInitializer;
 
-DEFINE_PRIMITIVE_WRAPPER(uint16_t, DiskCount);
 DEFINE_PRIMITIVE_WRAPPER(uint16_t, NodeIndex);
 DEFINE_PRIMITIVE_WRAPPER(uint16_t, NodeCount);
 DEFINE_PRIMITIVE_WRAPPER(uint16_t, Redundancy);
 
 class TestStorageApp
         : public framework::defaultimplementation::TestComponentRegister,
-          private DoneInitializeHandler
+          public DoneInitializeHandler
 {
     StorageComponentRegisterImpl& _compReg;
 
@@ -99,10 +99,10 @@ public:
 
 private:
     // Storage server interface implementation (until we can remove it)
-    virtual api::Timestamp getUniqueTimestamp() { assert(0); throw; }
-    virtual StorBucketDatabase& getStorageBucketDatabase() { assert(0); throw; }
-    virtual BucketDatabase& getBucketDatabase() { assert(0); throw; }
-    virtual uint16_t getDiskCount() const { assert(0); throw; }
+    virtual api::Timestamp getUniqueTimestamp() { abort(); }
+    [[nodiscard]] virtual StorBucketDatabase& content_bucket_db(document::BucketSpace) { abort(); }
+    virtual StorBucketDatabase& getStorageBucketDatabase() { abort(); }
+    virtual BucketDatabase& getBucketDatabase() { abort(); }
 };
 
 class TestServiceLayerApp : public TestStorageApp
@@ -110,12 +110,11 @@ class TestServiceLayerApp : public TestStorageApp
     using PersistenceProviderUP = std::unique_ptr<spi::PersistenceProvider>;
     ServiceLayerComponentRegisterImpl& _compReg;
     PersistenceProviderUP _persistenceProvider;
-    spi::PartitionStateList _partitions;
+    std::unique_ptr<vespalib::ISequencedTaskExecutor> _executor;
 
 public:
-    TestServiceLayerApp(vespalib::stringref configId = "");
-    TestServiceLayerApp(DiskCount diskCount, NodeIndex = NodeIndex(0xffff),
-                        vespalib::stringref configId = "");
+    TestServiceLayerApp(vespalib::stringref configId);
+    TestServiceLayerApp(NodeIndex = NodeIndex(0xffff), vespalib::stringref configId = "");
     ~TestServiceLayerApp();
 
     void setupDummyPersistence();
@@ -124,33 +123,31 @@ public:
     ServiceLayerComponentRegisterImpl& getComponentRegister() { return _compReg; }
 
     spi::PersistenceProvider& getPersistenceProvider();
-    spi::PartitionStateList& getPartitions();
-    uint16_t getPartition(const document::BucketId&);
+
+    StorBucketDatabase& content_bucket_db(document::BucketSpace space) override {
+        return _compReg.getBucketSpaceRepo().get(space).bucketDatabase();
+    }
 
     StorBucketDatabase& getStorageBucketDatabase() override {
         return _compReg.getBucketSpaceRepo().get(document::FixedBucketSpaces::default_space()).bucketDatabase();
     }
-
-private:
-    // For storage server interface implementation we'll get rid of soon.
-    // Use getPartitions().size() instead.
-    uint16_t getDiskCount() const override { return _compReg.getDiskCount(); }
+    vespalib::ISequencedTaskExecutor & executor() { return *_executor; }
 };
 
 class TestDistributorApp : public TestStorageApp,
                            public UniqueTimeCalculator
 {
     DistributorComponentRegisterImpl& _compReg;
-    vespalib::Lock _accessLock;
+    std::mutex _accessLock;
     uint64_t _lastUniqueTimestampRequested;
     uint32_t _uniqueTimestampCounter;
 
     void configure(vespalib::stringref configId);
 
 public:
-    TestDistributorApp(vespalib::stringref configId = "");
-    TestDistributorApp(NodeIndex index, vespalib::stringref configId = "");
-    ~TestDistributorApp();
+    explicit TestDistributorApp(vespalib::stringref configId = "");
+    explicit TestDistributorApp(NodeIndex index, vespalib::stringref configId = "");
+    ~TestDistributorApp() override;
 
     DistributorComponentRegisterImpl& getComponentRegister() {
         return _compReg;

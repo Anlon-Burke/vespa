@@ -161,7 +161,7 @@ FileChunk::erase()
 }
 
 size_t
-FileChunk::updateLidMap(const LockGuard &guard, ISetLid &ds, uint64_t serialNum, uint32_t docIdLimit)
+FileChunk::updateLidMap(const unique_lock &guard, ISetLid &ds, uint64_t serialNum, uint32_t docIdLimit)
 {
     size_t sz(0);
     assert(_chunkInfo.empty());
@@ -320,7 +320,7 @@ appendChunks(FixedParams * args, Chunk::UP chunk)
     for (const Chunk::Entry & e : ll) {
         LidInfo lidInfo(args->fileId, chunk->getId(), e.netSize());
         if (args->db.getLid(args->lidReadGuard, e.getLid()) == lidInfo) {
-            vespalib::LockGuard guard(args->db.getLidGuard(e.getLid()));
+            auto guard(args->db.getLidGuard(e.getLid()));
             if (args->db.getLid(args->lidReadGuard, e.getLid()) == lidInfo) {
                 // I am still in use so I need to taken care of.
                 vespalib::ConstBufferRef data(chunk->getLid(e.getLid()));

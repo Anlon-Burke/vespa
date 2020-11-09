@@ -5,15 +5,13 @@ import com.yahoo.config.FileReference;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.vespa.config.ConnectionPool;
 import com.yahoo.vespa.config.server.ApplicationRepository;
-import com.yahoo.vespa.config.server.session.RemoteSession;
+import com.yahoo.vespa.config.server.session.Session;
 import com.yahoo.vespa.config.server.session.SessionRepository;
 import com.yahoo.vespa.config.server.tenant.Tenant;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.filedistribution.FileDownloader;
-import com.yahoo.vespa.flags.BooleanFlag;
 import com.yahoo.vespa.flags.FlagSource;
-import com.yahoo.vespa.flags.Flags;
 
 import java.io.File;
 import java.time.Duration;
@@ -35,7 +33,6 @@ public class ApplicationPackageMaintainer extends ConfigServerMaintainer {
     private final ApplicationRepository applicationRepository;
     private final ConnectionPool connectionPool;
     private final File downloadDirectory;
-    private final BooleanFlag distributeApplicationPackage;
 
     ApplicationPackageMaintainer(ApplicationRepository applicationRepository,
                                  Curator curator,
@@ -46,19 +43,17 @@ public class ApplicationPackageMaintainer extends ConfigServerMaintainer {
         ConfigserverConfig configserverConfig = applicationRepository.configserverConfig();
         connectionPool = createConnectionPool(configserverConfig);
 
-        distributeApplicationPackage = Flags.CONFIGSERVER_DISTRIBUTE_APPLICATION_PACKAGE.bindTo(flagSource);
         downloadDirectory = new File(Defaults.getDefaults().underVespaHome(configserverConfig.fileReferencesDir()));
     }
 
     @Override
     protected boolean maintain() {
         boolean success = true;
-        if (! distributeApplicationPackage.value()) return success;
 
         try (var fileDownloader = new FileDownloader(connectionPool, downloadDirectory)) {
             for (var applicationId : applicationRepository.listApplications()) {
                 log.fine(() -> "Verifying application package for " + applicationId);
-                RemoteSession session = applicationRepository.getActiveSession(applicationId);
+                Session session = applicationRepository.getActiveSession(applicationId);
                 if (session == null) continue;  // App might be deleted after call to listApplications()
 
                 FileReference applicationPackage = session.getApplicationPackageReference();
@@ -89,10 +84,10 @@ public class ApplicationPackageMaintainer extends ConfigServerMaintainer {
     }
 
     private void createLocalSessionIfMissing(ApplicationId applicationId, long sessionId) {
-        Tenant tenant = applicationRepository.tenantRepository().getTenant(applicationId.tenant());
+        Tenant tenant = applicationRepository.getTenant(applicationId);
         SessionRepository sessionRepository = tenant.getSessionRepository();
         if (sessionRepository.getLocalSession(sessionId) == null)
-            sessionRepository.createLocalSessionUsingDistributedApplicationPackage(sessionId);
+            sessionRepository.createLocalSessionFromDistributedApplicationPackage(sessionId);
     }
 
 }

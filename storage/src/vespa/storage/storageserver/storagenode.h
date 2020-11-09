@@ -44,6 +44,7 @@ struct DeadLockDetector;
 struct StorageMetricSet;
 struct StorageNodeContext;
 class ApplicationGenerationFetcher;
+class IStorageChainBuilder;
 class StorageComponent;
 
 namespace lib { class NodeType; }
@@ -90,7 +91,6 @@ public:
      */
     virtual ResumeGuard pause() = 0;
     void requestShutdown(vespalib::stringref reason) override;
-    void notifyPartitionDown(int partId, vespalib::stringref reason);
     DoneInitializeHandler& getDoneInitializeHandler() { return *this; }
 
     // For testing
@@ -143,7 +143,7 @@ private:
 
 protected:
         // Lock taken while doing configuration of the server.
-    vespalib::Lock _configLock;
+    std::mutex _configLock;
     std::mutex _initial_config_mutex;
     using InitialGuard = std::lock_guard<std::mutex>;
         // Current running config. Kept, such that we can see what has been
@@ -164,6 +164,9 @@ protected:
     std::unique_ptr<StorageComponent> _component;
     config::ConfigUri _configUri;
     CommunicationManager* _communicationManager;
+private:
+    std::unique_ptr<IStorageChainBuilder>      _chain_builder;
+protected:
 
     /**
      * Node subclasses currently need to explicitly acquire ownership of state
@@ -177,10 +180,13 @@ protected:
     void initialize();
     virtual void subscribeToConfigs();
     virtual void initializeNodeSpecific() = 0;
-    virtual std::unique_ptr<StorageLink> createChain() = 0;
+    virtual void perform_post_chain_creation_init_steps() = 0;
+    virtual void createChain(IStorageChainBuilder &builder) = 0;
     virtual void handleLiveConfigUpdate(const InitialGuard & initGuard);
     void shutdown();
     virtual void removeConfigSubscriptions();
+public:
+    void set_storage_chain_builder(std::unique_ptr<IStorageChainBuilder> builder);
 };
 
 } // storage

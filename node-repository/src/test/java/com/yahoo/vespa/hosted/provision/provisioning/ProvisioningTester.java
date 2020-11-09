@@ -2,8 +2,10 @@
 package com.yahoo.vespa.hosted.provision.provisioning;
 
 import com.yahoo.component.Version;
+import com.yahoo.config.provision.ActivationContext;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
+import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
@@ -17,11 +19,13 @@ import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeResources.DiskSpeed;
 import com.yahoo.config.provision.NodeResources.StorageType;
 import com.yahoo.config.provision.NodeType;
+import com.yahoo.config.provision.ProvisionLock;
 import com.yahoo.config.provision.ProvisionLogger;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.config.provisioning.FlavorsConfig;
 import com.yahoo.test.ManualClock;
+import com.yahoo.transaction.Mutex;
 import com.yahoo.transaction.NestedTransaction;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.curator.mock.MockCurator;
@@ -31,6 +35,7 @@ import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
+import com.yahoo.vespa.hosted.provision.Nodelike;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancerServiceMock;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
@@ -53,6 +58,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 
@@ -83,11 +89,12 @@ public class ProvisioningTester {
     private int nextHost = 0;
     private int nextIP = 0;
 
-    public ProvisioningTester(Curator curator,
+    private ProvisioningTester(Curator curator,
                               NodeFlavors nodeFlavors,
                               HostResourcesCalculator resourcesCalculator,
                               Zone zone,
                               NameResolver nameResolver,
+                              DockerImage containerImage,
                               Orchestrator orchestrator,
                               HostProvisioner hostProvisioner,
                               LoadBalancerServiceMock loadBalancerService,
@@ -96,18 +103,18 @@ public class ProvisioningTester {
         this.curator = curator;
         this.nodeFlavors = nodeFlavors;
         this.clock = new ManualClock();
-        ProvisionServiceProvider provisionServiceProvider = new MockProvisionServiceProvider(loadBalancerService, hostProvisioner);
+        ProvisionServiceProvider provisionServiceProvider = new MockProvisionServiceProvider(loadBalancerService, hostProvisioner, resourcesCalculator);
         this.nodeRepository = new NodeRepository(nodeFlavors,
-                                                 resourcesCalculator,
+                                                 provisionServiceProvider,
                                                  curator,
                                                  clock,
                                                  zone,
                                                  nameResolver,
-                                                 DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa"),
+                                                 containerImage,
                                                  flagSource,
                                                  true,
-                                                 provisionServiceProvider.getHostProvisioner().isPresent(),
-                                                 spareCount);
+                                                 spareCount,
+                                                 1000);
         this.orchestrator = orchestrator;
         this.provisioner = new NodeRepositoryProvisioner(nodeRepository, zone, provisionServiceProvider, flagSource);
         this.capacityPolicies = new CapacityPolicies(nodeRepository);
@@ -139,7 +146,22 @@ public class ProvisioningTester {
     public CapacityPolicies capacityPolicies() { return capacityPolicies; }
     public NodeList getNodes(ApplicationId id, Node.State ... inState) { return NodeList.copyOf(nodeRepository.getNodes(id, inState)); }
 
-    public void patchNode(Node node) { nodeRepository.write(node, () -> {}); }
+    public Node patchNode(Node node, UnaryOperator<Node> patcher) {
+        return patchNodes(List.of(node), patcher).get(0);
+    }
+
+    public List<Node> patchNodes(List<Node> nodes, UnaryOperator<Node> patcher) {
+        List<Node> updated = new ArrayList<>();
+        for (var node : nodes) {
+            try (var lock = nodeRepository.lock(node)) {
+                node = nodeRepository.getNode(node.hostname()).get();
+                node = patcher.apply(node);
+                nodeRepository.write(node, lock);
+                updated.add(node);
+            }
+        }
+        return updated;
+    }
 
     public List<HostSpec> prepare(ApplicationId application, ClusterSpec cluster, int nodeCount, int groups, NodeResources resources) {
         return prepare(application, cluster, nodeCount, groups, false, resources);
@@ -153,9 +175,8 @@ public class ProvisioningTester {
         Set<String> reservedBefore = toHostNames(nodeRepository.getNodes(application, Node.State.reserved));
         Set<String> inactiveBefore = toHostNames(nodeRepository.getNodes(application, Node.State.inactive));
         List<HostSpec> hosts1 = provisioner.prepare(application, cluster, capacity, provisionLogger);
-        // prepare twice to ensure idempotence
         List<HostSpec> hosts2 = provisioner.prepare(application, cluster, capacity, provisionLogger);
-        assertEquals(hosts1, hosts2);
+        assertEquals("Prepare is idempotent", hosts1, hosts2);
         Set<String> newlyActivated = toHostNames(nodeRepository.getNodes(application, Node.State.reserved));
         newlyActivated.removeAll(reservedBefore);
         newlyActivated.removeAll(inactiveBefore);
@@ -170,7 +191,9 @@ public class ProvisioningTester {
             Node node = nodeRepository.getNode(prepared.hostname()).get();
             if (node.ipConfig().primary().isEmpty()) {
                 node = node.with(new IP.Config(Set.of("::" + 0 + ":0"), Set.of()));
-                nodeRepository.write(node, nodeRepository.lock(node));
+                try (Mutex lock = nodeRepository.lock(node)) {
+                    nodeRepository.write(node, lock);
+                }
             }
             if (node.parentHostname().isEmpty()) continue;
             Node parent = nodeRepository.getNode(node.parentHostname().get()).get();
@@ -186,12 +209,23 @@ public class ProvisioningTester {
     }
 
     public Collection<HostSpec> activate(ApplicationId application, Collection<HostSpec> hosts) {
-        NestedTransaction transaction = new NestedTransaction();
-        transaction.add(new CuratorTransaction(curator));
-        provisioner.activate(transaction, application, hosts);
-        transaction.commit();
+        try (var lock = provisioner.lock(application)) {
+            NestedTransaction transaction = new NestedTransaction();
+            transaction.add(new CuratorTransaction(curator));
+            provisioner.activate(hosts, new ActivationContext(0), new ApplicationTransaction(lock, transaction));
+            transaction.commit();
+        }
         assertEquals(toHostNames(hosts), toHostNames(nodeRepository.getNodes(application, Node.State.active)));
         return hosts;
+    }
+
+    /** Remove all resources allocated to application */
+    public void remove(ApplicationId application) {
+        try (var lock = provisioner.lock(application)) {
+            NestedTransaction transaction = new NestedTransaction();
+            provisioner.remove(new ApplicationTransaction(lock, transaction));
+            transaction.commit();
+        }
     }
 
     public void prepareAndActivateInfraApplication(ApplicationId application, NodeType nodeType, Version version) {
@@ -206,9 +240,12 @@ public class ProvisioningTester {
     }
 
     public void deactivate(ApplicationId applicationId) {
-        NestedTransaction deactivateTransaction = new NestedTransaction();
-        nodeRepository.deactivate(applicationId, deactivateTransaction);
-        deactivateTransaction.commit();
+        try (var lock = nodeRepository.lock(applicationId)) {
+            NestedTransaction deactivateTransaction = new NestedTransaction();
+            nodeRepository.deactivate(new ApplicationTransaction(new ProvisionLock(applicationId, lock),
+                                                                 deactivateTransaction));
+            deactivateTransaction.commit();
+        }
     }
 
     public Collection<String> toHostNames(Collection<HostSpec> hosts) {
@@ -266,7 +303,13 @@ public class ProvisioningTester {
         for (Node node : nodeList) {
             var expected = new NodeResources(vcpu, memory, disk, bandwidth, diskSpeed, storageType);
             assertTrue(explanation + ": Resources: Expected " + expected + " but was " + node.resources(),
-                       expected.compatibleWith(node.resources()));
+                       expected.justNonNumbers().compatibleWith(node.resources().justNonNumbers()));
+            assertEquals(explanation + ": Vcpu: Expected " + expected.vcpu() + " but was " + node.resources().vcpu(),
+                         expected.vcpu(), node.resources().vcpu(), 0.05);
+            assertEquals(explanation + ": Memory: Expected " + expected.memoryGb() + " but was " + node.resources().memoryGb(),
+                         expected.memoryGb(), node.resources().memoryGb(), 0.05);
+            assertEquals(explanation + ": Disk: Expected " + expected.diskGb() + " but was " + node.resources().diskGb(),
+                         expected.diskGb(), node.resources().diskGb(), 0.05);
         }
     }
 
@@ -299,14 +342,14 @@ public class ProvisioningTester {
         return removed;
     }
 
-    public ApplicationId makeApplicationId() {
+    public static ApplicationId makeApplicationId() {
         return ApplicationId.from(
                 TenantName.from(UUID.randomUUID().toString()),
                 ApplicationName.from(UUID.randomUUID().toString()),
                 InstanceName.from(UUID.randomUUID().toString()));
     }
 
-    public ApplicationId makeApplicationId(String applicationName) {
+    public static ApplicationId makeApplicationId(String applicationName) {
         return ApplicationId.from("tenant", applicationName, "default");
     }
 
@@ -314,7 +357,7 @@ public class ProvisioningTester {
         return makeReadyNodes(n, flavor, NodeType.tenant);
     }
 
-    /** Call deployZoneApp() after this before deploying applications */
+    /** Call {@link this#activateTenantHosts()} after this before deploying applications */
     public ProvisioningTester makeReadyHosts(int n, NodeResources resources) {
         makeReadyNodes(n, resources, NodeType.host, 5);
         return this;
@@ -345,6 +388,13 @@ public class ProvisioningTester {
         return makeProvisionedNodes(n, asFlavor(flavor, type), Optional.empty(), type, ipAddressPoolSize, dualStack);
     }
     public List<Node> makeProvisionedNodes(int n, Flavor flavor, Optional<TenantName> reservedTo, NodeType type, int ipAddressPoolSize, boolean dualStack) {
+        return makeProvisionedNodes(n, (index) -> "host-" + index + ".yahoo.com", flavor, reservedTo, type, ipAddressPoolSize, dualStack);
+    }
+
+    public List<Node> makeProvisionedNodes(int n, Function<Integer, String> nodeNamer, Flavor flavor, Optional<TenantName> reservedTo, NodeType type, int ipAddressPoolSize, boolean dualStack) {
+        if (ipAddressPoolSize == 0 && type == NodeType.host) {
+            ipAddressPoolSize = 1; // Tenant hosts must have at least one IP in their pool
+        }
         List<Node> nodes = new ArrayList<>(n);
 
         for (int i = 0; i < n; i++) {
@@ -355,12 +405,12 @@ public class ProvisioningTester {
             // name resolver already contains the next host - if this is the case - bump the indices and move on
             String testIp = String.format("127.0.0.%d", nextIP);
             MockNameResolver nameResolver = (MockNameResolver)nodeRepository().nameResolver();
-            if (nameResolver.getHostname(testIp).isPresent()) {
+            if (nameResolver.resolveHostname(testIp).isPresent()) {
                 nextHost += 100;
                 nextIP += 100;
             }
 
-            String hostname = String.format("host-%d.yahoo.com", nextHost);
+            String hostname = nodeNamer.apply(nextHost);
             String ipv4 = String.format("127.0.0.%d", nextIP);
             String ipv6 = String.format("::%d", nextIP);
 
@@ -381,13 +431,9 @@ public class ProvisioningTester {
                     nameResolver.addRecord(String.format("node-%d-of-%s", poolIp, hostname), ipv4Addr);
                 }
             }
-            nodes.add(nodeRepository.createNode(hostname,
-                                                hostname,
-                                                new IP.Config(hostIps, ipAddressPool),
-                                                Optional.empty(),
-                                                flavor,
-                                                reservedTo,
-                                                type));
+            Node.Builder builder = Node.create(hostname, new IP.Config(hostIps, ipAddressPool), hostname, flavor, type);
+            reservedTo.ifPresent(builder::reservedTo);
+            nodes.add(builder.build());
         }
         nodes = nodeRepository.addNodes(nodes, Agent.system);
         return nodes;
@@ -402,13 +448,8 @@ public class ProvisioningTester {
             String ipv4 = "127.0.1." + i;
 
             nameResolver.addRecord(hostname, ipv4);
-            Node node = nodeRepository.createNode(hostname,
-                                                  hostname,
-                                                  new IP.Config(Set.of(ipv4), Set.of()),
-                                                  Optional.empty(),
-                                                  nodeFlavors.getFlavorOrThrow(flavor),
-                                                  Optional.empty(),
-                                                  NodeType.config);
+            Node node = Node.create(hostname, new IP.Config(Set.of(ipv4), Set.of()), hostname,
+                    nodeFlavors.getFlavorOrThrow(flavor), NodeType.config).build();
             nodes.add(node);
         }
 
@@ -461,12 +502,6 @@ public class ProvisioningTester {
                                      i -> String.format("%s-%03d", dockerHostId, i));
     }
 
-    /** Creates a single of virtual docker node on a single parent host */
-    public List<Node> makeReadyVirtualDockerNode(int index, NodeResources resources, String dockerHostId) {
-        return makeReadyVirtualNodes(1, index, resources, Optional.of(dockerHostId),
-                                     i -> String.format("%s-%03d", dockerHostId, i));
-    }
-
     /** Creates a set of virtual nodes without a parent host */
     public List<Node> makeReadyVirtualNodes(int n, NodeResources resources) {
         return makeReadyVirtualNodes(n, 0, resources, Optional.empty(),
@@ -474,13 +509,16 @@ public class ProvisioningTester {
     }
 
     /** Creates a set of virtual nodes on a single parent host */
-    private List<Node> makeReadyVirtualNodes(int count, int startIndex, NodeResources flavor, Optional<String> parentHostId,
+    public List<Node> makeReadyVirtualNodes(int count, int startIndex, NodeResources resources, Optional<String> parentHostname,
                                              Function<Integer, String> nodeNamer) {
         List<Node> nodes = new ArrayList<>(count);
         for (int i = startIndex; i < count + startIndex; i++) {
             String hostname = nodeNamer.apply(i);
-            nodes.add(nodeRepository.createNode("openstack-id", hostname, parentHostId,
-                                                new Flavor(flavor), NodeType.tenant));
+            IP.Config ipConfig = new IP.Config(nodeRepository.nameResolver().resolveAll(hostname), Set.of());
+
+            Node.Builder builder = Node.create("node-id", ipConfig, hostname, new Flavor(resources), NodeType.tenant);
+            parentHostname.ifPresent(builder::parentHostname);
+            nodes.add(builder.build());
         }
         nodes = nodeRepository.addNodes(nodes, Agent.system);
         nodes = nodeRepository.setDirty(nodes, Agent.system, getClass().getSimpleName());
@@ -488,7 +526,7 @@ public class ProvisioningTester {
         return nodes;
     }
 
-    public void deployZoneApp() {
+    public void activateTenantHosts() {
         ApplicationId applicationId = makeApplicationId();
         List<HostSpec> list = prepare(applicationId,
                                       ClusterSpec.request(ClusterSpec.Type.container, ClusterSpec.Id.from("node-admin")).vespaVersion("6.42").build(),
@@ -496,11 +534,11 @@ public class ProvisioningTester {
         activate(applicationId, Set.copyOf(list));
     }
 
-    public ClusterSpec containerClusterSpec() {
+    public static ClusterSpec containerClusterSpec() {
         return ClusterSpec.request(ClusterSpec.Type.container, ClusterSpec.Id.from("test")).vespaVersion("6.42").build();
     }
 
-    public ClusterSpec contentClusterSpec() {
+    public static ClusterSpec contentClusterSpec() {
         return ClusterSpec.request(ClusterSpec.Type.content, ClusterSpec.Id.from("test")).vespaVersion("6.42").build();
     }
 
@@ -526,6 +564,23 @@ public class ProvisioningTester {
         }
     }
 
+    public void assertSwitches(Set<String> expectedSwitches, ApplicationId application, ClusterSpec.Id cluster) {
+        NodeList allNodes = nodeRepository.list();
+        NodeList activeNodes = allNodes.owner(application).state(Node.State.active).cluster(cluster);
+        assertEquals(expectedSwitches, switchesOf(activeNodes, allNodes));
+    }
+
+    public Set<String> switchesOf(NodeList applicationNodes, NodeList allNodes) {
+        assertTrue("All application nodes are children", applicationNodes.stream().allMatch(node -> node.parentHostname().isPresent()));
+        Set<String> switches = new HashSet<>();
+        for (var parent : allNodes.parentsOf(applicationNodes)) {
+            Optional<String> switchHostname = parent.switchHostname();
+            if (switchHostname.isEmpty()) continue;
+            switches.add(switchHostname.get());
+        }
+        return switches;
+    }
+
     public int hostFlavorCount(String hostFlavor, ApplicationId app) {
         return (int)nodeRepository().getNodes(app).stream()
                                                   .map(n -> nodeRepository().getNode(n.parentHostname().get()).get())
@@ -542,9 +597,9 @@ public class ProvisioningTester {
         private NameResolver nameResolver;
         private Orchestrator orchestrator;
         private HostProvisioner hostProvisioner;
-        private LoadBalancerServiceMock loadBalancerService;
         private FlagSource flagSource;
         private int spareCount = 0;
+        private DockerImage defaultImage = DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa");
 
         public Builder curator(Curator curator) {
             this.curator = curator;
@@ -582,6 +637,11 @@ public class ProvisioningTester {
             return this;
         }
 
+        public Builder defaultImage(DockerImage defaultImage) {
+            this.defaultImage = defaultImage;
+            return this;
+        }
+
         public Builder orchestrator(Orchestrator orchestrator) {
             this.orchestrator = orchestrator;
             return this;
@@ -589,11 +649,6 @@ public class ProvisioningTester {
 
         public Builder hostProvisioner(HostProvisioner hostProvisioner) {
             this.hostProvisioner = hostProvisioner;
-            return this;
-        }
-
-        public Builder loadBalancerService(LoadBalancerServiceMock loadBalancerService) {
-            this.loadBalancerService = loadBalancerService;
             return this;
         }
 
@@ -624,9 +679,10 @@ public class ProvisioningTester {
                                           resourcesCalculator,
                                           Optional.ofNullable(zone).orElseGet(Zone::defaultZone),
                                           Optional.ofNullable(nameResolver).orElseGet(() -> new MockNameResolver().mockAnyLookup()),
+                                          defaultImage,
                                           orchestrator,
                                           hostProvisioner,
-                                          Optional.ofNullable(loadBalancerService).orElseGet(LoadBalancerServiceMock::new),
+                                          new LoadBalancerServiceMock(),
                                           Optional.ofNullable(flagSource).orElseGet(InMemoryFlagSource::new),
                                           spareCount);
         }
@@ -667,7 +723,7 @@ public class ProvisioningTester {
         }
 
         @Override
-        public NodeResources realResourcesOf(Node node, NodeRepository nodeRepository) {
+        public NodeResources realResourcesOf(Nodelike node, NodeRepository nodeRepository, boolean exclusive) {
             NodeResources resources = node.resources();
             if (node.type() == NodeType.host) return resources;
             return resources.withMemoryGb(resources.memoryGb() - memoryTaxGb)
@@ -682,16 +738,19 @@ public class ProvisioningTester {
         }
 
         @Override
-        public NodeResources requestToReal(NodeResources resources) {
+        public NodeResources requestToReal(NodeResources resources, boolean exclusive) {
             return resources.withMemoryGb(resources.memoryGb() - memoryTaxGb)
                             .withDiskGb(resources.diskGb() - ( resources.storageType() == local ? localDiskTax : 0) );
         }
 
         @Override
-        public NodeResources realToRequest(NodeResources resources) {
+        public NodeResources realToRequest(NodeResources resources, boolean exclusive) {
             return resources.withMemoryGb(resources.memoryGb() + memoryTaxGb)
                             .withDiskGb(resources.diskGb() + ( resources.storageType() == local ? localDiskTax : 0) );
         }
+
+        @Override
+        public long thinPoolSizeInBase2Gb(NodeType nodeType, boolean sharedHost) { return 0; }
 
     }
 

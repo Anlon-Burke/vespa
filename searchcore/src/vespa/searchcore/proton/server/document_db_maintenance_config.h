@@ -134,7 +134,6 @@ public:
         return _sessionCachePruneInterval;
     }
     vespalib::duration getVisibilityDelay() const { return _visibilityDelay; }
-    bool hasVisibilityDelay() const { return _visibilityDelay > vespalib::duration::zero(); }
     const DocumentDBLidSpaceCompactionConfig &getLidSpaceCompactionConfig() const {
         return _lidSpaceCompaction;
     }

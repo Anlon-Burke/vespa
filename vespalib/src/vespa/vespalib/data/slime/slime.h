@@ -31,7 +31,6 @@
 #include "external_data_value_factory.h"
 #include <vespa/vespalib/data/input_reader.h>
 #include <vespa/vespalib/data/output_writer.h>
-#include <vespa/vespalib/data/simple_buffer.h>
 #include <vespa/vespalib/data/output.h>
 
 namespace vespalib {
@@ -87,7 +86,7 @@ public:
 
     ~Slime();
 
-    Slime(Slime &&rhs) :
+    Slime(Slime &&rhs) noexcept :
         _names(std::move(rhs._names)),
         _stash(std::move(rhs._stash)),
         _root(std::move(rhs._root))

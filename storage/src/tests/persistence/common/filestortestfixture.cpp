@@ -28,8 +28,7 @@ FileStorTestFixture::setupPersistenceThreads(uint32_t threads)
     _config->getConfig("stor-server").set("node_index", "1");
     _config->getConfig("stor-filestor").set("num_threads", std::to_string(threads));
 
-    _node = std::make_unique<TestServiceLayerApp>(
-            DiskCount(1), NodeIndex(1), _config->getConfigId());
+    _node = std::make_unique<TestServiceLayerApp>(NodeIndex(1), _config->getConfigId());
     _testdoctype1 = _node->getTypeRepo()->getDocumentType("testdoctype1");
 }
 
@@ -39,7 +38,8 @@ FileStorTestFixture::SetUp()
 {
     setupPersistenceThreads(1);
     _node->setPersistenceProvider(
-            std::make_unique<spi::dummy::DummyPersistence>(_node->getTypeRepo(), 1));
+            std::make_unique<spi::dummy::DummyPersistence>(_node->getTypeRepo()));
+    _node->getPersistenceProvider().initialize();
 }
 
 void
@@ -59,7 +59,6 @@ FileStorTestFixture::createBucket(const document::BucketId& bid)
     StorBucketDatabase::WrappedEntry entry(
             _node->getStorageBucketDatabase().get(bid, "foo",
                     StorBucketDatabase::CREATE_IF_NONEXISTING));
-    entry->disk = 0;
     entry->info = api::BucketInfo(0, 0, 0, 0, 0, true, false);
     entry.write();
 }
@@ -77,9 +76,9 @@ FileStorTestFixture::TestFileStorComponents::TestFileStorComponents(
         const StorageLinkInjector& injector)
     : _fixture(fixture),
       manager(new FileStorManager(fixture._config->getConfigId(),
-                                  fixture._node->getPartitions(),
                                   fixture._node->getPersistenceProvider(),
-                                  fixture._node->getComponentRegister()))
+                                  fixture._node->getComponentRegister(),
+                                  *fixture._node))
 {
     injector.inject(top);
     top.push_back(StorageLink::UP(manager));

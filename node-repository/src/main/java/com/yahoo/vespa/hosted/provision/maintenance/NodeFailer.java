@@ -1,7 +1,8 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
-import com.google.common.util.concurrent.UncheckedTimeoutException;
+import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ApplicationLockException;
 import com.yahoo.config.provision.Deployer;
 import com.yahoo.config.provision.Deployment;
 import com.yahoo.config.provision.HostLivenessTracker;
@@ -75,10 +76,10 @@ public class NodeFailer extends NodeRepositoryMaintainer {
 
     public NodeFailer(Deployer deployer, HostLivenessTracker hostLivenessTracker,
                       ServiceMonitor serviceMonitor, NodeRepository nodeRepository,
-                      Duration downTimeLimit, Clock clock, Orchestrator orchestrator,
+                      Duration downTimeLimit, Duration interval, Clock clock, Orchestrator orchestrator,
                       ThrottlePolicy throttlePolicy, Metric metric) {
-        // check ping status every five minutes, but at least twice as often as the down time limit
-        super(nodeRepository, min(downTimeLimit.dividedBy(2), Duration.ofMinutes(5)), metric);
+        // check ping status every interval, but at least twice as often as the down time limit
+        super(nodeRepository, min(downTimeLimit.dividedBy(2), interval), metric);
         this.deployer = deployer;
         this.hostLivenessTracker = hostLivenessTracker;
         this.serviceMonitor = serviceMonitor;
@@ -187,27 +188,30 @@ public class NodeFailer extends NodeRepositoryMaintainer {
      * Otherwise we remove any "down" history record.
      */
     private void updateNodeDownState() {
-        Map<String, Node> activeNodesByHostname = nodeRepository().getNodes(Node.State.active).stream()
-                .collect(Collectors.toMap(Node::hostname, node -> node));
+        NodeList activeNodes = NodeList.copyOf(nodeRepository().getNodes(Node.State.active));
+        serviceMonitor.getServiceModelSnapshot().getServiceInstancesByHostName().forEach((hostname, serviceInstances) -> {
+            Optional<Node> node = activeNodes.matching(n -> n.hostname().equals(hostname.toString())).first();
+            if (node.isEmpty()) return;
 
-        serviceMonitor.getServiceModelSnapshot().getServiceInstancesByHostName()
-                .forEach((hostName, serviceInstances) -> {
-                    Node node = activeNodesByHostname.get(hostName.s());
-                    if (node == null) return;
-                    try (var lock = nodeRepository().lock(node.allocation().get().owner())) {
-                        Optional<Node> currentNode = nodeRepository().getNode(node.hostname(), Node.State.active); // re-get inside lock
-                        if (currentNode.isEmpty()) return; // Node disappeared since acquiring lock
-                        node = currentNode.get();
-                        if (badNode(serviceInstances)) {
-                            recordAsDown(node, lock);
-                        } else {
-                            clearDownRecord(node, lock);
-                        }
-                    }
-                    catch (UncheckedTimeoutException e) {
-                        // Ignore - node may be locked on this round due to deployment
-                    }
-                });
+            // Already correct record, nothing to do
+            boolean badNode = badNode(serviceInstances);
+            if (badNode == node.get().history().event(History.Event.Type.down).isPresent()) return;
+
+            // Lock and update status
+            ApplicationId owner = node.get().allocation().get().owner();
+            try (var lock = nodeRepository().lock(owner)) {
+                node = getNode(hostname.toString(), owner, lock); // Re-get inside lock
+                if (node.isEmpty()) return; // Node disappeared or changed allocation
+                if (badNode) {
+                    recordAsDown(node.get(), lock);
+                } else {
+                    clearDownRecord(node.get(), lock);
+                }
+            } catch (ApplicationLockException e) {
+                // Fine, carry on with other nodes. We'll try updating this one in the next run
+                log.log(Level.WARNING, "Could not lock " + owner + ": " + Exceptions.toMessageString(e));
+            }
+        });
     }
 
     private Map<Node, String> getActiveNodesByFailureReason(List<Node> activeNodes) {
@@ -246,6 +250,13 @@ public class NodeFailer extends NodeRepositoryMaintainer {
     static boolean hasHardwareIssue(Node node, NodeRepository nodeRepository) {
         Node hostNode = node.parentHostname().flatMap(parent -> nodeRepository.getNode(parent)).orElse(node);
         return reasonsToFailParentHost(hostNode).size() > 0;
+    }
+
+    /** Get node by given hostname and application. The applicationLock must be held when calling this */
+    private Optional<Node> getNode(String hostname, ApplicationId application, @SuppressWarnings("unused") Mutex applicationLock) {
+        return nodeRepository().getNode(hostname, Node.State.active)
+                               .filter(node -> node.allocation().isPresent())
+                               .filter(node -> node.allocation().get().owner().equals(application));
     }
 
     private boolean expectConfigRequests(Node node) {
@@ -346,7 +357,7 @@ public class NodeFailer extends NodeRepositoryMaintainer {
     private boolean failActive(Node node, String reason) {
         Optional<Deployment> deployment =
             deployer.deployFromLocalActive(node.allocation().get().owner(), Duration.ofMinutes(30));
-        if (deployment.isEmpty()) return false; // this will be done at another config server
+        if (deployment.isEmpty()) return false;
 
         try (Mutex lock = nodeRepository().lock(node.allocation().get().owner())) {
             // If the active node that we are trying to fail is of type host, we need to successfully fail all

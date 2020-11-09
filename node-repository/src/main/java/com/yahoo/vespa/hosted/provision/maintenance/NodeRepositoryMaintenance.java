@@ -1,4 +1,4 @@
-// Copyright 2019 Oath Inc. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
 import com.google.inject.Inject;
@@ -11,17 +11,15 @@ import com.yahoo.config.provision.Zone;
 import com.yahoo.jdisc.Metric;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
-import com.yahoo.vespa.hosted.provision.autoscale.NodeMetrics;
-import com.yahoo.vespa.hosted.provision.autoscale.NodeMetricsDb;
+import com.yahoo.vespa.hosted.provision.autoscale.MetricsFetcher;
+import com.yahoo.vespa.hosted.provision.autoscale.MetricsDb;
 import com.yahoo.vespa.hosted.provision.provisioning.ProvisionServiceProvider;
 import com.yahoo.vespa.orchestrator.Orchestrator;
 import com.yahoo.vespa.service.monitor.ServiceMonitor;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.Optional;
-import java.util.logging.Logger;
 
 /**
  * A component which sets up all the node repo maintenance jobs.
@@ -29,9 +27,6 @@ import java.util.logging.Logger;
  * @author bratseth
  */
 public class NodeRepositoryMaintenance extends AbstractComponent {
-
-    private static final Logger log = Logger.getLogger(NodeRepositoryMaintenance.class.getName());
-    private static final String envPrefix = "vespa_node_repository__";
 
     private final NodeFailer nodeFailer;
     private final PeriodicApplicationMaintainer periodicApplicationMaintainer;
@@ -53,6 +48,7 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
     private final NodeMetricsDbMaintainer nodeMetricsDbMaintainer;
     private final AutoscalingMaintainer autoscalingMaintainer;
     private final ScalingSuggestionsMaintainer scalingSuggestionsMaintainer;
+    private final SwitchRebalancer switchRebalancer;
 
     @SuppressWarnings("unused")
     @Inject
@@ -60,20 +56,22 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
                                      HostLivenessTracker hostLivenessTracker, ServiceMonitor serviceMonitor,
                                      Zone zone, Orchestrator orchestrator, Metric metric,
                                      ProvisionServiceProvider provisionServiceProvider, FlagSource flagSource,
-                                     NodeMetrics nodeMetrics, NodeMetricsDb nodeMetricsDb) {
+                                     MetricsFetcher nodeMetrics, MetricsDb metricsDb) {
         this(nodeRepository, deployer, infraDeployer, hostLivenessTracker, serviceMonitor, zone, Clock.systemUTC(),
-             orchestrator, metric, provisionServiceProvider, flagSource, nodeMetrics, nodeMetricsDb);
+             orchestrator, metric, provisionServiceProvider, flagSource, nodeMetrics, metricsDb);
     }
 
     public NodeRepositoryMaintenance(NodeRepository nodeRepository, Deployer deployer, InfraDeployer infraDeployer,
                                      HostLivenessTracker hostLivenessTracker, ServiceMonitor serviceMonitor,
                                      Zone zone, Clock clock, Orchestrator orchestrator, Metric metric,
                                      ProvisionServiceProvider provisionServiceProvider, FlagSource flagSource,
-                                     NodeMetrics nodeMetrics, NodeMetricsDb nodeMetricsDb) {
-        DefaultTimes defaults = new DefaultTimes(zone);
+                                     MetricsFetcher metricsFetcher, MetricsDb metricsDb) {
+        DefaultTimes defaults = new DefaultTimes(zone, deployer);
 
-        nodeFailer = new NodeFailer(deployer, hostLivenessTracker, serviceMonitor, nodeRepository, defaults.failGrace, clock, orchestrator, throttlePolicyFromEnv().orElse(defaults.throttlePolicy), metric);
-        periodicApplicationMaintainer = new PeriodicApplicationMaintainer(deployer, metric, nodeRepository, defaults.redeployMaintainerInterval, defaults.periodicRedeployInterval);
+        nodeFailer = new NodeFailer(deployer, hostLivenessTracker, serviceMonitor, nodeRepository, defaults.failGrace,
+                                    defaults.nodeFailerInterval, clock, orchestrator, defaults.throttlePolicy, metric);
+        periodicApplicationMaintainer = new PeriodicApplicationMaintainer(deployer, metric, nodeRepository,
+                                                                          defaults.redeployMaintainerInterval, defaults.periodicRedeployInterval, flagSource);
         operatorChangeApplicationMaintainer = new OperatorChangeApplicationMaintainer(deployer, metric, nodeRepository, defaults.operatorChangeRedeployInterval);
         reservationExpirer = new ReservationExpirer(nodeRepository, clock, defaults.reservationExpiry, metric);
         retiredExpirer = new RetiredExpirer(nodeRepository, orchestrator, deployer, metric, clock, defaults.retiredInterval, defaults.retiredExpiry);
@@ -90,10 +88,11 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
                 new DynamicProvisioningMaintainer(nodeRepository, defaults.dynamicProvisionerInterval, hostProvisioner, flagSource, metric));
         spareCapacityMaintainer = new SpareCapacityMaintainer(deployer, nodeRepository, metric, defaults.spareCapacityMaintenanceInterval);
         osUpgradeActivator = new OsUpgradeActivator(nodeRepository, defaults.osUpgradeActivatorInterval, metric);
-        rebalancer = new Rebalancer(deployer, nodeRepository, metric, clock, defaults.rebalancerInterval);
-        nodeMetricsDbMaintainer = new NodeMetricsDbMaintainer(nodeRepository, nodeMetrics, nodeMetricsDb, defaults.nodeMetricsCollectionInterval, metric);
-        autoscalingMaintainer = new AutoscalingMaintainer(nodeRepository, nodeMetricsDb, deployer, metric, defaults.autoscalingInterval);
-        scalingSuggestionsMaintainer = new ScalingSuggestionsMaintainer(nodeRepository, nodeMetricsDb, defaults.scalingSuggestionsInterval, metric);
+        rebalancer = new Rebalancer(deployer, nodeRepository, metric, defaults.rebalancerInterval);
+        nodeMetricsDbMaintainer = new NodeMetricsDbMaintainer(nodeRepository, metricsFetcher, metricsDb, defaults.nodeMetricsCollectionInterval, metric);
+        autoscalingMaintainer = new AutoscalingMaintainer(nodeRepository, metricsDb, deployer, metric, defaults.autoscalingInterval);
+        scalingSuggestionsMaintainer = new ScalingSuggestionsMaintainer(nodeRepository, metricsDb, defaults.scalingSuggestionsInterval, metric);
+        switchRebalancer = new SwitchRebalancer(nodeRepository, defaults.switchRebalancerInterval, metric, deployer);
 
         // The DuperModel is filled with infrastructure applications by the infrastructure provisioner, so explicitly run that now
         infrastructureProvisioner.maintainButThrowOnException();
@@ -121,22 +120,11 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
         nodeMetricsDbMaintainer.close();
         autoscalingMaintainer.close();
         scalingSuggestionsMaintainer.close();
-    }
-
-    private static Optional<NodeFailer.ThrottlePolicy> throttlePolicyFromEnv() {
-        String policyName = System.getenv(envPrefix + "throttle_policy");
-        try {
-            return Optional.ofNullable(policyName).map(NodeFailer.ThrottlePolicy::valueOf);
-        } catch (IllegalArgumentException e) {
-            log.info(String.format("Ignoring invalid throttle policy name: '%s'. Must be one of %s", policyName,
-                                   Arrays.toString(NodeFailer.ThrottlePolicy.values())));
-            return Optional.empty();
-        }
+        switchRebalancer.close();
     }
 
     private static class DefaultTimes {
 
-        // TODO: Rename, kept now for compatibility reasons, want to change this and corresponding env variable
         /** Minimum time to wait between deployments by periodic application maintainer*/
         private final Duration periodicRedeployInterval;
         /** Time between each run of maintainer that does periodic redeployment */
@@ -144,7 +132,7 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
         /** Applications are redeployed after manual operator changes within this time period */
         private final Duration operatorChangeRedeployInterval;
 
-        /** The time a node must be continuously nonresponsive before it is failed */
+        /** The time a node must be continuously unresponsive before it is failed */
         private final Duration failGrace;
         
         private final Duration reservationExpiry;
@@ -155,6 +143,7 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
         private final Duration provisionedExpiry;
         private final Duration spareCapacityMaintenanceInterval;
         private final Duration metricsInterval;
+        private final Duration nodeFailerInterval;
         private final Duration retiredInterval;
         private final Duration infrastructureProvisionInterval;
         private final Duration loadBalancerExpirerInterval;
@@ -164,32 +153,37 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
         private final Duration nodeMetricsCollectionInterval;
         private final Duration autoscalingInterval;
         private final Duration scalingSuggestionsInterval;
+        private final Duration switchRebalancerInterval;
 
         private final NodeFailer.ThrottlePolicy throttlePolicy;
 
-        DefaultTimes(Zone zone) {
-            autoscalingInterval = Duration.ofMinutes(5);
+        DefaultTimes(Zone zone, Deployer deployer) {
+            autoscalingInterval = Duration.ofMinutes(15);
             dynamicProvisionerInterval = Duration.ofMinutes(5);
             failedExpirerInterval = Duration.ofMinutes(10);
             failGrace = Duration.ofMinutes(30);
             infrastructureProvisionInterval = Duration.ofMinutes(1);
             loadBalancerExpirerInterval = Duration.ofMinutes(5);
             metricsInterval = Duration.ofMinutes(1);
+            nodeFailerInterval = Duration.ofMinutes(15);
             nodeMetricsCollectionInterval = Duration.ofMinutes(1);
-            operatorChangeRedeployInterval = Duration.ofMinutes(1);
+            operatorChangeRedeployInterval = Duration.ofMinutes(3);
+            // Vespa upgrade frequency is higher in CD so (de)activate OS upgrades more frequently as well
             osUpgradeActivatorInterval = zone.system().isCd() ? Duration.ofSeconds(30) : Duration.ofMinutes(5);
             periodicRedeployInterval = Duration.ofMinutes(30);
             provisionedExpiry = Duration.ofHours(4);
-            rebalancerInterval = Duration.ofMinutes(40);
+            rebalancerInterval = Duration.ofMinutes(120);
             redeployMaintainerInterval = Duration.ofMinutes(1);
-            reservationExpiry = Duration.ofMinutes(15); // Need to be long enough for deployment to be finished for all config model versions
+            // Need to be long enough for deployment to be finished for all config model versions
+            reservationExpiry = deployer.serverDeployTimeout();
             scalingSuggestionsInterval = Duration.ofMinutes(31);
-            spareCapacityMaintenanceInterval = Duration.ofMinutes(10);
+            spareCapacityMaintenanceInterval = Duration.ofMinutes(30);
+            switchRebalancerInterval = Duration.ofHours(1);
             throttlePolicy = NodeFailer.ThrottlePolicy.hosted;
 
             if (zone.environment().equals(Environment.prod) && ! zone.system().isCd()) {
                 inactiveExpiry = Duration.ofHours(4); // enough time for the application owner to discover and redeploy
-                retiredInterval = Duration.ofMinutes(10);
+                retiredInterval = Duration.ofMinutes(30);
                 dirtyExpiry = Duration.ofHours(2); // enough time to clean the node
                 retiredExpiry = Duration.ofDays(4); // give up migrating data after 4 days
             } else {

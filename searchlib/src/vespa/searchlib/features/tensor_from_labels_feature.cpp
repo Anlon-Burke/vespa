@@ -91,7 +91,8 @@ createQueryExecutor(const search::fef::IQueryEnvironment &env,
     if (prop.found() && !prop.get().empty()) {
         std::vector<vespalib::string> vector;
         ArrayParser::parse(prop.get(), vector);
-        DirectSparseTensorBuilder tensorBuilder(type);
+        DirectSparseTensorBuilder<double> tensorBuilder(type);
+        tensorBuilder.reserve(vector.size());
         SparseTensorAddressBuilder address;
         for (const auto &elem : vector) {
             address.clear();

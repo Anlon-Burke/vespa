@@ -1,11 +1,14 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.application.validation;
 
+import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.io.IOUtils;
 import com.yahoo.log.InvalidLogFormatException;
-import java.util.logging.Level;
 import com.yahoo.log.LogMessage;
+import com.yahoo.path.Path;
+import com.yahoo.searchdefinition.OnnxModel;
+import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.yolean.Exceptions;
 import com.yahoo.system.ProcessExecuter;
 import com.yahoo.text.StringUtilities;
@@ -16,6 +19,7 @@ import com.yahoo.vespa.config.search.ImportedFieldsConfig;
 import com.yahoo.vespa.config.search.IndexschemaConfig;
 import com.yahoo.vespa.config.search.RankProfilesConfig;
 import com.yahoo.vespa.config.search.core.RankingConstantsConfig;
+import com.yahoo.vespa.config.search.core.OnnxModelsConfig;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.producer.AbstractConfigProducer;
 import com.yahoo.vespa.model.VespaModel;
@@ -27,9 +31,14 @@ import com.yahoo.vespa.model.search.SearchCluster;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.logging.Logger;
+import java.util.logging.Level;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Validate rank setup for all search clusters (rank-profiles, index-schema, attributes configs), validating done
@@ -66,6 +75,7 @@ public class RankSetupValidator extends Validator {
                         final String name = docDb.getDerivedConfiguration().getSearch().getName();
                         String searchDir = clusterDir + name + "/";
                         writeConfigs(searchDir, docDb);
+                        writeExtraVerifyRanksetupConfig(searchDir, docDb);
                         if ( ! validate("dir:" + searchDir, sc, name, deployState.getDeployLogger(), cfgDir)) {
                             return;
                         }
@@ -126,10 +136,37 @@ public class RankSetupValidator extends Validator {
             RankingConstantsConfig rcc = new RankingConstantsConfig(rccb);
             writeConfig(dir, RankingConstantsConfig.getDefName() + ".cfg", rcc);
 
+            OnnxModelsConfig.Builder omcb = new OnnxModelsConfig.Builder();
+            ((OnnxModelsConfig.Producer) producer).getConfig(omcb);
+            OnnxModelsConfig omc = new OnnxModelsConfig(omcb);
+            writeConfig(dir, OnnxModelsConfig.getDefName() + ".cfg", omc);
+
             ImportedFieldsConfig.Builder ifcb = new ImportedFieldsConfig.Builder();
             ((ImportedFieldsConfig.Producer) producer).getConfig(ifcb);
             ImportedFieldsConfig ifc = new ImportedFieldsConfig(ifcb);
             writeConfig(dir, ImportedFieldsConfig.getDefName() + ".cfg", ifc);
+    }
+
+    private void writeExtraVerifyRanksetupConfig(String dir, DocumentDatabase db) throws IOException {
+        String configName = "verify-ranksetup.cfg";
+
+        // Assist verify-ranksetup in finding the actual ONNX model files
+        Map<String, OnnxModel> models = db.getDerivedConfiguration().getSearch().onnxModels().asMap();
+        if (models.values().size() > 0) {
+            List<String> config = new ArrayList<>(models.values().size() * 2);
+            for (OnnxModel model : models.values()) {
+                String modelPath = getFileRepositoryPath(model.getFilePath(), model.getFileReference());
+                config.add(String.format("file[%d].ref \"%s\"", config.size() / 2, model.getFileReference()));
+                config.add(String.format("file[%d].path \"%s\"", config.size() / 2, modelPath));
+            }
+            IOUtils.writeFile(dir + configName, StringUtilities.implodeMultiline(config), false);
+        }
+    }
+
+    public static String getFileRepositoryPath(Path path, String fileReference) {
+        ConfigserverConfig cfg = new ConfigserverConfig(new ConfigserverConfig.Builder());  // assume defaults
+        String fileRefDir = Defaults.getDefaults().underVespaHome(cfg.fileReferencesDir());
+        return Paths.get(fileRefDir, fileReference, path.getName()).toString();
     }
 
     private static void writeConfig(String dir, String configName, ConfigInstance config) throws IOException {

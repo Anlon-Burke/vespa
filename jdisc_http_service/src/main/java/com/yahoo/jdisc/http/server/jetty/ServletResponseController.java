@@ -58,7 +58,7 @@ public class ServletResponseController {
             HttpServletRequest servletRequest,
             HttpServletResponse servletResponse,
             Executor executor,
-            MetricReporter metricReporter,
+            RequestMetricReporter metricReporter,
             boolean developerMode) throws IOException {
 
         this.servletRequest = servletRequest;
@@ -164,6 +164,7 @@ public class ServletResponseController {
 
     private void setResponse(Response jdiscResponse) {
         synchronized (monitor) {
+            servletRequest.setAttribute(HttpResponseStatisticsCollector.requestTypeAttribute, jdiscResponse.getRequestType());
             if (responseCommitted) {
                 log.log(Level.FINE,
                         jdiscResponse.getError(),

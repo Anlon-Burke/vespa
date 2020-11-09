@@ -5,7 +5,7 @@
 #include <vespa/document/update/assignvalueupdate.h>
 #include <vespa/document/repo/documenttyperepo.h>
 #include <vespa/document/update/documentupdate.h>
-#include <vespa/eval/tensor/tensor.h>
+#include <vespa/eval/eval/value.h>
 #include <vespa/eval/tensor/test/test_utils.h>
 #include <vespa/searchcore/proton/bucketdb/bucketdbhandler.h>
 #include <vespa/searchcore/proton/test/bucketfactory.h>
@@ -23,7 +23,6 @@
 #include <vespa/searchcore/proton/server/i_feed_handler_owner.h>
 #include <vespa/searchcore/proton/server/ireplayconfig.h>
 #include <vespa/searchcore/proton/test/dummy_feed_view.h>
-#include <vespa/searchlib/common/idestructorcallback.h>
 #include <vespa/searchlib/index/docbuilder.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
 #include <vespa/searchlib/transactionlog/translogserver.h>
@@ -50,7 +49,7 @@ using search::index::schema::CollectionType;
 using search::index::schema::DataType;
 using vespalib::makeLambdaTask;
 using search::transactionlog::TransLogServer;
-using storage::spi::PartitionId;
+using search::transactionlog::DomainConfig;
 using storage::spi::RemoveResult;
 using storage::spi::Result;
 using storage::spi::Timestamp;
@@ -59,9 +58,9 @@ using vespalib::ThreadStackExecutor;
 using vespalib::ThreadStackExecutorBase;
 using vespalib::makeClosure;
 using vespalib::eval::TensorSpec;
+using vespalib::eval::Value;
 using vespalib::eval::ValueType;
 using vespalib::tensor::test::makeTensor;
-using vespalib::tensor::Tensor;
 
 using namespace proton;
 using namespace search::index;
@@ -107,17 +106,13 @@ struct MyOwner : public IFeedHandlerOwner
         _allowPrune(false)
     {
     }
-    virtual void onTransactionLogReplayDone() override {
+    void onTransactionLogReplayDone() override {
         LOG(info, "MyOwner::onTransactionLogReplayDone()");
     }
-    virtual void enterRedoReprocessState() override {}
-    virtual void onPerformPrune(SerialNum) override {}
+    void enterRedoReprocessState() override {}
+    void onPerformPrune(SerialNum) override {}
 
-    virtual bool
-    getAllowPrune() const override
-    {
-        return _allowPrune;
-    }
+    bool getAllowPrune() const override { return _allowPrune; }
 };
 
 
@@ -130,15 +125,15 @@ struct MyResourceWriteFilter : public IResourceWriteFilter
           _message()
     {}
 
-    virtual bool acceptWriteOperation() const override { return _acceptWriteOperation; }
-    virtual State getAcceptState() const override {
+    bool acceptWriteOperation() const override { return _acceptWriteOperation; }
+    State getAcceptState() const override {
         return IResourceWriteFilter::State(acceptWriteOperation(), _message);
     }
 };
 
 
 struct MyReplayConfig : public IReplayConfig {
-    virtual void replayConfig(SerialNum) override {}
+    void replayConfig(SerialNum) override {}
 };
 
 struct MyDocumentMetaStore {
@@ -172,7 +167,7 @@ struct MyDocumentMetaStore {
         if (itr != _allocated.end()) {
             return &itr->second;
         }
-        return NULL;
+        return nullptr;
     }
 };
 
@@ -197,9 +192,9 @@ struct MyFeedView : public test::DummyFeedView {
     void preparePut(PutOperation &op) override {
         prepareDocumentOperation(op, op.getDocument()->getId().getGlobalId());
     }
-    void prepareDocumentOperation(DocumentOperation &op, const GlobalId &gid) {
+    void prepareDocumentOperation(DocumentOperation &op, const GlobalId &gid) const {
         const MyDocumentMetaStore::Entry *entry = metaStore.get(gid);
-        if (entry != NULL) {
+        if (entry != nullptr) {
             op.setDbDocumentId(entry->_id);
             op.setPrevDbDocumentId(entry->_prevId);
             op.setPrevTimestamp(entry->_prevTimestamp);
@@ -209,7 +204,7 @@ struct MyFeedView : public test::DummyFeedView {
         (void) token;
         LOG(info, "MyFeedView::handlePut(): docId(%s), putCount(%u), putLatchCount(%u)",
             putOp.getDocument()->getId().toString().c_str(), put_count,
-            (putLatch.get() != NULL ? putLatch->getCount() : 0u));
+            (putLatch ? putLatch->getCount() : 0u));
         if (usePutRdz) {
             putRdz.run();
         }
@@ -218,7 +213,7 @@ struct MyFeedView : public test::DummyFeedView {
         ++put_count;
         put_serial = putOp.getSerialNum();
         metaStore.allocate(putOp.getDocument()->getId().getGlobalId());
-        if (putLatch.get() != NULL) {
+        if (putLatch) {
             putLatch->countDown();
         }
     }
@@ -240,9 +235,9 @@ struct MyFeedView : public test::DummyFeedView {
     void heartBeat(SerialNum) override { ++heartbeat_count; }
     void handlePruneRemovedDocuments(const PruneRemovedDocumentsOperation &) override { ++prune_removed_count; }
     const ISimpleDocumentMetaStore *getDocumentMetaStorePtr() const override {
-        return NULL;
+        return nullptr;
     }
-    void checkCounts(int exp_update_count, SerialNum exp_update_serial, int exp_put_count, SerialNum exp_put_serial) {
+    void checkCounts(int exp_update_count, SerialNum exp_update_serial, int exp_put_count, SerialNum exp_put_serial) const {
         EXPECT_EQUAL(exp_update_count, update_count);
         EXPECT_EQUAL(exp_update_serial, update_serial);
         EXPECT_EQUAL(exp_put_count, put_count);
@@ -266,7 +261,7 @@ MyFeedView::MyFeedView(const std::shared_ptr<const DocumentTypeRepo> &dtr, const
       update_serial(0),
       documentType(dtr->getDocumentType(docTypeName.getName()))
 {}
-MyFeedView::~MyFeedView() {}
+MyFeedView::~MyFeedView() = default;
 
 
 struct SchemaContext {
@@ -334,12 +329,12 @@ struct UpdateContext {
         auto fieldValue = field.createValue();
         if (fieldName == "tensor") {
             dynamic_cast<TensorFieldValue &>(*fieldValue) =
-                makeTensor<Tensor>(TensorSpec("tensor(x{},y{})").
+                makeTensor<Value>(TensorSpec("tensor(x{},y{})").
                                    add({{"x","8"},{"y","9"}}, 11));
         } else if (fieldName == "tensor2") {
             auto tensorFieldValue = std::make_unique<TensorFieldValue>(tensor1DType);
             *tensorFieldValue =
-                makeTensor<Tensor>(TensorSpec("tensor(x{})").
+                makeTensor<Value>(TensorSpec("tensor(x{})").
                                    add({{"x","8"}}, 11));
             fieldValue = std::move(tensorFieldValue);
         } else {
@@ -358,7 +353,7 @@ struct MyTransport : public feedtoken::ITransport {
     ResultUP result;
     bool documentWasFound;
     MyTransport();
-    ~MyTransport();
+    ~MyTransport() override;
     void send(ResultUP res, bool documentWasFound_) override {
         result = std::move(res);
         documentWasFound = documentWasFound_;
@@ -421,8 +416,8 @@ struct PutHandler {
         puts.push_back(pc);
     }
     bool await(uint32_t timeout = 80000) {
-        for (size_t i = 0; i < puts.size(); ++i) {
-            if (!puts[i]->tokenCtx.await(timeout)) {
+        for (const auto & put : puts) {
+            if (!put->tokenCtx.await(timeout)) {
                 return false;
             }
         }
@@ -437,12 +432,13 @@ struct MyTlsWriter : TlsWriter {
     bool erase_return;
 
     MyTlsWriter() : store_count(0), erase_count(0), erase_return(true) {}
-    void storeOperation(const FeedOperation &, DoneCallback) override { ++store_count; }
+    void appendOperation(const FeedOperation &, DoneCallback) override { ++store_count; }
+    CommitResult startCommit(DoneCallback) override { return CommitResult(); }
     bool erase(SerialNum) override { ++erase_count; return erase_return; }
 
     SerialNum sync(SerialNum syncTo) override {
         return syncTo;
-    } 
+    }
 };
 
 struct FeedHandlerFixture
@@ -464,7 +460,7 @@ struct FeedHandlerFixture
     FeedHandler                  handler;
     FeedHandlerFixture()
         : _fileHeaderContext(),
-          tls("mytls", 9016, "mytlsdir", _fileHeaderContext, 0x10000),
+          tls("mytls", 9016, "mytlsdir", _fileHeaderContext, DomainConfig().setPartSizeLimit(0x10000)),
           tlsSpec("tcp/localhost:9016"),
           sharedExecutor(1, 0x10000),
           writeService(sharedExecutor),
@@ -475,7 +471,7 @@ struct FeedHandlerFixture
           feedView(schema.getRepo(), schema.getDocType()),
           _bucketDB(),
           _bucketDBHandler(_bucketDB),
-          handler(writeService, tlsSpec, schema.getDocType(), _state, owner,
+          handler(writeService, tlsSpec, schema.getDocType(), owner,
                   writeFilter, replayConfig, tls, &tls_writer)
     {
         _state.enterLoadState();
@@ -500,23 +496,21 @@ struct FeedHandlerFixture
 
 
 struct MyConfigStore : ConfigStore {
-    virtual SerialNum getBestSerialNum() const override { return 1; }
-    virtual SerialNum getOldestSerialNum() const override { return 1; }
-    virtual void saveConfig(const DocumentDBConfig &, SerialNum) override {}
-    virtual void loadConfig(const DocumentDBConfig &, SerialNum,
-                            DocumentDBConfig::SP &) override {}
-    virtual void removeInvalid() override {}
+    SerialNum getBestSerialNum() const override { return 1; }
+    SerialNum getOldestSerialNum() const override { return 1; }
+    void saveConfig(const DocumentDBConfig &, SerialNum) override {}
+    void loadConfig(const DocumentDBConfig &, SerialNum, DocumentDBConfig::SP &) override {}
+    void removeInvalid() override {}
     void prune(SerialNum) override {}
-    virtual bool hasValidSerial(SerialNum) const override { return true; }
-    virtual SerialNum getPrevValidSerial(SerialNum) const override { return 1; }
-    virtual void serializeConfig(SerialNum, vespalib::nbostream &) override {}
-    virtual void deserializeConfig(SerialNum, vespalib::nbostream &) override {}
-    virtual void setProtonConfig(const ProtonConfigSP &) override { }
+    bool hasValidSerial(SerialNum) const override { return true; }
+    SerialNum getPrevValidSerial(SerialNum) const override { return 1; }
+    void serializeConfig(SerialNum, vespalib::nbostream &) override {}
+    void deserializeConfig(SerialNum, vespalib::nbostream &) override {}
+    void setProtonConfig(const ProtonConfigSP &) override { }
 };
 
 
 struct ReplayTransactionLogContext {
-    IIndexWriter::SP iwriter;
     MyConfigStore config_store;
     DocumentDBConfig::SP cfgSnap;
 };
@@ -637,7 +631,7 @@ TEST_F("require that partial update for non-existing document is tagged as such"
     auto  op = std::make_unique<UpdateOperation>(upCtx.bucketId, Timestamp(10), upCtx.update);
     FeedTokenContext token_context;
     f.handler.performOperation(std::move(token_context.token), std::move(op));
-    const UpdateResult *result = static_cast<const UpdateResult *>(token_context.getResult());
+    const auto *result = dynamic_cast<const UpdateResult *>(token_context.getResult());
 
     EXPECT_FALSE(token_context.transport.documentWasFound);
     EXPECT_EQUAL(0u, result->getExistingTimestamp());
@@ -655,7 +649,7 @@ TEST_F("require that partial update for non-existing document is created if spec
     auto op = std::make_unique<UpdateOperation>(upCtx.bucketId, Timestamp(10), upCtx.update);
     FeedTokenContext token_context;
     f.handler.performOperation(std::move(token_context.token), std::move(op));
-    const UpdateResult *result = static_cast<const UpdateResult *>(token_context.getResult());
+    const auto * result = dynamic_cast<const UpdateResult *>(token_context.getResult());
 
     EXPECT_TRUE(token_context.transport.documentWasFound);
     EXPECT_EQUAL(10u, result->getExistingTimestamp());

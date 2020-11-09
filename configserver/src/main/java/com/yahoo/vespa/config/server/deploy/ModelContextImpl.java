@@ -1,6 +1,7 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.deploy;
 
+import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.Version;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.DeployLogger;
@@ -14,6 +15,8 @@ import com.yahoo.config.model.api.HostProvisioner;
 import com.yahoo.config.model.api.Model;
 import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.api.Provisioned;
+import com.yahoo.config.model.api.Quota;
+import com.yahoo.config.model.api.Reindexing;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.DockerImage;
@@ -22,12 +25,15 @@ import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.flags.FetchVector;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.Flags;
+import com.yahoo.vespa.flags.UnboundFlag;
 
 import java.io.File;
 import java.net.URI;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+
+import static com.yahoo.vespa.config.server.ConfigServerSpec.fromConfig;
 
 /**
  * Implementation of {@link ModelContext} for configserver.
@@ -44,6 +50,7 @@ public class ModelContextImpl implements ModelContext {
     private final FileRegistry fileRegistry;
     private final Optional<HostProvisioner> hostProvisioner;
     private final Provisioned provisioned;
+    private final Optional<? extends Reindexing> reindexing;
     private final ModelContext.Properties properties;
     private final Optional<File> appDir;
 
@@ -67,6 +74,7 @@ public class ModelContextImpl implements ModelContext {
                             DeployLogger deployLogger,
                             ConfigDefinitionRepo configDefinitionRepo,
                             FileRegistry fileRegistry,
+                            Optional<? extends Reindexing> reindexing,
                             Optional<HostProvisioner> hostProvisioner,
                             Provisioned provisioned,
                             ModelContext.Properties properties,
@@ -80,6 +88,7 @@ public class ModelContextImpl implements ModelContext {
         this.deployLogger = deployLogger;
         this.configDefinitionRepo = configDefinitionRepo;
         this.fileRegistry = fileRegistry;
+        this.reindexing = reindexing;
         this.hostProvisioner = hostProvisioner;
         this.provisioned = provisioned;
         this.properties = properties;
@@ -119,6 +128,9 @@ public class ModelContextImpl implements ModelContext {
     public FileRegistry getFileRegistry() { return fileRegistry; }
 
     @Override
+    public Optional<? extends Reindexing> reindexing() { return  reindexing; }
+
+    @Override
     public ModelContext.Properties properties() { return properties; }
 
     @Override
@@ -133,8 +145,27 @@ public class ModelContextImpl implements ModelContext {
     @Override
     public Version wantedNodeVespaVersion() { return wantedNodeVespaVersion; }
 
+    public static class FeatureFlags implements ModelContext.FeatureFlags {
+
+        private final boolean enableAutomaticReindexing;
+
+        public FeatureFlags(FlagSource source, ApplicationId appId) {
+            this.enableAutomaticReindexing = flagValue(source, appId, Flags.ENABLE_AUTOMATIC_REINDEXING);
+        }
+
+        @Override public boolean enableAutomaticReindexing() { return enableAutomaticReindexing; }
+
+        private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
+            return flag.bindTo(source)
+                    .with(FetchVector.Dimension.APPLICATION_ID, appId.serializedForm())
+                    .boxedValue();
+        }
+
+    }
+
     public static class Properties implements ModelContext.Properties {
 
+        private final ModelContext.FeatureFlags featureFlags;
         private final ApplicationId applicationId;
         private final boolean multitenant;
         private final List<ConfigServerSpec> configServerSpecs;
@@ -146,12 +177,11 @@ public class ModelContextImpl implements ModelContext {
         private final Set<ContainerEndpoint> endpoints;
         private final boolean isBootstrap;
         private final boolean isFirstTimeDeployment;
-        private final boolean useContentNodeBtreeDb;
         private final boolean useThreePhaseUpdates;
+        private final boolean useDirectStorageApiRpc;
+        private final boolean useFastValueTensorImplementation;
         private final Optional<EndpointCertificateSecrets> endpointCertificateSecrets;
         private final double defaultTermwiseLimit;
-        private final double threadPoolSizeFactor;
-        private final double queueSizefactor;
         private final String jvmGCOPtions;
         private final String feedSequencer;
         private final String responseSequencer;
@@ -161,15 +191,14 @@ public class ModelContextImpl implements ModelContext {
         private final boolean skipMbusReplyThread;
         private final Optional<AthenzDomain> athenzDomain;
         private final Optional<ApplicationRoles> applicationRoles;
-        private final double feedCoreThreadPoolSizeFactor;
+        private final Quota quota;
+        private final boolean useAccessControlTlsHandshakeClientAuth;
+        private final boolean useAsyncMessageHandlingOnSchedule;
+        private final int contentNodeBucketDBStripeBits;
+        private final int mergeChunkSize;
 
         public Properties(ApplicationId applicationId,
-                          boolean multitenantFromConfig,
-                          List<ConfigServerSpec> configServerSpecs,
-                          HostName loadBalancerName,
-                          URI ztsUrl,
-                          String athenzDnsSuffix,
-                          boolean hostedVespa,
+                          ConfigserverConfig configserverConfig,
                           Zone zone,
                           Set<ContainerEndpoint> endpoints,
                           boolean isBootstrap,
@@ -177,14 +206,16 @@ public class ModelContextImpl implements ModelContext {
                           FlagSource flagSource,
                           Optional<EndpointCertificateSecrets> endpointCertificateSecrets,
                           Optional<AthenzDomain> athenzDomain,
-                          Optional<ApplicationRoles> applicationRoles) {
+                          Optional<ApplicationRoles> applicationRoles,
+                          Optional<Quota> maybeQuota) {
+            this.featureFlags = new FeatureFlags(flagSource, applicationId);
             this.applicationId = applicationId;
-            this.multitenant = multitenantFromConfig || hostedVespa || Boolean.getBoolean("multitenant");
-            this.configServerSpecs = configServerSpecs;
-            this.loadBalancerName = loadBalancerName;
-            this.ztsUrl = ztsUrl;
-            this.athenzDnsSuffix = athenzDnsSuffix;
-            this.hostedVespa = hostedVespa;
+            this.multitenant = configserverConfig.multitenant() || configserverConfig.hostedVespa() || Boolean.getBoolean("multitenant");
+            this.configServerSpecs = fromConfig(configserverConfig);
+            this.loadBalancerName = HostName.from(configserverConfig.loadBalancerAddress());
+            this.ztsUrl = configserverConfig.ztsUrl() != null ? URI.create(configserverConfig.ztsUrl()) : null;
+            this.athenzDnsSuffix = configserverConfig.athenzDnsSuffix();
+            this.hostedVespa = configserverConfig.hostedVespa();
             this.zone = zone;
             this.endpoints = endpoints;
             this.isBootstrap = isBootstrap;
@@ -192,13 +223,11 @@ public class ModelContextImpl implements ModelContext {
             this.endpointCertificateSecrets = endpointCertificateSecrets;
             defaultTermwiseLimit = Flags.DEFAULT_TERM_WISE_LIMIT.bindTo(flagSource)
                     .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
-            useContentNodeBtreeDb = Flags.USE_CONTENT_NODE_BTREE_DB.bindTo(flagSource)
-                    .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
             useThreePhaseUpdates = Flags.USE_THREE_PHASE_UPDATES.bindTo(flagSource)
                     .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
-            threadPoolSizeFactor = Flags.DEFAULT_THREADPOOL_SIZE_FACTOR.bindTo(flagSource)
+            useDirectStorageApiRpc = Flags.USE_DIRECT_STORAGE_API_RPC.bindTo(flagSource)
                     .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
-            queueSizefactor = Flags.DEFAULT_QUEUE_SIZE_FACTOR.bindTo(flagSource)
+            useFastValueTensorImplementation = Flags.USE_FAST_VALUE_TENSOR_IMPLEMENTATION.bindTo(flagSource)
                     .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
             jvmGCOPtions = Flags.JVM_GC_OPTIONS.bindTo(flagSource)
                     .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
@@ -216,9 +245,20 @@ public class ModelContextImpl implements ModelContext {
                     .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
             this.athenzDomain = athenzDomain;
             this.applicationRoles = applicationRoles;
-            feedCoreThreadPoolSizeFactor = Flags.FEED_CORE_THREAD_POOL_SIZE_FACTOR.bindTo(flagSource)
+            this.quota = maybeQuota.orElseGet(Quota::unlimited);
+            this.useAccessControlTlsHandshakeClientAuth =
+                    Flags.USE_ACCESS_CONTROL_CLIENT_AUTHENTICATION.bindTo(flagSource)
+                            .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm())
+                            .value();
+            useAsyncMessageHandlingOnSchedule = Flags.USE_ASYNC_MESSAGE_HANDLING_ON_SCHEDULE.bindTo(flagSource)
+                    .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
+            contentNodeBucketDBStripeBits = Flags.CONTENT_NODE_BUCKET_DB_STRIPE_BITS.bindTo(flagSource)
+                    .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
+            mergeChunkSize = Flags.MERGE_CHUNK_SIZE.bindTo(flagSource)
                     .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
         }
+
+        @Override public ModelContext.FeatureFlags featureFlags() { return featureFlags; }
 
         @Override
         public boolean multitenant() { return multitenant; }
@@ -264,23 +304,18 @@ public class ModelContextImpl implements ModelContext {
         public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
 
         @Override
-        public double threadPoolSizeFactor() {
-            return threadPoolSizeFactor;
-        }
-
-        @Override
-        public double queueSizeFactor() {
-            return queueSizefactor;
-        }
-
-        @Override
-        public boolean useContentNodeBtreeDb() {
-            return useContentNodeBtreeDb;
-        }
-
-        @Override
         public boolean useThreePhaseUpdates() {
             return useThreePhaseUpdates;
+        }
+
+        @Override
+        public boolean useDirectStorageApiRpc() {
+            return useDirectStorageApiRpc;
+        }
+
+        @Override
+        public boolean useFastValueTensorImplementation() {
+            return useFastValueTensorImplementation;
         }
 
         @Override
@@ -294,13 +329,15 @@ public class ModelContextImpl implements ModelContext {
         @Override public String jvmGCOptions() { return jvmGCOPtions; }
         @Override public String feedSequencerType() { return feedSequencer; }
         @Override public String responseSequencerType() { return responseSequencer; }
-        @Override public int defaultNumResponseThreads() {
-            return numResponseThreads;
-        }
+        @Override public int defaultNumResponseThreads() { return numResponseThreads; }
         @Override public boolean skipCommunicationManagerThread() { return skipCommunicationManagerThread; }
         @Override public boolean skipMbusRequestThread() { return skipMbusRequestThread; }
         @Override public boolean skipMbusReplyThread() { return skipMbusReplyThread; }
-        @Override public double feedCoreThreadPoolSizeFactor() { return feedCoreThreadPoolSizeFactor; }
+        @Override public Quota quota() { return quota; }
+        @Override public boolean useAccessControlTlsHandshakeClientAuth() { return useAccessControlTlsHandshakeClientAuth; }
+        @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
+        @Override public int contentNodeBucketDBStripeBits() { return contentNodeBucketDBStripeBits; }
+        @Override public int mergeChunkSize() { return mergeChunkSize; }
     }
 
 }

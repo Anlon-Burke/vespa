@@ -1,25 +1,27 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.filedistribution;
 
 import com.google.inject.Inject;
 import com.yahoo.cloud.config.ConfigserverConfig;
+import com.yahoo.concurrent.DaemonThreadFactory;
 import com.yahoo.config.FileReference;
 import com.yahoo.jrt.Int32Value;
 import com.yahoo.jrt.Request;
 import com.yahoo.jrt.StringValue;
-import com.yahoo.vespa.config.ConnectionPool;
 import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.filedistribution.CompressedFileReference;
 import com.yahoo.vespa.filedistribution.FileDownloader;
 import com.yahoo.vespa.filedistribution.FileReferenceData;
-import com.yahoo.vespa.filedistribution.FileReferenceDataBlob;
+import com.yahoo.vespa.filedistribution.EmptyFileReferenceData;
 import com.yahoo.vespa.filedistribution.FileReferenceDownload;
 import com.yahoo.vespa.filedistribution.LazyFileReferenceData;
+import com.yahoo.vespa.filedistribution.LazyTemporaryStorageFileReferenceData;
 import com.yahoo.yolean.Exceptions;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Optional;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Level;
@@ -68,19 +70,22 @@ public class FileServer {
     @SuppressWarnings("WeakerAccess") // Created by dependency injection
     @Inject
     public FileServer(ConfigserverConfig configserverConfig) {
-        this(createConnectionPool(configserverConfig), new File(Defaults.getDefaults().underVespaHome(configserverConfig.fileReferencesDir())));
+        this(new File(Defaults.getDefaults().underVespaHome(configserverConfig.fileReferencesDir())),
+             new FileDownloader(createConnectionPool(configserverConfig)));
     }
 
     // For testing only
     public FileServer(File rootDir) {
-        this(emptyConnectionPool(), rootDir);
+        this(rootDir, new FileDownloader(emptyConnectionPool()));
     }
 
-    private FileServer(ConnectionPool connectionPool, File rootDir) {
-        this.downloader = new FileDownloader(connectionPool);
+    public FileServer(File rootDir, FileDownloader fileDownloader) {
+        this.downloader = fileDownloader;
         this.root = new FileDirectory(rootDir);
-        this.pushExecutor = Executors.newFixedThreadPool(Math.max(8, Runtime.getRuntime().availableProcessors()));
-        this.pullExecutor = Executors.newFixedThreadPool(Math.max(8, Runtime.getRuntime().availableProcessors()));
+        this.pushExecutor = Executors.newFixedThreadPool(Math.max(8, Runtime.getRuntime().availableProcessors()),
+                                                         new DaemonThreadFactory("file server push"));
+        this.pullExecutor = Executors.newFixedThreadPool(Math.max(8, Runtime.getRuntime().availableProcessors()),
+                                                         new DaemonThreadFactory("file server pull"));
     }
 
     boolean hasFile(String fileReference) {
@@ -114,7 +119,7 @@ public class FileServer {
         log.log(Level.FINE, () -> "Start serving reference '" + reference.value() + "' with file '" + file.getAbsolutePath() + "'");
         boolean success = false;
         String errorDescription = "OK";
-        FileReferenceData fileData = FileReferenceDataBlob.empty(reference, file.getName());
+        FileReferenceData fileData = EmptyFileReferenceData.empty(reference, file.getName());
         try {
             fileData = readFileReferenceData(reference);
             success = true;
@@ -137,9 +142,9 @@ public class FileServer {
         File file = root.getFile(reference);
 
         if (file.isDirectory()) {
-            //TODO Here we should compress to file, but then we have to clean up too. Pending.
-            byte [] blob = CompressedFileReference.compress(file.getParentFile());
-            return new FileReferenceDataBlob(reference, file.getName(), FileReferenceData.Type.compressed, blob);
+            Path tempFile = Files.createTempFile("filereferencedata", reference.value());
+            File compressedFile = CompressedFileReference.compress(file.getParentFile(), tempFile.toFile());
+            return new LazyTemporaryStorageFileReferenceData(reference, file.getName(), FileReferenceData.Type.compressed, compressedFile);
         } else {
             return new LazyFileReferenceData(reference, file.getName(), FileReferenceData.Type.file, file);
         }
@@ -154,7 +159,11 @@ public class FileServer {
 
         boolean fileExists;
         try {
-            fileExists = hasFile(fileReference) || download(fileReference, downloadFromOtherSourceIfNotFound);
+            String client = request.target().toString();
+            FileReferenceDownload fileReferenceDownload = new FileReferenceDownload(new FileReference(fileReference),
+                                                                                    downloadFromOtherSourceIfNotFound,
+                                                                                    client);
+            fileExists = hasFileDownloadIfNeeded(fileReferenceDownload);
             if (fileExists) startFileServing(fileReference, receiver);
         } catch (IllegalArgumentException e) {
             fileExists = false;
@@ -168,21 +177,21 @@ public class FileServer {
         request.returnRequest();
     }
 
-    // downloadFromOtherSourceIfNotFound is true when the request comes from another config server.
-    // This is to avoid config servers asking each other for a file that does not exist
-    private boolean download(String fileReference, boolean downloadFromOtherSourceIfNotFound) {
-        if (downloadFromOtherSourceIfNotFound) {
+
+    boolean hasFileDownloadIfNeeded(FileReferenceDownload fileReferenceDownload) {
+        FileReference fileReference = fileReferenceDownload.fileReference();
+        if (hasFile(fileReference)) return true;
+
+        if (fileReferenceDownload.downloadFromOtherSourceIfNotFound()) {
             log.log(Level.FINE, "File not found, downloading from another source");
-            return download(fileReference).isPresent();
+            // Create new FileReferenceDownload with downloadFromOtherSourceIfNotFound set to false
+            // to avoid config servers requesting a file reference perpetually, e.g. for a file that does not exist anymore
+            FileReferenceDownload newDownload = new FileReferenceDownload(fileReference, false, fileReferenceDownload.client());
+            return downloader.getFile(newDownload).isPresent();
         } else {
             log.log(Level.FINE, "File not found, will not download from another source since request came from another config server");
             return false;
         }
-    }
-
-    private Optional<File> download(String fileReference) {
-        /* downloadFromOtherSourceIfNotFound should be false here, since this request is from a config server */
-        return downloader.getFile(new FileReferenceDownload(new FileReference(fileReference), false));
     }
 
     public FileDownloader downloader() {
@@ -191,6 +200,8 @@ public class FileServer {
 
     public void close() {
         downloader.close();
+        pullExecutor.shutdown();
+        pushExecutor.shutdown();
     }
 
 }

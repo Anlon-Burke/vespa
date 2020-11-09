@@ -5,6 +5,7 @@
 #include <vespa/document/bucket/bucketid.h>
 #include <vespa/vespalib/stllike/hash_map.h>
 #include <vespa/vespalib/stllike/hash_set.h>
+#include <vespa/vespalib/util/memoryusage.h>
 #include <vespa/vespalib/util/time.h>
 #include <cassert>
 #include <functional>
@@ -35,7 +36,7 @@ public:
         key_type _key;
         bool _locked;
 
-        LockKeeper(AbstractBucketMap& map, key_type key)
+        LockKeeper(AbstractBucketMap& map, key_type key) noexcept
             : _map(map), _key(key), _locked(true) {}
         void unlock() { _map.unlock(_key); _locked = false; }
     public:
@@ -43,7 +44,7 @@ public:
     };
 
     struct WrappedEntry {
-        WrappedEntry()
+        WrappedEntry() noexcept
             : _exists(false),
               _preExisted(false),
               _lockKeeper(),
@@ -102,16 +103,16 @@ public:
         key_type _key;
         const char* _owner;
 
-        LockId() : _key(0), _owner("none - empty token") {}
-        LockId(key_type key, const char* owner)
+        LockId() noexcept : _key(0), _owner("none - empty token") {}
+        LockId(key_type key, const char* owner) noexcept
             : _key(key), _owner(owner)
         {
             assert(_owner);
         }
 
-        size_t hash() const { return _key; }
-        size_t operator%(size_t val) const { return _key % val; }
-        bool operator==(const LockId& id) const { return (_key == id._key); }
+        size_t hash() const noexcept { return _key; }
+        size_t operator%(size_t val) const noexcept { return _key % val; }
+        bool operator==(const LockId& id) const noexcept { return (_key == id._key); }
         operator key_type() const { return _key; }
     };
 
@@ -170,20 +171,14 @@ public:
         do_for_each_chunked(std::move(func), clientId, yieldTime, chunkSize);
     }
 
-    void for_each_mutable(std::function<Decision(uint64_t, ValueT&)> func,
-                          const char* clientId,
-                          const key_type& first = 0,
-                          const key_type& last = UINT64_MAX)
+    void for_each_mutable_unordered(std::function<Decision(uint64_t, ValueT&)> func,
+                                    const char* clientId)
     {
-        do_for_each_mutable(std::move(func), clientId, first, last);
+        do_for_each_mutable_unordered(std::move(func), clientId);
     }
 
-    void for_each(std::function<Decision(uint64_t, const ValueT&)> func,
-                  const char* clientId,
-                  const key_type& first = 0,
-                  const key_type& last = UINT64_MAX)
-    {
-        do_for_each(std::move(func), clientId, first, last);
+    void for_each(std::function<Decision(uint64_t, const ValueT&)> func, const char* clientId) {
+        do_for_each(std::move(func), clientId);
     }
 
     std::unique_ptr<bucketdb::ReadGuard<ValueT>> acquire_read_guard() const {
@@ -192,6 +187,7 @@ public:
 
     [[nodiscard]] virtual size_type size() const noexcept = 0;
     [[nodiscard]] virtual size_type getMemoryUsage() const noexcept = 0;
+    [[nodiscard]] virtual vespalib::MemoryUsage detailed_memory_usage() const noexcept = 0;
     [[nodiscard]] virtual bool empty() const noexcept = 0;
 
     virtual void showLockClients(vespalib::asciistream& out) const = 0;
@@ -203,14 +199,10 @@ private:
                                      const char* clientId,
                                      vespalib::duration yieldTime,
                                      uint32_t chunkSize) = 0;
-    virtual void do_for_each_mutable(std::function<Decision(uint64_t, ValueT&)> func,
-                                     const char* clientId,
-                                     const key_type& first,
-                                     const key_type& last) = 0;
+    virtual void do_for_each_mutable_unordered(std::function<Decision(uint64_t, ValueT&)> func,
+                                               const char* clientId) = 0;
     virtual void do_for_each(std::function<Decision(uint64_t, const ValueT&)> func,
-                             const char* clientId,
-                             const key_type& first,
-                             const key_type& last) = 0;
+                             const char* clientId) = 0;
     virtual std::unique_ptr<bucketdb::ReadGuard<ValueT>> do_acquire_read_guard() const = 0;
 };
 

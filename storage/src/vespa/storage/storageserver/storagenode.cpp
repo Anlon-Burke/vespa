@@ -12,6 +12,7 @@
 #include <vespa/storage/frameworkimpl/status/statuswebserver.h>
 #include <vespa/storage/frameworkimpl/thread/deadlockdetector.h>
 #include <vespa/storage/common/statusmetricconsumer.h>
+#include <vespa/storage/common/storage_chain_builder.h>
 #include <vespa/vespalib/io/fileutil.h>
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/util/time.h>
@@ -59,18 +60,6 @@ namespace {
         }
     }
 
-
-bool
-allDisksDown(const lib::NodeState &nodeState)
-{
-    for (uint32_t i = 0; i < nodeState.getDiskCount(); ++i) {
-        if (nodeState.getDiskState(i).getState() != lib::State::DOWN)
-            return false;
-    }
-    return true;
-}
-
-
 } // End of anonymous namespace
 
 StorageNode::StorageNode(
@@ -111,7 +100,8 @@ StorageNode::StorageNode(
       _newBucketSpacesConfig(),
       _component(),
       _configUri(configUri),
-      _communicationManager(nullptr)
+      _communicationManager(nullptr),
+      _chain_builder(std::make_unique<StorageChainBuilder>())
 {
 }
 
@@ -127,7 +117,7 @@ StorageNode::subscribeToConfigs()
 
     _configFetcher->start();
 
-    vespalib::LockGuard configLockGuard(_configLock);
+    std::lock_guard configLockGuard(_configLock);
     _serverConfig = std::move(_newServerConfig);
     _clusterConfig = std::move(_newClusterConfig);
     _distributionConfig = std::move(_newDistributionConfig);
@@ -171,7 +161,7 @@ StorageNode::initialize()
     _component->registerMetricUpdateHook(*this, framework::SecondTime(300));
 
     // Initializing state manager early, as others use it init time to
-    // update node state according to disk count and min used bits etc.
+    // update node state according min used bits etc.
     // Needs node type to be set right away. Needs thread pool, index and
     // dead lock detector too, but not before open()
     _stateManager.reset(new StateManager(
@@ -198,15 +188,17 @@ StorageNode::initialize()
     _deadLockDetector.reset(new DeadLockDetector(_context.getComponentRegister()));
     _deadLockDetector->enableWarning(_serverConfig->enableDeadLockDetectorWarnings);
     _deadLockDetector->enableShutdown(_serverConfig->enableDeadLockDetector);
-    _deadLockDetector->setProcessSlack(framework::MilliSecTime(
-            static_cast<uint32_t>(_serverConfig->deadLockDetectorTimeoutSlack * 1000)));
-    _deadLockDetector->setWaitSlack(framework::MilliSecTime(
-            static_cast<uint32_t>(_serverConfig->deadLockDetectorTimeoutSlack * 1000)));
+    _deadLockDetector->setProcessSlack(vespalib::from_s(_serverConfig->deadLockDetectorTimeoutSlack));
+    _deadLockDetector->setWaitSlack(vespalib::from_s(_serverConfig->deadLockDetectorTimeoutSlack));
 
-    _chain.reset(createChain().release());
+    createChain(*_chain_builder);
+    _chain = std::move(*_chain_builder).build();
+    _chain_builder.reset();
 
     assert(_communicationManager != nullptr);
     _communicationManager->updateBucketSpacesConfig(*_bucketSpacesConfig);
+
+    perform_post_chain_creation_init_steps();
 
     // Start the metric manager, such that it starts generating snapshots
     // and the like. Note that at this time, all metrics should hopefully
@@ -236,8 +228,8 @@ void
 StorageNode::initializeStatusWebServer()
 {
     if (_singleThreadedDebugMode) return;
-    _statusWebServer.reset(new StatusWebServer(_context.getComponentRegister(),
-                                               _context.getComponentRegister(), _configUri));
+    _statusWebServer = std::make_unique<StatusWebServer>(_context.getComponentRegister(),
+                                                         _context.getComponentRegister(), _configUri);
 }
 
 #define DIFFER(a) (!(oldC.a == newC.a))
@@ -248,7 +240,7 @@ StorageNode::initializeStatusWebServer()
 void
 StorageNode::setNewDocumentRepo(const std::shared_ptr<const document::DocumentTypeRepo>& repo)
 {
-    vespalib::LockGuard configLockGuard(_configLock);
+    std::lock_guard configLockGuard(_configLock);
     _context.getComponentRegister().setDocumentTypeRepo(repo);
     if (_communicationManager != nullptr) {
         _communicationManager->updateMessagebusProtocol(repo);
@@ -276,7 +268,7 @@ StorageNode::handleLiveConfigUpdate(const InitialGuard & initGuard)
 {
     // Make sure we don't conflict with initialize or shutdown threads.
     (void) initGuard;
-    vespalib::LockGuard configLockGuard(_configLock);
+    std::lock_guard configLockGuard(_configLock);
 
     assert(_chain);
     // If we get here, initialize is done running. We have to handle changes
@@ -326,12 +318,6 @@ StorageNode::handleLiveConfigUpdate(const InitialGuard & initGuard)
         if (DIFFER(group)) {
             LOG(info, "Live config update: Group structure altered.");
             ASSIGN(group);
-        }
-        if (DIFFER(diskDistribution)) {
-            LOG(info, "Live config update: Disk distribution altered from %s to %s.",
-                StorDistributionConfig::getDiskDistributionName(oldC.diskDistribution).c_str(),
-                StorDistributionConfig::getDiskDistributionName(newC.diskDistribution).c_str());
-            ASSIGN(diskDistribution);
         }
         _distributionConfig = std::make_unique<StorDistributionConfig>(oldC);
         _newDistributionConfig.reset();
@@ -472,7 +458,7 @@ void StorageNode::configure(std::unique_ptr<StorServerConfig> config) {
     // to a variable where we can find it later when processing config
     // updates
     {
-        vespalib::LockGuard configLockGuard(_configLock);
+        std::lock_guard configLockGuard(_configLock);
         _newServerConfig = std::move(config);
     }
     if (_serverConfig) {
@@ -484,7 +470,7 @@ void StorageNode::configure(std::unique_ptr<StorServerConfig> config) {
 void StorageNode::configure(std::unique_ptr<UpgradingConfig> config) {
     log_config_received(*config);
     {
-        vespalib::LockGuard configLockGuard(_configLock);
+        std::lock_guard configLockGuard(_configLock);
         _newClusterConfig = std::move(config);
     }
     if (_clusterConfig) {
@@ -496,7 +482,7 @@ void StorageNode::configure(std::unique_ptr<UpgradingConfig> config) {
 void StorageNode::configure(std::unique_ptr<StorDistributionConfig> config) {
     log_config_received(*config);
     {
-        vespalib::LockGuard configLockGuard(_configLock);
+        std::lock_guard configLockGuard(_configLock);
         _newDistributionConfig = std::move(config);
     }
     if (_distributionConfig) {
@@ -508,7 +494,7 @@ void StorageNode::configure(std::unique_ptr<StorDistributionConfig> config) {
 void StorageNode::configure(std::unique_ptr<StorPrioritymappingConfig> config) {
     log_config_received(*config);
     {
-        vespalib::LockGuard configLockGuard(_configLock);
+        std::lock_guard configLockGuard(_configLock);
         _newPriorityConfig = std::move(config);
     }
     if (_priorityConfig) {
@@ -526,7 +512,7 @@ StorageNode::configure(std::unique_ptr<document::DocumenttypesConfig> config,
     if (!hasChanged)
         return;
     {
-        vespalib::LockGuard configLockGuard(_configLock);
+        std::lock_guard configLockGuard(_configLock);
         _newDoctypesConfig = std::move(config);
     }
     if (_doctypesConfig) {
@@ -538,7 +524,7 @@ StorageNode::configure(std::unique_ptr<document::DocumenttypesConfig> config,
 void StorageNode::configure(std::unique_ptr<BucketspacesConfig> config) {
     log_config_received(*config);
     {
-        vespalib::LockGuard configLockGuard(_configLock);
+        std::lock_guard configLockGuard(_configLock);
         _newBucketSpacesConfig = std::move(config);
     }
     if (_bucketSpacesConfig) {
@@ -595,31 +581,15 @@ StorageNode::requestShutdown(vespalib::stringref reason)
     _attemptedStopped = true;
 }
 
-void
-StorageNode::notifyPartitionDown(int partId, vespalib::stringref reason)
-{
-    if (!_component)
-        return;
-    NodeStateUpdater::Lock::SP lock(_component->getStateUpdater().grabStateChangeLock());
-    lib::NodeState nodeState(*_component->getStateUpdater().getReportedNodeState());
-    if (partId >= nodeState.getDiskCount())
-        return;
-    lib::DiskState diskState(nodeState.getDiskState(partId));
-    if (diskState.getState() == lib::State::DOWN)
-        return;
-    diskState.setState(lib::State::DOWN);
-    diskState.setDescription(reason);
-    nodeState.setDiskState(partId, diskState);
-    if (allDisksDown(nodeState)) {
-        nodeState.setState(lib::State::DOWN);
-        nodeState.setDescription("All partitions are down");
-    }
-    _component->getStateUpdater().setReportedNodeState(nodeState);
-}
-
 std::unique_ptr<StateManager>
 StorageNode::releaseStateManager() {
     return std::move(_stateManager);
+}
+
+void
+StorageNode::set_storage_chain_builder(std::unique_ptr<IStorageChainBuilder> builder)
+{
+    _chain_builder = std::move(builder);
 }
 
 } // storage

@@ -2,11 +2,8 @@
 
 #pragma once
 
-#include "documentdbconfig.h"
 #include "tls_replay_progress.h"
 #include "transactionlogmanagerbase.h"
-#include <vespa/searchcore/proton/index/i_index_writer.h>
-#include <vespa/searchlib/transactionlog/translogclient.h>
 
 namespace proton {
 struct ConfigStore;
@@ -16,7 +13,7 @@ struct ConfigStore;
  **/
 class TransactionLogManager : public TransactionLogManagerBase
 {
-    TransLogClient::Visitor::UP _visitor;
+    std::unique_ptr<Visitor> _visitor;
 
     void doLogReplayComplete(const vespalib::string &domainName, vespalib::duration elapsedTime) const override;
 
@@ -51,10 +48,17 @@ public:
                   SerialNum flushedSummaryMgrSerial,
                   ConfigStore &config_store);
 
+
+    /*
+     * Make a tls replay progress object for serial numbers (first..last]
+     */
+    std::unique_ptr<TlsReplayProgress>
+    make_replay_progress(SerialNum first, SerialNum last);
+
     /**
      * Start replay of the transaction log.
      **/
-    TlsReplayProgress::UP startReplay(SerialNum first, SerialNum syncToken, TransLogClient::Session::Callback &callback);
+    void startReplay(SerialNum first, SerialNum syncToken, Callback &callback);
 
     /**
      * Indicate that replay is done.

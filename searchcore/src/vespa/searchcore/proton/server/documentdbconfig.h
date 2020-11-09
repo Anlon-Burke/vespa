@@ -6,6 +6,7 @@
 #include <vespa/searchlib/common/tunefileinfo.h>
 #include <vespa/searchcommon/common/schema.h>
 #include <vespa/searchcore/proton/matching/ranking_constants.h>
+#include <vespa/searchcore/proton/matching/onnx_models.h>
 #include <vespa/config/retriever/configkeyset.h>
 #include <vespa/config/retriever/configsnapshot.h>
 #include <vespa/searchlib/docstore/logdocumentstore.h>
@@ -28,6 +29,8 @@ namespace document::internal { class InternalDocumenttypesType; }
 
 namespace proton {
 
+class ThreadingServiceConfig;
+
 class DocumentDBConfig
 {
 public:
@@ -36,6 +39,7 @@ public:
     public:
         bool rankProfilesChanged;
         bool rankingConstantsChanged;
+        bool onnxModelsChanged;
         bool indexschemaChanged;
         bool attributesChanged;
         bool summaryChanged;
@@ -50,10 +54,12 @@ public:
         bool storeChanged;
         bool visibilityDelayChanged;
         bool flushChanged;
+        bool threading_service_config_changed;
 
         ComparisonResult();
         ComparisonResult &setRankProfilesChanged(bool val) { rankProfilesChanged = val; return *this; }
         ComparisonResult &setRankingConstantsChanged(bool val) { rankingConstantsChanged = val; return *this; }
+        ComparisonResult &setOnnxModelsChanged(bool val) { onnxModelsChanged = val; return *this; }
         ComparisonResult &setIndexschemaChanged(bool val) { indexschemaChanged = val; return *this; }
         ComparisonResult &setAttributesChanged(bool val) { attributesChanged = val; return *this; }
         ComparisonResult &setSummaryChanged(bool val) { summaryChanged = val; return *this; }
@@ -81,6 +87,7 @@ public:
             }
             return *this;
         }
+        ComparisonResult &set_threading_service_config_changed(bool val) { threading_service_config_changed = val; return *this; }
     };
 
     using SP = std::shared_ptr<DocumentDBConfig>;
@@ -91,6 +98,7 @@ public:
     using RankProfilesConfig = const vespa::config::search::internal::InternalRankProfilesType;
     using RankProfilesConfigSP = std::shared_ptr<RankProfilesConfig>;
     using RankingConstants = matching::RankingConstants;
+    using OnnxModels = matching::OnnxModels;
     using SummaryConfig = const vespa::config::search::internal::InternalSummaryType;
     using SummaryConfigSP = std::shared_ptr<SummaryConfig>;
     using SummarymapConfig = const vespa::config::search::internal::InternalSummarymapType;
@@ -109,6 +117,7 @@ private:
     int64_t                          _generation;
     RankProfilesConfigSP             _rankProfiles;
     RankingConstants::SP             _rankingConstants;
+    OnnxModels::SP                   _onnxModels;
     IndexschemaConfigSP              _indexschema;
     AttributesConfigSP               _attributes;
     SummaryConfigSP                  _summary;
@@ -121,6 +130,7 @@ private:
     search::index::Schema::SP        _schema;
     MaintenanceConfigSP              _maintenance;
     search::LogDocumentStore::Config _storeConfig;
+    std::shared_ptr<const ThreadingServiceConfig> _threading_service_config;
     SP                               _orig;
     bool                             _delayedAttributeAspects;
 
@@ -145,6 +155,7 @@ public:
     DocumentDBConfig(int64_t generation,
                      const RankProfilesConfigSP &rankProfiles,
                      const RankingConstants::SP &rankingConstants,
+                     const OnnxModels::SP &onnxModels,
                      const IndexschemaConfigSP &indexschema,
                      const AttributesConfigSP &attributes,
                      const SummaryConfigSP &summary,
@@ -157,6 +168,7 @@ public:
                      const search::index::Schema::SP &schema,
                      const DocumentDBMaintenanceConfig::SP &maintenance,
                      const search::LogDocumentStore::Config & storeConfig,
+                     std::shared_ptr<const ThreadingServiceConfig> threading_service_config,
                      const vespalib::string &configId,
                      const vespalib::string &docTypeName);
 
@@ -172,6 +184,7 @@ public:
 
     const RankProfilesConfig &getRankProfilesConfig() const { return *_rankProfiles; }
     const RankingConstants &getRankingConstants() const { return *_rankingConstants; }
+    const OnnxModels &getOnnxModels() const { return *_onnxModels; }
     const IndexschemaConfig &getIndexschemaConfig() const { return *_indexschema; }
     const AttributesConfig &getAttributesConfig() const { return *_attributes; }
     const SummaryConfig &getSummaryConfig() const { return *_summary; }
@@ -180,6 +193,7 @@ public:
     const DocumenttypesConfig &getDocumenttypesConfig() const { return *_documenttypes; }
     const RankProfilesConfigSP &getRankProfilesConfigSP() const { return _rankProfiles; }
     const RankingConstants::SP &getRankingConstantsSP() const { return _rankingConstants; }
+    const OnnxModels::SP &getOnnxModelsSP() const { return _onnxModels; }
     const IndexschemaConfigSP &getIndexschemaConfigSP() const { return _indexschema; }
     const AttributesConfigSP &getAttributesConfigSP() const { return _attributes; }
     const SummaryConfigSP &getSummaryConfigSP() const { return _summary; }
@@ -194,6 +208,8 @@ public:
     const MaintenanceConfigSP &getMaintenanceConfigSP() const { return _maintenance; }
     const search::TuneFileDocumentDB::SP &getTuneFileDocumentDBSP() const { return _tuneFileDocumentDB; }
     bool getDelayedAttributeAspects() const { return _delayedAttributeAspects; }
+    const ThreadingServiceConfig& get_threading_service_config() const { return *_threading_service_config; }
+    const std::shared_ptr<const ThreadingServiceConfig>& get_threading_service_config_shared_ptr() const { return _threading_service_config; }
 
     bool operator==(const DocumentDBConfig &rhs) const;
 

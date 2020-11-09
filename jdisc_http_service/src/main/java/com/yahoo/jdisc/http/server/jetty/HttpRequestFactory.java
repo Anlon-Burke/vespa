@@ -42,17 +42,35 @@ class HttpRequestFactory {
     // Implementation based on org.eclipse.jetty.server.Request.getRequestURL(), but with the connector's local port instead
     public static URI getUri(HttpServletRequest servletRequest) {
         try {
-            StringBuffer builder = new StringBuffer(128);
-            URIUtil.appendSchemeHostPort(builder, servletRequest.getScheme(), servletRequest.getServerName(), getConnectorLocalPort(servletRequest));
-            builder.append(servletRequest.getRequestURI());
+            String scheme = servletRequest.getScheme();
+            String host = servletRequest.getServerName();
+            int port = getConnectorLocalPort(servletRequest);
+            String path = servletRequest.getRequestURI();
             String query = servletRequest.getQueryString();
+
+            StringBuffer builder = new StringBuffer(128);
+            URIUtil.appendSchemeHostPort(builder, scheme, host, port);
+            builder.append(path);
             if (query != null) {
                 builder.append('?').append(query);
             }
-            return URI.create(builder.toString());
+            URI uri = URI.create(builder.toString());
+            validateSchemeHostPort(scheme, host, port, uri);
+            return uri;
         } catch (IllegalArgumentException e) {
             throw createBadQueryException(e);
         }
+    }
+
+    private static void validateSchemeHostPort(String scheme, String host, int port, URI uri) {
+        if ( ! scheme.equals(uri.getScheme()))
+            throw new IllegalArgumentException("Bad scheme: " + scheme);
+
+        if ( ! host.equals(uri.getHost()))
+            throw new IllegalArgumentException("Bad host: " + host);
+
+        if (port != uri.getPort() && ! (port == 80 && scheme.equals("http")) && ! (port == 443 && scheme.equals("https")))
+            throw new IllegalArgumentException("Bad port: " + port);
     }
 
     private static RequestException createBadQueryException(IllegalArgumentException e) {

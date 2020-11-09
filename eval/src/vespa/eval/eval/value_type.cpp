@@ -174,6 +174,30 @@ ValueType::is_dense() const
 }
 
 size_t
+ValueType::count_indexed_dimensions() const
+{
+    size_t cnt = 0;
+    for (const auto &dim : dimensions()) {
+        if (dim.is_indexed()) {
+            ++cnt;
+        }
+    }
+    return cnt;
+}
+
+size_t
+ValueType::count_mapped_dimensions() const
+{
+    size_t cnt = 0;
+    for (const auto &dim : dimensions()) {
+        if (dim.is_mapped()) {
+            ++cnt;
+        }
+    }
+    return cnt;
+}
+
+size_t
 ValueType::dense_subspace_size() const
 {
     size_t size = 1;
@@ -186,10 +210,21 @@ ValueType::dense_subspace_size() const
 }
 
 std::vector<ValueType::Dimension>
-ValueType::nontrivial_dimensions() const {
+ValueType::nontrivial_indexed_dimensions() const {
     std::vector<ValueType::Dimension> result;
     for (const auto &dim: dimensions()) {
-        if (!dim.is_trivial()) {
+        if (dim.is_indexed() && !dim.is_trivial()) {
+            result.push_back(dim);
+        }
+    }
+    return result;
+}
+
+std::vector<ValueType::Dimension>
+ValueType::mapped_dimensions() const {
+    std::vector<ValueType::Dimension> result;
+    for (const auto &dim: dimensions()) {
+        if (dim.is_mapped()) {
             result.push_back(dim);
         }
     }
@@ -253,16 +288,22 @@ ValueType::rename(const std::vector<vespalib::string> &from,
 }
 
 ValueType
+ValueType::make_type(CellType cell_type, std::vector<Dimension> dimensions_in)
+{
+    sort_dimensions(dimensions_in);
+    if (!verify_dimensions(dimensions_in)) {
+        return error_type();
+    }
+    return ValueType(cell_type, std::move(dimensions_in));
+}
+
+ValueType
 ValueType::tensor_type(std::vector<Dimension> dimensions_in, CellType cell_type)
 {
     if (dimensions_in.empty()) {
         return double_type();
     }
-    sort_dimensions(dimensions_in);
-    if (!verify_dimensions(dimensions_in)) {
-        return error_type();
-    }
-    return ValueType(Type::TENSOR, cell_type, std::move(dimensions_in));
+    return make_type(cell_type, std::move(dimensions_in));
 }
 
 ValueType
@@ -303,7 +344,7 @@ ValueType::join(const ValueType &lhs, const ValueType &rhs)
 ValueType
 ValueType::merge(const ValueType &lhs, const ValueType &rhs)
 {
-    if ((lhs.type() != rhs.type()) ||
+    if ((lhs.is_error() != rhs.is_error()) ||
         (lhs.dimensions() != rhs.dimensions()))
     {
         return error_type();

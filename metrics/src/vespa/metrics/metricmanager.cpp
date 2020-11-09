@@ -13,6 +13,7 @@
 #include <vespa/vespalib/stllike/hashtable.hpp>
 #include <sstream>
 #include <algorithm>
+#include <cassert>
 
 #include <vespa/log/bufferedlogger.h>
 LOG_SETUP(".metrics.manager");
@@ -31,9 +32,8 @@ MetricManager::Timer::getTime() const {
 
 void
 MetricManager::assertMetricLockLocked(const MetricLockGuard& g) const {
-    if (!g.monitors(_waiter)) {
-        throw vespalib::IllegalArgumentException(
-                "Given lock does not lock the metric lock.", VESPA_STRLOC);
+    if ((g.mutex() != &_waiter) || !g.owns_lock()) {
+        throw vespalib::IllegalArgumentException("Given lock does not lock the metric lock.", VESPA_STRLOC);
     }
 }
 
@@ -99,8 +99,8 @@ MetricManager::stop()
     }
     Runnable::stop();
     {
-        vespalib::MonitorGuard sync(_waiter);
-        sync.signal();
+        MetricLockGuard sync(_waiter);
+        _cond.notify_all();
     }
     join();
 }
@@ -109,7 +109,7 @@ void
 MetricManager::addMetricUpdateHook(UpdateHook& hook, uint32_t period)
 {
     hook._period = period;
-    vespalib::MonitorGuard sync(_waiter);
+    std::lock_guard sync(_waiter);
         // If we've already initialized manager, log period has been set.
         // In this case. Call first time after period
     hook._nextCall = _timer->getTime() + period;
@@ -135,7 +135,7 @@ MetricManager::addMetricUpdateHook(UpdateHook& hook, uint32_t period)
 void
 MetricManager::removeMetricUpdateHook(UpdateHook& hook)
 {
-    vespalib::MonitorGuard sync(_waiter);
+    std::lock_guard sync(_waiter);
     if (hook._period == 0) {
         for (auto it = _snapshotUpdateHooks.begin(); it != _snapshotUpdateHooks.end(); it++) {
             if (*it == &hook) {
@@ -169,7 +169,7 @@ MetricManager::init(const config::ConfigUri & uri, FastOS_ThreadPool& pool,
                 "It can only be initialized once.", VESPA_STRLOC);
     }
     LOG(debug, "Initializing metric manager.");
-    _configSubscriber.reset(new config::ConfigSubscriber(uri.getContext()));
+    _configSubscriber = std::make_unique<config::ConfigSubscriber>(uri.getContext());
     _configHandle = _configSubscriber->subscribe<Config>(uri.getConfigId());
     _configSubscriber->nextConfig();
     configure(getMetricLock(), _configHandle->getConfig());
@@ -178,12 +178,12 @@ MetricManager::init(const config::ConfigUri & uri, FastOS_ThreadPool& pool,
         Runnable::start(pool);
         // Wait for first iteration to have completed, such that it is safe
         // to access snapshots afterwards.
-        vespalib::MonitorGuard sync(_waiter);
+        MetricLockGuard sync(_waiter);
         while (_lastProcessedTime.load(std::memory_order_relaxed) == 0) {
-            sync.wait(1);
+            _cond.wait_for(sync, 1ms);
         }
     } else {
-        _configSubscriber.reset(0);
+        _configSubscriber.reset();
     }
     LOG(debug, "Metric manager completed initialization.");
 }
@@ -646,8 +646,8 @@ MetricManager::getMetricSnapshotSet(const MetricLockGuard& l,
 void
 MetricManager::timeChangedNotification() const
 {
-    vespalib::MonitorGuard sync(_waiter);
-    sync.broadcast();
+    MetricLockGuard sync(_waiter);
+    _cond.notify_all();
 }
 
 void
@@ -656,13 +656,11 @@ MetricManager::updateMetrics(bool includeSnapshotOnlyHooks)
     LOG(debug, "Calling metric update hooks%s.",
         includeSnapshotOnlyHooks ? ", including snapshot hooks" : "");
         // Ensure we're not in the way of the background thread
-    vespalib::MonitorGuard sync(_waiter);
-    LOG(debug, "Giving %zu periodic update hooks.",
-        _periodicUpdateHooks.size());
+    MetricLockGuard sync(_waiter);
+    LOG(debug, "Giving %zu periodic update hooks.", _periodicUpdateHooks.size());
     updatePeriodicMetrics(sync, 0, true);
     if (includeSnapshotOnlyHooks) {
-        LOG(debug, "Giving %zu snapshot update hooks.",
-            _snapshotUpdateHooks.size());
+        LOG(debug, "Giving %zu snapshot update hooks.", _snapshotUpdateHooks.size());
         updateSnapshotMetrics(sync);
     }
 }
@@ -719,9 +717,9 @@ void
 MetricManager::forceEventLogging()
 {
     LOG(debug, "Forcing event logging to happen.");
-        // Ensure background thread is not in a current cycle during change.
-    vespalib::MonitorGuard sync(_waiter);
-    sync.signal();
+    // Ensure background thread is not in a current cycle during change.
+    MetricLockGuard sync(_waiter);
+    _cond.notify_all();
 }
 
 void
@@ -730,7 +728,7 @@ MetricManager::reset(time_t currentTime)
     time_t preTime = _timer->getTimeInMilliSecs();
     // Resetting implies visiting metrics, which needs to grab metric lock
     // to avoid conflict with adding/removal of metrics
-    vespalib::LockGuard waiterLock(_waiter);
+    std::lock_guard waiterLock(_waiter);
     _activeMetrics.reset(currentTime);
     for (uint32_t i=0; i<_snapshots.size(); ++i) {
         _snapshots[i]->reset(currentTime);
@@ -743,7 +741,7 @@ MetricManager::reset(time_t currentTime)
 void
 MetricManager::run()
 {
-    vespalib::MonitorGuard sync(_waiter);
+    MetricLockGuard sync(_waiter);
     // For a slow system to still be doing metrics tasks each n'th
     // second, rather than each n'th + time to do something seconds,
     // we constantly add next time to do something from the last timer.
@@ -762,8 +760,9 @@ MetricManager::run()
         currentTime = _timer->getTime();
         time_t next = tick(sync, currentTime);
         if (currentTime < next) {
-            sync.wait((next - currentTime) * 1000);
-            _sleepTimes.addValue((next - currentTime) * 1000);
+            size_t ms = (next - currentTime) * 1000;
+            _cond.wait_for(sync, std::chrono::milliseconds(ms));
+            _sleepTimes.addValue(ms);
         } else {
             _sleepTimes.addValue(0);
         }

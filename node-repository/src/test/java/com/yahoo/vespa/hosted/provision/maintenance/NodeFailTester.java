@@ -1,35 +1,30 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
+import com.yahoo.config.provision.ActivationContext;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
-import com.yahoo.config.provision.DockerImage;
-import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
-import com.yahoo.config.provision.RegionName;
-import com.yahoo.config.provision.Zone;
 import com.yahoo.test.ManualClock;
 import com.yahoo.transaction.NestedTransaction;
 import com.yahoo.vespa.applicationmodel.HostName;
 import com.yahoo.vespa.curator.Curator;
-import com.yahoo.vespa.curator.mock.MockCurator;
 import com.yahoo.vespa.curator.transaction.CuratorTransaction;
-import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.node.Agent;
-import com.yahoo.vespa.hosted.provision.provisioning.EmptyProvisionServiceProvider;
+import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.provisioning.FlavorConfigBuilder;
 import com.yahoo.vespa.hosted.provision.provisioning.NodeRepositoryProvisioner;
+import com.yahoo.vespa.hosted.provision.provisioning.ProvisioningTester;
 import com.yahoo.vespa.hosted.provision.testutils.MockDeployer;
-import com.yahoo.vespa.hosted.provision.testutils.MockNameResolver;
-import com.yahoo.vespa.hosted.provision.testutils.MockProvisionServiceProvider;
 import com.yahoo.vespa.hosted.provision.testutils.OrchestratorMock;
 import com.yahoo.vespa.hosted.provision.testutils.ServiceMonitorStub;
 import com.yahoo.vespa.hosted.provision.testutils.TestHostLivenessTracker;
@@ -56,13 +51,13 @@ public class NodeFailTester {
     public static final ApplicationId tenantHostApp = ApplicationId.from("hosted-vespa", "tenant-host", "default");
     public static final ApplicationId app1 = ApplicationId.from("foo1", "bar", "fuz");
     public static final ApplicationId app2 = ApplicationId.from("foo2", "bar", "fuz");
-    public static final NodeFlavors nodeFlavors = FlavorConfigBuilder.createDummies("default", "docker");
-    private static final Zone zone = new Zone(Environment.prod, RegionName.from("us-east"));
+    public static final NodeFlavors hostFlavors = FlavorConfigBuilder.createDummies("default", "docker");
     private static final Duration downtimeLimitOneHour = Duration.ofMinutes(60);
 
     // Components with state
     public final ManualClock clock;
     public final NodeRepository nodeRepository;
+    public final ProvisioningTester tester;
     public NodeFailer failer;
     public ServiceMonitorStub serviceMonitor;
     public MockDeployer deployer;
@@ -73,22 +68,15 @@ public class NodeFailTester {
     private final Curator curator;
 
     private NodeFailTester() {
-        clock = new ManualClock();
-        curator = new MockCurator();
-        nodeRepository = new NodeRepository(nodeFlavors,
-                                            new EmptyProvisionServiceProvider().getHostResourcesCalculator(),
-                                            curator,
-                                            clock,
-                                            zone,
-                                            new MockNameResolver().mockAnyLookup(),
-                                            DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa"),
-                                            new InMemoryFlagSource(),
-                                            true,
-                                            false,
-                                            0);
-        provisioner = new NodeRepositoryProvisioner(nodeRepository, zone, new MockProvisionServiceProvider(), new InMemoryFlagSource());
-        hostLivenessTracker = new TestHostLivenessTracker(clock);
         orchestrator = new OrchestratorMock();
+        tester = new ProvisioningTester.Builder().orchestrator(orchestrator)
+                                                 .flavors(hostFlavors.getFlavors())
+                                                 .spareCount(1).build();
+        clock = tester.clock();
+        curator = tester.getCurator();
+        nodeRepository = tester.nodeRepository();
+        provisioner = tester.provisioner();
+        hostLivenessTracker = new TestHostLivenessTracker(clock);
     }
 
     public static NodeFailTester withTwoApplications() {
@@ -124,8 +112,8 @@ public class NodeFailTester {
         int nodesPerHost = 3;
         List<Node> hosts = tester.createHostNodes(numberOfHosts);
         for (int i = 0; i < hosts.size(); i++) {
-            tester.createReadyNodes(nodesPerHost, i * nodesPerHost, Optional.of("parent" + i),
-                                   new NodeResources(1, 4, 100, 0.3), NodeType.tenant);
+            tester.createReadyNodes(nodesPerHost, i * nodesPerHost, Optional.of("parent" + (i + 1)),
+                                    new NodeResources(1, 4, 100, 0.3), NodeType.tenant);
         }
 
         // Create applications
@@ -139,7 +127,7 @@ public class NodeFailTester {
         tester.activate(app1, clusterApp1, capacity1);
         tester.activate(app2, clusterApp2, capacity2);
         assertEquals(Set.of(tester.nodeRepository.getNodes(NodeType.host)),
-                Set.of(tester.nodeRepository.getNodes(tenantHostApp, Node.State.active)));
+                     Set.of(tester.nodeRepository.getNodes(tenantHostApp, Node.State.active)));
         assertEquals(capacity1.minResources().nodes(), tester.nodeRepository.getNodes(app1, Node.State.active).size());
         assertEquals(capacity2.minResources().nodes(), tester.nodeRepository.getNodes(app2, Node.State.active).size());
 
@@ -147,6 +135,19 @@ public class NodeFailTester {
                 tenantHostApp, new MockDeployer.ApplicationContext(tenantHostApp, clusterNodeAdminApp, allHosts),
                 app1, new MockDeployer.ApplicationContext(app1, clusterApp1, capacity1),
                 app2, new MockDeployer.ApplicationContext(app2, clusterApp2, capacity2));
+        tester.deployer = new MockDeployer(tester.provisioner, tester.clock(), apps);
+        tester.serviceMonitor = new ServiceMonitorStub(apps, tester.nodeRepository);
+        tester.metric = new TestMetric();
+        tester.failer = tester.createFailer();
+        return tester;
+    }
+
+    public static NodeFailTester withOneUndeployedApplication(Capacity capacity) {
+        NodeFailTester tester = new NodeFailTester();
+
+        // Create applications
+        ClusterSpec clusterApp = ClusterSpec.request(ClusterSpec.Type.container, ClusterSpec.Id.from("test")).vespaVersion("6.42").build();
+        Map<ApplicationId, MockDeployer.ApplicationContext> apps = Map.of(app1, new MockDeployer.ApplicationContext(app1, clusterApp, capacity));
         tester.deployer = new MockDeployer(tester.provisioner, tester.clock(), apps);
         tester.serviceMonitor = new ServiceMonitorStub(apps, tester.nodeRepository);
         tester.metric = new TestMetric();
@@ -199,7 +200,8 @@ public class NodeFailTester {
     }
 
     public NodeFailer createFailer() {
-        return new NodeFailer(deployer, hostLivenessTracker, serviceMonitor, nodeRepository, downtimeLimitOneHour, clock, orchestrator, NodeFailer.ThrottlePolicy.hosted, metric);
+        return new NodeFailer(deployer, hostLivenessTracker, serviceMonitor, nodeRepository, downtimeLimitOneHour,
+                              Duration.ofMinutes(5), clock, orchestrator, NodeFailer.ThrottlePolicy.hosted, metric);
     }
 
     public void allNodesMakeAConfigRequestExcept(Node ... deadNodeArray) {
@@ -224,7 +226,7 @@ public class NodeFailTester {
     }
 
     public List<Node> createReadyNodes(int count, NodeType nodeType) {
-        return createReadyNodes(count, 0, Optional.empty(), nodeFlavors.getFlavorOrThrow("default"), nodeType);
+        return createReadyNodes(count, 0, Optional.empty(), hostFlavors.getFlavorOrThrow("default"), nodeType);
     }
 
     public List<Node> createReadyNodes(int count, int startIndex) {
@@ -232,7 +234,7 @@ public class NodeFailTester {
     }
 
     public List<Node> createReadyNodes(int count, int startIndex, String flavor) {
-        return createReadyNodes(count, startIndex, Optional.empty(), nodeFlavors.getFlavorOrThrow(flavor), NodeType.tenant);
+        return createReadyNodes(count, startIndex, Optional.empty(), hostFlavors.getFlavorOrThrow(flavor), NodeType.tenant);
     }
 
     public List<Node> createReadyNodes(int count, int startIndex, NodeResources resources) {
@@ -245,8 +247,13 @@ public class NodeFailTester {
 
     private List<Node> createReadyNodes(int count, int startIndex, Optional<String> parentHostname, Flavor flavor, NodeType nodeType) {
         List<Node> nodes = new ArrayList<>(count);
-        for (int i = startIndex; i < startIndex + count; i++)
-            nodes.add(nodeRepository.createNode("node" + i, "host" + i, parentHostname, flavor, nodeType));
+        for (int i = startIndex; i < startIndex + count; i++) {
+            String hostname = "host" + i;
+            IP.Config ipConfig = new IP.Config(nodeRepository.nameResolver().resolveAll(hostname), Set.of());
+            Node.Builder builder = Node.create("node" + i, ipConfig, hostname, flavor, nodeType);
+            parentHostname.ifPresent(builder::parentHostname);
+            nodes.add(builder.build());
+        }
 
         nodes = nodeRepository.addNodes(nodes, Agent.system);
         nodes = nodeRepository.setDirty(nodes, Agent.system, getClass().getSimpleName());
@@ -254,19 +261,27 @@ public class NodeFailTester {
     }
 
     private List<Node> createHostNodes(int count) {
-        List<Node> nodes = new ArrayList<>(count);
-        for (int i = 0; i < count; i++)
-            nodes.add(nodeRepository.createNode("parent" + i, "parent" + i, Optional.empty(), nodeFlavors.getFlavorOrThrow("default"), NodeType.host));
-        nodes = nodeRepository.addNodes(nodes, Agent.system);
+        List<Node> nodes = tester.makeProvisionedNodes(count, (index) -> "parent" + index,
+                                                       hostFlavors.getFlavorOrThrow("default"),
+                                                       Optional.empty(), NodeType.host, 10, false);
         nodes = nodeRepository.setDirty(nodes, Agent.system, getClass().getSimpleName());
+        tester.activateTenantHosts();
         return nodeRepository.setReady(nodes, Agent.system, getClass().getSimpleName());
     }
 
-    private void activate(ApplicationId applicationId, ClusterSpec cluster, Capacity capacity) {
+    // Prefer using this instead of the above
+    public void createAndActivateHosts(int count, NodeResources resources) {
+        tester.makeReadyNodes(count, resources, NodeType.host, 8);
+        tester.activateTenantHosts();
+    }
+
+    public void activate(ApplicationId applicationId, ClusterSpec cluster, Capacity capacity) {
         List<HostSpec> hosts = provisioner.prepare(applicationId, cluster, capacity, null);
-        NestedTransaction transaction = new NestedTransaction().add(new CuratorTransaction(curator));
-        provisioner.activate(transaction, applicationId, hosts);
-        transaction.commit();
+        try (var lock = provisioner.lock(applicationId)) {
+            NestedTransaction transaction = new NestedTransaction().add(new CuratorTransaction(curator));
+            provisioner.activate(hosts, new ActivationContext(0), new ApplicationTransaction(lock, transaction));
+            transaction.commit();
+        }
     }
 
     /** Returns the node with the highest membership index from the given set of allocated nodes */

@@ -37,7 +37,7 @@ public:
     using BucketId     = document::BucketId;
 
     BTreeLockableMap();
-    ~BTreeLockableMap();
+    ~BTreeLockableMap() override;
 
     bool operator==(const BTreeLockableMap& other) const;
     bool operator!=(const BTreeLockableMap& other) const {
@@ -46,6 +46,7 @@ public:
     bool operator<(const BTreeLockableMap& other) const;
     size_t size() const noexcept override;
     size_t getMemoryUsage() const noexcept override;
+    vespalib::MemoryUsage detailed_memory_usage() const noexcept override;
     bool empty() const noexcept override;
     void swap(BTreeLockableMap&);
 
@@ -72,6 +73,8 @@ public:
     void showLockClients(vespalib::asciistream & out) const override;
 
 private:
+    template <typename T1> friend class StripedBTreeLockableMap;
+
     struct hasher {
         size_t operator () (const LockId & lid) const { return lid.hash(); }
     };
@@ -116,15 +119,11 @@ private:
     bool handleDecision(key_type& key, mapped_type& val, Decision decision);
     void acquireKey(const LockId & lid, std::unique_lock<std::mutex> &guard);
 
-    void do_for_each_mutable(std::function<Decision(uint64_t, mapped_type&)> func,
-                             const char* clientId,
-                             const key_type& first,
-                             const key_type& last) override;
+    void do_for_each_mutable_unordered(std::function<Decision(uint64_t, mapped_type&)> func,
+                                       const char* clientId) override;
 
     void do_for_each(std::function<Decision(uint64_t, const mapped_type&)> func,
-                     const char* clientId,
-                     const key_type& first,
-                     const key_type& last) override;
+                     const char* clientId) override;
 
     void do_for_each_chunked(std::function<Decision(uint64_t, const mapped_type&)> func,
                              const char* client_id,

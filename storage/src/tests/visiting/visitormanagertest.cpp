@@ -96,7 +96,7 @@ VisitorManagerTest::initializeTest()
                 config.getConfigId(), _node->getComponentRegister(),
                 *_messageSessionFactory)));
     _top->push_back(std::unique_ptr<StorageLink>(new FileStorManager(
-            config.getConfigId(), _node->getPartitions(), _node->getPersistenceProvider(), _node->getComponentRegister())));
+            config.getConfigId(), _node->getPersistenceProvider(), _node->getComponentRegister(), *_node)));
     _manager->setTimeBetweenTicks(10);
     _top->open();
 
@@ -161,7 +161,6 @@ VisitorManagerTest::initializeTest()
         StorBucketDatabase::WrappedEntry entry(
                 _node->getStorageBucketDatabase().get(bid, "",
                     StorBucketDatabase::CREATE_IF_NONEXISTING));
-        entry->disk = 0;
         entry.write();
     }
     for (uint32_t i=0; i<docCount; ++i) {
@@ -223,7 +222,7 @@ VisitorManagerTest::getSession(uint32_t n)
     framework::MilliSecTime endTime(clock.getTimeInMillis() + framework::MilliSecTime(30 * 1000));
     while (true) {
         {
-            vespalib::LockGuard lock(_messageSessionFactory->_accessLock);
+            std::lock_guard lock(_messageSessionFactory->_accessLock);
             if (sessions.size() > n) {
                 return *sessions[n];
             }
@@ -250,7 +249,7 @@ VisitorManagerTest::getMessagesAndReply(
         session.waitForMessages(i + 1);
         mbus::Reply::UP reply;
         {
-            vespalib::MonitorGuard guard(session.getMonitor());
+            std::lock_guard guard(session.getMonitor());
 
             if (priority) {
                 ASSERT_EQ(*priority, session.sentMessages[i]->getPriority());
@@ -271,8 +270,7 @@ VisitorManagerTest::getMessagesAndReply(
 
             reply = session.sentMessages[i]->createReply();
             reply->swapState(*session.sentMessages[i]);
-            reply->setMessage(
-                    mbus::Message::UP(session.sentMessages[i].release()));
+            reply->setMessage(std::move(session.sentMessages[i]));
 
             if (result != api::ReturnCode::OK) {
                 reply->addError(mbus::Error(result, "Generic error"));
@@ -582,7 +580,7 @@ TEST_F(VisitorManagerTest, visitor_callbacks) {
         session.waitForMessages(i + 1);
         mbus::Reply::UP reply;
         {
-            vespalib::MonitorGuard guard(session.getMonitor());
+            std::lock_guard guard(session.getMonitor());
 
             ASSERT_EQ(documentapi::DocumentProtocol::MESSAGE_MAPVISITOR, session.sentMessages[i]->getType());
 
@@ -593,7 +591,7 @@ TEST_F(VisitorManagerTest, visitor_callbacks) {
 
             reply = mapvisitormsg->createReply();
             reply->swapState(*session.sentMessages[i]);
-            reply->setMessage(mbus::Message::UP(session.sentMessages[i].release()));
+            reply->setMessage(std::move(session.sentMessages[i]));
         }
         session.reply(std::move(reply));
     }
@@ -778,7 +776,7 @@ TEST_F(VisitorManagerTest, visitor_queue_timeout) {
     _manager->enforceQueueUsage();
 
     {
-        vespalib::MonitorGuard guard(_manager->getThread(0).getQueueMonitor());
+        std::lock_guard guard(_manager->getThread(0).getQueueMonitor());
 
         auto cmd = std::make_shared<api::CreateVisitorCommand>(makeBucketSpace(), "DumpVisitor", "testvis", "");
         cmd->addBucketToBeVisited(document::BucketId(16, 3));

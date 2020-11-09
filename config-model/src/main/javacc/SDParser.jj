@@ -32,6 +32,7 @@ import com.yahoo.searchdefinition.document.*;
 import com.yahoo.searchdefinition.document.annotation.SDAnnotationType;
 import com.yahoo.searchdefinition.document.annotation.TemporaryAnnotationReferenceDataType;
 import com.yahoo.searchdefinition.RankingConstant;
+import com.yahoo.searchdefinition.OnnxModel;
 import com.yahoo.searchdefinition.Index;
 import com.yahoo.searchdefinition.RankProfile;
 import com.yahoo.searchdefinition.DocumentsOnlyRankProfile;
@@ -231,6 +232,8 @@ TOKEN :
 | < SUBSTRING: "substring" >
 | < SUFFIX: "suffix" >
 | < CONSTANT: "constant">
+| < ONNXMODEL: "onnx-model">
+| < MODEL: "model" >
 | < RANKPROFILE: "rank-profile" >
 | < RANKDEGRADATIONFREQ: "rank-degradation-frequency" >
 | < RANKDEGRADATION: "rank-degradation" >
@@ -379,6 +382,8 @@ TOKEN :
 | < LESSTHAN: "<" >
 | < GREATERTHAN: ">" >
 | < VARIABLE: "$" <IDENTIFIER> >
+| < ONNX_INPUT_SL: "input" (" ")* (<IDENTIFIER>|<QUOTEDSTRING>) (" ")* ":" (" ")* (~["\n"])* ("\n")? >
+| < ONNX_OUTPUT_SL: "output" (" ")* (<IDENTIFIER>|<QUOTEDSTRING>) (" ")* ":" (" ")* (~["\n"])* ("\n")? >
 }
 
 // Declare a special skip token for comments.
@@ -451,7 +456,8 @@ Object rootSchemaItem(Search search) : { }
       | structOutside(search)
       | annotationOutside(search)
       | fieldSet(search)
-      | importField(search) )
+      | importField(search)
+      | onnxModel(search) )
     { return null; }
 }
 
@@ -1847,6 +1853,60 @@ void hnswIndexBody(HnswIndexParams.Builder params) :
 }
 
 /**
+ * Consumes a onnx-model block of a search element.
+ *
+ * @param search The search object to add content to.
+ */
+void onnxModel(Search search) :
+{
+    String name;
+    OnnxModel onnxModel;
+}
+{
+    ( <ONNXMODEL> name = identifier()
+        {
+            onnxModel = new OnnxModel(name);
+        }
+      lbrace() (onnxModelItem(onnxModel) (<NL>)*)+ <RBRACE> )
+    {
+        if (documentsOnly) return;
+        search.onnxModels().add(onnxModel);
+    }
+}
+
+/**
+ * This rule consumes an onnx-model block.
+ *
+ * @param onnxModel The onnxModel to modify.
+ * @return Null.
+ */
+Object onnxModelItem(OnnxModel onnxModel) :
+{
+    String path = null;
+}
+{
+    (
+        (<FILE> <COLON> path = filePath() { } (<NL>)*) { onnxModel.setFileName(path); } |
+        (<URI> <COLON> path = uriPath() { } (<NL>)*) { onnxModel.setUri(path); } |
+        (<ONNX_INPUT_SL>) {
+            String name = token.image.substring(5, token.image.lastIndexOf(":")).trim();
+            if (name.startsWith("\"")) { name = name.substring(1, name.length() - 1); }
+            String source = token.image.substring(token.image.lastIndexOf(":") + 1).trim();
+            onnxModel.addInputNameMapping(name, source);
+        } |
+        (<ONNX_OUTPUT_SL>) {
+            String name = token.image.substring(6, token.image.lastIndexOf(":")).trim();
+            if (name.startsWith("\"")) { name = name.substring(1, name.length() - 1); }
+            String as = token.image.substring(token.image.lastIndexOf(":") + 1).trim();
+            onnxModel.addOutputNameMapping(name, as);
+        }
+    )
+    {
+        return null;
+    }
+}
+
+/**
  * Consumes a constant block of a search element.
  *
  * @param search The search object to add content to.
@@ -1917,7 +1977,7 @@ void rankProfile(Search search) :
     RankProfile profile;
 }
 {
-    ( <RANKPROFILE> name = identifierWithDash()
+    ( ( <MODEL> | <RANKPROFILE> ) name = identifierWithDash()
         {
             if (documentsOnly) {
                 profile = new DocumentsOnlyRankProfile(name, search, rankProfileRegistry);
@@ -2531,10 +2591,10 @@ String identifierWithDash() :
 }
 
 /**
- * This rule consumes an identifier. This must be kept in sync with all word tokens that should be parseable as
+ * Consumes an identifier. This must be kept in sync with all word tokens that should be parseable as
  * identifiers.
  *
- * @return The identifier string.
+ * @return the identifier string
  */
 String identifier() : { }
 {
@@ -2617,6 +2677,7 @@ String identifier() : { }
       | <QUATERNARY>
       | <QUERYCOMMAND>
       | <RANK>
+      | <MODEL>
       | <RANKPROFILE>
       | <RANKPROPERTIES>
       | <RANKSCOREDROPLIMIT>
@@ -2665,7 +2726,7 @@ String identifier() : { }
 }
 
 /**
- * This rule consumes a string token and returns the token image.
+ * Consumes a string token and returns the token image.
  *
  * @return The consumed token image.
  */
@@ -2675,7 +2736,7 @@ String string() : { }
 }
 
 /**
- * This rule consumes a quoted string token and returns the token image minus the quotes. This does not perform
+ * Consumes a quoted string token and returns the token image minus the quotes. This does not perform
  * unescaping of the content, it simply removes the first and last character of the image. However, the token itself can
  * contain anything but a double quote.
  *

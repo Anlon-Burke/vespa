@@ -5,6 +5,7 @@
 #include "communicationmanager.h"
 #include "opslogger.h"
 #include "statemanager.h"
+#include <vespa/storage/common/i_storage_chain_builder.h>
 #include <vespa/storage/distributor/distributor.h>
 #include <vespa/storage/common/hostreporter/hostinfo.h>
 #include <vespa/vespalib/util/exceptions.h>
@@ -19,7 +20,8 @@ DistributorNode::DistributorNode(
         DistributorNodeContext& context,
         ApplicationGenerationFetcher& generationFetcher,
         NeedActiveState activeState,
-        StorageLink::UP communicationManager)
+        StorageLink::UP communicationManager,
+        std::unique_ptr<IStorageChainBuilder> storage_chain_builder)
     : StorageNode(configUri, context, generationFetcher,
             std::unique_ptr<HostInfo>(new HostInfo()),
                   communicationManager.get() == 0 ? NORMAL
@@ -31,6 +33,9 @@ DistributorNode::DistributorNode(
       _manageActiveBucketCopies(activeState == NEED_ACTIVE_BUCKET_STATES_SET),
       _retrievedCommunicationManager(std::move(communicationManager))
 {
+    if (storage_chain_builder) {
+        set_storage_chain_builder(std::move(storage_chain_builder));
+    }
     try{
         initialize();
     } catch (const vespalib::NetworkSetupFailureException & e) {
@@ -69,12 +74,9 @@ DistributorNode::handleConfigChange(vespa::config::content::core::StorDistributo
 {
     framework::TickingLockGuard guard(_threadPool->freezeAllTicks());
     _context.getComponentRegister().setDistributorConfig(c);
-    framework::MilliSecTime ticksWaitTime(c.ticksWaitTimeMs);
-    framework::MilliSecTime maxProcessTime(c.maxProcessTimeMs);
-    _threadPool->updateParametersAllThreads(
-        ticksWaitTime,
-        maxProcessTime,
-        c.ticksBeforeWait);
+    _threadPool->updateParametersAllThreads(std::chrono::milliseconds(c.ticksWaitTimeMs),
+                                            std::chrono::milliseconds(c.maxProcessTimeMs),
+                                            c.ticksBeforeWait);
 }
 
 void
@@ -84,34 +86,33 @@ DistributorNode::handleConfigChange(vespa::config::content::core::StorVisitordis
     _context.getComponentRegister().setVisitorConfig(c);
 }
 
-StorageLink::UP
-DistributorNode::createChain()
+void
+DistributorNode::createChain(IStorageChainBuilder &builder)
 {
     DistributorComponentRegister& dcr(_context.getComponentRegister());
     // TODO: All components in this chain should use a common thread instead of
     // each having its own configfetcher.
     StorageLink::UP chain;
     if (_retrievedCommunicationManager.get()) {
-        chain = std::move(_retrievedCommunicationManager);
+        builder.add(std::move(_retrievedCommunicationManager));
     } else {
-        chain.reset(_communicationManager
-                = new CommunicationManager(dcr, _configUri));
+        auto communication_manager = std::make_unique<CommunicationManager>(dcr, _configUri);
+        _communicationManager = communication_manager.get();
+        builder.add(std::move(communication_manager));
     }
     std::unique_ptr<StateManager> stateManager(releaseStateManager());
 
-    chain->push_back(StorageLink::UP(new Bouncer(dcr, _configUri)));
-    chain->push_back(StorageLink::UP(new OpsLogger(dcr, _configUri)));
+    builder.add(std::make_unique<Bouncer>(dcr, _configUri));
+    builder.add(std::make_unique<OpsLogger>(dcr, _configUri));
     // Distributor instance registers a host info reporter with the state
     // manager, which is safe since the lifetime of said state manager
     // extends to the end of the process.
-    chain->push_back(StorageLink::UP(
-            new storage::distributor::Distributor(
-                dcr, *_threadPool, getDoneInitializeHandler(),
-                _manageActiveBucketCopies,
-                stateManager->getHostInfo())));
+    builder.add(std::make_unique<storage::distributor::Distributor>
+                (dcr, *_threadPool, getDoneInitializeHandler(),
+                 _manageActiveBucketCopies,
+                 stateManager->getHostInfo()));
 
-    chain->push_back(StorageLink::UP(stateManager.release()));
-    return chain;
+    builder.add(std::move(stateManager));
 }
 
 api::Timestamp

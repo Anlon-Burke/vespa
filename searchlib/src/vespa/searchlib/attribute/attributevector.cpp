@@ -16,12 +16,11 @@
 #include <vespa/fastlib/io/bufferedfile.h>
 #include <vespa/searchlib/common/tunefileinfo.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
-#include <vespa/searchlib/parsequery/stackdumpiterator.h>
-#include <vespa/searchlib/query/query_term_simple.h>
 #include <vespa/searchlib/query/query_term_decoder.h>
 #include <vespa/searchlib/queryeval/emptysearch.h>
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/searchlib/util/logutil.h>
+#include <vespa/searchcommon/attribute/attribute_utils.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".searchlib.attribute.attributevector");
@@ -129,7 +128,8 @@ AttributeVector::AttributeVector(vespalib::stringref baseFileName, const Config 
       _createSerialNum(0u),
       _compactLidSpaceGeneration(0u),
       _hasEnum(false),
-      _loaded(false)
+      _loaded(false),
+      _isUpdateableInMemoryOnly(attribute::isUpdateableInMemoryOnly(getName(), getConfig()))
 {
 }
 
@@ -635,7 +635,7 @@ AttributeVector::onInitSave(vespalib::stringref)
 bool
 AttributeVector::hasActiveEnumGuards()
 {
-    std::unique_lock<std::shared_timed_mutex> lock(_enumLock, std::defer_lock);
+    std::unique_lock<std::shared_mutex> lock(_enumLock, std::defer_lock);
     for (size_t i = 0; i < 1000; ++i) {
         // Note: Need to run this in loop as try_lock() is allowed to fail spuriously and return false
         // even if the mutex is not currently locked by any other thread.
@@ -735,10 +735,10 @@ class ReadGuard : public attribute::AttributeReadGuard
 {
     using GenerationHandler = vespalib::GenerationHandler;
     GenerationHandler::Guard _generationGuard;
-    using EnumGuard = std::shared_lock<std::shared_timed_mutex>;
+    using EnumGuard = std::shared_lock<std::shared_mutex>;
     EnumGuard _enumGuard;
 public:
-    ReadGuard(const attribute::IAttributeVector *attr, GenerationHandler::Guard &&generationGuard, std::shared_timed_mutex *enumLock)
+    ReadGuard(const attribute::IAttributeVector *attr, GenerationHandler::Guard &&generationGuard, std::shared_mutex *enumLock)
         : attribute::AttributeReadGuard(attr),
           _generationGuard(std::move(generationGuard)),
           _enumGuard(enumLock != nullptr ? EnumGuard(*enumLock) : EnumGuard())

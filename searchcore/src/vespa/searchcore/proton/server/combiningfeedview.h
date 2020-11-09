@@ -6,6 +6,8 @@
 #include "replaypacketdispatcher.h"
 #include "ibucketstatecalculator.h"
 #include <vespa/searchcore/proton/common/feedtoken.h>
+#include <vespa/document/bucket/bucketspace.h>
+#include <vespa/document/base/globalid.h>
 #include <vespa/searchlib/common/serialnum.h>
 
 namespace proton {
@@ -47,7 +49,7 @@ private:
     }
 
     bool shouldBeReady(const document::BucketId &bucket) const;
-    void forceCommit(search::SerialNum serialNum) override;
+    void forceCommit(search::SerialNum serialNum, DoneCallback onDone) override;
 public:
     typedef std::shared_ptr<CombiningFeedView> SP;
 

@@ -56,10 +56,13 @@ public abstract class AbstractService extends AbstractConfigProducer<AbstractCon
     private String preload = Defaults.getDefaults().underVespaHome("lib64/vespa/malloc/libvespamalloc.so");
 
     // If larger or equal to 0 it mean that explicit mmaps shall not be included in coredump.
-    private long mmapNoCoreLimit = -1l;
+    private long mmapNoCoreLimit = -1L;
 
     // If this is true it will dump core when OOM
     private boolean coreOnOOM = false;
+
+    // If greater than 0, controls the number of threads used by open mp
+    private int ompNumThreads = 0;
 
     private String noVespaMalloc = "";
     private String vespaMalloc = "";
@@ -74,7 +77,7 @@ public abstract class AbstractService extends AbstractConfigProducer<AbstractCon
      * more key/value pairs to the service-list dump.
      * Supported key datatypes are String, and values may be String or Integer.
      */
-    private Map<String, Object> serviceProperties = new LinkedHashMap<>();
+    private final Map<String, Object> serviceProperties = new LinkedHashMap<>();
 
     /** The affinity properties of this service. */
     private Optional<Affinity> affinity = Optional.empty();
@@ -173,15 +176,6 @@ public abstract class AbstractService extends AbstractConfigProducer<AbstractCon
         } else {
             // User defined from spec
             wantedPort = userWantedPort;
-/*            if ((wantedPort >= Host.BASE_PORT) &&
-                    (wantedPort <= (Host.BASE_PORT + Host.MAX_PORTS))) {
-                throw new RuntimeException
-                        ("Attribute 'basePort=" + wantedPort +
-                                "' is not allowed to be inside Vespa's reserved port range "
-                                + Host.BASE_PORT + "-"
-                                + (Host.BASE_PORT + Host.MAX_PORTS) + ".");
-            }
-*/
         }
         return wantedPort;
     }
@@ -207,20 +201,18 @@ public abstract class AbstractService extends AbstractConfigProducer<AbstractCon
      * Computes and returns the i'th port for this service, based on
      * this Service's baseport.
      *
-     * @param i The offset from 'basePort' of the port to return
+     * @param i the offset from 'basePort' of the port to return
      * @return the i'th port relative to the base port.
      * @throws IllegalStateException if i is out of range.
      */
     public int getRelativePort(int i) {
         if (ports.size() < 1) {
-            throw new IllegalStateException
-                    ("Requested port with offset " + i + " for service that " +
-                            "has not reserved any ports: " + this);
+            throw new IllegalStateException("Requested port with offset " + i + " for service that " +
+                                            "has not reserved any ports: " + this);
         }
         if (i >= ports.size()) {
-            throw new IllegalStateException
-                    ("Requested port with offset " + i + " for service that " +
-                            "only has reserved " + ports.size() + " ports: " + this);
+            throw new IllegalStateException("Requested port with offset " + i + " for service that " +
+                                            "only has reserved " + ports.size() + " ports: " + this);
         }
         return ports.get(i);
     }
@@ -266,20 +258,10 @@ public abstract class AbstractService extends AbstractConfigProducer<AbstractCon
         return myClass.getName().substring(1 + myPackage.getName().length());
     }
 
-    /**
-     * @return the physical host on which this service runs.
-     */
-    public Host getHost() {
-        if (hostResource != null) {
-            return hostResource.getHost();
-        } else {
-            return null;
-        }
-    }
+    @Override
+    public HostResource getHost() { return hostResource; }
 
-    /**
-     * @return The hostname on which this service runs.
-     */
+    @Override
     public String getHostName() {
         return hostResource.getHostname();
     }
@@ -303,7 +285,6 @@ public abstract class AbstractService extends AbstractConfigProducer<AbstractCon
     protected int getIndex(HostResource host) {
         int i = 0;
         for (Service s : host.getServices()) {
-            //if (s.getClass().equals(getClass()) && (s != this)) {
             if (s.getServiceType().equals(getServiceType()) && (s != this)) {
                 i++;
             }
@@ -392,6 +373,8 @@ public abstract class AbstractService extends AbstractConfigProducer<AbstractCon
     public void setMMapNoCoreLimit(long noCoreLimit) { this.mmapNoCoreLimit = noCoreLimit; }
     public boolean getCoreOnOOM() { return coreOnOOM; }
     public void setCoreOnOOM(boolean coreOnOOM) { this.coreOnOOM = coreOnOOM; }
+    public int getOmpNumThreads() { return ompNumThreads; }
+    public void setOmpNumThreads(int value) { ompNumThreads = value; }
 
     public String getNoVespaMalloc() { return noVespaMalloc; }
     public String getVespaMalloc() { return vespaMalloc; }
@@ -410,6 +393,11 @@ public abstract class AbstractService extends AbstractConfigProducer<AbstractCon
 
     public String getCoreOnOOMEnvVariable() {
         return getCoreOnOOM() ? "" : "VESPA_SILENCE_CORE_ON_OOM=true ";
+    }
+    public String getOmpNumThreadsEnvVariable() {
+        return (getOmpNumThreads() == 0)
+            ? ""
+            : "OMP_NUM_THREADS=" + getOmpNumThreads() + " ";
     }
     public String getNoVespaMallocEnvVariable() {
         return "".equals(getNoVespaMalloc())
@@ -433,12 +421,12 @@ public abstract class AbstractService extends AbstractConfigProducer<AbstractCon
     }
 
     public String getEnvVariables() {
-        return getCoreOnOOMEnvVariable() + getMMapNoCoreEnvVariable() + getNoVespaMallocEnvVariable() +
+        return getCoreOnOOMEnvVariable() + getOmpNumThreadsEnvVariable() + getMMapNoCoreEnvVariable() + getNoVespaMallocEnvVariable() +
                 getVespaMallocEnvVariable() + getVespaMallocDebugEnvVariable() + getVespaMallocDebugStackTraceEnvVariable();
     }
 
     /**
-     * WARNING: should only be called before initService(), otherwise call at own risk!
+     * WARNING: should only be called before initService()
      */
     public void setBasePort(int wantedPort) {
         this.basePort = wantedPort;
@@ -455,27 +443,27 @@ public abstract class AbstractService extends AbstractConfigProducer<AbstractCon
     /**
      * Add the given file to the application's file distributor.
      *
-     * @param relativePath path to the file, relative to the app package.
+     * @param relativePath path to the file, relative to the app package
      * @return the file reference hash
      */
     public FileReference sendFile(String relativePath) {
-        return getRoot().getFileDistributor().sendFileToHost(relativePath, getHost());
+        Host host = null;
+        if (getHost() != null) // false when running application tests without hosts
+            host = getHost().getHost();
+        return getRoot().getFileDistributor().sendFileToHost(relativePath, host);
     }
 
     public FileReference sendUri(String uri) {
-        return getRoot().getFileDistributor().sendUriToHost(uri, getHost());
+        return getRoot().getFileDistributor().sendUriToHost(uri, getHost().getHost());
     }
 
-    /**
-     *
-     * The service HTTP port for health status
-     * @return portnumber
-     */
+    /** The service HTTP port for health status */
     public int getHealthPort() { return -1;}
 
     /**
      * Overridden by subclasses. List of default dimensions to be added to this services metrics
-     * @return The default dimensions for this service
+     *
+     * @return the default dimensions for this service
      */
     public HashMap<String, String> getDefaultMetricDimensions(){ return new LinkedHashMap<>(); }
 
@@ -500,4 +488,5 @@ public abstract class AbstractService extends AbstractConfigProducer<AbstractCon
     public String toString() {
         return getServiceName() + " on " + (getHost() == null ? "no host" : getHost().toString());
     }
+
 }

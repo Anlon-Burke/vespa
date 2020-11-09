@@ -6,8 +6,6 @@ import com.yahoo.jdisc.Metric;
 import com.yahoo.jdisc.Request;
 import com.yahoo.jdisc.ResourceReference;
 import com.yahoo.jdisc.Response;
-import com.yahoo.jdisc.application.BindingMatch;
-import com.yahoo.jdisc.application.UriPattern;
 import com.yahoo.jdisc.handler.AbstractRequestHandler;
 import com.yahoo.jdisc.handler.BufferedContentChannel;
 import com.yahoo.jdisc.handler.ContentChannel;
@@ -15,12 +13,12 @@ import com.yahoo.jdisc.handler.OverloadException;
 import com.yahoo.jdisc.handler.ReadableContentChannel;
 import com.yahoo.jdisc.handler.ResponseDispatch;
 import com.yahoo.jdisc.handler.ResponseHandler;
-import java.util.logging.Level;
+import com.yahoo.container.core.HandlerMetricContextUtil;
 
-import java.net.URI;
 import java.time.Duration;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -73,35 +71,14 @@ public abstract class ThreadedRequestHandler extends AbstractRequestHandler {
      */
     @Inject
     protected ThreadedRequestHandler(Executor executor, Metric metric, boolean allowAsyncResponse) {
-        executor.getClass(); // throws NullPointerException
-        this.executor = executor;
+        this.executor = Objects.requireNonNull(executor);
         this.metric = (metric == null) ? new NullRequestMetric() : metric;
         this.allowAsyncResponse = allowAsyncResponse;
     }
 
     Metric.Context contextFor(Request request, Map<String, String> extraDimensions) {
-        BindingMatch match = request.getBindingMatch();
-        if (match == null) return null;
-        UriPattern matched = match.matched();
-        if (matched == null) return null;
-        String name = matched.toString();
-        String endpoint = request.headers().containsKey("Host") ? request.headers().get("Host").get(0) : null;
-
-        Map<String, String> dimensions = new HashMap<>();
-        dimensions.put("handler", name);
-        if (endpoint != null) {
-            dimensions.put("endpoint", endpoint);
-        }
-        URI uri = request.getUri();
-        dimensions.put("scheme", uri.getScheme());
-        dimensions.put("port", Integer.toString(uri.getPort()));
-        String handlerClassName = getClass().getName();
-        dimensions.put("handler-name", handlerClassName);
-        dimensions.putAll(extraDimensions);
-        return this.metric.createContext(dimensions);
+        return HandlerMetricContextUtil.contextFor(request, extraDimensions, metric, getClass());
     }
-
-    private Metric.Context contextFor(Request request) { return contextFor(request, Map.of()); }
 
     /**
      * Handles a request by assigning a worker thread to it.
@@ -110,7 +87,7 @@ public abstract class ThreadedRequestHandler extends AbstractRequestHandler {
      */
     @Override
     public final ContentChannel handleRequest(Request request, ResponseHandler responseHandler) {
-        metric.add("handled.requests", 1, contextFor(request));
+        HandlerMetricContextUtil.onHandle(request, metric, getClass());
         if (request.getTimeout(TimeUnit.SECONDS) == null) {
             Duration timeout = getTimeout();
             if (timeout != null) {
@@ -118,7 +95,7 @@ public abstract class ThreadedRequestHandler extends AbstractRequestHandler {
             }
         }
         BufferedContentChannel content = new BufferedContentChannel();
-        final RequestTask command = new RequestTask(request, content, responseHandler);
+        RequestTask command = new RequestTask(request, content, responseHandler);
         try {
             executor.execute(command);
         } catch (RejectedExecutionException e) {
@@ -130,9 +107,23 @@ public abstract class ThreadedRequestHandler extends AbstractRequestHandler {
         return content;
     }
 
+    /**
+     * <p>Returns the request type classification to use for requests to this handler.
+     * This overrides the default classification based on request method, and can in turn
+     * be overridden by setting a request type on individual responses in handleRequest
+     * whenever it is invoked (i.e not for requests that are rejected early e.g due to overload).</p>
+     *
+     * <p>This default implementation returns empty.</p>
+     *
+     * @return the request type to set, or empty to not override the default classification based on request method
+     */
+    protected Optional<Request.RequestType> getRequestType() { return Optional.empty(); }
+
     public Duration getTimeout() {
         return TIMEOUT;
     }
+
+    public Executor executor() { return executor; }
 
     private void logRejectedRequests() {
         if (numRejectedRequests == 0) {
@@ -161,6 +152,17 @@ public abstract class ThreadedRequestHandler extends AbstractRequestHandler {
 
     protected abstract void handleRequest(Request request, BufferedContentChannel requestContent,
                                           ResponseHandler responseHandler);
+
+    /**
+     * Invoked to write an error response when the worker pool is overloaded.
+     * A subclass may override this method to define a custom response.
+     */
+    protected void writeErrorResponseOnOverload(Request request, ResponseHandler responseHandler) {
+        Response response = new Response(Response.Status.SERVICE_UNAVAILABLE);
+        if (getRequestType().isPresent() && response.getRequestType() == null)
+            response.setRequestType(getRequestType().get());
+        ResponseDispatch.newInstance(response).dispatch(responseHandler);
+    }
 
     private class RequestTask implements ResponseHandler, Runnable {
 
@@ -202,9 +204,10 @@ public abstract class ThreadedRequestHandler extends AbstractRequestHandler {
         @Override
         public ContentChannel handleResponse(Response response) {
             if ( tryHasResponded()) throw new IllegalStateException("Response already handled");
+            if (getRequestType().isPresent() && response.getRequestType() == null)
+                response.setRequestType(getRequestType().get());
             ContentChannel cc = responseHandler.handleResponse(response);
-            long millis = request.timeElapsed(TimeUnit.MILLISECONDS);
-            metric.set("handled.latency", millis, contextFor(request));
+            HandlerMetricContextUtil.onHandled(request, metric, getClass());
             return cc;
         }
 
@@ -236,14 +239,15 @@ public abstract class ThreadedRequestHandler extends AbstractRequestHandler {
             }
         }
 
+
         /**
          * Clean up when the task can not be executed because no worker thread is available.
          */
-        public void failOnOverload() {
+        void failOnOverload() {
             try (ResourceReference reference = requestReference) {
                 incrementRejectedRequests();
                 logRejectedRequests();
-                ResponseDispatch.newInstance(Response.Status.SERVICE_UNAVAILABLE).dispatch(responseHandler);
+                writeErrorResponseOnOverload(request, responseHandler);
             }
         }
     }

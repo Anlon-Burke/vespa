@@ -10,6 +10,7 @@
 #include <vespa/storageapi/message/persistence.h>
 #include <vespa/storageapi/message/removelocation.h>
 #include <vespa/storageapi/message/visitor.h>
+#include <vespa/storageapi/message/stat.h>
 
 namespace storage::mbusprot {
 
@@ -943,7 +944,7 @@ void fill_proto_apply_diff_vector(::google::protobuf::RepeatedPtrField<protobuf:
 void ProtocolSerialization7::onEncode(GBBuf& buf, const api::ApplyBucketDiffCommand& msg) const {
     encode_bucket_request<protobuf::ApplyBucketDiffRequest>(buf, msg, [&](auto& req) {
         set_merge_nodes(*req.mutable_nodes(), msg.getNodes());
-        req.set_max_buffer_size(msg.getMaxBufferSize());
+        req.set_max_buffer_size(0x400000); // Unused, GC soon.
         fill_proto_apply_diff_vector(*req.mutable_entries(), msg.getDiff());
     });
 }
@@ -957,7 +958,7 @@ void ProtocolSerialization7::onEncode(GBBuf& buf, const api::ApplyBucketDiffRepl
 api::StorageCommand::UP ProtocolSerialization7::onDecodeApplyBucketDiffCommand(BBuf& buf) const {
     return decode_bucket_request<protobuf::ApplyBucketDiffRequest>(buf, [&](auto& req, auto& bucket) {
         auto nodes = get_merge_nodes(req.nodes());
-        auto cmd = std::make_unique<api::ApplyBucketDiffCommand>(bucket, std::move(nodes), req.max_buffer_size());
+        auto cmd = std::make_unique<api::ApplyBucketDiffCommand>(bucket, std::move(nodes));
         fill_api_apply_diff_vector(cmd->getDiff(), req.entries());
         return cmd;
     });
@@ -1310,6 +1311,34 @@ api::StorageCommand::UP ProtocolSerialization7::onDecodeDestroyVisitorCommand(BB
 api::StorageReply::UP ProtocolSerialization7::onDecodeDestroyVisitorReply(const SCmd& cmd, BBuf& buf) const {
     return decode_response<protobuf::DestroyVisitorResponse>(buf, [&]([[maybe_unused]] auto& res) {
         return std::make_unique<api::DestroyVisitorReply>(static_cast<const api::DestroyVisitorCommand&>(cmd));
+    });
+}
+
+// -----------------------------------------------------------------
+// StatBucket
+// -----------------------------------------------------------------
+
+void ProtocolSerialization7::onEncode(GBBuf& buf, const api::StatBucketCommand& msg) const {
+    encode_bucket_request<protobuf::StatBucketRequest>(buf, msg, [&](auto& req) {
+        req.set_document_selection(msg.getDocumentSelection().data(), msg.getDocumentSelection().size());
+    });
+}
+
+void ProtocolSerialization7::onEncode(GBBuf& buf, const api::StatBucketReply& msg) const {
+    encode_bucket_response<protobuf::StatBucketResponse>(buf, msg, [&](auto& res) {
+        res.set_results(msg.getResults().data(), msg.getResults().size());
+    });
+}
+
+api::StorageCommand::UP ProtocolSerialization7::onDecodeStatBucketCommand(BBuf& buf) const {
+    return decode_bucket_request<protobuf::StatBucketRequest>(buf, [&](auto& req, auto& bucket) {
+        return std::make_unique<api::StatBucketCommand>(bucket, req.document_selection());
+    });
+}
+
+api::StorageReply::UP ProtocolSerialization7::onDecodeStatBucketReply(const SCmd& cmd, BBuf& buf) const {
+    return decode_bucket_response<protobuf::StatBucketResponse>(buf, [&](auto& res) {
+        return std::make_unique<api::StatBucketReply>(static_cast<const api::StatBucketCommand&>(cmd), res.results());
     });
 }
 

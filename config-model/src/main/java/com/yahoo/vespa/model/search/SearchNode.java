@@ -2,6 +2,8 @@
 package com.yahoo.vespa.model.search;
 
 import com.yahoo.cloud.config.filedistribution.FiledistributorrpcConfig;
+import com.yahoo.config.model.api.Model;
+import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.AbstractConfigProducer;
 import com.yahoo.metrics.MetricsmanagerConfig;
@@ -67,6 +69,7 @@ public class SearchNode extends AbstractService implements
     private AbstractService serviceLayerService;
     private final Optional<Tuning> tuning;
     private final Optional<ResourceLimits> resourceLimits;
+    private final boolean useFastValueTensorImplementation;
 
     /** Whether this search node is co-located with a container node on a hosted system */
     private final boolean combined;
@@ -97,34 +100,35 @@ public class SearchNode extends AbstractService implements
 
         @Override
         protected SearchNode doBuild(DeployState deployState, AbstractConfigProducer ancestor, Element producerSpec) {
-            return new SearchNode(ancestor, name, contentNode.getDistributionKey(), nodeSpec, clusterName, contentNode,
+            return new SearchNode(deployState.getProperties(), ancestor, name, contentNode.getDistributionKey(), nodeSpec, clusterName, contentNode,
                                   flushOnShutdown, tuning, resourceLimits, deployState.isHosted(), combined);
         }
 
     }
 
-    public static SearchNode create(AbstractConfigProducer parent, String name, int distributionKey, NodeSpec nodeSpec,
+    public static SearchNode create(ModelContext.Properties props, AbstractConfigProducer parent, String name, int distributionKey, NodeSpec nodeSpec,
                                     String clusterName, AbstractService serviceLayerService, boolean flushOnShutdown,
                                     Optional<Tuning> tuning, Optional<ResourceLimits> resourceLimits, boolean isHostedVespa,
                                     boolean combined) {
-        return new SearchNode(parent, name, distributionKey, nodeSpec, clusterName, serviceLayerService,
+        return new SearchNode(props, parent, name, distributionKey, nodeSpec, clusterName, serviceLayerService,
                               flushOnShutdown, tuning, resourceLimits, isHostedVespa, combined);
     }
 
-    private SearchNode(AbstractConfigProducer parent, String name, int distributionKey, NodeSpec nodeSpec,
+    private SearchNode(ModelContext.Properties props, AbstractConfigProducer parent, String name, int distributionKey, NodeSpec nodeSpec,
                        String clusterName, AbstractService serviceLayerService, boolean flushOnShutdown,
                        Optional<Tuning> tuning, Optional<ResourceLimits> resourceLimits, boolean isHostedVespa,
                        boolean combined) {
-        this(parent, name, nodeSpec, clusterName, flushOnShutdown, tuning, resourceLimits, isHostedVespa, combined);
+        this(props, parent, name, nodeSpec, clusterName, flushOnShutdown, tuning, resourceLimits, isHostedVespa, combined);
         this.distributionKey = distributionKey;
         this.serviceLayerService = serviceLayerService;
         setPropertiesElastic(clusterName, distributionKey);
     }
 
-    private SearchNode(AbstractConfigProducer parent, String name, NodeSpec nodeSpec, String clusterName,
+    private SearchNode(ModelContext.Properties props, AbstractConfigProducer parent, String name, NodeSpec nodeSpec, String clusterName,
                        boolean flushOnShutdown, Optional<Tuning> tuning, Optional<ResourceLimits> resourceLimits, boolean isHostedVespa,
                        boolean combined) {
         super(parent, name);
+        setOmpNumThreads(1);
         this.isHostedVespa = isHostedVespa;
         this.combined = combined;
         this.nodeSpec = nodeSpec;
@@ -138,6 +142,7 @@ public class SearchNode extends AbstractService implements
         // Properties are set in DomSearchBuilder
         this.tuning = tuning;
         this.resourceLimits = resourceLimits;
+        this.useFastValueTensorImplementation = props.useFastValueTensorImplementation();
     }
 
     private void setPropertiesElastic(String clusterName, int distributionKey) {
@@ -244,6 +249,9 @@ public class SearchNode extends AbstractService implements
 
     @Override
     public String getStartupCommand() {
+        if (getOmpNumThreads() != 1) {
+            throw new IllegalStateException("ompNumThreads must be 1");
+        }
         String startup = getEnvVariables() + "exec $ROOT/sbin/vespa-proton " + "--identity " + getConfigId();
         if (serviceLayerService != null) {
             startup = startup + " --serviceidentity " + serviceLayerService.getConfigId();
@@ -255,7 +263,7 @@ public class SearchNode extends AbstractService implements
     public void getConfig(FiledistributorrpcConfig.Builder builder) {
         FileDistributionConfigProducer fileDistribution = getRoot().getFileDistributionConfigProducer();
         if (fileDistribution != null) {
-            FileDistributionConfigProvider configProducer = fileDistribution.getConfigProducer(getHost());
+            FileDistributionConfigProvider configProducer = fileDistribution.getConfigProducer(getHost().getHost());
             configProducer.getConfig(builder);
         }
     }
@@ -289,6 +297,9 @@ public class SearchNode extends AbstractService implements
             tuning.ifPresent(t -> t.getConfig(builder));
             resourceLimits.ifPresent(l -> l.getConfig(builder));
         }
+        if (useFastValueTensorImplementation) {
+            builder.tensor_implementation(ProtonConfig.Tensor_implementation.FAST_VALUE);
+        }
     }
 
     @Override
@@ -308,9 +319,7 @@ public class SearchNode extends AbstractService implements
                     periods(point.getIntervalSeconds()).periods(300));
         }
         builder.consumer(
-                new MetricsmanagerConfig.Consumer.Builder().
-                        name("log").
-                        tags("logdefault"));
+                new MetricsmanagerConfig.Consumer.Builder().name("log").tags("logdefault"));
     }
 
     @Override

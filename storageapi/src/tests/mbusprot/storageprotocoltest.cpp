@@ -5,6 +5,7 @@
 #include <vespa/storageapi/message/bucketsplitting.h>
 #include <vespa/storageapi/message/internal.h>
 #include <vespa/storageapi/message/removelocation.h>
+#include <vespa/storageapi/message/stat.h>
 #include <vespa/storageapi/mbusprot/storageprotocol.h>
 #include <vespa/storageapi/mbusprot/storagecommand.h>
 #include <vespa/storageapi/mbusprot/storagereply.h>
@@ -567,6 +568,24 @@ TEST_P(StorageProtocolTest, remove_location) {
     }
 }
 
+TEST_P(StorageProtocolTest, stat_bucket) {
+    if (GetParam().getMajor() < 7) {
+        return; // Only available for protobuf-backed protocol version.
+    }
+    auto cmd = std::make_shared<StatBucketCommand>(_bucket, "id.group == 'mygroup'");
+    auto cmd2 = copyCommand(cmd);
+    EXPECT_EQ("id.group == 'mygroup'", cmd2->getDocumentSelection());
+    EXPECT_EQ(_bucket, cmd2->getBucket());
+
+    auto reply = std::make_shared<StatBucketReply>(*cmd2, "neat bucket info goes here");
+    reply->remapBucketId(_dummy_remap_bucket);
+    auto reply2 = copyReply(reply);
+    EXPECT_EQ(reply2->getResults(), "neat bucket info goes here");
+    EXPECT_TRUE(reply2->hasBeenRemapped());
+    EXPECT_EQ(_dummy_remap_bucket, reply2->getBucketId());
+    EXPECT_EQ(_bucket_id, reply2->getOriginalBucketId());
+}
+
 TEST_P(StorageProtocolTest, create_visitor) {
     std::vector<document::BucketId> buckets;
     buckets.push_back(document::BucketId(16, 1));
@@ -669,7 +688,7 @@ TEST_P(StorageProtocolTest, apply_bucket_diff) {
     nodes.push_back(13);
     std::vector<ApplyBucketDiffCommand::Entry> entries = {dummy_apply_entry()};
 
-    auto cmd = std::make_shared<ApplyBucketDiffCommand>(_bucket, nodes, 1234);
+    auto cmd = std::make_shared<ApplyBucketDiffCommand>(_bucket, nodes);
     cmd->getDiff() = entries;
     auto cmd2 = copyCommand(cmd);
     EXPECT_EQ(_bucket, cmd2->getBucket());
@@ -679,7 +698,6 @@ TEST_P(StorageProtocolTest, apply_bucket_diff) {
 
     EXPECT_EQ(nodes, reply2->getNodes());
     EXPECT_EQ(entries, reply2->getDiff());
-    EXPECT_EQ(1234u, reply2->getMaxBufferSize());
 }
 
 namespace {

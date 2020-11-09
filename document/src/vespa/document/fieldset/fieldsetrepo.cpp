@@ -5,7 +5,11 @@
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/document/repo/documenttyperepo.h>
+#include <vespa/document/base/exceptions.h>
 #include <vespa/vespalib/stllike/hash_map.hpp>
+
+#include <vespa/log/log.h>
+LOG_SETUP(".document.fieldset.fieldsetrepo");
 
 using vespalib::StringTokenizer;
 
@@ -124,7 +128,12 @@ FieldSetRepo::configureDocumentType(const DocumentType & documentType) {
     for (const auto & entry : documentType.getFieldSets()) {
         vespalib::string fieldSetName(documentType.getName());
         fieldSetName.append(':').append(entry.first);
-        _configuredFieldSets[fieldSetName] = parse(_doumentTyperepo, fieldSetName);
+        try {
+            auto fieldset = parse(_doumentTyperepo, fieldSetName);
+            _configuredFieldSets[fieldSetName] = std::move(fieldset);
+        } catch (const FieldNotFoundException & ex) {
+            // Just silently skip it so error handling can be done when you can return proper error to user.
+        }
     }
 }
 FieldSet::SP

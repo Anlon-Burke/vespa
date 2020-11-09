@@ -9,6 +9,7 @@
 #include <vespa/eval/eval/vm_forest.h>
 #include <vespa/eval/eval/fast_forest.h>
 #include <vespa/eval/eval/llvm/deinline_forest.h>
+#include <vespa/eval/eval/engine_or_factory.h>
 #include <vespa/eval/tensor/default_tensor_engine.h>
 #include <vespa/vespalib/io/mapped_file_input.h>
 #include <vespa/eval/eval/param_usage.h>
@@ -17,7 +18,6 @@
 //-----------------------------------------------------------------------------
 
 using vespalib::BenchmarkTimer;
-using vespalib::tensor::DefaultTensorEngine;
 using namespace vespalib::eval;
 using namespace vespalib::eval::nodes;
 using namespace vespalib::eval::gbdt;
@@ -62,8 +62,9 @@ struct InputInfo {
     std::vector<double> cmp_with;
     double usage_probability;
     double expected_usage;
-    InputInfo(vespalib::stringref name_in, double usage_probability_in, double expected_usage_in)
-        : name(name_in), cmp_with(), usage_probability(usage_probability_in), expected_usage(expected_usage_in) {}
+    InputInfo(vespalib::stringref name_in, double usage_probability_in, double expected_usage_in) noexcept
+        : name(name_in), cmp_with(), usage_probability(usage_probability_in), expected_usage(expected_usage_in)
+    {}
     double select_value() const {
         return cmp_with.empty() ? 0.5 : cmp_with[(cmp_with.size()-1)/2];
     }
@@ -153,7 +154,7 @@ struct FunctionInfo {
     size_t get_path_len(const TreeList &trees) const {
         size_t path = 0;
         for (const Node *tree: trees) {
-            InterpretedFunction ifun(DefaultTensorEngine::ref(), *tree, NodeTypes());
+            InterpretedFunction ifun(EngineOrFactory::get(), *tree, NodeTypes());
             InterpretedFunction::Context ctx(ifun);
             SimpleParams fun_params(params);
             ifun.eval(ctx, fun_params);

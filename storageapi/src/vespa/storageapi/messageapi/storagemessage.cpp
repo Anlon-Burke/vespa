@@ -4,8 +4,8 @@
 
 #include <vespa/messagebus/routing/verbatimdirective.h>
 #include <vespa/vespalib/util/exceptions.h>
-#include <vespa/vespalib/util/sync.h>
 #include <vespa/vespalib/stllike/asciistream.h>
+#include <vespa/vespalib/stllike/hash_fun.h>
 #include <sstream>
 #include <cassert>
 #include <atomic>
@@ -105,7 +105,7 @@ const MessageType MessageType::SETBUCKETSTATE_REPLY("SetBucketStateReply", SETBU
 const MessageType&
 MessageType::MessageType::get(Id id)
 {
-    std::map<Id, MessageType*>::const_iterator it = _codes.find(id);
+    auto it = _codes.find(id);
     if (it == _codes.end()) {
         std::ostringstream ost;
         ost << "No message type with id " << id << ".";
@@ -115,13 +115,13 @@ MessageType::MessageType::get(Id id)
 }
 MessageType::MessageType(vespalib::stringref name, Id id,
                          const MessageType* replyOf)
-    : _name(name), _id(id), _reply(NULL), _replyOf(replyOf)
+    : _name(name), _id(id), _reply(nullptr), _replyOf(replyOf)
 {
     _codes[id] = this;
-    if (_replyOf != 0) {
-        assert(_replyOf->_reply == 0);
+    if (_replyOf) {
+        assert(_replyOf->_reply == nullptr);
         // Ugly cast to let initialization work
-        MessageType& type = const_cast<MessageType&>(*_replyOf);
+        auto& type = const_cast<MessageType&>(*_replyOf);
         type._reply = this;
     }
 }
@@ -141,10 +141,10 @@ MessageType::print(std::ostream& out, bool verbose, const std::string& indent) c
 
 StorageMessageAddress::StorageMessageAddress(const mbus::Route& route)
     : _route(route),
-      _retryEnabled(false),
       _protocol(DOCUMENT),
+      _precomputed_storage_hash(0),
       _cluster(""),
-      _type(0),
+      _type(nullptr),
       _index(0xFFFF)
 { }
 
@@ -160,17 +160,34 @@ createAddress(vespalib::stringref cluster, const lib::NodeType& type, uint16_t i
     return os.str();
 }
 
+// TODO we ideally want this removed. Currently just in place to support usage as map key when emplacement not available
+StorageMessageAddress::StorageMessageAddress()
+    : _route(),
+      _protocol(Protocol::STORAGE),
+      _precomputed_storage_hash(0),
+      _cluster(),
+      _type(nullptr),
+      _index(0)
+{}
+
+
 StorageMessageAddress::StorageMessageAddress(vespalib::stringref cluster, const lib::NodeType& type,
                                              uint16_t index, Protocol protocol)
     : _route(),
-      _retryEnabled(false),
       _protocol(protocol),
+      _precomputed_storage_hash(0),
       _cluster(cluster),
       _type(&type),
       _index(index)
 {
     std::vector<mbus::IHopDirective::SP> directives;
-    directives.emplace_back(std::make_shared<mbus::VerbatimDirective>(createAddress(cluster, type, index)));
+    auto address_as_str = createAddress(cluster, type, index);
+    // We reuse the string representation and pass it to vespalib's hashValue instead of
+    // explicitly combining a running hash over the individual fields. This is because
+    // hashValue internally uses xxhash, which offers great dispersion of bits even for
+    // minimal changes in the input (such as single bit differences in the index).
+    _precomputed_storage_hash = vespalib::hashValue(address_as_str.data(), address_as_str.size());
+    directives.emplace_back(std::make_shared<mbus::VerbatimDirective>(std::move(address_as_str)));
     _route.addHop(mbus::Hop(std::move(directives), false));
 }
 
@@ -179,7 +196,7 @@ StorageMessageAddress::~StorageMessageAddress() = default;
 uint16_t
 StorageMessageAddress::getIndex() const
 {
-    if (_type == 0) {
+    if (!_type) {
         throw vespalib::IllegalStateException("Cannot retrieve node index out of external address", VESPA_STRLOC);
     }
     return _index;
@@ -188,7 +205,7 @@ StorageMessageAddress::getIndex() const
 const lib::NodeType&
 StorageMessageAddress::getNodeType() const
 {
-    if (_type == 0) {
+    if (!_type) {
         throw vespalib::IllegalStateException("Cannot retrieve node type out of external address", VESPA_STRLOC);
     }
     return *_type;
@@ -197,7 +214,7 @@ StorageMessageAddress::getNodeType() const
 const vespalib::string&
 StorageMessageAddress::getCluster() const
 {
-    if (_type == 0) {
+    if (!_type) {
         throw vespalib::IllegalStateException("Cannot retrieve cluster out of external address", VESPA_STRLOC);
     }
     return _cluster;
@@ -207,12 +224,11 @@ bool
 StorageMessageAddress::operator==(const StorageMessageAddress& other) const
 {
     if (_protocol != other._protocol) return false;
-    if (_retryEnabled != other._retryEnabled) return false;
     if (_type != other._type) return false;
-    if (_type != 0) {
-        if (_cluster != other._cluster) return false;
+    if (_type) {
         if (_index != other._index) return false;
         if (_type != other._type) return false;
+        if (_cluster != other._cluster) return false;
     }
     return true;
 }
@@ -234,10 +250,7 @@ StorageMessageAddress::print(vespalib::asciistream & out) const
     } else {
         out << "Document protocol";
     }
-    if (_retryEnabled) {
-        out << ", retry enabled";
-    }
-    if (_type == 0) {
+    if (!_type) {
         out << ", " << _route.toString() << ")";
     } else {
         out << ", cluster " << _cluster << ", nodetype " << *_type

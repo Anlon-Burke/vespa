@@ -1,6 +1,13 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "tensor_spec.h"
+#include "value.h"
+#include "value_codec.h"
+#include "tensor.h"
+#include "tensor_engine.h"
+#include "simple_tensor_engine.h"
+#include "function.h"
+#include "interpreted_function.h"
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/data/slime/slime.h>
 #include <ostream>
@@ -38,6 +45,18 @@ TensorSpec::TensorSpec(const TensorSpec &) = default;
 TensorSpec & TensorSpec::operator = (const TensorSpec &) = default;
 
 TensorSpec::~TensorSpec() { }
+
+TensorSpec &
+TensorSpec::add(Address address, double value) {
+    auto [iter, inserted] = _cells.emplace(std::move(address), value);
+    if (! inserted) {
+        // to simplify reference implementations, allow
+        // adding the same address several times to a Spec, but
+        // only with the same value every time:
+        assert(iter->second.value == value);
+    }
+    return *this;
+}
 
 vespalib::string
 TensorSpec::to_string() const
@@ -92,6 +111,29 @@ TensorSpec::from_slime(const slime::Inspector &tensor)
         spec.add(address, cell["value"].asDouble());
     }
     return spec;
+}
+
+TensorSpec
+TensorSpec::from_value(const eval::Value &value)
+{
+    if (auto tensor = dynamic_cast<const vespalib::eval::Tensor *>(&value)) {
+        return tensor->engine().to_spec(value);
+    } else {
+        return spec_from_value(value);
+    }
+}
+
+TensorSpec
+TensorSpec::from_expr(const vespalib::string &expr)
+{
+    NoParams no_params;
+    auto fun = Function::parse(expr);
+    if (!fun->has_error() && (fun->num_params() == 0)) {
+        InterpretedFunction ifun(SimpleTensorEngine::ref(), *fun, NodeTypes());
+        InterpretedFunction::Context ctx(ifun);
+        return from_value(ifun.eval(ctx, no_params));
+    }
+    return TensorSpec("error");
 }
 
 bool

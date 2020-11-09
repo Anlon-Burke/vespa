@@ -102,9 +102,9 @@ vespa_define_module(
     src/tests/bitcompression/expgolomb
     src/tests/bitvector
     src/tests/btree
-    src/tests/bytecomplens
     src/tests/common/bitvector
     src/tests/common/location
+    src/tests/common/location_iterator
     src/tests/common/matching_elements
     src/tests/common/matching_elements_fields
     src/tests/common/resultset
@@ -139,6 +139,7 @@ vespa_define_module(
     src/tests/features/native_dot_product
     src/tests/features/nns_closeness
     src/tests/features/nns_distance
+    src/tests/features/onnx_feature
     src/tests/features/ranking_expression
     src/tests/features/raw_score
     src/tests/features/subqueries
@@ -191,6 +192,7 @@ vespa_define_module(
     src/tests/queryeval/equiv
     src/tests/queryeval/fake_searchable
     src/tests/queryeval/getnodeweight
+    src/tests/queryeval/matching_elements_search
     src/tests/queryeval/monitoring_search_iterator
     src/tests/queryeval/multibitvectoriterator
     src/tests/queryeval/nearest_neighbor
@@ -215,6 +217,7 @@ vespa_define_module(
     src/tests/sortspec
     src/tests/stringenum
     src/tests/tensor/dense_tensor_store
+    src/tests/tensor/direct_tensor_store
     src/tests/tensor/distance_functions
     src/tests/tensor/hnsw_index
     src/tests/tensor/hnsw_saver
@@ -224,12 +227,8 @@ vespa_define_module(
     src/tests/url
     src/tests/util
     src/tests/util/bufferwriter
-    src/tests/util/ioerrorhandler
     src/tests/util/searchable_stats
-    src/tests/util/sigbushandler
     src/tests/util/slime_output_raw_buf_adapter
-    src/tests/util/statebuf
-    src/tests/util/statefile
     src/tests/vespa-fileheader-inspect
 )
 

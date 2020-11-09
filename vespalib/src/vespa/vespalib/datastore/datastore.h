@@ -8,18 +8,17 @@
 #include "free_list_raw_allocator.h"
 #include "raw_allocator.h"
 
-namespace vespalib::btree {
+namespace vespalib::datastore {
 
+/**
+ * Default noop reclaimer used together with datastore allocators.
+ */
 template<typename EntryType>
 struct DefaultReclaimer {
     static void reclaim(EntryType *entry) {
         (void) entry;
     }
 };
-
-}
-
-namespace vespalib::datastore {
 
 /**
  * Concrete data store using the given EntryRef type to reference stored data.
@@ -99,20 +98,22 @@ protected:
     using ParentType::dropBuffers;
     using ParentType::initActiveBuffers;
     using ParentType::addType;
+    using BufferTypeUP = std::unique_ptr<BufferType<EntryType>>;
 
-    BufferType<EntryType> _type;
+    BufferTypeUP _type;
+
+
 public:
-    typedef typename ParentType::RefType RefType;
+    using RefType = typename ParentType::RefType;
     DataStore(const DataStore &rhs) = delete;
     DataStore &operator=(const DataStore &rhs) = delete;
     DataStore();
+    explicit DataStore(uint32_t min_arrays);
+    explicit DataStore(BufferTypeUP type);
     ~DataStore();
 
     EntryRef addEntry(const EntryType &e);
     const EntryType &getEntry(EntryRef ref) const;
-
-    template <typename ReclaimerT>
-    FreeListAllocator<EntryType, RefT, ReclaimerT> freeListAllocator();
 };
 
 extern template class DataStoreT<EntryRefT<22> >;

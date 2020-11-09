@@ -1,6 +1,7 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.http.v2;
 
+import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
 import com.yahoo.config.provision.InstanceName;
@@ -10,6 +11,7 @@ import com.yahoo.jdisc.Response;
 import com.yahoo.jdisc.http.HttpRequest;
 import com.yahoo.text.Utf8;
 import com.yahoo.vespa.config.server.ApplicationRepository;
+import com.yahoo.vespa.config.server.MockProvisioner;
 import com.yahoo.vespa.config.server.TestComponentRegistry;
 import com.yahoo.vespa.config.server.application.OrchestratorMock;
 import com.yahoo.vespa.config.server.http.ContentHandlerTestBase;
@@ -19,13 +21,14 @@ import com.yahoo.vespa.config.server.tenant.Tenant;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import org.junit.Before;
 import org.junit.Ignore;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.time.Clock;
 
 import static org.hamcrest.core.Is.is;
 import static org.junit.Assert.assertNotNull;
@@ -38,23 +41,36 @@ public class SessionContentHandlerTest extends ContentHandlerTestBase {
     private static final TenantName tenantName = TenantName.from("contenttest");
     private static final File testApp = new File("src/test/apps/content");
 
-    private final TestComponentRegistry componentRegistry = new TestComponentRegistry.Builder().build();
-
+    private TestComponentRegistry componentRegistry;
     private TenantRepository tenantRepository;
     private SessionContentHandler handler = null;
     private long sessionId;
 
+    @Rule
+    public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
     @Before
-    public void setupHandler() {
-        tenantRepository = new TenantRepository(componentRegistry, false);
+    public void setupHandler() throws IOException {
+        ConfigserverConfig configserverConfig = new ConfigserverConfig.Builder()
+                .configServerDBDir(temporaryFolder.newFolder("serverdb").getAbsolutePath())
+                .configDefinitionsDir(temporaryFolder.newFolder("configdefinitions").getAbsolutePath())
+                .fileReferencesDir(temporaryFolder.newFolder().getAbsolutePath())
+                .build();
+        componentRegistry = new TestComponentRegistry.Builder()
+                .configServerConfig(configserverConfig)
+                .build();
+
+        tenantRepository = new TenantRepository(componentRegistry);
         tenantRepository.addTenant(tenantName);
 
-        ApplicationRepository applicationRepository = new ApplicationRepository(tenantRepository,
-                                                          new SessionHandlerTest.MockProvisioner(),
-                                                          new OrchestratorMock(),
-                                                          Clock.systemUTC());
+        ApplicationRepository applicationRepository = new ApplicationRepository.Builder()
+                .withTenantRepository(tenantRepository)
+                .withProvisioner(new MockProvisioner())
+                .withOrchestrator(new OrchestratorMock())
+                .withConfigserverConfig(configserverConfig)
+                .build();
         applicationRepository.deploy(testApp, new PrepareParams.Builder().applicationId(applicationId()).build());
-        Tenant tenant = tenantRepository.getTenant(tenantName);
+        Tenant tenant = applicationRepository.getTenant(applicationId());
         sessionId = applicationRepository.getActiveLocalSession(tenant, applicationId()).getSessionId();
 
         handler = createHandler();
@@ -171,10 +187,12 @@ public class SessionContentHandlerTest extends ContentHandlerTestBase {
     private SessionContentHandler createHandler() {
         return new SessionContentHandler(
                 SessionContentHandler.testOnlyContext(),
-                new ApplicationRepository(tenantRepository,
-                                          new SessionHandlerTest.MockProvisioner(),
-                                          new OrchestratorMock(),
-                                          componentRegistry.getClock())
+                new ApplicationRepository.Builder()
+                        .withTenantRepository(tenantRepository)
+                        .withProvisioner(new MockProvisioner())
+                        .withOrchestrator(new OrchestratorMock())
+                        .withClock(componentRegistry.getClock())
+                        .build()
         );
     }
 

@@ -9,7 +9,6 @@
 #include <vespa/vespalib/util/compress.h>
 #include <vespa/searchlib/fef/termfieldmatchdata.h>
 
-#include <vespa/searchlib/attribute/attributevector.hpp>
 #include <vespa/searchlib/attribute/i_document_weight_attribute.h>
 #include <vespa/searchlib/queryeval/document_weight_search_iterator.h>
 #include <vespa/searchlib/test/searchiteratorverifier.h>
@@ -491,7 +490,7 @@ BitVectorTest::test(BasicType bt,
         v->asDocumentWeightAttribute();
     if (dwa != NULL) {
         search::IDocumentWeightAttribute::LookupResult lres = 
-            dwa->lookup(getSearchStr<VectorType>());
+            dwa->lookup(getSearchStr<VectorType>(), dwa->get_dictionary_snapshot());
         typedef search::queryeval::DocumentWeightSearchIterator DWSI;
         typedef search::queryeval::SearchIterator SI;
         TermFieldMatchData md;

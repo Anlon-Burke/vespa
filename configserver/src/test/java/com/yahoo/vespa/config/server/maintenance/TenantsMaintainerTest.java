@@ -10,9 +10,12 @@ import com.yahoo.vespa.config.server.ApplicationRepository;
 import com.yahoo.vespa.config.server.session.PrepareParams;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.io.IOException;
 import java.time.Duration;
 
 import static org.junit.Assert.assertNotNull;
@@ -20,13 +23,16 @@ import static org.junit.Assert.assertNull;
 
 public class TenantsMaintainerTest {
 
+    @Rule
+    public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
     @Test
-    public void deleteTenantWithNoApplications() {
+    public void deleteTenantWithNoApplications() throws IOException {
         ManualClock clock = new ManualClock("2020-06-01T00:00:00");
-        MaintainerTester tester = new MaintainerTester(clock);
+        MaintainerTester tester = new MaintainerTester(clock, temporaryFolder);
         TenantRepository tenantRepository = tester.tenantRepository();
         ApplicationRepository applicationRepository = tester.applicationRepository();
-        File applicationPackage = new File("src/test/apps/app");
+        File applicationPackage = new File("src/test/apps/hosted");
 
         TenantName shouldBeDeleted = TenantName.from("to-be-deleted");
         TenantName shouldNotBeDeleted = TenantName.from("should-not-be-deleted");
@@ -35,7 +41,7 @@ public class TenantsMaintainerTest {
         tenantRepository.addTenant(shouldNotBeDeleted);
         tenantRepository.addTenant(TenantRepository.HOSTED_VESPA_TENANT);
 
-        applicationRepository.deploy(applicationPackage, prepareParams(shouldNotBeDeleted));
+        tester.deployApp(applicationPackage, prepareParams(shouldNotBeDeleted));
         assertNotNull(tenantRepository.getTenant(shouldBeDeleted));
         assertNotNull(tenantRepository.getTenant(shouldNotBeDeleted));
 
@@ -53,11 +59,11 @@ public class TenantsMaintainerTest {
 
         // Add tenant again and deploy
         tenantRepository.addTenant(shouldBeDeleted);
-        tester.applicationRepository().deploy(applicationPackage, prepareParams(shouldBeDeleted));
+        tester.deployApp(applicationPackage, prepareParams(shouldBeDeleted));
     }
 
-    private PrepareParams prepareParams(TenantName tenantName) {
-        return new PrepareParams.Builder().applicationId(applicationId(tenantName)).build();
+    private PrepareParams.Builder prepareParams(TenantName tenantName) {
+        return new PrepareParams.Builder().applicationId(applicationId(tenantName));
     }
 
     private ApplicationId applicationId(TenantName tenantName) {

@@ -54,6 +54,7 @@ import com.yahoo.vespa.model.container.Container;
 import com.yahoo.vespa.model.container.ContainerCluster;
 import com.yahoo.vespa.model.container.ContainerModel;
 import com.yahoo.vespa.model.container.ContainerModelEvaluation;
+import com.yahoo.vespa.model.container.ContainerThreadpool;
 import com.yahoo.vespa.model.container.IdentityProvider;
 import com.yahoo.vespa.model.container.SecretStore;
 import com.yahoo.vespa.model.container.component.BindingPattern;
@@ -110,9 +111,6 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     private static final String CONTAINER_TAG = "container";
     private static final String DEPRECATED_CONTAINER_TAG = "jdisc";
     private static final String ENVIRONMENT_VARIABLES_ELEMENT = "environment-variables";
-
-    static final String SEARCH_HANDLER_CLASS = com.yahoo.search.handler.SearchHandler.class.getName();
-    static final BindingPattern SEARCH_HANDLER_BINDING = SystemBindingPattern.fromHttpPath("/search/*");
 
     public enum Networking { disable, enable }
 
@@ -320,16 +318,13 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         if (isHostedTenantApplication(context)) {
             addHostedImplicitHttpIfNotPresent(cluster);
             addHostedImplicitAccessControlIfNotPresent(deployState, cluster);
-            addAdditionalHostedConnector(deployState, cluster);
+            addAdditionalHostedConnector(deployState, cluster, context);
         }
     }
 
-    private void addAdditionalHostedConnector(DeployState deployState, ApplicationContainerCluster cluster) {
+    private void addAdditionalHostedConnector(DeployState deployState, ApplicationContainerCluster cluster, ConfigModelContext context) {
         JettyHttpServer server = cluster.getHttp().getHttpServer().get();
         String serverName = server.getComponentId().getName();
-
-        // Temporarily disable jdisc proxy-protocol in public systems
-        boolean enableProxyProtocol = !deployState.zone().system().isPublic();
 
         // If the deployment contains certificate/private key reference, setup TLS port
         if (deployState.endpointCertificateSecrets().isPresent()) {
@@ -338,12 +333,19 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
                 throw new RuntimeException("Client certificate authority security/clients.pem is missing - see: https://cloud.vespa.ai/security-model#data-plane");
             }
             EndpointCertificateSecrets endpointCertificateSecrets = deployState.endpointCertificateSecrets().get();
+
+            boolean enforceHandshakeClientAuth = context.properties().useAccessControlTlsHandshakeClientAuth() &&
+                    cluster.getHttp().getAccessControl()
+                    .map(accessControl -> accessControl.clientAuthentication)
+                    .map(clientAuth -> clientAuth.equals(AccessControl.ClientAuthentication.need))
+                    .orElse(false);
+
             HostedSslConnectorFactory connectorFactory = authorizeClient
-                    ? HostedSslConnectorFactory.withProvidedCertificateAndTruststore(serverName, endpointCertificateSecrets, deployState.tlsClientAuthority().get(), enableProxyProtocol)
-                    : HostedSslConnectorFactory.withProvidedCertificate(serverName, endpointCertificateSecrets, enableProxyProtocol);
+                    ? HostedSslConnectorFactory.withProvidedCertificateAndTruststore(serverName, endpointCertificateSecrets, deployState.tlsClientAuthority().get())
+                    : HostedSslConnectorFactory.withProvidedCertificate(serverName, endpointCertificateSecrets, enforceHandshakeClientAuth);
             server.addConnector(connectorFactory);
         } else {
-            server.addConnector(HostedSslConnectorFactory.withDefaultCertificateAndTruststore(serverName, enableProxyProtocol));
+            server.addConnector(HostedSslConnectorFactory.withDefaultCertificateAndTruststore(serverName));
         }
     }
 
@@ -358,7 +360,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             cluster.setHttp(new Http(new FilterChains(cluster)));
         }
         if(cluster.getHttp().getHttpServer().isEmpty()) {
-            JettyHttpServer defaultHttpServer = new JettyHttpServer(new ComponentId("DefaultHttpServer"));
+            JettyHttpServer defaultHttpServer = new JettyHttpServer(new ComponentId("DefaultHttpServer"), cluster, cluster.isHostedVespa());
             cluster.getHttp().setHttpServer(defaultHttpServer);
             defaultHttpServer.addConnector(new ConnectorFactory("SearchServer", Defaults.getDefaults().vespaWebServicePort()));
         }
@@ -373,6 +375,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
                 .setHandlers(cluster)
                 .readEnabled(false)
                 .writeEnabled(false)
+                .clientAuthentication(AccessControl.ClientAuthentication.need)
                 .build()
                 .configureHttpFilterChains(http);
     }
@@ -422,7 +425,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         addIncludes(searchElement);
         cluster.setSearch(buildSearch(deployState, cluster, searchElement));
 
-        addSearchHandler(cluster, searchElement);
+        addSearchHandler(cluster, searchElement, deployState);
         addGUIHandler(cluster);
         validateAndAddConfiguredComponents(deployState, cluster, searchElement, "renderer", ContainerModelBuilder::validateRendererElement);
     }
@@ -442,7 +445,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
         addIncludes(processingElement);
         cluster.setProcessingChains(new DomProcessingBuilder(null).build(deployState, cluster, processingElement),
-                                    serverBindings(processingElement, ProcessingChains.defaultBindings));
+                                    serverBindings(processingElement, ProcessingChains.defaultBindings).toArray(BindingPattern[]::new));
         validateAndAddConfiguredComponents(deployState, cluster, processingElement, "renderer", ContainerModelBuilder::validateRendererElement);
     }
 
@@ -786,19 +789,17 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             container.setPreLoad(nodesElement.getAttribute(VespaDomBuilder.PRELOAD_ATTRIB_NAME));
     }
 
-    private void addSearchHandler(ApplicationContainerCluster cluster, Element searchElement) {
+    private void addSearchHandler(ApplicationContainerCluster cluster, Element searchElement, DeployState deployState) {
         // Magic spell is needed to receive the chains config :-|
         cluster.addComponent(new ProcessingHandler<>(cluster.getSearch().getChains(),
                                                      "com.yahoo.search.searchchain.ExecutionFactory"));
 
-        ProcessingHandler<SearchChains> searchHandler = new ProcessingHandler<>(cluster.getSearch().getChains(),
-                                                                                "com.yahoo.search.handler.SearchHandler");
-        BindingPattern[] defaultBindings = {SEARCH_HANDLER_BINDING};
-        for (BindingPattern binding: serverBindings(searchElement, defaultBindings)) {
-            searchHandler.addServerBindings(binding);
-        }
-
-        cluster.addComponent(searchHandler);
+        cluster.addComponent(
+                new SearchHandler(
+                        cluster,
+                        serverBindings(searchElement, SearchHandler.DEFAULT_BINDING),
+                        ContainerThreadpool.UserOptions.fromXml(searchElement).orElse(null),
+                        deployState));
     }
 
     private void addGUIHandler(ApplicationContainerCluster cluster) {
@@ -808,15 +809,15 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     }
 
 
-    private BindingPattern[] serverBindings(Element searchElement, BindingPattern... defaultBindings) {
+    private List<BindingPattern> serverBindings(Element searchElement, BindingPattern... defaultBindings) {
         List<Element> bindings = XML.getChildren(searchElement, "binding");
         if (bindings.isEmpty())
-            return defaultBindings;
+            return List.of(defaultBindings);
 
         return toBindingList(bindings);
     }
 
-    private BindingPattern[] toBindingList(List<Element> bindingElements) {
+    private List<BindingPattern> toBindingList(List<Element> bindingElements) {
         List<BindingPattern> result = new ArrayList<>();
 
         for (Element element: bindingElements) {
@@ -825,7 +826,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
                 result.add(UserBindingPattern.fromPattern(text));
         }
 
-        return result.toArray(BindingPattern[]::new);
+        return result;
     }
 
     private ContainerDocumentApi buildDocumentApi(ApplicationContainerCluster cluster, Element spec) {

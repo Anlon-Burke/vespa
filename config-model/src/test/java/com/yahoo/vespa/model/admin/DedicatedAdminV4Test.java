@@ -87,7 +87,7 @@ public class DedicatedAdminV4Test {
 
         MetricsConsumer consumer = model.getAdmin().getUserMetrics().getConsumers().get("slingstone");
         assertNotNull(consumer);
-        Metric metric = consumer.getMetrics().get("foobar.count");
+        Metric metric = consumer.metrics().get("foobar.count");
         assertNotNull(metric);
         assertEquals("foobar", metric.outputName);
     }
@@ -236,7 +236,7 @@ public class DedicatedAdminV4Test {
                 .build();
         return new VespaModel(new NullConfigModelRegistry(), deployStateBuilder
                 .applicationPackage(app)
-                .modelHostProvisioner(new InMemoryProvisioner(Hosts.readFrom(app.getHosts()), true))
+                .modelHostProvisioner(new InMemoryProvisioner(Hosts.readFrom(app.getHosts()), true, false))
                 .build());
     }
 

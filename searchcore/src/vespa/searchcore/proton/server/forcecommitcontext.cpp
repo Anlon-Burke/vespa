@@ -8,11 +8,15 @@
 namespace proton {
 
 ForceCommitContext::ForceCommitContext(vespalib::Executor &executor,
-                                       IDocumentMetaStore &documentMetaStore)
+                                       IDocumentMetaStore &documentMetaStore,
+                                       PendingLidTrackerBase::Snapshot lidsToCommit,
+                                       std::shared_ptr<IDestructorCallback> onDone)
     : _executor(executor),
       _task(std::make_unique<ForceCommitDoneTask>(documentMetaStore)),
       _committedDocIdLimit(0u),
-      _docIdLimit(nullptr)
+      _docIdLimit(nullptr),
+      _lidsToCommit(std::move(lidsToCommit)),
+      _onDone(std::move(onDone))
 {
 }
 
@@ -40,8 +44,7 @@ ForceCommitContext::holdUnblockShrinkLidSpace()
 }
 
 void
-ForceCommitContext::registerCommittedDocIdLimit(uint32_t committedDocIdLimit,
-                                                DocIdLimit *docIdLimit)
+ForceCommitContext::registerCommittedDocIdLimit(uint32_t committedDocIdLimit, DocIdLimit *docIdLimit)
 {
     _committedDocIdLimit = committedDocIdLimit;
     _docIdLimit = docIdLimit;

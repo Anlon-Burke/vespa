@@ -12,9 +12,7 @@
 #include <vespa/searchcore/proton/docsummary/summarymanager.h>
 #include <vespa/searchcore/proton/documentmetastore/documentmetastorecontext.h>
 #include <vespa/searchcore/proton/documentmetastore/documentmetastoreflushtarget.h>
-#include <vespa/searchcore/proton/documentmetastore/ilidreusedelayer.h>
 #include <vespa/searchcore/proton/summaryengine/isearchhandler.h>
-#include <vespa/searchcore/proton/common/commit_time_tracker.h>
 #include <vespa/searchcore/proton/persistenceengine/i_document_retriever.h>
 #include <vespa/searchlib/common/fileheadercontext.h>
 #include <vespa/vespalib/util/varholder.h>
@@ -31,7 +29,6 @@ class ShrinkLidSpaceFlushTarget;
 namespace initializer { class InitializerTask; }
 
 namespace bucketdb { class IBucketDBHandlerInitializer; }
-namespace documentmetastore { class LidReuseDelayerConfig; }
 
 /**
  * Base class for a document sub database.
@@ -159,14 +156,13 @@ private:
     TlsSyncer                        _tlsSyncer;
     DocumentMetaStoreFlushTarget::SP _dmsFlushTarget;
     std::shared_ptr<ShrinkLidSpaceFlushTarget> _dmsShrinkTarget;
+    std::shared_ptr<PendingLidTrackerBase>     _pendingLidsForCommit;
 
     IFlushTargetList getFlushTargets() override;
 protected:
     const uint32_t                  _subDbId;
     const SubDbType                 _subDbType;
     StoreOnlySubDBFileHeaderContext _fileHeaderContext;
-    std::unique_ptr<documentmetastore::ILidReuseDelayer> _lidReuseDelayer;
-    CommitTimeTracker               _commitTimeTracker;
     std::shared_ptr<IGidToLidChangeHandler> _gidToLidChangeHandler;
 
     std::shared_ptr<initializer::InitializerTask>
@@ -187,15 +183,11 @@ protected:
     StoreOnlyFeedView::Context getStoreOnlyFeedViewContext(const DocumentDBConfig &configSnapshot);
     StoreOnlyFeedView::PersistentParams getFeedViewPersistentParams();
     vespalib::string getSubDbName() const;
-    void updateLidReuseDelayer(const DocumentDBConfig *newConfigSnapshot);
 
-    using LidReuseDelayerConfig = documentmetastore::LidReuseDelayerConfig;
-
-    virtual void updateLidReuseDelayer(const LidReuseDelayerConfig &config);
     void reconfigure(const search::LogDocumentStore::Config & protonConfig);
 public:
     StoreOnlyDocSubDB(const Config &cfg, const Context &ctx);
-    ~StoreOnlyDocSubDB();
+    ~StoreOnlyDocSubDB() override;
 
     uint32_t getSubDbId() const override { return _subDbId; }
     vespalib::string getName() const override { return _subName; }
@@ -242,6 +234,7 @@ public:
     void close() override;
     std::shared_ptr<IDocumentDBReference> getDocumentDBReference() override;
     void tearDownReferences(IDocumentDBReferenceResolver &resolver) override;
+    PendingLidTrackerBase & getUncommittedLidsTracker() override { return *_pendingLidsForCommit; }
 };
 
 }

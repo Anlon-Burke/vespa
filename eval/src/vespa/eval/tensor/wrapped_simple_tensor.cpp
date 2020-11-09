@@ -16,14 +16,6 @@ namespace vespalib::tensor {
 using eval::SimpleTensor;
 using eval::TensorSpec;
 
-bool
-WrappedSimpleTensor::equals(const Tensor &arg) const
-{
-    auto lhs_spec = _tensor.engine().to_spec(_tensor);
-    auto rhs_spec = arg.engine().to_spec(arg);
-    return (lhs_spec == rhs_spec);
-}
-
 eval::TensorSpec
 WrappedSimpleTensor::toSpec() const
 {
@@ -41,7 +33,7 @@ WrappedSimpleTensor::accept(TensorVisitor &visitor) const
 {
     TensorAddressBuilder addr;
     const auto &dimensions = _tensor.type().dimensions();
-    for (const auto &cell: _tensor.cells()) {
+    for (const auto &cell: _tensor.my_cells()) {
         addr.clear();
         for (size_t i = 0; i < dimensions.size(); ++i) {
             if (dimensions[i].is_indexed()) {
@@ -54,11 +46,17 @@ WrappedSimpleTensor::accept(TensorVisitor &visitor) const
     }
 }
 
-Tensor::UP
-WrappedSimpleTensor::clone() const
+MemoryUsage
+WrappedSimpleTensor::get_memory_usage() const
 {
-    auto tensor = std::make_unique<eval::SimpleTensor>(_tensor.type(), _tensor.cells());
-    return std::make_unique<WrappedSimpleTensor>(std::move(tensor));
+    size_t used = sizeof(WrappedSimpleTensor);
+    if (_space) {
+        auto plus = _space->get_memory_usage();
+        plus.incUsedBytes(used);
+        plus.incAllocatedBytes(used);
+        return plus;
+    }
+    return MemoryUsage(used, used, 0, 0);
 }
 
 //-----------------------------------------------------------------------------
@@ -132,7 +130,6 @@ WrappedSimpleTensor::add(const Tensor &arg) const
     if (!rhs || type() != rhs->type()) {
         return Tensor::UP();
     }
-
     TensorSpec oldTensor = toSpec();
     TensorSpec argTensor = rhs->toSpec();
     TensorSpec result(type().to_spec());

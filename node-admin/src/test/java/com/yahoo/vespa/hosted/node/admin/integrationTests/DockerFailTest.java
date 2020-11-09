@@ -19,7 +19,7 @@ public class DockerFailTest {
     @Test
     public void dockerFailTest() {
         try (DockerTester tester = new DockerTester()) {
-            final DockerImage dockerImage = DockerImage.fromString("dockerImage");
+            final DockerImage dockerImage = DockerImage.fromString("registry.example.com/dockerImage");
             final ContainerName containerName = new ContainerName("host1");
             final String hostname = "host1.test.yahoo.com";
             tester.addChildNodeRepositoryNode(NodeSpec.Builder
@@ -28,15 +28,15 @@ public class DockerFailTest {
                     .currentDockerImage(dockerImage)
                     .build());
 
-            tester.inOrder(tester.docker).createContainerCommand(eq(dockerImage), eq(containerName));
-            tester.inOrder(tester.docker).executeInContainerAsUser(
+            tester.inOrder(tester.containerEngine).createContainerCommand(eq(dockerImage), eq(containerName));
+            tester.inOrder(tester.containerEngine).executeInContainerAsUser(
                     eq(containerName), eq("root"), any(), eq(DockerTester.NODE_PROGRAM), eq("resume"));
 
-            tester.docker.deleteContainer(new ContainerName("host1"));
+            tester.containerEngine.deleteContainer(new ContainerName("host1"));
 
-            tester.inOrder(tester.docker).deleteContainer(eq(containerName));
-            tester.inOrder(tester.docker).createContainerCommand(eq(dockerImage), eq(containerName));
-            tester.inOrder(tester.docker).executeInContainerAsUser(
+            tester.inOrder(tester.containerEngine).deleteContainer(eq(containerName));
+            tester.inOrder(tester.containerEngine).createContainerCommand(eq(dockerImage), eq(containerName));
+            tester.inOrder(tester.containerEngine).executeInContainerAsUser(
                     eq(containerName), eq("root"), any(), eq(DockerTester.NODE_PROGRAM), eq("resume"));
 
             verify(tester.nodeRepository, never()).updateNodeAttributes(any(), any());

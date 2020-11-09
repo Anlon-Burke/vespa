@@ -56,25 +56,22 @@ public:
 
 } // namespace child_process
 
-using child_process::Timer;
-
-//-----------------------------------------------------------------------------
 
 void
 ChildProcess::Reader::OnReceiveData(const void *data, size_t length)
 {
     const char *buf = (const char *) data;
-    MonitorGuard lock(_cond);
-    if (_gotEOF || (buf != NULL && length == 0)) { // ignore special cases
+    std::unique_lock lock(_lock);
+    if (_gotEOF || (buf != nullptr && length == 0)) { // ignore special cases
         return;
     }
-    if (buf == NULL) { // EOF
+    if (buf == nullptr) { // EOF
         _gotEOF = true;
     } else {
         _queue.push(std::string(buf, length));
     }
     if (_waitCnt > 0) {
-        lock.signal();
+        _cond.notify_one();
     }
 }
 
@@ -88,12 +85,12 @@ ChildProcess::Reader::hasData()
 
 
 bool
-ChildProcess::Reader::waitForData(Timer &timer, MonitorGuard &lock)
+ChildProcess::Reader::waitForData(child_process::Timer &timer, std::unique_lock<std::mutex> &guard)
 {
     // NB: caller has lock on _cond
     CounterGuard count(_waitCnt);
     while (!timer.update().timeOut() && !hasData() && !_gotEOF) {
-        lock.wait(timer.waitTime());
+        _cond.wait_for(guard, std::chrono::milliseconds(timer.waitTime()));
     }
     return hasData();
 }
@@ -110,7 +107,8 @@ ChildProcess::Reader::updateEOF()
 
 
 ChildProcess::Reader::Reader()
-    : _cond(),
+    : _lock(),
+      _cond(),
       _queue(),
       _data(),
       _gotEOF(false),
@@ -120,9 +118,7 @@ ChildProcess::Reader::Reader()
 }
 
 
-ChildProcess::Reader::~Reader()
-{
-}
+ChildProcess::Reader::~Reader() = default;
 
 
 uint32_t
@@ -131,9 +127,9 @@ ChildProcess::Reader::read(char *buf, uint32_t len, int msTimeout)
     if (eof()) {
         return 0;
     }
-    Timer timer(msTimeout);
-    MonitorGuard lock(_cond);
-    waitForData(timer, lock);
+    child_process::Timer timer(msTimeout);
+    std::unique_lock guard(_lock);
+    waitForData(timer, guard);
     uint32_t bytes = 0;
     while (bytes < len && hasData()) {
         if (_data.empty()) {
@@ -162,9 +158,9 @@ ChildProcess::Reader::readLine(std::string &line, int msTimeout)
     if (eof()) {
         return false;
     }
-    Timer timer(msTimeout);
-    MonitorGuard lock(_cond);
-    while (waitForData(timer, lock)) {
+    child_process::Timer timer(msTimeout);
+    std::unique_lock guard(_lock);
+    while (waitForData(timer, guard)) {
         while (hasData()) {
             if (_data.empty()) {
                 _data = _queue.front();
@@ -299,7 +295,7 @@ ChildProcess::run(const std::string &input, const char *cmd,
                std::string &output, int msTimeout)
 {
     ChildProcess proc(cmd);
-    Timer timer(msTimeout);
+    child_process::Timer timer(msTimeout);
     char buf[4096];
     proc.write(input.data(), input.length());
     proc.close(); // close stdin

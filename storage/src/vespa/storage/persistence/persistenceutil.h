@@ -8,18 +8,16 @@
 #include <vespa/storage/persistence/filestorage/filestormetrics.h>
 #include <vespa/vespalib/io/fileutil.h>
 #include <vespa/storage/storageutil/utils.h>
-#include <vespa/config-stor-filestor.h>
-#include <vespa/persistence/spi/persistenceprovider.h>
 
 namespace storage {
 
-struct PersistenceUtil;
+class PersistenceUtil;
 
 class MessageTracker : protected Types {
 public:
     typedef std::unique_ptr<MessageTracker> UP;
 
-    MessageTracker(PersistenceUtil & env, MessageSender & replySender,
+    MessageTracker(const framework::MilliSecTimer & timer, const PersistenceUtil & env, MessageSender & replySender,
                    FileStorHandler::BucketLockInterface::SP bucketLock, api::StorageMessage::SP msg);
 
     ~MessageTracker();
@@ -72,78 +70,80 @@ public:
     bool checkForError(const spi::Result& response);
 
     static MessageTracker::UP
-    createForTesting(PersistenceUtil & env, MessageSender & replySender,
+    createForTesting(const framework::MilliSecTimer & timer, PersistenceUtil & env, MessageSender & replySender,
                      FileStorHandler::BucketLockInterface::SP bucketLock, api::StorageMessage::SP msg);
 
 private:
-    MessageTracker(PersistenceUtil & env, MessageSender & replySender, bool updateBucketInfo,
+    MessageTracker(const framework::MilliSecTimer & timer, const PersistenceUtil & env, MessageSender & replySender, bool updateBucketInfo,
                    FileStorHandler::BucketLockInterface::SP bucketLock, api::StorageMessage::SP msg);
+
+    [[nodiscard]] bool count_result_as_failure() const noexcept;
+
     bool                                     _sendReply;
     bool                                     _updateBucketInfo;
     FileStorHandler::BucketLockInterface::SP _bucketLock;
     api::StorageMessage::SP                  _msg;
     spi::Context                             _context;
-    PersistenceUtil                         &_env;
+    const PersistenceUtil                   &_env;
     MessageSender                           &_replySender;
-    FileStorThreadMetrics::Op               *_metric;
+    FileStorThreadMetrics::Op               *_metric; // needs a better and thread safe solution
     api::StorageReply::SP                    _reply;
     api::ReturnCode                          _result;
     framework::MilliSecTimer                 _timer;
 };
 
-struct PersistenceUtil {
-    vespa::config::content::StorFilestorConfig _config;
-    ServiceLayerComponentRegister             &_compReg;
-    ServiceLayerComponent                      _component;
-    FileStorHandler                           &_fileStorHandler;
-    uint16_t                                   _partition;
-    uint16_t                                   _nodeIndex;
-    FileStorThreadMetrics                     &_metrics;
-    const document::BucketIdFactory           &_bucketFactory;
-    const std::shared_ptr<const document::DocumentTypeRepo> _repo;
-    spi::PersistenceProvider& _spi;
-
-    PersistenceUtil(
-            const config::ConfigUri&,
-            ServiceLayerComponentRegister&,
-            FileStorHandler& fileStorHandler,
-            FileStorThreadMetrics& metrics,
-            uint16_t partition,
-            spi::PersistenceProvider& provider);
-
-    ~PersistenceUtil();
-
-    StorBucketDatabase& getBucketDatabase(document::BucketSpace bucketSpace)
-        { return _component.getBucketDatabase(bucketSpace); }
-
-    void updateBucketDatabase(const document::Bucket &bucket,
-                              const api::BucketInfo& info);
-
-    uint16_t getPreferredAvailableDisk(const document::Bucket &bucket) const;
-
+class PersistenceUtil {
+public:
     /** Lock the given bucket in the file stor handler. */
     struct LockResult {
         std::shared_ptr<FileStorHandler::BucketLockInterface> lock;
-        uint16_t disk;
+        LockResult() : lock() {}
 
-        LockResult() : lock(), disk(0) {}
-
-        bool bucketExisted() const { return (lock.get() != 0); }
+        bool bucketExisted() const { return bool(lock); }
     };
 
-    LockResult lockAndGetDisk(
-            const document::Bucket &bucket,
-            StorBucketDatabase::Flag flags = StorBucketDatabase::NONE);
+    PersistenceUtil(const ServiceLayerComponent&, FileStorHandler& fileStorHandler,
+                    FileStorThreadMetrics& metrics, spi::PersistenceProvider& provider);
+    ~PersistenceUtil();
 
-    api::BucketInfo getBucketInfo(const document::Bucket &bucket, int disk = -1) const;
+    StorBucketDatabase& getBucketDatabase(document::BucketSpace bucketSpace) const {
+        return _component.getBucketDatabase(bucketSpace);
+    }
+    spi::Bucket getBucket(const document::DocumentId& id, const document::Bucket &bucket) const;
+    void setBucketInfo(MessageTracker& tracker, const document::Bucket &bucket) const;
+    void updateBucketDatabase(const document::Bucket &bucket, const api::BucketInfo& info) const;
+    LockResult lockAndGetDisk(const document::Bucket &bucket, StorBucketDatabase::Flag flags = StorBucketDatabase::NONE);
+    api::BucketInfo getBucketInfo(const document::Bucket &bucket) const;
+    const document::DocumentTypeRepo & getDocumentTypeRepo() const {
+        if (componentHasChanged()) {
+            reloadComponent();
+        }
+        return *_repos->documentTypeRepo;
+    }
+    const document::FieldSetRepo & getFieldSetRepo() const {
+        if (componentHasChanged()) {
+            reloadComponent();
+        }
+        return *_repos->fieldSetRepo;
+    }
 
-    api::BucketInfo convertBucketInfo(const spi::BucketInfo&) const;
-
-    void setBucketInfo(MessageTracker& tracker, const document::Bucket &bucket);
-
+    static api::BucketInfo convertBucketInfo(const spi::BucketInfo&);
     static uint32_t convertErrorCode(const spi::Result& response);
+public:
+    const ServiceLayerComponent                &_component;
+    FileStorHandler                            &_fileStorHandler;
+    FileStorThreadMetrics                      &_metrics;  // Needs a better solution for speed and thread safety
+    uint16_t                                    _nodeIndex;
+private:
+    bool componentHasChanged() const {
+        return _lastGeneration != _component.getGeneration();
+    }
+    void reloadComponent() const;
 
-    void shutdown(const std::string& reason);
+    const document::BucketIdFactory                 &_bucketIdFactory;
+    spi::PersistenceProvider                        &_spi;
+    mutable uint64_t                                 _lastGeneration;
+    mutable std::shared_ptr<StorageComponent::Repos> _repos;
 };
 
 } // storage

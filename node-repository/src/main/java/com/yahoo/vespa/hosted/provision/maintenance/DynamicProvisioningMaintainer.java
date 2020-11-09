@@ -16,15 +16,19 @@ import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.node.Agent;
+import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.provisioning.FatalProvisioningException;
 import com.yahoo.vespa.hosted.provision.provisioning.HostProvisioner;
+import com.yahoo.vespa.hosted.provision.provisioning.HostProvisioner.HostSharing;
 import com.yahoo.vespa.hosted.provision.provisioning.NodeResourceComparator;
 import com.yahoo.vespa.hosted.provision.provisioning.ProvisionedHost;
 import com.yahoo.yolean.Exceptions;
 
+import javax.naming.NameNotFoundException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +46,6 @@ import java.util.stream.IntStream;
 public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
 
     private static final Logger log = Logger.getLogger(DynamicProvisioningMaintainer.class.getName());
-    private static final ApplicationId preprovisionAppId = ApplicationId.from("hosted-vespa", "tenant-host", "preprovision");
 
     private final HostProvisioner hostProvisioner;
     private final ListFlag<HostCapacity> targetCapacityFlag;
@@ -75,10 +78,11 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
                                                                                node -> node.parentHostname().get(),
                                                                                Collectors.toSet()));
 
-        nodes.state(Node.State.provisioned).nodeType(NodeType.host).forEach(host -> {
+        nodes.state(Node.State.provisioned).hosts().forEach(host -> {
             Set<Node> children = nodesByProvisionedParentHostname.getOrDefault(host.hostname(), Set.of());
             try {
                 List<Node> updatedNodes = hostProvisioner.provision(host, children);
+                verifyDns(updatedNodes);
                 nodeRepository().write(updatedNodes, lock);
             } catch (IllegalArgumentException | IllegalStateException e) {
                 log.log(Level.INFO, "Failed to provision " + host.hostname() + " with " + children.size() + " children: " +
@@ -90,7 +94,10 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
                 nodeRepository().failRecursively(
                         host.hostname(), Agent.operator, "Failed by HostProvisioner due to provisioning failure");
             } catch (RuntimeException e) {
-                log.log(Level.WARNING, "Failed to provision " + host.hostname() + ", will retry in " + interval(), e);
+                if (e.getCause() instanceof NameNotFoundException)
+                    log.log(Level.INFO, "Failed to provision " + host.hostname() + ", will retry in " + interval() + ": " + e.getMessage());
+                else
+                    log.log(Level.WARNING, "Failed to provision " + host.hostname() + ", will retry in " + interval(), e);
             }
         });
     }
@@ -109,20 +116,29 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
         });
     }
 
-
     /**
-     * Provision the nodes necessary to satisfy given capacity.
+     * Provision hosts to ensure there is room to allocate spare nodes.
      *
-     * @return excess hosts that can safely be deprovisioned, if any
+     * @param advertisedSpareCapacity the advertised resources of the spare nodes
+     * @param nodes list of all nodes
+     * @return excess hosts that can safely be deprovisioned: An excess host 1. contains no nodes allocated
+     *         to an application, and assuming the spare nodes have been allocated, and 2. is not parked
+     *         without wantToDeprovision (which means an operator is looking at the node).
      */
-    private List<Node> provision(List<NodeResources> capacity, NodeList nodes) {
-        List<Node> existingHosts = availableHostsOf(nodes);
-        if (nodeRepository().zone().getCloud().dynamicProvisioning()) {
-            existingHosts = removableHostsOf(existingHosts, nodes);
-        } else if (capacity.isEmpty()) {
-            return List.of();
-        }
-        List<Node> excessHosts = new ArrayList<>(existingHosts);
+    private List<Node> provision(List<NodeResources> advertisedSpareCapacity, NodeList nodes) {
+        Map<String, Node> hostsByHostname = new HashMap<>(nodes.hosts().asList().stream()
+                .filter(host -> host.state() != Node.State.parked || host.status().wantToDeprovision())
+                .collect(Collectors.toMap(Node::hostname, Function.identity())));
+
+        nodes.asList().stream()
+                .filter(node -> node.allocation().isPresent())
+                .flatMap(node -> node.parentHostname().stream())
+                .distinct()
+                .forEach(hostsByHostname::remove);
+
+        List<Node> excessHosts = new ArrayList<>(hostsByHostname.values());
+
+        var capacity = new ArrayList<>(advertisedSpareCapacity);
         for (Iterator<NodeResources> it = capacity.iterator(); it.hasNext() && !excessHosts.isEmpty(); ) {
             NodeResources resources = it.next();
             excessHosts.stream()
@@ -136,12 +152,14 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
                            it.remove();
                        });
         }
+
         // Pre-provisioning is best effort, do one host at a time
         capacity.forEach(resources -> {
             try {
                 Version osVersion = nodeRepository().osVersions().targetFor(NodeType.host).orElse(Version.emptyVersion);
                 List<Node> hosts = hostProvisioner.provisionHosts(nodeRepository().database().getProvisionIndexes(1),
-                                                                  resources, preprovisionAppId, osVersion)
+                                                                  resources, ApplicationId.defaultId(), osVersion,
+                                                                  HostSharing.shared)
                                                   .stream()
                                                   .map(ProvisionedHost::generateHost)
                                                   .collect(Collectors.toList());
@@ -152,7 +170,8 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
                 log.log(Level.WARNING, "Failed to pre-provision " + resources + ", will retry in " + interval(), e);
             }
         });
-        return removableHostsOf(excessHosts, nodes);
+
+        return excessHosts;
     }
 
 
@@ -168,26 +187,12 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
                                  .collect(Collectors.toList());
     }
 
-    /** Returns hosts that are considered available, i.e. not parked or flagged for deprovisioning */
-    private static List<Node> availableHostsOf(NodeList nodes) {
-        return nodes.nodeType(NodeType.host)
-                    .matching(host -> host.state() != Node.State.parked || host.status().wantToDeprovision())
-                    .asList();
+    /** Verify DNS configuration of given nodes */
+    private void verifyDns(List<Node> nodes) {
+        for (var node : nodes) {
+            for (var ipAddress : node.ipConfig().primary()) {
+                IP.verifyDns(node.hostname(), ipAddress, nodeRepository().nameResolver());
+            }
+        }
     }
-
-    /** Returns the subset of given hosts that have no containers and are thus removable */
-    private static List<Node> removableHostsOf(List<Node> hosts, NodeList allNodes) {
-        Map<String, Node> hostsByHostname = hosts.stream()
-                                                 .collect(Collectors.toMap(Node::hostname,
-                                                                           Function.identity()));
-
-        allNodes.asList().stream()
-                .filter(node -> node.allocation().isPresent())
-                .flatMap(node -> node.parentHostname().stream())
-                .distinct()
-                .forEach(hostsByHostname::remove);
-
-        return List.copyOf(hostsByHostname.values());
-    }
-
 }

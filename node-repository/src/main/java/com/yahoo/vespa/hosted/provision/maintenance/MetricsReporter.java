@@ -10,11 +10,14 @@ import com.yahoo.vespa.applicationmodel.ApplicationInstance;
 import com.yahoo.vespa.applicationmodel.HostName;
 import com.yahoo.vespa.applicationmodel.ServiceInstance;
 import com.yahoo.vespa.applicationmodel.ServiceStatus;
+import com.yahoo.vespa.curator.stats.LatencyMetrics;
+import com.yahoo.vespa.curator.stats.LockStats;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.node.Allocation;
 import com.yahoo.vespa.hosted.provision.node.History;
+import com.yahoo.vespa.hosted.provision.persistence.CacheStats;
 import com.yahoo.vespa.orchestrator.Orchestrator;
 import com.yahoo.vespa.service.monitor.ServiceModel;
 import com.yahoo.vespa.service.monitor.ServiceMonitor;
@@ -63,12 +66,26 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
         NodeList nodes = nodeRepository().list();
         ServiceModel serviceModel = serviceMonitor.getServiceModelSnapshot();
 
+        updateLockMetrics();
         nodes.forEach(node -> updateNodeMetrics(node, serviceModel));
-        updateStateMetrics(nodes);
+        updateNodeCountMetrics(nodes);
         updateMaintenanceMetrics();
         updateDockerMetrics(nodes);
         updateTenantUsageMetrics(nodes);
+        updateCacheMetrics();
         return true;
+    }
+
+    private void updateCacheMetrics() {
+        CacheStats nodeCacheStats = nodeRepository().database().nodeSerializerCacheStats();
+        metric.set("cache.nodeObject.hitRate", nodeCacheStats.hitRate(), null);
+        metric.set("cache.nodeObject.evictionCount", nodeCacheStats.evictionCount(), null);
+        metric.set("cache.nodeObject.size", nodeCacheStats.size(), null);
+
+        CacheStats curatorCacheStats = nodeRepository().database().cacheStats();
+        metric.set("cache.curator.hitRate", curatorCacheStats.hitRate(), null);
+        metric.set("cache.curator.evictionCount", curatorCacheStats.evictionCount(), null);
+        metric.set("cache.curator.size", curatorCacheStats.size(), null);
     }
 
     private void updateMaintenanceMetrics() {
@@ -205,15 +222,44 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
         return contextMap.computeIfAbsent(dimensions, metric::createContext);
     }
 
-    private void updateStateMetrics(NodeList nodes) {
+    private void updateNodeCountMetrics(NodeList nodes) {
         Map<Node.State, List<Node>> nodesByState = nodes.nodeType(NodeType.tenant).asList().stream()
                 .collect(Collectors.groupingBy(Node::state));
 
-        // Metrics pr state
+        // Count per state
         for (Node.State state : Node.State.values()) {
             List<Node> nodesInState = nodesByState.getOrDefault(state, List.of());
             metric.set("hostedVespa." + state.name() + "Hosts", nodesInState.size(), null);
         }
+    }
+
+    private void updateLockMetrics() {
+        LockStats.getGlobal().getLockMetricsByPath()
+                .forEach((lockPath, lockMetrics) -> {
+                    Metric.Context context = getContextAt("lockPath", lockPath);
+
+                    metric.set("lockAttempt.acquire", lockMetrics.getAndResetAcquireCount(), context);
+                    metric.set("lockAttempt.acquireFailed", lockMetrics.getAndResetAcquireFailedCount(), context);
+                    metric.set("lockAttempt.acquireTimedOut", lockMetrics.getAndResetAcquireTimedOutCount(), context);
+                    metric.set("lockAttempt.locked", lockMetrics.getAndResetAcquireSucceededCount(), context);
+                    metric.set("lockAttempt.release", lockMetrics.getAndResetReleaseCount(), context);
+                    metric.set("lockAttempt.releaseFailed", lockMetrics.getAndResetReleaseFailedCount(), context);
+                    metric.set("lockAttempt.reentry", lockMetrics.getAndResetReentryCount(), context);
+                    metric.set("lockAttempt.deadlock", lockMetrics.getAndResetDeadlockCount(), context);
+                    metric.set("lockAttempt.nakedRelease", lockMetrics.getAndResetNakedReleaseCount(), context);
+                    metric.set("lockAttempt.acquireWithoutRelease", lockMetrics.getAndResetAcquireWithoutReleaseCount(), context);
+                    metric.set("lockAttempt.foreignRelease", lockMetrics.getAndResetForeignReleaseCount(), context);
+
+                    setLockLatencyMetrics("acquire", lockMetrics.getAndResetAcquireLatencyMetrics(), context);
+                    setLockLatencyMetrics("locked", lockMetrics.getAndResetLockedLatencyMetrics(), context);
+                });
+    }
+
+    private void setLockLatencyMetrics(String name, LatencyMetrics latencyMetrics, Metric.Context context) {
+        metric.set("lockAttempt." + name + "Latency", latencyMetrics.latencySeconds(), context);
+        metric.set("lockAttempt." + name + "MaxActiveLatency", latencyMetrics.maxActiveLatencySeconds(), context);
+        metric.set("lockAttempt." + name + "Hz", latencyMetrics.startHz(), context);
+        metric.set("lockAttempt." + name + "Load", latencyMetrics.load(), context);
     }
 
     private void updateDockerMetrics(NodeList nodes) {
@@ -251,14 +297,14 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
     }
 
     private static NodeResources getCapacityTotal(NodeList nodes) {
-        return nodes.nodeType(NodeType.host).state(active).asList().stream()
+        return nodes.hosts().state(active).asList().stream()
                 .map(host -> host.flavor().resources())
                 .map(NodeResources::justNumbers)
                 .reduce(new NodeResources(0, 0, 0, 0, any), NodeResources::add);
     }
 
     private static NodeResources getFreeCapacityTotal(NodeList nodes) {
-        return nodes.nodeType(NodeType.host).state(active).asList().stream()
+        return nodes.hosts().state(active).asList().stream()
                 .map(n -> freeCapacityOf(nodes, n))
                 .map(NodeResources::justNumbers)
                 .reduce(new NodeResources(0, 0, 0, 0, any), NodeResources::add);
@@ -269,4 +315,5 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
                 .map(node -> node.flavor().resources().justNumbers())
                 .reduce(dockerHost.flavor().resources().justNumbers(), NodeResources::subtract);
     }
+
 }

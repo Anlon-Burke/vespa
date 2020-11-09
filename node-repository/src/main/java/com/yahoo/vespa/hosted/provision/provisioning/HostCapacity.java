@@ -12,8 +12,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Capacity calculation for docker hosts.
- * <p>
+ * Capacity calculation for hosts.
+ *
  * The calculations are based on an immutable copy of nodes that represents
  * all capacities in the system - i.e. all nodes in the node repo.
  *
@@ -48,6 +48,14 @@ public class HostCapacity {
                          .sorted(this::compareWithoutInactive)
                          .limit(count)
                          .collect(Collectors.toSet());
+    }
+
+    public Set<Node> findSpareHostsInDynamicallyProvisionedZones(List<Node> candidates) {
+        return candidates.stream()
+                .filter(node -> node.type() == NodeType.host)
+                .filter(host -> host.state() == Node.State.active)
+                .filter(host -> allNodes.childrenOf(host).isEmpty())
+                .collect(Collectors.toSet());
     }
 
     private int compareWithoutInactive(Node hostA, Node hostB) {

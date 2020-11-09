@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.session;
 
 import com.yahoo.component.Version;
@@ -13,6 +13,7 @@ import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.path.Path;
 import com.yahoo.transaction.Transaction;
+import com.yahoo.vespa.config.server.application.ApplicationSet;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 
 import java.time.Instant;
@@ -28,30 +29,29 @@ import java.util.Optional;
  */
 public abstract class Session implements Comparable<Session>  {
 
-    private final long sessionId;
+    protected final long sessionId;
     protected final TenantName tenant;
     protected final SessionZooKeeperClient sessionZooKeeperClient;
     protected final Optional<ApplicationPackage> applicationPackage;
 
     protected Session(TenantName tenant, long sessionId, SessionZooKeeperClient sessionZooKeeperClient) {
-        this.tenant = tenant;
-        this.sessionId = sessionId;
-        this.sessionZooKeeperClient = sessionZooKeeperClient;
-        this.applicationPackage = Optional.empty();
+        this(tenant, sessionId, sessionZooKeeperClient, Optional.empty());
     }
 
     protected Session(TenantName tenant, long sessionId, SessionZooKeeperClient sessionZooKeeperClient,
                       ApplicationPackage applicationPackage) {
+        this(tenant, sessionId, sessionZooKeeperClient, Optional.of(applicationPackage));
+    }
+
+    private Session(TenantName tenant, long sessionId, SessionZooKeeperClient sessionZooKeeperClient,
+                    Optional<ApplicationPackage> applicationPackage) {
         this.tenant = tenant;
         this.sessionId = sessionId;
         this.sessionZooKeeperClient = sessionZooKeeperClient;
-        this.applicationPackage = Optional.of(applicationPackage);
+        this.applicationPackage = applicationPackage;
     }
 
-
-    public final long getSessionId() {
-        return sessionId;
-    }
+    public final long getSessionId() { return sessionId; }
 
     public Session.Status getStatus() {
         return sessionZooKeeperClient.readStatus();
@@ -74,7 +74,7 @@ public abstract class Session implements Comparable<Session>  {
      * The status of this session.
      */
     public enum Status {
-        NEW, PREPARE, ACTIVATE, DEACTIVATE, DELETE, NONE;
+        NEW, PREPARE, ACTIVATE, DEACTIVATE, NONE;
 
         public static Status parse(String data) {
             for (Status status : Status.values()) {
@@ -116,9 +116,7 @@ public abstract class Session implements Comparable<Session>  {
     }
 
     void setApplicationPackageReference(FileReference applicationPackageReference) {
-        if (applicationPackageReference == null) throw new IllegalArgumentException(String.format(
-                "Null application package file reference for tenant %s, session id %d", tenant, sessionId));
-        sessionZooKeeperClient.writeApplicationPackageReference(applicationPackageReference);
+        sessionZooKeeperClient.writeApplicationPackageReference(Optional.ofNullable(applicationPackageReference));
     }
 
     public void setVespaVersion(Version version) {
@@ -133,7 +131,20 @@ public abstract class Session implements Comparable<Session>  {
         sessionZooKeeperClient.writeAthenzDomain(athenzDomain);
     }
 
-    public ApplicationId getApplicationId() { return sessionZooKeeperClient.readApplicationId(); }
+    /** Returns application id read from ZooKeeper. Will throw RuntimeException if not found */
+    public ApplicationId getApplicationId() {
+        return sessionZooKeeperClient.readApplicationId()
+                .orElseThrow(() -> new RuntimeException("Unable to read application id for session " + sessionId));
+    }
+
+    /** Returns application id read from ZooKeeper. Will return Optional.empty() if not found */
+    public Optional<ApplicationId> getOptionalApplicationId() {
+        try {
+            return Optional.of(getApplicationId());
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+    }
 
     public FileReference getApplicationPackageReference() {return sessionZooKeeperClient.readApplicationPackageReference(); }
 
@@ -174,6 +185,8 @@ public abstract class Session implements Comparable<Session>  {
         }
         return getApplicationPackage().getFile(relativePath);
     }
+
+    Optional<ApplicationSet> applicationSet() { return Optional.empty(); };
 
     private void markSessionEdited() {
         setStatus(Session.Status.NEW);

@@ -6,7 +6,9 @@
 #include "tensor_nodes.h"
 #include "tensor_engine.h"
 #include "make_tensor_function.h"
+#include "optimize_tensor_function.h"
 #include "compile_tensor_function.h"
+#include "simple_tensor_engine.h"
 #include <vespa/vespalib/util/classname.h>
 #include <vespa/eval/eval/llvm/compile_cache.h>
 #include <vespa/vespalib/util/benchmark_timer.h>
@@ -32,7 +34,7 @@ const Function *get_lambda(const nodes::Node &node) {
 } // namespace vespalib::<unnamed>
 
 
-InterpretedFunction::State::State(const TensorEngine &engine_in)
+InterpretedFunction::State::State(EngineOrFactory engine_in)
     : engine(engine_in),
       params(nullptr),
       stash(),
@@ -58,7 +60,7 @@ InterpretedFunction::Context::Context(const InterpretedFunction &ifun)
 {
 }
 
-InterpretedFunction::InterpretedFunction(const TensorEngine &engine, const TensorFunction &function)
+InterpretedFunction::InterpretedFunction(EngineOrFactory engine, const TensorFunction &function)
     : _program(),
       _stash(),
       _tensor_engine(engine)
@@ -66,13 +68,13 @@ InterpretedFunction::InterpretedFunction(const TensorEngine &engine, const Tenso
     _program = compile_tensor_function(engine, function, _stash);
 }
 
-InterpretedFunction::InterpretedFunction(const TensorEngine &engine, const nodes::Node &root, const NodeTypes &types)
+InterpretedFunction::InterpretedFunction(EngineOrFactory engine, const nodes::Node &root, const NodeTypes &types)
     : _program(),
       _stash(),
       _tensor_engine(engine)
 {
     const TensorFunction &plain_fun = make_tensor_function(engine, root, types, _stash);
-    const TensorFunction &optimized = engine.optimize(plain_fun, _stash);
+    const TensorFunction &optimized = optimize_tensor_function(engine, plain_fun, _stash);
     _program = compile_tensor_function(engine, optimized, _stash);
 }
 
@@ -115,6 +117,23 @@ InterpretedFunction::detect_issues(const Function &function)
     } checker;
     function.root().traverse(checker);
     return Function::Issues(std::move(checker.issues));
+}
+
+InterpretedFunction::EvalSingle::EvalSingle(EngineOrFactory engine, Instruction op, const LazyParams &params)
+    : _state(engine),
+      _op(op)
+{
+    _state.params = &params;
+}
+
+const Value &
+InterpretedFunction::EvalSingle::eval(const std::vector<Value::CREF> &stack)
+{
+    _state.stash.clear();
+    _state.stack = stack;
+    _op.perform(_state);
+    assert(_state.stack.size() == 1);
+    return _state.stack.back();
 }
 
 }

@@ -4,6 +4,7 @@
 #include <vespa/searchcore/proton/reprocessing/reprocessingrunner.h>
 #include <vespa/searchcore/proton/bucketdb/bucketdbhandler.h>
 #include <vespa/searchcore/proton/common/hw_info.h>
+#include <vespa/searchcore/proton/persistenceengine/i_document_retriever.h>
 #include <vespa/searchcommon/common/growstrategy.h>
 #include <vespa/searchlib/common/serialnum.h>
 #include <vespa/vespalib/util/varholder.h>
@@ -31,7 +32,6 @@ class DocumentDBConfig;
 struct DocumentDBTaggedMetrics;
 class MaintenanceController;
 struct MetricsWireService;
-class ICommitable;
 struct IDocumentDBReferenceResolver;
 class IGetSerialNum;
 class DocTypeName;
@@ -118,12 +118,10 @@ public:
     void setBucketStateCalculator(const IBucketStateCalculatorSP &calc);
 
     void createRetrievers();
-    void maintenanceSync(MaintenanceController &mc, ICommitable &commit);
+    void maintenanceSync(MaintenanceController &mc);
 
     // Internally synchronized
-    RetrieversSP getRetrievers() {
-        return _retrievers.get();
-    }
+    RetrieversSP getRetrievers(IDocumentRetriever::ReadConsistency consistency);
 
     IDocumentSubDB *getReadySubDB() { return _subDBs[_readySubDbId]; }
     const IDocumentSubDB *getReadySubDB() const { return _subDBs[_readySubDbId]; }

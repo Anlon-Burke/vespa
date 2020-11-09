@@ -34,10 +34,10 @@ double my_dot_product(const LCT *lhs, const RCT *rhs, size_t lhs_size, size_t co
 
 template <typename LCT, typename RCT, bool lhs_common_inner, bool rhs_common_inner>
 void my_matmul_op(eval::InterpretedFunction::State &state, uint64_t param) {
-    const DenseMatMulFunction::Self &self = *((const DenseMatMulFunction::Self *)(param));
+    const DenseMatMulFunction::Self &self = unwrap_param<DenseMatMulFunction::Self>(param);
     using OCT = typename eval::UnifyCellTypes<LCT,RCT>::type;
-    auto lhs_cells = DenseTensorView::typify_cells<LCT>(state.peek(1));
-    auto rhs_cells = DenseTensorView::typify_cells<RCT>(state.peek(0));
+    auto lhs_cells = state.peek(1).cells().typify<LCT>();
+    auto rhs_cells = state.peek(0).cells().typify<RCT>();
     auto dst_cells = state.stash.create_array<OCT>(self.lhs_size * self.rhs_size);
     OCT *dst = dst_cells.begin();
     const LCT *lhs = lhs_cells.cbegin();
@@ -54,9 +54,9 @@ void my_matmul_op(eval::InterpretedFunction::State &state, uint64_t param) {
 
 template <bool lhs_common_inner, bool rhs_common_inner>
 void my_cblas_double_matmul_op(eval::InterpretedFunction::State &state, uint64_t param) {
-    const DenseMatMulFunction::Self &self = *((const DenseMatMulFunction::Self *)(param));
-    auto lhs_cells = DenseTensorView::typify_cells<double>(state.peek(1));
-    auto rhs_cells = DenseTensorView::typify_cells<double>(state.peek(0));
+    const DenseMatMulFunction::Self &self = unwrap_param<DenseMatMulFunction::Self>(param);
+    auto lhs_cells = state.peek(1).cells().typify<double>();
+    auto rhs_cells = state.peek(0).cells().typify<double>();
     auto dst_cells = state.stash.create_array<double>(self.lhs_size * self.rhs_size);
     cblas_dgemm(CblasRowMajor, lhs_common_inner ? CblasNoTrans : CblasTrans, rhs_common_inner ? CblasTrans : CblasNoTrans,
                 self.lhs_size, self.rhs_size, self.common_size, 1.0,
@@ -68,9 +68,9 @@ void my_cblas_double_matmul_op(eval::InterpretedFunction::State &state, uint64_t
 
 template <bool lhs_common_inner, bool rhs_common_inner>
 void my_cblas_float_matmul_op(eval::InterpretedFunction::State &state, uint64_t param) {
-    const DenseMatMulFunction::Self &self = *((const DenseMatMulFunction::Self *)(param));
-    auto lhs_cells = DenseTensorView::typify_cells<float>(state.peek(1));
-    auto rhs_cells = DenseTensorView::typify_cells<float>(state.peek(0));
+    const DenseMatMulFunction::Self &self = unwrap_param<DenseMatMulFunction::Self>(param);
+    auto lhs_cells = state.peek(1).cells().typify<float>();
+    auto rhs_cells = state.peek(0).cells().typify<float>();
     auto dst_cells = state.stash.create_array<float>(self.lhs_size * self.rhs_size);
     cblas_sgemm(CblasRowMajor, lhs_common_inner ? CblasNoTrans : CblasTrans, rhs_common_inner ? CblasTrans : CblasNoTrans,
                 self.lhs_size, self.rhs_size, self.common_size, 1.0,
@@ -166,14 +166,14 @@ DenseMatMulFunction::DenseMatMulFunction(const eval::ValueType &result_type,
 DenseMatMulFunction::~DenseMatMulFunction() = default;
 
 eval::InterpretedFunction::Instruction
-DenseMatMulFunction::compile_self(const TensorEngine &, Stash &stash) const
+DenseMatMulFunction::compile_self(eval::EngineOrFactory, Stash &stash) const
 {
     using MyTypify = TypifyValue<eval::TypifyCellType,TypifyBool>;
     Self &self = stash.create<Self>(result_type(), _lhs_size, _common_size, _rhs_size);
     auto op = typify_invoke<4,MyTypify,MyGetFun>(
             lhs().result_type().cell_type(), rhs().result_type().cell_type(),
             _lhs_common_inner, _rhs_common_inner);
-    return eval::InterpretedFunction::Instruction(op, (uint64_t)(&self));
+    return eval::InterpretedFunction::Instruction(op, wrap_param<DenseMatMulFunction::Self>(self));
 }
 
 void

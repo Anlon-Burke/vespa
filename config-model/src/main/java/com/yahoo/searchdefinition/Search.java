@@ -79,6 +79,9 @@ public class Search implements ImmutableSearch {
     /** Ranking constants of this */
     private final RankingConstants rankingConstants = new RankingConstants();
 
+    /** Onnx models of this */
+    private final OnnxModels onnxModels = new OnnxModels();
+
     private Optional<TemporaryImportedFields> temporaryImportedFields = Optional.of(new TemporaryImportedFields());
     private Optional<ImportedFields> importedFields = Optional.empty();
 
@@ -158,6 +161,9 @@ public class Search implements ImmutableSearch {
 
     @Override
     public RankingConstants rankingConstants() { return rankingConstants; }
+
+    @Override
+    public OnnxModels onnxModels() { return onnxModels; }
 
     public Optional<TemporaryImportedFields> temporaryImportedFields() {
         return temporaryImportedFields;
@@ -393,6 +399,9 @@ public class Search implements ImmutableSearch {
         for (Index current : indices) {
             if (current.isPrefix()) {
                 consolidated.setPrefix(true);
+            }
+            if (current.useInterleavedFeatures()) {
+                consolidated.setInterleavedFeatures(true);
             }
 
             if (consolidated.getRankType() == null) {

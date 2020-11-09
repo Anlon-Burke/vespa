@@ -2,7 +2,6 @@
 package com.yahoo.vespa.hosted.controller.api.integration.billing;
 
 import com.yahoo.config.provision.TenantName;
-import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.integration.user.User;
 
 import java.math.BigDecimal;
@@ -16,6 +15,8 @@ import java.util.Set;
 public interface BillingController {
 
     PlanId getPlan(TenantName tenant);
+
+    Quota getQuota(TenantName tenant);
 
     /**
      * @return String containing error message if something went wrong. Empty otherwise
@@ -50,4 +51,11 @@ public interface BillingController {
 
     void deleteBillingInfo(TenantName tenant, Set<User> users, boolean isPrivileged);
 
+    default CollectionMethod getCollectionMethod(TenantName tenant) {
+        return CollectionMethod.NONE;
+    }
+
+    default CollectionResult setCollectionMethod(TenantName tenant, CollectionMethod method) {
+        return CollectionResult.error("Method not implemented");
+    }
 }

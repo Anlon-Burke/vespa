@@ -5,7 +5,6 @@
 #include <vespa/searchcommon/attribute/iattributevector.h>
 #include <vespa/eval/eval/value.h>
 #include <vespa/vespalib/stllike/string.h>
-#include <vespa/eval/tensor/tensor.h>
 #include <vespa/eval/tensor/sparse/direct_sparse_tensor_builder.h>
 
 namespace search::features {
@@ -21,7 +20,7 @@ private:
     const search::attribute::IAttributeVector *_attribute;
     vespalib::eval::ValueType _type;
     WeightedBufferType _attrBuffer;
-    std::unique_ptr<vespalib::tensor::Tensor> _tensor;
+    std::unique_ptr<vespalib::eval::Value> _tensor;
 
 public:
     TensorFromAttributeExecutor(const search::attribute::IAttributeVector *attribute,
@@ -41,7 +40,8 @@ void
 TensorFromAttributeExecutor<WeightedBufferType>::execute(uint32_t docId)
 {
     _attrBuffer.fill(*_attribute, docId);
-    vespalib::tensor::DirectSparseTensorBuilder builder(_type);
+    vespalib::tensor::DirectSparseTensorBuilder<double> builder(_type);
+    builder.reserve(_attrBuffer.size());
     vespalib::tensor::SparseTensorAddressBuilder address;
     for (size_t i = 0; i < _attrBuffer.size(); ++i) {
         address.clear();

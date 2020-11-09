@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.http;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
@@ -7,6 +7,7 @@ import com.yahoo.config.provision.TenantName;
 import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.vespa.config.server.ApplicationRepository;
+import com.yahoo.vespa.config.server.MockProvisioner;
 import com.yahoo.vespa.config.server.TestComponentRegistry;
 import com.yahoo.vespa.config.server.TestConfigDefinitionRepo;
 import com.yahoo.vespa.config.server.application.OrchestratorMock;
@@ -19,7 +20,6 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
-import java.time.Clock;
 import java.util.Collections;
 
 import static com.yahoo.jdisc.http.HttpRequest.Method.GET;
@@ -49,20 +49,23 @@ public class HttpGetConfigHandlerTest {
 
     @Before
     public void setUp() throws IOException {
+        ConfigserverConfig configserverConfig = new ConfigserverConfig.Builder()
+                .configServerDBDir(temporaryFolder.newFolder().getAbsolutePath())
+                .configDefinitionsDir(temporaryFolder.newFolder().getAbsolutePath())
+                .fileReferencesDir(temporaryFolder.newFolder().getAbsolutePath())
+                .build();
         TestComponentRegistry componentRegistry = new TestComponentRegistry.Builder()
                 .configDefinitionRepo(new TestConfigDefinitionRepo())
-                .configServerConfig(new ConfigserverConfig.Builder()
-                                            .configServerDBDir(temporaryFolder.newFolder().getAbsolutePath())
-                                            .configDefinitionsDir(temporaryFolder.newFolder().getAbsolutePath())
-                                            .build())
+                .configServerConfig(configserverConfig)
                 .build();
         TenantRepository tenantRepository = new TenantRepository(componentRegistry);
         tenantRepository.addTenant(tenant);
-        ApplicationRepository applicationRepository =
-                new ApplicationRepository(tenantRepository,
-                                          new SessionHandlerTest.MockProvisioner(),
-                                          new OrchestratorMock(),
-                                          Clock.systemUTC());
+        ApplicationRepository applicationRepository = new ApplicationRepository.Builder()
+                .withTenantRepository(tenantRepository)
+                .withProvisioner(new MockProvisioner())
+                .withOrchestrator(new OrchestratorMock())
+                .withConfigserverConfig(configserverConfig)
+                .build();
         handler = new HttpGetConfigHandler(HttpGetConfigHandler.testOnlyContext(), tenantRepository);
         applicationRepository.deploy(testApp, prepareParams());
     }

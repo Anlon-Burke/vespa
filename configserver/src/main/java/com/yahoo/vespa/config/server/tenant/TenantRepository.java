@@ -4,16 +4,21 @@ package com.yahoo.vespa.config.server.tenant;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Inject;
 import com.yahoo.cloud.config.ConfigserverConfig;
+import com.yahoo.concurrent.DaemonThreadFactory;
 import com.yahoo.concurrent.StripedExecutor;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.path.Path;
+import com.yahoo.text.Utf8;
+import com.yahoo.transaction.Transaction;
 import com.yahoo.vespa.config.server.GlobalComponentRegistry;
 import com.yahoo.vespa.config.server.application.TenantApplications;
 import com.yahoo.vespa.config.server.deploy.TenantFileSystemDirs;
 import com.yahoo.vespa.config.server.monitoring.MetricUpdater;
 import com.yahoo.vespa.config.server.session.SessionRepository;
 import com.yahoo.vespa.curator.Curator;
+import com.yahoo.vespa.curator.transaction.CuratorOperations;
+import com.yahoo.vespa.curator.transaction.CuratorTransaction;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
 import org.apache.curator.framework.state.ConnectionState;
@@ -80,7 +85,8 @@ public class TenantRepository {
     private final ExecutorService zkCacheExecutor;
     private final StripedExecutor<TenantName> zkWatcherExecutor;
     private final ExecutorService bootstrapExecutor;
-    private final ScheduledExecutorService checkForRemovedApplicationsService = new ScheduledThreadPoolExecutor(1);
+    private final ScheduledExecutorService checkForRemovedApplicationsService =
+            new ScheduledThreadPoolExecutor(1, new DaemonThreadFactory("check for removed applications"));
     private final Optional<Curator.DirectoryCache> directoryCache;
 
     /**
@@ -90,20 +96,10 @@ public class TenantRepository {
      */
     @Inject
     public TenantRepository(GlobalComponentRegistry componentRegistry) {
-        this(componentRegistry, true);
-    }
-
-    /**
-     * Creates a new tenant repository
-     *
-     * @param componentRegistry a {@link com.yahoo.vespa.config.server.GlobalComponentRegistry}
-     * @param useZooKeeperWatchForTenantChanges set to false for tests where you want to control adding and deleting
-     *                                          tenants yourself
-     */
-    public TenantRepository(GlobalComponentRegistry componentRegistry, boolean useZooKeeperWatchForTenantChanges) {
         this.componentRegistry = componentRegistry;
         ConfigserverConfig configserverConfig = componentRegistry.getConfigserverConfig();
-        this.bootstrapExecutor = Executors.newFixedThreadPool(configserverConfig.numParallelTenantLoaders());
+        this.bootstrapExecutor = Executors.newFixedThreadPool(configserverConfig.numParallelTenantLoaders(),
+                                                              new DaemonThreadFactory("bootstrap tenants"));
         this.curator = componentRegistry.getCurator();
         metricUpdater = componentRegistry.getMetrics().getOrCreateMetricUpdater(Collections.emptyMap());
         this.tenantListeners.add(componentRegistry.getTenantListener());
@@ -116,13 +112,9 @@ public class TenantRepository {
         createSystemTenants(configserverConfig);
         curator.create(vespaPath);
 
-        if (useZooKeeperWatchForTenantChanges) {
-            this.directoryCache = Optional.of(curator.createDirectoryCache(tenantsPath.getAbsolute(), false, false, zkCacheExecutor));
-            this.directoryCache.get().addListener(this::childEvent);
-            this.directoryCache.get().start();
-        } else {
-            this.directoryCache = Optional.empty();
-        }
+        this.directoryCache = Optional.of(curator.createDirectoryCache(tenantsPath.getAbsolute(), false, false, zkCacheExecutor));
+        this.directoryCache.get().addListener(this::childEvent);
+        this.directoryCache.get().start();
         bootstrapTenants();
         notifyTenantsLoaded();
         checkForRemovedApplicationsService.scheduleWithFixedDelay(this::removeUnusedApplications,
@@ -137,9 +129,39 @@ public class TenantRepository {
         }
     }
 
-    public synchronized void addTenant(TenantName tenantName) {
+    public synchronized Tenant addTenant(TenantName tenantName) {
         writeTenantPath(tenantName);
-        createTenant(tenantName, componentRegistry.getClock().instant());
+        return createTenant(tenantName, componentRegistry.getClock().instant());
+    }
+
+    public void createAndWriteTenantMetaData(Tenant tenant) {
+        createWriteTenantMetaDataTransaction(createMetaData(tenant)).commit();
+    }
+
+    public Transaction createWriteTenantMetaDataTransaction(TenantMetaData tenantMetaData) {
+        return new CuratorTransaction(curator).add(
+                CuratorOperations.setData(TenantRepository.getTenantPath(tenantMetaData.tenantName()).getAbsolute(),
+                                          tenantMetaData.asJsonBytes()));
+    }
+
+    private TenantMetaData createMetaData(Tenant tenant) {
+        Instant deployTime = tenant.getSessionRepository().clock().instant();
+        Instant createdTime = getTenantMetaData(tenant).createdTimestamp();
+        if (createdTime.equals(Instant.EPOCH))
+            createdTime = deployTime;
+        return new TenantMetaData(tenant.getName(), deployTime, createdTime);
+    }
+
+    public TenantMetaData getTenantMetaData(Tenant tenant) {
+        Optional<byte[]> data = getCurator().getData(TenantRepository.getTenantPath(tenant.getName()));
+        Optional<TenantMetaData> metaData;
+        try {
+            metaData = data.map(bytes -> TenantMetaData.fromJsonString(tenant.getName(), Utf8.toString(bytes)));
+        } catch (IllegalArgumentException e) {
+            // If no data or illegal data
+            metaData = Optional.empty();
+        }
+        return metaData.orElse(new TenantMetaData(tenant.getName(), tenant.getCreatedTime(), tenant.getCreatedTime()));
     }
 
      private static Set<TenantName> readTenantsFromZooKeeper(Curator curator) {
@@ -204,8 +226,12 @@ public class TenantRepository {
     }
 
     // Creates tenant and all its dependencies. This also includes loading active applications
-    private void createTenant(TenantName tenantName, Instant created) {
-        if (tenants.containsKey(tenantName)) return;
+    private Tenant createTenant(TenantName tenantName, Instant created) {
+        if (tenants.containsKey(tenantName)) {
+            Tenant tenant = getTenant(tenantName);
+            createAndWriteTenantMetaData(tenant);
+            return tenant;
+        }
 
         TenantApplications applicationRepo =
                 new TenantApplications(tenantName,
@@ -220,12 +246,13 @@ public class TenantRepository {
         SessionRepository sessionRepository = new SessionRepository(tenantName,
                                                                     componentRegistry,
                                                                     applicationRepo,
-                                                                    componentRegistry.getFlagSource(),
                                                                     componentRegistry.getSessionPreparer());
         log.log(Level.INFO, "Adding tenant '" + tenantName + "'" + ", created " + created);
         Tenant tenant = new Tenant(tenantName, sessionRepository, applicationRepo, applicationRepo, created);
         notifyNewTenant(tenant);
         tenants.putIfAbsent(tenantName, tenant);
+        createAndWriteTenantMetaData(tenant);
+        return tenant;
     }
 
     /**

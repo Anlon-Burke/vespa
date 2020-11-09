@@ -10,8 +10,8 @@
 #include <tests/common/dummystoragelink.h>
 #include <vespa/config/common/exceptions.h>
 #include <vespa/vespalib/data/slime/slime.h>
+#include <vespa/vespalib/data/simple_buffer.h>
 #include <vespa/vespalib/gtest/gtest.h>
-#include <vespa/vespalib/util/time.h>
 #include <thread>
 
 #include <vespa/log/log.h>
@@ -70,7 +70,7 @@ void StateReporterTest::SetUp() {
     _config = std::make_unique<vdstestlib::DirConfig>(getStandardConfig(true, "statereportertest"));
     assert(system(("rm -rf " + getRootFolder(*_config)).c_str()) == 0);
 
-    _node = std::make_unique<TestServiceLayerApp>(DiskCount(4), NodeIndex(0), _config->getConfigId());
+    _node = std::make_unique<TestServiceLayerApp>(NodeIndex(0), _config->getConfigId());
     _node->setupDummyPersistence();
     _clock = &_node->getClock();
     _clock->setAbsoluteTimeInSeconds(1000000);
@@ -89,11 +89,10 @@ void StateReporterTest::SetUp() {
             _generationFetcher,
             "status");
 
-    uint16_t diskCount = _node->getPartitions().size();
     documentapi::LoadTypeSet::SP loadTypes(_node->getLoadTypes());
 
     _filestorMetrics = std::make_shared<FileStorMetrics>(_node->getLoadTypes()->getMetricLoadTypes());
-    _filestorMetrics->initDiskMetrics(diskCount, loadTypes->getMetricLoadTypes(), 1, 1);
+    _filestorMetrics->initDiskMetrics(loadTypes->getMetricLoadTypes(), 1, 1);
     _topSet->registerMetric(*_filestorMetrics);
 
     _metricManager->init(_config->getConfigId(), _node->getThreadPool());
@@ -218,7 +217,7 @@ TEST_F(StateReporterTest, report_health) {
 }
 
 TEST_F(StateReporterTest, report_metrics) {
-    FileStorDiskMetrics& disk0(*_filestorMetrics->disks[0]);
+    FileStorDiskMetrics& disk0(*_filestorMetrics->disk);
     FileStorThreadMetrics& thread0(*disk0.threads[0]);
 
     LOG(debug, "Adding to get metric");

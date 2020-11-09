@@ -10,7 +10,6 @@
 #include <vespa/searchcore/proton/metrics/documentdb_tagged_metrics.h>
 #include <vespa/searchcore/proton/metrics/metricswireservice.h>
 #include <vespa/searchcore/proton/reference/i_document_db_reference_resolver.h>
-#include <vespa/searchcore/proton/reprocessing/i_reprocessing_task.h>
 #include <vespa/searchcore/proton/reprocessing/reprocessingrunner.h>
 #include <vespa/searchcore/proton/feedoperation/operations.h>
 #include <vespa/searchcore/proton/server/bootstrapconfig.h>
@@ -18,16 +17,15 @@
 #include <vespa/searchcore/proton/server/emptysearchview.h>
 #include <vespa/searchcore/proton/server/fast_access_document_retriever.h>
 #include <vespa/searchcore/proton/server/i_document_subdb_owner.h>
+#include <vespa/searchcore/proton/server/igetserialnum.h>
 #include <vespa/searchcore/proton/server/minimal_document_retriever.h>
 #include <vespa/searchcore/proton/server/searchabledocsubdb.h>
 #include <vespa/searchcore/proton/matching/querylimiter.h>
 #include <vespa/searchcore/proton/test/test.h>
 #include <vespa/searchcore/proton/test/thread_utils.h>
-#include <vespa/searchcorespi/plugin/iindexmanagerfactory.h>
 #include <vespa/searchlib/common/idestructorcallback.h>
 #include <vespa/searchlib/index/docbuilder.h>
 #include <vespa/searchlib/test/directory_handler.h>
-#include <vespa/vespalib/io/fileutil.h>
 #include <vespa/vespalib/test/insertion_operators.h>
 #include <vespa/vespalib/testkit/test_kit.h>
 #include <vespa/vespalib/util/lambdatask.h>
@@ -88,25 +86,25 @@ struct MySubDBOwner : public IDocumentSubDBOwner
 
 struct MySyncProxy : public SyncProxy
 {
-    virtual void sync(SerialNum) override {}
+    void sync(SerialNum) override {}
 };
 
 
 struct MyGetSerialNum : public IGetSerialNum
 {
-    virtual SerialNum getSerialNum() const override { return 0u; }
+    SerialNum getSerialNum() const override { return 0u; }
 };
 
 struct MyFileHeaderContext : public FileHeaderContext
 {
-    virtual void addTags(vespalib::GenericHeader &, const vespalib::string &) const override {}
+    void addTags(vespalib::GenericHeader &, const vespalib::string &) const override {}
 };
 
 struct MyMetricsWireService : public DummyWireService
 {
     std::set<vespalib::string> _attributes;
     MyMetricsWireService() : _attributes() {}
-    virtual void addAttribute(AttributeMetrics &, const std::string &name) override {
+    void addAttribute(AttributeMetrics &, const std::string &name) override {
         _attributes.insert(name);
     }
 };
@@ -235,7 +233,8 @@ MySearchableContext::MySearchableContext(IThreadingService &writeService,
                                          IBucketDBHandlerInitializer & bucketDBHandlerInitializer)
     : _fastUpdCtx(writeService, bucketDB, bucketDBHandlerInitializer),
       _queryLimiter(), _clock(),
-      _ctx(_fastUpdCtx._ctx, _queryLimiter, _clock, dynamic_cast<vespalib::SyncableThreadExecutor &>(writeService.shared()))
+      _ctx(_fastUpdCtx._ctx, _queryLimiter,
+           _clock, dynamic_cast<vespalib::SyncableThreadExecutor &>(writeService.shared()))
 {}
 MySearchableContext::~MySearchableContext() = default;
 
@@ -267,7 +266,7 @@ struct MyConfigSnapshot
           _bootstrap()
     {
         auto documenttypesConfig = std::make_shared<DocumenttypesConfig>(_builder.getDocumenttypesConfig());
-        TuneFileDocumentDB::SP tuneFileDocumentDB(new TuneFileDocumentDB());
+        auto tuneFileDocumentDB = std::make_shared<TuneFileDocumentDB>();
         _bootstrap = std::make_shared<BootstrapConfig>(1,
                                  documenttypesConfig,
                                  _builder.getDocumentTypeRepo(),
@@ -327,7 +326,7 @@ struct FixtureBase
                 vespalib::ThreadStackExecutor executor(1, 1024 * 1024);
                 initializer::TaskRunner taskRunner(executor);
                 taskRunner.runTask(task);
-        SessionManager::SP sessionMgr(new SessionManager(1));
+        auto sessionMgr = std::make_shared<SessionManager>(1);
         runInMaster([&] () { _subDb.initViews(*_snapshot->_cfg, sessionMgr); });
     }
     void basicReconfig(SerialNum serialNum) {
@@ -755,18 +754,27 @@ struct DocumentHandler
     }
     void putDoc(PutOperation &op) {
         IFeedView::SP feedView = _f._subDb.getFeedView();
-        _f.runInMaster([&]() {    feedView->preparePut(op);
-                                  feedView->handlePut(FeedToken(), op); } );
+        _f.runInMaster([&]() {
+            feedView->preparePut(op);
+            feedView->handlePut(FeedToken(), op);
+            feedView->forceCommit(op.getSerialNum());
+        } );
     }
     void moveDoc(MoveOperation &op) {
         IFeedView::SP feedView = _f._subDb.getFeedView();
-        _f.runInMaster([&]() {    feedView->handleMove(op, IDestructorCallback::SP()); } );
+        _f.runInMaster([&]() {
+            feedView->handleMove(op, IDestructorCallback::SP());
+            feedView->forceCommit(op.getSerialNum());
+        } );
     }
     void removeDoc(RemoveOperation &op)
     {
         IFeedView::SP feedView = _f._subDb.getFeedView();
-        _f.runInMaster([&]() {    feedView->prepareRemove(op);
-                                  feedView->handleRemove(FeedToken(), op); } );
+        _f.runInMaster([&]() {
+            feedView->prepareRemove(op);
+            feedView->handleRemove(FeedToken(), op);
+            feedView->forceCommit(op.getSerialNum());
+        } );
     }
     void putDocs() {
         PutOperation putOp = createPut(std::move(createDoc(1, 22, 33)), Timestamp(10), 10);

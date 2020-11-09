@@ -156,13 +156,11 @@ MergeThrottlerTest::SetUp()
     vdstestlib::DirConfig config(getStandardConfig(true));
 
     for (int i = 0; i < _storageNodeCount; ++i) {
-        std::unique_ptr<TestServiceLayerApp> server(
-                new TestServiceLayerApp(DiskCount(1), NodeIndex(i)));
-        server->setClusterState(lib::ClusterState(
-                    "distributor:100 storage:100 version:1"));
+        auto server = std::make_unique<TestServiceLayerApp>(NodeIndex(i));
+        server->setClusterState(lib::ClusterState("distributor:100 storage:100 version:1"));
         std::unique_ptr<DummyStorageLink> top;
 
-        top.reset(new DummyStorageLink);
+        top = std::make_unique<DummyStorageLink>();
         MergeThrottler* throttler = new MergeThrottler(config.getConfigId(), server->getComponentRegister());
         // MergeThrottler will be sandwiched in between two dummy links
         top->push_back(std::unique_ptr<StorageLink>(throttler));
@@ -216,7 +214,7 @@ void waitUntilMergeQueueIs(MergeThrottler& throttler, std::size_t sz, int timeou
     while (true) {
         std::size_t count;
         {
-            vespalib::LockGuard lock(throttler.getStateLock());
+            std::lock_guard lock(throttler.getStateLock());
             count = throttler.getMergeQueue().size();
         }
         if (count == sz) {
@@ -1369,8 +1367,7 @@ TEST_F(MergeThrottlerTest, get_bucket_diff_command_not_in_active_set_is_rejected
 TEST_F(MergeThrottlerTest, apply_bucket_diff_command_not_in_active_set_is_rejected) {
     document::BucketId bucket(16, 1234);
     std::vector<api::GetBucketDiffCommand::Node> nodes;
-    auto applyDiffCmd = std::make_shared<api::ApplyBucketDiffCommand>(
-            makeDocumentBucket(bucket), nodes, api::Timestamp(1234));
+    auto applyDiffCmd = std::make_shared<api::ApplyBucketDiffCommand>(makeDocumentBucket(bucket), nodes);
 
     ASSERT_NO_FATAL_FAILURE(sendAndExpectReply(applyDiffCmd,
             api::MessageType::APPLYBUCKETDIFF_REPLY,

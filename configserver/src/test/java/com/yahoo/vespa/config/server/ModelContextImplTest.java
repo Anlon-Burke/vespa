@@ -1,6 +1,7 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server;
 
+import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.Version;
 import com.yahoo.config.model.api.ContainerEndpoint;
 import com.yahoo.config.model.api.ModelContext;
@@ -39,6 +40,11 @@ public class ModelContextImplTest {
         Set<ContainerEndpoint> endpoints = Collections.singleton(endpoint);
         InMemoryFlagSource flagSource = new InMemoryFlagSource();
 
+        ConfigserverConfig configserverConfig = new ConfigserverConfig.Builder()
+                .multitenant(true)
+                .hostedVespa(false)
+                .build();
+
         ModelContext context = new ModelContextImpl(
                 MockApplicationPackage.createEmpty(),
                 Optional.empty(),
@@ -47,21 +53,18 @@ public class ModelContextImplTest {
                 new StaticConfigDefinitionRepo(),
                 new MockFileRegistry(),
                 Optional.empty(),
+                Optional.empty(),
                 new Provisioned(),
                 new ModelContextImpl.Properties(
                         ApplicationId.defaultId(),
-                        true,
-                        Collections.emptyList(),
-                        null,
-                        null,
-                        null,
-                        false,
+                        configserverConfig,
                         Zone.defaultZone(),
                         endpoints,
                         false,
                         false,
                         flagSource,
                         null,
+                        Optional.empty(),
                         Optional.empty(),
                         Optional.empty()),
                 Optional.empty(),
@@ -86,6 +89,9 @@ public class ModelContextImplTest {
         assertEquals(new Version(7), context.modelVespaVersion());
         assertEquals(new Version(8), context.wantedNodeVespaVersion());
         assertEquals(1.0, context.properties().defaultTermwiseLimit(), 0.0);
+        assertFalse(context.properties().useAsyncMessageHandlingOnSchedule());
+        assertEquals(0, context.properties().contentNodeBucketDBStripeBits());
+        assertEquals(0x400000, context.properties().mergeChunkSize());
     }
 
 }

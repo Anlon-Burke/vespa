@@ -33,25 +33,23 @@ public class StorageCluster extends AbstractConfigProducer<StorageNode>
         protected StorageCluster doBuild(DeployState deployState, AbstractConfigProducer ancestor, Element producerSpec) {
             final ModelElement clusterElem = new ModelElement(producerSpec);
             final ContentCluster cluster = (ContentCluster)ancestor;
-            boolean useContentNodeBtreeDb = deployState.getProperties().useContentNodeBtreeDb();
 
             return new StorageCluster(ancestor,
                                       ContentCluster.getClusterId(clusterElem),
                                       new FileStorProducer.Builder().build(deployState.getProperties(), cluster, clusterElem),
                                       new IntegrityCheckerProducer.Builder().build(cluster, clusterElem),
-                                      new StorServerProducer.Builder().build(clusterElem, useContentNodeBtreeDb),
+                                      new StorServerProducer.Builder().build(deployState.getProperties(), clusterElem),
                                       new StorVisitorProducer.Builder().build(clusterElem),
                                       new PersistenceProducer.Builder().build(clusterElem));
         }
     }
 
-    private Integer bucketMoverMaxFillAboveAverage = null;
-    private String clusterName;
-    private FileStorProducer fileStorProducer;
-    private IntegrityCheckerProducer integrityCheckerProducer;
-    private StorServerProducer storServerProducer;
-    private StorVisitorProducer storVisitorProducer;
-    private PersistenceProducer persistenceProducer;
+    private final String clusterName;
+    private final FileStorProducer fileStorProducer;
+    private final IntegrityCheckerProducer integrityCheckerProducer;
+    private final StorServerProducer storServerProducer;
+    private final StorVisitorProducer storVisitorProducer;
+    private final PersistenceProducer persistenceProducer;
 
     StorageCluster(AbstractConfigProducer parent,
                    String clusterName,
@@ -71,9 +69,6 @@ public class StorageCluster extends AbstractConfigProducer<StorageNode>
 
     @Override
     public void getConfig(StorBucketmoverConfig.Builder builder) {
-        if (bucketMoverMaxFillAboveAverage != null) {
-            builder.max_target_fill_rate_above_average(bucketMoverMaxFillAboveAverage);
-        }
     }
 
     @Override
@@ -127,4 +122,5 @@ public class StorageCluster extends AbstractConfigProducer<StorageNode>
     public void getConfig(StorFilestorConfig.Builder builder) {
         fileStorProducer.getConfig(builder);
     }
+
 }

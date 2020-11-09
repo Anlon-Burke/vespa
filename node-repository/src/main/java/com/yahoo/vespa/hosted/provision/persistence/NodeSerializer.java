@@ -1,7 +1,11 @@
 // Copyright 2018 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.persistence;
 
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.hash.Hashing;
+import com.google.common.util.concurrent.UncheckedExecutionException;
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
@@ -32,12 +36,13 @@ import com.yahoo.vespa.hosted.provision.node.Reports;
 import com.yahoo.vespa.hosted.provision.node.Status;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.UnaryOperator;
+import java.util.concurrent.ExecutionException;
 
 /**
  * Serializes a node to/from JSON.
@@ -68,7 +73,7 @@ public class NodeSerializer {
     private static final String rebootGenerationKey = "rebootGeneration";
     private static final String currentRebootGenerationKey = "currentRebootGeneration";
     private static final String vespaVersionKey = "vespaVersion";
-    private static final String currentDockerImageKey = "currentDockerImage";
+    private static final String currentContainerImageKey = "currentDockerImage";
     private static final String failCountKey = "failCount";
     private static final String nodeTypeKey = "type";
     private static final String wantToRetireKey = "wantToRetire";
@@ -79,6 +84,8 @@ public class NodeSerializer {
     private static final String reportsKey = "reports";
     private static final String modelNameKey = "modelName";
     private static final String reservedToKey = "reservedTo";
+    private static final String exclusiveToKey = "exclusiveTo";
+    private static final String switchHostnameKey = "switchHostname";
 
     // Node resource fields
     private static final String flavorKey = "flavor";
@@ -96,7 +103,7 @@ public class NodeSerializer {
     private static final String removableKey = "removable";
     // Saved as part of allocation instead of serviceId, since serviceId serialized form is not easily extendable.
     private static final String wantedVespaVersionKey = "wantedVespaVersion";
-    private static final String wantedDockerImageRepoKey = "wantedDockerImageRepo";
+    private static final String wantedContainerImageRepoKey = "wantedDockerImageRepo";
 
     // History event fields
     private static final String historyEventTypeKey = "type";
@@ -106,10 +113,17 @@ public class NodeSerializer {
     // Network port fields
     private static final String networkPortsKey = "networkPorts";
 
+    // A cache of deserialized Node objects. The cache is keyed on the hash of serialized node data.
+    //
+    // Deserializing a Node from slime is expensive, and happens frequently. Node instances that have already been
+    // deserialized are returned from this cache instead of being deserialized again.
+    private final Cache<Long, Node> cache;
+
     // ---------------- Serialization ----------------------------------------------------
 
-    public NodeSerializer(NodeFlavors flavors) {
+    public NodeSerializer(NodeFlavors flavors, long cacheSize) {
         this.flavors = flavors;
+        this.cache = CacheBuilder.newBuilder().maximumSize(cacheSize).recordStats().build();
     }
 
     public byte[] toJson(Node node) {
@@ -123,17 +137,23 @@ public class NodeSerializer {
         }
     }
 
+    /** Returns cache statistics for this serializer */
+    public CacheStats cacheStats() {
+        var stats = cache.stats();
+        return new CacheStats(stats.hitRate(), stats.evictionCount(), cache.size());
+    }
+
     private void toSlime(Node node, Cursor object) {
         object.setString(hostnameKey, node.hostname());
-        toSlime(node.ipConfig().primary(), object.setArray(ipAddressesKey), IP.Config::require);
-        toSlime(node.ipConfig().pool().asSet(), object.setArray(ipAddressPoolKey), UnaryOperator.identity() /* Pool already holds a validated address list */);
+        toSlime(node.ipConfig().primary(), object.setArray(ipAddressesKey));
+        toSlime(node.ipConfig().pool().asSet(), object.setArray(ipAddressPoolKey));
         object.setString(idKey, node.id());
         node.parentHostname().ifPresent(hostname -> object.setString(parentHostnameKey, hostname));
         toSlime(node.flavor(), object);
         object.setLong(rebootGenerationKey, node.status().reboot().wanted());
         object.setLong(currentRebootGenerationKey, node.status().reboot().current());
         node.status().vespaVersion().ifPresent(version -> object.setString(vespaVersionKey, version.toString()));
-        node.status().dockerImage().ifPresent(image -> object.setString(currentDockerImageKey, image.asString()));
+        node.status().containerImage().ifPresent(image -> object.setString(currentContainerImageKey, image.asString()));
         object.setLong(failCountKey, node.status().failCount());
         object.setBool(wantToRetireKey, node.status().wantToRetire());
         object.setBool(wantToDeprovisionKey, node.status().wantToDeprovision());
@@ -143,9 +163,11 @@ public class NodeSerializer {
         node.status().osVersion().current().ifPresent(version -> object.setString(osVersionKey, version.toString()));
         node.status().osVersion().wanted().ifPresent(version -> object.setString(wantedOsVersionKey, version.toFullString()));
         node.status().firmwareVerifiedAt().ifPresent(instant -> object.setLong(firmwareCheckKey, instant.toEpochMilli()));
+        node.switchHostname().ifPresent(switchHostname -> object.setString(switchHostnameKey, switchHostname));
         node.reports().toSlime(object, reportsKey);
         node.modelName().ifPresent(modelName -> object.setString(modelNameKey, modelName));
         node.reservedTo().ifPresent(tenant -> object.setString(reservedToKey, tenant.value()));
+        node.exclusiveTo().ifPresent(applicationId -> object.setString(exclusiveToKey, applicationId.serializedForm()));
     }
 
     private void toSlime(Flavor flavor, Cursor object) {
@@ -171,7 +193,7 @@ public class NodeSerializer {
         object.setLong(currentRestartGenerationKey, allocation.restartGeneration().current());
         object.setBool(removableKey, allocation.isRemovable());
         object.setString(wantedVespaVersionKey, allocation.membership().cluster().vespaVersion().toString());
-        allocation.membership().cluster().dockerImageRepo().ifPresent(repo -> object.setString(wantedDockerImageRepoKey, repo.repository()));
+        allocation.membership().cluster().dockerImageRepo().ifPresent(repo -> object.setString(wantedContainerImageRepoKey, repo.untagged()));
         allocation.networkPorts().ifPresent(ports -> NetworkPortsSerializer.toSlime(ports, object.setArray(networkPortsKey)));
     }
 
@@ -186,15 +208,24 @@ public class NodeSerializer {
         object.setString(agentKey, toString(event.agent()));
     }
 
-    private void toSlime(Set<String> ipAddresses, Cursor array, UnaryOperator<Set<String>> validator) {
-        // Sorting IP addresses is expensive, so we do it at serialization time instead of Node construction time
-        validator.apply(ipAddresses).stream().sorted(IP.NATURAL_ORDER).forEach(array::addString);
+    private void toSlime(Set<String> ipAddresses, Cursor array) {
+        // Validating IP address string literals is expensive, so we do it at serialization time instead of Node
+        // construction time
+        ipAddresses.stream().map(IP::parse).sorted(IP.NATURAL_ORDER).map(IP::asString).forEach(array::addString);
     }
 
     // ---------------- Deserialization --------------------------------------------------
 
     public Node fromJson(Node.State state, byte[] data) {
-        return nodeFromSlime(state, SlimeUtils.jsonToSlime(data).get());
+        var key = Hashing.sipHash24().newHasher()
+                         .putString(state.name(), StandardCharsets.UTF_8)
+                         .putBytes(data).hash()
+                         .asLong();
+        try {
+            return cache.get(key, () -> nodeFromSlime(state, SlimeUtils.jsonToSlime(data).get()));
+        } catch (ExecutionException e) {
+            throw new UncheckedExecutionException(e);
+        }
     }
 
     private Node nodeFromSlime(Node.State state, Inspector object) {
@@ -212,19 +243,26 @@ public class NodeSerializer {
                         nodeTypeFromString(object.field(nodeTypeKey).asString()),
                         Reports.fromSlime(object.field(reportsKey)),
                         modelNameFromSlime(object),
-                        reservedToFromSlime(object.field(reservedToKey)));
+                        reservedToFromSlime(object.field(reservedToKey)),
+                        exclusiveToFromSlime(object.field(exclusiveToKey)),
+                        switchHostnameFromSlime(object.field(switchHostnameKey)));
     }
 
     private Status statusFromSlime(Inspector object) {
         return new Status(generationFromSlime(object, rebootGenerationKey, currentRebootGenerationKey),
                           versionFromSlime(object.field(vespaVersionKey)),
-                          dockerImageFromSlime(object.field(currentDockerImageKey)),
+                          containerImageFromSlime(object.field(currentContainerImageKey)),
                           (int) object.field(failCountKey).asLong(),
                           object.field(wantToRetireKey).asBool(),
                           object.field(wantToDeprovisionKey).asBool(),
                           new OsVersion(versionFromSlime(object.field(osVersionKey)),
                                         versionFromSlime(object.field(wantedOsVersionKey))),
                           instantFromSlime(object.field(firmwareCheckKey)));
+    }
+
+    private Optional<String> switchHostnameFromSlime(Inspector field) {
+        if (!field.valid()) return Optional.empty();
+        return Optional.of(field.asString());
     }
 
     private Flavor flavorFromSlime(Inspector object) {
@@ -241,7 +279,7 @@ public class NodeSerializer {
     }
 
     private Optional<Allocation> allocationFromSlime(NodeResources assignedResources, Inspector object) {
-        if ( ! object.valid()) return Optional.empty(); // TODO: Remove this line (and to the simplifications that follows) after November 2019
+        if ( ! object.valid()) return Optional.empty();
         return Optional.of(new Allocation(applicationIdFromSlime(object),
                                           clusterMembershipFromSlime(object),
                                           NodeResourcesSerializer.optionalResourcesFromSlime(object.field(requestedResourcesKey))
@@ -281,9 +319,9 @@ public class NodeSerializer {
     }
 
     private ClusterMembership clusterMembershipFromSlime(Inspector object) {
-        return ClusterMembership.from(object.field(serviceIdKey).asString(), 
+        return ClusterMembership.from(object.field(serviceIdKey).asString(),
                                       versionFromSlime(object.field(wantedVespaVersionKey)).get(),
-                                      dockerImageRepoFromSlime(object.field(wantedDockerImageRepoKey)));
+                                      containerImageRepoFromSlime(object.field(wantedContainerImageRepoKey)));
     }
 
     private Optional<Version> versionFromSlime(Inspector object) {
@@ -291,12 +329,12 @@ public class NodeSerializer {
         return Optional.of(Version.fromString(object.asString()));
     }
 
-    private Optional<DockerImage> dockerImageRepoFromSlime(Inspector object) {
+    private Optional<DockerImage> containerImageRepoFromSlime(Inspector object) {
         if ( ! object.valid() || object.asString().isEmpty()) return Optional.empty();
         return Optional.of(DockerImage.fromString(object.asString()));
     }
 
-    private Optional<DockerImage> dockerImageFromSlime(Inspector object) {
+    private Optional<DockerImage> containerImageFromSlime(Inspector object) {
         if ( ! object.valid()) return Optional.empty();
         return Optional.of(DockerImage.fromString(object.asString()));
     }
@@ -334,6 +372,13 @@ public class NodeSerializer {
         return Optional.of(TenantName.from(object.asString()));
     }
 
+    private Optional<ApplicationId> exclusiveToFromSlime(Inspector object) {
+        if (! object.valid()) return Optional.empty();
+        if (object.type() != Type.STRING)
+            throw new IllegalArgumentException("Expected 'exclusiveTo' to be a string but is " + object);
+        return Optional.of(ApplicationId.fromSerializedForm(object.asString()));
+    }
+
     // ----------------- Enum <-> string mappings ----------------------------------------
     
     /** Returns the event type, or null if this event type should be ignored */
@@ -355,6 +400,7 @@ public class NodeSerializer {
             case "rebooted" : return History.Event.Type.rebooted;
             case "osUpgraded" : return History.Event.Type.osUpgraded;
             case "firmwareVerified" : return History.Event.Type.firmwareVerified;
+            case "breakfixed" : return History.Event.Type.breakfixed;
         }
         throw new IllegalArgumentException("Unknown node event type '" + eventTypeString + "'");
     }
@@ -377,6 +423,7 @@ public class NodeSerializer {
             case rebooted: return "rebooted";
             case osUpgraded: return "osUpgraded";
             case firmwareVerified: return "firmwareVerified";
+            case breakfixed: return "breakfixed";
         }
         throw new IllegalArgumentException("Serialized form of '" + nodeEventType + "' not defined");
     }
@@ -396,6 +443,7 @@ public class NodeSerializer {
             case "ReservationExpirer" : return Agent.ReservationExpirer;
             case "RetiringUpgrader" : return Agent.RetiringUpgrader;
             case "SpareCapacityMaintainer": return Agent.SpareCapacityMaintainer;
+            case "SwitchRebalancer": return Agent.SwitchRebalancer;
         }
         throw new IllegalArgumentException("Unknown node event agent '" + eventAgentField.asString() + "'");
     }
@@ -414,6 +462,7 @@ public class NodeSerializer {
             case ReservationExpirer : return "ReservationExpirer";
             case RetiringUpgrader: return "RetiringUpgrader";
             case SpareCapacityMaintainer: return "SpareCapacityMaintainer";
+            case SwitchRebalancer: return "SwitchRebalancer";
         }
         throw new IllegalArgumentException("Serialized form of '" + agent + "' not defined");
     }

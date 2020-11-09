@@ -20,6 +20,8 @@ import com.yahoo.vespa.athenz.api.AthenzPrincipal;
 import com.yahoo.vespa.athenz.api.AthenzUser;
 import com.yahoo.vespa.athenz.api.OktaAccessToken;
 import com.yahoo.vespa.athenz.api.OktaIdentityToken;
+import com.yahoo.vespa.flags.Flags;
+import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.ControllerTester;
 import com.yahoo.vespa.hosted.controller.Instance;
@@ -495,6 +497,14 @@ public class ApplicationApiTest extends ControllerContainerTest {
                         .userIdentity(USER_ID),
                 "INFO - All good");
 
+        // Get content - root
+        tester.assertResponse(request("/application/v4/tenant/tenant2/application/application1/instance/default/environment/dev/region/us-central-1/content/", GET).userIdentity(USER_ID),
+                "{\"path\":\"/\"}");
+        // Get content - ignore query params
+        tester.assertResponse(request("/application/v4/tenant/tenant2/application/application1/instance/default/environment/dev/region/us-central-1/content/bar/file.json?query=param", GET).userIdentity(USER_ID),
+                "{\"path\":\"/bar/file.json\"}");
+
+
         updateMetrics();
 
         // GET metrics
@@ -944,7 +954,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
                                       .userIdentity(HOSTED_VESPA_OPERATOR),
                               "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Deployment of system applications during a system upgrade is not allowed\"}",
                               400);
-        deploymentTester.controllerTester().upgradeSystem(deploymentTester.controller().versionStatus().controllerVersion().get().versionNumber());
+        deploymentTester.controllerTester().upgradeSystem(deploymentTester.controller().readVersionStatus().controllerVersion().get().versionNumber());
         tester.assertResponse(request("/application/v4/tenant/hosted-vespa/application/routing/environment/prod/region/us-central-1/instance/default/deploy", POST)
                         .data(noAppEntity)
                         .userIdentity(HOSTED_VESPA_OPERATOR),
@@ -1367,7 +1377,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
                                       .data(entity)
                                       .userIdentity(userId),
                               "{\"message\":\"Deployment started in run 1 of dev-us-east-1 for tenant1.application1.new-user. This may take about 15 minutes the first time.\",\"run\":1}");
-
     }
 
     @Test
@@ -1426,6 +1435,20 @@ public class ApplicationApiTest extends ControllerContainerTest {
                 "{\"message\":\"Deployment started in run 2 of dev-us-east-1 for sandbox.myapp. This may take about 15 minutes the first time.\",\"run\":2}",
                 200);
 
+
+        // POST (deploy) an application package as content type application/zip — not multipart
+        tester.assertResponse(request("/application/v4/tenant/sandbox/application/myapp/instance/default/deploy/dev-us-east-1", POST)
+                                      .data(applicationPackageInstance1.zippedContent())
+                                      .contentType("application/zip")
+                                      .userIdentity(developer2),
+                              "{\"message\":\"Deployment started in run 3 of dev-us-east-1 for sandbox.myapp. This may take about 15 minutes the first time.\",\"run\":3}");
+
+        // POST (deploy) an application package not as content type application/zip — not multipart — is disallowed
+        tester.assertResponse(request("/application/v4/tenant/sandbox/application/myapp/instance/default/deploy/dev-us-east-1", POST)
+                                      .data(applicationPackageInstance1.zippedContent())
+                                      .contentType("application/gzip")
+                                      .userIdentity(developer2),
+                              "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Expected a multipart or application/zip message, but got Content-Type: application/gzip\"}", 400);
     }
 
     @Test
@@ -1453,6 +1476,14 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/environment/prod/region/us-west-1/instance/instance1", GET)
                                       .userIdentity(USER_ID),
                               new File("deployment-with-routing-policy.json"));
+
+        // Hide shared endpoints
+        ((InMemoryFlagSource) tester.controller().flagSource()).withBooleanFlag(Flags.HIDE_SHARED_ROUTING_ENDPOINT.id(), true);
+
+        // GET deployment
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/environment/prod/region/us-west-1/instance/instance1", GET)
+                                      .userIdentity(USER_ID),
+                              new File("deployment-without-shared-endpoints.json"));
     }
 
     private MultiPartStreamer createApplicationDeployData(ApplicationPackage applicationPackage, boolean deployDirectly) {

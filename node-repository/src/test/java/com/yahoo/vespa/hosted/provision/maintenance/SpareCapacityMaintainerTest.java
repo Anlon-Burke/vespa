@@ -31,7 +31,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -200,6 +199,22 @@ public class SpareCapacityMaintainerTest {
         assertEquals(0, tester.metric.values.get("spareHostCapacity"));
     }
 
+    @Test
+    public void retireFromOvercommitedHosts() {
+        var tester = new SpareCapacityMaintainerTester(5);
+
+        tester.addHosts(7, new NodeResources(10, 100, 1000, 1));
+
+        tester.addNodes(0, 5, new NodeResources( 7, 70, 700, 0.7), 0);
+        tester.addNodes(1, 4, new NodeResources( 2, 20, 200, 0.2), 0);
+        tester.addNodes(2, 2, new NodeResources( 1.1, 10, 100, 0.1), 1);
+
+        tester.maintainer.maintain();
+        assertEquals(2, tester.metric.values.get("overcommittedHosts"));
+        assertEquals(1, tester.deployer.redeployments);
+        assertEquals(List.of(new NodeResources( 1.1, 10, 100, 0.1)), tester.nodeRepository.list().retired().mapToList(Node::resources));
+    }
+
     /** Microbenchmark */
     @Test
     @Ignore
@@ -240,7 +255,7 @@ public class SpareCapacityMaintainerTest {
         private SpareCapacityMaintainerTester(int maxIterations) {
             NodeFlavors flavors = new NodeFlavors(new FlavorConfigBuilder().build());
             nodeRepository = new NodeRepository(flavors,
-                                                new EmptyProvisionServiceProvider().getHostResourcesCalculator(),
+                                                new EmptyProvisionServiceProvider(),
                                                 new MockCurator(),
                                                 new ManualClock(),
                                                 new Zone(Environment.prod, RegionName.from("us-east-3")),
@@ -248,8 +263,7 @@ public class SpareCapacityMaintainerTest {
                                                 DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa"),
                                                 new InMemoryFlagSource(),
                                                 true,
-                                                false,
-                                                1);
+                                                1, 1000);
             deployer = new MockDeployer(nodeRepository);
             maintainer = new SpareCapacityMaintainer(deployer, nodeRepository, metric, Duration.ofDays(1), maxIterations);
         }
@@ -257,51 +271,43 @@ public class SpareCapacityMaintainerTest {
         private void addHosts(int count, NodeResources resources) {
             List<Node> hosts = new ArrayList<>();
             for (int i = 0; i < count; i++) {
-                Node host = nodeRepository.createNode("host" + hostIndex,
-                                                      "host" + hostIndex + ".yahoo.com",
-                                                      ipConfig(hostIndex + nodeIndex, true),
-                                                      Optional.empty(),
-                                                      new Flavor(resources),
-                                                      Optional.empty(),
-                                                      NodeType.host);
+                Node host = Node.create("host" + hostIndex, ipConfig(hostIndex + nodeIndex, true),
+                        "host" + hostIndex + ".yahoo.com", new Flavor(resources), NodeType.host).build();
                 hosts.add(host);
                 hostIndex++;
             }
-            hosts = nodeRepository.addNodes(hosts, Agent.system);
-            hosts = nodeRepository.setReady(hosts, Agent.system, "Test");
-            var transaction = new NestedTransaction();
-            nodeRepository.activate(hosts, transaction);
-            transaction.commit();
+
+            ApplicationId application = ApplicationId.from("vespa", "tenant-host", "default");
+            ClusterSpec clusterSpec = ClusterSpec.specification(ClusterSpec.Type.content, ClusterSpec.Id.from("tenant-host"))
+                                .group(ClusterSpec.Group.from(0))
+                                .vespaVersion("7")
+                                .build();
+            allocate(application, clusterSpec, hosts);
         }
 
         private void addNodes(int id, int count, NodeResources resources, int hostOffset) {
             List<Node> nodes = new ArrayList<>();
-            ApplicationId application = ApplicationId.from("tenant" + id, "application" + id, "default");
             for (int i = 0; i < count; i++) {
-                ClusterMembership membership = ClusterMembership.from(ClusterSpec.specification(ClusterSpec.Type.content, ClusterSpec.Id.from("cluster" + id))
-                                                                                 .group(ClusterSpec.Group.from(0))
-                                                                                 .vespaVersion("7")
-                                                                                 .build(),
-                                                                      i);
-                Node node = nodeRepository.createNode("node" + nodeIndex,
-                                                      "node" + nodeIndex + ".yahoo.com",
-                                                      ipConfig(hostIndex + nodeIndex, false),
-                                                      Optional.of("host" + ( hostOffset + i) + ".yahoo.com"),
-                                                      new Flavor(resources),
-                                                      Optional.empty(),
-                                                      NodeType.tenant);
-                node = node.allocate(application, membership, node.resources(), Instant.now());
+                Node node = Node.create("node" + nodeIndex, ipConfig(hostIndex + nodeIndex, false),
+                        "node" + nodeIndex + ".yahoo.com", new Flavor(resources), NodeType.tenant)
+                        .parentHostname("host" + ( hostOffset + i) + ".yahoo.com").build();
                 nodes.add(node);
                 nodeIndex++;
             }
+
+            ApplicationId application = ApplicationId.from("tenant" + id, "application" + id, "default");
+            ClusterSpec clusterSpec = ClusterSpec.specification(ClusterSpec.Type.content, ClusterSpec.Id.from("cluster" + id))
+                    .group(ClusterSpec.Group.from(0))
+                    .vespaVersion("7")
+                    .build();
+            allocate(application, clusterSpec, nodes);
+        }
+
+        private void allocate(ApplicationId application, ClusterSpec clusterSpec, List<Node> nodes) {
             nodes = nodeRepository.addNodes(nodes, Agent.system);
-            for (int i = 0; i < count; i++) {
+            for (int i = 0; i < nodes.size(); i++) {
                 Node node = nodes.get(i);
-                ClusterMembership membership = ClusterMembership.from(ClusterSpec.specification(ClusterSpec.Type.content, ClusterSpec.Id.from("cluster" + id))
-                                                                                 .group(ClusterSpec.Group.from(0))
-                                                                                 .vespaVersion("7")
-                                                                                 .build(),
-                                                                      i);
+                ClusterMembership membership = ClusterMembership.from(clusterSpec, i);
                 node = node.allocate(application, membership, node.resources(), Instant.now());
                 nodes.set(i, node);
             }

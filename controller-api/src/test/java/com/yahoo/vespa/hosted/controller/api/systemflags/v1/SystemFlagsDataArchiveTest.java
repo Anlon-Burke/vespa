@@ -84,6 +84,19 @@ public class SystemFlagsDataArchiveTest {
     }
 
     @Test
+    public void supports_multi_level_flags_directory() {
+        var archive = SystemFlagsDataArchive.fromDirectory(Paths.get("src/test/resources/system-flags-multi-level/"));
+        assertFlagDataHasValue(archive, MY_TEST_FLAG, mainControllerTarget, "default");
+    }
+
+    @Test
+    public void duplicated_flagdata_is_detected() {
+        expectedException.expect(IllegalArgumentException.class);
+        expectedException.expectMessage("contains redundant flag data for id 'my-test-flag' already set in another directory!");
+        var archive = SystemFlagsDataArchive.fromDirectory(Paths.get("src/test/resources/system-flags-multi-level-with-duplicated-flagdata/"));
+    }
+
+    @Test
     public void empty_files_are_handled_as_no_flag_data_for_target() {
         var archive = SystemFlagsDataArchive.fromDirectory(Paths.get("src/test/resources/system-flags/"));
         assertNoFlagData(archive, FLAG_WITH_EMPTY_DATA, mainControllerTarget);
@@ -220,6 +233,30 @@ public class SystemFlagsDataArchiveTest {
             fail();
         } catch (IllegalArgumentException e) {
             assertEquals("Non-string email address: 123", e.getMessage());
+        }
+    }
+
+    @Test
+    public void normalize_json_fail_on_invalid_tenant_id() {
+        try {
+            SystemFlagsDataArchive.normalizeJson("{\n" +
+                    "    \"id\": \"foo\",\n" +
+                    "    \"rules\": [\n" +
+                    "        {\n" +
+                    "            \"conditions\": [\n" +
+                    "                {\n" +
+                    "                    \"type\": \"whitelist\",\n" +
+                    "                    \"dimension\": \"tenant\",\n" +
+                    "                    \"values\": [ 123 ]\n" +
+                    "                }\n" +
+                    "            ],\n" +
+                    "            \"value\": true\n" +
+                    "        }\n" +
+                    "    ]\n" +
+                    "}\n");
+            fail();
+        } catch (IllegalArgumentException e) {
+            assertEquals("Non-string tenant ID: 123", e.getMessage());
         }
     }
 

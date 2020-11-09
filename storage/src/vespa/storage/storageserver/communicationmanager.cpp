@@ -1,7 +1,6 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "communicationmanager.h"
-#include "fnetlistener.h"
 #include "rpcrequestwrapper.h"
 #include <vespa/documentapi/messagebus/messages/wrongdistributionreply.h>
 #include <vespa/messagebus/emptyreply.h>
@@ -11,6 +10,10 @@
 #include <vespa/storage/common/nodestateupdater.h>
 #include <vespa/storage/config/config-stor-server.h>
 #include <vespa/storage/storageserver/configurable_bucket_resolver.h>
+#include <vespa/storage/storageserver/rpc/shared_rpc_resources.h>
+#include <vespa/storage/storageserver/rpc/cluster_controller_api_rpc_service.h>
+#include <vespa/storage/storageserver/rpc/message_codec_provider.h>
+#include <vespa/storage/storageserver/rpc/storage_api_rpc_service.h>
 #include <vespa/storageapi/message/state.h>
 #include <vespa/storageframework/generic/clock/timer.h>
 #include <vespa/vespalib/stllike/asciistream.h>
@@ -20,6 +23,7 @@
 #include <vespa/log/bufferedlogger.h>
 #include <vespa/document/bucket/fixed_bucket_spaces.h>
 #include <vespa/documentapi/messagebus/messages/getdocumentreply.h>
+#include <string_view>
 
 LOG_SETUP(".communication.manager");
 
@@ -183,7 +187,7 @@ CommunicationManager::handleReply(std::unique_ptr<mbus::Reply> reply)
         if (protocolName == documentapi::DocumentProtocol::NAME) {
             std::shared_ptr<api::StorageCommand> originalCommand;
             {
-                vespalib::LockGuard lock(_messageBusSentLock);
+                std::lock_guard lock(_messageBusSentLock);
                 typedef std::map<api::StorageMessage::Id, api::StorageCommand::SP> MessageMap;
                 MessageMap::iterator iter(_messageBusSent.find(reply->getContext().value.UINT64));
                 if (iter != _messageBusSent.end()) {
@@ -242,20 +246,32 @@ struct PlaceHolderBucketResolver : public BucketResolver {
     }
 };
 
+vespalib::compression::CompressionConfig
+convert_to_rpc_compression_config(const vespa::config::content::core::StorCommunicationmanagerConfig& mgr_config) {
+    using vespalib::compression::CompressionConfig;
+    using vespa::config::content::core::StorCommunicationmanagerConfig;
+    auto compression_type = CompressionConfig::toType(
+            StorCommunicationmanagerConfig::Rpc::Compress::getTypeName(mgr_config.rpc.compress.type).c_str());
+    return CompressionConfig(compression_type, mgr_config.rpc.compress.level, 90, mgr_config.rpc.compress.limit);
+}
+
 }
 
 CommunicationManager::CommunicationManager(StorageComponentRegister& compReg, const config::ConfigUri & configUri)
     : StorageLink("Communication manager"),
       _component(compReg, "communicationmanager"),
       _metrics(_component.getLoadTypes()->getMetricLoadTypes()),
-      _listener(),
+      _shared_rpc_resources(),    // Created upon initial configuration
+      _storage_api_rpc_service(), // (ditto)
+      _cc_rpc_service(),          // (ditto)
       _eventQueue(),
       _mbus(),
       _configUri(configUri),
       _closed(false),
       _docApiConverter(configUri, std::make_shared<PlaceHolderBucketResolver>()),
       _thread(),
-      _skip_thread(false)
+      _skip_thread(false),
+      _use_direct_storageapi_rpc(false)
 {
     _component.registerMetricUpdateHook(*this, framework::SecondTime(5));
     _component.registerMetric(_metrics);
@@ -267,11 +283,10 @@ CommunicationManager::onOpen()
     _configFetcher = std::make_unique<config::ConfigFetcher>(_configUri.getContext());
     _configFetcher->subscribe<vespa::config::content::core::StorCommunicationmanagerConfig>(_configUri.getConfigId(), this);
     _configFetcher->start();
-    framework::MilliSecTime maxProcessingTime(60 * 1000);
-    _thread = _component.startThread(*this, maxProcessingTime);
+    _thread = _component.startThread(*this, 60s);
 
-    if (_listener) {
-        _listener->registerHandle(_component.getIdentity());
+    if (_shared_rpc_resources) {
+        _shared_rpc_resources->start_server_and_register_slobrok(_component.getIdentity());
     }
 }
 
@@ -313,8 +328,13 @@ void CommunicationManager::onClose()
         }
     }
 
-    if (_listener) {
-        _listener->close();
+    // TODO remove? this no longer has any particularly useful semantics
+    if (_cc_rpc_service) {
+        _cc_rpc_service->close();
+    }
+    // TODO do this after we drain queues?
+    if (_shared_rpc_resources) {
+        _shared_rpc_resources->shutdown();
     }
 
     // Stopping pumper thread should stop all incoming messages from being
@@ -327,10 +347,11 @@ void CommunicationManager::onClose()
     }
 
     // Emptying remaining queued messages
+    // FIXME but RPC/mbus is already shut down at this point...! Make sure we handle this
     std::shared_ptr<api::StorageMessage> msg;
     api::ReturnCode code(api::ReturnCode::ABORTED, "Node shutting down");
     while (_eventQueue.size() > 0) {
-        assert(_eventQueue.getNext(msg, 0));
+        assert(_eventQueue.getNext(msg, 0ms));
         if (!msg->getType().isReply()) {
             std::shared_ptr<api::StorageReply> reply(static_cast<api::StorageCommand&>(*msg).makeReply());
             reply->setResult(code);
@@ -362,9 +383,9 @@ void CommunicationManager::configure(std::unique_ptr<CommunicationManagerConfig>
             LOG(warning, "%s", m.c_str());
             _component.requestShutdown(m);
         }
-        if (_listener->getListenPort() != config->rpcport) {
+        if (_shared_rpc_resources->listen_port() != config->rpcport) {
             auto m = make_string("rpc port changed from %d to %d. Will conduct a quick, but controlled restart.",
-                                 _listener->getListenPort(), config->rpcport);
+                                 _shared_rpc_resources->listen_port(), config->rpcport);
             LOG(warning, "%s", m.c_str());
             _component.requestShutdown(m);
         }
@@ -407,7 +428,16 @@ void CommunicationManager::configure(std::unique_ptr<CommunicationManagerConfig>
         configureMessageBusLimits(*config);
     }
 
-    _listener = std::make_unique<FNetListener>(*this, _configUri, config->rpcport);
+    _use_direct_storageapi_rpc = config->useDirectStorageapiRpc;
+    _message_codec_provider = std::make_unique<rpc::MessageCodecProvider>(_component.getTypeRepo()->documentTypeRepo,
+                                                                          _component.getLoadTypes());
+    _shared_rpc_resources = std::make_unique<rpc::SharedRpcResources>(_configUri, config->rpcport, config->rpc.numNetworkThreads);
+    _cc_rpc_service = std::make_unique<rpc::ClusterControllerApiRpcService>(*this, *_shared_rpc_resources);
+    rpc::StorageApiRpcService::Params rpc_params;
+    rpc_params.compression_config = convert_to_rpc_compression_config(*config);
+    rpc_params.num_rpc_targets_per_node = config->rpc.numTargetsPerNode;
+    _storage_api_rpc_service = std::make_unique<rpc::StorageApiRpcService>(
+            *this, *_shared_rpc_resources, *_message_codec_provider, rpc_params);
 
     if (_mbus) {
         mbus::DestinationSessionParams dstParams;
@@ -452,15 +482,17 @@ CommunicationManager::enqueue_or_process(std::shared_ptr<api::StorageMessage> ms
         LOG(spam, "Process storage message %s, priority %d", msg->toString().c_str(), msg->getPriority());
         process(msg);
     } else {
-        enqueue(std::move(msg));
+        dispatch_async(std::move(msg));
     }
 }
 
-void
-CommunicationManager::enqueue(std::shared_ptr<api::StorageMessage> msg)
-{
-    assert(msg);
-    LOG(spam, "Enq storage message %s, priority %d", msg->toString().c_str(), msg->getPriority());
+void CommunicationManager::dispatch_sync(std::shared_ptr<api::StorageMessage> msg) {
+    LOG(spam, "Direct dispatch of storage message %s, priority %d", msg->toString().c_str(), msg->getPriority());
+    process(std::move(msg));
+}
+
+void CommunicationManager::dispatch_async(std::shared_ptr<api::StorageMessage> msg) {
+    LOG(spam, "Enqueued dispatch of storage message %s, priority %d", msg->toString().c_str(), msg->getPriority());
     _eventQueue.enqueue(std::move(msg));
 }
 
@@ -542,15 +574,18 @@ CommunicationManager::sendCommand(
     switch (address.getProtocol()) {
     case api::StorageMessageAddress::STORAGE:
     {
-        LOG(spam, "Send to %s: %s", address.toString().c_str(), msg->toString().c_str());
+        LOG(debug, "Send to %s: %s", address.toString().c_str(), msg->toString().c_str());
+        if (_use_direct_storageapi_rpc && _storage_api_rpc_service->target_supports_direct_rpc(address)) {
+            _storage_api_rpc_service->send_rpc_v1_request(msg);
+        } else {
+            auto cmd = std::make_unique<mbusprot::StorageCommand>(msg);
 
-        auto cmd = std::make_unique<mbusprot::StorageCommand>(msg);
-
-        cmd->setContext(mbus::Context(msg->getMsgId()));
-        cmd->setRetryEnabled(address.retryEnabled());
-        cmd->setTimeRemaining(msg->getTimeout());
-        cmd->setTrace(msg->getTrace());
-        sendMessageBusMessage(msg, std::move(cmd), address.getRoute());
+            cmd->setContext(mbus::Context(msg->getMsgId()));
+            cmd->setRetryEnabled(false);
+            cmd->setTimeRemaining(msg->getTimeout());
+            cmd->setTrace(msg->getTrace());
+            sendMessageBusMessage(msg, std::move(cmd), address.getRoute());
+        }
         break;
     }
     case api::StorageMessageAddress::DOCUMENT:
@@ -562,10 +597,10 @@ CommunicationManager::sendCommand(
         if (mbusMsg) {
             MBUS_TRACE(msg->getTrace(), 7, "Communication manager: Converted OK");
             mbusMsg->setTrace(msg->getTrace());
-            mbusMsg->setRetryEnabled(address.retryEnabled());
+            mbusMsg->setRetryEnabled(false);
 
             {
-                vespalib::LockGuard lock(_messageBusSentLock);
+                std::lock_guard lock(_messageBusSentLock);
                 _messageBusSent[msg->getMsgId()] = msg;
             }
             sendMessageBusMessage(msg, std::move(mbusMsg), address.getRoute());
@@ -583,15 +618,13 @@ CommunicationManager::sendCommand(
 }
 
 void
-CommunicationManager::serializeNodeState(const api::GetNodeStateReply& gns, std::ostream& os,
-                                         bool includeDescription, bool includeDiskDescription, bool useOldFormat) const
+CommunicationManager::serializeNodeState(const api::GetNodeStateReply& gns, std::ostream& os, bool includeDescription) const
 {
     vespalib::asciistream tmp;
     if (gns.hasNodeState()) {
-        gns.getNodeState().serialize(tmp, "", includeDescription, includeDiskDescription, useOldFormat);
+        gns.getNodeState().serialize(tmp, "", includeDescription);
     } else {
-        _component.getStateUpdater().getReportedNodeState()->serialize(tmp, "", includeDescription,
-                                                                       includeDiskDescription, useOldFormat);
+        _component.getStateUpdater().getReportedNodeState()->serialize(tmp, "", includeDescription);
     }
     os << tmp.str();
 }
@@ -601,18 +634,21 @@ CommunicationManager::sendDirectRPCReply(
         RPCRequestWrapper& request,
         const std::shared_ptr<api::StorageReply>& reply)
 {
-    std::string requestName(request.getMethodName());
-    if (requestName == "getnodestate3") {
+    std::string_view requestName(request.getMethodName()); // TODO non-name based dispatch
+    // TODO rework this entire dispatch mechanism :D
+    if (requestName == rpc::StorageApiRpcService::rpc_v1_method_name()) {
+        _storage_api_rpc_service->encode_rpc_v1_response(*request.raw_request(), *reply);
+    } else if (requestName == "getnodestate3") {
         auto& gns(dynamic_cast<api::GetNodeStateReply&>(*reply));
         std::ostringstream ns;
-        serializeNodeState(gns, ns, true, true, false);
+        serializeNodeState(gns, ns, true);
         request.addReturnString(ns.str().c_str());
         request.addReturnString(gns.getNodeInfo().c_str());
         LOGBP(debug, "Sending getnodestate3 reply with host info '%s'.", gns.getNodeInfo().c_str());
     } else if (requestName == "getnodestate2") {
         auto& gns(dynamic_cast<api::GetNodeStateReply&>(*reply));
         std::ostringstream ns;
-        serializeNodeState(gns, ns, true, true, false);
+        serializeNodeState(gns, ns, true);
         request.addReturnString(ns.str().c_str());
         LOGBP(debug, "Sending getnodestate2 reply with no host info.");
     } else if (requestName == "setsystemstate2" || requestName == "setdistributionstates") {
@@ -629,7 +665,7 @@ CommunicationManager::sendDirectRPCReply(
         if (reply->getType() == api::MessageType::GETNODESTATE_REPLY) {
             api::GetNodeStateReply& gns(static_cast<api::GetNodeStateReply&>(*reply));
             std::ostringstream ns;
-            serializeNodeState(gns, ns, false, false, true);
+            serializeNodeState(gns, ns, false);
             request.addReturnString(ns.str().c_str());
             request.addReturnInt(static_cast<int>(gns.getNodeState().getInitProgress().getValue() * 100));
         }
@@ -724,7 +760,7 @@ CommunicationManager::run(framework::ThreadHandle& thread)
     while (!thread.interrupted()) {
         thread.registerTick();
         std::shared_ptr<api::StorageMessage> msg;
-        if (_eventQueue.getNext(msg, 100)) {
+        if (_eventQueue.getNext(msg, 100ms)) {
             process(msg);
         }
         std::lock_guard<std::mutex> guard(_earlierGenerationsLock);
@@ -752,7 +788,7 @@ CommunicationManager::print(std::ostream& out, bool verbose, const std::string& 
 }
 
 void CommunicationManager::updateMessagebusProtocol(
-        const std::shared_ptr<const document::DocumentTypeRepo> &repo) {
+        const std::shared_ptr<const document::DocumentTypeRepo>& repo) {
     if (_mbus) {
         framework::SecondTime now(_component.getClock().getTimeInSeconds());
         auto newDocumentProtocol = std::make_shared<documentapi::DocumentProtocol>(*_component.getLoadTypes(), repo);
@@ -760,6 +796,9 @@ void CommunicationManager::updateMessagebusProtocol(
         _earlierGenerations.push_back(std::make_pair(now, _mbus->getMessageBus().putProtocol(newDocumentProtocol)));
         auto newStorageProtocol = std::make_shared<mbusprot::StorageProtocol>(repo, *_component.getLoadTypes());
         _earlierGenerations.push_back(std::make_pair(now, _mbus->getMessageBus().putProtocol(newStorageProtocol)));
+    }
+    if (_message_codec_provider) {
+        _message_codec_provider->update_atomically(repo, _component.getLoadTypes());
     }
 }
 

@@ -30,7 +30,7 @@ import java.util.Set;
  * @author bratseth
  * @author mpolden
  */
-public final class Node {
+public final class Node implements Nodelike {
 
     private final String hostname;
     private final IP.Config ipConfig;
@@ -43,6 +43,8 @@ public final class Node {
     private final Reports reports;
     private final Optional<String> modelName;
     private final Optional<TenantName> reservedTo;
+    private final Optional<ApplicationId> exclusiveTo;
+    private final Optional<String> switchHostname;
 
     /** Record of the last event of each type happening to this node */
     private final History history;
@@ -50,24 +52,28 @@ public final class Node {
     /** The current allocation of this node, if any */
     private final Optional<Allocation> allocation;
 
-    /** Creates a node in the initial state (reserved) */
-    public static Node createDockerNode(Set<String> ipAddresses, String hostname, String parentHostname, NodeResources resources, NodeType type) {
-        return new Node("fake-" + hostname, new IP.Config(ipAddresses, Set.of()), hostname, Optional.of(parentHostname),
-                        new Flavor(resources), Status.initial(), State.reserved,
-                        Optional.empty(), History.empty(), type, new Reports(), Optional.empty(), Optional.empty());
+    /** Creates a node builder in the initial state (reserved) */
+    public static Node.Builder createDockerNode(Set<String> ipAddresses, String hostname, String parentHostname, NodeResources resources, NodeType type) {
+        return new Node.Builder("fake-" + hostname, hostname, new Flavor(resources), State.reserved, type)
+                .ipConfig(ipAddresses, Set.of())
+                .parentHostname(parentHostname);
     }
 
-    /** Creates a node in the initial state (provisioned) */
-    public static Node create(String openStackId, IP.Config ipConfig, String hostname, Optional<String> parentHostname,
-                              Optional<String> modelName, Flavor flavor, Optional<TenantName> reservedTo, NodeType type) {
-        return new Node(openStackId, ipConfig, hostname, parentHostname, flavor, Status.initial(), State.provisioned,
-                        Optional.empty(), History.empty(), type, new Reports(), modelName, reservedTo);
+    /** Creates a node builder in the initial state (provisioned) */
+    public static Node.Builder create(String openStackId, IP.Config ipConfig, String hostname, Flavor flavor, NodeType type) {
+        return new Node.Builder(openStackId, hostname, flavor, State.provisioned, type).ipConfig(ipConfig);
     }
 
-    /** Creates a node. See also the {@code create} helper methods. */
+    /** Creates a node builder */
+    public static Node.Builder create(String openStackId, String hostname, Flavor flavor, Node.State state, NodeType type) {
+        return new Node.Builder(openStackId, hostname, flavor, state, type);
+    }
+
+    /** DO NOT USE: public for serialization purposes. See {@code create} helper methods. */
     public Node(String id, IP.Config ipConfig, String hostname, Optional<String> parentHostname,
                 Flavor flavor, Status status, State state, Optional<Allocation> allocation, History history, NodeType type,
-                Reports reports, Optional<String> modelName, Optional<TenantName> reservedTo) {
+                Reports reports, Optional<String> modelName, Optional<TenantName> reservedTo,
+                Optional<ApplicationId> exclusiveTo, Optional<String> switchHostname) {
         this.id = Objects.requireNonNull(id, "A node must have an ID");
         this.hostname = requireNonEmptyString(hostname, "A node must have a hostname");
         this.ipConfig = Objects.requireNonNull(ipConfig, "A node must a have an IP config");
@@ -81,17 +87,23 @@ public final class Node {
         this.reports = Objects.requireNonNull(reports, "A null reports is not permitted");
         this.modelName = Objects.requireNonNull(modelName, "A null modelName is not permitted");
         this.reservedTo = Objects.requireNonNull(reservedTo, "reservedTo cannot be null");
+        this.exclusiveTo = Objects.requireNonNull(exclusiveTo, "exclusiveTo cannot be null");
+        this.switchHostname = requireNonEmptyString(switchHostname, "switchHostname cannot be null");
 
         if (state == State.active)
             requireNonEmpty(ipConfig.primary(), "Active node " + hostname + " must have at least one valid IP address");
 
         if (parentHostname.isPresent()) {
-            if (!ipConfig.pool().asSet().isEmpty()) throw new IllegalArgumentException("A child node cannot have an IP address pool");
+            if (!ipConfig.pool().isEmpty()) throw new IllegalArgumentException("A child node cannot have an IP address pool");
             if (modelName.isPresent()) throw new IllegalArgumentException("A child node cannot have model name set");
+            if (switchHostname.isPresent()) throw new IllegalArgumentException("A child node cannot have switch hostname set");
         }
 
         if (type != NodeType.host && reservedTo.isPresent())
             throw new IllegalArgumentException("Only hosts can be reserved to a tenant");
+
+        if (type != NodeType.host && exclusiveTo.isPresent())
+            throw new IllegalArgumentException("Only hosts can be exclusive to an application");
     }
 
     /** Returns the IP config of this node */
@@ -112,13 +124,14 @@ public final class Node {
      */
     public String id() { return id; }
 
-    /** Returns the parent hostname for this node if this node is a docker container or a VM (i.e. it has a parent host). Otherwise, empty **/
+    @Override
     public Optional<String> parentHostname() { return parentHostname; }
 
     public boolean hasParent(String hostname) {
         return parentHostname.isPresent() && parentHostname.get().equals(hostname);
     }
 
+    @Override
     public NodeResources resources() { return flavor.resources(); }
 
     /** Returns the flavor of this node */
@@ -130,7 +143,7 @@ public final class Node {
     /** Returns the current state of this node (in the node state machine) */
     public State state() { return state; }
 
-    /** Returns the type of this node */
+    @Override
     public NodeType type() { return type; }
 
     /** Returns the current allocation of this, if any */
@@ -151,7 +164,7 @@ public final class Node {
     /** Returns all the reports on this node. */
     public Reports reports() { return reports; }
 
-    /** Returns the hardware model of this node */
+    /** Returns the hardware model of this node, if any */
     public Optional<String> modelName() { return modelName; }
 
     /**
@@ -159,6 +172,18 @@ public final class Node {
      * If this is set, resources on this host cannot be allocated to any other tenant
      */
     public Optional<TenantName> reservedTo() { return reservedTo; }
+
+    /**
+     * Returns the application this node is exclusive to, if any. Only hosts can be exclusive to an application.
+     * If this is set, resources on this host cannot be allocated to any other application. This is set during
+     * provisioning and applies for the entire lifetime of the host
+     */
+    public Optional<ApplicationId> exclusiveTo() { return exclusiveTo; }
+
+    /** Returns the hostname of the switch this node is connected to, if any */
+    public Optional<String> switchHostname() {
+        return switchHostname;
+    }
 
     /**
      * Returns a copy of this node with wantToRetire and wantToDeprovision set to the given values and updated history.
@@ -204,6 +229,11 @@ public final class Node {
         return with(requireAllocation("Cannot unretire").unretire());
     }
 
+    /** Returns a copy of this with removable set to the given value */
+    public Node removable(boolean removable) {
+        return with(requireAllocation("Cannot set removable").removable(removable));
+    }
+
     /** Returns a copy of this with the restart generation set to generation */
     public Node withRestart(Generation generation) {
         Allocation allocation = requireAllocation("Cannot set restart generation");
@@ -212,42 +242,44 @@ public final class Node {
 
     /** Returns a node with the status assigned to the given value */
     public Node with(Status status) {
-        return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history, type, reports, modelName, reservedTo);
+        return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history, type,
+                        reports, modelName, reservedTo, exclusiveTo, switchHostname);
     }
 
     /** Returns a node with the type assigned to the given value */
     public Node with(NodeType type) {
-        return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history, type, reports, modelName, reservedTo);
+        return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history, type,
+                        reports, modelName, reservedTo, exclusiveTo, switchHostname);
     }
 
     /** Returns a node with the flavor assigned to the given value */
     public Node with(Flavor flavor) {
-        return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
-                        allocation, history, type, reports, modelName, reservedTo);
+        return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history, type,
+                        reports, modelName, reservedTo, exclusiveTo, switchHostname);
     }
 
     /** Returns a copy of this with the reboot generation set to generation */
     public Node withReboot(Generation generation) {
         return new Node(id, ipConfig, hostname, parentHostname, flavor, status.withReboot(generation), state,
-                        allocation, history, type, reports, modelName, reservedTo);
+                        allocation, history, type, reports, modelName, reservedTo, exclusiveTo, switchHostname);
     }
 
     /** Returns a copy of this with the openStackId set */
     public Node withOpenStackId(String openStackId) {
         return new Node(openStackId, ipConfig, hostname, parentHostname, flavor, status, state,
-                        allocation, history, type, reports, modelName, reservedTo);
+                        allocation, history, type, reports, modelName, reservedTo, exclusiveTo, switchHostname);
     }
 
     /** Returns a copy of this with model name set to given value */
     public Node withModelName(String modelName) {
         return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
-                        allocation, history, type, reports, Optional.of(modelName), reservedTo);
+                        allocation, history, type, reports, Optional.of(modelName), reservedTo, exclusiveTo, switchHostname);
     }
 
     /** Returns a copy of this with model name cleared */
     public Node withoutModelName() {
         return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
-                        allocation, history, type, reports, Optional.empty(), reservedTo);
+                        allocation, history, type, reports, Optional.empty(), reservedTo, exclusiveTo, switchHostname);
     }
 
     /** Returns a copy of this with a history record saying it was detected to be down at this instant */
@@ -273,39 +305,55 @@ public final class Node {
      */
     public Node with(Allocation allocation) {
         return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
-                        Optional.of(allocation), history, type, reports, modelName, reservedTo);
+                        Optional.of(allocation), history, type, reports, modelName, reservedTo, exclusiveTo, switchHostname);
     }
 
     /** Returns a new Node without an allocation. */
     public Node withoutAllocation() {
         return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
-                        Optional.empty(), history, type, reports, modelName, reservedTo);
+                        Optional.empty(), history, type, reports, modelName, reservedTo, exclusiveTo, switchHostname);
     }
 
 
     /** Returns a copy of this node with IP config set to the given value. */
     public Node with(IP.Config ipConfig) {
         return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
-                        allocation, history, type, reports, modelName, reservedTo);
+                        allocation, history, type, reports, modelName, reservedTo, exclusiveTo, switchHostname);
     }
 
     /** Returns a copy of this node with the parent hostname assigned to the given value. */
     public Node withParentHostname(String parentHostname) {
         return new Node(id, ipConfig, hostname, Optional.of(parentHostname), flavor, status, state,
-                        allocation, history, type, reports, modelName, reservedTo);
+                        allocation, history, type, reports, modelName, reservedTo, exclusiveTo, switchHostname);
     }
 
     public Node withReservedTo(TenantName tenant) {
         if (type != NodeType.host)
             throw new IllegalArgumentException("Only host nodes can be reserved, " + hostname + " has type " + type);
         return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
-                        allocation, history, type, reports, modelName, Optional.of(tenant));
+                        allocation, history, type, reports, modelName, Optional.of(tenant), exclusiveTo, switchHostname);
     }
 
     /** Returns a copy of this node which is not reserved to a tenant */
     public Node withoutReservedTo() {
         return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
-                        allocation, history, type, reports, modelName, Optional.empty());
+                        allocation, history, type, reports, modelName, Optional.empty(), exclusiveTo, switchHostname);
+    }
+
+    public Node withExclusiveTo(ApplicationId exclusiveTo) {
+        return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
+                allocation, history, type, reports, modelName, reservedTo, Optional.ofNullable(exclusiveTo), switchHostname);
+    }
+
+    /** Returns a copy of this node with switch hostname set to given value */
+    public Node withSwitchHostname(String switchHostname) {
+        return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
+                        allocation, history, type, reports, modelName, reservedTo, exclusiveTo, Optional.ofNullable(switchHostname));
+    }
+
+    /** Returns a copy of this node with switch hostname unset */
+    public Node withoutSwitchHostname() {
+        return withSwitchHostname(null);
     }
 
     /** Returns a copy of this node with the current reboot generation set to the given number at the given instant */
@@ -338,12 +386,12 @@ public final class Node {
     /** Returns a copy of this node with the given history. */
     public Node with(History history) {
         return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
-                        allocation, history, type, reports, modelName, reservedTo);
+                        allocation, history, type, reports, modelName, reservedTo, exclusiveTo, switchHostname);
     }
 
     public Node with(Reports reports) {
         return new Node(id, ipConfig, hostname, parentHostname, flavor, status, state,
-                        allocation, history, type, reports, modelName, reservedTo);
+                        allocation, history, type, reports, modelName, reservedTo, exclusiveTo, switchHostname);
     }
 
     private static Optional<String> requireNonEmptyString(Optional<String> value, String message) {
@@ -428,7 +476,10 @@ public final class Node {
         parked,
 
         /** This host has previously been in use but is now removed. */
-        deprovisioned;
+        deprovisioned,
+
+        /** This host is currently undergoing repair. */
+        breakfixed;
 
         /** Returns whether this is a state where the node is assigned to an application */
         public boolean isAllocated() {
@@ -454,6 +505,96 @@ public final class Node {
 
         public double deviation() {  return deviation; }
 
+    }
+
+    public static class Builder {
+        private final String id;
+        private final String hostname;
+        private final Flavor flavor;
+        private final State state;
+        private final NodeType type;
+
+        private String parentHostname;
+        private String modelName;
+        private TenantName reservedTo;
+        private ApplicationId exclusiveTo;
+        private String switchHostname;
+        private Allocation allocation;
+        private IP.Config ipConfig;
+        private Status status;
+        private Reports reports;
+        private History history;
+
+        private Builder(String id, String hostname, Flavor flavor, State state, NodeType type) {
+            this.id = id;
+            this.hostname = hostname;
+            this.flavor = flavor;
+            this.state = state;
+            this.type = type;
+        }
+
+        public Builder parentHostname(String parentHostname) {
+            this.parentHostname = parentHostname;
+            return this;
+        }
+
+        public Builder modelName(String modelName) {
+            this.modelName = modelName;
+            return this;
+        }
+
+        public Builder reservedTo(TenantName reservedTo) {
+            this.reservedTo = reservedTo;
+            return this;
+        }
+
+        public Builder exclusiveTo(ApplicationId exclusiveTo) {
+            this.exclusiveTo = exclusiveTo;
+            return this;
+        }
+
+        public Builder switchHostname(String switchHostname) {
+            this.switchHostname = switchHostname;
+            return this;
+        }
+
+        public Builder allocation(Allocation allocation) {
+            this.allocation = allocation;
+            return this;
+        }
+
+        public Builder ipConfig(IP.Config ipConfig) {
+            this.ipConfig = ipConfig;
+            return this;
+        }
+
+        public Builder ipConfig(Set<String> primary, Set<String> pool) {
+            this.ipConfig = new IP.Config(primary, pool);
+            return this;
+        }
+
+        public Builder status(Status status) {
+            this.status = status;
+            return this;
+        }
+
+        public Builder reports(Reports reports) {
+            this.reports = reports;
+            return this;
+        }
+
+        public Builder history(History history) {
+            this.history = history;
+            return this;
+        }
+
+        public Node build() {
+            return new Node(id, Optional.ofNullable(ipConfig).orElse(IP.Config.EMPTY), hostname, Optional.ofNullable(parentHostname),
+                    flavor, Optional.ofNullable(status).orElseGet(Status::initial), state, Optional.ofNullable(allocation),
+                    Optional.ofNullable(history).orElseGet(History::empty), type, Optional.ofNullable(reports).orElseGet(Reports::new),
+                    Optional.ofNullable(modelName), Optional.ofNullable(reservedTo), Optional.ofNullable(exclusiveTo),
+                    Optional.ofNullable(switchHostname));
+        }
     }
 
 }

@@ -1,33 +1,34 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.deploy;
 
-import com.yahoo.component.Version;
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
 import com.yahoo.config.application.api.DeployLogger;
+import com.yahoo.config.model.api.ServiceInfo;
 import com.yahoo.config.provision.ApplicationId;
-import com.yahoo.config.provision.AthenzDomain;
-import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.HostFilter;
 import com.yahoo.config.provision.Provisioner;
-import java.util.logging.Level;
 import com.yahoo.vespa.config.server.ApplicationRepository;
 import com.yahoo.vespa.config.server.ApplicationRepository.ActionTimer;
+import com.yahoo.vespa.config.server.ApplicationRepository.Activation;
 import com.yahoo.vespa.config.server.TimeoutBudget;
-import com.yahoo.vespa.config.server.application.ApplicationSet;
+import com.yahoo.vespa.config.server.application.ApplicationReindexing;
+import com.yahoo.vespa.config.server.configchange.ConfigChangeActions;
+import com.yahoo.vespa.config.server.configchange.ReindexActions;
+import com.yahoo.vespa.config.server.configchange.RestartActions;
 import com.yahoo.vespa.config.server.http.InternalServerException;
-import com.yahoo.vespa.config.server.session.LocalSession;
 import com.yahoo.vespa.config.server.session.PrepareParams;
-import com.yahoo.vespa.config.server.session.RemoteSession;
 import com.yahoo.vespa.config.server.session.Session;
-import com.yahoo.vespa.config.server.session.SilentDeployLogger;
 import com.yahoo.vespa.config.server.tenant.Tenant;
 import com.yahoo.vespa.curator.Lock;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.Set;
+import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import static com.yahoo.vespa.curator.Curator.CompletionWaiter;
+import java.util.stream.Collectors;
 
 /**
  * The process of deploying an application.
@@ -42,121 +43,131 @@ public class Deployment implements com.yahoo.config.provision.Deployment {
     private static final Logger log = Logger.getLogger(Deployment.class.getName());
 
     /** The session containing the application instance to activate */
-    private final LocalSession session;
+    private final Session session;
     private final ApplicationRepository applicationRepository;
-    private final Optional<Provisioner> hostProvisioner;
+    private final Supplier<PrepareParams> params;
+    private final Optional<Provisioner> provisioner;
     private final Tenant tenant;
-    private final Duration timeout;
+    private final DeployLogger deployLogger;
     private final Clock clock;
-    private final DeployLogger logger = new SilentDeployLogger();
+    private final boolean internalRedeploy;
 
-    /** The repository part of docker image this application should run on. Version is separate from image repo */
-    final Optional<DockerImage> dockerImageRepository;
+    private boolean prepared;
+    private ConfigChangeActions configChangeActions;
 
-    /** The Vespa version this application should run on */
-    private final Version version;
-
-    /** True if this deployment is done to bootstrap the config server */
-    private final boolean isBootstrap;
-
-    /** The (optional) Athenz domain this application should use */
-    private final Optional<AthenzDomain> athenzDomain;
-
-    private boolean prepared = false;
-    
-    /** Whether this model should be validated (only takes effect if prepared=false) */
-    private final boolean validate;
-
-    private boolean ignoreSessionStaleFailure = false;
-
-    private Deployment(LocalSession session, ApplicationRepository applicationRepository,
-                       Optional<Provisioner> hostProvisioner, Tenant tenant, Duration timeout,
-                       Clock clock, boolean prepared, boolean validate, boolean isBootstrap) {
+    private Deployment(Session session, ApplicationRepository applicationRepository, Supplier<PrepareParams> params,
+                       Optional<Provisioner> provisioner, Tenant tenant, DeployLogger deployLogger, Clock clock,
+                       boolean internalRedeploy, boolean prepared) {
         this.session = session;
         this.applicationRepository = applicationRepository;
-        this.hostProvisioner = hostProvisioner;
+        this.params = params;
+        this.provisioner = provisioner;
         this.tenant = tenant;
-        this.timeout = timeout;
+        this.deployLogger = deployLogger;
         this.clock = clock;
+        this.internalRedeploy = internalRedeploy;
         this.prepared = prepared;
-        this.validate = validate;
-        this.dockerImageRepository = session.getDockerImageRepository();
-        this.version = session.getVespaVersion();
-        this.isBootstrap = isBootstrap;
-        this.athenzDomain = session.getAthenzDomain();
     }
 
-    public static Deployment unprepared(LocalSession session, ApplicationRepository applicationRepository,
-                                        Optional<Provisioner> hostProvisioner, Tenant tenant,
+    public static Deployment unprepared(Session session, ApplicationRepository applicationRepository,
+                                        Optional<Provisioner> provisioner, Tenant tenant, PrepareParams params, DeployLogger logger, Clock clock) {
+        return new Deployment(session, applicationRepository, () -> params, provisioner, tenant, logger, clock, false, false);
+    }
+
+    public static Deployment unprepared(Session session, ApplicationRepository applicationRepository,
+                                        Optional<Provisioner> provisioner, Tenant tenant, DeployLogger logger,
                                         Duration timeout, Clock clock, boolean validate, boolean isBootstrap) {
-        return new Deployment(session, applicationRepository, hostProvisioner, tenant, timeout, clock, false,
-                              validate, isBootstrap);
+        Supplier<PrepareParams> params = createPrepareParams(clock, timeout, session, isBootstrap, !validate, false);
+        return new Deployment(session, applicationRepository, params, provisioner, tenant, logger, clock, true, false);
     }
 
-    public static Deployment prepared(LocalSession session, ApplicationRepository applicationRepository,
-                                      Optional<Provisioner> hostProvisioner, Tenant tenant,
-                                      Duration timeout, Clock clock, boolean isBootstrap) {
-        return new Deployment(session, applicationRepository, hostProvisioner, tenant,
-                              timeout, clock, true, true, isBootstrap);
-    }
-
-    public void setIgnoreSessionStaleFailure(boolean ignoreSessionStaleFailure) {
-        this.ignoreSessionStaleFailure = ignoreSessionStaleFailure;
+    public static Deployment prepared(Session session, ApplicationRepository applicationRepository,
+                                      Optional<Provisioner> provisioner, Tenant tenant, DeployLogger logger,
+                                      Duration timeout, Clock clock, boolean isBootstrap, boolean force) {
+        Supplier<PrepareParams> params = createPrepareParams(clock, timeout, session, isBootstrap, false, force);
+        return new Deployment(session, applicationRepository, params, provisioner, tenant, logger, clock, false, true);
     }
 
     /** Prepares this. This does nothing if this is already prepared */
     @Override
     public void prepare() {
         if (prepared) return;
-        try (ActionTimer timer = applicationRepository.timerFor(session.getApplicationId(), "deployment.prepareMillis")) {
-            TimeoutBudget timeoutBudget = new TimeoutBudget(clock, timeout);
-
-            PrepareParams.Builder params = new PrepareParams.Builder().applicationId(session.getApplicationId())
-                    .timeoutBudget(timeoutBudget)
-                    .ignoreValidationErrors(!validate)
-                    .vespaVersion(version.toString())
-                    .isBootstrap(isBootstrap);
-            dockerImageRepository.ifPresent(params::dockerImageRepository);
-            athenzDomain.ifPresent(params::athenzDomain);
-            Optional<ApplicationSet> activeApplicationSet = applicationRepository.getCurrentActiveApplicationSet(tenant, session.getApplicationId());
-            tenant.getSessionRepository().prepareLocalSession(session, logger, params.build(), activeApplicationSet,
-                                                              tenant.getPath(), clock.instant());
+        PrepareParams params = this.params.get();
+        ApplicationId applicationId = params.getApplicationId();
+        try (ActionTimer timer = applicationRepository.timerFor(applicationId, "deployment.prepareMillis")) {
+            this.configChangeActions = tenant.getSessionRepository().prepareLocalSession(session, deployLogger, params, clock.instant());
             this.prepared = true;
         }
     }
 
     /** Activates this. If it is not already prepared, this will call prepare first. */
     @Override
-    public void activate() {
-        if ( ! prepared)
-            prepare();
+    public long activate() {
+        prepare();
 
-        try (ActionTimer timer = applicationRepository.timerFor(session.getApplicationId(), "deployment.activateMillis")) {
-            TimeoutBudget timeoutBudget = new TimeoutBudget(clock, timeout);
-            validateSessionStatus(session);
-            ApplicationId applicationId = session.getApplicationId();
+        validateSessionStatus(session);
+        PrepareParams params = this.params.get();
+        ApplicationId applicationId = session.getApplicationId();
+        try (ActionTimer timer = applicationRepository.timerFor(applicationId, "deployment.activateMillis")) {
+            TimeoutBudget timeoutBudget = params.getTimeoutBudget();
+            timeoutBudget.assertNotTimedOut(() -> "Timeout exceeded when trying to activate '" + applicationId + "'");
 
-            if ( ! timeoutBudget.hasTimeLeft()) throw new RuntimeException("Timeout exceeded when trying to activate '" + applicationId + "'");
-
-            RemoteSession previousActiveSession;
-            CompletionWaiter waiter;
-            try (Lock lock = tenant.getApplicationRepo().lock(applicationId)) {
-                previousActiveSession = applicationRepository.getActiveSession(applicationId);
-                waiter = applicationRepository.activate(session, previousActiveSession, applicationId, ignoreSessionStaleFailure);
+            Activation activation;
+            try {
+                activation = applicationRepository.activate(session, applicationId, tenant, params.force());
             }
             catch (RuntimeException e) {
                 throw e;
             }
             catch (Exception e) {
-                throw new InternalServerException("Error activating application", e);
+                throw new InternalServerException("Error when activating '" + applicationId + "'", e);
             }
 
-            waiter.awaitCompletion(timeoutBudget.timeLeft());
+            activation.awaitCompletion(timeoutBudget.timeLeft());
             log.log(Level.INFO, session.logPre() + "Session " + session.getSessionId() + " activated successfully using " +
-                                hostProvisioner.map(provisioner -> provisioner.getClass().getSimpleName()).orElse("no host provisioner") +
+                                provisioner.map(provisioner -> provisioner.getClass().getSimpleName()).orElse("no host provisioner") +
                                 ". Config generation " + session.getMetaData().getGeneration() +
-                                (previousActiveSession != null ? ". Based on session " + previousActiveSession.getSessionId() : "") +
+                                activation.sourceSessionId().stream().mapToObj(id -> ". Based on session " + id).findFirst().orElse("") +
                                 ". File references: " + applicationRepository.getFileReferences(applicationId));
+
+            if (configChangeActions != null) {
+                if (provisioner.isPresent())
+                    restartServices(applicationId);
+
+                storeReindexing(applicationId, session.getMetaData().getGeneration());
+            }
+
+            return session.getMetaData().getGeneration();
+        }
+    }
+
+    private void restartServices(ApplicationId applicationId) {
+        RestartActions restartActions = configChangeActions.getRestartActions().useForInternalRestart(internalRedeploy);
+
+        if ( ! restartActions.isEmpty()) {
+            Set<String> hostnames = restartActions.getEntries().stream()
+                                                  .flatMap(entry -> entry.getServices().stream())
+                                                  .map(ServiceInfo::getHostName)
+                                                  .collect(Collectors.toUnmodifiableSet());
+
+            provisioner.get().restart(applicationId, HostFilter.from(hostnames, Set.of(), Set.of(), Set.of()));
+            deployLogger.log(Level.INFO, String.format("Scheduled service restart of %d nodes: %s",
+                                                       hostnames.size(), hostnames.stream().sorted().collect(Collectors.joining(", "))));
+
+            this.configChangeActions = new ConfigChangeActions(
+                    new RestartActions(), configChangeActions.getRefeedActions(), configChangeActions.getReindexActions());
+        }
+    }
+
+    private void storeReindexing(ApplicationId applicationId, long requiredSession) {
+        try (Lock sessionLock = tenant.getApplicationRepo().lock(applicationId)) {
+            ApplicationReindexing reindexing = tenant.getApplicationRepo().database().readReindexingStatus(applicationId)
+                                                     .orElse(ApplicationReindexing.ready(clock.instant()));
+
+            for (ReindexActions.Entry entry : configChangeActions.getReindexActions().getEntries())
+                reindexing = reindexing.withPending(entry.getClusterName(), entry.getDocumentType(), requiredSession);
+
+            tenant.getApplicationRepo().database().writeReindexingStatus(applicationId, reindexing);
         }
     }
 
@@ -167,19 +178,59 @@ public class Deployment implements com.yahoo.config.provision.Deployment {
      */
     @Override
     public void restart(HostFilter filter) {
-        hostProvisioner.get().restart(session.getApplicationId(), filter);
+        provisioner.get().restart(session.getApplicationId(), filter);
     }
 
     /** Exposes the session of this for testing only */
-    public LocalSession session() { return session; }
+    public Session session() { return session; }
 
-    private void validateSessionStatus(LocalSession localSession) {
-        long sessionId = localSession.getSessionId();
-        if (Session.Status.NEW.equals(localSession.getStatus())) {
-            throw new IllegalStateException(localSession.logPre() + "Session " + sessionId + " is not prepared");
-        } else if (Session.Status.ACTIVATE.equals(localSession.getStatus())) {
-            throw new IllegalStateException(localSession.logPre() + "Session " + sessionId + " is already active");
+    /**
+     * @return config change actions that need to be performed as result of prepare
+     * @throws IllegalArgumentException if called without being prepared by this
+     */
+    public ConfigChangeActions configChangeActions() {
+        if (configChangeActions != null) return configChangeActions;
+        throw new IllegalArgumentException("No config change actions: " + (prepared ? "was already prepared" : "not yet prepared"));
+    }
+
+    private void validateSessionStatus(Session session) {
+        long sessionId = session.getSessionId();
+        if (Session.Status.NEW.equals(session.getStatus())) {
+            throw new IllegalStateException(session.logPre() + "Session " + sessionId + " is not prepared");
+        } else if (Session.Status.ACTIVATE.equals(session.getStatus())) {
+            throw new IllegalStateException(session.logPre() + "Session " + sessionId + " is already active");
         }
+    }
+
+    /**
+     * @param clock system clock
+     * @param timeout total timeout duration of prepare + activate
+     * @param session the local session for this deployment
+     * @param isBootstrap true if this deployment is done to bootstrap the config server
+     * @param ignoreValidationErrors whether this model should be validated
+     * @param force whether activation of this model should be forced
+     */
+    private static Supplier<PrepareParams> createPrepareParams(
+            Clock clock, Duration timeout, Session session,
+            boolean isBootstrap, boolean ignoreValidationErrors, boolean force) {
+
+        // Supplier because shouldn't/cant create this before validateSessionStatus() for prepared deployments
+        // memoized because we want to create this once for unprepared deployments
+        return Suppliers.memoize(() -> {
+            TimeoutBudget timeoutBudget = new TimeoutBudget(clock, timeout);
+
+            PrepareParams.Builder params = new PrepareParams.Builder()
+                    .applicationId(session.getApplicationId())
+                    .vespaVersion(session.getVespaVersion().toString())
+                    .timeoutBudget(timeoutBudget)
+                    .ignoreValidationErrors(ignoreValidationErrors)
+                    .isBootstrap(isBootstrap)
+                    .force(force);
+            session.getDockerImageRepository().ifPresent(params::dockerImageRepository);
+            session.getAthenzDomain().ifPresent(params::athenzDomain);
+
+            return params.build();
+        });
     }
 
 }

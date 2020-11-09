@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.http.v2;
 
 import com.google.common.util.concurrent.UncheckedTimeoutException;
@@ -12,9 +12,10 @@ import com.yahoo.config.provision.OutOfCapacityException;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.jdisc.http.HttpRequest;
-import com.yahoo.slime.JsonDecoder;
 import com.yahoo.slime.Slime;
+import com.yahoo.slime.SlimeUtils;
 import com.yahoo.vespa.config.server.ApplicationRepository;
+import com.yahoo.vespa.config.server.MockProvisioner;
 import com.yahoo.vespa.config.server.TestComponentRegistry;
 import com.yahoo.vespa.config.server.TimeoutBudget;
 import com.yahoo.vespa.config.server.application.OrchestratorMock;
@@ -25,7 +26,9 @@ import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.curator.mock.MockCurator;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -54,23 +57,39 @@ public class SessionPrepareHandlerTest extends SessionHandlerTest {
     private static final File app = new File("src/test/resources/deploy/validapp");
 
     private final Curator curator = new MockCurator();
-    private final TestComponentRegistry componentRegistry = new TestComponentRegistry.Builder().curator(curator).build();
-    private final Clock clock = componentRegistry.getClock();
-    private final TimeoutBudget timeoutBudget = new TimeoutBudget(clock, Duration.ofSeconds(10));
+    private TimeoutBudget timeoutBudget;
     private ApplicationRepository applicationRepository;
 
+    private TestComponentRegistry componentRegistry;
     private String preparedMessage = " prepared.\"}";
     private String tenantMessage = "";
     private TenantRepository tenantRepository;
 
+    @Rule
+    public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
     @Before
-    public void setupRepo() {
-        tenantRepository = new TenantRepository(componentRegistry, false);
+    public void setupRepo() throws IOException {
+        ConfigserverConfig configserverConfig = new ConfigserverConfig.Builder()
+                .configServerDBDir(temporaryFolder.newFolder().getAbsolutePath())
+                .configDefinitionsDir(temporaryFolder.newFolder().getAbsolutePath())
+                .fileReferencesDir(temporaryFolder.newFolder().getAbsolutePath())
+                .build();
+        componentRegistry = new TestComponentRegistry.Builder()
+                .curator(curator)
+                .configServerConfig(configserverConfig)
+                .build();
+        Clock clock = componentRegistry.getClock();
+        timeoutBudget = new TimeoutBudget(clock, Duration.ofSeconds(10));
+        tenantRepository = new TenantRepository(componentRegistry);
         tenantRepository.addTenant(tenant);
-        applicationRepository = new ApplicationRepository(tenantRepository,
-                                  new MockProvisioner(),
-                                  new OrchestratorMock(),
-                                  clock);
+        applicationRepository = new ApplicationRepository.Builder()
+                .withTenantRepository(tenantRepository)
+                .withProvisioner(new MockProvisioner())
+                .withOrchestrator(new OrchestratorMock())
+                .withClock(clock)
+                .withConfigserverConfig(configserverConfig)
+                .build();
         pathPrefix = "/application/v2/tenant/" + tenant + "/session/";
         preparedMessage = " for tenant '" + tenant + "' prepared.\"";
         tenantMessage = ",\"tenant\":\"" + tenant + "\"";
@@ -215,15 +234,16 @@ public class SessionPrepareHandlerTest extends SessionHandlerTest {
     public void require_that_config_change_actions_are_in_response() throws Exception {
         long sessionId = applicationRepository.createSession(applicationId(), timeoutBudget, app);
         HttpResponse response = request(HttpRequest.Method.PUT, sessionId);
-        assertResponseContains(response, "\"configChangeActions\":{\"restart\":[],\"refeed\":[]}");
+        assertResponseContains(response, "\"configChangeActions\":{\"restart\":[],\"refeed\":[],\"reindex\":[]}");
     }
 
     @Test
     public void require_that_config_change_actions_are_not_logged_if_not_existing() throws Exception {
         long sessionId = applicationRepository.createSession(applicationId(), timeoutBudget, app);
         HttpResponse response = request(HttpRequest.Method.PUT, sessionId);
-        assertResponseNotContains(response, "Change(s) between active and new application that require restart");
-        assertResponseNotContains(response, "Change(s) between active and new application that require re-feed");
+        assertResponseNotContains(response, "Change(s) between active and new application that may require restart");
+        assertResponseNotContains(response, "Change(s) between active and new application that may require re-feed");
+        assertResponseNotContains(response, "Change(s) between active and new application that may require re-index");
     }
 
     @Test
@@ -274,7 +294,7 @@ public class SessionPrepareHandlerTest extends SessionHandlerTest {
     @Test
     public void test_docker_image_repository() {
         long sessionId = applicationRepository.createSession(applicationId(), timeoutBudget, app);
-        String dockerImageRepository = "https://foo.bar.com:4443/baz";
+        String dockerImageRepository = "foo.bar.com:4443/baz";
         request(HttpRequest.Method.PUT, sessionId, Map.of("dockerImageRepository", dockerImageRepository,
                                                           "applicationName", applicationId().application().value()));
         applicationRepository.activate(tenantRepository.getTenant(tenant), sessionId, timeoutBudget, false);
@@ -285,9 +305,7 @@ public class SessionPrepareHandlerTest extends SessionHandlerTest {
     private Slime getData(HttpResponse response) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         response.render(baos);
-        Slime data = new Slime();
-        new JsonDecoder().decode(data, baos.toByteArray());
-        return data;
+        return SlimeUtils.jsonToSlime(baos.toByteArray());
     }
 
     private static void assertResponseContains(HttpResponse response, String string) throws IOException {

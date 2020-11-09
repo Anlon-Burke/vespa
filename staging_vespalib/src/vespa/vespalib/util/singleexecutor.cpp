@@ -1,7 +1,7 @@
 // Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "singleexecutor.h"
-#include <vespa/vespalib/util/time.h>
+#include <cassert>
 
 namespace vespalib {
 
@@ -83,7 +83,7 @@ SingleExecutor::drain(Lock & lock) {
 }
 
 void
-SingleExecutor::startSync() {
+SingleExecutor::wakeup() {
     _consumerCondition.notify_one();
 }
 

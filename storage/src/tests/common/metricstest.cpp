@@ -13,7 +13,6 @@
 #include <vespa/config/common/exceptions.h>
 #include <vespa/vespalib/stllike/hash_map.hpp>
 #include <vespa/vespalib/gtest/gtest.h>
-#include <vespa/vespalib/util/time.h>
 #include <gmock/gmock.h>
 #include <thread>
 
@@ -72,8 +71,7 @@ void MetricsTest::SetUp() {
     _config = std::make_unique<vdstestlib::DirConfig>(getStandardConfig(true, "metricstest"));
     assert(system(("rm -rf " + getRootFolder(*_config)).c_str()) == 0);
     try {
-        _node = std::make_unique<TestServiceLayerApp>(
-                DiskCount(4), NodeIndex(0), _config->getConfigId());
+        _node = std::make_unique<TestServiceLayerApp>(NodeIndex(0), _config->getConfigId());
         _node->setupDummyPersistence();
         _clock = &_node->getClock();
         _clock->setAbsoluteTimeInSeconds(1000000);
@@ -94,15 +92,13 @@ void MetricsTest::SetUp() {
             *_metricManager,
             "status");
 
-    uint16_t diskCount = _node->getPartitions().size();
     documentapi::LoadTypeSet::SP loadTypes(_node->getLoadTypes());
 
     _filestorMetrics = std::make_shared<FileStorMetrics>(_node->getLoadTypes()->getMetricLoadTypes());
-    _filestorMetrics->initDiskMetrics(diskCount, loadTypes->getMetricLoadTypes(), 1, 1);
+    _filestorMetrics->initDiskMetrics(loadTypes->getMetricLoadTypes(), 1, 1);
     _topSet->registerMetric(*_filestorMetrics);
 
     _bucketManagerMetrics = std::make_shared<BucketManagerMetrics>(_node->getComponentRegister().getBucketSpaceRepo());
-    _bucketManagerMetrics->setDisks(diskCount);
     _topSet->registerMetric(*_bucketManagerMetrics);
 
     _visitorMetrics = std::make_shared<VisitorMetrics>();
@@ -129,16 +125,16 @@ void MetricsTest::createFakeLoad()
     _clock->addSecondsToTime(1);
     _metricManager->timeChangedNotification();
     uint32_t n = 5;
-    for (uint32_t i=0; i<_bucketManagerMetrics->disks.size(); ++i) {
-        DataStoredMetrics& metrics(*_bucketManagerMetrics->disks[i]);
+    {
+        DataStoredMetrics& metrics(*_bucketManagerMetrics->disk);
         metrics.docs.inc(10 * n);
         metrics.bytes.inc(10240 * n);
     }
     _filestorMetrics->directoryEvents.inc(5);
     _filestorMetrics->partitionEvents.inc(4);
     _filestorMetrics->diskEvents.inc(3);
-    for (uint32_t i=0; i<_filestorMetrics->disks.size(); ++i) {
-        FileStorDiskMetrics& disk(*_filestorMetrics->disks[i]);
+    {
+        FileStorDiskMetrics& disk(*_filestorMetrics->disk);
         disk.queueSize.addValue(4 * n);
         //disk.averageQueueWaitingTime[documentapi::LoadType::DEFAULT].addValue(10 * n);
         disk.pendingMerges.addValue(4 * n);
@@ -214,10 +210,10 @@ TEST_F(MetricsTest, filestor_metrics) {
     bool retVal = _metricsConsumer->reportStatus(ost, path);
     ASSERT_TRUE(retVal) << "_metricsConsumer->reportStatus failed";
     std::string s = ost.str();
-    EXPECT_THAT(s, HasSubstr("vds.filestor.alldisks.allthreads.get.sum.count count=240"));
-    EXPECT_THAT(s, HasSubstr("vds.filestor.alldisks.allthreads.put.sum.count count=200"));
-    EXPECT_THAT(s, HasSubstr("vds.filestor.alldisks.allthreads.remove.sum.count count=120"));
-    EXPECT_THAT(s, HasSubstr("vds.filestor.alldisks.allthreads.remove.sum.not_found count=20"));
+    EXPECT_THAT(s, HasSubstr("vds.filestor.alldisks.allthreads.get.sum.count count=60"));
+    EXPECT_THAT(s, HasSubstr("vds.filestor.alldisks.allthreads.put.sum.count count=50"));
+    EXPECT_THAT(s, HasSubstr("vds.filestor.alldisks.allthreads.remove.sum.count count=30"));
+    EXPECT_THAT(s, HasSubstr("vds.filestor.alldisks.allthreads.remove.sum.not_found count=5"));
 }
 
 #define ASSERT_METRIC(interval, metric, count) \
@@ -240,7 +236,7 @@ TEST_F(MetricsTest, filestor_metrics) {
 }
 
 TEST_F(MetricsTest, snapshot_presenting) {
-    FileStorDiskMetrics& disk0(*_filestorMetrics->disks[0]);
+    FileStorDiskMetrics& disk0(*_filestorMetrics->disk);
     FileStorThreadMetrics& thread0(*disk0.threads[0]);
 
     LOG(debug, "Adding to get metric");
@@ -285,7 +281,6 @@ TEST_F(MetricsTest, html_metrics_report) {
     createFakeLoad();
     _clock->addSecondsToTime(6 * 60);
     _metricManager->timeChangedNotification();
-    _metricsConsumer->waitUntilTimeProcessed(_clock->getTimeInSeconds());
     createFakeLoad();
     std::ostringstream ost;
     framework::HttpUrlPath path("metrics?interval=300&format=html");
@@ -327,7 +322,7 @@ MetricsTest::createSnapshotForPeriod(std::chrono::seconds secs)
 }
 
 TEST_F(MetricsTest, current_gauge_values_override_snapshot_values) {
-    auto& metrics(*_bucketManagerMetrics->disks[0]);
+    auto& metrics(*_bucketManagerMetrics->disk);
     metrics.docs.set(1000);
     // Take a 5 minute snapshot of active metrics (1000 docs).
     createSnapshotForPeriod(5min);

@@ -21,41 +21,27 @@ using vespa::config::search::RankProfilesConfig;
 namespace proton {
 
 using matching::Matcher;
+using matching::OnnxModels;
 
 typedef AttributeReprocessingInitializer::Config ARIConfig;
 
 void
-SearchableDocSubDBConfigurer::reconfigureFeedView(const SearchView::SP &searchView)
-{
-    SearchableFeedView::SP curr = _feedView.get();
-    reconfigureFeedView(curr->getIndexWriter(),
-                        curr->getSummaryAdapter(),
-                        curr->getAttributeWriter(),
-                        curr->getSchema(),
-                        curr->getDocumentTypeRepo(),
-                        searchView);
-}
-
-void
-SearchableDocSubDBConfigurer::reconfigureFeedView(const IIndexWriter::SP &indexWriter,
-                                                  const ISummaryAdapter::SP &summaryAdapter,
-                                                  const IAttributeWriter::SP &attrWriter,
-                                                  const Schema::SP &schema,
-                                                  const std::shared_ptr<const DocumentTypeRepo> &repo,
-                                                  const SearchView::SP &searchView)
+SearchableDocSubDBConfigurer::reconfigureFeedView(IAttributeWriter::SP attrWriter,
+                                                  Schema::SP schema,
+                                                  std::shared_ptr<const DocumentTypeRepo> repo)
 {
     SearchableFeedView::SP curr = _feedView.get();
     _feedView.set(std::make_shared<SearchableFeedView>(
-            StoreOnlyFeedView::Context(summaryAdapter,
-                    schema,
-                    searchView->getDocumentMetaStore(),
+            StoreOnlyFeedView::Context(curr->getSummaryAdapter(),
+                    std::move(schema),
+                    curr->getDocumentMetaStore(),
+                    std::move(repo),
+                    curr->getUncommittedLidTracker(),
                     curr->getGidToLidChangeHandler(),
-                    repo,
-                    curr->getWriteService(),
-                    curr->getLidReuseDelayer(), curr->getCommitTimeTracker()),
+                    curr->getWriteService()),
             curr->getPersistentParams(),
-            FastAccessFeedView::Context(attrWriter, curr->getDocIdLimit()),
-            SearchableFeedView::Context(indexWriter)));
+            FastAccessFeedView::Context(std::move(attrWriter), curr->getDocIdLimit()),
+            SearchableFeedView::Context(curr->getIndexWriter())));
 }
 
 void
@@ -120,18 +106,18 @@ SearchableDocSubDBConfigurer::~SearchableDocSubDBConfigurer() = default;
 
 Matchers::UP
 SearchableDocSubDBConfigurer::createMatchers(const Schema::SP &schema,
-                                             const RankProfilesConfig &cfg)
+                                             const RankProfilesConfig &cfg,
+                                             const OnnxModels &onnxModels)
 {
     auto newMatchers = std::make_unique<Matchers>(_clock, _queryLimiter, _constantValueRepo);
     for (const auto &profile : cfg.rankprofile) {
         vespalib::string name = profile.name;
         search::fef::Properties properties;
         for (const auto &property : profile.fef.property) {
-            properties.add(property.name,
-                           property.value);
+            properties.add(property.name, property.value);
         }
         // schema instance only used during call.
-        auto profptr = std::make_shared<Matcher>(*schema, properties, _clock, _queryLimiter, _constantValueRepo, _distributionKey);
+        auto profptr = std::make_shared<Matcher>(*schema, properties, _clock, _queryLimiter, _constantValueRepo, onnxModels, _distributionKey);
         newMatchers->add(name, profptr);
     }
     return newMatchers;
@@ -144,8 +130,6 @@ SearchableDocSubDBConfigurer::reconfigureIndexSearchable()
     const IIndexWriter::SP &indexWriter = feedView->getIndexWriter();
     const searchcorespi::IIndexManager::SP &indexManager = indexWriter->getIndexManager();
     reconfigureMatchView(indexManager->getSearchable());
-    const SearchView::SP searchView(_searchView.get());
-    reconfigureFeedView(searchView);
 }
 
 void
@@ -199,10 +183,9 @@ SearchableDocSubDBConfigurer::reconfigure(const DocumentDBConfig &newConfig,
     Matchers::SP matchers = searchView->getMatchers();
     if (params.shouldMatchersChange()) {
         _constantValueRepo.reconfigure(newConfig.getRankingConstants());
-        Matchers::SP newMatchers(
-                createMatchers(newConfig.getSchemaSP(),
-                               newConfig.getRankProfilesConfig()).
-                release());
+        Matchers::SP newMatchers = createMatchers(newConfig.getSchemaSP(),
+                                                  newConfig.getRankProfilesConfig(),
+                                                  newConfig.getOnnxModels());
         matchers = newMatchers;
         shouldMatchViewChange = true;
     }
@@ -247,7 +230,6 @@ SearchableDocSubDBConfigurer::reconfigure(const DocumentDBConfig &newConfig,
         IndexSearchable::SP indexSearchable = searchView->getIndexSearchable();
         reconfigureMatchView(matchers, indexSearchable, attrMgr);
         searchView = _searchView.get();
-        shouldFeedViewChange = true;
     }
 
     if (shouldSearchViewChange) {
@@ -255,13 +237,9 @@ SearchableDocSubDBConfigurer::reconfigure(const DocumentDBConfig &newConfig,
     }
 
     if (shouldFeedViewChange) {
-        SearchableFeedView::SP curr = _feedView.get();
-        reconfigureFeedView(curr->getIndexWriter(),
-                            curr->getSummaryAdapter(),
-                            attrWriter,
+        reconfigureFeedView(std::move(attrWriter),
                             newConfig.getSchemaSP(),
-                            newConfig.getDocumentTypeRepoSP(),
-                            searchView);
+                            newConfig.getDocumentTypeRepoSP());
     }
     return initializer;
 }

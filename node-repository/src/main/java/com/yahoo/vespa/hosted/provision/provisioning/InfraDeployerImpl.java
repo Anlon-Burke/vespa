@@ -3,7 +3,9 @@ package com.yahoo.vespa.hosted.provision.provisioning;
 
 import com.google.inject.Inject;
 import com.yahoo.component.Version;
+import com.yahoo.config.provision.ActivationContext;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.Deployment;
 import com.yahoo.config.provision.HostFilter;
 import com.yahoo.config.provision.HostName;
@@ -11,7 +13,6 @@ import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.InfraDeployer;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.Provisioner;
-import java.util.logging.Level;
 import com.yahoo.transaction.Mutex;
 import com.yahoo.transaction.NestedTransaction;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
@@ -19,8 +20,10 @@ import com.yahoo.vespa.hosted.provision.maintenance.InfrastructureVersions;
 import com.yahoo.vespa.service.monitor.DuperModelInfraApi;
 import com.yahoo.vespa.service.monitor.InfraApplicationApi;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -51,7 +54,10 @@ public class InfraDeployerImpl implements InfraDeployer {
 
     @Override
     public void activateAllSupportedInfraApplications(boolean propagateException) {
-        duperModel.getSupportedInfraApplications().forEach(api -> {
+        duperModel.getSupportedInfraApplications().stream()
+                // nodes cannot be activated before their host, so try to activate the host first
+                .sorted(Comparator.comparing(n -> !n.getCapacity().type().isHost()))
+                .forEach(api -> {
             var application = api.getApplicationId();
             var deployment = new InfraDeployment(api);
             try {
@@ -96,8 +102,8 @@ public class InfraDeployerImpl implements InfraDeployer {
         }
 
         @Override
-        public void activate() {
-            try (Mutex lock = nodeRepository.lock(application.getApplicationId())) {
+        public long activate() {
+            try (var lock = provisioner.lock(application.getApplicationId())) {
                 prepare();
 
                 if (hostSpecs.isEmpty()) {
@@ -105,7 +111,7 @@ public class InfraDeployerImpl implements InfraDeployer {
                     removeApplication(application.getApplicationId());
                 } else {
                     NestedTransaction nestedTransaction = new NestedTransaction();
-                    provisioner.activate(nestedTransaction, application.getApplicationId(), hostSpecs);
+                    provisioner.activate(hostSpecs, new ActivationContext(0), new ApplicationTransaction(lock, nestedTransaction));
                     nestedTransaction.commit();
 
                     duperModel.infraApplicationActivated(
@@ -114,6 +120,8 @@ public class InfraDeployerImpl implements InfraDeployer {
 
                     logger.log(Level.FINE, () -> generateActivationLogMessage(hostSpecs, application.getApplicationId()));
                 }
+
+                return 0; // No application config version here
             }
         }
 
@@ -126,10 +134,12 @@ public class InfraDeployerImpl implements InfraDeployer {
     private void removeApplication(ApplicationId applicationId) {
         // Use the DuperModel as source-of-truth on whether it has also been activated (to avoid periodic removals)
         if (duperModel.infraApplicationIsActive(applicationId)) {
-            NestedTransaction nestedTransaction = new NestedTransaction();
-            provisioner.remove(nestedTransaction, applicationId);
-            nestedTransaction.commit();
-            duperModel.infraApplicationRemoved(applicationId);
+            try (var lock = provisioner.lock(applicationId)) {
+                NestedTransaction nestedTransaction = new NestedTransaction();
+                provisioner.remove(new ApplicationTransaction(lock, nestedTransaction));
+                nestedTransaction.commit();
+                duperModel.infraApplicationRemoved(applicationId);
+            }
         }
     }
 
@@ -142,4 +152,5 @@ public class InfraDeployerImpl implements InfraDeployer {
         }
         return "Infrastructure application " + applicationId + " activated" + detail;
     }
+
 }

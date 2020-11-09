@@ -9,7 +9,7 @@ namespace search {
 
 class GateCallback : public IDestructorCallback {
 public:
-    GateCallback(vespalib::Gate & gate) : _gate(gate) {}
+    GateCallback(vespalib::Gate & gate) noexcept : _gate(gate) {}
     ~GateCallback() override;
 private:
     vespalib::Gate & _gate;
@@ -17,8 +17,15 @@ private:
 
 class IgnoreCallback : public IDestructorCallback {
 public:
-    IgnoreCallback() { }
+    IgnoreCallback() noexcept { }
     ~IgnoreCallback() override = default;
+};
+
+template <typename T>
+struct KeepAlive : public search::IDestructorCallback {
+    explicit KeepAlive(T toKeep) noexcept : _toKeep(std::move(toKeep)) { }
+    ~KeepAlive() override = default;
+    T _toKeep;
 };
 
 } // namespace search

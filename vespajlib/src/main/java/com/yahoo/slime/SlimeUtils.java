@@ -94,8 +94,12 @@ public class SlimeUtils {
     }
 
     public static byte[] toJsonBytes(Slime slime) throws IOException {
+        return toJsonBytes(slime.get());
+    }
+
+    public static byte[] toJsonBytes(Inspector inspector) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        new JsonFormat(true).encode(baos, slime);
+        new JsonFormat(true).encode(baos, inspector);
         return baos.toByteArray();
     }
 
@@ -122,6 +126,13 @@ public class SlimeUtils {
 
     public static Optional<String> optionalString(Inspector inspector) {
         return Optional.of(inspector.asString()).filter(s -> !s.isEmpty());
+    }
+
+    public static Optional<Long> optionalLong(Inspector inspector) {
+        if (inspector.type() == Type.LONG) {
+            return Optional.of(inspector.asLong());
+        }
+        return Optional.empty();
     }
 
     public static Iterator<Inspector> entriesIterator(Inspector inspector) {

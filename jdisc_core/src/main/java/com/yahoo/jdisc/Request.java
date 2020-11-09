@@ -49,6 +49,10 @@ public class Request extends AbstractResource {
     private Long timeout;
     private URI uri;
 
+    public enum RequestType {
+        READ, WRITE, MONITORING
+    }
+
     /**
      * <p>Creates a new instance of this class. As a {@link ServerProvider} you need to inject a {@link
      * CurrentContainer} instance at construction time and use that as argument to this method. As a {@link

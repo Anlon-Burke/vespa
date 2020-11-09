@@ -10,6 +10,7 @@
 #include <vespa/searchsummary/config/config-juniperrc.h>
 #include <vespa/document/config/config-documenttypes.h>
 #include <vespa/config-imported-fields.h>
+#include <vespa/searchcore/proton/server/threading_service_config.h>
 
 using document::DocumenttypesConfig;
 using search::TuneFileDocumentDB;
@@ -21,6 +22,7 @@ using vespa::config::search::SummaryConfig;
 using vespa::config::search::SummarymapConfig;
 using vespa::config::search::summary::JuniperrcConfig;
 using vespa::config::search::ImportedFieldsConfig;
+using proton::ThreadingServiceConfig;
 
 namespace proton::test {
 
@@ -31,6 +33,7 @@ DocumentDBConfigBuilder::DocumentDBConfigBuilder(int64_t generation,
     : _generation(generation),
       _rankProfiles(std::make_shared<RankProfilesConfig>()),
       _rankingConstants(std::make_shared<matching::RankingConstants>()),
+      _onnxModels(std::make_shared<matching::OnnxModels>()),
       _indexschema(std::make_shared<IndexschemaConfig>()),
       _attributes(std::make_shared<AttributesConfig>()),
       _summary(std::make_shared<SummaryConfig>()),
@@ -43,6 +46,7 @@ DocumentDBConfigBuilder::DocumentDBConfigBuilder(int64_t generation,
       _schema(schema),
       _maintenance(std::make_shared<DocumentDBMaintenanceConfig>()),
       _store(),
+      _threading_service_config(std::make_shared<const ThreadingServiceConfig>(ThreadingServiceConfig::make(1))),
       _configId(configId),
       _docTypeName(docTypeName)
 { }
@@ -52,6 +56,7 @@ DocumentDBConfigBuilder::DocumentDBConfigBuilder(const DocumentDBConfig &cfg)
      : _generation(cfg.getGeneration()),
       _rankProfiles(cfg.getRankProfilesConfigSP()),
       _rankingConstants(cfg.getRankingConstantsSP()),
+      _onnxModels(cfg.getOnnxModelsSP()),
       _indexschema(cfg.getIndexschemaConfigSP()),
       _attributes(cfg.getAttributesConfigSP()),
       _summary(cfg.getSummaryConfigSP()),
@@ -64,6 +69,7 @@ DocumentDBConfigBuilder::DocumentDBConfigBuilder(const DocumentDBConfig &cfg)
       _schema(cfg.getSchemaSP()),
       _maintenance(cfg.getMaintenanceConfigSP()),
       _store(cfg.getStoreConfig()),
+      _threading_service_config(cfg.get_threading_service_config_shared_ptr()),
       _configId(cfg.getConfigId()),
       _docTypeName(cfg.getDocTypeName())
 {}
@@ -77,6 +83,7 @@ DocumentDBConfigBuilder::build()
             _generation,
             _rankProfiles,
             _rankingConstants,
+            _onnxModels,
             _indexschema,
             _attributes,
             _summary,
@@ -89,6 +96,7 @@ DocumentDBConfigBuilder::build()
             _schema,
             _maintenance,
             _store,
+            _threading_service_config,
             _configId,
             _docTypeName);
 }

@@ -23,25 +23,15 @@ private:
     using ParentType::_activeBufferIds;
 public:
     MyStore() {}
-
-    void
-    holdBuffer(uint32_t bufferId)
-    {
+    void holdBuffer(uint32_t bufferId) {
         ParentType::holdBuffer(bufferId);
     }
-
-    void
-    holdElem(EntryRef ref, uint64_t len)
-    {
+    void holdElem(EntryRef ref, uint64_t len) {
         ParentType::holdElem(ref, len);
     }
-
-    void
-    transferHoldLists(generation_t generation)
-    {
+    void transferHoldLists(generation_t generation) {
         ParentType::transferHoldLists(generation);
     }
-
     void trimElemHoldList(generation_t usedGen) override {
         ParentType::trimElemHoldList(usedGen);
     }
@@ -54,13 +44,13 @@ public:
     void enableFreeLists() {
         ParentType::enableFreeLists();
     }
-
-    void
-    switchActiveBuffer()
-    {
+    void switchActiveBuffer() {
         ParentType::switchActiveBuffer(0, 0u);
     }
     size_t activeBufferId() const { return _activeBufferIds[0]; }
+    BufferState& get_active_buffer_state() {
+        return ParentType::getBufferState(activeBufferId());
+    }
 };
 
 
@@ -337,6 +327,12 @@ operator<<(std::ostream &os, const IntHandle &rhs)
 }
 
 void
+expect_successive_refs(EntryRef first, EntryRef second)
+{
+    EXPECT_EQ(MyRef(first).offset() + 1, MyRef(second).offset());
+}
+
+void
 expect_successive_handles(const IntHandle &first, const IntHandle &second)
 {
     EXPECT_EQ(to_ref(first).offset() + 1, to_ref(second).offset());
@@ -346,30 +342,29 @@ TEST(DataStoreTest, require_that_we_can_use_free_lists)
 {
     MyStore s;
     s.enableFreeLists();
-    auto allocator = s.freeListAllocator<IntReclaimer>();
-    auto h1 = allocator.alloc(1);
-    s.holdElem(h1.ref, 1);
+    auto r1 = s.addEntry(1);
+    s.holdElem(r1, 1);
     s.transferHoldLists(10);
-    auto h2 = allocator.alloc(2);
-    expect_successive_handles(h1, h2);
-    s.holdElem(h2.ref, 1);
+    auto r2 = s.addEntry(2);
+    expect_successive_refs(r1, r2);
+    s.holdElem(r2, 1);
     s.transferHoldLists(20);
     s.trimElemHoldList(11);
-    auto h3 = allocator.alloc(3); // reuse h1.ref
-    EXPECT_EQ(h1, h3);
-    auto h4 = allocator.alloc(4);
-    expect_successive_handles(h2, h4);
+    auto r3 = s.addEntry(3); // reuse r1
+    EXPECT_EQ(r1, r3);
+    auto r4 = s.addEntry(4);
+    expect_successive_refs(r2, r4);
     s.trimElemHoldList(21);
-    auto h5 = allocator.alloc(5); // reuse h2.ref
-    EXPECT_EQ(h2, h5);
-    auto h6 = allocator.alloc(6);
-    expect_successive_handles(h4, h6);
-    EXPECT_EQ(3, s.getEntry(h1.ref));
-    EXPECT_EQ(5, s.getEntry(h2.ref));
-    EXPECT_EQ(3, s.getEntry(h3.ref));
-    EXPECT_EQ(4, s.getEntry(h4.ref));
-    EXPECT_EQ(5, s.getEntry(h5.ref));
-    EXPECT_EQ(6, s.getEntry(h6.ref));
+    auto r5 = s.addEntry(5); // reuse r2
+    EXPECT_EQ(r2, r5);
+    auto r6 = s.addEntry(6);
+    expect_successive_refs(r4, r6);
+    EXPECT_EQ(3, s.getEntry(r1));
+    EXPECT_EQ(5, s.getEntry(r2));
+    EXPECT_EQ(3, s.getEntry(r3));
+    EXPECT_EQ(4, s.getEntry(r4));
+    EXPECT_EQ(5, s.getEntry(r5));
+    EXPECT_EQ(6, s.getEntry(r6));
 }
 
 TEST(DataStoreTest, require_that_we_can_use_free_lists_with_raw_allocator)
@@ -427,7 +422,8 @@ TEST(DataStoreTest, require_that_memory_stats_are_calculated)
     s.holdBuffer(r.bufferId());
     s.transferHoldLists(100);
     m._usedElems += 2;
-    m._holdElems += 2; // used - dead
+    m._holdElems = m._usedElems;
+    m._deadElems = 0;
     m._activeBuffers--;
     m._holdBuffers++;
     assertMemStats(m, s.getMemStats());
@@ -449,6 +445,21 @@ TEST(DataStoreTest, require_that_memory_stats_are_calculated)
     m._freeBuffers = MyRef::numBuffers() - 1;
     m._holdBuffers = 0;
     assertMemStats(m, s.getMemStats());
+
+    { // increase extra used bytes
+        auto prev_stats = s.getMemStats();
+        s.get_active_buffer_state().incExtraUsedBytes(50);
+        auto curr_stats = s.getMemStats();
+        EXPECT_EQ(prev_stats._allocBytes + 50, curr_stats._allocBytes);
+        EXPECT_EQ(prev_stats._usedBytes + 50, curr_stats._usedBytes);
+    }
+
+    { // increase extra hold bytes
+        auto prev_stats = s.getMemStats();
+        s.get_active_buffer_state().incExtraHoldBytes(30);
+        auto curr_stats = s.getMemStats();
+        EXPECT_EQ(prev_stats._holdBytes + 30, curr_stats._holdBytes);
+    }
 }
 
 TEST(DataStoreTest, require_that_memory_usage_is_calculated)
@@ -464,8 +475,8 @@ TEST(DataStoreTest, require_that_memory_usage_is_calculated)
     vespalib::MemoryUsage m = s.getMemoryUsage();
     EXPECT_EQ(MyRef::offsetSize() * sizeof(int), m.allocatedBytes());
     EXPECT_EQ(5 * sizeof(int), m.usedBytes());
-    EXPECT_EQ(2 * sizeof(int), m.deadBytes());
-    EXPECT_EQ(3 * sizeof(int), m.allocatedBytesOnHold());
+    EXPECT_EQ(0 * sizeof(int), m.deadBytes());
+    EXPECT_EQ(5 * sizeof(int), m.allocatedBytesOnHold());
     s.trimHoldLists(101);
 }
 

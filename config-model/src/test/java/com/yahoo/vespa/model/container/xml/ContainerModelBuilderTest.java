@@ -618,7 +618,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
         String servicesXml = "<container id='default' version='1.0' />";
         ApplicationPackage applicationPackage = new MockApplicationPackage.Builder().withServices(servicesXml).build();
         VespaModel model = new VespaModel(new NullConfigModelRegistry(), new DeployState.Builder()
-                .modelHostProvisioner(new InMemoryProvisioner(true, "host1.yahoo.com", "host2.yahoo.com"))
+                .modelHostProvisioner(new InMemoryProvisioner(true, false, "host1.yahoo.com", "host2.yahoo.com"))
                 .applicationPackage(applicationPackage)
                 .properties(new TestProperties()
                         .setMultitenant(true)
@@ -824,6 +824,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
 
         ConnectorConfig connectorConfig = new ConnectorConfig(builder);
         assertTrue(connectorConfig.ssl().enabled());
+        assertEquals(ConnectorConfig.Ssl.ClientAuth.Enum.WANT_AUTH, connectorConfig.ssl().clientAuth());
         assertEquals("CERT", connectorConfig.ssl().certificate());
         assertEquals("KEY", connectorConfig.ssl().privateKey());
         assertEquals(4443, connectorConfig.listenPort());
@@ -832,40 +833,42 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
                    connectorConfig.ssl().caCertificateFile(), equalTo("/opt/yahoo/share/ssl/certs/athenz_certificate_bundle.pem"));
         assertThat(connectorConfig.ssl().caCertificate(), isEmptyString());
     }
-    @Test
 
-    public void jdisc_proxy_protocol_disabled_in_public_systems() {
+    @Test
+    public void requireThatClientAuthenticationIsEnforced() {
         Element clusterElem = DomBuilderTest.parse(
                 "<container version='1.0'>",
                 nodesXml,
+                "   <http><filtering>" +
+                "      <access-control domain=\"vespa\" tls-handshake-client-auth=\"need\"/>" +
+                "   </filtering></http>" +
                 "</container>" );
 
-        var applicationPackage = new MockApplicationPackage.Builder()
-                .withRoot(applicationFolder.getRoot())
-                .build();
-
-        applicationPackage.getFile(Path.fromString("security")).createDirectory();
-        applicationPackage.getFile(Path.fromString("security/clients.pem")).writeFile(new StringReader("I am a very nice certificate"));
-
-        Zone zone = new Zone(SystemName.Public, Environment.prod, RegionName.defaultName());
-        DeployState state = new DeployState.Builder()
-                .zone(zone)
-                .applicationPackage(applicationPackage)
-                .properties(new TestProperties()
-                                    .setHostedVespa(true)
-                                    .setZone(zone)
-                                    .setEndpointCertificateSecrets(Optional.of(new EndpointCertificateSecrets("CERT", "KEY"))))
+        DeployState state = new DeployState.Builder().properties(
+                new TestProperties()
+                        .setHostedVespa(true)
+                        .setEndpointCertificateSecrets(Optional.of(new EndpointCertificateSecrets("CERT", "KEY")))
+                        .useAccessControlTlsHandshakeClientAuth(true))
                 .build();
         createModel(root, state, null, clusterElem);
         ApplicationContainer container = (ApplicationContainer)root.getProducer("container/container.0");
-        ConnectorFactory tlsPort = container.getHttp().getHttpServer().get().getConnectorFactories().stream()
-                .filter(connectorFactory -> connectorFactory.getListenPort() == 4443)
-                .findFirst()
-                .orElseThrow();
+
+        List<ConnectorFactory> connectorFactories = container.getHttp().getHttpServer().get().getConnectorFactories();
+        ConnectorFactory tlsPort = connectorFactories.stream().filter(connectorFactory -> connectorFactory.getListenPort() == 4443).findFirst().orElseThrow();
+
         ConnectorConfig.Builder builder = new ConnectorConfig.Builder();
         tlsPort.getConfig(builder);
+
         ConnectorConfig connectorConfig = new ConnectorConfig(builder);
-        assertFalse(connectorConfig.proxyProtocol().enabled());
+        assertTrue(connectorConfig.ssl().enabled());
+        assertEquals(ConnectorConfig.Ssl.ClientAuth.Enum.NEED_AUTH, connectorConfig.ssl().clientAuth());
+        assertEquals("CERT", connectorConfig.ssl().certificate());
+        assertEquals("KEY", connectorConfig.ssl().privateKey());
+        assertEquals(4443, connectorConfig.listenPort());
+
+        assertThat("Connector must use Athenz truststore in a non-public system.",
+                connectorConfig.ssl().caCertificateFile(), equalTo("/opt/yahoo/share/ssl/certs/athenz_certificate_bundle.pem"));
+        assertThat(connectorConfig.ssl().caCertificate(), isEmptyString());
     }
 
 

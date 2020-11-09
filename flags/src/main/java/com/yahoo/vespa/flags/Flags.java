@@ -4,6 +4,7 @@ package com.yahoo.vespa.flags;
 import com.yahoo.component.Vtag;
 import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.flags.custom.HostCapacity;
+import com.yahoo.vespa.flags.custom.SharedHost;
 
 import java.util.List;
 import java.util.Optional;
@@ -13,6 +14,7 @@ import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.CONSOLE_USER_EMAIL;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.HOSTNAME;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.NODE_TYPE;
+import static com.yahoo.vespa.flags.FetchVector.Dimension.TENANT_ID;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.VESPA_VERSION;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.ZONE_ID;
 
@@ -40,29 +42,6 @@ import static com.yahoo.vespa.flags.FetchVector.Dimension.ZONE_ID;
 public class Flags {
     private static volatile TreeMap<FlagId, FlagDefinition> flags = new TreeMap<>();
 
-    public static final UnboundIntFlag DROP_CACHES = defineIntFlag(
-            "drop-caches", 3,
-            "The int value to write into /proc/sys/vm/drop_caches for each tick. " +
-            "1 is page cache, 2 is dentries inodes, 3 is both page cache and dentries inodes, etc.",
-            "Takes effect on next tick.",
-            HOSTNAME);
-
-    public static final UnboundBooleanFlag ENABLE_CROWDSTRIKE = defineFeatureFlag(
-            "enable-crowdstrike", true,
-            "Whether to enable CrowdStrike.", "Takes effect on next host admin tick",
-            HOSTNAME);
-
-    public static final UnboundBooleanFlag ENABLE_NESSUS = defineFeatureFlag(
-            "enable-nessus", true,
-            "Whether to enable Nessus.", "Takes effect on next host admin tick",
-            HOSTNAME);
-
-    public static final UnboundBooleanFlag ENABLE_FLEET_SSHD_CONFIG = defineFeatureFlag(
-            "enable-fleet-sshd-config", true,
-            "Whether fleet should manage the /etc/ssh/sshd_config file.",
-            "Takes effect on next host admin tick.",
-            HOSTNAME);
-
     public static final UnboundBooleanFlag FLEET_CANARY = defineFeatureFlag(
             "fleet-canary", false,
             "Whether the host is a fleet canary.",
@@ -84,25 +63,12 @@ public class Flags {
             "Takes effect on next tick.",
             HOSTNAME);
 
-    public static final UnboundLongFlag THIN_POOL_GB = defineLongFlag(
-            "thin-pool-gb", -1,
-            "The size of the disk reserved for the thin pool with dynamic provisioning in AWS, in base-2 GB. " +
-                    "If <0, the default is used (which may depend on the zone and node type).",
-            "Takes effect immediately (but used only during provisioning).",
-            NODE_TYPE);
-
     public static final UnboundDoubleFlag CONTAINER_CPU_CAP = defineDoubleFlag(
             "container-cpu-cap", 0,
             "Hard limit on how many CPUs a container may use. This value is multiplied by CPU allocated to node, so " +
             "to cap CPU at 200%, set this to 2, etc.",
             "Takes effect on next node agent tick. Change is orchestrated, but does NOT require container restart",
             HOSTNAME, APPLICATION_ID);
-
-    public static final UnboundStringFlag TLS_INSECURE_AUTHORIZATION_MODE = defineStringFlag(
-            "tls-insecure-authorization-mode", "log_only",
-            "TLS insecure authorization mode. Allowed values: ['disable', 'log_only', 'enforce']",
-            "Takes effect on restart of Docker container",
-            NODE_TYPE, APPLICATION_ID, HOSTNAME);
 
     public static final UnboundIntFlag REBOOT_INTERVAL_IN_DAYS = defineIntFlag(
             "reboot-interval-in-days", 30,
@@ -124,6 +90,12 @@ public class Flags {
             "Otherwise it specifies the total (unallocated or not) capacity.",
             "Takes effect on next iteration of DynamicProvisioningMaintainer.");
 
+    public static final UnboundJacksonFlag<SharedHost> SHARED_HOST = defineJacksonFlag(
+            "shared-host", SharedHost.createDisabled(), SharedHost.class,
+            "Specifies whether shared hosts can be provisioned, and if so, the advertised " +
+            "node resources of the host, the maximum number of containers, etc.",
+            "Takes effect on next iteration of DynamicProvisioningMaintainer.");
+
     public static final UnboundListFlag<String> INACTIVE_MAINTENANCE_JOBS = defineListFlag(
             "inactive-maintenance-jobs", List.of(), String.class,
             "The list of maintenance jobs that are inactive.",
@@ -132,17 +104,6 @@ public class Flags {
     public static final UnboundDoubleFlag DEFAULT_TERM_WISE_LIMIT = defineDoubleFlag(
             "default-term-wise-limit", 1.0,
             "Default limit for when to apply termwise query evaluation",
-            "Takes effect at redeployment",
-            ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundDoubleFlag DEFAULT_THREADPOOL_SIZE_FACTOR = defineDoubleFlag(
-            "default-threadpool-size-factor", 0.0,
-            "Default multiplication factor when computing maxthreads for main container threadpool based on available cores",
-            "Takes effect at redeployment",
-            ZONE_ID, APPLICATION_ID);
-    public static final UnboundDoubleFlag DEFAULT_QUEUE_SIZE_FACTOR = defineDoubleFlag(
-            "default-queue-size-factor", 0.0,
-            "Default multiplication factor when computing queuesize for burst handling",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
@@ -157,21 +118,25 @@ public class Flags {
             "Selects type of sequenced executor used for feeding, valid values are LATENCY, ADAPTIVE, THROUGHPUT",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
+
     public static final UnboundStringFlag RESPONSE_SEQUENCER_TYPE = defineStringFlag(
             "response-sequencer-type", "ADAPTIVE",
             "Selects type of sequenced executor used for mbus responses, valid values are LATENCY, ADAPTIVE, THROUGHPUT",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
+
     public static final UnboundIntFlag RESPONSE_NUM_THREADS = defineIntFlag(
             "response-num-threads", 2,
             "Number of threads used for mbus responses, default is 2, negative number = numcores/4",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
+
     public static final UnboundBooleanFlag SKIP_COMMUNICATIONMANAGER_THREAD = defineFeatureFlag(
             "skip-communicatiomanager-thread", false,
             "Should we skip the communicationmanager thread",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
+
     public static final UnboundBooleanFlag SKIP_MBUS_REQUEST_THREAD = defineFeatureFlag(
             "skip-mbus-request-thread", false,
             "Should we skip the mbus request thread",
@@ -184,16 +149,22 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundBooleanFlag USE_CONTENT_NODE_BTREE_DB = defineFeatureFlag(
-            "use-content-node-btree-db", false,
-            "Whether to use the new B-tree bucket database on the content node.",
-            "Takes effect at restart of content node process",
-            ZONE_ID, APPLICATION_ID);
-
     public static final UnboundBooleanFlag USE_THREE_PHASE_UPDATES = defineFeatureFlag(
             "use-three-phase-updates", false,
             "Whether to enable the use of three-phase updates when bucket replicas are out of sync.",
             "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag USE_DIRECT_STORAGE_API_RPC = defineFeatureFlag(
+            "use-direct-storage-api-rpc", false,
+            "Whether to use direct RPC for Storage API communication between content cluster nodes.",
+            "Takes effect at restart of distributor and content node process",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag USE_FAST_VALUE_TENSOR_IMPLEMENTATION = defineFeatureFlag(
+            "use-fast-value-tensor-implementation", false,
+            "Whether to use FastValueBuilderFactory as the tensor implementation on all content nodes.",
+            "Takes effect at restart of content node process",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag HOST_HARDENING = defineFeatureFlag(
@@ -226,26 +197,14 @@ public class Flags {
             "Takes effect on restart of process",
             NODE_TYPE, HOSTNAME);
 
-    public static final UnboundBooleanFlag ENABLE_DISK_WRITE_TEST = defineFeatureFlag(
-            "enable-disk-write-test", true,
-            "Regularly issue a small write to disk and fail the host if it is not successful",
-            "Takes effect on next node agent tick (but does not clear existing failure reports)",
-            HOSTNAME);
-
-    public static final UnboundBooleanFlag USE_REFRESHED_ENDPOINT_CERTIFICATE = defineFeatureFlag(
-            "use-refreshed-endpoint-certificate", false,
-            "Whether an application should start using a newer certificate/key pair if available",
-            "Takes effect on the next deployment of the application",
-            APPLICATION_ID);
-
     public static final UnboundBooleanFlag VALIDATE_ENDPOINT_CERTIFICATES = defineFeatureFlag(
             "validate-endpoint-certificates", false,
             "Whether endpoint certificates should be validated before use",
             "Takes effect on the next deployment of the application");
 
-    public static final UnboundStringFlag ENDPOINT_CERTIFICATE_BACKFILL = defineStringFlag(
-            "endpoint-certificate-backfill", "disable",
-            "Whether the endpoint certificate maintainer should backfill missing certificate data from cameo",
+    public static final UnboundStringFlag DELETE_UNUSED_ENDPOINT_CERTIFICATES = defineStringFlag(
+            "delete-unused-endpoint-certificates", "disable",
+            "Whether the endpoint certificate maintainer should delete unused certificates in cameo/zk",
             "Takes effect on next scheduled run of maintainer - set to \"disable\", \"dryrun\" or \"enable\"");
 
     public static final UnboundBooleanFlag USE_ALTERNATIVE_ENDPOINT_CERTIFICATE_PROVIDER = defineFeatureFlag(
@@ -264,28 +223,11 @@ public class Flags {
             "Whether to provision and use endpoint certs for apps in shared routing zones",
             "Takes effect on next deployment of the application", APPLICATION_ID);
 
-    public static final UnboundBooleanFlag PHRASE_SEGMENTING = defineFeatureFlag(
-            "phrase-segmenting", false,
-            "Should 'implicit phrases' in queries we parsed to a phrase or and?",
-            "Takes effect on redeploy",
-            ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundBooleanFlag NLB_PROXY_PROTOCOL = defineFeatureFlag(
-            "nlb-proxy-protocol", false,
-            "Configure NLB to use proxy protocol",
-            "Takes effect on next application redeploy",
-            APPLICATION_ID);
-
     public static final UnboundBooleanFlag USE_CLOUD_INIT_FORMAT = defineFeatureFlag(
             "use-cloud-init", false,
             "Use the cloud-init format when provisioning hosts",
             "Takes effect immediately",
             ZONE_ID);
-
-    public static final UnboundBooleanFlag CONFIGSERVER_DISTRIBUTE_APPLICATION_PACKAGE = defineFeatureFlag(
-            "configserver-distribute-application-package", false,
-            "Whether the application package should be distributed to other config servers during a deployment",
-            "Takes effect immediately");
 
     public static final UnboundBooleanFlag PROVISION_APPLICATION_ROLES = defineFeatureFlag(
             "provision-application-roles", false,
@@ -315,16 +257,16 @@ public class Flags {
 
     public static final UnboundIntFlag TENANT_NODE_QUOTA = defineIntFlag(
             "tenant-node-quota", 5,
-            "The number of nodes a tenant is allowed to request",
-            "Takes effect on next deployment",
+            "The number of nodes a tenant is allowed to request per cluster",
+            "Only takes effect on next deployment, if set to a value other than the default for flag!",
             APPLICATION_ID
     );
 
-    public static final UnboundBooleanFlag WEIGHTED_DNS_PER_REGION = defineFeatureFlag(
-            "weighted-dns-per-region", true,
-            "Whether to create weighted DNS records per region in global endpoints",
-            "Takes effect on next deployment through controller",
-            APPLICATION_ID
+    public static final UnboundIntFlag TENANT_BUDGET_QUOTA = defineIntFlag(
+            "tenant-budget-quota", -1,
+            "The budget in cents/hr a tenant is allowed spend per instance, as calculated by NodeResources",
+            "Only takes effect on next deployment, if set to a value other than the default for flag!",
+            TENANT_ID
     );
 
     public static final UnboundBooleanFlag ONLY_PUBLIC_ACCESS = defineFeatureFlag(
@@ -345,19 +287,6 @@ public class Flags {
             "Takes effect on next tick"
     );
 
-    public static final UnboundDoubleFlag FEED_CORE_THREAD_POOL_SIZE_FACTOR = defineDoubleFlag(
-            "feed-core-thread-pool-size-factor", 1.0,
-            "Number of core threads in threadpool for feeding APIs as factor of max pool size",
-            "Takes effect on next internal redeployment",
-            APPLICATION_ID);
-
-    public static final UnboundBooleanFlag USE_CONFIG_SERVER_LOCK = defineFeatureFlag(
-            "use-config-server-lock",
-            false,
-            "Whether the node-repository should take the same application lock as the config server when making changes to nodes",
-            "Takes effect on config server restart"
-    );
-
     public static final UnboundBooleanFlag HIDE_SHARED_ROUTING_ENDPOINT = defineFeatureFlag(
             "hide-shared-routing-endpoint",
             false,
@@ -365,6 +294,49 @@ public class Flags {
             "Takes effect immediately",
             APPLICATION_ID
     );
+
+    public static final UnboundBooleanFlag SKIP_MAINTENANCE_DEPLOYMENT = defineFeatureFlag(
+            "node-repository-skip-maintenance-deployment",
+            false,
+            "Whether PeriodicApplicationMaintainer should skip deployment for an application",
+            "Takes effect at next run of maintainer",
+            APPLICATION_ID);
+
+    public static final UnboundBooleanFlag USE_ACCESS_CONTROL_CLIENT_AUTHENTICATION = defineFeatureFlag(
+            "use-access-control-client-authentication",
+            false,
+            "Whether application container should set up client authentication on default port based on access control element",
+            "Takes effect on next internal redeployment",
+            APPLICATION_ID);
+
+    public static final UnboundBooleanFlag USE_ASYNC_MESSAGE_HANDLING_ON_SCHEDULE = defineFeatureFlag(
+            "async-message-handling-on-schedule", false,
+            "Optionally deliver async messages in own thread",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+    public static final UnboundIntFlag CONTENT_NODE_BUCKET_DB_STRIPE_BITS = defineIntFlag(
+            "content-node-bucket-db-stripe-bits", 0,
+            "Number of bits used for striping the bucket DB in service layer",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+    public static final UnboundIntFlag MERGE_CHUNK_SIZE = defineIntFlag(
+            "merge-chunk-size", 0x400000,
+            "Size of merge buffer in service layer",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag REGIONAL_CONTAINER_REGISTRY = defineFeatureFlag(
+            "regional-container-registry",
+            false,
+            "Whether host-admin should download images from the zone's regional container registry",
+            "Takes effect on host-admin restart");
+
+    public static final UnboundBooleanFlag ENABLE_AUTOMATIC_REINDEXING = defineFeatureFlag(
+            "enable-automatic-reindexing",
+            false,
+            "Whether to automatically trigger reindexing from config change",
+            "Takes effect on next internal redeployment",
+            APPLICATION_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, String description,

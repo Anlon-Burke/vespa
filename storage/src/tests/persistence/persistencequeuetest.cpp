@@ -34,8 +34,6 @@ public:
         explicit Fixture(FileStorTestFixture& parent);
         ~Fixture();
     };
-
-    static constexpr uint16_t _disk = 0;
 };
 
 PersistenceQueueTest::Fixture::Fixture(FileStorTestFixture& parent_)
@@ -44,28 +42,27 @@ PersistenceQueueTest::Fixture::Fixture(FileStorTestFixture& parent_)
       dummyManager(std::make_unique<DummyStorageLink>()),
       messageSender(*dummyManager),
       loadTypes("raw:"),
-      metrics(loadTypes.getMetricLoadTypes())
+      metrics(loadTypes.getMetricLoadTypes()),
+      stripeId(0)
 {
     top.push_back(std::move(dummyManager));
     top.open();
 
-    metrics.initDiskMetrics(parent._node->getPartitions().size(), loadTypes.getMetricLoadTypes(), 1, 1);
+    metrics.initDiskMetrics(loadTypes.getMetricLoadTypes(), 1, 1);
 
-    filestorHandler = std::make_unique<FileStorHandler>(messageSender, metrics, parent._node->getPartitions(),
-                                                        parent._node->getComponentRegister());
+    filestorHandler = std::make_unique<FileStorHandlerImpl>(messageSender, metrics,
+                                                            parent._node->getComponentRegister());
     // getNextMessage will time out if no unlocked buckets are present. Choose a timeout
     // that is large enough to fail tests with high probability if this is not the case,
     // and small enough to not slow down testing too much.
-    filestorHandler->setGetNextMessageTimeout(20);
-
-    stripeId = filestorHandler->getNextStripeId(0);
+    filestorHandler->setGetNextMessageTimeout(20ms);
 }
 
 PersistenceQueueTest::Fixture::~Fixture() = default;
 
 void PersistenceQueueTest::SetUp() {
     setupPersistenceThreads(1);
-    _node->setPersistenceProvider(std::make_unique<spi::dummy::DummyPersistence>(_node->getTypeRepo(), 1));
+    _node->setPersistenceProvider(std::make_unique<spi::dummy::DummyPersistence>(_node->getTypeRepo()));
 }
 
 std::shared_ptr<api::StorageMessage> PersistenceQueueTest::createPut(uint64_t bucket, uint64_t docIdx) {
@@ -90,16 +87,16 @@ TEST_F(PersistenceQueueTest, fetch_next_unlocked_message_if_bucket_locked) {
     // getNextMessage 2 times should then return a lock on the first bucket,
     // then subsequently on the second, skipping the already locked bucket.
     // Puts all have same pri, so order is well defined.
-    f.filestorHandler->schedule(createPut(1234, 0), _disk);
-    f.filestorHandler->schedule(createPut(1234, 1), _disk);
-    f.filestorHandler->schedule(createPut(5432, 0), _disk);
+    f.filestorHandler->schedule(createPut(1234, 0));
+    f.filestorHandler->schedule(createPut(1234, 1));
+    f.filestorHandler->schedule(createPut(5432, 0));
 
-    auto lock0 = f.filestorHandler->getNextMessage(_disk, f.stripeId);
+    auto lock0 = f.filestorHandler->getNextMessage(f.stripeId);
     ASSERT_TRUE(lock0.first.get());
     EXPECT_EQ(document::BucketId(16, 1234),
               dynamic_cast<api::PutCommand&>(*lock0.second).getBucketId());
 
-    auto lock1 = f.filestorHandler->getNextMessage(_disk, f.stripeId);
+    auto lock1 = f.filestorHandler->getNextMessage(f.stripeId);
     ASSERT_TRUE(lock1.first.get());
     EXPECT_EQ(document::BucketId(16, 5432),
               dynamic_cast<api::PutCommand&>(*lock1.second).getBucketId());
@@ -108,16 +105,16 @@ TEST_F(PersistenceQueueTest, fetch_next_unlocked_message_if_bucket_locked) {
 TEST_F(PersistenceQueueTest, shared_locked_operations_allow_concurrent_bucket_access) {
     Fixture f(*this);
 
-    f.filestorHandler->schedule(createGet(1234), _disk);
-    f.filestorHandler->schedule(createGet(1234), _disk);
+    f.filestorHandler->schedule(createGet(1234));
+    f.filestorHandler->schedule(createGet(1234));
 
-    auto lock0 = f.filestorHandler->getNextMessage(_disk, f.stripeId);
+    auto lock0 = f.filestorHandler->getNextMessage(f.stripeId);
     ASSERT_TRUE(lock0.first.get());
     EXPECT_EQ(api::LockingRequirements::Shared, lock0.first->lockingRequirements());
 
     // Even though we already have a lock on the bucket, Gets allow shared locking and we
     // should therefore be able to get another lock.
-    auto lock1 = f.filestorHandler->getNextMessage(_disk, f.stripeId);
+    auto lock1 = f.filestorHandler->getNextMessage(f.stripeId);
     ASSERT_TRUE(lock1.first.get());
     EXPECT_EQ(api::LockingRequirements::Shared, lock1.first->lockingRequirements());
 }
@@ -125,45 +122,45 @@ TEST_F(PersistenceQueueTest, shared_locked_operations_allow_concurrent_bucket_ac
 TEST_F(PersistenceQueueTest, exclusive_locked_operation_not_started_if_shared_op_active) {
     Fixture f(*this);
 
-    f.filestorHandler->schedule(createGet(1234), _disk);
-    f.filestorHandler->schedule(createPut(1234, 0), _disk);
+    f.filestorHandler->schedule(createGet(1234));
+    f.filestorHandler->schedule(createPut(1234, 0));
 
-    auto lock0 = f.filestorHandler->getNextMessage(_disk, f.stripeId);
+    auto lock0 = f.filestorHandler->getNextMessage(f.stripeId);
     ASSERT_TRUE(lock0.first.get());
     EXPECT_EQ(api::LockingRequirements::Shared, lock0.first->lockingRequirements());
 
     // Expected to time out
-    auto lock1 = f.filestorHandler->getNextMessage(_disk, f.stripeId);
+    auto lock1 = f.filestorHandler->getNextMessage(f.stripeId);
     ASSERT_FALSE(lock1.first.get());
 }
 
 TEST_F(PersistenceQueueTest, shared_locked_operation_not_started_if_exclusive_op_active) {
     Fixture f(*this);
 
-    f.filestorHandler->schedule(createPut(1234, 0), _disk);
-    f.filestorHandler->schedule(createGet(1234), _disk);
+    f.filestorHandler->schedule(createPut(1234, 0));
+    f.filestorHandler->schedule(createGet(1234));
 
-    auto lock0 = f.filestorHandler->getNextMessage(_disk, f.stripeId);
+    auto lock0 = f.filestorHandler->getNextMessage(f.stripeId);
     ASSERT_TRUE(lock0.first.get());
     EXPECT_EQ(api::LockingRequirements::Exclusive, lock0.first->lockingRequirements());
 
     // Expected to time out
-    auto lock1 = f.filestorHandler->getNextMessage(_disk, f.stripeId);
+    auto lock1 = f.filestorHandler->getNextMessage(f.stripeId);
     ASSERT_FALSE(lock1.first.get());
 }
 
 TEST_F(PersistenceQueueTest, exclusive_locked_operation_not_started_if_exclusive_op_active) {
     Fixture f(*this);
 
-    f.filestorHandler->schedule(createPut(1234, 0), _disk);
-    f.filestorHandler->schedule(createPut(1234, 0), _disk);
+    f.filestorHandler->schedule(createPut(1234, 0));
+    f.filestorHandler->schedule(createPut(1234, 0));
 
-    auto lock0 = f.filestorHandler->getNextMessage(_disk, f.stripeId);
+    auto lock0 = f.filestorHandler->getNextMessage(f.stripeId);
     ASSERT_TRUE(lock0.first.get());
     EXPECT_EQ(api::LockingRequirements::Exclusive, lock0.first->lockingRequirements());
 
     // Expected to time out
-    auto lock1 = f.filestorHandler->getNextMessage(_disk, f.stripeId);
+    auto lock1 = f.filestorHandler->getNextMessage(f.stripeId);
     ASSERT_FALSE(lock1.first.get());
 }
 

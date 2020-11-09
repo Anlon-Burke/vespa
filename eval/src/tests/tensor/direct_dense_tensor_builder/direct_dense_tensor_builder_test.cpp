@@ -29,9 +29,8 @@ void assertTensor(const vespalib::string &type_spec,
                   const std::vector<double> &expCells,
                   const Tensor &tensor)
 {
-    const DenseTensorView &realTensor = dynamic_cast<const DenseTensorView &>(tensor);
-    EXPECT_EQUAL(ValueType::from_spec(type_spec), realTensor.type());
-    EXPECT_EQUAL(expCells, dispatch_1<CallMakeVector>(realTensor.cellsRef()));
+    EXPECT_EQUAL(ValueType::from_spec(type_spec), tensor.type());
+    EXPECT_EQUAL(expCells, dispatch_1<CallMakeVector>(tensor.cells()));
 }
 
 void assertTensorSpec(const TensorSpec &expSpec, const Tensor &tensor) {
@@ -172,6 +171,22 @@ TEST("require that dense tensor cells iterator works for 2d tensor") {
     assertTensorCell({1,1}, 7, itr);
     itr.next();
     EXPECT_FALSE(itr.valid());
+}
+
+TEST("require that memory used count is reasonable") {
+    Tensor::UP full = build2DTensor();
+    const DenseTensorView &full_view = dynamic_cast<const DenseTensorView &>(*full);
+    DenseTensorView ref_view(full_view.fast_type(), full_view.cells());
+
+    size_t full_sz = full->get_memory_usage().usedBytes();
+    size_t view_sz = full_view.get_memory_usage().usedBytes();
+    size_t ref_sz = ref_view.get_memory_usage().usedBytes();
+
+    EXPECT_EQUAL(ref_sz, sizeof(DenseTensorView));
+    EXPECT_LESS(ref_sz, full_sz);
+    EXPECT_EQUAL(full_sz, view_sz);
+    EXPECT_LESS(full_sz, 10000u);
+    EXPECT_GREATER(full_sz, sizeof(DenseTensor<double>));
 }
 
 TEST_MAIN() { TEST_RUN_ALL(); }

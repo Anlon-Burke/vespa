@@ -73,6 +73,10 @@ public:
         return vespalib::eval::ConstantValue::UP();
     }
 
+    const search::fef::OnnxModel *getOnnxModel(const vespalib::string &) const override {
+        return nullptr;
+    }
+
     bool addField(const vespalib::string & name, bool isAttribute);
 
     search::fef::Properties & getProperties() { return _properties; }

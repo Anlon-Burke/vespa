@@ -23,7 +23,7 @@ private:
     DenseTensorStore _denseTensorStore;
     std::unique_ptr<NearestNeighborIndex> _index;
 
-    void internal_set_tensor(DocId docid, const Tensor& tensor);
+    void internal_set_tensor(DocId docid, const vespalib::eval::Value& tensor);
     void consider_remove_from_index(DocId docid);
     vespalib::MemoryUsage memory_usage() const override;
 
@@ -33,11 +33,12 @@ public:
     virtual ~DenseTensorAttribute();
     // Implements AttributeVector and ITensorAttribute
     uint32_t clearDoc(DocId docId) override;
-    void setTensor(DocId docId, const Tensor &tensor) override;
-    std::unique_ptr<PrepareResult> prepare_set_tensor(DocId docid, const Tensor& tensor) const override;
-    void complete_set_tensor(DocId docid, const Tensor& tensor, std::unique_ptr<PrepareResult> prepare_result) override;
-    std::unique_ptr<Tensor> getTensor(DocId docId) const override;
-    void getTensor(DocId docId, vespalib::tensor::MutableDenseTensorView &tensor) const override;
+    void setTensor(DocId docId, const vespalib::eval::Value &tensor) override;
+    std::unique_ptr<PrepareResult> prepare_set_tensor(DocId docid, const vespalib::eval::Value& tensor) const override;
+    void complete_set_tensor(DocId docid, const vespalib::eval::Value& tensor, std::unique_ptr<PrepareResult> prepare_result) override;
+    std::unique_ptr<vespalib::eval::Value> getTensor(DocId docId) const override;
+    void extract_dense_view(DocId docId, vespalib::tensor::MutableDenseTensorView &tensor) const override;
+    bool supports_extract_dense_view() const override { return true; }
     bool onLoad() override;
     std::unique_ptr<AttributeSaver> onInitSave(vespalib::stringref fileName) override;
     void compactWorst() override;
@@ -47,7 +48,7 @@ public:
     void get_state(const vespalib::slime::Inserter& inserter) const override;
 
     // Implements DocVectorAccess
-    vespalib::tensor::TypedCells get_vector(uint32_t docid) const override;
+    vespalib::eval::TypedCells get_vector(uint32_t docid) const override;
 
     const NearestNeighborIndex* nearest_neighbor_index() const { return _index.get(); }
 };

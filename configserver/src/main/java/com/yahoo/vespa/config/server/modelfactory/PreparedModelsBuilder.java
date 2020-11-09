@@ -21,6 +21,7 @@ import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.vespa.config.server.application.Application;
+import com.yahoo.vespa.config.server.application.ApplicationCuratorDatabase;
 import com.yahoo.vespa.config.server.application.ApplicationSet;
 import com.yahoo.vespa.config.server.application.PermanentApplicationPackage;
 import com.yahoo.vespa.config.server.deploy.ModelContextImpl;
@@ -29,6 +30,7 @@ import com.yahoo.vespa.config.server.host.HostValidator;
 import com.yahoo.vespa.config.server.provision.HostProvisionerProvider;
 import com.yahoo.vespa.config.server.provision.StaticProvisioner;
 import com.yahoo.vespa.config.server.session.PrepareParams;
+import com.yahoo.vespa.curator.Curator;
 
 import java.io.File;
 import java.io.IOException;
@@ -53,12 +55,14 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
     private final FileDistributionProvider fileDistributionProvider;
     private final Optional<ApplicationSet> currentActiveApplicationSet;
     private final ModelContext.Properties properties;
+    private final Curator curator;
 
     public PreparedModelsBuilder(ModelFactoryRegistry modelFactoryRegistry,
                                  PermanentApplicationPackage permanentApplicationPackage,
                                  ConfigDefinitionRepo configDefinitionRepo,
                                  FileDistributionProvider fileDistributionProvider,
                                  HostProvisionerProvider hostProvisionerProvider,
+                                 Curator curator,
                                  HostValidator<ApplicationId> hostValidator,
                                  DeployLogger logger,
                                  PrepareParams params,
@@ -70,6 +74,7 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
         this.configDefinitionRepo = configDefinitionRepo;
         this.fileDistributionProvider = fileDistributionProvider;
         this.hostValidator = hostValidator;
+        this.curator = curator;
         this.logger = logger;
         this.params = params;
         this.currentActiveApplicationSet = currentActiveApplicationSet;
@@ -95,6 +100,7 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
                 logger,
                 configDefinitionRepo,
                 fileDistributionProvider.getFileRegistry(),
+                new ApplicationCuratorDatabase(applicationId.tenant(), curator).readReindexingStatus(applicationId),
                 createHostProvisioner(allocatedHosts, provisioned),
                 provisioned,
                 properties,
@@ -108,9 +114,11 @@ public class PreparedModelsBuilder extends ModelsBuilder<PreparedModelsBuilder.P
                 "Create and validate model " + modelVersion + " for " + applicationId + ", previous model is " + modelOf(modelVersion));
         ValidationParameters validationParameters =
                 new ValidationParameters(params.ignoreValidationErrors() ? IgnoreValidationErrors.TRUE : IgnoreValidationErrors.FALSE);
-        ModelCreateResult result =  modelFactory.createAndValidateModel(modelContext, validationParameters);
+        ModelCreateResult result = modelFactory.createAndValidateModel(modelContext, validationParameters);
         validateModelHosts(hostValidator, applicationId, result.getModel());
         log.log(Level.FINE, "Done building model " + modelVersion + " for " + applicationId);
+        params.getTimeoutBudget().assertNotTimedOut(() -> "prepare timed out after building model " + modelVersion +
+                " (timeout " + params.getTimeoutBudget().timeout() + "): " + applicationId);
         return new PreparedModelsBuilder.PreparedModelResult(modelVersion, result.getModel(), fileDistributionProvider, result.getConfigChangeActions());
     }
 

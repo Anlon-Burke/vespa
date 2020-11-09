@@ -5,9 +5,12 @@
 #include "read_guard.h"
 #include "storagebucketinfo.h"
 #include <vespa/storageapi/defs.h>
+#include <vespa/vespalib/util/memoryusage.h>
 #include <memory>
 
 namespace storage {
+
+struct ContentBucketDbOptions;
 
 class StorBucketDatabase {
     std::unique_ptr<bucketdb::AbstractBucketMap<bucketdb::StorageBucketInfo>> _impl;
@@ -24,7 +27,7 @@ public:
         CREATE_IF_NONEXISTING = 1
     };
 
-    explicit StorBucketDatabase(bool use_btree_db = false);
+    explicit StorBucketDatabase(const ContentBucketDbOptions&);
 
     void insert(const document::BucketId&, const bucketdb::StorageBucketInfo&,
                 const char* clientId);
@@ -59,17 +62,13 @@ public:
                           vespalib::duration yieldTime = 10us,
                           uint32_t chunkSize = bucketdb::AbstractBucketMap<bucketdb::StorageBucketInfo>::DEFAULT_CHUNK_SIZE);
 
-    void for_each_mutable(std::function<Decision(uint64_t, bucketdb::StorageBucketInfo&)> func,
-                          const char* clientId,
-                          const key_type& first = key_type(),
-                          const key_type& last = key_type() - 1);
+    void for_each_mutable_unordered(std::function<Decision(uint64_t, bucketdb::StorageBucketInfo&)> func,
+                                    const char* clientId);
 
     void for_each(std::function<Decision(uint64_t, const bucketdb::StorageBucketInfo&)> func,
-                  const char* clientId,
-                  const key_type& first = key_type(),
-                  const key_type& last = key_type() - 1);
+                  const char* clientId);
 
-    std::unique_ptr<bucketdb::ReadGuard<Entry>> acquire_read_guard() const;
+    [[nodiscard]] std::unique_ptr<bucketdb::ReadGuard<Entry>> acquire_read_guard() const;
 
     /**
      * Returns true iff bucket has no superbuckets or sub-buckets in the
@@ -79,7 +78,8 @@ public:
      */
     bool isConsistent(const WrappedEntry& entry);
 
-    size_t getMemoryUsage() const;
+    [[nodiscard]] size_t getMemoryUsage() const;
+    [[nodiscard]] vespalib::MemoryUsage detailed_memory_usage() const noexcept;
     void showLockClients(vespalib::asciistream & out) const;
 
 };

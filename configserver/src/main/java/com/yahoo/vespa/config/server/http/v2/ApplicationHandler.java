@@ -3,7 +3,6 @@ package com.yahoo.vespa.config.server.http.v2;
 
 import com.google.inject.Inject;
 import com.yahoo.component.Version;
-import com.yahoo.config.FileReference;
 import com.yahoo.config.application.api.ApplicationFile;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
@@ -18,18 +17,13 @@ import com.yahoo.jdisc.application.BindingMatch;
 import com.yahoo.jdisc.application.UriPattern;
 import com.yahoo.slime.Cursor;
 import com.yahoo.vespa.config.server.ApplicationRepository;
-import com.yahoo.vespa.config.server.application.ApplicationSet;
 import com.yahoo.vespa.config.server.http.ContentHandler;
 import com.yahoo.vespa.config.server.http.ContentRequest;
 import com.yahoo.vespa.config.server.http.HttpErrorResponse;
 import com.yahoo.vespa.config.server.http.HttpHandler;
 import com.yahoo.vespa.config.server.http.JSONResponse;
 import com.yahoo.vespa.config.server.http.NotFoundException;
-import com.yahoo.vespa.config.server.session.RemoteSession;
-import com.yahoo.vespa.config.server.tenant.Tenant;
-import com.yahoo.vespa.defaults.Defaults;
 
-import java.io.File;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
@@ -37,8 +31,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-
-import static com.yahoo.vespa.config.server.filedistribution.FileDistributionUtil.fileReferenceExistsOnDisk;
 
 /**
  * Operations on applications (delete, wait for config convergence, restart, application content etc.)
@@ -60,6 +52,7 @@ public class ApplicationHandler extends HttpHandler {
             "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/logs",
             "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/tester/*/*",
             "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/tester/*",
+            "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/quota",
             "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*",
             "http://*/application/v2/tenant/*/application/*")
             .map(UriPattern::new)
@@ -80,13 +73,11 @@ public class ApplicationHandler extends HttpHandler {
     @Override
     public HttpResponse handleDELETE(HttpRequest request) {
         ApplicationId applicationId = getApplicationIdFromRequest(request);
-        // TODO: Add support for timeout in request
-        boolean deleted = applicationRepository.delete(applicationId, Duration.ofSeconds(60));
+        boolean deleted = applicationRepository.delete(applicationId);
         if ( ! deleted)
             return HttpErrorResponse.notFoundError("Unable to delete " + applicationId.toFullString() + ": Not found");
         return new DeleteApplicationResponse(Response.Status.OK, applicationId);
     }
-
 
     @Override
     public HttpResponse handleGET(HttpRequest request) {
@@ -160,30 +151,26 @@ public class ApplicationHandler extends HttpHandler {
                     return applicationRepository.getTesterLog(applicationId, after);
                 case "ready":
                     return applicationRepository.isTesterReady(applicationId);
+                case "report":
+                    return applicationRepository.getTestReport(applicationId);
                 default:
                     throw new IllegalArgumentException("Unknown tester command in request " + request.getUri().toString());
             }
+        }
+
+        if (isQuotaUsageRequest(request)) {
+            var quotaUsageRate = applicationRepository.getQuotaUsageRate(applicationId);
+            return new QuotaUsageResponse(quotaUsageRate);
         }
 
         return getApplicationResponse(applicationId);
     }
 
     GetApplicationResponse getApplicationResponse(ApplicationId applicationId) {
-        Tenant tenant = applicationRepository.getTenant(applicationId);
-        Optional<ApplicationSet> applicationSet = applicationRepository.getCurrentActiveApplicationSet(tenant, applicationId);
-        String applicationPackage = "";
-        RemoteSession session = applicationRepository.getActiveSession(applicationId);
-        if (session != null) {
-            FileReference applicationPackageReference = session.getApplicationPackageReference();
-            File downloadDirectory = new File(Defaults.getDefaults().underVespaHome(applicationRepository.configserverConfig().fileReferencesDir()));
-            if (applicationPackageReference != null && ! fileReferenceExistsOnDisk(downloadDirectory, applicationPackageReference))
-                applicationPackage = applicationPackageReference.value();
-        }
-
         return new GetApplicationResponse(Response.Status.OK,
                                           applicationRepository.getApplicationGeneration(applicationId),
-                                          applicationSet.get().getAllVersions(applicationId),
-                                          applicationPackage);
+                                          applicationRepository.getAllVersions(applicationId),
+                                          applicationRepository.getApplicationPackageReference(applicationId));
     }
 
     @Override
@@ -286,6 +273,11 @@ public class ApplicationHandler extends HttpHandler {
                request.getUri().getPath().contains("/tester/run/");
     }
 
+    private static boolean isQuotaUsageRequest(HttpRequest request) {
+        return getBindingMatch(request).groupCount() == 7 &&
+                request.getUri().getPath().endsWith("/quota");
+    }
+
     private static String getHostNameFromRequest(HttpRequest req) {
         BindingMatch<?> bm = getBindingMatch(req);
         return bm.group(7);
@@ -346,10 +338,10 @@ public class ApplicationHandler extends HttpHandler {
     }
 
     private static class GetApplicationResponse extends JSONResponse {
-        GetApplicationResponse(int status, long generation, List<Version> modelVersions, String applicationPackageReference) {
+        GetApplicationResponse(int status, long generation, List<Version> modelVersions, Optional<String> applicationPackageReference) {
             super(status);
             object.setLong("generation", generation);
-            object.setString("applicationPackageFileReference", applicationPackageReference);
+            object.setString("applicationPackageFileReference", applicationPackageReference.orElse(""));
             Cursor modelVersionArray = object.setArray("modelVersions");
             modelVersions.forEach(version -> modelVersionArray.addString(version.toFullString()));
         }
@@ -362,4 +354,10 @@ public class ApplicationHandler extends HttpHandler {
         }
     }
 
+    private static class QuotaUsageResponse extends JSONResponse {
+        QuotaUsageResponse(double usageRate) {
+            super(Response.Status.OK);
+            object.setDouble("rate", usageRate);
+        }
+    }
 }

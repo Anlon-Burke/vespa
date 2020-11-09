@@ -1,7 +1,6 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "bucketmovejob.h"
-#include "documentdb_commit_job.h"
 #include "heart_beat_job.h"
 #include "job_tracked_maintenance_job.h"
 #include "lid_space_compaction_job.h"
@@ -35,13 +34,13 @@ injectLidSpaceCompactionJobs(MaintenanceController &controller,
                              const std::shared_ptr<IBucketStateCalculator> &calc)
 {
     for (auto &lidHandler : lscHandlers) {
-        IMaintenanceJob::UP job = IMaintenanceJob::UP
-                (new LidSpaceCompactionJob(config.getLidSpaceCompactionConfig(),
-                                           *lidHandler, opStorer, fbHandler,
-                                           diskMemUsageNotifier,
-                                           config.getBlockableJobConfig(),
-                                           clusterStateChangedNotifier,
-                                           (calc ? calc->nodeRetired() : false)));
+        IMaintenanceJob::UP job = std::make_unique<LidSpaceCompactionJob>(
+                config.getLidSpaceCompactionConfig(),
+                *lidHandler, opStorer, fbHandler,
+                diskMemUsageNotifier,
+                config.getBlockableJobConfig(),
+                clusterStateChangedNotifier,
+                (calc ? calc->nodeRetired() : false));
         controller.registerJobInMasterThread(trackJob(tracker, std::move(job)));
     }
 }
@@ -97,7 +96,6 @@ MaintenanceJobsInjector::injectJobs(MaintenanceController &controller,
                                     const std::shared_ptr<IBucketStateCalculator> &calc,
                                     IDiskMemUsageNotifier &diskMemUsageNotifier,
                                     DocumentDBJobTrackers &jobTrackers,
-                                    ICommitable &commit,
                                     IAttributeManagerSP readyAttributeManager,
                                     IAttributeManagerSP notReadyAttributeManager,
                                     std::unique_ptr<const AttributeConfigInspector> attribute_config_inspector,
@@ -105,9 +103,6 @@ MaintenanceJobsInjector::injectJobs(MaintenanceController &controller,
                                     AttributeUsageFilter &attributeUsageFilter) {
     controller.registerJobInMasterThread(std::make_unique<HeartBeatJob>(hbHandler, config.getHeartBeatConfig()));
     controller.registerJobInDefaultPool(std::make_unique<PruneSessionCacheJob>(scPruner, config.getSessionCachePruneInterval()));
-    if (config.hasVisibilityDelay()) {
-        controller.registerJobInMasterThread(std::make_unique<DocumentDBCommitJob>(commit, config.getVisibilityDelay()));
-    }
     const MaintenanceDocumentSubDB &mRemSubDB(controller.getRemSubDB());
     auto pruneRDjob = std::make_unique<PruneRemovedDocumentsJob>(config.getPruneRemovedDocumentsConfig(), *mRemSubDB.meta_store(),
                                                 mRemSubDB.sub_db_id(), docTypeName, prdHandler, fbHandler);

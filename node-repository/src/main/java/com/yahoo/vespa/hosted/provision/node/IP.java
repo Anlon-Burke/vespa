@@ -8,9 +8,9 @@ import com.yahoo.vespa.hosted.provision.LockedNodeList;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.persistence.NameResolver;
+import com.yahoo.vespa.hosted.provision.persistence.NameResolver.RecordType;
 
-import java.net.Inet4Address;
-import java.net.Inet6Address;
+import java.net.InetAddress;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -33,9 +33,9 @@ import static com.yahoo.config.provision.NodeType.proxyhost;
 public class IP {
 
     /** Comparator for sorting IP addresses by their natural order */
-    public static final Comparator<String> NATURAL_ORDER = (ip1, ip2) -> {
-        byte[] address1 = InetAddresses.forString(ip1).getAddress();
-        byte[] address2 = InetAddresses.forString(ip2).getAddress();
+    public static final Comparator<InetAddress> NATURAL_ORDER = (ip1, ip2) -> {
+        byte[] address1 = ip1.getAddress();
+        byte[] address2 = ip2.getAddress();
 
         // IPv4 always sorts before IPv6
         if (address1.length < address2.length) return -1;
@@ -88,7 +88,7 @@ public class IP {
 
         /** Returns a copy of this with pool set to given value */
         public Config with(Set<String> primary) {
-            return new Config(require(primary), pool.asSet());
+            return new Config(primary, pool.asSet());
         }
 
         @Override
@@ -108,16 +108,6 @@ public class IP {
         @Override
         public String toString() {
             return String.format("ip config primary=%s pool=%s", primary, pool.asSet());
-        }
-
-        /** Validates and returns the given addresses */
-        public static Set<String> require(Set<String> addresses) {
-            try {
-                addresses.forEach(InetAddresses::forString);
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("Found one or more invalid addresses in " + addresses, e);
-            }
-            return addresses;
         }
 
         /**
@@ -233,8 +223,8 @@ public class IP {
         /**
          * Find a free allocation in this pool. Note that the allocation is not final until it is assigned to a node
          *
-         * @param nodes A locked list of all nodes in the repository
-         * @return An allocation from the pool, if any can be made
+         * @param nodes a locked list of all nodes in the repository
+         * @return an allocation from the pool, if any can be made
          */
         public Optional<Allocation> findAllocation(LockedNodeList nodes, NameResolver resolver) {
             var unusedAddresses = findUnused(nodes);
@@ -255,7 +245,7 @@ public class IP {
         /**
          * Finds all unused addresses in this pool
          *
-         * @param nodes Locked list of all nodes in the repository
+         * @param nodes a list of all nodes in the repository
          */
         public Set<String> findUnused(NodeList nodes) {
             var unusedAddresses = new LinkedHashSet<>(asSet());
@@ -266,6 +256,10 @@ public class IP {
 
         public Set<String> asSet() {
             return addresses.asSet();
+        }
+
+        public boolean isEmpty() {
+            return asSet().isEmpty();
         }
 
         @Override
@@ -346,8 +340,8 @@ public class IP {
          * @return An allocation containing 1 IPv6 address and 1 IPv4 address (if hostname is dual-stack)
          */
         private static Allocation ofIpv6(String ipAddress, NameResolver resolver) {
-            String hostname6 = resolver.getHostname(ipAddress).orElseThrow(() -> new IllegalArgumentException("Could not resolve IP address: " + ipAddress));
-            List<String> ipv4Addresses = resolver.getAllByNameOrThrow(hostname6).stream()
+            String hostname6 = resolver.resolveHostname(ipAddress).orElseThrow(() -> new IllegalArgumentException("Could not resolve IP address: " + ipAddress));
+            List<String> ipv4Addresses = resolver.resolveAll(hostname6).stream()
                                                  .filter(IP::isV4)
                                                  .collect(Collectors.toList());
             if (ipv4Addresses.size() > 1) {
@@ -355,7 +349,7 @@ public class IP {
             }
             Optional<String> ipv4Address = ipv4Addresses.stream().findFirst();
             ipv4Address.ifPresent(addr -> {
-                String hostname4 = resolver.getHostname(addr).orElseThrow(() -> new IllegalArgumentException("Could not resolve IP address: " + addr));
+                String hostname4 = resolver.resolveHostname(addr).orElseThrow(() -> new IllegalArgumentException("Could not resolve IP address: " + addr));
                 if (!hostname6.equals(hostname4)) {
                     throw new IllegalArgumentException(String.format("Hostnames resolved from each IP address do not " +
                                                                      "point to the same hostname [%s -> %s, %s -> %s]",
@@ -373,8 +367,8 @@ public class IP {
          * @return An allocation containing 1 IPv4 address.
          */
         private static Allocation ofIpv4(String ipAddress, NameResolver resolver) {
-            String hostname4 = resolver.getHostname(ipAddress).orElseThrow(() -> new IllegalArgumentException("Could not resolve IP address: " + ipAddress));
-            List<String> addresses = resolver.getAllByNameOrThrow(hostname4).stream()
+            String hostname4 = resolver.resolveHostname(ipAddress).orElseThrow(() -> new IllegalArgumentException("Could not resolve IP address: " + ipAddress));
+            List<String> addresses = resolver.resolveAll(hostname4).stream()
                                              .filter(IP::isV4)
                                              .collect(Collectors.toList());
             if (addresses.size() != 1) {
@@ -414,14 +408,45 @@ public class IP {
 
     }
 
+    /** Parse given IP address string */
+    public static InetAddress parse(String ipAddress) {
+        try {
+            return InetAddresses.forString(ipAddress);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid IP address '" + ipAddress + "'", e);
+        }
+    }
+
+    /** Verify DNS configuration of given hostname and IP address */
+    public static void verifyDns(String hostname, String ipAddress, NameResolver resolver) {
+        RecordType recordType = isV6(ipAddress) ? RecordType.AAAA : RecordType.A;
+        Set<String> addresses = resolver.resolve(hostname, recordType);
+        if (!addresses.equals(Set.of(ipAddress)))
+            throw new IllegalArgumentException("Expected " + hostname + " to resolve to " + ipAddress +
+                                               ", but got " + addresses);
+
+        Optional<String> reverseHostname = resolver.resolveHostname(ipAddress);
+        if (reverseHostname.isEmpty())
+            throw new IllegalArgumentException(ipAddress + " did not resolve to a hostname");
+
+        if (!reverseHostname.get().equals(hostname))
+            throw new IllegalArgumentException(ipAddress + " resolved to " + reverseHostname.get() +
+                                               ", which does not match expected hostname " + hostname);
+    }
+
+    /** Convert IP address to string. This uses :: for zero compression in IPv6 addresses.  */
+    public static String asString(InetAddress inetAddress) {
+        return InetAddresses.toAddrString(inetAddress);
+    }
+
     /** Returns whether given string is an IPv4 address */
     public static boolean isV4(String ipAddress) {
-        return InetAddresses.forString(ipAddress) instanceof Inet4Address;
+        return ipAddress.contains(".");
     }
 
     /** Returns whether given string is an IPv6 address */
     public static boolean isV6(String ipAddress) {
-        return InetAddresses.forString(ipAddress) instanceof Inet6Address;
+        return ipAddress.contains(":");
     }
 
 }

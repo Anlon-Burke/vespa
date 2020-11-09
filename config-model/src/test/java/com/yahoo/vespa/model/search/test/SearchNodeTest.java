@@ -1,8 +1,12 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.search.test;
 
+import com.yahoo.config.model.api.ModelContext;
+import com.yahoo.config.model.deploy.DeployState;
+import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.producer.AbstractConfigProducer;
 import com.yahoo.config.model.test.MockRoot;
+import com.yahoo.searchlib.TranslogserverConfig;
 import com.yahoo.vespa.config.search.core.ProtonConfig;
 import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.model.Host;
@@ -47,9 +51,13 @@ public class SearchNodeTest {
         root.freezeModelTopology();
     }
 
-    private static SearchNode createSearchNode(AbstractConfigProducer parent, String name, int distributionKey,
+    private static SearchNode createSearchNode(MockRoot root, String name, int distributionKey,
                                                NodeSpec nodeSpec, boolean flushOnShutDown, boolean isHosted, boolean combined) {
-        return SearchNode.create(parent, name, distributionKey, nodeSpec, "mycluster", null, flushOnShutDown, Optional.empty(), Optional.empty(), isHosted, combined);
+        return SearchNode.create(root.getDeployState().getProperties(), root, name, distributionKey, nodeSpec, "mycluster", null, flushOnShutDown, Optional.empty(), Optional.empty(), isHosted, combined);
+    }
+
+    private static SearchNode createSearchNode(MockRoot root) {
+        return createSearchNode(root, "mynode", 3, new NodeSpec(7, 5), true, true, false);
     }
 
     @Test
@@ -78,6 +86,19 @@ public class SearchNodeTest {
         assertTrue(node.getPreShutdownCommand().isPresent());
         Assert.assertThat(node.getPreShutdownCommand().get(),
                 CoreMatchers.containsString("vespa-proton-cmd " + node.getRpcPort() + " prepareRestart"));
+    }
+
+    private MockRoot createRoot(ModelContext.Properties properties) {
+        return new MockRoot("", new DeployState.Builder().properties(properties).build());
+    }
+
+    private TranslogserverConfig getTlsConfig(ModelContext.Properties properties) {
+        MockRoot root = createRoot(properties);
+        SearchNode node = createSearchNode(root);
+        prepare(root, node);
+        TranslogserverConfig.Builder tlsBuilder = new TranslogserverConfig.Builder();
+        node.getConfig(tlsBuilder);
+        return tlsBuilder.build();
     }
 
 }

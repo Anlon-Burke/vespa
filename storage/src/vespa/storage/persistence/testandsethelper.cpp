@@ -1,8 +1,9 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // @author Vegard Sjonfjell
 
-#include "fieldvisitor.h"
 #include "testandsethelper.h"
+#include "persistenceutil.h"
+#include "fieldvisitor.h"
 #include <vespa/document/select/parser.h>
 #include <vespa/document/repo/documenttyperepo.h>
 #include <vespa/vespalib/util/stringfmt.h>
@@ -11,7 +12,8 @@ using namespace std::string_literals;
 
 namespace storage {
 
-void TestAndSetHelper::getDocumentType(const document::DocumentTypeRepo & documentTypeRepo) {
+void TestAndSetHelper::resolveDocumentType(const document::DocumentTypeRepo & documentTypeRepo) {
+    if (_docTypePtr != nullptr) return;
     if (!_docId.hasDocType()) {
         throw TestAndSetException(api::ReturnCode(api::ReturnCode::ILLEGAL_PARAMETERS, "Document id has no doctype"));
     }
@@ -22,8 +24,9 @@ void TestAndSetHelper::getDocumentType(const document::DocumentTypeRepo & docume
     }
 }
 
-void TestAndSetHelper::parseDocumentSelection(const document::DocumentTypeRepo & documentTypeRepo) {
-    document::select::Parser parser(documentTypeRepo, _component.getBucketIdFactory());
+void TestAndSetHelper::parseDocumentSelection(const document::DocumentTypeRepo & documentTypeRepo,
+                                              const document::BucketIdFactory & bucketIdFactory) {
+    document::select::Parser parser(documentTypeRepo, bucketIdFactory);
 
     try {
         _docSelectionUp = parser.parse(_cmd.getCondition().getSelection());
@@ -33,25 +36,22 @@ void TestAndSetHelper::parseDocumentSelection(const document::DocumentTypeRepo &
 }
 
 spi::GetResult TestAndSetHelper::retrieveDocument(const document::FieldSet & fieldSet, spi::Context & context) {
-    return _thread._spi.get(
-        _thread.getBucket(_docId, _cmd.getBucket()),
-        fieldSet,
-        _cmd.getDocumentId(),
-        context);
+    return _spi.get(_env.getBucket(_docId, _cmd.getBucket()), fieldSet, _cmd.getDocumentId(), context);
 }
 
-TestAndSetHelper::TestAndSetHelper(PersistenceThread & thread, const api::TestAndSetCommand & cmd,
-                                   bool missingDocumentImpliesMatch)
-    : _thread(thread),
-      _component(thread._env._component),
+TestAndSetHelper::TestAndSetHelper(const PersistenceUtil & env, const spi::PersistenceProvider  & spi,
+                                   const document::BucketIdFactory & bucketFactory,
+                                   const api::TestAndSetCommand & cmd, bool missingDocumentImpliesMatch)
+    : _env(env),
+      _spi(spi),
       _cmd(cmd),
       _docId(cmd.getDocumentId()),
-      _docTypePtr(nullptr),
+      _docTypePtr(_cmd.getDocumentType()),
       _missingDocumentImpliesMatch(missingDocumentImpliesMatch)
 {
-    auto docTypeRepo = _component.getTypeRepo()->documentTypeRepo;
-    getDocumentType(*docTypeRepo);
-    parseDocumentSelection(*docTypeRepo);
+    const auto & repo = _env.getDocumentTypeRepo();
+    resolveDocumentType(repo);
+    parseDocumentSelection(repo, bucketFactory);
 }
 
 TestAndSetHelper::~TestAndSetHelper() = default;
@@ -70,8 +70,8 @@ TestAndSetHelper::retrieveAndMatch(spi::Context & context) {
         auto docPtr = result.getDocumentPtr();
         if (_docSelectionUp->contains(*docPtr) != document::select::Result::True) {
             return api::ReturnCode(api::ReturnCode::TEST_AND_SET_CONDITION_FAILED,
-                                   vespalib::make_string("Condition did not match document partition=%d, nodeIndex=%d bucket=%" PRIx64 " %s",
-                                                         _thread._env._partition, _thread._env._nodeIndex, _cmd.getBucketId().getRawId(),
+                                   vespalib::make_string("Condition did not match document nodeIndex=%d bucket=%" PRIx64 " %s",
+                                                         _env._nodeIndex, _cmd.getBucketId().getRawId(),
                                                          _cmd.hasBeenRemapped() ? "remapped" : ""));
         }
 
@@ -82,8 +82,8 @@ TestAndSetHelper::retrieveAndMatch(spi::Context & context) {
     }
 
     return api::ReturnCode(api::ReturnCode::TEST_AND_SET_CONDITION_FAILED,
-                           vespalib::make_string("Document does not exist partition=%d, nodeIndex=%d bucket=%" PRIx64 " %s",
-                                                 _thread._env._partition, _thread._env._nodeIndex, _cmd.getBucketId().getRawId(),
+                           vespalib::make_string("Document does not exist nodeIndex=%d bucket=%" PRIx64 " %s",
+                                                 _env._nodeIndex, _cmd.getBucketId().getRawId(),
                                                  _cmd.hasBeenRemapped() ? "remapped" : ""));
 }
 

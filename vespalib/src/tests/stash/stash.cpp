@@ -99,7 +99,7 @@ TEST("require that base types have expected size") {
     EXPECT_EQUAL(8u, char_ptr_size());
     EXPECT_EQUAL(16u, chunk_header_size());
     EXPECT_EQUAL(16u, dtor_hook_size());
-    EXPECT_EQUAL(16u, free_hook_size());
+    EXPECT_EQUAL(24u, free_hook_size());
     EXPECT_EQUAL(24u, array_dtor_hook_size());
 }
 
@@ -253,9 +253,9 @@ TEST("require that the chunk size can be adjusted") {
     EXPECT_EQUAL(64000u, stash.get_chunk_size());
 }
 
-TEST("require that minimal chunk size is 4096") {
-    Stash stash(128);
-    EXPECT_EQUAL(4096u, stash.get_chunk_size());
+TEST("require that minimal chunk size is 128") {
+    Stash stash(50);
+    EXPECT_EQUAL(128u, stash.get_chunk_size());
 }
 
 TEST("require that a stash can be moved by construction") {
@@ -447,6 +447,27 @@ TEST("require that mark/revert works as expected") {
     EXPECT_EQUAL(destruct_small, 100u);
     EXPECT_EQUAL(destruct_large, 2u);
     EXPECT_EQUAL(stash.count_used(), 0u);
+}
+
+void check_array(ArrayRef<float> arr, size_t expect_size) {
+    EXPECT_EQUAL(arr.size(), expect_size);
+    for (size_t i = 0; i < arr.size(); ++i) {
+        arr[i] = float(i);
+    }
+    for (size_t i = 0; i < arr.size(); ++i) {
+        EXPECT_EQUAL(arr[i], float(i));
+    }
+}
+
+TEST("require that uninitialized arrays can be created") {
+    Stash stash(4096);
+    EXPECT_EQUAL(0u, stash.count_used());
+    ArrayRef<float> small_arr = stash.create_uninitialized_array<float>(64);
+    TEST_DO(check_array(small_arr, 64));
+    EXPECT_EQUAL(sum({chunk_header_size(), sizeof(float) * 64}), stash.count_used());
+    ArrayRef<float> big_arr = stash.create_uninitialized_array<float>(2500);
+    TEST_DO(check_array(big_arr, 2500));
+    EXPECT_EQUAL(sum({chunk_header_size(), sizeof(float) * 64}), stash.count_used());
 }
 
 TEST_MAIN() { TEST_RUN_ALL(); }

@@ -39,7 +39,7 @@ struct Eval {
         TensorSpec _tensor;
     public:
         Result() : _type(Type::ERROR), _number(0.0), _tensor("error") {}
-        Result(const TensorEngine &engine, const Value &value) : _type(Type::ERROR), _number(0.0), _tensor("error") {
+        Result(EngineOrFactory engine, const Value &value) : _type(Type::ERROR), _number(0.0), _tensor("error") {
             if (value.is_double()) {
                 _type = Type::NUMBER;
             }
@@ -62,15 +62,15 @@ struct Eval {
             return _tensor;
         }
     };
-    virtual Result eval(const TensorEngine &) const {
+    virtual Result eval(EngineOrFactory) const {
         TEST_ERROR("wrong signature");
         return Result();
     }
-    virtual Result eval(const TensorEngine &, const TensorSpec &) const {
+    virtual Result eval(EngineOrFactory, const TensorSpec &) const {
         TEST_ERROR("wrong signature");
         return Result();
     }
-    virtual Result eval(const TensorEngine &, const TensorSpec &, const TensorSpec &) const {
+    virtual Result eval(EngineOrFactory, const TensorSpec &, const TensorSpec &) const {
         TEST_ERROR("wrong signature");
         return Result();
     }
@@ -81,7 +81,7 @@ struct Eval {
 struct SafeEval : Eval {
     const Eval &unsafe;
     SafeEval(const Eval &unsafe_in) : unsafe(unsafe_in) {}
-    Result eval(const TensorEngine &engine) const override {
+    Result eval(EngineOrFactory engine) const override {
         try {
             return unsafe.eval(engine);
         } catch (std::exception &e) {
@@ -89,7 +89,7 @@ struct SafeEval : Eval {
             return Result();
         }
     }
-    Result eval(const TensorEngine &engine, const TensorSpec &a) const override {
+    Result eval(EngineOrFactory engine, const TensorSpec &a) const override {
         try {
             return unsafe.eval(engine, a);
         } catch (std::exception &e) {
@@ -98,7 +98,7 @@ struct SafeEval : Eval {
         }
 
     }
-    Result eval(const TensorEngine &engine, const TensorSpec &a, const TensorSpec &b) const override {
+    Result eval(EngineOrFactory engine, const TensorSpec &a, const TensorSpec &b) const override {
         try {
             return unsafe.eval(engine, a, b);
         } catch (std::exception &e) {
@@ -118,7 +118,7 @@ const Value &check_type(const Value &value, const ValueType &expect_type) {
 struct Expr_V : Eval {
     const vespalib::string &expr;
     Expr_V(const vespalib::string &expr_in) : expr(expr_in) {}
-    Result eval(const TensorEngine &engine) const override {
+    Result eval(EngineOrFactory engine) const override {
         auto fun = Function::parse(expr);
         NodeTypes types(*fun, {});
         InterpretedFunction ifun(engine, *fun, types);
@@ -132,7 +132,7 @@ struct Expr_V : Eval {
 struct Expr_T : Eval {
     const vespalib::string &expr;
     Expr_T(const vespalib::string &expr_in) : expr(expr_in) {}
-    Result eval(const TensorEngine &engine, const TensorSpec &a) const override {
+    Result eval(EngineOrFactory engine, const TensorSpec &a) const override {
         auto fun = Function::parse(expr);
         auto a_type = ValueType::from_spec(a.type());
         NodeTypes types(*fun, {a_type});
@@ -148,7 +148,7 @@ struct Expr_T : Eval {
 struct Expr_TT : Eval {
     vespalib::string expr;
     Expr_TT(const vespalib::string &expr_in) : expr(expr_in) {}
-    Result eval(const TensorEngine &engine, const TensorSpec &a, const TensorSpec &b) const override {
+    Result eval(EngineOrFactory engine, const TensorSpec &a, const TensorSpec &b) const override {
         auto fun = Function::parse(expr);
         auto a_type = ValueType::from_spec(a.type());
         auto b_type = ValueType::from_spec(b.type());
@@ -162,7 +162,7 @@ struct Expr_TT : Eval {
     }
 };
 
-const Value &make_value(const TensorEngine &engine, const TensorSpec &spec, Stash &stash) {
+const Value &make_value(EngineOrFactory engine, const TensorSpec &spec, Stash &stash) {
     return *stash.create<Value::UP>(engine.from_spec(spec));
 }
 
@@ -175,7 +175,7 @@ struct ImmediateReduce : Eval {
     ImmediateReduce(Aggr aggr_in) : aggr(aggr_in), dimensions() {}
     ImmediateReduce(Aggr aggr_in, const vespalib::string &dimension)
         : aggr(aggr_in), dimensions({dimension}) {}
-    Result eval(const TensorEngine &engine, const TensorSpec &a) const override {
+    Result eval(EngineOrFactory engine, const TensorSpec &a) const override {
         Stash stash;
         const auto &lhs = make_value(engine, a, stash);
         return Result(engine, engine.reduce(lhs, aggr, dimensions, stash));
@@ -187,7 +187,7 @@ struct ImmediateMap : Eval {
     using fun_t = double (*)(double);
     fun_t function;
     ImmediateMap(fun_t function_in) : function(function_in) {}
-    Result eval(const TensorEngine &engine, const TensorSpec &a) const override {
+    Result eval(EngineOrFactory engine, const TensorSpec &a) const override {
         Stash stash;
         const auto &lhs = make_value(engine, a, stash);
         return Result(engine, engine.map(lhs, function, stash));
@@ -199,7 +199,7 @@ struct ImmediateJoin : Eval {
     using fun_t = double (*)(double, double);
     fun_t function;
     ImmediateJoin(fun_t function_in) : function(function_in) {}
-    Result eval(const TensorEngine &engine, const TensorSpec &a, const TensorSpec &b) const override {
+    Result eval(EngineOrFactory engine, const TensorSpec &a, const TensorSpec &b) const override {
         Stash stash;
         const auto &lhs = make_value(engine, a, stash);
         const auto &rhs = make_value(engine, b, stash);
@@ -211,7 +211,7 @@ struct ImmediateJoin : Eval {
 struct ImmediateConcat : Eval {
     vespalib::string dimension;
     ImmediateConcat(const vespalib::string &dimension_in) : dimension(dimension_in) {}
-    Result eval(const TensorEngine &engine, const TensorSpec &a, const TensorSpec &b) const override {
+    Result eval(EngineOrFactory engine, const TensorSpec &a, const TensorSpec &b) const override {
         Stash stash;
         const auto &lhs = make_value(engine, a, stash);
         const auto &rhs = make_value(engine, b, stash);
@@ -225,7 +225,7 @@ struct ImmediateRename : Eval {
     std::vector<vespalib::string> to;
     ImmediateRename(const std::vector<vespalib::string> &from_in, const std::vector<vespalib::string> &to_in)
         : from(from_in), to(to_in) {}
-    Result eval(const TensorEngine &engine, const TensorSpec &a) const override {
+    Result eval(EngineOrFactory engine, const TensorSpec &a) const override {
         Stash stash;
         const auto &lhs = make_value(engine, a, stash);
         return Result(engine, engine.rename(lhs, from, to, stash));
@@ -284,10 +284,10 @@ bool is_same(const nbostream &a, const nbostream &b) {
 struct TestContext {
 
     vespalib::string module_path;
-    const TensorEngine &ref_engine;
-    const TensorEngine &engine;
+    EngineOrFactory ref_engine;
+    EngineOrFactory engine;
 
-    TestContext(const vespalib::string &module_path_in, const TensorEngine &engine_in)
+    TestContext(const vespalib::string &module_path_in, EngineOrFactory engine_in)
         : module_path(module_path_in), ref_engine(SimpleTensorEngine::ref()), engine(engine_in) {}
 
     //-------------------------------------------------------------------------
@@ -358,6 +358,7 @@ struct TestContext {
         TEST_DO(test_reduce_op(Aggr::PROD, SigmoidF(N())));
         TEST_DO(test_reduce_op(Aggr::SUM, N()));
         TEST_DO(test_reduce_op(Aggr::MAX, N()));
+        TEST_DO(test_reduce_op(Aggr::MEDIAN, N()));
         TEST_DO(test_reduce_op(Aggr::MIN, N()));
     }
 
@@ -723,8 +724,8 @@ struct TestContext {
                      const vespalib::string &dimension,
                      const TensorSpec &expect)
     {
-        ImmediateConcat eval(dimension);
         vespalib::string expr = make_string("concat(a,b,%s)", dimension.c_str());
+        ImmediateConcat eval(dimension);
         TEST_DO(verify_result(eval.eval(engine, a, b), expect));
         TEST_DO(verify_result(Expr_TT(expr).eval(engine, a, b), expect));
     }
@@ -857,8 +858,8 @@ struct TestContext {
     //-------------------------------------------------------------------------
 
     void verify_encode_decode(const TensorSpec &spec,
-                              const TensorEngine &encode_engine,
-                              const TensorEngine &decode_engine)
+                              EngineOrFactory encode_engine,
+                              EngineOrFactory decode_engine)
     {
         Stash stash;
         nbostream data;
@@ -948,7 +949,7 @@ struct TestContext {
 } // namespace vespalib::eval::test::<unnamed>
 
 void
-TensorConformance::run_tests(const vespalib::string &module_path, const TensorEngine &engine)
+TensorConformance::run_tests(const vespalib::string &module_path, EngineOrFactory engine)
 {
     TestContext ctx(module_path, engine);
     fprintf(stderr, "module path: '%s'\n", ctx.module_path.c_str());

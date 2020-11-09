@@ -68,10 +68,10 @@ void my_simple_join_op(State &state, uint64_t param) {
     using SCT = typename std::conditional<swap,LCT,RCT>::type;
     using OCT = typename eval::UnifyCellTypes<PCT,SCT>::type;
     using OP = typename std::conditional<swap,SwapArgs2<Fun>,Fun>::type;
-    const JoinParams &params = *(JoinParams*)param;
+    const JoinParams &params = unwrap_param<JoinParams>(param);
     OP my_op(params.function);
-    auto pri_cells = DenseTensorView::typify_cells<PCT>(state.peek(swap ? 0 : 1));
-    auto sec_cells = DenseTensorView::typify_cells<SCT>(state.peek(swap ? 1 : 0));
+    auto pri_cells = state.peek(swap ? 0 : 1).cells().typify<PCT>();
+    auto sec_cells = state.peek(swap ? 1 : 0).cells().typify<SCT>();
     auto dst_cells = make_dst_cells<OCT, pri_mut>(pri_cells, state.stash);
     if (overlap == Overlap::FULL) {
         apply_op2_vec_vec(dst_cells.begin(), pri_cells.begin(), sec_cells.begin(), dst_cells.size(), my_op);
@@ -130,8 +130,8 @@ Primary select_primary(const TensorFunction &lhs, const TensorFunction &rhs, Val
 }
 
 std::optional<Overlap> detect_overlap(const TensorFunction &primary, const TensorFunction &secondary) {
-    std::vector<ValueType::Dimension> a = primary.result_type().nontrivial_dimensions();
-    std::vector<ValueType::Dimension> b = secondary.result_type().nontrivial_dimensions();
+    std::vector<ValueType::Dimension> a = primary.result_type().nontrivial_indexed_dimensions();
+    std::vector<ValueType::Dimension> b = secondary.result_type().nontrivial_indexed_dimensions();
     if (b.size() > a.size()) {
         return std::nullopt;
     } else if (b == a) {
@@ -190,15 +190,14 @@ DenseSimpleJoinFunction::factor() const
 }
 
 Instruction
-DenseSimpleJoinFunction::compile_self(const TensorEngine &, Stash &stash) const
+DenseSimpleJoinFunction::compile_self(eval::EngineOrFactory, Stash &stash) const
 {
     const JoinParams &params = stash.create<JoinParams>(result_type(), factor(), function());
     auto op = typify_invoke<6,MyTypify,MyGetFun>(lhs().result_type().cell_type(),
                                                  rhs().result_type().cell_type(),
                                                  function(), (_primary == Primary::RHS),
                                                  _overlap, primary_is_mutable());
-    static_assert(sizeof(uint64_t) == sizeof(&params));
-    return Instruction(op, (uint64_t)(&params));
+    return Instruction(op, wrap_param<JoinParams>(params));
 }
 
 const TensorFunction &

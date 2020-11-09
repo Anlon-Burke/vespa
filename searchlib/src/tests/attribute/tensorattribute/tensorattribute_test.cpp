@@ -1,21 +1,22 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/document/base/exceptions.h>
-#include <vespa/eval/tensor/default_tensor_engine.h>
-#include <vespa/eval/tensor/dense/dense_tensor.h>
-#include <vespa/eval/tensor/tensor.h>
+#include <vespa/eval/eval/engine_or_factory.h>
+#include <vespa/eval/eval/value.h>
+#include <vespa/eval/eval/test/value_compare.h>
 #include <vespa/fastos/file.h>
 #include <vespa/searchlib/attribute/attribute_read_guard.h>
 #include <vespa/searchlib/attribute/attributeguard.h>
 #include <vespa/searchlib/queryeval/nearest_neighbor_blueprint.h>
 #include <vespa/searchlib/tensor/default_nearest_neighbor_index_factory.h>
 #include <vespa/searchlib/tensor/dense_tensor_attribute.h>
+#include <vespa/searchlib/tensor/direct_tensor_attribute.h>
 #include <vespa/searchlib/tensor/doc_vector_access.h>
-#include <vespa/searchlib/tensor/generic_tensor_attribute.h>
 #include <vespa/searchlib/tensor/hnsw_index.h>
 #include <vespa/searchlib/tensor/nearest_neighbor_index.h>
 #include <vespa/searchlib/tensor/nearest_neighbor_index_factory.h>
 #include <vespa/searchlib/tensor/nearest_neighbor_index_saver.h>
+#include <vespa/searchlib/tensor/serialized_tensor_attribute.h>
 #include <vespa/searchlib/tensor/tensor_attribute.h>
 #include <vespa/searchlib/test/directory_handler.h>
 #include <vespa/searchlib/util/fileutil.h>
@@ -37,8 +38,9 @@ using search::queryeval::GlobalFilter;
 using search::queryeval::NearestNeighborBlueprint;
 using search::tensor::DefaultNearestNeighborIndexFactory;
 using search::tensor::DenseTensorAttribute;
+using search::tensor::DirectTensorAttribute;
 using search::tensor::DocVectorAccess;
-using search::tensor::GenericTensorAttribute;
+using search::tensor::SerializedTensorAttribute;
 using search::tensor::HnswIndex;
 using search::tensor::HnswNode;
 using search::tensor::NearestNeighborIndex;
@@ -48,36 +50,18 @@ using search::tensor::PrepareResult;
 using search::tensor::TensorAttribute;
 using vespalib::eval::TensorSpec;
 using vespalib::eval::ValueType;
-using vespalib::tensor::DefaultTensorEngine;
-using vespalib::tensor::DenseTensor;
-using vespalib::tensor::DenseTensorView;
-using vespalib::tensor::Tensor;
+using vespalib::eval::Value;
+using vespalib::eval::EngineOrFactory;
 
 using DoubleVector = std::vector<double>;
 using generation_t = vespalib::GenerationHandler::generation_t;
-
-namespace vespalib::tensor {
-
-static bool operator==(const Tensor &lhs, const Tensor &rhs)
-{
-    return lhs.equals(rhs);
-}
-
-}
 
 vespalib::string sparseSpec("tensor(x{},y{})");
 vespalib::string denseSpec("tensor(x[2],y[3])");
 vespalib::string vec_2d_spec("tensor(x[2])");
 
-Tensor::UP createTensor(const TensorSpec &spec) {
-    auto value = DefaultTensorEngine::ref().from_spec(spec);
-    if (value->is_double()) {
-        return Tensor::UP(new DenseTensor<double>(ValueType::double_type(), {value->as_double()}));
-    }
-    Tensor *tensor = dynamic_cast<Tensor*>(value.get());
-    ASSERT_TRUE(tensor != nullptr);
-    value.release();
-    return Tensor::UP(tensor);
+Value::UP createTensor(const TensorSpec &spec) {
+    return EngineOrFactory::get().from_spec(spec);
 }
 
 TensorSpec
@@ -179,7 +163,7 @@ public:
         _adds.emplace_back(docid, DoubleVector(vector.begin(), vector.end()));
     }
     std::unique_ptr<PrepareResult> prepare_add_document(uint32_t docid,
-                                                        vespalib::tensor::TypedCells vector,
+                                                        vespalib::eval::TypedCells vector,
                                                         vespalib::GenerationHandler::Guard guard) const override {
         (void) guard;
         auto d_vector = vector.typify<double>();
@@ -220,13 +204,13 @@ public:
         _index_value = (reinterpret_cast<const int*>(buf.buffer()))[0];
         return true;
     }
-    std::vector<Neighbor> find_top_k(uint32_t k, vespalib::tensor::TypedCells vector, uint32_t explore_k) const override {
+    std::vector<Neighbor> find_top_k(uint32_t k, vespalib::eval::TypedCells vector, uint32_t explore_k) const override {
         (void) k;
         (void) vector;
         (void) explore_k;
         return std::vector<Neighbor>();
     }
-    std::vector<Neighbor> find_top_k_with_filter(uint32_t k, vespalib::tensor::TypedCells vector,
+    std::vector<Neighbor> find_top_k_with_filter(uint32_t k, vespalib::eval::TypedCells vector,
                                                  const search::BitVector& filter, uint32_t explore_k) const override
     {
         (void) k;
@@ -256,6 +240,40 @@ class MockNearestNeighborIndexFactory : public NearestNeighborIndexFactory {
 const vespalib::string test_dir = "test_data/";
 const vespalib::string attr_name = test_dir + "my_attr";
 
+struct FixtureTraits {
+    bool use_dense_tensor_attribute = false;
+    bool use_direct_tensor_attribute = false;
+    bool enable_hnsw_index = false;
+    bool use_mock_index = false;
+
+    FixtureTraits dense() && {
+        use_dense_tensor_attribute = true;
+        enable_hnsw_index = false;
+        return *this;
+    }
+
+    FixtureTraits hnsw() && {
+        use_dense_tensor_attribute = true;
+        enable_hnsw_index = true;
+        use_mock_index = false;
+        return *this;
+    }
+
+    FixtureTraits mock_hnsw() && {
+        use_dense_tensor_attribute = true;
+        enable_hnsw_index = true;
+        use_mock_index = true;
+        return *this;
+    }
+
+    FixtureTraits direct() && {
+        use_dense_tensor_attribute = false;
+        use_direct_tensor_attribute = true;
+        return *this;
+    }
+
+};
+
 struct Fixture {
     using BasicType = search::attribute::BasicType;
     using CollectionType = search::attribute::CollectionType;
@@ -270,24 +288,21 @@ struct Fixture {
     std::shared_ptr<TensorAttribute> _tensorAttr;
     std::shared_ptr<AttributeVector> _attr;
     bool _denseTensors;
-    bool _useDenseTensorAttribute;
+    FixtureTraits _traits;
 
     Fixture(const vespalib::string &typeSpec,
-            bool useDenseTensorAttribute = false,
-            bool enable_hnsw_index = false,
-            bool use_mock_index = false)
+            FixtureTraits traits = FixtureTraits())
         : _dir_handler(test_dir),
           _cfg(BasicType::TENSOR, CollectionType::SINGLE),
           _name(attr_name),
           _typeSpec(typeSpec),
-          _use_mock_index(use_mock_index),
           _index_factory(),
           _tensorAttr(),
           _attr(),
           _denseTensors(false),
-          _useDenseTensorAttribute(useDenseTensorAttribute)
+          _traits(traits)
     {
-        if (enable_hnsw_index) {
+        if (traits.enable_hnsw_index) {
             _cfg.set_distance_metric(DistanceMetric::Euclidean);
             _cfg.set_hnsw_index_params(HnswIndexParams(4, 20, DistanceMetric::Euclidean));
         }
@@ -301,7 +316,7 @@ struct Fixture {
         if (_cfg.tensorType().is_dense()) {
             _denseTensors = true;
         }
-        if (_use_mock_index) {
+        if (_traits.use_mock_index) {
             _index_factory = std::make_unique<MockNearestNeighborIndexFactory>();
         } else {
             _index_factory = std::make_unique<DefaultNearestNeighborIndexFactory>();
@@ -322,11 +337,13 @@ struct Fixture {
     }
 
     std::shared_ptr<TensorAttribute> makeAttr() {
-        if (_useDenseTensorAttribute) {
+        if (_traits.use_dense_tensor_attribute) {
             assert(_denseTensors);
             return std::make_shared<DenseTensorAttribute>(_name, _cfg, *_index_factory);
+        } else if (_traits.use_direct_tensor_attribute) {
+            return std::make_shared<DirectTensorAttribute>(_name, _cfg);
         } else {
-            return std::make_shared<GenericTensorAttribute>(_name, _cfg);
+            return std::make_shared<SerializedTensorAttribute>(_name, _cfg);
         }
     }
 
@@ -383,7 +400,7 @@ struct Fixture {
         set_tensor_internal(docid, *_tensorAttr->getEmptyTensor());
     }
 
-    void set_tensor_internal(uint32_t docId, const Tensor &tensor) {
+    void set_tensor_internal(uint32_t docId, const Value &tensor) {
         ensureSpace(docId);
         _tensorAttr->setTensor(docId, tensor);
         _attr->commit();
@@ -400,14 +417,14 @@ struct Fixture {
 
     void assertGetNoTensor(uint32_t docId) {
         AttributeGuard guard(_attr);
-        Tensor::UP actTensor = _tensorAttr->getTensor(docId);
+        Value::UP actTensor = _tensorAttr->getTensor(docId);
         EXPECT_FALSE(actTensor);
     }
 
     void assertGetTensor(const TensorSpec &expSpec, uint32_t docId) {
-        Tensor::UP expTensor = createTensor(expSpec);
+        Value::UP expTensor = createTensor(expSpec);
         AttributeGuard guard(_attr);
-        Tensor::UP actTensor = _tensorAttr->getTensor(docId);
+        Value::UP actTensor = _tensorAttr->getTensor(docId);
         EXPECT_TRUE(static_cast<bool>(actTensor));
         EXPECT_EQUAL(*expTensor, *actTensor);
     }
@@ -543,7 +560,9 @@ Fixture::testSaveLoad()
 void
 Fixture::testCompaction()
 {
-    if (_useDenseTensorAttribute && _denseTensors) {
+    if ((_traits.use_dense_tensor_attribute && _denseTensors) ||
+            _traits.use_direct_tensor_attribute)
+    {
         LOG(info, "Skipping compaction test for tensor '%s' which is using free-lists", _cfg.tensorType().to_spec().c_str());
         return;
     }
@@ -607,7 +626,7 @@ Fixture::testTensorTypeFileHeaderTag()
     auto header = get_file_header();
     EXPECT_TRUE(header.hasTag("tensortype"));
     EXPECT_EQUAL(_typeSpec, header.getTag("tensortype").asString());
-    if (_useDenseTensorAttribute) {
+    if (_traits.use_dense_tensor_attribute) {
         EXPECT_EQUAL(1u, header.getTag("version").asInteger());
     } else {
         EXPECT_EQUAL(0u, header.getTag("version").asInteger());
@@ -618,7 +637,7 @@ void
 Fixture::testEmptyTensor()
 {
     const TensorAttribute &tensorAttr = *_tensorAttr;
-    Tensor::UP emptyTensor = tensorAttr.getEmptyTensor();
+    Value::UP emptyTensor = tensorAttr.getEmptyTensor();
     if (_denseTensors) {
         vespalib::string expSpec = expEmptyDenseTensorSpec();
         EXPECT_EQUAL(emptyTensor->type(), ValueType::from_spec(expSpec));
@@ -644,6 +663,11 @@ TEST("Test sparse tensors with generic tensor attribute")
     testAll([]() { return std::make_shared<Fixture>(sparseSpec); });
 }
 
+TEST("Test sparse tensors with direct tensor attribute")
+{
+    testAll([]() { return std::make_shared<Fixture>(sparseSpec, FixtureTraits().direct()); });
+}
+
 TEST("Test dense tensors with generic tensor attribute")
 {
     testAll([]() { return std::make_shared<Fixture>(denseSpec); });
@@ -651,11 +675,11 @@ TEST("Test dense tensors with generic tensor attribute")
 
 TEST("Test dense tensors with dense tensor attribute")
 {
-    testAll([]() { return std::make_shared<Fixture>(denseSpec, true); });
+    testAll([]() { return std::make_shared<Fixture>(denseSpec, FixtureTraits().dense()); });
 }
 
 TEST_F("Hnsw index is NOT instantiated in dense tensor attribute by default",
-       Fixture(vec_2d_spec, true, false))
+       Fixture(vec_2d_spec, FixtureTraits().dense()))
 {
     const auto& tensor = f.as_dense_tensor();
     EXPECT_TRUE(tensor.nearest_neighbor_index() == nullptr);
@@ -663,7 +687,7 @@ TEST_F("Hnsw index is NOT instantiated in dense tensor attribute by default",
 
 class DenseTensorAttributeHnswIndex : public Fixture {
 public:
-    DenseTensorAttributeHnswIndex() : Fixture(vec_2d_spec, true, true, false) {}
+    DenseTensorAttributeHnswIndex() : Fixture(vec_2d_spec, FixtureTraits().hnsw()) {}
 };
 
 TEST_F("Hnsw index is instantiated in dense tensor attribute when specified in config", DenseTensorAttributeHnswIndex)
@@ -704,9 +728,10 @@ TEST_F("Hnsw index is integrated in dense tensor attribute and can be saved and 
     expect_level_0(1, index_b.get_node(2));
 }
 
+
 class DenseTensorAttributeMockIndex : public Fixture {
 public:
-    DenseTensorAttributeMockIndex() : Fixture(vec_2d_spec, true, true, true) {}
+    DenseTensorAttributeMockIndex() : Fixture(vec_2d_spec, FixtureTraits().mock_hnsw()) {}
 };
 
 TEST_F("setTensor() updates nearest neighbor index", DenseTensorAttributeMockIndex)
@@ -864,8 +889,6 @@ TEST_F("Nearest neighbor index type is added to attribute file header", DenseTen
 
 class NearestNeighborBlueprintFixture : public DenseTensorAttributeMockIndex {
 public:
-    using QueryTensor = DenseTensor<double>;
-
     NearestNeighborBlueprintFixture() {
         set_tensor(1, vec_2d(1, 1));
         set_tensor(2, vec_2d(2, 2));
@@ -879,12 +902,8 @@ public:
         set_tensor(10, vec_2d(0, 0));
     }
 
-    std::unique_ptr<QueryTensor> createDenseTensor(const TensorSpec &spec) {
-        auto value = DefaultTensorEngine::ref().from_spec(spec);
-        QueryTensor *tensor = dynamic_cast<QueryTensor *>(value.get());
-        ASSERT_TRUE(tensor != nullptr);
-        value.release();
-        return std::unique_ptr<QueryTensor>(tensor);
+    std::unique_ptr<Value> createDenseTensor(const TensorSpec &spec) {
+        return EngineOrFactory::get().from_spec(spec);
     }
 
     std::unique_ptr<NearestNeighborBlueprint> make_blueprint(double brute_force_limit = 0.05) {

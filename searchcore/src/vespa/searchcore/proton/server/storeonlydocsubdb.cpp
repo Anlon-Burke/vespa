@@ -13,7 +13,6 @@
 #include <vespa/searchcore/proton/docsummary/summaryflushtarget.h>
 #include <vespa/searchcore/proton/docsummary/summarymanagerinitializer.h>
 #include <vespa/searchcore/proton/documentmetastore/documentmetastoreinitializer.h>
-#include <vespa/searchcore/proton/documentmetastore/lidreusedelayer.h>
 #include <vespa/searchcore/proton/flushengine/shrink_lid_space_flush_target.h>
 #include <vespa/searchcore/proton/flushengine/threadedflushtarget.h>
 #include <vespa/searchcore/proton/index/index_writer.h>
@@ -43,7 +42,6 @@ using proton::matching::MatchingStats;
 using proton::matching::SessionManager;
 using vespalib::GenericHeader;
 using search::common::FileHeaderContext;
-using proton::documentmetastore::LidReuseDelayer;
 using proton::initializer::InitializerTask;
 using searchcorespi::IFlushTarget;
 
@@ -119,11 +117,10 @@ StoreOnlyDocSubDB::StoreOnlyDocSubDB(const Config &cfg, const Context &ctx)
       _tlsSyncer(ctx._writeService.master(), ctx._getSerialNum, ctx._tlSyncer),
       _dmsFlushTarget(),
       _dmsShrinkTarget(),
+      _pendingLidsForCommit(std::make_shared<PendingLidTracker>()),
       _subDbId(cfg._subDbId),
       _subDbType(cfg._subDbType),
       _fileHeaderContext(*this, ctx._fileHeaderContext, _docTypeName, _baseDir),
-      _lidReuseDelayer(),
-      _commitTimeTracker(3600s),
       _gidToLidChangeHandler(std::make_shared<DummyGidToLidChangeHandler>())
 {
     vespalib::mkdir(_baseDir, false); // Assume parent is created.
@@ -182,8 +179,12 @@ void
 StoreOnlyDocSubDB::onReplayDone()
 {
     _dms->constructFreeList();
+    auto stats = _dms->getLidUsageStats();
+    uint32_t docIdLimit = stats.getHighestUsedLid() + 1;
+    assert(docIdLimit <= _dms->getCommittedDocIdLimit());
+    _dms->compactLidSpace(docIdLimit);
+    _dms->unblockShrinkLidSpace();
     _dms->shrinkLidSpace();
-    uint32_t docIdLimit = _dms->getCommittedDocIdLimit();
     auto &docStore = _rSummaryMgr->getBackingStore();
     std::promise<void> promise;
     auto future = promise.get_future();
@@ -195,7 +196,6 @@ StoreOnlyDocSubDB::onReplayDone()
 void
 StoreOnlyDocSubDB::onReprocessDone(SerialNum)
 {
-    _commitTimeTracker.setReplayDone();
 }
 
 
@@ -304,8 +304,6 @@ StoreOnlyDocSubDB::createInitializer(const DocumentDBConfig &configSnapshot, Ser
     result->addDependency(summaryTask);
     summaryTask->addDependency(dmsInitTask);
 
-    LidReuseDelayerConfig lidReuseDelayerConfig(configSnapshot);
-    result->writableResult().setLidReuseDelayerConfig(lidReuseDelayerConfig);
     result->writableResult().setFlushConfig(configSnapshot.getMaintenanceConfigSP()->getFlushConfig());
     return result;
 }
@@ -315,8 +313,6 @@ StoreOnlyDocSubDB::setup(const DocumentSubDbInitializerResult &initResult)
 {
     setupDocumentMetaStore(initResult.documentMetaStore());
     setupSummaryManager(initResult.summaryManager());
-    _lidReuseDelayer = std::make_unique<LidReuseDelayer>(_writeService, *_dms);
-    updateLidReuseDelayer(initResult.lidReuseDelayerConfig());
 }
 
 IFlushTarget::List
@@ -342,8 +338,8 @@ StoreOnlyFeedView::Context
 StoreOnlyDocSubDB::getStoreOnlyFeedViewContext(const DocumentDBConfig &configSnapshot)
 {
     return StoreOnlyFeedView::Context(getSummaryAdapter(), configSnapshot.getSchemaSP(), _metaStoreCtx,
-                                      *_gidToLidChangeHandler, configSnapshot.getDocumentTypeRepoSP(), _writeService,
-                                      *_lidReuseDelayer, _commitTimeTracker);
+                                      configSnapshot.getDocumentTypeRepoSP(), _pendingLidsForCommit,
+                                      *_gidToLidChangeHandler, _writeService);
 }
 
 StoreOnlyFeedView::PersistentParams
@@ -358,7 +354,7 @@ void
 StoreOnlyDocSubDB::initViews(const DocumentDBConfig &configSnapshot, const SessionManager::SP &sessionManager)
 {
     assert(_writeService.master().isCurrentThread());
-    _iSearchView.set(ISearchHandler::SP(new EmptySearchView));
+    _iSearchView.set(std::make_shared<EmptySearchView>());
     {
         std::lock_guard<std::mutex> guard(_configMutex);
         initFeedView(configSnapshot);
@@ -394,36 +390,16 @@ void
 StoreOnlyDocSubDB::initFeedView(const DocumentDBConfig &configSnapshot)
 {
     assert(_writeService.master().isCurrentThread());
-    auto feedView = std::make_unique<StoreOnlyFeedView>(getStoreOnlyFeedViewContext(configSnapshot),
+    auto feedView = std::make_shared<StoreOnlyFeedView>(getStoreOnlyFeedViewContext(configSnapshot),
                                                         getFeedViewPersistentParams());
 
     // XXX: Not exception safe.
-    _iFeedView.set(StoreOnlyFeedView::SP(feedView.release()));
+    _iFeedView.set(std::move(feedView));
 }
 
 vespalib::string
 StoreOnlyDocSubDB::getSubDbName() const {
     return vespalib::make_string("%s.%s", _owner.getName().c_str(), _subName.c_str());
-}
-
-void
-StoreOnlyDocSubDB::updateLidReuseDelayer(const DocumentDBConfig * newConfigSnapshot)
-{
-    LidReuseDelayerConfig lidReuseDelayerConfig(*newConfigSnapshot);
-    updateLidReuseDelayer(lidReuseDelayerConfig);
-}
-
-void
-StoreOnlyDocSubDB::updateLidReuseDelayer(const LidReuseDelayerConfig &config)
-{
-    bool immediateCommit = (config.visibilityDelay() == vespalib::duration::zero());
-    /*
-     * The lid reuse delayer should not have any pending lids stored at this
-     * time, since DocumentDB::applyConfig() calls forceCommit() on the
-     * feed view before applying the new config to the sub dbs.
-     */
-    _lidReuseDelayer->setImmediateCommit(immediateCommit);
-    _commitTimeTracker.setVisibilityDelay(config.visibilityDelay());
 }
 
 IReprocessingTask::List
@@ -437,7 +413,6 @@ StoreOnlyDocSubDB::applyConfig(const DocumentDBConfig &newConfigSnapshot, const 
     assert(_writeService.master().isCurrentThread());
     reconfigure(newConfigSnapshot.getStoreConfig());
     initFeedView(newConfigSnapshot);
-    updateLidReuseDelayer(&newConfigSnapshot);
     _owner.syncFeedView();
     return IReprocessingTask::List();
 }

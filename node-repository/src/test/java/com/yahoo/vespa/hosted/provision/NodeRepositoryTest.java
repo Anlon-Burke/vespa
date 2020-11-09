@@ -34,9 +34,9 @@ public class NodeRepositoryTest {
         NodeRepositoryTester tester = new NodeRepositoryTester();
         assertEquals(0, tester.nodeRepository().getNodes().size());
 
-        tester.addNode("id1", "host1", "default", NodeType.host);
-        tester.addNode("id2", "host2", "default", NodeType.host);
-        tester.addNode("id3", "host3", "default", NodeType.host);
+        tester.addHost("id1", "host1", "default", NodeType.host);
+        tester.addHost("id2", "host2", "default", NodeType.host);
+        tester.addHost("id3", "host3", "default", NodeType.host);
 
         assertEquals(3, tester.nodeRepository().getNodes().size());
         
@@ -50,7 +50,7 @@ public class NodeRepositoryTest {
     @Test
     public void only_allow_docker_containers_remove_in_ready() {
         NodeRepositoryTester tester = new NodeRepositoryTester();
-        tester.addNode("id1", "host1", "docker", NodeType.tenant);
+        tester.addHost("id1", "host1", "docker", NodeType.tenant);
 
         try {
             tester.nodeRepository().removeRecursively("host1"); // host1 is in state provisioned
@@ -66,9 +66,9 @@ public class NodeRepositoryTest {
     @Test
     public void only_remove_tenant_docker_containers_for_new_allocations() {
         NodeRepositoryTester tester = new NodeRepositoryTester();
-        tester.addNode("host1", "host1", "default", NodeType.tenant);
-        tester.addNode("host2", "host2", "docker", NodeType.tenant);
-        tester.addNode("cfg1", "cfg1", "docker", NodeType.config);
+        tester.addHost("host1", "host1", "default", NodeType.tenant);
+        tester.addHost("host2", "host2", "docker", NodeType.tenant);
+        tester.addHost("cfg1", "cfg1", "docker", NodeType.config);
 
         tester.setNodeState("host1", Node.State.dirty);
         tester.setNodeState("host2", Node.State.dirty);
@@ -87,8 +87,8 @@ public class NodeRepositoryTest {
     @Test
     public void fail_readying_with_hard_fail() {
         NodeRepositoryTester tester = new NodeRepositoryTester();
-        tester.addNode("host1", "host1", "default", NodeType.tenant);
-        tester.addNode("host2", "host2", "default", NodeType.tenant);
+        tester.addHost("host1", "host1", "default", NodeType.tenant);
+        tester.addHost("host2", "host2", "default", NodeType.tenant);
         tester.setNodeState("host1", Node.State.dirty);
         tester.setNodeState("host2", Node.State.dirty);
 
@@ -113,8 +113,8 @@ public class NodeRepositoryTest {
     public void delete_host_only_after_all_the_children_have_been_deleted() {
         NodeRepositoryTester tester = new NodeRepositoryTester();
 
-        tester.addNode("id1", "host1", "default", NodeType.host);
-        tester.addNode("id2", "host2", "default", NodeType.host);
+        tester.addHost("id1", "host1", "default", NodeType.host);
+        tester.addHost("id2", "host2", "default", NodeType.host);
         tester.addNode("node10", "node10", "host1", "docker", NodeType.tenant);
         tester.addNode("node11", "node11", "host1", "docker", NodeType.tenant);
         tester.addNode("node12", "node12", "host1", "docker", NodeType.tenant);
@@ -151,7 +151,7 @@ public class NodeRepositoryTest {
 
         String cfghost1 = "cfghost1";
         String cfg1 = "cfg1";
-        tester.addNode("id1", cfghost1, "default", NodeType.confighost);
+        tester.addHost("id1", cfghost1, "default", NodeType.confighost);
         tester.addNode("id2", cfg1, cfghost1, "docker", NodeType.config);
         tester.setNodeState(cfghost1, Node.State.active);
         tester.setNodeState(cfg1, Node.State.active);
@@ -177,8 +177,8 @@ public class NodeRepositoryTest {
         Instant testStart = tester.nodeRepository().clock().instant();
 
         tester.clock().advance(Duration.ofSeconds(1));
-        tester.addNode("id1", "host1", "default", NodeType.host);
-        tester.addNode("id2", "host2", "default", NodeType.host);
+        tester.addHost("id1", "host1", "default", NodeType.host);
+        tester.addHost("id2", "host2", "default", NodeType.host);
         assertFalse(tester.nodeRepository().getNode("host1").get().history().hasEventAfter(History.Event.Type.deprovisioned, testStart));
 
         // Set host 1 properties and deprovision it
@@ -187,7 +187,9 @@ public class NodeRepositoryTest {
         host1 = host1.withFirmwareVerifiedAt(tester.clock().instant());
         host1 = host1.with(host1.status().withIncreasedFailCount());
         host1 = host1.with(host1.reports().withReport(Report.basicReport("id", Report.Type.HARD_FAIL, tester.clock().instant(), "Test report")));
-        tester.nodeRepository().write(host1, tester.nodeRepository().lock(host1));
+        try (var lock = tester.nodeRepository().lock(host1)) {
+            tester.nodeRepository().write(host1, lock);
+        }
         tester.nodeRepository().removeRecursively("host1");
 
         // Host 1 is deprovisioned and unwanted properties are cleared
@@ -196,7 +198,7 @@ public class NodeRepositoryTest {
         assertTrue(host1.history().hasEventAfter(History.Event.Type.deprovisioned, testStart));
 
         // Adding it again preserves some information from the deprovisioned host and removes it
-        tester.addNode("id2", "host1", "default", NodeType.host);
+        tester.addHost("id2", "host1", "default", NodeType.host);
         host1 = tester.nodeRepository().getNode("host1").get();
         assertEquals("This is the newly added node", "id2", host1.id());
         assertFalse("The old 'host1' is removed",
@@ -213,8 +215,8 @@ public class NodeRepositoryTest {
     public void dirty_host_only_if_we_can_dirty_children() {
         NodeRepositoryTester tester = new NodeRepositoryTester();
 
-        tester.addNode("id1", "host1", "default", NodeType.host);
-        tester.addNode("id2", "host2", "default", NodeType.host);
+        tester.addHost("id1", "host1", "default", NodeType.host);
+        tester.addHost("id2", "host2", "default", NodeType.host);
         tester.addNode("node10", "node10", "host1", "docker", NodeType.tenant);
         tester.addNode("node11", "node11", "host1", "docker", NodeType.tenant);
         tester.addNode("node12", "node12", "host1", "docker", NodeType.tenant);
@@ -237,6 +239,39 @@ public class NodeRepositoryTest {
         } catch (IllegalArgumentException ignored) { } // Expected;
 
         assertEquals(asSet("host2", "node20"), filterNodes(tester, node -> node.state() == Node.State.dirty));
+    }
+
+    @Test
+    public void breakfix_tenant_host() {
+        NodeRepositoryTester tester = new NodeRepositoryTester();
+        tester.addHost("host1", "host1", "default", NodeType.host);
+        tester.addNode("node1", "node1", "host1", "docker", NodeType.tenant);
+        String reason = NodeRepositoryTest.class.getSimpleName();
+
+        try {
+            tester.nodeRepository().breakfixRecursively("node1", Agent.system, reason);
+            fail("Should not be able to breakfix tenant node");
+        } catch (IllegalArgumentException ignored) {}
+
+        try {
+            tester.nodeRepository().breakfixRecursively("host1", Agent.system, reason);
+            fail("Should not be able to breakfix host in state not in [parked, failed]");
+        } catch (IllegalArgumentException ignored) {}
+
+        tester.setNodeState("host1", Node.State.failed);
+        tester.setNodeState("node1", Node.State.active);
+        try {
+            tester.nodeRepository().breakfixRecursively("host1", Agent.system, reason);
+            fail("Should not be able to breakfix host with active tenant node");
+        } catch (IllegalArgumentException ignored) {}
+
+        tester.setNodeState("node1", Node.State.failed);
+        tester.nodeRepository().breakfixRecursively("host1", Agent.system, reason);
+
+        assertEquals(1, tester.nodeRepository().getNodes().size());
+        Node node = tester.nodeRepository().getNodes().get(0);
+        assertEquals("host1", node.hostname());
+        assertEquals(Node.State.breakfixed, node.state());
     }
 
     private static Set<String> asSet(String... elements) {

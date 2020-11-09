@@ -28,9 +28,6 @@ numthreadspersearch int default=1 restart
 ## Num summary threads
 numsummarythreads int default=16 restart
 
-## Stop on io errors ?
-stoponioerrors bool default=false restart
-
 ## Perform extra validation of stored data on startup
 ## It requires a restart to be turned, but no restart to turned off.
 ## Hence it must always be followed by a manual restart.
@@ -128,14 +125,10 @@ indexing.optimize enum {LATENCY, THROUGHPUT, ADAPTIVE} default=LATENCY restart
 
 ## Maximum number of pending operations for each of the internal
 ## indexing threads.  Only used when visibility delay is zero.
-indexing.tasklimit int default=1000 restart
+indexing.tasklimit int default=1000
 
-## Parameter used to calculate maximum number of pending operations
-## for each of the internal indexing threads when visibility delay is
-## nonzero. The number is divided by the number of indexing threads,
-## i.e.  when indexing.threads is 4 and indexing.semiunboundtasklimit
-## is 40000 then effective task limit is 10000.
-indexing.semiunboundtasklimit int default = 40000 restart
+## Deprecated and ignored, will soon go away
+indexing.semiunboundtasklimit int default = 1000
 
 ## Kind of watermark for when to activate extra manpower
 ## Utilized if optimize is set to either THROUGHPUT or ADAPTIVE
@@ -500,3 +493,10 @@ maintenancejobs.maxoutstandingmoveops int default=10
 ## Controls the type of bucket checksum used. Do not change unless 
 ## in depth understanding is present.
 bucketdb.checksumtype enum {LEGACY, XXHASH64} default = LEGACY restart
+
+## Specifies which tensor implementation to use for all backend code.
+##
+## TENSOR_ENGINE (default) uses DefaultTensorEngine, which has been the production implementation for years.
+## FAST_VALUE uses the new and optimized FastValueBuilderFactory instead.
+## TODO: Remove when default has been switched to FAST_VALUE.
+tensor_implementation enum {TENSOR_ENGINE, FAST_VALUE} default = TENSOR_ENGINE

@@ -1,9 +1,8 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.http.v2;
 
 import com.google.inject.Inject;
 import com.yahoo.cloud.config.ConfigserverConfig;
-import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
 import com.yahoo.config.provision.InstanceName;
@@ -11,7 +10,6 @@ import com.yahoo.config.provision.TenantName;
 import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.jdisc.application.UriPattern;
-import com.yahoo.slime.Slime;
 import com.yahoo.vespa.config.server.ApplicationRepository;
 import com.yahoo.vespa.config.server.deploy.DeployHandlerLogger;
 import com.yahoo.vespa.config.server.TimeoutBudget;
@@ -45,22 +43,26 @@ public class SessionCreateHandler extends SessionHandler {
 
     @Override
     protected HttpResponse handlePOST(HttpRequest request) {
-        Slime deployLog = applicationRepository.createDeployLog();
         final TenantName tenantName = Utils.getTenantNameFromSessionRequest(request);
         Utils.checkThatTenantExists(applicationRepository.tenantRepository(), tenantName);
         TimeoutBudget timeoutBudget = SessionHandler.getTimeoutBudget(request, zookeeperBarrierTimeout);
-        DeployLogger logger = createLogger(request, deployLog, tenantName);
+        boolean verbose = request.getBooleanProperty("verbose");
+
+        DeployHandlerLogger logger;
         long sessionId;
         if (request.hasProperty("from")) {
             ApplicationId applicationId = getFromApplicationId(request);
-            sessionId = applicationRepository.createSessionFromExisting(applicationId, logger, false, timeoutBudget);
+            logger = DeployHandlerLogger.forApplication(applicationId, verbose);
+            sessionId = applicationRepository.createSessionFromExisting(applicationId, false, timeoutBudget);
         } else {
             validateDataAndHeader(request);
+            logger = DeployHandlerLogger.forTenant(tenantName, verbose);
             // TODO: Avoid using application id here at all
             ApplicationId applicationId = ApplicationId.from(tenantName, ApplicationName.defaultName(), InstanceName.defaultName());
-            sessionId = applicationRepository.createSession(applicationId, timeoutBudget, request.getData(), request.getHeader(ApplicationApiHandler.contentTypeHeader));
+            sessionId = applicationRepository.createSession(applicationId, timeoutBudget, request.getData(),
+                                                            request.getHeader(ApplicationApiHandler.contentTypeHeader), logger);
         }
-        return createResponse(request, tenantName, deployLog, sessionId);
+        return new SessionCreateResponse(logger.slime(), tenantName, request.getHost(), request.getPort(), sessionId);
     }
 
     static ApplicationId getFromApplicationId(HttpRequest request) {
@@ -82,11 +84,6 @@ public class SessionCreateHandler extends SessionHandler {
             .instanceName(match.group(6)).build();
     }
 
-    private static DeployHandlerLogger createLogger(HttpRequest request, Slime deployLog, TenantName tenant) {
-        return SessionHandler.createLogger(deployLog, request,
-                                           new ApplicationId.Builder().tenant(tenant).applicationName("-").build());
-    }
-
     static void validateDataAndHeader(HttpRequest request) {
         if (request.getData() == null) {
             throw new BadRequestException("Request contains no data");
@@ -98,10 +95,5 @@ public class SessionCreateHandler extends SessionHandler {
             throw new BadRequestException("Request contains invalid " + ApplicationApiHandler.contentTypeHeader + " header, only '" +
                                                   ApplicationApiHandler.APPLICATION_X_GZIP + "' and '" + ApplicationApiHandler.APPLICATION_ZIP + "' are supported");
         }
-    }
-
-    private HttpResponse createResponse(HttpRequest request, TenantName tenantName, Slime deployLog, long sessionId) {
-        return new SessionCreateResponse(tenantName, deployLog, deployLog.get())
-                .createResponse(request.getHost(), request.getPort(), sessionId);
     }
 }

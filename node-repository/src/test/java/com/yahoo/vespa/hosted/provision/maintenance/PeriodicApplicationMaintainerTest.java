@@ -7,40 +7,26 @@ import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Deployer;
-import com.yahoo.config.provision.DockerImage;
-import com.yahoo.config.provision.Environment;
-import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.InstanceName;
-import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
-import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.TenantName;
-import com.yahoo.config.provision.Zone;
 import com.yahoo.test.ManualClock;
-import com.yahoo.vespa.curator.Curator;
-import com.yahoo.vespa.curator.mock.MockCurator;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.node.Agent;
-import com.yahoo.vespa.hosted.provision.provisioning.EmptyProvisionServiceProvider;
-import com.yahoo.vespa.hosted.provision.provisioning.FlavorConfigBuilder;
-import com.yahoo.vespa.hosted.provision.provisioning.NodeRepositoryProvisioner;
+import com.yahoo.vespa.hosted.provision.provisioning.ProvisioningTester;
 import com.yahoo.vespa.hosted.provision.testutils.MockDeployer;
-import com.yahoo.vespa.hosted.provision.testutils.MockNameResolver;
-import com.yahoo.vespa.hosted.provision.testutils.MockProvisionServiceProvider;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
 
@@ -49,32 +35,18 @@ import static org.junit.Assert.assertEquals;
  */
 public class PeriodicApplicationMaintainerTest {
 
-    private static final NodeFlavors nodeFlavors = FlavorConfigBuilder.createDummies("default");
-
     private NodeRepository nodeRepository;
     private Fixture fixture;
     private ManualClock clock;
 
     @Before
     public void before() {
-        Curator curator = new MockCurator();
-        Zone zone = new Zone(Environment.prod, RegionName.from("us-east"));
-        this.clock = new ManualClock();
-        this.nodeRepository = new NodeRepository(nodeFlavors,
-                                                 new EmptyProvisionServiceProvider().getHostResourcesCalculator(),
-                                                 curator,
-                                                 clock,
-                                                 zone,
-                                                 new MockNameResolver().mockAnyLookup(),
-                                                 DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa"),
-                                                 new InMemoryFlagSource(),
-                                                 true,
-                                                 false,
-                                                 0);
-        this.fixture = new Fixture(zone, nodeRepository);
+        this.fixture = new Fixture();
+        this.nodeRepository = fixture.nodeRepository;
+        this.clock = fixture.tester.clock();
 
-        createReadyNodes(15, fixture.nodeResources, nodeRepository);
-        createHostNodes(2, nodeRepository, nodeFlavors);
+        fixture.tester.makeReadyNodes(15, fixture.nodeResources);
+        fixture.tester.makeReadyHosts(2, new NodeResources(64, 256, 2000, 10));
     }
 
     @After
@@ -87,8 +59,9 @@ public class PeriodicApplicationMaintainerTest {
         // Create applications
         fixture.activate();
 
-        // Exhaust initial wait period
+        // Exhaust initial wait period and set bootstrapping to be done
         clock.advance(Duration.ofMinutes(30).plus(Duration.ofSeconds(1)));
+        fixture.setBootstrapping(false);
 
         // Fail and park some nodes
         nodeRepository.fail(nodeRepository.getNodes(fixture.app1).get(3).hostname(), Agent.system, "Failing to unit test");
@@ -161,9 +134,15 @@ public class PeriodicApplicationMaintainerTest {
         // Exhaust initial wait period
         clock.advance(Duration.ofMinutes(30).plus(Duration.ofSeconds(1)));
 
-        // First deployment of applications
+        // Will not do any deployments, as bootstrapping is still in progress
+        fixture.runApplicationMaintainer();
+        assertEquals("No deployment expected", 2, fixture.deployer.redeployments);
+
+        // First deployment of applications will happen now, as bootstrapping is done
+        fixture.setBootstrapping(false);
         fixture.runApplicationMaintainer();
         assertEquals("No deployment expected", 4, fixture.deployer.redeployments);
+
         Instant firstDeployTime = clock.instant();
         assertEquals(firstDeployTime, fixture.deployer.lastDeployTime(fixture.app1).get());
         assertEquals(firstDeployTime, fixture.deployer.lastDeployTime(fixture.app2).get());
@@ -186,8 +165,9 @@ public class PeriodicApplicationMaintainerTest {
     public void queues_all_eligible_applications_for_deployment() throws Exception {
         fixture.activate();
 
-        // Exhaust initial wait period
+        // Exhaust initial wait period and set bootstrapping to be done
         clock.advance(Duration.ofMinutes(30).plus(Duration.ofSeconds(1)));
+        fixture.setBootstrapping(false);
 
         // Lock deployer to simulate slow deployments
         fixture.deployer.lock().lockInterruptibly();
@@ -222,32 +202,11 @@ public class PeriodicApplicationMaintainerTest {
         }
     }
 
-    private void createReadyNodes(int count, NodeResources nodeResources, NodeRepository nodeRepository) {
-        createReadyNodes(count, new Flavor(nodeResources), nodeRepository);
-    }
-
-    private void createReadyNodes(int count, Flavor flavor, NodeRepository nodeRepository) {
-        List<Node> nodes = new ArrayList<>(count);
-        for (int i = 0; i < count; i++)
-            nodes.add(nodeRepository.createNode("node" + i, "host" + i, Optional.empty(), flavor, NodeType.tenant));
-        nodes = nodeRepository.addNodes(nodes, Agent.system);
-        nodes = nodeRepository.setDirty(nodes, Agent.system, getClass().getSimpleName());
-        nodeRepository.setReady(nodes, Agent.system, getClass().getSimpleName());
-    }
-
-    private void createHostNodes(int count, NodeRepository nodeRepository, NodeFlavors nodeFlavors) {
-        List<Node> nodes = new ArrayList<>(count);
-        for (int i = 0; i < count; i++)
-            nodes.add(nodeRepository.createNode("hostNode" + i, "realHost" + i, Optional.empty(), nodeFlavors.getFlavorOrThrow("default"), NodeType.host));
-        nodes = nodeRepository.addNodes(nodes, Agent.system);
-        nodes = nodeRepository.setDirty(nodes, Agent.system, getClass().getSimpleName());
-        nodeRepository.setReady(nodes, Agent.system, getClass().getSimpleName());
-    }
-
     private class Fixture {
 
         final NodeRepository nodeRepository;
         final MockDeployer deployer;
+        final ProvisioningTester tester;
 
         final NodeResources nodeResources = new NodeResources(2, 8, 50, 1);
         final ApplicationId app1 = ApplicationId.from(TenantName.from("foo1"), ApplicationName.from("bar"), InstanceName.from("fuz"));
@@ -259,17 +218,13 @@ public class PeriodicApplicationMaintainerTest {
 
         private final TestablePeriodicApplicationMaintainer maintainer;
 
-        Fixture(Zone zone, NodeRepository nodeRepository) {
-            this.nodeRepository = nodeRepository;
-            NodeRepositoryProvisioner provisioner = new NodeRepositoryProvisioner(nodeRepository,
-                                                                                  zone,
-                                                                                  new MockProvisionServiceProvider(),
-                                                                                  new InMemoryFlagSource());
-
+        Fixture() {
+            this.tester = new ProvisioningTester.Builder().build();
+            this.nodeRepository = tester.nodeRepository();
             Map<ApplicationId, MockDeployer.ApplicationContext> apps = Map.of(
                     app1, new MockDeployer.ApplicationContext(app1, clusterApp1, Capacity.from(new ClusterResources(wantedNodesApp1, 1, nodeResources))),
                     app2, new MockDeployer.ApplicationContext(app2, clusterApp2, Capacity.from(new ClusterResources(wantedNodesApp2, 1, nodeResources))));
-            this.deployer = new MockDeployer(provisioner, nodeRepository.clock(), apps);
+            this.deployer = new MockDeployer(tester.provisioner(), nodeRepository.clock(), apps);
             this.maintainer = new TestablePeriodicApplicationMaintainer(deployer, nodeRepository, Duration.ofDays(1), // Long duration to prevent scheduled runs during test
                                                                         Duration.ofMinutes(30));
         }
@@ -298,20 +253,23 @@ public class PeriodicApplicationMaintainerTest {
             return NodeList.copyOf(nodeRepository.getNodes(NodeType.tenant, states));
         }
 
+        void setBootstrapping(boolean bootstrapping) {
+            deployer.setBootstrapping(bootstrapping);
+        }
+
     }
     
     private static class TestablePeriodicApplicationMaintainer extends PeriodicApplicationMaintainer {
 
         private List<Node> overriddenNodesNeedingMaintenance;
 
-        TestablePeriodicApplicationMaintainer setOverriddenNodesNeedingMaintenance(List<Node> overriddenNodesNeedingMaintenance) {
+        void setOverriddenNodesNeedingMaintenance(List<Node> overriddenNodesNeedingMaintenance) {
             this.overriddenNodesNeedingMaintenance = overriddenNodesNeedingMaintenance;
-            return this;
         }
 
         TestablePeriodicApplicationMaintainer(Deployer deployer, NodeRepository nodeRepository, Duration interval,
                                               Duration minTimeBetweenRedeployments) {
-            super(deployer, new TestMetric(), nodeRepository, interval, minTimeBetweenRedeployments);
+            super(deployer, new TestMetric(), nodeRepository, interval, minTimeBetweenRedeployments, new InMemoryFlagSource());
         }
 
         @Override

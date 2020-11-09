@@ -4,8 +4,11 @@
 
 #include <vespa/vespalib/util/typify.h>
 #include <vespa/vespalib/stllike/string.h>
+#include <limits>
 #include <vector>
 #include <map>
+#include <algorithm>
+#include <cmath>
 
 namespace vespalib {
 
@@ -19,7 +22,7 @@ struct BinaryOperation;
  * Enumeration of all different aggregators that are allowed to be
  * used in tensor reduce expressions.
  **/
-enum class Aggr { AVG, COUNT, PROD, SUM, MAX, MIN };
+enum class Aggr { AVG, COUNT, PROD, SUM, MAX, MEDIAN, MIN };
 
 /**
  * Utiliy class used to map between aggregator enum value and symbolic
@@ -59,63 +62,111 @@ namespace aggr {
 
 template <typename T> class Avg {
 private:
-    T _sum = 0.0;
-    size_t _cnt = 1;
+    T _sum;
+    size_t _cnt;
 public:
-    void first(T value) {
-        _sum = value;
-        _cnt = 1;
-    }
-    void next(T value) {
+    constexpr Avg() : _sum{0}, _cnt{0} {}
+    constexpr Avg(T value) : _sum{value}, _cnt{1} {}
+    constexpr void sample(T value) {
         _sum += value;
         ++_cnt;
     }
-    T result() const { return (_sum / _cnt); }
+    constexpr void merge(const Avg &rhs) {
+        _sum += rhs._sum;
+        _cnt += rhs._cnt;
+    };
+    constexpr T result() const { return (_sum / _cnt); }
 };
 
 template <typename T> class Count {
 private:
-    size_t _cnt = 0;
+    size_t _cnt;
 public:
-    void first(T) { _cnt = 1; }
-    void next(T) { ++_cnt; }
-    T result() const { return _cnt; }
+    constexpr Count() : _cnt{0} {}
+    constexpr Count(T) : _cnt{1} {}
+    constexpr void sample(T) { ++_cnt; }
+    constexpr void merge(const Count &rhs) { _cnt += rhs._cnt; }
+    constexpr T result() const { return _cnt; }
 };
 
 template <typename T> class Prod {
 private:
-    T _prod = 0.0;
+    T _prod;
 public:
-    void first(T value) { _prod = value; }
-    void next(T value) { _prod *= value; }
-    T result() const { return _prod; }
+    constexpr Prod() : _prod{1} {}
+    constexpr Prod(T value) : _prod{value} {}
+    constexpr void sample(T value) { _prod *= value; }
+    constexpr void merge(const Prod &rhs) { _prod *= rhs._prod; }
+    constexpr T result() const { return _prod; }
 };
 
 template <typename T> class Sum {
 private:
-    T _sum = 0.0;
+    T _sum;
 public:
-    void first(T value) { _sum = value; }
-    void next(T value) { _sum += value; }
-    T result() const { return _sum; }
+    constexpr Sum() : _sum{0} {}
+    constexpr Sum(T value) : _sum{value} {}
+    constexpr void sample(T value) { _sum += value; }
+    constexpr void merge(const Sum &rhs) { _sum += rhs._sum; }
+    constexpr T result() const { return _sum; }
 };
 
 template <typename T> class Max {
 private:
-    T _max = 0.0;
+    T _max;
 public:
-    void first(T value) { _max = value; }
-    void next(T value) { _max = std::max(_max, value); }
-    T result() const { return _max; }
+    constexpr Max() : _max{-std::numeric_limits<T>::infinity()} {}
+    constexpr Max(T value) : _max{value} {}
+    constexpr void sample(T value) { _max = std::max(_max, value); }
+    constexpr void merge(const Max &rhs) { _max = std::max(_max, rhs._max); }
+    constexpr T result() const { return _max; }
+};
+
+template <typename T> class Median {
+private:
+    std::vector<T> _seen;
+public:
+    constexpr Median() : _seen() {}
+    constexpr Median(T value) : _seen({value}) {}
+    constexpr void sample(T value) { _seen.push_back(value); }
+    constexpr void merge(const Median &rhs) {
+        for (T value: rhs._seen) {
+            _seen.push_back(value);
+        }
+    };
+    constexpr T result() const {
+        if (_seen.empty()) {
+            return std::numeric_limits<T>::quiet_NaN();
+        }
+        std::vector<T> tmp;
+        tmp.reserve(_seen.size());
+        for (T value: _seen) {
+            if (!std::isnan(value)) {
+                tmp.push_back(value);
+            } else {
+                return std::numeric_limits<T>::quiet_NaN();
+            }
+        }
+        size_t n = (tmp.size() / 2);
+        std::nth_element(tmp.begin(), tmp.begin() + n, tmp.end());
+        T result = tmp[n]; // the nth element
+        if ((tmp.size() % 2) == 0) {
+            result += *std::max_element(tmp.begin(), tmp.begin() + n);
+            result /= T{2};
+        }
+        return result;
+    }
 };
 
 template <typename T> class Min {
 private:
-    T _min = 0.0;
+    T _min;
 public:
-    void first(T value) { _min = value; }
-    void next(T value) { _min = std::min(_min, value); }
-    T result() const { return _min; }
+    constexpr Min() : _min{std::numeric_limits<T>::infinity()} {}
+    constexpr Min(T value) : _min{value} {}
+    constexpr void sample(T value) { _min = std::min(_min, value); }
+    constexpr void merge(const Min &rhs) { _min = std::min(_min, rhs._min); }
+    constexpr T result() const { return _min; }
 };
 
 } // namespave vespalib::eval::aggr
@@ -124,12 +175,13 @@ struct TypifyAggr {
     template <template<typename> typename TT> using Result = TypifyResultSimpleTemplate<TT>;
     template <typename F> static decltype(auto) resolve(Aggr aggr, F &&f) {
         switch (aggr) {
-        case Aggr::AVG:   return f(Result<aggr::Avg>());
-        case Aggr::COUNT: return f(Result<aggr::Count>());
-        case Aggr::PROD:  return f(Result<aggr::Prod>());
-        case Aggr::SUM:   return f(Result<aggr::Sum>());
-        case Aggr::MAX:   return f(Result<aggr::Max>());
-        case Aggr::MIN:   return f(Result<aggr::Min>());
+        case Aggr::AVG:    return f(Result<aggr::Avg>());
+        case Aggr::COUNT:  return f(Result<aggr::Count>());
+        case Aggr::PROD:   return f(Result<aggr::Prod>());
+        case Aggr::SUM:    return f(Result<aggr::Sum>());
+        case Aggr::MAX:    return f(Result<aggr::Max>());
+        case Aggr::MEDIAN: return f(Result<aggr::Median>());
+        case Aggr::MIN:    return f(Result<aggr::Min>());
         }
         abort();
     }

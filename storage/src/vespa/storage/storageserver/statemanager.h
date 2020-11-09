@@ -20,7 +20,6 @@
 #include <vespa/storageframework/generic/status/htmlstatusreporter.h>
 #include <vespa/storageapi/message/state.h>
 #include <vespa/storageapi/messageapi/storagemessage.h>
-#include <vespa/vespalib/util/sync.h>
 #include <vespa/vespalib/objects/floatingpointtype.h>
 #include <deque>
 #include <map>
@@ -44,18 +43,19 @@ class StateManager : public NodeStateUpdater,
 {
     StorageComponent _component;
     metrics::MetricManager& _metricManager;
-    vespalib::Monitor _stateLock;
-    vespalib::Lock _listenerLock;
+    mutable std::mutex _stateLock;
+    std::condition_variable _stateCond;
+    std::mutex _listenerLock;
     std::shared_ptr<lib::NodeState> _nodeState;
     std::shared_ptr<lib::NodeState> _nextNodeState;
     using ClusterStateBundle = lib::ClusterStateBundle;
     std::shared_ptr<const ClusterStateBundle> _systemState;
     std::shared_ptr<const ClusterStateBundle> _nextSystemState;
     std::list<StateListener*> _stateListeners;
-    typedef std::pair<framework::MilliSecTime,
-                      api::GetNodeStateCommand::SP> TimeStatePair;
+    typedef std::pair<framework::MilliSecTime, api::GetNodeStateCommand::SP> TimeStatePair;
     std::list<TimeStatePair> _queuedStateRequests;
-    mutable vespalib::Monitor _threadMonitor;
+    mutable std::mutex _threadLock;
+    std::condition_variable _threadCond;
     framework::MilliSecTime _lastProgressUpdateCausingSend;
     vespalib::Double _progressLastInitStateSend;
     using TimeSysStatePair = std::pair<framework::MilliSecTime, std::shared_ptr<const ClusterStateBundle>>;
@@ -73,7 +73,7 @@ class StateManager : public NodeStateUpdater,
 public:
     explicit StateManager(StorageComponentRegister&, metrics::MetricManager&,
                           std::unique_ptr<HostInfo>, bool testMode = false);
-    ~StateManager();
+    ~StateManager() override;
 
     void onOpen() override;
     void onClose() override;
@@ -106,7 +106,7 @@ private:
     bool sendGetNodeStateReplies(
             framework::MilliSecTime olderThanTime = framework::MilliSecTime(0),
             uint16_t index = 0xffff);
-    void mark_controller_as_having_observed_explicit_node_state(const vespalib::LockGuard &, uint16_t controller_index);
+    void mark_controller_as_having_observed_explicit_node_state(const std::unique_lock<std::mutex> &, uint16_t controller_index);
 
     lib::Node thisNode() const;
 

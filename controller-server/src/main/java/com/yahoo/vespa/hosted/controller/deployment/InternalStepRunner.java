@@ -37,7 +37,6 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.TesterCloud;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.TesterId;
-import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartFilter;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.DeploymentFailureMails;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.Mail;
 import com.yahoo.vespa.hosted.controller.application.ApplicationPackage;
@@ -237,18 +236,23 @@ public class InternalStepRunner implements StepRunner {
                 return Optional.of(deploymentFailed);
             }
 
-            if (prepareResponse.configChangeActions.restartActions.isEmpty())
-                logger.log("No services requiring restart.");
-            else
-                prepareResponse.configChangeActions.restartActions.stream()
-                                                                  .flatMap(action -> action.services.stream())
-                                                                  .map(service -> service.hostName)
-                                                                  .sorted().distinct()
-                                                                  .map(HostName::from)
-                                                                  .forEach(hostname -> {
-                                                                      controller.applications().restart(new DeploymentId(id, type.zone(controller.system())), new RestartFilter().withHostName(Optional.of(hostname)));
-                                                                      logger.log("Schedule service restart on host " + hostname.value() + ".");
-                                                                  });
+            if ( ! prepareResponse.configChangeActions.reindexActions.stream().allMatch(action -> action.allowed)) {
+                List<String> messages = new ArrayList<>();
+                messages.add("Deploy failed due to non-compatible changes that require re-index.");
+                messages.add("Your options are:");
+                messages.add("1. Revert the incompatible changes.");
+                messages.add("2. If you think it is safe in your case, you can override this validation, see");
+                messages.add("   http://docs.vespa.ai/documentation/reference/validation-overrides.html");
+                messages.add("3. Deploy as a new application under a different name.");
+                messages.add("Illegal actions:");
+                prepareResponse.configChangeActions.reindexActions.stream()
+                                                                 .filter(action -> ! action.allowed)
+                                                                 .flatMap(action -> action.messages.stream())
+                                                                 .forEach(messages::add);
+                logger.log(messages);
+                return Optional.of(deploymentFailed);
+            }
+
             logger.log("Deployment successful.");
             if (prepareResponse.message != null)
                 logger.log(prepareResponse.message);
@@ -413,7 +417,7 @@ public class InternalStepRunner implements StepRunner {
     private Version testerPlatformVersion(RunId id) {
         return application(id.application()).change().isPinned()
                ? controller.jobController().run(id).get().versions().targetPlatform()
-               : controller.systemVersion();
+               : controller.readSystemVersion();
     }
 
     private Optional<RunStatus> installTester(RunId id, DualLogger logger) {
@@ -640,12 +644,14 @@ public class InternalStepRunner implements StepRunner {
                 return Optional.empty();
             case FAILURE:
                 logger.log("Tests failed.");
+                controller.jobController().updateTestReport(id);
                 return Optional.of(testFailure);
             case ERROR:
                 logger.log(INFO, "Tester failed running its tests!");
                 return Optional.of(error);
             case SUCCESS:
                 logger.log("Tests completed successfully.");
+                controller.jobController().updateTestReport(id);
                 return Optional.of(running);
             default:
                 throw new IllegalStateException("Unknown status '" + testStatus + "'!");
@@ -839,13 +845,14 @@ public class InternalStepRunner implements StepRunner {
     }
 
     static NodeResources testerResourcesFor(ZoneId zone, DeploymentInstanceSpec spec) {
-        return spec.steps().stream()
+        NodeResources nodeResources = spec.steps().stream()
                    .filter(step -> step.concerns(zone.environment()))
                    .findFirst()
                    .flatMap(step -> step.zones().get(0).testerFlavor())
                    .map(NodeResources::fromLegacyName)
                    .orElse(zone.region().value().contains("aws-") ?
                            DEFAULT_TESTER_RESOURCES_AWS : DEFAULT_TESTER_RESOURCES);
+        return nodeResources.with(NodeResources.DiskSpeed.any);
     }
 
     /** Returns the generated services.xml content for the tester application. */
@@ -985,7 +992,7 @@ public class InternalStepRunner implements StepRunner {
         Duration endpointCertificate() { return Duration.ofMinutes(20); }
         Duration tester() { return Duration.ofMinutes(30); }
         Duration nodesDown() { return Duration.ofMinutes(system.isCd() ? 30 : 60); }
-        Duration noNodesDown() { return Duration.ofMinutes(system.isCd() ? 30 : 120); }
+        Duration noNodesDown() { return Duration.ofMinutes(system.isCd() ? 30 : 240); }
         Duration testerCertificate() { return Duration.ofMinutes(300); }
 
     }

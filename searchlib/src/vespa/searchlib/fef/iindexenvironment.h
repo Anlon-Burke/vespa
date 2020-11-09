@@ -11,6 +11,7 @@ namespace search::fef {
 class Properties;
 class FieldInfo;
 class ITableManager;
+class OnnxModel;
 
 /**
  * Abstract view of index related information available to the
@@ -119,6 +120,11 @@ public:
      * Returns a constant rank value with the given name or null ptr if no such value exists.
      */
     virtual std::unique_ptr<vespalib::eval::ConstantValue> getConstantValue(const vespalib::string &name) const = 0;
+
+    /**
+     * Get configuration for the given onnx model.
+     **/
+    virtual const OnnxModel *getOnnxModel(const vespalib::string &name) const = 0;
 
     virtual uint32_t getDistributionKey() const = 0;
 

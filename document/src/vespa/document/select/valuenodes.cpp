@@ -2,10 +2,10 @@
 #include "valuenodes.h"
 #include "visitor.h"
 #include "parser.h"
-#include <vespa/document/bucket/bucketdistribution.h>
 #include <vespa/document/base/exceptions.h>
 #include <vespa/document/update/documentupdate.h>
 #include <vespa/document/fieldvalue/fieldvalues.h>
+#include <vespa/document/fieldvalue/referencefieldvalue.h>
 #include <vespa/document/fieldvalue/iteratorhandler.h>
 #include <vespa/document/datatype/documenttype.h>
 #include <vespa/vespalib/util/md5.h>
@@ -302,6 +302,15 @@ IteratorHandler::getInternalValue(const FieldValue& fval) const
         {
             const StringFieldValue& val(dynamic_cast<const StringFieldValue&>(fval));
             return std::make_unique<StringValue>(val.getAsString());
+        }
+        case ReferenceFieldValue::classId:
+        {
+            const ReferenceFieldValue& val(dynamic_cast<const ReferenceFieldValue&>(fval));
+            if (val.hasValidDocumentId()) {
+                return std::make_unique<StringValue>(val.getDocumentId().toString());
+            } else {
+                return std::make_unique<InvalidValue>();
+            }
         }
         case ArrayFieldValue::classId:
         {

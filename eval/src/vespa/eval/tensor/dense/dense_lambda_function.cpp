@@ -28,8 +28,6 @@ using State = InterpretedFunction::State;
 
 using namespace eval::tensor_function;
 
-const TensorEngine &prod_engine = DefaultTensorEngine::ref();
-
 namespace {
 
 //-----------------------------------------------------------------------------
@@ -78,7 +76,7 @@ struct CompiledParams {
 
 template <typename CT>
 void my_compiled_lambda_op(eval::InterpretedFunction::State &state, uint64_t param) {
-    const CompiledParams &params = *(const CompiledParams*)param;
+    const CompiledParams &params = unwrap_param<CompiledParams>(param);
     std::vector<double> args(params.result_type.dimensions().size() + params.bindings.size(), 0.0);
     double *bind_next = &args[params.result_type.dimensions().size()];
     for (size_t binding: params.bindings) {
@@ -105,11 +103,11 @@ struct InterpretedParams {
     const std::vector<size_t> &bindings;
     size_t num_cells;
     InterpretedFunction fun;
-    InterpretedParams(const Lambda &lambda)
+    InterpretedParams(const Lambda &lambda, eval::EngineOrFactory engine)
         : result_type(lambda.result_type()),
           bindings(lambda.bindings()),
           num_cells(result_type.dense_subspace_size()),
-          fun(prod_engine, lambda.lambda().root(), lambda.types())
+          fun(engine, lambda.lambda().root(), lambda.types())
     {
         assert(lambda.lambda().num_params() == (result_type.dimensions().size() + bindings.size()));
     }
@@ -117,7 +115,7 @@ struct InterpretedParams {
 
 template <typename CT>
 void my_interpreted_lambda_op(eval::InterpretedFunction::State &state, uint64_t param) {
-    const InterpretedParams &params = *(const InterpretedParams*)param;
+    const InterpretedParams &params = unwrap_param<InterpretedParams>(param);
     std::vector<double> labels(params.result_type.dimensions().size(), 0.0);
     ParamProxy param_proxy(labels, *state.params, params.bindings);
     InterpretedFunction::Context ctx(params.fun);
@@ -159,22 +157,19 @@ DenseLambdaFunction::eval_mode() const
 }
 
 Instruction
-DenseLambdaFunction::compile_self(const TensorEngine &engine, Stash &stash) const
+DenseLambdaFunction::compile_self(eval::EngineOrFactory engine, Stash &stash) const
 {
-    assert(&engine == &prod_engine);
     auto mode = eval_mode();
     using MyTypify = eval::TypifyCellType;
     if (mode == EvalMode::COMPILED) {
         CompiledParams &params = stash.create<CompiledParams>(_lambda);
         auto op = typify_invoke<1,MyTypify,MyCompiledLambdaOp>(result_type().cell_type());
-        static_assert(sizeof(&params) == sizeof(uint64_t));
-        return Instruction(op, (uint64_t)(&params));
+        return Instruction(op, wrap_param<CompiledParams>(params));
     } else {
         assert(mode == EvalMode::INTERPRETED);
-        InterpretedParams &params = stash.create<InterpretedParams>(_lambda);
+        InterpretedParams &params = stash.create<InterpretedParams>(_lambda, engine);
         auto op = typify_invoke<1,MyTypify,MyInterpretedLambdaOp>(result_type().cell_type());
-        static_assert(sizeof(&params) == sizeof(uint64_t));
-        return Instruction(op, (uint64_t)(&params));
+        return Instruction(op, wrap_param<InterpretedParams>(params));
     }
 }
 

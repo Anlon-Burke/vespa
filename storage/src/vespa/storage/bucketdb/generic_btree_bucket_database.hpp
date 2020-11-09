@@ -17,6 +17,15 @@ namespace storage::bucketdb {
 using document::BucketId;
 
 template <typename DataStoreTraitsT>
+GenericBTreeBucketDatabase<DataStoreTraitsT>::~GenericBTreeBucketDatabase() {
+    // If there was a snapshot reader concurrent with the last modify operation
+    // on the DB, it's possible for the hold list to be non-empty. Explicitly
+    // clean it up now to ensure that we don't try to destroy any data stores
+    // with a non-empty hold list. Failure to do so might trigger an assertion.
+    commit_tree_changes();
+}
+
+template <typename DataStoreTraitsT>
 BucketId GenericBTreeBucketDatabase<DataStoreTraitsT>::bucket_from_valid_iterator(const BTreeConstIterator& iter) {
     return BucketId(BucketId::keyToBucketId(iter.getKey()));
 }
@@ -553,6 +562,41 @@ void GenericBTreeBucketDatabase<DataStoreTraitsT>::ReadSnapshot::for_each(Func f
         // Iterator value extractor implicitly inserts any required memory fences for value.
         func(iter.getKey(), IterValueExtractor::apply(*_db, iter));
     }
+}
+
+template <typename DataStoreTraitsT>
+class GenericBTreeBucketDatabase<DataStoreTraitsT>::ReadSnapshot::ConstIteratorImpl
+    : public ConstIterator<typename DataStoreTraitsT::ConstValueRef>
+{
+    const typename GenericBTreeBucketDatabase<DataStoreTraitsT>::ReadSnapshot& _snapshot;
+    typename BTree::ConstIterator _iter;
+public:
+    using ConstValueRef = typename DataStoreTraitsT::ConstValueRef;
+
+    explicit ConstIteratorImpl(const GenericBTreeBucketDatabase<DataStoreTraitsT>::ReadSnapshot& snapshot)
+        : _snapshot(snapshot),
+          _iter(_snapshot._frozen_view.begin())
+    {}
+    ~ConstIteratorImpl() override = default;
+
+    void next() noexcept override {
+        ++_iter;
+    }
+    bool valid() const noexcept override {
+        return _iter.valid();
+    }
+    uint64_t key() const noexcept override {
+        return _iter.getKey();
+    }
+    ConstValueRef value() const override {
+        return ByConstRef::apply(*_snapshot._db, _iter);
+    }
+};
+
+template <typename DataStoreTraitsT>
+std::unique_ptr<ConstIterator<typename DataStoreTraitsT::ConstValueRef>>
+GenericBTreeBucketDatabase<DataStoreTraitsT>::ReadSnapshot::create_iterator() const {
+    return std::make_unique<ConstIteratorImpl>(*this);
 }
 
 template <typename DataStoreTraitsT>

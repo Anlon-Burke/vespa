@@ -19,7 +19,6 @@
 #include <tests/common/testhelper.h>
 #include <vespa/vdslib/state/random.h>
 #include <vespa/vespalib/io/fileutil.h>
-#include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/gtest/gtest.h>
 #include <future>
 
@@ -99,7 +98,7 @@ protected:
         _manager->updateMinUsedBits();
     }
     void trigger_metric_manager_update() {
-        vespalib::Monitor l;
+        std::mutex l;
         _manager->updateMetrics(BucketManager::MetricLockGuard(l));
     }
 
@@ -151,8 +150,7 @@ void BucketManagerTest::setupTestEnvironment(bool fakePersistenceLayer,
                 *ConfigGetter<DocumenttypesConfig>::getConfig(
                     "config-doctypes", FileSpec("../config-doctypes.cfg")));
     _top = std::make_unique<DummyStorageLink>();
-    _node = std::make_unique<TestServiceLayerApp>(
-                DiskCount(2), NodeIndex(0), config.getConfigId());
+    _node = std::make_unique<TestServiceLayerApp>(NodeIndex(0), config.getConfigId());
     _node->setTypeRepo(repo);
     _node->setupDummyPersistence();
     // Set up the 3 links
@@ -165,8 +163,8 @@ void BucketManagerTest::setupTestEnvironment(bool fakePersistenceLayer,
         _top->push_back(std::move(bottom));
     } else {
         auto bottom = std::make_unique<FileStorManager>(
-                    config.getConfigId(), _node->getPartitions(),
-                    _node->getPersistenceProvider(), _node->getComponentRegister());
+                    config.getConfigId(),
+                    _node->getPersistenceProvider(), _node->getComponentRegister(), *_node);
         _filestorManager = bottom.get();
         _top->push_back(std::move(bottom));
     }
@@ -192,7 +190,7 @@ void BucketManagerTest::addBucketsToDB(uint32_t count)
         info.size = randomizer.nextUint32();
         info.count = randomizer.nextUint32(1, 0xFFFF);
 
-        info.partition = _node->getPartition(id);
+        info.partition = 0u;
         _bucketInfo[id] = info;
     }
 
@@ -205,7 +203,6 @@ void BucketManagerTest::addBucketsToDB(uint32_t count)
     ++_emptyBuckets;
     for (const auto& bi : _bucketInfo) {
         bucketdb::StorageBucketInfo entry;
-        entry.disk = bi.second.partition;
         entry.setBucketInfo(api::BucketInfo(bi.second.crc,
                                             bi.second.count,
                                             bi.second.size));
@@ -225,7 +222,6 @@ BucketManagerTest::wasBlockedDueToLastModified(api::StorageMessage* msg,
     {
         bucketdb::StorageBucketInfo entry;
         entry.setBucketInfo(info);
-        entry.disk = 0;
         _node->getStorageBucketDatabase().insert(id, entry, "foo");
     }
 
@@ -289,7 +285,7 @@ TEST_F(BucketManagerTest, distribution_bit_change_on_create_bucket){
     EXPECT_EQ(4u, _node->getStateUpdater().getReportedNodeState()->getMinUsedBits());
 }
 
-TEST_F(BucketManagerTest, Min_Used_Bits_From_Component_Is_Honored) {
+TEST_F(BucketManagerTest, min_used_bits_from_component_is_honored) {
     setupTestEnvironment();
     // Let these differ in order to test state update behavior.
     _node->getComponentRegister().getMinUsedBitsTracker().setMinUsedBits(10);
@@ -439,7 +435,6 @@ TEST_F(BucketManagerTest, metrics_generation) {
     // Add 3 buckets; 2 ready, 1 active. 300 docs total, 600 bytes total.
     for (int i = 0; i < 3; ++i) {
         bucketdb::StorageBucketInfo entry;
-        entry.disk = 0;
         api::BucketInfo info(50, 100, 200);
         if (i > 0) {
             info.setReady();
@@ -455,13 +450,27 @@ TEST_F(BucketManagerTest, metrics_generation) {
     _top->doneInit();
     trigger_metric_manager_update();
 
-    ASSERT_EQ(2u, bucket_manager_metrics().disks.size());
-    const DataStoredMetrics& m(*bucket_manager_metrics().disks[0]);
+    ASSERT_TRUE(bucket_manager_metrics().disk);
+    const DataStoredMetrics& m(*bucket_manager_metrics().disk);
     EXPECT_EQ(3, m.buckets.getLast());
     EXPECT_EQ(300, m.docs.getLast());
     EXPECT_EQ(600, m.bytes.getLast());
     EXPECT_EQ(1, m.active.getLast());
     EXPECT_EQ(2, m.ready.getLast());
+}
+
+namespace {
+
+void verify_db_memory_metrics_present(const ContentBucketDbMetrics& db_metrics) {
+    auto* m = db_metrics.memory_usage.getMetric("allocated_bytes");
+    ASSERT_TRUE(m != nullptr);
+    // Actual values are very much implementation defined, so just check for non-zero.
+    EXPECT_GT(m->getLongValue("last"), 0);
+    m = db_metrics.memory_usage.getMetric("used_bytes");
+    ASSERT_TRUE(m != nullptr);
+    EXPECT_GT(m->getLongValue("last"), 0);
+}
+
 }
 
 TEST_F(BucketManagerTest, metrics_are_tracked_per_bucket_space) {
@@ -470,7 +479,6 @@ TEST_F(BucketManagerTest, metrics_are_tracked_per_bucket_space) {
     auto& repo = _node->getComponentRegister().getBucketSpaceRepo();
     {
         bucketdb::StorageBucketInfo entry;
-        entry.disk = 0;
         api::BucketInfo info(50, 100, 200);
         info.setReady(true);
         entry.setBucketInfo(info);
@@ -479,7 +487,6 @@ TEST_F(BucketManagerTest, metrics_are_tracked_per_bucket_space) {
     }
     {
         bucketdb::StorageBucketInfo entry;
-        entry.disk = 0;
         api::BucketInfo info(60, 150, 300);
         info.setActive(true);
         entry.setBucketInfo(info);
@@ -499,6 +506,8 @@ TEST_F(BucketManagerTest, metrics_are_tracked_per_bucket_space) {
     EXPECT_EQ(0,   default_m->second->active_buckets.getLast());
     EXPECT_EQ(1,   default_m->second->ready_buckets.getLast());
 
+    verify_db_memory_metrics_present(default_m->second->bucket_db_metrics);
+
     auto global_m = spaces.find(document::FixedBucketSpaces::global_space());
     ASSERT_TRUE(global_m != spaces.end());
     EXPECT_EQ(1,   global_m->second->buckets_total.getLast());
@@ -506,6 +515,8 @@ TEST_F(BucketManagerTest, metrics_are_tracked_per_bucket_space) {
     EXPECT_EQ(300, global_m->second->bytes.getLast());
     EXPECT_EQ(1,   global_m->second->active_buckets.getLast());
     EXPECT_EQ(0,   global_m->second->ready_buckets.getLast());
+
+    verify_db_memory_metrics_present(global_m->second->bucket_db_metrics);
 }
 
 void
@@ -513,7 +524,6 @@ BucketManagerTest::insertSingleBucket(const document::BucketId& bucket,
                                       const api::BucketInfo& info)
 {
     bucketdb::StorageBucketInfo entry;
-    entry.disk = 0;
     entry.setBucketInfo(info);
     _node->getStorageBucketDatabase().insert(bucket, entry, "foo");
 }

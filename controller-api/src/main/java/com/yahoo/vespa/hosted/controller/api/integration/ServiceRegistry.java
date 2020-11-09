@@ -7,6 +7,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.aws.ResourceTagger;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingController;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateProvider;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServer;
+import com.yahoo.vespa.hosted.controller.api.integration.container.ContainerRegistry;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationStore;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ArtifactRepository;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.TesterCloud;
@@ -18,6 +19,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.organization.IssueHandl
 import com.yahoo.vespa.hosted.controller.api.integration.organization.Mailer;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.OwnershipIssues;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.SystemMonitor;
+import com.yahoo.vespa.hosted.controller.api.integration.repair.HostRepairClient;
 import com.yahoo.vespa.hosted.controller.api.integration.resource.CostReportConsumer;
 import com.yahoo.vespa.hosted.controller.api.integration.resource.MeteringClient;
 import com.yahoo.vespa.hosted.controller.api.integration.routing.GlobalRoutingService;
@@ -78,5 +80,9 @@ public interface ServiceRegistry {
     SystemMonitor systemMonitor();
 
     BillingController billingController();
+
+    HostRepairClient hostRepairClient();
+
+    ContainerRegistry containerRegistry();
 
 }

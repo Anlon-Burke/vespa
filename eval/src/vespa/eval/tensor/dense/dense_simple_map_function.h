@@ -12,13 +12,13 @@ namespace vespalib::tensor {
 class DenseSimpleMapFunction : public eval::tensor_function::Map
 {
 public:
-    using map_fun_t = ::vespalib::eval::tensor_function::map_fun_t;
+    using map_fun_t = vespalib::eval::operation::op1_t;
     DenseSimpleMapFunction(const eval::ValueType &result_type,
                            const TensorFunction &child,
                            map_fun_t function_in);
     ~DenseSimpleMapFunction() override;
     bool inplace() const { return child().result_is_mutable(); }
-    eval::InterpretedFunction::Instruction compile_self(const eval::TensorEngine &engine, Stash &stash) const override;
+    eval::InterpretedFunction::Instruction compile_self(eval::EngineOrFactory engine, Stash &stash) const override;
     static const eval::TensorFunction &optimize(const eval::TensorFunction &expr, Stash &stash);
 };
 

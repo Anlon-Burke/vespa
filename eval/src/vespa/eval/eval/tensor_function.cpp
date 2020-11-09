@@ -8,6 +8,15 @@
 #include "simple_tensor_engine.h"
 #include "visit_stuff.h"
 #include "string_stuff.h"
+#include <vespa/eval/instruction/generic_concat.h>
+#include <vespa/eval/instruction/generic_create.h>
+#include <vespa/eval/instruction/generic_join.h>
+#include <vespa/eval/instruction/generic_lambda.h>
+#include <vespa/eval/instruction/generic_map.h>
+#include <vespa/eval/instruction/generic_merge.h>
+#include <vespa/eval/instruction/generic_peek.h>
+#include <vespa/eval/instruction/generic_reduce.h>
+#include <vespa/eval/instruction/generic_rename.h>
 #include <vespa/vespalib/objects/objectdumper.h>
 #include <vespa/vespalib/objects/visit.hpp>
 
@@ -49,17 +58,6 @@ namespace {
 
 using State = InterpretedFunction::State;
 using Instruction = InterpretedFunction::Instruction;
-
-//-----------------------------------------------------------------------------
-
-template <typename T, typename IN>
-uint64_t wrap_param(const IN &value_in) {
-    const T &value = value_in;
-    return (uint64_t)&value;
-}
-
-template <typename T>
-const T &unwrap_param(uint64_t param) { return *((const T *)param); }
 
 //-----------------------------------------------------------------------------
 
@@ -250,7 +248,7 @@ Op2::visit_children(vespalib::ObjectVisitor &visitor) const
 //-----------------------------------------------------------------------------
 
 Instruction
-ConstValue::compile_self(const TensorEngine &, Stash &) const
+ConstValue::compile_self(EngineOrFactory, Stash &) const
 {
     return Instruction(op_load_const, wrap_param<Value>(_value));
 }
@@ -269,7 +267,7 @@ ConstValue::visit_self(vespalib::ObjectVisitor &visitor) const
 //-----------------------------------------------------------------------------
 
 Instruction
-Inject::compile_self(const TensorEngine &, Stash &) const
+Inject::compile_self(EngineOrFactory, Stash &) const
 {
     return Instruction::fetch_param(_param_idx);
 }
@@ -284,8 +282,11 @@ Inject::visit_self(vespalib::ObjectVisitor &visitor) const
 //-----------------------------------------------------------------------------
 
 Instruction
-Reduce::compile_self(const TensorEngine &, Stash &stash) const
+Reduce::compile_self(EngineOrFactory engine, Stash &stash) const
 {
+    if (engine.is_factory()) {
+        return instruction::GenericReduce::make_instruction(child().result_type(), aggr(), dimensions(), engine.factory(), stash);
+    }
     ReduceParams &params = stash.create<ReduceParams>(_aggr, _dimensions);
     return Instruction(op_tensor_reduce, wrap_param<ReduceParams>(params));
 }
@@ -301,8 +302,11 @@ Reduce::visit_self(vespalib::ObjectVisitor &visitor) const
 //-----------------------------------------------------------------------------
 
 Instruction
-Map::compile_self(const TensorEngine &, Stash &) const
+Map::compile_self(EngineOrFactory engine, Stash &) const
 {
+    if (engine.is_factory()) {
+        return instruction::GenericMap::make_instruction(result_type(), _function);
+    }
     if (result_type().is_double()) {
         return Instruction(op_double_map, to_param(_function));
     }
@@ -319,8 +323,11 @@ Map::visit_self(vespalib::ObjectVisitor &visitor) const
 //-----------------------------------------------------------------------------
 
 Instruction
-Join::compile_self(const TensorEngine &, Stash &) const
+Join::compile_self(EngineOrFactory engine, Stash &stash) const
 {
+    if (engine.is_factory()) {
+        return instruction::GenericJoin::make_instruction(lhs().result_type(), rhs().result_type(), function(), engine.factory(), stash);
+    }
     if (result_type().is_double()) {
         if (_function == operation::Mul::f) {
             return Instruction(op_double_mul);
@@ -343,8 +350,11 @@ Join::visit_self(vespalib::ObjectVisitor &visitor) const
 //-----------------------------------------------------------------------------
 
 Instruction
-Merge::compile_self(const TensorEngine &, Stash &) const
+Merge::compile_self(EngineOrFactory engine, Stash &stash) const
 {
+    if (engine.is_factory()) {
+        return instruction::GenericMerge::make_instruction(lhs().result_type(), rhs().result_type(), function(), engine.factory(), stash);
+    }
     return Instruction(op_tensor_merge, to_param(_function));
 }
 
@@ -358,8 +368,11 @@ Merge::visit_self(vespalib::ObjectVisitor &visitor) const
 //-----------------------------------------------------------------------------
 
 Instruction
-Concat::compile_self(const TensorEngine &, Stash &) const
+Concat::compile_self(EngineOrFactory engine, Stash &stash) const
 {
+    if (engine.is_factory()) {
+        return instruction::GenericConcat::make_instruction(lhs().result_type(), rhs().result_type(), dimension(), engine.factory(), stash);
+    }
     return Instruction(op_tensor_concat, wrap_param<vespalib::string>(_dimension));
 }
 
@@ -381,8 +394,16 @@ Create::push_children(std::vector<Child::CREF> &children) const
 }
 
 Instruction
-Create::compile_self(const TensorEngine &, Stash &) const
+Create::compile_self(EngineOrFactory engine, Stash &stash) const
 {
+    if (engine.is_factory()) {
+        std::map<TensorSpec::Address, size_t> generic_spec;
+        size_t child_idx = 0;
+        for (const auto & kv : spec()) {
+            generic_spec[kv.first] = child_idx++;
+        }
+        return instruction::GenericCreate::make_instruction(result_type(), generic_spec, engine.factory(), stash);
+    }
     return Instruction(op_tensor_create, wrap_param<Create>(*this));
 }
 
@@ -443,8 +464,11 @@ Lambda::create_spec_impl(const ValueType &type, const LazyParams &params, const 
 }
 
 InterpretedFunction::Instruction
-Lambda::compile_self(const TensorEngine &engine, Stash &stash) const
+Lambda::compile_self(EngineOrFactory engine, Stash &stash) const
 {
+    if (engine.is_factory()) {
+        return instruction::GenericLambda::make_instruction(*this, engine.factory(), stash);
+    }
     InterpretedFunction fun(engine, _lambda->root(), _lambda_types);
     LambdaParams &params = stash.create<LambdaParams>(*this, std::move(fun));
     return Instruction(op_tensor_lambda, wrap_param<LambdaParams>(params));
@@ -469,14 +493,29 @@ Peek::push_children(std::vector<Child::CREF> &children) const
                        [&](const Child &child) {
                            children.emplace_back(child);
                        },
-                       [](const TensorSpec::Label &){}
+                       [](const TensorSpec::Label &) noexcept {}
                    }, dim.second);
     }
 }
 
 Instruction
-Peek::compile_self(const TensorEngine &, Stash &) const
+Peek::compile_self(EngineOrFactory engine, Stash &stash) const
 {
+    if (engine.is_factory()) {
+        instruction::GenericPeek::SpecMap generic_spec;
+        size_t child_idx = 0;
+        for (const auto & [dim_name, label_or_child] : spec()) {
+            std::visit(vespalib::overload {
+                    [&](const TensorSpec::Label &label) {
+                        generic_spec.emplace(dim_name, label);
+                    },
+                    [&](const TensorFunction::Child &) {
+                        generic_spec.emplace(dim_name, child_idx++);
+                    }
+                }, label_or_child);
+        }
+        return instruction::GenericPeek::make_instruction(param_type(), result_type(), generic_spec, engine.factory(), stash);
+    }
     return Instruction(op_tensor_peek, wrap_param<Peek>(*this));
 }
 
@@ -504,8 +543,11 @@ Peek::visit_children(vespalib::ObjectVisitor &visitor) const
 //-----------------------------------------------------------------------------
 
 Instruction
-Rename::compile_self(const TensorEngine &, Stash &stash) const
+Rename::compile_self(EngineOrFactory engine, Stash &stash) const
 {
+    if (engine.is_factory()) {
+        return instruction::GenericRename::make_instruction(child().result_type(), from(), to(), engine.factory(), stash);
+    }
     RenameParams &params = stash.create<RenameParams>(_from, _to);
     return Instruction(op_tensor_rename, wrap_param<RenameParams>(params));
 }
@@ -528,7 +570,7 @@ If::push_children(std::vector<Child::CREF> &children) const
 }
 
 Instruction
-If::compile_self(const TensorEngine &, Stash &) const
+If::compile_self(EngineOrFactory, Stash &) const
 {
     // 'if' is handled directly by compile_tensor_function to enable
     // lazy-evaluation of true/false sub-expressions.
@@ -591,6 +633,7 @@ const TensorFunction &peek(const TensorFunction &param, const std::map<vespalib:
     for (const auto &dim_spec: spec) {
         dimensions.push_back(dim_spec.first);
     }
+    assert(!dimensions.empty());
     ValueType result_type = param.result_type().reduce(dimensions);
     return stash.create<Peek>(result_type, param, spec);
 }

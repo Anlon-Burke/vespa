@@ -64,8 +64,6 @@ public abstract class ApplicationMaintainer extends NodeRepositoryMaintainer {
      */
     protected void deploy(ApplicationId application) {
         if (pendingDeployments.addIfAbsent(application)) { // Avoid queuing multiple deployments for same application
-            log.log(Level.INFO, application + " will be deployed, last deploy time " +
-                                   getLastDeployTime(application));
             deploymentExecutor.execute(() -> deployWithLock(application));
         }
     }
@@ -84,7 +82,8 @@ public abstract class ApplicationMaintainer extends NodeRepositoryMaintainer {
         try (MaintenanceDeployment deployment = new MaintenanceDeployment(application, deployer, metric, nodeRepository())) {
             if ( ! deployment.isValid()) return false; // this will be done at another config server
             if ( ! canDeployNow(application)) return false; // redeployment is no longer needed
-            return deployment.activate();
+            log.log(Level.INFO, application + " will be deployed, last deploy time " + getLastDeployTime(application));
+            return deployment.activate().isPresent();
         } finally {
             pendingDeployments.remove(application);
         }

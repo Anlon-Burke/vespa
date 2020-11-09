@@ -58,6 +58,9 @@ public abstract class Container extends AbstractService implements
     public static final int BASEPORT = Defaults.getDefaults().vespaWebServicePort();
     public static final String SINGLENODE_CONTAINER_SERVICESPEC = "default_singlenode_container";
 
+    /** The cluster this contasiner belongs to, or null if it is not added to any cluster */
+    private ContainerCluster owner = null;
+
     protected final AbstractConfigProducer parent;
     private final String name;
     private boolean requireSpecificPorts = true;
@@ -73,19 +76,19 @@ public abstract class Container extends AbstractService implements
     private final ComponentGroup<Handler<?>> handlers = new ComponentGroup<>(this, "handler");
     private final ComponentGroup<Component<?, ?>> components = new ComponentGroup<>(this, "components");
 
-    private final JettyHttpServer defaultHttpServer = new JettyHttpServer(new ComponentId("DefaultHttpServer"));
+    private final JettyHttpServer defaultHttpServer;
 
-    protected Container(AbstractConfigProducer parent, String name, int index) {
-        this(parent, name, false, index);
+    protected Container(AbstractConfigProducer parent, String name, int index, boolean isHostedVespa) {
+        this(parent, name, false, index, isHostedVespa);
     }
 
-    protected Container(AbstractConfigProducer parent, String name, boolean retired, int index) {
+    protected Container(AbstractConfigProducer parent, String name, boolean retired, int index, boolean isHostedVespa) {
         super(parent, name);
         this.name = name;
         this.parent = parent;
         this.retired = retired;
         this.index = index;
-
+        this.defaultHttpServer = new JettyHttpServer(new ComponentId("DefaultHttpServer"), containerClusterOrNull(parent), isHostedVespa);
         if (getHttp() == null) {
             addChild(defaultHttpServer);
         }
@@ -93,6 +96,8 @@ public abstract class Container extends AbstractService implements
 
         addChild(new SimpleComponent("com.yahoo.container.jdisc.ConfiguredApplication$ApplicationContext"));
     }
+
+    void setOwner(ContainerCluster<?> owner) { this.owner = owner; }
 
     /** True if this container is retired (slated for removal) */
     public boolean isRetired() { return retired; }
@@ -296,17 +301,14 @@ public abstract class Container extends AbstractService implements
 
     @Override
     public void getConfig(QrConfig.Builder builder) {
-        builder.
-                rpc(new Rpc.Builder()
+        builder.rpc(new Rpc.Builder()
                         .enabled(rpcServerEnabled())
                         .port(getRpcPort())
-                        .slobrokId(serviceSlobrokId())).
-                filedistributor(filedistributorConfig());
-        if (clusterName != null) {
-            builder.discriminator(clusterName + "." + name);
-        } else {
-            builder.discriminator(name);
-        }
+                        .slobrokId(serviceSlobrokId()))
+                .filedistributor(filedistributorConfig())
+                .discriminator((clusterName != null ? clusterName + "." : "" ) + name)
+                .restartOnDeploy(owner != null && owner.getDeferChangesUntilRestart());
+
     }
 
     /** Returns the jvm args set explicitly for this node */
@@ -321,7 +323,7 @@ public abstract class Container extends AbstractService implements
 
         FileDistributionConfigProducer fileDistribution = getRoot().getFileDistributionConfigProducer();
         if (fileDistribution != null) {
-            builder.configid(fileDistribution.getConfigProducer(getHost()).getConfigId());
+            builder.configid(fileDistribution.getConfigProducer(getHost().getHost()).getConfigId());
         }
         return builder;
     }
@@ -388,8 +390,12 @@ public abstract class Container extends AbstractService implements
         return containerCluster().isPresent() && containerCluster().get().rpcServerEnabled();
     }
 
-    private Optional<ContainerCluster> containerCluster() {
-        return (parent instanceof ContainerCluster) ? Optional.of((ContainerCluster) parent) : Optional.empty();
+    protected Optional<ContainerCluster> containerCluster() {
+        return Optional.ofNullable(containerClusterOrNull(parent));
+    }
+
+    private static ContainerCluster containerClusterOrNull(AbstractConfigProducer producer) {
+        return producer instanceof ContainerCluster<?> ? (ContainerCluster<?>) producer : null;
     }
 
 }

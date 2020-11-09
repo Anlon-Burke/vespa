@@ -128,32 +128,56 @@ DocumentSubDBCollection::createRetrievers()
 
 namespace {
 
-IDocumentRetriever::SP
-wrapRetriever(const IDocumentRetriever::SP &retriever, ICommitable &commit)
+std::shared_ptr<CommitAndWaitDocumentRetriever>
+wrapRetriever(IDocumentRetriever::SP retriever, ILidCommitState & unCommittedLidsTracker)
 {
-    return std::make_shared<CommitAndWaitDocumentRetriever>(retriever, commit);
+    return std::make_shared<CommitAndWaitDocumentRetriever>(std::move(retriever), unCommittedLidsTracker);
 }
 
 }
 
+DocumentSubDBCollection::RetrieversSP
+DocumentSubDBCollection::getRetrievers(IDocumentRetriever::ReadConsistency consistency) {
+    RetrieversSP list = _retrievers.get();
 
-void DocumentSubDBCollection::maintenanceSync(MaintenanceController &mc, ICommitable &commit) {
-    RetrieversSP retrievers = getRetrievers();
+    if (consistency == IDocumentRetriever::ReadConsistency::STRONG) {
+        auto wrappedList = std::make_shared<std::vector<IDocumentRetriever::SP>>();
+        wrappedList->reserve(list->size());
+        assert(list->size() == 3);
+        wrappedList->push_back(wrapRetriever((*list)[_readySubDbId],
+                                             getReadySubDB()->getUncommittedLidsTracker()));
+        wrappedList->push_back(wrapRetriever((*list)[_remSubDbId],
+                                             getRemSubDB()->getUncommittedLidsTracker()));
+        wrappedList->push_back(wrapRetriever((*list)[_notReadySubDbId],
+                                             getNotReadySubDB()->getUncommittedLidsTracker()));
+        return wrappedList;
+    } else {
+        return list;
+    }
+}
+
+void DocumentSubDBCollection::maintenanceSync(MaintenanceController &mc) {
+    RetrieversSP retrievers = _retrievers.get();
     MaintenanceDocumentSubDB readySubDB(getReadySubDB()->getName(),
                                         _readySubDbId,
                                         getReadySubDB()->getDocumentMetaStoreContext().getSP(),
-                                        wrapRetriever((*retrievers)[_readySubDbId], commit),
-                                        getReadySubDB()->getFeedView());
+                                        wrapRetriever((*retrievers)[_readySubDbId],
+                                                      getReadySubDB()->getUncommittedLidsTracker()),
+                                        getReadySubDB()->getFeedView(),
+                                        &getReadySubDB()->getUncommittedLidsTracker());
     MaintenanceDocumentSubDB remSubDB(getRemSubDB()->getName(),
                                       _remSubDbId,
                                       getRemSubDB()->getDocumentMetaStoreContext().getSP(),
-                                      (*retrievers)[_remSubDbId],
-                                      getRemSubDB()->getFeedView());
+                                      wrapRetriever((*retrievers)[_remSubDbId], getRemSubDB()->getUncommittedLidsTracker()),
+                                      getRemSubDB()->getFeedView(),
+                                      &getRemSubDB()->getUncommittedLidsTracker());
     MaintenanceDocumentSubDB notReadySubDB(getNotReadySubDB()->getName(),
                                            _notReadySubDbId,
                                            getNotReadySubDB()->getDocumentMetaStoreContext().getSP(),
-                                           wrapRetriever((*retrievers)[_notReadySubDbId], commit),
-                                           getNotReadySubDB()->getFeedView());
+                                           wrapRetriever((*retrievers)[_notReadySubDbId],
+                                                         getNotReadySubDB()->getUncommittedLidsTracker()),
+                                           getNotReadySubDB()->getFeedView(),
+                                           &getNotReadySubDB()->getUncommittedLidsTracker());
     mc.syncSubDBs(readySubDB, remSubDB, notReadySubDB);
 }
 
@@ -162,10 +186,9 @@ DocumentSubDBCollection::createInitializer(const DocumentDBConfig &configSnapsho
                                            SerialNum configSerialNum,
                                            const index::IndexConfig & indexCfg)
 {
-    DocumentSubDbCollectionInitializer::SP task = std::make_shared<DocumentSubDbCollectionInitializer>();
+    auto task = std::make_shared<DocumentSubDbCollectionInitializer>();
     for (auto subDb : _subDBs) {
-        DocumentSubDbInitializer::SP subTask(subDb->createInitializer(configSnapshot, configSerialNum, indexCfg));
-        task->add(subTask);
+        task->add(subDb->createInitializer(configSnapshot, configSerialNum, indexCfg));
     }
     return task;
 }

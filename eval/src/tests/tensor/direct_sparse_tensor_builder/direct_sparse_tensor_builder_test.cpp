@@ -13,7 +13,7 @@ using vespalib::eval::ValueType;
 void
 assertCellValue(double expValue, const TensorAddress &address,
                 const ValueType &type,
-                const SparseTensor::Cells &cells)
+                const SparseTensor &tensor)
 {
     SparseTensorAddressBuilder addressBuilder;
     auto dimsItr = type.dimensions().cbegin();
@@ -32,15 +32,20 @@ assertCellValue(double expValue, const TensorAddress &address,
         ++dimsItr;
     }
     SparseTensorAddressRef addressRef(addressBuilder.getAddressRef());
-    auto itr = cells.find(addressRef);
-    EXPECT_FALSE(itr == cells.end());
-    EXPECT_EQUAL(expValue, itr->second);
+    size_t idx;
+    bool found = tensor.index().lookup_address(addressRef, idx);
+    EXPECT_TRUE(found);
+    auto cells = tensor.cells();
+    if (EXPECT_TRUE(cells.type == ValueType::CellType::DOUBLE)) {
+        auto arr = cells.typify<double>();
+        EXPECT_EQUAL(expValue, arr[idx]);
+    }
 }
 
 Tensor::UP
 buildTensor()
 {
-    DirectSparseTensorBuilder builder(ValueType::from_spec("tensor(a{},b{},c{},d{})"));
+    DirectSparseTensorBuilder<double> builder(ValueType::from_spec("tensor(a{},b{},c{},d{})"));
     SparseTensorAddressBuilder address;
     address.set({"1", "2", "", ""});
     builder.insertCell(address, 10);
@@ -54,10 +59,10 @@ TEST("require that tensor can be constructed")
     Tensor::UP tensor = buildTensor();
     const SparseTensor &sparseTensor = dynamic_cast<const SparseTensor &>(*tensor);
     const ValueType &type = sparseTensor.type();
-    const SparseTensor::Cells &cells = sparseTensor.cells();
-    EXPECT_EQUAL(2u, cells.size());
-    assertCellValue(10, TensorAddress({{"a","1"},{"b","2"}}), type, cells);
-    assertCellValue(20, TensorAddress({{"c","3"},{"d","4"}}), type, cells);
+    const auto & index = sparseTensor.index();
+    EXPECT_EQUAL(2u, index.size());
+    assertCellValue(10, TensorAddress({{"a","1"},{"b","2"}}), type, sparseTensor);
+    assertCellValue(20, TensorAddress({{"c","3"},{"d","4"}}), type, sparseTensor);
 }
 
 TEST("require that tensor can be converted to tensor spec")
@@ -99,6 +104,15 @@ TEST("Test essential object sizes") {
     EXPECT_EQUAL(16u, sizeof(SparseTensorAddressRef));
     EXPECT_EQUAL(24u, sizeof(std::pair<SparseTensorAddressRef, double>));
     EXPECT_EQUAL(32u, sizeof(vespalib::hash_node<std::pair<SparseTensorAddressRef, double>>));
+    Tensor::UP tensor = buildTensor();
+    size_t used = tensor->get_memory_usage().usedBytes();
+    EXPECT_GREATER(used, sizeof(SparseTensor));
+    EXPECT_LESS(used, 10000u);
+    size_t allocated = tensor->get_memory_usage().allocatedBytes();
+    EXPECT_GREATER(allocated, used);
+    EXPECT_LESS(allocated, 50000u);
+    fprintf(stderr, "tensor using %zu bytes of %zu allocated\n",
+            used, allocated);
 }
 
 TEST_MAIN() { TEST_RUN_ALL(); }

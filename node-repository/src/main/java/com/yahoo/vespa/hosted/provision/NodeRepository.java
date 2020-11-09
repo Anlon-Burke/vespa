@@ -7,18 +7,17 @@ import com.yahoo.component.AbstractComponent;
 import com.yahoo.component.Version;
 import com.yahoo.concurrent.maintenance.JobControl;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeType;
-import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.config.provisioning.NodeRepositoryConfig;
 import com.yahoo.transaction.Mutex;
 import com.yahoo.transaction.NestedTransaction;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.flags.FlagSource;
-import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.hosted.provision.Node.State;
 import com.yahoo.vespa.hosted.provision.applications.Applications;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancer;
@@ -39,7 +38,7 @@ import com.yahoo.vespa.hosted.provision.persistence.CuratorDatabaseClient;
 import com.yahoo.vespa.hosted.provision.persistence.DnsNameResolver;
 import com.yahoo.vespa.hosted.provision.persistence.JobControlFlags;
 import com.yahoo.vespa.hosted.provision.persistence.NameResolver;
-import com.yahoo.vespa.hosted.provision.provisioning.DockerImages;
+import com.yahoo.vespa.hosted.provision.provisioning.ContainerImages;
 import com.yahoo.vespa.hosted.provision.provisioning.FirmwareChecks;
 import com.yahoo.vespa.hosted.provision.provisioning.HostResourcesCalculator;
 import com.yahoo.vespa.hosted.provision.provisioning.ProvisionServiceProvider;
@@ -49,7 +48,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
@@ -90,7 +88,7 @@ import java.util.stream.Stream;
 // 1) (new) | deprovisioned - > provisioned -> (dirty ->) ready -> reserved -> active -> inactive -> dirty -> ready
 // 2) inactive -> reserved | parked
 // 3) reserved -> dirty
-// 4) * -> failed | parked -> dirty | active | deprovisioned
+// 4) * -> failed | parked -> (breakfixed) -> dirty | active | deprovisioned
 // 5) deprovisioned -> (forgotten)
 // Nodes have an application assigned when in states reserved, active and inactive.
 // Nodes might have an application assigned in dirty.
@@ -107,12 +105,10 @@ public class NodeRepository extends AbstractComponent {
     private final OsVersions osVersions;
     private final InfrastructureVersions infrastructureVersions;
     private final FirmwareChecks firmwareChecks;
-    private final DockerImages dockerImages;
+    private final ContainerImages containerImages;
     private final JobControl jobControl;
     private final Applications applications;
-    private final boolean canProvisionHosts;
     private final int spareCount;
-    private final boolean useConfigServerLock;
 
     /**
      * Creates a node repository from a zookeeper provider.
@@ -126,16 +122,17 @@ public class NodeRepository extends AbstractComponent {
                           Zone zone,
                           FlagSource flagSource) {
         this(flavors,
-             provisionServiceProvider.getHostResourcesCalculator(),
+             provisionServiceProvider,
              curator,
              Clock.systemUTC(),
              zone,
              new DnsNameResolver(),
-             DockerImage.fromString(config.dockerImage()),
+             DockerImage.fromString(config.containerImage())
+                        .withReplacedBy(DockerImage.fromString(config.containerImageReplacement())),
              flagSource,
              config.useCuratorClientCache(),
-             provisionServiceProvider.getHostProvisioner().isPresent(),
-             zone.environment().isProduction() && provisionServiceProvider.getHostProvisioner().isEmpty() ? 1 : 0);
+             zone.environment().isProduction() && !zone.getCloud().dynamicProvisioning() ? 1 : 0,
+             config.nodeCacheSize());
     }
 
     /**
@@ -143,31 +140,34 @@ public class NodeRepository extends AbstractComponent {
      * which will be used for time-sensitive decisions.
      */
     public NodeRepository(NodeFlavors flavors,
-                          HostResourcesCalculator resourcesCalculator,
+                          ProvisionServiceProvider provisionServiceProvider,
                           Curator curator,
                           Clock clock,
                           Zone zone,
                           NameResolver nameResolver,
-                          DockerImage dockerImage,
+                          DockerImage containerImage,
                           FlagSource flagSource,
                           boolean useCuratorClientCache,
-                          boolean canProvisionHosts,
-                          int spareCount) {
-        // Flag is read once here as it shouldn't not change at runtime
-        this.useConfigServerLock = Flags.USE_CONFIG_SERVER_LOCK.bindTo(flagSource).value();
-        this.db = new CuratorDatabaseClient(flavors, curator, clock, zone, useCuratorClientCache, useConfigServerLock);
+                          int spareCount,
+                          long nodeCacheSize) {
+        // TODO (valerijf): Uncomment when exception for prod.cd-aws is removed
+//        if (provisionServiceProvider.getHostProvisioner().isPresent() != zone.getCloud().dynamicProvisioning())
+//            throw new IllegalArgumentException(String.format(
+//                    "dynamicProvisioning property must be 1-to-1 with availability of HostProvisioner, was: dynamicProvisioning=%s, hostProvisioner=%s",
+//                    zone.getCloud().dynamicProvisioning(), provisionServiceProvider.getHostProvisioner().map(__ -> "present").orElse("empty")));
+
+        this.db = new CuratorDatabaseClient(flavors, curator, clock, zone, useCuratorClientCache, nodeCacheSize);
         this.zone = zone;
         this.clock = clock;
         this.flavors = flavors;
-        this.resourcesCalculator = resourcesCalculator;
+        this.resourcesCalculator = provisionServiceProvider.getHostResourcesCalculator();
         this.nameResolver = nameResolver;
         this.osVersions = new OsVersions(this);
         this.infrastructureVersions = new InfrastructureVersions(db);
         this.firmwareChecks = new FirmwareChecks(db, clock);
-        this.dockerImages = new DockerImages(db, dockerImage);
+        this.containerImages = new ContainerImages(db, containerImage, flagSource);
         this.jobControl = new JobControl(new JobControlFlags(db, flagSource));
         this.applications = new Applications(db);
-        this.canProvisionHosts = canProvisionHosts;
         this.spareCount = spareCount;
         rewriteNodes();
     }
@@ -176,23 +176,11 @@ public class NodeRepository extends AbstractComponent {
     private void rewriteNodes() {
         Instant start = clock.instant();
         int nodesWritten = 0;
-        if (useConfigServerLock) {
-            for (var state : State.values()) {
-                for (var node : db.readNodes(state)) {
-                    try (var lock = lock(node)) {
-                        var currentNode = db.readNode(node.hostname());
-                        if (currentNode.isEmpty()) continue; // Node disappeared while running this loop
-                        db.writeTo(currentNode.get().state(), currentNode.get(), Agent.system, Optional.empty());
-                        nodesWritten++;
-                    }
-                }
-            }
-        } else {
-            for (State state : State.values()) {
-                List<Node> nodes = db.readNodes(state);
-                db.writeTo(state, nodes, Agent.system, Optional.empty());
-                nodesWritten += nodes.size();
-            }
+        for (State state : State.values()) {
+            List<Node> nodes = db.readNodes(state);
+            // TODO(mpolden): This should take the lock before writing
+            db.writeTo(state, nodes, Agent.system, Optional.empty());
+            nodesWritten += nodes.size();
         }
         Instant end = clock.instant();
         log.log(Level.INFO, String.format("Rewrote %d nodes in %s", nodesWritten, Duration.between(start, end)));
@@ -200,9 +188,6 @@ public class NodeRepository extends AbstractComponent {
 
     /** Returns the curator database client used by this */
     public CuratorDatabaseClient database() { return db; }
-
-    /** Returns the Docker image to use for given node */
-    public DockerImage dockerImage(Node node) { return dockerImages.dockerImageFor(node.type()); }
 
     /** @return The name resolver used to resolve hostname and ip addresses */
     public NameResolver nameResolver() { return nameResolver; }
@@ -217,7 +202,7 @@ public class NodeRepository extends AbstractComponent {
     public FirmwareChecks firmwareChecks() { return firmwareChecks; }
 
     /** Returns the docker images to use for nodes in this. */
-    public DockerImages dockerImages() { return dockerImages; }
+    public ContainerImages containerImages() { return containerImages; }
 
     /** Returns the status of maintenance jobs managed by this. */
     public JobControl jobControl() { return jobControl; }
@@ -267,9 +252,9 @@ public class NodeRepository extends AbstractComponent {
         return db.readNodes(inState).stream().filter(node -> node.type().equals(type)).collect(Collectors.toList());
     }
 
-    /** Returns a filterable list of all nodes in this repository */
-    public NodeList list() {
-        return NodeList.copyOf(getNodes());
+    /** Returns a filterable list of nodes in this repository in any of the given states */
+    public NodeList list(State ... inState) {
+        return NodeList.copyOf(getNodes(inState));
     }
 
     /** Returns a filterable list of all nodes of an application */
@@ -337,7 +322,7 @@ public class NodeRepository extends AbstractComponent {
                 trustedNodes.addAll(candidates.nodeType(NodeType.config).asList());
                 trustedNodes.addAll(candidates.nodeType(NodeType.proxy).asList());
                 node.allocation().ifPresent(allocation ->
-                        trustedNodes.addAll(candidates.parentsOf(candidates.owner(allocation.owner()).asList()).asList()));
+                        trustedNodes.addAll(candidates.parentsOf(candidates.owner(allocation.owner())).asList()));
 
                 if (node.state() == State.ready) {
                     // Tenant nodes in state ready, trust:
@@ -395,24 +380,12 @@ public class NodeRepository extends AbstractComponent {
         if (children) {
             return candidates.childrenOf(node).asList().stream()
                              .map(childNode -> getNodeAcl(childNode, candidates))
-                             .collect(Collectors.collectingAndThen(Collectors.toList(), Collections::unmodifiableList));
+                             .collect(Collectors.toUnmodifiableList());
         }
-        return Collections.singletonList(getNodeAcl(node, candidates));
+        return List.of(getNodeAcl(node, candidates));
     }
 
     // ----------------- Node lifecycle -----------------------------------------------------------
-
-    /** Creates a new node object, without adding it to the node repo. If no IP address is given, it will be resolved */
-    public Node createNode(String openStackId, String hostname, IP.Config ipConfig, Optional<String> parentHostname,
-                           Flavor flavor, Optional<TenantName> reservedTo, NodeType type) {
-        if (ipConfig.primary().isEmpty()) // TODO: Remove this. Only test code hits this path
-            ipConfig = ipConfig.with(nameResolver.getAllByNameOrThrow(hostname));
-        return Node.create(openStackId, ipConfig, hostname, parentHostname, Optional.empty(), flavor, reservedTo, type);
-    }
-
-    public Node createNode(String openStackId, String hostname, Optional<String> parentHostname, Flavor flavor, NodeType type) {
-        return createNode(openStackId, hostname, IP.Config.EMPTY, parentHostname, flavor, Optional.empty(), type);
-    }
 
     /** Adds a list of newly created docker container nodes to the node repository as <i>reserved</i> nodes */
     public List<Node> addDockerNodes(LockedNodeList nodes) {
@@ -427,7 +400,7 @@ public class NodeRepository extends AbstractComponent {
                         existing.get() + ", " + existing.get().history() + "). Node to be added: " +
                         node + ", " + node.history());
         }
-        return db.addNodesInState(nodes.asList(), State.reserved);
+        return db.addNodesInState(nodes.asList(), State.reserved, Agent.system);
     }
 
     /**
@@ -462,8 +435,7 @@ public class NodeRepository extends AbstractComponent {
 
                 nodesToAdd.add(node);
             }
-            List<Node> resultingNodes = new ArrayList<>();
-            resultingNodes.addAll(db.addNodesInState(IP.Config.verify(nodesToAdd, list(lock)), State.provisioned));
+            List<Node> resultingNodes = db.addNodesInState(IP.Config.verify(nodesToAdd, list(lock)), State.provisioned, agent);
             db.removeNodes(nodesToRemove);
             return resultingNodes;
         }
@@ -476,6 +448,8 @@ public class NodeRepository extends AbstractComponent {
                     .map(node -> {
                         if (node.state() != State.provisioned && node.state() != State.dirty)
                             illegal("Can not set " + node + " ready. It is not provisioned or dirty.");
+                        if (node.type() == NodeType.host && node.ipConfig().pool().isEmpty())
+                            illegal("Can not set host " + node + " ready. Its IP address pool is empty.");
                         return node.withWantToRetire(false, false, Agent.system, clock.instant());
                     })
                     .collect(Collectors.toList());
@@ -489,7 +463,7 @@ public class NodeRepository extends AbstractComponent {
                 new NoSuchNodeException("Could not move " + hostname + " to ready: Node not found"));
 
         if (nodeToReady.state() == State.ready) return nodeToReady;
-        return setReady(Collections.singletonList(nodeToReady), agent, reason).get(0);
+        return setReady(List.of(nodeToReady), agent, reason).get(0);
     }
 
     /** Reserve nodes. This method does <b>not</b> lock the node repository */
@@ -511,26 +485,24 @@ public class NodeRepository extends AbstractComponent {
     public void setRemovable(ApplicationId application, List<Node> nodes) {
         try (Mutex lock = lock(application)) {
             List<Node> removableNodes =
-                nodes.stream().map(node -> node.with(node.allocation().get().removable()))
+                nodes.stream().map(node -> node.with(node.allocation().get().removable(true)))
                               .collect(Collectors.toList());
             write(removableNodes, lock);
         }
     }
 
-    public void deactivate(ApplicationId application, NestedTransaction transaction) {
-        try (Mutex lock = lock(application)) {
-            deactivate(db.readNodes(application, State.reserved, State.active), transaction);
-            applications.remove(application, transaction, lock);
-        }
+    /** Deactivate nodes owned by application guarded by given lock */
+    public void deactivate(ApplicationTransaction transaction) {
+        deactivate(db.readNodes(transaction.application(), State.reserved, State.active), transaction);
+        applications.remove(transaction);
     }
 
     /**
-     * Deactivates these nodes in a transaction and returns
-     * the nodes in the new state which will hold if the transaction commits.
-     * This method does <b>not</b> lock
+     * Deactivates these nodes in a transaction and returns the nodes in the new state which will hold if the
+     * transaction commits.
      */
-    public List<Node> deactivate(List<Node> nodes, NestedTransaction transaction) {
-        return db.writeTo(State.inactive, nodes, Agent.application, Optional.empty(), transaction);
+    public List<Node> deactivate(List<Node> nodes, ApplicationTransaction transaction) {
+        return db.writeTo(State.inactive, nodes, Agent.application, Optional.empty(), transaction.nested());
     }
 
     /** Move nodes to the dirty state */
@@ -563,11 +535,12 @@ public class NodeRepository extends AbstractComponent {
                 .filter(node -> node.state() != State.provisioned)
                 .filter(node -> node.state() != State.failed)
                 .filter(node -> node.state() != State.parked)
+                .filter(node -> node.state() != State.breakfixed)
                 .map(Node::hostname)
                 .collect(Collectors.toList());
         if ( ! hostnamesNotAllowedToDirty.isEmpty())
             illegal("Could not deallocate " + nodeToDirty + ": " +
-                    hostnamesNotAllowedToDirty + " are not in states [provisioned, failed, parked]");
+                    hostnamesNotAllowedToDirty + " are not in states [provisioned, failed, parked, breakfixed]");
 
         return nodesToDirty.stream().map(node -> setDirty(node, agent, reason)).collect(Collectors.toList());
     }
@@ -620,6 +593,21 @@ public class NodeRepository extends AbstractComponent {
         return move(hostname, true, State.active, agent, Optional.of(reason));
     }
 
+    /**
+     * Moves a host to breakfixed state, removing any children.
+     */
+    public List<Node> breakfixRecursively(String hostname, Agent agent, String reason) {
+        Node node = getNode(hostname).orElseThrow(() ->
+                new NoSuchNodeException("Could not breakfix " + hostname + ": Node not found"));
+
+        try (Mutex lock = lockUnallocated()) {
+            requireBreakfixable(node);
+            List<Node> removed = removeChildren(node, false);
+            removed.add(move(node, State.breakfixed, agent, Optional.of(reason)));
+            return removed;
+        }
+    }
+
     private List<Node> moveRecursively(String hostname, State toState, Agent agent, Optional<String> reason) {
         List<Node> moved = list().childrenOf(hostname).asList().stream()
                                          .map(child -> move(child, toState, agent, reason))
@@ -641,7 +629,7 @@ public class NodeRepository extends AbstractComponent {
     }
 
     private Node move(Node node, State toState, Agent agent, Optional<String> reason) {
-        if (toState == Node.State.active && ! node.allocation().isPresent())
+        if (toState == Node.State.active && node.allocation().isEmpty())
             illegal("Could not set " + node + " active. It has no allocation.");
 
         try (Mutex lock = lock(node)) {
@@ -675,7 +663,7 @@ public class NodeRepository extends AbstractComponent {
         if ( ! failureReasons.isEmpty())
             illegal(node + " cannot be readied because it has hard failures: " + failureReasons);
 
-        return setReady(Collections.singletonList(node), agent, reason).get(0);
+        return setReady(List.of(node), agent, reason).get(0);
     }
 
     /**
@@ -693,11 +681,8 @@ public class NodeRepository extends AbstractComponent {
             requireRemovable(node, false, force);
 
             if (node.type().isHost()) {
-                List<Node> children = list().childrenOf(node).asList();
-                children.forEach(child -> requireRemovable(child, true, force));
-                db.removeNodes(children);
-                List<Node> removed = new ArrayList<>(children);
-                if (zone.getCloud().dynamicProvisioning())
+                List<Node> removed = removeChildren(node, force);
+                if (zone.getCloud().dynamicProvisioning() || node.type() != NodeType.host)
                     db.removeNodes(List.of(node));
                 else {
                     node = node.with(IP.Config.EMPTY);
@@ -719,6 +704,13 @@ public class NodeRepository extends AbstractComponent {
         if (node.state() != State.deprovisioned)
             throw new IllegalArgumentException(node + " must be deprovisioned before it can be forgotten");
         db.removeNodes(List.of(node));
+    }
+
+    private List<Node> removeChildren(Node node, boolean force) {
+        List<Node> children = list().childrenOf(node).asList();
+        children.forEach(child -> requireRemovable(child, true, force));
+        db.removeNodes(children);
+        return new ArrayList<>(children);
     }
 
     /**
@@ -752,6 +744,28 @@ public class NodeRepository extends AbstractComponent {
     }
 
     /**
+     * Throws if given node cannot be breakfixed.
+     * Breakfix is allowed if the following is true:
+     *  - Node is tenant host
+     *  - Node is in zone without dynamic provisioning
+     *  - Node is in parked or failed state
+     */
+    private void requireBreakfixable(Node node) {
+        if (zone().getCloud().dynamicProvisioning()) {
+            illegal("Can not breakfix in zone: " + zone());
+        }
+
+        if (node.type() != NodeType.host) {
+            illegal(node + " can not be breakfixed as it is not a tenant host");
+        }
+
+        Set<State> legalStates = EnumSet.of(State.failed, State.parked);
+        if (! legalStates.contains(node.state())) {
+            illegal(node + " can not be removed as it is not in the states " + legalStates);
+        }
+    }
+
+    /**
      * Increases the restart generation of the active nodes matching the filter.
      *
      * @return the nodes in their new state.
@@ -780,6 +794,11 @@ public class NodeRepository extends AbstractComponent {
             var newStatus = node.status().withOsVersion(node.status().osVersion().withWanted(version));
             return write(node.with(newStatus), lock);
         });
+    }
+
+    /** Retire nodes matching given filter */
+    public List<Node> retire(NodeFilter filter, Agent agent, Instant instant) {
+        return performOn(filter, (node, lock) -> write(node.withWantToRetire(true, agent, instant), lock));
     }
 
     /**
@@ -825,13 +844,19 @@ public class NodeRepository extends AbstractComponent {
         // perform operation while holding locks
         List<Node> resultingNodes = new ArrayList<>();
         try (Mutex lock = lockUnallocated()) {
-            for (Node node : unallocatedNodes)
-                resultingNodes.add(action.apply(node, lock));
+            for (Node node : unallocatedNodes) {
+                Optional<Node> currentNode = db.readNode(node.hostname()); // Re-read while holding lock
+                if (currentNode.isEmpty()) continue;
+                resultingNodes.add(action.apply(currentNode.get(), lock));
+            }
         }
         for (Map.Entry<ApplicationId, List<Node>> applicationNodes : allocatedNodes.entrySet()) {
             try (Mutex lock = lock(applicationNodes.getKey())) {
-                for (Node node : applicationNodes.getValue())
-                    resultingNodes.add(action.apply(node, lock));
+                for (Node node : applicationNodes.getValue()) {
+                    Optional<Node> currentNode = db.readNode(node.hostname());  // Re-read while holding lock
+                    if (currentNode.isEmpty()) continue;
+                    resultingNodes.add(action.apply(currentNode.get(), lock));
+                }
             }
         }
         return resultingNodes;
@@ -842,14 +867,11 @@ public class NodeRepository extends AbstractComponent {
         if (host.status().wantToRetire()) return false;
         if (host.allocation().map(alloc -> alloc.membership().retired()).orElse(false)) return false;
 
-        if ( canProvisionHosts())
+        if (zone.getCloud().dynamicProvisioning())
             return EnumSet.of(State.active, State.ready, State.provisioned).contains(host.state());
         else
             return host.state() == State.active;
     }
-
-    /** Returns whether this repository can provision hosts on demand */
-    public boolean canProvisionHosts() { return canProvisionHosts; }
 
     /** Returns the time keeper of this system */
     public Clock clock() { return clock; }
@@ -859,12 +881,12 @@ public class NodeRepository extends AbstractComponent {
 
     /** Create a lock which provides exclusive rights to making changes to the given application */
     public Mutex lock(ApplicationId application) {
-        return useConfigServerLock ? db.lock(application) : db.legacyLock(application);
+        return db.lock(application);
     }
 
     /** Create a lock with a timeout which provides exclusive rights to making changes to the given application */
     public Mutex lock(ApplicationId application, Duration timeout) {
-        return useConfigServerLock ? db.lock(application, timeout) : db.legacyLock(application, timeout);
+        return db.lock(application, timeout);
     }
 
     /** Create a lock which provides exclusive rights to modifying unallocated nodes */

@@ -1,6 +1,8 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.model.api;
 
+import com.yahoo.config.provision.ClusterSpec;
+
 import java.util.List;
 
 /**
@@ -12,7 +14,7 @@ import java.util.List;
 public interface ConfigChangeAction {
 
     enum Type {
-        RESTART("restart"), REFEED("refeed");
+        RESTART("restart"), REFEED("refeed"), REINDEX("reindex");
 
         private final String type;
 
@@ -37,5 +39,14 @@ public interface ConfigChangeAction {
 
     /** Returns whether this change should be allowed */
     boolean allowed();
+
+    /** The id of the cluster that needs this action applied */
+    // TODO: Remove this default implementation after October 2020
+    default ClusterSpec.Id clusterId() { return null; }
+
+    /** Returns whether this change should be ignored for internal redeploy */
+    default boolean ignoreForInternalRedeploy() {
+        return false;
+    };
 
 }

@@ -8,7 +8,6 @@
 #include <vespa/searchcore/proton/bucketdb/bucketsessionbase.h>
 #include <vespa/searchcore/proton/bucketdb/joinbucketssession.h>
 #include <vespa/searchcore/proton/bucketdb/splitbucketsession.h>
-#include <vespa/searchlib/attribute/attributevector.hpp>
 #include <vespa/searchlib/attribute/load_utils.h>
 #include <vespa/searchlib/attribute/readerbase.h>
 #include <vespa/searchlib/common/i_gid_to_lid_mapper.h>
@@ -174,15 +173,12 @@ DocumentMetaStore::ensureSpace(DocId lid)
     _lidAlloc.ensureSpace(newSize, newCapacity);
 }
 
-bool
+void
 DocumentMetaStore::insert(DocId lid, const RawDocumentMetaData &metaData)
 {
     ensureSpace(lid);
     _metaDataStore[lid] = metaData;
-    KeyComp comp(metaData, _metaDataStore, *_gidCompare);
-    if (!_gidToLidMap.insert(lid, BTreeNoLeafData(), comp)) {
-        return false;
-    }
+    _gidToLidMap.insert(_gid_to_lid_map_write_itr, lid, BTreeNoLeafData());
     // flush writes to meta store rcu vector before new entry is visible
     // from frozen root or lid based scan
     std::atomic_thread_fence(std::memory_order_release);
@@ -197,7 +193,6 @@ DocumentMetaStore::insert(DocId lid, const RawDocumentMetaData &metaData)
                       _subDbType);
     _lidAlloc.updateActiveLids(lid, state.isActive());
     updateCommittedDocIdLimit();
-    return true;
 }
 
 void
@@ -303,59 +298,6 @@ DocumentMetaStore::onLoad()
     return true;
 }
 
-bool
-DocumentMetaStore::checkBuckets(const GlobalId &gid, const BucketId &bucketId,
-                                const TreeType::Iterator &itr, bool found)
-{
-    bool success = true;
-#if 0
-    TreeType::Iterator p = itr;
-    --p;
-    if (p.valid()) {
-        DocId prevLid = p.getKey();
-        RawDocumentMetaData &prevMetaData = _metaDataStore[prevLid];
-        BucketId prevBucketId = prevMetaData.getBucketId();
-        if (bucketId != prevBucketId &&
-            (bucketId.contains(prevBucketId) ||
-             prevBucketId.contains(bucketId))) {
-            LOG(error,
-                "Bucket overlap, gid %s bucketId %s and prev gid %s bucket %s",
-                gid.toString().c_str(),
-                bucketId.toString().c_str(),
-                prevMetaData.getGid().toString().c_str(),
-                prevBucketId.toString().c_str());
-            success = false;
-        }
-    }
-    TreeType::Iterator n = itr;
-    if (found)
-        ++n;
-    if (n.valid()) {
-        DocId nextLid = n.getKey();
-        RawDocumentMetaData &nextMetaData = _metaDataStore[nextLid];
-        BucketId nextBucketId = nextMetaData.getBucketId();
-        if (bucketId != nextBucketId &&
-            (bucketId.contains(nextBucketId) ||
-             nextBucketId.contains(bucketId))) {
-            LOG(error,
-                "Bucket overlap, gid %s bucketId %s and next gid %s bucket %s",
-                gid.toString().c_str(),
-                bucketId.toString().c_str(),
-                nextMetaData.getGid().toString().c_str(),
-                nextBucketId.toString().c_str());
-            success = false;
-        }
-    }
-#else
-    (void) gid;
-    (void) bucketId;
-    (void) itr;
-    (void) found;
-#endif
-    return success;
-}
-
-
 template <typename TreeView>
 typename TreeView::Iterator
 DocumentMetaStore::lowerBound(const BucketId &bucketId,
@@ -446,6 +388,8 @@ DocumentMetaStore::DocumentMetaStore(BucketDBOwner::SP bucketDB,
                      grow.getDocsGrowDelta(),
                      getGenerationHolder()),
       _gidToLidMap(),
+      _gid_to_lid_map_write_itr(vespalib::datastore::EntryRef(), _gidToLidMap.getAllocator()),
+      _gid_to_lid_map_write_itr_prepare_serial_num(0u),
       _lidAlloc(_metaDataStore.size(),
                 _metaDataStore.capacity(),
                 getGenerationHolder()),
@@ -474,13 +418,14 @@ DocumentMetaStore::~DocumentMetaStore()
 }
 
 DocumentMetaStore::Result
-DocumentMetaStore::inspectExisting(const GlobalId &gid) const
+DocumentMetaStore::inspectExisting(const GlobalId &gid, uint64_t prepare_serial_num)
 {
     assert(_lidAlloc.isFreeListConstructed());
     Result res;
     KeyComp comp(gid, _metaDataStore, *_gidCompare);
-    TreeType::Iterator itr = _gidToLidMap.lowerBound(KeyComp::FIND_DOC_ID,
-            comp);
+    auto& itr = _gid_to_lid_map_write_itr;
+    itr.lower_bound(_gidToLidMap.getRoot(), KeyComp::FIND_DOC_ID, comp);
+    _gid_to_lid_map_write_itr_prepare_serial_num = prepare_serial_num;
     bool found = itr.valid() && !comp(KeyComp::FIND_DOC_ID, itr.getKey());
     if (found) {
         res.setLid(itr.getKey());
@@ -491,13 +436,14 @@ DocumentMetaStore::inspectExisting(const GlobalId &gid) const
 }
 
 DocumentMetaStore::Result
-DocumentMetaStore::inspect(const GlobalId &gid)
+DocumentMetaStore::inspect(const GlobalId &gid, uint64_t prepare_serial_num)
 {
     assert(_lidAlloc.isFreeListConstructed());
     Result res;
     KeyComp comp(gid, _metaDataStore, *_gidCompare);
-    TreeType::Iterator itr = _gidToLidMap.lowerBound(KeyComp::FIND_DOC_ID,
-            comp);
+    auto& itr = _gid_to_lid_map_write_itr;
+    itr.lower_bound(_gidToLidMap.getRoot(), KeyComp::FIND_DOC_ID, comp);
+    _gid_to_lid_map_write_itr_prepare_serial_num = prepare_serial_num;
     bool found = itr.valid() && !comp(KeyComp::FIND_DOC_ID, itr.getKey());
     if (!found) {
         DocId myLid = peekFreeLid();
@@ -516,22 +462,23 @@ DocumentMetaStore::put(const GlobalId &gid,
                        const BucketId &bucketId,
                        const Timestamp &timestamp,
                        uint32_t docSize,
-                       DocId lid)
+                       DocId lid,
+                       uint64_t prepare_serial_num)
 {
     Result res;
     RawDocumentMetaData metaData(gid, bucketId, timestamp, docSize);
     KeyComp comp(metaData, _metaDataStore, *_gidCompare);
-    TreeType::Iterator itr = _gidToLidMap.lowerBound(KeyComp::FIND_DOC_ID,
-            comp);
+    auto& itr = _gid_to_lid_map_write_itr;
+    if (prepare_serial_num == 0u || _gid_to_lid_map_write_itr_prepare_serial_num != prepare_serial_num) {
+        itr.lower_bound(_gidToLidMap.getRoot(), KeyComp::FIND_DOC_ID, comp);
+    }
     bool found = itr.valid() && !comp(KeyComp::FIND_DOC_ID, itr.getKey());
-    if (!checkBuckets(gid, bucketId, itr, found)) {
-        // Failure
-    } else if (!found) {
+    if (!found) {
         if (validLid(lid)) {
             throw IllegalStateException(
                     make_string(
                             "document meta data store"
-                            " or transaction log is corrupted,"
+                            " or transaction log is corrupt,"
                             " cannot put"
                             " document with lid '%u' and gid '%s',"
                             " gid not found, but lid is used"
@@ -545,15 +492,14 @@ DocumentMetaStore::put(const GlobalId &gid,
             assert(freeLid == lid);
             (void) freeLid;
         }
-        if (insert(lid, metaData)) {
-            res.setLid(lid);
-            res.markSuccess();
-        }
+        insert(lid, metaData);
+        res.setLid(lid);
+        res.markSuccess();
     } else if (lid != itr.getKey()) {
         throw IllegalStateException(
                 make_string(
                         "document meta data store"
-                        " or transaction log is corrupted,"
+                        " or transaction log is corrupt,"
                         " cannot put"
                         " document with lid '%u' and gid '%s',"
                         " gid found, but using another lid '%u'",
@@ -592,40 +538,44 @@ DocumentMetaStore::updateMetaData(DocId lid,
     return true;
 }
 
-bool
-DocumentMetaStore::remove(DocId lid, BucketDBOwner::Guard &bucketGuard)
+void
+DocumentMetaStore::remove(DocId lid, uint64_t prepare_serial_num, BucketDBOwner::Guard &bucketGuard)
 {
-    if (!validLid(lid)) {
-        return false;
-    }
     const GlobalId & gid = getRawGid(lid);
     KeyComp comp(gid, _metaDataStore, *_gidCompare);
-    if (!_gidToLidMap.remove(lid, comp)) {
+    auto& itr = _gid_to_lid_map_write_itr;
+    if (prepare_serial_num == 0u || _gid_to_lid_map_write_itr_prepare_serial_num != prepare_serial_num) {
+        itr.lower_bound(_gidToLidMap.getRoot(), lid, comp);
+    }
+    if (!itr.valid() || comp(lid, itr.getKey())) {
         throw IllegalStateException(make_string(
                         "document meta data store corrupted,"
                         " cannot remove"
                         " document with lid '%u' and gid '%s'",
                         lid, gid.toString().c_str()));
     }
+    _gidToLidMap.remove(itr);
     _lidAlloc.unregisterLid(lid);
     RawDocumentMetaData &oldMetaData = _metaDataStore[lid];
     bucketGuard->remove(oldMetaData.getGid(),
                         oldMetaData.getBucketId().stripUnused(),
                         oldMetaData.getTimestamp(), oldMetaData.getDocSize(),
                         _subDbType);
-    return true;
 }
 
 bool
-DocumentMetaStore::remove(DocId lid)
+DocumentMetaStore::remove(DocId lid, uint64_t prepare_serial_num)
 {
+    if (!validLid(lid)) {
+        return false;
+    }
     BucketDBOwner::Guard bucketGuard = _bucketDB->takeGuard();
-    bool result = remove(lid, bucketGuard);
+    remove(lid, prepare_serial_num, bucketGuard);
     incGeneration();
-    if (result && _op_listener) {
+    if (_op_listener) {
         _op_listener->notify_remove();
     }
-    return result;
+    return true;
 }
 
 void
@@ -638,7 +588,7 @@ DocumentMetaStore::removeComplete(DocId lid)
 }
 
 void
-DocumentMetaStore::move(DocId fromLid, DocId toLid)
+DocumentMetaStore::move(DocId fromLid, DocId toLid, uint64_t prepare_serial_num)
 {
     assert(fromLid != 0);
     assert(toLid != 0);
@@ -650,11 +600,14 @@ DocumentMetaStore::move(DocId fromLid, DocId toLid)
     _metaDataStore[toLid] = _metaDataStore[fromLid];
     const GlobalId & gid = getRawGid(fromLid);
     KeyComp comp(gid, _metaDataStore, *_gidCompare);
-    TreeType::Iterator it(_gidToLidMap.lowerBound(fromLid, comp));
-    assert(it.valid());
-    assert(it.getKey() == fromLid);
-    _gidToLidMap.thaw(it);
-    it.writeKey(toLid);
+    auto& itr = _gid_to_lid_map_write_itr;
+    if (prepare_serial_num == 0u || _gid_to_lid_map_write_itr_prepare_serial_num != prepare_serial_num) {
+        itr.lower_bound(_gidToLidMap.getRoot(), fromLid, comp);
+    }
+    assert(itr.valid());
+    assert(itr.getKey() == fromLid);
+    _gidToLidMap.thaw(itr);
+    itr.writeKey(toLid);
     _lidAlloc.moveLidEnd(fromLid, toLid);
     incGeneration();
 }
@@ -667,9 +620,8 @@ DocumentMetaStore::removeBatch(const std::vector<DocId> &lidsToRemove, const uin
         assert(lid > 0 && lid < docIdLimit);
         (void) docIdLimit;
 
-        bool removed = remove(lid, bucketGuard);
-        assert(removed);
-        (void) removed;
+        assert(validLid(lid));
+        remove(lid, 0u, bucketGuard);
     }
     incGeneration();
     if (_op_listener) {

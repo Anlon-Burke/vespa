@@ -46,7 +46,8 @@ ExternPolicy::ExternPolicy(const string &param) :
     // Activate supervisor and register mirror.
     MirrorAPI::StringList spec;
     string lst = param.substr(0, pos);
-    Tokenizer tokens(lst, Separator(","));
+    std::string stdlst(lst);
+    Tokenizer tokens(stdlst, Separator(","));
     for (Tokenizer::iterator it = tokens.begin(); it != tokens.end(); ++it) {
         spec.push_back(*it);
     }
@@ -117,7 +118,7 @@ ExternPolicy::merge(mbus::RoutingContext &ctx)
 mbus::Hop
 ExternPolicy::getRecipient()
 {
-    vespalib::LockGuard guard(_lock);
+    std::lock_guard guard(_lock);
     update();
     if (_recipients.empty()) {
         return mbus::Hop();

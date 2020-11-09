@@ -99,14 +99,14 @@ struct MySubDb
     MySubDb(const std::shared_ptr<const DocumentTypeRepo> &repo,
             std::shared_ptr<BucketDBOwner> bucketDB,
             SubDbType subDbType)
-        : _view(new MyFeedView(repo, bucketDB, subDbType))
+        : _view(std::make_shared<MyFeedView>(repo, std::move(bucketDB), subDbType))
     {
     }
     void insertDocs(const test::BucketDocuments &docs) {
         for (size_t i = 0; i < docs.getDocs().size(); ++i) {
             const test::Document &testDoc = docs.getDocs()[i];
             _view->_metaStore.put(testDoc.getGid(), testDoc.getBucket(),
-                                  testDoc.getTimestamp(), testDoc.getDocSize(), testDoc.getLid());
+                                  testDoc.getTimestamp(), testDoc.getDocSize(), testDoc.getLid(), 0u);
         }
     }
 };

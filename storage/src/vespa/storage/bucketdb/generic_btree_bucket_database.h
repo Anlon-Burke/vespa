@@ -1,6 +1,7 @@
 // Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
+#include "const_iterator.h"
 #include "db_merger.h"
 #include <vespa/document/bucket/bucketid.h>
 #include <vespa/vespalib/btree/btree.h>
@@ -64,12 +65,16 @@ public:
     template <typename... DataStoreArgs>
     explicit GenericBTreeBucketDatabase(DataStoreArgs&&... data_store_args)
         : _store(std::forward<DataStoreArgs>(data_store_args)...)
-    {}
+    {
+        DataStoreTraitsT::init_data_store(_store);
+    }
 
     GenericBTreeBucketDatabase(const GenericBTreeBucketDatabase&) = delete;
     GenericBTreeBucketDatabase& operator=(const GenericBTreeBucketDatabase&) = delete;
     GenericBTreeBucketDatabase(GenericBTreeBucketDatabase&&) = delete;
     GenericBTreeBucketDatabase& operator=(GenericBTreeBucketDatabase&&) = delete;
+
+    ~GenericBTreeBucketDatabase();
 
     ValueType entry_from_iterator(const BTreeConstIterator& iter) const;
     ConstValueRef const_value_ref_from_valid_iterator(const BTreeConstIterator& iter) const;
@@ -116,6 +121,8 @@ public:
         const GenericBTreeBucketDatabase*  _db;
         vespalib::GenerationHandler::Guard _guard;
         typename BTree::FrozenView         _frozen_view;
+
+        class ConstIteratorImpl;
     public:
         explicit ReadSnapshot(const GenericBTreeBucketDatabase& db);
         ~ReadSnapshot();
@@ -129,6 +136,7 @@ public:
         void find_parents_self_and_children(const document::BucketId& bucket, Func func) const;
         template <typename IterValueExtractor, typename Func>
         void for_each(Func func) const;
+        std::unique_ptr<ConstIterator<ConstValueRef>> create_iterator() const;
         [[nodiscard]] uint64_t generation() const noexcept;
     };
 private:

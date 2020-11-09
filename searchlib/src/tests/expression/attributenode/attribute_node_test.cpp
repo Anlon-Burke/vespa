@@ -5,7 +5,6 @@
 #include <vespa/searchlib/attribute/attributecontext.h>
 #include <vespa/searchlib/attribute/attributemanager.h>
 #include <vespa/searchlib/attribute/attributevector.h>
-#include <vespa/searchlib/attribute/attributevector.hpp>
 #include <vespa/searchlib/attribute/floatbase.h>
 #include <vespa/searchlib/attribute/integerbase.h>
 #include <vespa/searchlib/attribute/stringbase.h>
@@ -115,7 +114,7 @@ AttributeManagerFixture::buildAttribute(const vespalib::string &name, BasicType 
     auto attr = std::dynamic_pointer_cast<AttributeType>(attrBase);
     EXPECT_TRUE(attr);
     attr->addReservedDoc();
-    for (const auto &value : values) {
+    for (const std::conditional_t<std::is_same_v<bool, ValueType>, bool, ValueType&> value : values) {
         uint32_t docId = 0;
         EXPECT_TRUE(attr->addDoc(docId));
         EXPECT_NOT_EQUAL(0u, docId);
