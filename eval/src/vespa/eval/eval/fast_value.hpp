@@ -16,12 +16,12 @@ namespace {
 //-----------------------------------------------------------------------------
 
 // look up a full address in the map directly
-struct LookupView : public Value::Index::View {
+struct FastLookupView : public Value::Index::View {
 
     const FastSparseMap &map;
     size_t               subspace;
 
-    LookupView(const FastSparseMap &map_in)
+    FastLookupView(const FastSparseMap &map_in)
         : map(map_in), subspace(FastSparseMap::npos()) {}
 
     void lookup(ConstArrayRef<const vespalib::stringref*> addr) override {
@@ -41,7 +41,7 @@ struct LookupView : public Value::Index::View {
 //-----------------------------------------------------------------------------
 
 // find matching mappings for a partial address with brute force filtering
-struct FilterView : public Value::Index::View {
+struct FastFilterView : public Value::Index::View {
 
     using Label = FastSparseMap::HashedLabel;
 
@@ -61,7 +61,7 @@ struct FilterView : public Value::Index::View {
         return true;
     }
 
-    FilterView(const FastSparseMap &map, const std::vector<size_t> &match_dims_in)
+    FastFilterView(const FastSparseMap &map, const std::vector<size_t> &match_dims_in)
         : num_mapped_dims(map.num_dims()), labels(map.labels()), match_dims(match_dims_in),
           extract_dims(), query(match_dims.size(), Label()), pos(labels.size())
     {
@@ -105,7 +105,7 @@ struct FilterView : public Value::Index::View {
 //-----------------------------------------------------------------------------
 
 // iterate all mappings
-struct IterateView : public Value::Index::View {
+struct FastIterateView : public Value::Index::View {
 
     using Labels = std::vector<FastSparseMap::HashedLabel>;
 
@@ -113,7 +113,7 @@ struct IterateView : public Value::Index::View {
     const Labels &labels;
     size_t        pos;
 
-    IterateView(const FastSparseMap &map)
+    FastIterateView(const FastSparseMap &map)
         : num_mapped_dims(map.num_dims()), labels(map.labels()), pos(labels.size()) {}
 
     void lookup(ConstArrayRef<const vespalib::stringref*>) override {
@@ -390,20 +390,12 @@ FastValueIndex::sparse_only_merge(const ValueType &res_type, const Fun &fun,
                              const FastValueIndex &lhs, const FastValueIndex &rhs,
                              ConstArrayRef<LCT> lhs_cells, ConstArrayRef<RCT> rhs_cells, Stash &stash)
 {
-    auto &result = stash.create<FastValue<OCT>>(res_type, lhs.map.num_dims(), 1, lhs.map.size()+rhs.map.size());
-    lhs.map.each_map_entry([&](auto lhs_subspace, auto hash)
-                           {
-                               auto idx = result.my_index.map.add_mapping(lhs.map.make_addr(lhs_subspace), hash);
-                               if (__builtin_expect((idx == result.my_cells.size), true)) {
-                                   auto rhs_subspace = rhs.map.lookup(hash);
-                                   if (rhs_subspace != FastSparseMap::npos()) {
-                                       auto cell_value = fun(lhs_cells[lhs_subspace], rhs_cells[rhs_subspace]);
-                                       result.my_cells.push_back_fast(cell_value);
-                                   } else {
-                                       result.my_cells.push_back_fast(lhs_cells[lhs_subspace]);
-                                   }
-                               }
-                           });
+    size_t guess_size = lhs.map.size() + rhs.map.size();
+    auto &result = stash.create<FastValue<OCT>>(res_type, lhs.map.num_dims(), 1, guess_size);
+    result.my_index = lhs;
+    for (auto val : lhs_cells) {
+        result.my_cells.push_back_fast(val);
+    }
     rhs.map.each_map_entry([&](auto rhs_subspace, auto hash)
                            {
                                auto lhs_subspace = lhs.map.lookup(hash);
@@ -412,9 +404,11 @@ FastValueIndex::sparse_only_merge(const ValueType &res_type, const Fun &fun,
                                    if (__builtin_expect((idx == result.my_cells.size), true)) {
                                        result.my_cells.push_back_fast(rhs_cells[rhs_subspace]);
                                    }
+                               } else {
+                                   auto cell_value = fun(lhs_cells[lhs_subspace], rhs_cells[rhs_subspace]);
+                                   *result.my_cells.get(lhs_subspace) = cell_value;
                                }
                            });
-
     return result;
 }
 

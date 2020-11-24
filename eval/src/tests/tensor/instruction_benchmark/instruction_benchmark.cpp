@@ -95,7 +95,7 @@ template <typename ...Ds> void add_cells(TensorSpec &spec, double &seq, TensorSp
 }
 
 template <typename ...Ds> TensorSpec make_spec(double seq, const Ds &...ds) {
-    TensorSpec spec(ValueType::tensor_type({ds...}, ValueType::CellType::FLOAT).to_spec());
+    TensorSpec spec(ValueType::tensor_type({ds...}, CellType::FLOAT).to_spec());
     add_cells(spec, seq, TensorSpec::Address(), ds...);
     return spec;
 }
@@ -122,6 +122,32 @@ MyPeekSpec verbatim_peek() { return MyPeekSpec(false); }
 
 //-----------------------------------------------------------------------------
 
+struct MultiOpParam {
+    std::vector<Instruction> list;
+};
+
+void my_multi_instruction_op(InterpretedFunction::State &state, uint64_t param_in) {
+    const auto &param = *(MultiOpParam*)(param_in);
+    for (const auto &item: param.list) {
+        item.perform(state);
+    }
+}
+
+void collect_op1_chain(const TensorFunction &node, const EngineOrFactory &engine, Stash &stash, std::vector<Instruction> &list) {
+    if (auto op1 = as<tensor_function::Op1>(node)) {
+        collect_op1_chain(op1->child(), engine, stash, list);
+        list.push_back(node.compile_self(engine, stash));
+    }
+}
+
+Instruction compile_op1_chain(const TensorFunction &node, const EngineOrFactory &engine, Stash &stash) {
+    auto &param = stash.create<MultiOpParam>();
+    collect_op1_chain(node, engine, stash, param.list);
+    return {my_multi_instruction_op,(uint64_t)(&param)};
+}
+
+//-----------------------------------------------------------------------------
+
 struct Impl {
     size_t order;
     vespalib::string name;
@@ -145,7 +171,10 @@ struct Impl {
         const auto &lhs_node = tensor_function::inject(lhs, 0, stash);
         const auto &reduce_node = tensor_function::reduce(lhs_node, aggr, dims, stash);
         const auto &node = optimize ? optimize_tensor_function(engine, reduce_node, stash) : reduce_node;
-        return node.compile_self(engine, stash);
+        // since reduce might be optimized into multiple chained
+        // instructions, we need some extra magic to package these
+        // instructions into a single compound instruction.
+        return compile_op1_chain(node, engine, stash);
     }
     Instruction create_rename(const ValueType &lhs, const std::vector<vespalib::string> &from, const std::vector<vespalib::string> &to, Stash &stash) const {
         // create a complete tensor function, but only compile the relevant instruction
@@ -325,6 +354,7 @@ MyParam::~MyParam() = default;
 
 struct EvalOp {
     using UP = std::unique_ptr<EvalOp>;
+    Stash                    my_stash;
     const Impl              &impl;
     MyParam                  my_param;
     std::vector<Value::UP>   values;
@@ -332,8 +362,8 @@ struct EvalOp {
     EvalSingle               single;
     EvalOp(const EvalOp &) = delete;
     EvalOp &operator=(const EvalOp &) = delete;
-    EvalOp(Instruction op, const std::vector<CREF<TensorSpec>> &stack_spec, const Impl &impl_in)
-        : impl(impl_in), my_param(), values(), stack(), single(impl.engine, op)
+    EvalOp(Stash &&stash_in, Instruction op, const std::vector<CREF<TensorSpec>> &stack_spec, const Impl &impl_in)
+        : my_stash(std::move(stash_in)), impl(impl_in), my_param(), values(), stack(), single(impl.engine, op)
     {
         for (const TensorSpec &spec: stack_spec) {
             values.push_back(impl.create_value(spec));
@@ -342,14 +372,51 @@ struct EvalOp {
             stack.push_back(*value.get());
         }
     }
-    EvalOp(Instruction op, const TensorSpec &p0, const Impl &impl_in)
-        : impl(impl_in), my_param(p0, impl), values(), stack(), single(impl.engine, op, my_param)
+    EvalOp(Stash &&stash_in, Instruction op, const TensorSpec &p0, const Impl &impl_in)
+        : my_stash(std::move(stash_in)), impl(impl_in), my_param(p0, impl), values(), stack(), single(impl.engine, op, my_param)
     {
     }
     TensorSpec result() { return impl.create_spec(single.eval(stack)); }
-    double estimate_cost_us() {
-        auto actual = [&](){ single.eval(stack); };
-        return BenchmarkTimer::benchmark(actual, budget) * 1000.0 * 1000.0;
+    size_t suggest_loop_cnt() {
+        size_t loop_cnt = 1;
+        auto my_loop = [&](){
+            for (size_t i = 0; i < loop_cnt; ++i) {
+                single.eval(stack);
+            }
+        };
+        for (;;) {
+            vespalib::BenchmarkTimer timer(0.0);
+            for (size_t i = 0; i < 5; ++i) {
+                timer.before();
+                my_loop();
+                timer.after();
+            }
+            double min_time = timer.min_time();
+            if (min_time > 0.004) {
+                break;
+            } else {
+                loop_cnt *= 2;
+            }
+        }
+        return std::max(loop_cnt, size_t(8));
+    }
+    double estimate_cost_us(size_t self_loop_cnt, size_t ref_loop_cnt) {
+        size_t loop_cnt = ((self_loop_cnt * 128) < ref_loop_cnt) ? self_loop_cnt : ref_loop_cnt;
+        assert((loop_cnt % 8) == 0);
+        auto my_loop = [&](){
+            for (size_t i = 0; (i + 7) < loop_cnt; i += 8) {
+                for (size_t j = 0; j < 8; ++j) {
+                    single.eval(stack);
+                }
+            }
+        };
+        BenchmarkTimer timer(budget);
+        while (timer.has_budget()) {
+            timer.before();
+            my_loop();
+            timer.after();
+        }
+        return timer.min_time() * 1000.0 * 1000.0 / double(loop_cnt);
     }
 };
 
@@ -367,8 +434,12 @@ void benchmark(const vespalib::string &desc, const std::vector<EvalOp::UP> &list
         }
     }
     BenchmarkResult result(desc, list.size());
+    std::vector<size_t> loop_cnt(list.size());
     for (const auto &eval: list) {
-        double time = eval->estimate_cost_us();
+        loop_cnt[eval->impl.order] = eval->suggest_loop_cnt();
+    }
+    for (const auto &eval: list) {
+        double time = eval->estimate_cost_us(loop_cnt[eval->impl.order], loop_cnt[1]);
         result.sample(eval->impl.order, time);
         fprintf(stderr, "    %s(%s): %10.3f us\n", eval->impl.name.c_str(), eval->impl.short_name.c_str(), time);
     }
@@ -391,9 +462,10 @@ void benchmark_join(const vespalib::string &desc, const TensorSpec &lhs,
     ASSERT_FALSE(res_type.is_error());
     std::vector<EvalOp::UP> list;
     for (const Impl &impl: impl_list) {
-        auto op = impl.create_join(lhs_type, rhs_type, function, stash);
+        Stash my_stash;
+        auto op = impl.create_join(lhs_type, rhs_type, function, my_stash);
         std::vector<CREF<TensorSpec>> stack_spec({lhs, rhs});
-        list.push_back(std::make_unique<EvalOp>(op, stack_spec, impl));
+        list.push_back(std::make_unique<EvalOp>(std::move(my_stash), op, stack_spec, impl));
     }
     benchmark(desc, list);
 }
@@ -410,9 +482,10 @@ void benchmark_reduce(const vespalib::string &desc, const TensorSpec &lhs,
     ASSERT_FALSE(res_type.is_error());
     std::vector<EvalOp::UP> list;
     for (const Impl &impl: impl_list) {
-        auto op = impl.create_reduce(lhs_type, aggr, dims, stash);
+        Stash my_stash;
+        auto op = impl.create_reduce(lhs_type, aggr, dims, my_stash);
         std::vector<CREF<TensorSpec>> stack_spec({lhs});
-        list.push_back(std::make_unique<EvalOp>(op, stack_spec, impl));
+        list.push_back(std::make_unique<EvalOp>(std::move(my_stash), op, stack_spec, impl));
     }
     benchmark(desc, list);
 }
@@ -430,9 +503,10 @@ void benchmark_rename(const vespalib::string &desc, const TensorSpec &lhs,
     ASSERT_FALSE(res_type.is_error());
     std::vector<EvalOp::UP> list;
     for (const Impl &impl: impl_list) {
-        auto op = impl.create_rename(lhs_type, from, to, stash);
+        Stash my_stash;
+        auto op = impl.create_rename(lhs_type, from, to, my_stash);
         std::vector<CREF<TensorSpec>> stack_spec({lhs});
-        list.push_back(std::make_unique<EvalOp>(op, stack_spec, impl));
+        list.push_back(std::make_unique<EvalOp>(std::move(my_stash), op, stack_spec, impl));
     }
     benchmark(desc, list);
 }
@@ -451,9 +525,10 @@ void benchmark_merge(const vespalib::string &desc, const TensorSpec &lhs,
     ASSERT_FALSE(res_type.is_error());
     std::vector<EvalOp::UP> list;
     for (const Impl &impl: impl_list) {
-        auto op = impl.create_merge(lhs_type, rhs_type, function, stash);
+        Stash my_stash;
+        auto op = impl.create_merge(lhs_type, rhs_type, function, my_stash);
         std::vector<CREF<TensorSpec>> stack_spec({lhs, rhs});
-        list.push_back(std::make_unique<EvalOp>(op, stack_spec, impl));
+        list.push_back(std::make_unique<EvalOp>(std::move(my_stash), op, stack_spec, impl));
     }
     benchmark(desc, list);
 }
@@ -467,9 +542,10 @@ void benchmark_map(const vespalib::string &desc, const TensorSpec &lhs, operatio
     ASSERT_FALSE(lhs_type.is_error());
     std::vector<EvalOp::UP> list;
     for (const Impl &impl: impl_list) {
-        auto op = impl.create_map(lhs_type, function, stash);
+        Stash my_stash;
+        auto op = impl.create_map(lhs_type, function, my_stash);
         std::vector<CREF<TensorSpec>> stack_spec({lhs});
-        list.push_back(std::make_unique<EvalOp>(op, stack_spec, impl));
+        list.push_back(std::make_unique<EvalOp>(std::move(my_stash), op, stack_spec, impl));
     }
     benchmark(desc, list);
 }
@@ -488,9 +564,10 @@ void benchmark_concat(const vespalib::string &desc, const TensorSpec &lhs,
     ASSERT_FALSE(res_type.is_error());
     std::vector<EvalOp::UP> list;
     for (const Impl &impl: impl_list) {
-        auto op = impl.create_concat(lhs_type, rhs_type, dimension, stash);
+        Stash my_stash;
+        auto op = impl.create_concat(lhs_type, rhs_type, dimension, my_stash);
         std::vector<CREF<TensorSpec>> stack_spec({lhs, rhs});
-        list.push_back(std::make_unique<EvalOp>(op, stack_spec, impl));
+        list.push_back(std::make_unique<EvalOp>(std::move(my_stash), op, stack_spec, impl));
     }
     benchmark(desc, list);
 }
@@ -507,10 +584,11 @@ void benchmark_tensor_create(const vespalib::string &desc, const TensorSpec &pro
     }
     std::vector<EvalOp::UP> list;
     for (const Impl &impl: impl_list) {
-        auto op = impl.create_tensor_create(proto_type, proto, stash);
-        list.push_back(std::make_unique<EvalOp>(op, stack_spec, impl));
+        Stash my_stash;
+        auto op = impl.create_tensor_create(proto_type, proto, my_stash);
+        list.push_back(std::make_unique<EvalOp>(std::move(my_stash), op, stack_spec, impl));
     }
-    benchmark(desc, list);    
+    benchmark(desc, list);
 }
 
 //-----------------------------------------------------------------------------
@@ -521,8 +599,9 @@ void benchmark_tensor_lambda(const vespalib::string &desc, const ValueType &type
     ASSERT_FALSE(p0_type.is_error());
     std::vector<EvalOp::UP> list;
     for (const Impl &impl: impl_list) {
-        auto op = impl.create_tensor_lambda(type, function, p0_type, stash);
-        list.push_back(std::make_unique<EvalOp>(op, p0, impl));
+        Stash my_stash;
+        auto op = impl.create_tensor_lambda(type, function, p0_type, my_stash);
+        list.push_back(std::make_unique<EvalOp>(std::move(my_stash), op, p0, impl));
     }
     benchmark(desc, list);
 }
@@ -542,8 +621,9 @@ void benchmark_tensor_peek(const vespalib::string &desc, const TensorSpec &lhs, 
     }
     std::vector<EvalOp::UP> list;
     for (const Impl &impl: impl_list) {
-        auto op = impl.create_tensor_peek(type, peek_spec, stash);
-        list.push_back(std::make_unique<EvalOp>(op, stack_spec, impl));
+        Stash my_stash;
+        auto op = impl.create_tensor_peek(type, peek_spec, my_stash);
+        list.push_back(std::make_unique<EvalOp>(std::move(my_stash), op, stack_spec, impl));
     }
     benchmark(desc, list);
 }
@@ -581,11 +661,11 @@ void benchmark_encode_decode(const vespalib::string &desc, const TensorSpec &pro
     BenchmarkResult encode_result(desc + " <encode>", impl_list.size());
     BenchmarkResult decode_result(desc + " <decode>", impl_list.size());
     for (const Impl &impl: impl_list) {
-        constexpr size_t loop_cnt = 16;
+        constexpr size_t loop_cnt = 32;
         auto value = impl.create_value(proto);
         BenchmarkTimer encode_timer(2 * budget);
         BenchmarkTimer decode_timer(2 * budget);
-        while (encode_timer.has_budget() || decode_timer.has_budget()) {
+        while (encode_timer.has_budget()) {
             std::array<vespalib::nbostream, loop_cnt> data;
             std::array<Value::UP, loop_cnt> object;
             encode_timer.before();
@@ -705,6 +785,18 @@ TEST(DenseJoin, no_overlap) {
     benchmark_join("dense no overlap multiply", lhs, rhs, operation::Mul::f);
 }
 
+TEST(DenseJoin, simple_expand) {
+    auto lhs = make_cube(D::idx("a", 5), D::idx("b", 4), D::idx("c", 4), 1.0);
+    auto rhs = make_cube(D::idx("d", 4), D::idx("e", 4), D::idx("f", 5), 2.0);
+    benchmark_join("dense simple expand multiply", lhs, rhs, operation::Mul::f);
+}
+
+TEST(DenseJoin, multiply_by_number) {
+    auto lhs = make_spec(3.0);
+    auto rhs = make_cube(D::idx("a", 16), D::idx("b", 16), D::idx("c", 16), 2.0);
+    benchmark_join("dense cube multiply by number", lhs, rhs, operation::Mul::f);
+}
+
 //-----------------------------------------------------------------------------
 
 TEST(SparseJoin, small_vectors) {
@@ -743,6 +835,12 @@ TEST(SparseJoin, no_overlap) {
     benchmark_join("sparse no overlap multiply", lhs, rhs, operation::Mul::f);
 }
 
+TEST(SparseJoin, multiply_by_number) {
+    auto lhs = make_spec(3.0);
+    auto rhs = make_cube(D::map("a", 16, 2), D::map("b", 16, 2), D::map("c", 16, 2), 2.0);
+    benchmark_join("sparse multiply by number", lhs, rhs, operation::Mul::f);
+}
+
 //-----------------------------------------------------------------------------
 
 TEST(MixedJoin, full_overlap) {
@@ -761,6 +859,12 @@ TEST(MixedJoin, no_overlap) {
     auto lhs = make_cube(D::map("a", 4, 1), D::map("e", 4, 1), D::idx("f", 4), 1.0);
     auto rhs = make_cube(D::map("b", 4, 1), D::map("c", 4, 1), D::idx("d", 4), 2.0);
     benchmark_join("mixed no overlap multiply", lhs, rhs, operation::Mul::f);
+}
+
+TEST(MixedJoin, multiply_by_number) {
+    auto lhs = make_spec(3.0);
+    auto rhs = make_cube(D::map("a", 16, 2), D::map("b", 16, 2), D::idx("c", 16), 2.0);
+    benchmark_join("mixed multiply by number", lhs, rhs, operation::Mul::f);
 }
 
 //-----------------------------------------------------------------------------

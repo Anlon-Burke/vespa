@@ -20,6 +20,7 @@ import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
+import com.yahoo.vespa.hosted.provision.node.Address;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.provisioning.HostProvisioner.HostSharing;
@@ -67,7 +68,7 @@ public class DynamicDockerProvisionTest {
     public void dynamically_provision_with_empty_node_repo() {
         assertEquals(0, tester.nodeRepository().list().size());
 
-        ApplicationId application1 = ProvisioningTester.makeApplicationId();
+        ApplicationId application1 = ProvisioningTester.applicationId();
         NodeResources resources = new NodeResources(1, 4, 10, 1);
 
         mockHostProvisioner(hostProvisioner, "large", 3, null); // Provision shared hosts
@@ -83,7 +84,7 @@ public class DynamicDockerProvisionTest {
                         .map(Node::hostname).sorted().collect(Collectors.toList()));
 
         // Deploy new application
-        ApplicationId application2 = ProvisioningTester.makeApplicationId();
+        ApplicationId application2 = ProvisioningTester.applicationId();
         prepareAndActivate(application2, clusterSpec("mycluster"), 4, 1, resources);
 
         // Total of 12 nodes should now be in node-repo, 4 active hosts and 8 active nodes
@@ -95,7 +96,7 @@ public class DynamicDockerProvisionTest {
                         .map(Node::hostname).sorted().collect(Collectors.toList()));
 
         // Deploy new exclusive application
-        ApplicationId application3 = ProvisioningTester.makeApplicationId();
+        ApplicationId application3 = ProvisioningTester.applicationId();
         mockHostProvisioner(hostProvisioner, "large", 3, application3);
         prepareAndActivate(application3, clusterSpec("mycluster", true), 4, 1, resources);
         verify(hostProvisioner).provisionHosts(List.of(104, 105, 106, 107), resources, application3,
@@ -114,11 +115,11 @@ public class DynamicDockerProvisionTest {
         NodeResources initialResources = new NodeResources(2, 8, 10, 1);
         NodeResources smallResources = new NodeResources(1, 4, 10, 1);
 
-        ApplicationId application1 = ProvisioningTester.makeApplicationId();
+        ApplicationId application1 = ProvisioningTester.applicationId();
         mockHostProvisioner(hostProvisioner, "large", 3, null); // Provision shared hosts
         prepareAndActivate(application1, clusterSpec("mycluster"), 4, 1, initialResources);
 
-        ApplicationId application2 = ProvisioningTester.makeApplicationId();
+        ApplicationId application2 = ProvisioningTester.applicationId();
         mockHostProvisioner(hostProvisioner, "large", 3, application2); // Provision exclusive hosts
         prepareAndActivate(application2, clusterSpec("mycluster", true), 4, 1, initialResources);
 
@@ -144,24 +145,24 @@ public class DynamicDockerProvisionTest {
 
         NodeResources resources = new NodeResources(1, 4, 10, 4);
 
-        ApplicationId application1 = ProvisioningTester.makeApplicationId();
+        ApplicationId application1 = ProvisioningTester.applicationId();
         prepareAndActivate(application1, clusterSpec("mycluster"), 4, 1, resources);
 
-        ApplicationId application2 = ProvisioningTester.makeApplicationId();
+        ApplicationId application2 = ProvisioningTester.applicationId();
         prepareAndActivate(application2, clusterSpec("mycluster"), 3, 1, resources);
 
-        ApplicationId application3 = ProvisioningTester.makeApplicationId();
+        ApplicationId application3 = ProvisioningTester.applicationId();
         prepareAndActivate(application3, clusterSpec("mycluster"), 3, 1, resources);
         assertEquals(4, tester.nodeRepository().getNodes(NodeType.tenant).stream().map(Node::parentHostname).distinct().count());
 
-        ApplicationId application4 = ProvisioningTester.makeApplicationId();
+        ApplicationId application4 = ProvisioningTester.applicationId();
         prepareAndActivate(application4, clusterSpec("mycluster"), 3, 1, resources);
         assertEquals(5, tester.nodeRepository().getNodes(NodeType.tenant).stream().map(Node::parentHostname).distinct().count());
     }
 
     @Test
     public void retires_on_exclusivity_violation() {
-        ApplicationId application1 = ProvisioningTester.makeApplicationId();
+        ApplicationId application1 = ProvisioningTester.applicationId();
         NodeResources resources = new NodeResources(1, 4, 10, 1);
 
         mockHostProvisioner(hostProvisioner, "large", 3, null); // Provision shared hosts
@@ -184,7 +185,7 @@ public class DynamicDockerProvisionTest {
     @Test
     public void node_indices_are_unique_even_when_a_node_is_left_in_reserved_state() {
         NodeResources resources = new NodeResources(10, 10, 10, 10);
-        ApplicationId app = ProvisioningTester.makeApplicationId();
+        ApplicationId app = ProvisioningTester.applicationId();
 
         Function<Node, Node> retireNode = node -> tester.patchNode(node, (n) -> n.withWantToRetire(true, Agent.system, Instant.now()));
         Function<Integer, Node> getNodeInGroup = group -> tester.nodeRepository().getNodes(app).stream()
@@ -229,7 +230,7 @@ public class DynamicDockerProvisionTest {
 
         tester.activateTenantHosts();
 
-        ApplicationId app1 = ProvisioningTester.makeApplicationId("app1");
+        ApplicationId app1 = ProvisioningTester.applicationId("app1");
         ClusterSpec cluster1 = ClusterSpec.request(ClusterSpec.Type.content, new ClusterSpec.Id("cluster1")).vespaVersion("7").build();
 
         // Deploy using real memory amount (17)
@@ -275,7 +276,7 @@ public class DynamicDockerProvisionTest {
 
         tester.activateTenantHosts();
 
-        ApplicationId app1 = ProvisioningTester.makeApplicationId("app1");
+        ApplicationId app1 = ProvisioningTester.applicationId("app1");
         ClusterSpec cluster1 = ClusterSpec.request(ClusterSpec.Type.content, new ClusterSpec.Id("cluster1")).vespaVersion("7").build();
 
         // Limits where each number is within flavor limits but but which don't contain any flavor leads to an error
@@ -350,7 +351,7 @@ public class DynamicDockerProvisionTest {
 
         tester.activateTenantHosts();
 
-        ApplicationId app1 = ProvisioningTester.makeApplicationId("app1");
+        ApplicationId app1 = ProvisioningTester.applicationId("app1");
         ClusterSpec cluster1 = ClusterSpec.request(ClusterSpec.Type.content, new ClusterSpec.Id("cluster1")).vespaVersion("7").build();
 
         tester.activate(app1, cluster1, Capacity.from(resources(4, 2, 2, 10, 200, fast, local),
@@ -385,7 +386,7 @@ public class DynamicDockerProvisionTest {
 
         tester.activateTenantHosts();
 
-        ApplicationId app1 = ProvisioningTester.makeApplicationId("app1");
+        ApplicationId app1 = ProvisioningTester.applicationId("app1");
         ClusterSpec cluster1 = ClusterSpec.request(ClusterSpec.Type.content, new ClusterSpec.Id("cluster1")).vespaVersion("7").build();
 
         tester.activate(app1, cluster1, Capacity.from(resources(4, 2, 2, 10, 200, fast, StorageType.any),
@@ -471,7 +472,7 @@ public class DynamicDockerProvisionTest {
                 throw new OutOfCapacityException("No host flavor matches " + resources);
             return provisionIndexes.stream()
                                    .map(i -> new ProvisionedHost("id-" + i, "host-" + i, hostFlavor.get(), Optional.empty(),
-                                           "host-" + i + "-1", resources, osVersion))
+                                           List.of(new Address("host-" + i + "-1")), resources, osVersion))
                                    .collect(Collectors.toList());
         }
 

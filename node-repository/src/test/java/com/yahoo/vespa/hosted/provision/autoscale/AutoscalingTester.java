@@ -20,6 +20,7 @@ import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.Nodelike;
 import com.yahoo.vespa.hosted.provision.applications.Application;
+import com.yahoo.vespa.hosted.provision.node.Address;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.provisioning.FatalProvisioningException;
@@ -136,7 +137,8 @@ class AutoscalingTester {
                                                                               cpu,
                                                                               memory,
                                                                               disk,
-                                                                              0))));
+                                                                              0,
+                                                                              true))));
             }
         }
     }
@@ -165,7 +167,8 @@ class AutoscalingTester {
                                                                               cpu,
                                                                               memory,
                                                                               disk,
-                                                                              0))));
+                                                                              0,
+                                                                              true))));
             }
         }
     }
@@ -179,7 +182,8 @@ class AutoscalingTester {
                                                                               cpu,
                                                                               memory,
                                                                               disk,
-                                                                              generation))));
+                                                                              generation,
+                                                                              true))));
             }
         }
     }
@@ -291,7 +295,7 @@ class AutoscalingTester {
                                               "hostname" + index,
                                               hostFlavor,
                                               Optional.empty(),
-                                              "nodename" + index,
+                                              List.of(new Address("nodename" + index)),
                                               resources,
                                               osVersion));
             }

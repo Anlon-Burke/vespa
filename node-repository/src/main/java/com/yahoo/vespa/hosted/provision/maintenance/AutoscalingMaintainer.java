@@ -17,7 +17,6 @@ import com.yahoo.vespa.hosted.provision.autoscale.MetricsDb;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -46,6 +45,8 @@ public class AutoscalingMaintainer extends NodeRepositoryMaintainer {
 
     @Override
     protected boolean maintain() {
+        if ( ! nodeRepository().isWorking()) return false;
+
         boolean success = true;
         if ( ! nodeRepository().zone().environment().isProduction()) return success;
 
@@ -55,7 +56,7 @@ public class AutoscalingMaintainer extends NodeRepositoryMaintainer {
 
     private void autoscale(ApplicationId application, List<Node> applicationNodes) {
         try (MaintenanceDeployment deployment = new MaintenanceDeployment(application, deployer, metric, nodeRepository())) {
-            if ( ! deployment.isValid()) return; // Another config server will consider this application
+            if ( ! deployment.isValid()) return;
             nodesByCluster(applicationNodes).forEach((clusterId, clusterNodes) -> autoscale(application, clusterId, clusterNodes, deployment));
         }
     }
@@ -67,11 +68,14 @@ public class AutoscalingMaintainer extends NodeRepositoryMaintainer {
         Application application = nodeRepository().applications().get(applicationId).orElse(new Application(applicationId));
         Optional<Cluster> cluster = application.cluster(clusterId);
         if (cluster.isEmpty()) return;
+
         var advice = autoscaler.autoscale(cluster.get(), clusterNodes);
 
-        if (advice.isEmpty()) return;
-
-        if ( ! cluster.get().targetResources().equals(advice.target())) {
+        application = application.with(cluster.get().withAutoscalingStatus(advice.reason()));
+        if (advice.isEmpty()) {
+            applications().put(application, deployment.applicationLock().get());
+        }
+        else if ( ! cluster.get().targetResources().equals(advice.target())) {
             applications().put(application.with(cluster.get().withTarget(advice.target())), deployment.applicationLock().get());
             if (advice.target().isPresent()) {
                 logAutoscaling(advice.target().get(), applicationId, cluster.get(), clusterNodes);
@@ -95,11 +99,7 @@ public class AutoscalingMaintainer extends NodeRepositoryMaintainer {
     }
 
     static String toString(ClusterResources r) {
-        return String.format(Locale.US, "%d%s * [vcpu: %.1f, memory: %.1f Gb, disk %.1f Gb]" +
-                             " (total: [vcpu: %.1f, memory: %.1f Gb, disk: %.1f Gb])",
-                             r.nodes(), r.groups() > 1 ? " (in " + r.groups() + " groups)" : "",
-                             r.nodeResources().vcpu(), r.nodeResources().memoryGb(), r.nodeResources().diskGb(),
-                             r.nodes() * r.nodeResources().vcpu(), r.nodes() * r.nodeResources().memoryGb(), r.nodes() * r.nodeResources().diskGb());
+        return r + " (total: " + r.totalResources() + ")";
     }
 
     private Map<ClusterSpec.Id, List<Node>> nodesByCluster(List<Node> applicationNodes) {

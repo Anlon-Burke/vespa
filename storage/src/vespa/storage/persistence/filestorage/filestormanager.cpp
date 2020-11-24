@@ -29,6 +29,11 @@ using std::shared_ptr;
 using document::BucketSpace;
 using vespalib::make_string_short::fmt;
 
+namespace {
+
+VESPA_THREAD_STACK_TAG(response_executor)
+
+}
 namespace storage {
 
 FileStorManager::
@@ -164,7 +169,8 @@ FileStorManager::configure(std::unique_ptr<vespa::config::content::StorFilestorC
 
         _filestorHandler = std::make_unique<FileStorHandlerImpl>(numThreads, numStripes, *this, *_metrics, _compReg);
         uint32_t numResponseThreads = computeNumResponseThreads(_config->numResponseThreads);
-        _sequencedExecutor = vespalib::SequencedTaskExecutor::create(numResponseThreads, 10000, selectSequencer(_config->responseSequencerType));
+        _sequencedExecutor = vespalib::SequencedTaskExecutor::create(response_executor, numResponseThreads, 10000,
+                                                                     selectSequencer(_config->responseSequencerType));
         assert(_sequencedExecutor);
         LOG(spam, "Setting up the disk");
         for (uint32_t i = 0; i < numThreads; i++) {
@@ -670,7 +676,7 @@ FileStorManager::onInternal(const shared_ptr<api::InternalCommand>& msg)
         spi::Context context(msg->getLoadType(), msg->getPriority(), msg->getTrace().getLevel());
         shared_ptr<DestroyIteratorCommand> cmd(std::static_pointer_cast<DestroyIteratorCommand>(msg));
         _provider->destroyIterator(cmd->getIteratorId(), context);
-        msg->getTrace().getRoot().addChild(context.getTrace().getRoot());
+        msg->getTrace().addChild(context.steal_trace());
         return true;
     }
     case ReadBucketList::ID:
@@ -921,7 +927,7 @@ void FileStorManager::initialize_bucket_databases_from_provider() {
         assert(!bucket_result.hasError());
         const auto& buckets = bucket_result.getList();
         LOG(debug, "Fetching bucket info for %zu buckets in space '%s'",
-            buckets.size(), elem.first.toString().c_str());
+            buckets.size(), bucket_space.toString().c_str());
         auto& db = elem.second->bucketDatabase();
 
         for (const auto& bucket : buckets) {

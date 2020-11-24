@@ -50,7 +50,6 @@ BuildRequires: maven
 BuildRequires: gcc-c++
 BuildRequires: libatomic
 %endif
-BuildRequires: Judy-devel
 %if 0%{?el7}
 BuildRequires: cmake3
 BuildRequires: llvm7.0-devel
@@ -149,7 +148,6 @@ Requires: perl-URI
 %if ! 0%{?el7}
 Requires: valgrind
 %endif
-Requires: Judy
 Requires: xxhash
 Requires: xxhash-libs >= 0.8.0
 %if 0%{?el8}
@@ -473,6 +471,7 @@ fi
 %{_prefix}/lib/jars/clustercontroller-apps-jar-with-dependencies.jar
 %{_prefix}/lib/jars/clustercontroller-apputil-jar-with-dependencies.jar
 %{_prefix}/lib/jars/clustercontroller-core-jar-with-dependencies.jar
+%{_prefix}/lib/jars/clustercontroller-reindexer-jar-with-dependencies.jar
 %{_prefix}/lib/jars/clustercontroller-utils-jar-with-dependencies.jar
 %{_prefix}/lib/jars/config-models
 %{_prefix}/lib/jars/config-proxy-jar-with-dependencies.jar

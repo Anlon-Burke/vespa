@@ -91,7 +91,9 @@ public enum RoleDefinition {
 
     paymentProcessor(Policy.paymentProcessor),
 
-    hostedAccountant(Policy.hostedAccountant);
+    hostedAccountant(Policy.hostedAccountant,
+                     Policy.collectionMethodUpdate,
+                     Policy.planUpdate);
 
     private final Set<RoleDefinition> parents;
     private final Set<Policy> policies;

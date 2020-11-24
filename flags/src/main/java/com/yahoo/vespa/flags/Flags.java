@@ -324,17 +324,23 @@ public class Flags {
             "Size of merge buffer in service layer",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundBooleanFlag REGIONAL_CONTAINER_REGISTRY = defineFeatureFlag(
-            "regional-container-registry",
-            false,
-            "Whether host-admin should download images from the zone's regional container registry",
-            "Takes effect on host-admin restart");
+    public static final UnboundDoubleFlag FEED_CONCURRENCY = defineDoubleFlag(
+            "feed-concurrency", 0.5,
+            "How much concurrency should be allowed for feed",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag ENABLE_AUTOMATIC_REINDEXING = defineFeatureFlag(
             "enable-automatic-reindexing",
             false,
             "Whether to automatically trigger reindexing from config change",
+            "Takes effect on next internal redeployment",
+            APPLICATION_ID);
+
+    public static final UnboundBooleanFlag USE_POWER_OF_TWO_CHOICES_LOAD_BALANCING = defineFeatureFlag(
+            "use-power-of-two-choices-load-balancing",
+            false,
+            "Whether to use Power of two load balancing algorithm for application",
             "Takes effect on next internal redeployment",
             APPLICATION_ID);
 

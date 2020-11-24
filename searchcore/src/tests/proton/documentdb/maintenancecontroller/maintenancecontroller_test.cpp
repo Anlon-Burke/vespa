@@ -133,7 +133,7 @@ MyDocumentSubDB::MyDocumentSubDB(uint32_t subDBId, SubDbType subDbType, const st
       _subDBId(subDBId),
       _metaStoreSP(std::make_shared<DocumentMetaStore>(
               std::move(bucketDB), DocumentMetaStore::getFixedName(), search::GrowStrategy(),
-              DocumentMetaStore::IGidCompare::SP(new DocumentMetaStore::DefaultGidCompare), subDbType)),
+              subDbType)),
       _metaStore(*_metaStoreSP),
       _repo(repo),
       _docTypeName(docTypeName)
@@ -228,7 +228,7 @@ public:
 
     void setSubDBs(const std::vector<MyDocumentSubDB *> &subDBs);
 
-    SerialNum incSerialNum() {
+    SerialNum inc_serial_num() {
         return ++_serialNum;
     }
 
@@ -736,7 +736,7 @@ MyFeedHandler::setSubDBs(const std::vector<MyDocumentSubDB *> &subDBs)
 void
 MyFeedHandler::appendOperation(const FeedOperation &op, DoneCallback)
 {
-    const_cast<FeedOperation &>(op).setSerialNum(incSerialNum());
+    const_cast<FeedOperation &>(op).setSerialNum(inc_serial_num());
 }
 
 

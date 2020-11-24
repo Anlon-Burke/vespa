@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /**
@@ -19,6 +20,8 @@ import java.util.stream.Collectors;
  * @author bratseth
  */
 public class ClusterTimeseries {
+
+    private static final Logger log = Logger.getLogger(ClusterTimeseries.class.getName());
 
     private final List<Node> clusterNodes;
     private final Map<String, Instant> startTimePerNode;
@@ -64,9 +67,9 @@ public class ClusterTimeseries {
 
     /**
      * Returns the average load of this resource in the measurement window,
-     * or empty if we are not in a position to make decisions from these measurements at this time.
+     * or empty if we do not have a reliable measurement across the cluster nodes.
      */
-    public Optional<Double> averageLoad(Resource resource) {
+    public Optional<Double> averageLoad(Resource resource, Cluster cluster) {
         ClusterSpec.Type clusterType = clusterNodes.get(0).allocation().get().membership().cluster().type();
 
         List<NodeTimeseries> currentMeasurements = filterStale(nodeTimeseries, startTimePerNode);

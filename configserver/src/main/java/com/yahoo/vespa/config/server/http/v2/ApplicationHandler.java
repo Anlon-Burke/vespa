@@ -17,20 +17,25 @@ import com.yahoo.jdisc.application.BindingMatch;
 import com.yahoo.jdisc.application.UriPattern;
 import com.yahoo.slime.Cursor;
 import com.yahoo.vespa.config.server.ApplicationRepository;
+import com.yahoo.vespa.config.server.application.ApplicationReindexing;
 import com.yahoo.vespa.config.server.http.ContentHandler;
 import com.yahoo.vespa.config.server.http.ContentRequest;
 import com.yahoo.vespa.config.server.http.HttpErrorResponse;
 import com.yahoo.vespa.config.server.http.HttpHandler;
 import com.yahoo.vespa.config.server.http.JSONResponse;
 import com.yahoo.vespa.config.server.http.NotFoundException;
+import com.yahoo.vespa.config.server.tenant.Tenant;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static java.util.Map.Entry.comparingByKey;
+import static java.util.stream.Collectors.toList;
 
 /**
  * Operations on applications (delete, wait for config convergence, restart, application content etc.)
@@ -43,6 +48,8 @@ public class ApplicationHandler extends HttpHandler {
             "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/content/*",
             "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/filedistributionstatus",
             "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/restart",
+            "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/reindex",
+            "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/reindexing",
             "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/suspended",
             "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/serviceconverge",
             "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*/serviceconverge/*",
@@ -56,7 +63,7 @@ public class ApplicationHandler extends HttpHandler {
             "http://*/application/v2/tenant/*/application/*/environment/*/region/*/instance/*",
             "http://*/application/v2/tenant/*/application/*")
             .map(UriPattern::new)
-            .collect(Collectors.toList());
+            .collect(toList());
 
     private final Zone zone;
     private final ApplicationRepository applicationRepository;
@@ -73,10 +80,16 @@ public class ApplicationHandler extends HttpHandler {
     @Override
     public HttpResponse handleDELETE(HttpRequest request) {
         ApplicationId applicationId = getApplicationIdFromRequest(request);
-        boolean deleted = applicationRepository.delete(applicationId);
-        if ( ! deleted)
-            return HttpErrorResponse.notFoundError("Unable to delete " + applicationId.toFullString() + ": Not found");
-        return new DeleteApplicationResponse(Response.Status.OK, applicationId);
+
+        if (isReindexingRequest(request)) {
+            applicationRepository.modifyReindexing(applicationId, reindexing -> reindexing.enabled(false));
+            return new JSONResponse(Response.Status.OK);
+        }
+
+        if (applicationRepository.delete(applicationId))
+            return new DeleteApplicationResponse(Response.Status.OK, applicationId);
+
+        return HttpErrorResponse.notFoundError("Unable to delete " + applicationId.toFullString() + ": Not found");
     }
 
     @Override
@@ -95,6 +108,10 @@ public class ApplicationHandler extends HttpHandler {
             String hostName = getHostNameFromRequest(request);
             String pathSuffix = getPathSuffix(request);
             return applicationRepository.clusterControllerStatusPage(applicationId, hostName, pathSuffix);
+        }
+
+        if (isReindexingRequest(request)) {
+            return getReindexingStatus(applicationId);
         }
 
         if (isContentRequest(request)) {
@@ -176,9 +193,11 @@ public class ApplicationHandler extends HttpHandler {
     @Override
     public HttpResponse handlePOST(HttpRequest request) {
         ApplicationId applicationId = getApplicationIdFromRequest(request);
-        if (request.getUri().getPath().endsWith("restart")) {
+
+        if (isRestartRequest(request))
             return restart(request, applicationId);
-        } else if (isTesterStartTestsRequest(request)) {
+
+        if (isTesterStartTestsRequest(request)) {
             byte[] data;
             try {
                 data = IOUtils.readBytes(request.getData(), 1024 * 1000);
@@ -186,15 +205,59 @@ public class ApplicationHandler extends HttpHandler {
                 throw new IllegalArgumentException("Could not read data in request " + request);
             }
             return applicationRepository.startTests(applicationId, getSuiteFromRequest(request), data);
-        } else {
-            throw new NotFoundException("Illegal POST request '" + request.getUri() + "'");
         }
+
+        if (isReindexRequest(request)) {
+            triggerReindexing(request, applicationId);
+            return new JSONResponse(Response.Status.OK);
+        }
+
+        if (isReindexingRequest(request)) {
+            applicationRepository.modifyReindexing(applicationId, reindexing -> reindexing.enabled(true));
+            return new JSONResponse(Response.Status.OK);
+        }
+
+        throw new NotFoundException("Illegal POST request '" + request.getUri() + "'");
+    }
+
+    private void triggerReindexing(HttpRequest request, ApplicationId applicationId) {
+        List<String> clusters = Optional.ofNullable(request.getProperty("clusterId")).stream()
+                                        .flatMap(value -> Stream.of(value.split(",")))
+                                        .filter(cluster -> ! cluster.isBlank())
+                                        .collect(toList());
+        List<String> types = Optional.ofNullable(request.getProperty("documentType")).stream()
+                                     .flatMap(value -> Stream.of(value.split(",")))
+                                     .filter(type -> ! type.isBlank())
+                                     .collect(toList());
+        Instant now = applicationRepository.clock().instant();
+        applicationRepository.modifyReindexing(applicationId, reindexing -> {
+            if (clusters.isEmpty())
+                reindexing = reindexing.withReady(now);
+            else
+                for (String cluster : clusters)
+                    if (types.isEmpty())
+                        reindexing = reindexing.withReady(cluster, now);
+                    else
+                        for (String type : types)
+                            reindexing = reindexing.withReady(cluster, type, now);
+            return reindexing;
+        });
+    }
+
+    private HttpResponse getReindexingStatus(ApplicationId applicationId) {
+        Tenant tenant = applicationRepository.getTenant(applicationId);
+        if (tenant == null)
+            throw new NotFoundException("Tenant '" + applicationId.tenant().value() + "' not found");
+
+        return new ReindexResponse(tenant.getApplicationRepo().database()
+                                         .readReindexingStatus(applicationId)
+                                         .orElseThrow(() -> new NotFoundException("Reindexing status not found for " + applicationId)));
     }
 
     private HttpResponse restart(HttpRequest request, ApplicationId applicationId) {
         if (getBindingMatch(request).groupCount() != 7)
             throw new NotFoundException("Illegal POST restart request '" + request.getUri() +
-                                        "': Must have 6 arguments but had " + ( getBindingMatch(request).groupCount()-1 ) );
+                                        "': Must have 6 arguments but had " + (getBindingMatch(request).groupCount() - 1));
         applicationRepository.restart(applicationId, hostFilterFrom(request));
         return new JSONResponse(Response.Status.OK); // return empty
     }
@@ -216,6 +279,21 @@ public class ApplicationHandler extends HttpHandler {
                 .filter(Objects::nonNull)
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Illegal url for config request: " + request.getUri()));
+    }
+
+    private static boolean isRestartRequest(HttpRequest request) {
+        return getBindingMatch(request).groupCount() == 7 &&
+               request.getUri().getPath().endsWith("/restart");
+    }
+
+    private static boolean isReindexRequest(HttpRequest request) {
+        return getBindingMatch(request).groupCount() == 7 &&
+               request.getUri().getPath().endsWith("/reindex");
+    }
+
+    private static boolean isReindexingRequest(HttpRequest request) {
+        return getBindingMatch(request).groupCount() == 7 &&
+               request.getUri().getPath().endsWith("/reindexing");
     }
 
     private static boolean isIsSuspendedRequest(HttpRequest request) {
@@ -360,4 +438,32 @@ public class ApplicationHandler extends HttpHandler {
             object.setDouble("rate", usageRate);
         }
     }
+
+    private static class ReindexResponse extends JSONResponse {
+        ReindexResponse(ApplicationReindexing reindexing) {
+            super(Response.Status.OK);
+                object.setBool("enabled", reindexing.enabled());
+                setStatus(object.setObject("status"), reindexing.common());
+
+                Cursor clustersObject = object.setObject("clusters");
+                reindexing.clusters().entrySet().stream().sorted(comparingByKey())
+                          .forEach(cluster -> {
+                              Cursor clusterObject = clustersObject.setObject(cluster.getKey());
+                              setStatus(clusterObject.setObject("status"), cluster.getValue().common());
+
+                              Cursor pendingObject = clusterObject.setObject("pending");
+                              cluster.getValue().pending().entrySet().stream().sorted(comparingByKey())
+                                     .forEach(pending -> pendingObject.setLong(pending.getKey(), pending.getValue()));
+
+                              Cursor readyObject = clusterObject.setObject("ready");
+                              cluster.getValue().ready().entrySet().stream().sorted(comparingByKey())
+                                     .forEach(ready -> setStatus(readyObject.setObject(ready.getKey()), ready.getValue()));
+                          });
+        }
+
+        private static void setStatus(Cursor object, ApplicationReindexing.Status status) {
+            object.setLong("readyMillis", status.ready().toEpochMilli());
+        }
+    }
+
 }

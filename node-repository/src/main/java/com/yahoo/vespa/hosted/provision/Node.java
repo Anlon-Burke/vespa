@@ -55,7 +55,7 @@ public final class Node implements Nodelike {
     /** Creates a node builder in the initial state (reserved) */
     public static Node.Builder createDockerNode(Set<String> ipAddresses, String hostname, String parentHostname, NodeResources resources, NodeType type) {
         return new Node.Builder("fake-" + hostname, hostname, new Flavor(resources), State.reserved, type)
-                .ipConfig(ipAddresses, Set.of())
+                .ipConfig(IP.Config.ofEmptyPool(ipAddresses))
                 .parentHostname(parentHostname);
     }
 
@@ -94,7 +94,7 @@ public final class Node implements Nodelike {
             requireNonEmpty(ipConfig.primary(), "Active node " + hostname + " must have at least one valid IP address");
 
         if (parentHostname.isPresent()) {
-            if (!ipConfig.pool().isEmpty()) throw new IllegalArgumentException("A child node cannot have an IP address pool");
+            if (!ipConfig.pool().getIpSet().isEmpty()) throw new IllegalArgumentException("A child node cannot have an IP address pool");
             if (modelName.isPresent()) throw new IllegalArgumentException("A child node cannot have model name set");
             if (switchHostname.isPresent()) throw new IllegalArgumentException("A child node cannot have switch hostname set");
         }
@@ -290,6 +290,11 @@ public final class Node implements Nodelike {
     /** Returns a copy of this with any history record saying it has been detected down removed */
     public Node up() {
         return with(history.without(History.Event.Type.down));
+    }
+
+    /** Returns whether this node has a record of being down */
+    public boolean isDown() {
+        return history().event(History.Event.Type.down).isPresent();
     }
 
     /** Returns a copy of this with allocation set as specified. <code>node.state</code> is *not* changed. */
@@ -568,8 +573,8 @@ public final class Node implements Nodelike {
             return this;
         }
 
-        public Builder ipConfig(Set<String> primary, Set<String> pool) {
-            this.ipConfig = new IP.Config(primary, pool);
+        public Builder ipConfigWithEmptyPool(Set<String> primary) {
+            this.ipConfig = IP.Config.ofEmptyPool(primary);
             return this;
         }
 

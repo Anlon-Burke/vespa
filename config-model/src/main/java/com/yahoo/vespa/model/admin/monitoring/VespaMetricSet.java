@@ -215,6 +215,11 @@ public class VespaMetricSet {
         addMetric(metrics, "jdisc.http.jetty.threadpool.thread.total", List.of("sum", "count", "min", "max"));
         addMetric(metrics, "jdisc.http.jetty.threadpool.queue.size", List.of("sum", "count", "min", "max"));
 
+        addMetric(metrics, "jdisc.http.filtering.request.handled", List.of("rate"));
+        addMetric(metrics, "jdisc.http.filtering.request.unhandled", List.of("rate"));
+        addMetric(metrics, "jdisc.http.filtering.response.handled", List.of("rate"));
+        addMetric(metrics, "jdisc.http.filtering.response.unhandled", List.of("rate"));
+
         return metrics;
     }
 
@@ -233,6 +238,8 @@ public class VespaMetricSet {
         // TODO(hakonhall): Update this name once persistent "count" metrics has been implemented.
         // DO NOT RELY ON THIS METRIC YET.
         metrics.add(new Metric("cluster-controller.node-event.count"));
+
+        metrics.add(new Metric("cluster-controller.reindexing.progress.last"));
 
         return metrics;
     }

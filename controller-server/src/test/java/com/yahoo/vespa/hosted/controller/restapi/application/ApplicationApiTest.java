@@ -116,7 +116,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
 
     private static final ApplicationPackage applicationPackageDefault = new ApplicationPackageBuilder()
             .instances("default")
-            .environment(Environment.prod)
             .globalServiceId("foo")
             .region("us-central-1")
             .region("us-east-3")
@@ -126,7 +125,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
 
     private static final ApplicationPackage applicationPackageInstance1 = new ApplicationPackageBuilder()
             .instances("instance1")
-            .environment(Environment.prod)
             .globalServiceId("foo")
             .region("us-central-1")
             .region("us-east-3")
@@ -332,7 +330,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
                 .instances("instance1")
                 .globalServiceId("foo")
-                .environment(Environment.prod)
                 .region("us-west-1")
                 .region("us-east-3")
                 .allow(ValidationId.globalEndpointChange)
@@ -580,6 +577,39 @@ public class ApplicationApiTest extends ControllerContainerTest {
                                       .userIdentity(USER_ID),
                               "{\"message\":\"Triggered production-us-west-1 for tenant1.application1.instance1\"}");
 
+        // POST a 'reindex application' command
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/reindex", POST)
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Requested reindexing of tenant1.application1.instance1 in prod.us-central-1\"}");
+
+        // POST a 'reindex application' command with cluster filter
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/reindex", POST)
+                                      .properties(Map.of("clusterId", "boo,moo"))
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Requested reindexing of tenant1.application1.instance1 in prod.us-central-1, on clusters boo, moo\"}");
+
+        // POST a 'reindex application' command with cluster and document type filters
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/reindex", POST)
+                                      .properties(Map.of("clusterId", "boo,moo",
+                                                         "documentType", "foo,boo"))
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Requested reindexing of tenant1.application1.instance1 in prod.us-central-1, on clusters boo, moo, for types foo, boo\"}");
+
+        // POST to enable reindexing
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/reindexing", POST)
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Enabled reindexing of tenant1.application1.instance1 in prod.us-central-1\"}");
+
+        // DELETE to disable reindexing
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/reindexing", DELETE)
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Disabled reindexing of tenant1.application1.instance1 in prod.us-central-1\"}");
+
+        // GET to get reindexing status
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/reindexing", GET)
+                                      .userIdentity(USER_ID),
+                              "{\"enabled\":true,\"status\":{\"readyAtMillis\":123},\"clusters\":[{\"name\":\"cluster\",\"status\":{\"readyAtMillis\":234},\"pending\":[{\"type\":\"type\",\"requiredGeneration\":100}],\"ready\":[{\"type\":\"type\",\"readyAtMillis\":345}]}]}");
+
         // POST a 'restart application' command
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/environment/prod/region/us-central-1/instance/instance1/restart", POST)
                                       .userIdentity(USER_ID),
@@ -676,7 +706,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // Second attempt has a service under a different domain than the tenant of the application, and fails.
         ApplicationPackage packageWithServiceForWrongDomain = new ApplicationPackageBuilder()
                 .instances("instance1")
-                .environment(Environment.prod)
                 .athenzIdentity(com.yahoo.config.provision.AthenzDomain.from(ATHENZ_TENANT_DOMAIN_2.getName()), AthenzService.from("service"))
                 .region("us-west-1")
                 .build();
@@ -690,7 +719,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
         ApplicationPackage packageWithService = new ApplicationPackageBuilder()
                 .instances("instance1")
                 .globalServiceId("foo")
-                .environment(Environment.prod)
                 .athenzIdentity(com.yahoo.config.provision.AthenzDomain.from(ATHENZ_TENANT_DOMAIN.getName()), AthenzService.from("service"))
                 .region("us-central-1")
                 .parallel("us-west-1", "us-east-3")
@@ -737,7 +765,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // Sixth attempt has a multi-instance deployment spec, and is accepted.
         ApplicationPackage multiInstanceSpec = new ApplicationPackageBuilder()
                 .instances("instance1,instance2")
-                .environment(Environment.prod)
                 .region("us-central-1")
                 .parallel("us-west-1", "us-east-3")
                 .endpoint("default", "foo", "us-central-1", "us-west-1", "us-east-3")
@@ -1305,7 +1332,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
                 .upgradePolicy("default")
                 .athenzIdentity(com.yahoo.config.provision.AthenzDomain.from("another.domain"), com.yahoo.config.provision.AthenzService.from("service"))
-                .environment(Environment.prod)
                 .region("us-west-1")
                 .build();
         createAthenzDomainWithAdmin(ATHENZ_TENANT_DOMAIN, USER_ID);
@@ -1327,7 +1353,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
         applicationPackage = new ApplicationPackageBuilder()
                 .upgradePolicy("default")
                 .athenzIdentity(com.yahoo.config.provision.AthenzDomain.from("domain1"), com.yahoo.config.provision.AthenzService.from("service"))
-                .environment(Environment.prod)
                 .region("us-west-1")
                 .build();
 
@@ -1460,7 +1485,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
                 .athenzIdentity(com.yahoo.config.provision.AthenzDomain.from("domain"), AthenzService.from("service"))
                 .compileVersion(RoutingController.DIRECT_ROUTING_MIN_VERSION)
-                .environment(Environment.prod)
                 .instances("instance1")
                 .region(zone.region().value())
                 .build();

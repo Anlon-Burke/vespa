@@ -120,6 +120,20 @@ private:
     std::unique_ptr<Executor::Task> _task;
 };
 
+/**
+ * Wraps the original feed token so that it will be delivered
+ * when the derived operation is completed.
+ */
+class DaisyChainedFeedToken : public feedtoken::ITransport {
+public:
+    DaisyChainedFeedToken(FeedToken token) : _token(std::move(token)) {}
+    void send(ResultUP, bool ) override {
+        _token.reset();
+    }
+private:
+    FeedToken _token;
+};
+
 }  // namespace
 
 void
@@ -206,9 +220,8 @@ FeedHandler::createNonExistingDocument(FeedToken token, const UpdateOperation &o
     if (token) {
         token->setResult(make_unique<UpdateResult>(putOp.getTimestamp()), true);
     }
-    TransportLatch latch(1);
-    _activeFeedView->handlePut(feedtoken::make(latch), putOp);
-    latch.await();
+
+    _activeFeedView->handlePut(feedtoken::make(std::make_unique<DaisyChainedFeedToken>(std::move(token))), putOp);
 }
 
 
@@ -296,6 +309,12 @@ FeedHandler::performEof()
     assert(_writeService.master().isCurrentThread());
     _writeService.sync();
     LOG(debug, "Visiting done for transaction log domain '%s', eof received", _tlsMgr.getDomainName().c_str());
+    // Replay must be complete
+    if (_replay_end_serial_num != _serialNum) {
+        LOG(warning, "Expected replay end serial number %" PRIu64 ", got serial number %" PRIu64,
+            _replay_end_serial_num, _serialNum);
+        assert(_replay_end_serial_num == _serialNum);
+    }
     _owner.onTransactionLogReplayDone();
     _tlsMgr.replayDone();
     changeToNormalFeedState();
@@ -399,6 +418,7 @@ FeedHandler::FeedHandler(IThreadingService &writeService,
       _tlsReplayProgress(),
       _serialNum(0),
       _prunedSerialNum(0),
+      _replay_end_serial_num(0u),
       _prepare_serial_num(0u),
       _numOperationsPendingCommit(0),
       _numOperationsCompleted(0),
@@ -422,13 +442,14 @@ FeedHandler::~FeedHandler() = default;
 void
 FeedHandler::init(SerialNum oldestConfigSerial)
 {
-    _tlsMgr.init(oldestConfigSerial, _prunedSerialNum, _serialNum);
+    _tlsMgr.init(oldestConfigSerial, _prunedSerialNum, _replay_end_serial_num);
+    _serialNum = _prunedSerialNum;
     if (_tlsWriter == nullptr) {
         _tlsMgrWriter = std::make_unique<TlsMgrWriter>(_tlsMgr, _tlsWriterfactory);
         _tlsWriter = _tlsMgrWriter.get();
     }
     _allowSync = true;
-    syncTls(_serialNum);
+    syncTls(_replay_end_serial_num);
 }
 
 
@@ -451,18 +472,18 @@ FeedHandler::replayTransactionLog(SerialNum flushedIndexMgrSerial, SerialNum flu
     assert(_activeFeedView);
     assert(_bucketDBHandler);
     auto state = make_shared<ReplayTransactionLogState>
-                          (getDocTypeName(), _activeFeedView, *_bucketDBHandler, _replayConfig, config_store);
+                          (getDocTypeName(), _activeFeedView, *_bucketDBHandler, _replayConfig, config_store, *this);
     changeFeedState(state);
     // Resurrected attribute vector might cause oldestFlushedSerial to
     // be lower than _prunedSerialNum, so don't warn for now.
     (void) oldestFlushedSerial;
-    assert(_serialNum >= newestFlushedSerial);
+    assert(_replay_end_serial_num >= newestFlushedSerial);
 
     TransactionLogManager::prepareReplay(_tlsMgr.getClient(), _docTypeName.getName(),
                                          flushedIndexMgrSerial, flushedSummaryMgrSerial, config_store);
 
-    _tlsReplayProgress = _tlsMgr.make_replay_progress(_prunedSerialNum, _serialNum);
-    _tlsMgr.startReplay(_prunedSerialNum, _serialNum, *this);
+    _tlsReplayProgress = _tlsMgr.make_replay_progress(_serialNum, _replay_end_serial_num);
+    _tlsMgr.startReplay(_serialNum, _replay_end_serial_num, *this);
 }
 
 void
@@ -531,7 +552,7 @@ FeedHandler::initiateCommit() {
 void
 FeedHandler::appendOperation(const FeedOperation &op, TlsWriter::DoneCallback onDone) {
     if (!op.getSerialNum()) {
-        const_cast<FeedOperation &>(op).setSerialNum(incSerialNum());
+        const_cast<FeedOperation &>(op).setSerialNum(inc_serial_num());
     }
     _tlsWriter->appendOperation(op, std::move(onDone));
     if (++_numOperationsPendingCommit == 1) {

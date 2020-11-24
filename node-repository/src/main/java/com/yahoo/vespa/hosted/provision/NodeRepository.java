@@ -165,7 +165,7 @@ public class NodeRepository extends AbstractComponent {
         this.osVersions = new OsVersions(this);
         this.infrastructureVersions = new InfrastructureVersions(db);
         this.firmwareChecks = new FirmwareChecks(db, clock);
-        this.containerImages = new ContainerImages(db, containerImage, flagSource);
+        this.containerImages = new ContainerImages(db, containerImage);
         this.jobControl = new JobControl(new JobControlFlags(db, flagSource));
         this.applications = new Applications(db);
         this.spareCount = spareCount;
@@ -385,6 +385,18 @@ public class NodeRepository extends AbstractComponent {
         return List.of(getNodeAcl(node, candidates));
     }
 
+    /**
+     * Returns whether the zone managed by this node repository seems to be working.
+     * If too many nodes are not responding, there is probably some zone-wide issue
+     * and we should probably refrain from making changes to it.
+     */
+    public boolean isWorking() {
+        NodeList activeNodes = list(State.active);
+        if (activeNodes.size() <= 5) return true; // Not enough data to decide
+        NodeList downNodes = activeNodes.down();
+        return ! ( (double)downNodes.size() / (double)activeNodes.size() > 0.2 );
+    }
+
     // ----------------- Node lifecycle -----------------------------------------------------------
 
     /** Adds a list of newly created docker container nodes to the node repository as <i>reserved</i> nodes */
@@ -448,7 +460,7 @@ public class NodeRepository extends AbstractComponent {
                     .map(node -> {
                         if (node.state() != State.provisioned && node.state() != State.dirty)
                             illegal("Can not set " + node + " ready. It is not provisioned or dirty.");
-                        if (node.type() == NodeType.host && node.ipConfig().pool().isEmpty())
+                        if (node.type() == NodeType.host && node.ipConfig().pool().getIpSet().isEmpty())
                             illegal("Can not set host " + node + " ready. Its IP address pool is empty.");
                         return node.withWantToRetire(false, false, Agent.system, clock.instant());
                     })
@@ -491,18 +503,25 @@ public class NodeRepository extends AbstractComponent {
         }
     }
 
-    /** Deactivate nodes owned by application guarded by given lock */
-    public void deactivate(ApplicationTransaction transaction) {
-        deactivate(db.readNodes(transaction.application(), State.reserved, State.active), transaction);
-        applications.remove(transaction);
-    }
-
     /**
      * Deactivates these nodes in a transaction and returns the nodes in the new state which will hold if the
      * transaction commits.
      */
     public List<Node> deactivate(List<Node> nodes, ApplicationTransaction transaction) {
         return db.writeTo(State.inactive, nodes, Agent.application, Optional.empty(), transaction.nested());
+    }
+
+    /** Removes this application: Active nodes are deactivated while all non-active nodes are set dirty. */
+    public void remove(ApplicationTransaction transaction) {
+        NodeList applicationNodes = list(transaction.application());
+        NodeList activeNodes = applicationNodes.state(State.active);
+        deactivate(activeNodes.asList(), transaction);
+        db.writeTo(State.dirty,
+                   applicationNodes.except(activeNodes.asSet()).asList(),
+                   Agent.system,
+                   Optional.of("Application is removed"),
+                   transaction.nested());
+        applications.remove(transaction);
     }
 
     /** Move nodes to the dirty state */
@@ -519,6 +538,7 @@ public class NodeRepository extends AbstractComponent {
     public Node setDirty(Node node, Agent agent, String reason) {
         return db.writeTo(State.dirty, node, agent, Optional.of(reason));
     }
+
 
     public List<Node> dirtyRecursively(String hostname, Agent agent, String reason) {
         Node nodeToDirty = getNode(hostname).orElseThrow(() ->
@@ -768,7 +788,7 @@ public class NodeRepository extends AbstractComponent {
     /**
      * Increases the restart generation of the active nodes matching the filter.
      *
-     * @return the nodes in their new state.
+     * @return the nodes in their new state
      */
     public List<Node> restart(NodeFilter filter) {
         return performOn(StateFilter.from(State.active, filter),
@@ -778,7 +798,8 @@ public class NodeRepository extends AbstractComponent {
 
     /**
      * Increases the reboot generation of the nodes matching the filter.
-     * @return the nodes in their new state.
+     *
+     * @return the nodes in their new state
      */
     public List<Node> reboot(NodeFilter filter) {
         return performOn(filter, (node, lock) -> write(node.withReboot(node.status().reboot().withIncreasedWanted()), lock));
@@ -787,7 +808,7 @@ public class NodeRepository extends AbstractComponent {
     /**
      * Set target OS version of all nodes matching given filter.
      *
-     * @return the nodes in their new state.
+     * @return the nodes in their new state
      */
     public List<Node> upgradeOs(NodeFilter filter, Optional<Version> version) {
         return performOn(filter, (node, lock) -> {
@@ -805,7 +826,7 @@ public class NodeRepository extends AbstractComponent {
      * Writes this node after it has changed some internal state but NOT changed its state field.
      * This does NOT lock the node repository implicitly, but callers are expected to already hold the lock.
      *
-     * @param lock Already acquired lock
+     * @param lock already acquired lock
      * @return the written node for convenience
      */
     public Node write(Node node, Mutex lock) { return write(List.of(node), lock).get(0); }

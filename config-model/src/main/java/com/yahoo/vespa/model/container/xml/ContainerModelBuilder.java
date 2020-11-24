@@ -85,6 +85,7 @@ import org.w3c.dom.Node;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -318,8 +319,14 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         if (isHostedTenantApplication(context)) {
             addHostedImplicitHttpIfNotPresent(cluster);
             addHostedImplicitAccessControlIfNotPresent(deployState, cluster);
+            addDefaultConnectorHostedFilterBinding(cluster);
             addAdditionalHostedConnector(deployState, cluster, context);
         }
+    }
+
+    private void addDefaultConnectorHostedFilterBinding(ApplicationContainerCluster cluster) {
+        cluster.getHttp().getAccessControl()
+                .ifPresent(accessControl -> accessControl.configureDefaultHostedConnector(cluster.getHttp()));                                 ;
     }
 
     private void addAdditionalHostedConnector(DeployState deployState, ApplicationContainerCluster cluster, ConfigModelContext context) {
@@ -327,6 +334,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         String serverName = server.getComponentId().getName();
 
         // If the deployment contains certificate/private key reference, setup TLS port
+        HostedSslConnectorFactory connectorFactory;
         if (deployState.endpointCertificateSecrets().isPresent()) {
             boolean authorizeClient = deployState.zone().system().isPublic();
             if (authorizeClient && deployState.tlsClientAuthority().isEmpty()) {
@@ -340,13 +348,14 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
                     .map(clientAuth -> clientAuth.equals(AccessControl.ClientAuthentication.need))
                     .orElse(false);
 
-            HostedSslConnectorFactory connectorFactory = authorizeClient
+            connectorFactory = authorizeClient
                     ? HostedSslConnectorFactory.withProvidedCertificateAndTruststore(serverName, endpointCertificateSecrets, deployState.tlsClientAuthority().get())
                     : HostedSslConnectorFactory.withProvidedCertificate(serverName, endpointCertificateSecrets, enforceHandshakeClientAuth);
-            server.addConnector(connectorFactory);
         } else {
-            server.addConnector(HostedSslConnectorFactory.withDefaultCertificateAndTruststore(serverName));
+            connectorFactory = HostedSslConnectorFactory.withDefaultCertificateAndTruststore(serverName);
         }
+        cluster.getHttp().getAccessControl().ifPresent(accessControl -> accessControl.configureHostedConnector(connectorFactory));
+        server.addConnector(connectorFactory);
     }
 
     private static boolean isHostedTenantApplication(ConfigModelContext context) {
@@ -359,10 +368,15 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         if(cluster.getHttp() == null) {
             cluster.setHttp(new Http(new FilterChains(cluster)));
         }
-        if(cluster.getHttp().getHttpServer().isEmpty()) {
-            JettyHttpServer defaultHttpServer = new JettyHttpServer(new ComponentId("DefaultHttpServer"), cluster, cluster.isHostedVespa());
-            cluster.getHttp().setHttpServer(defaultHttpServer);
-            defaultHttpServer.addConnector(new ConnectorFactory("SearchServer", Defaults.getDefaults().vespaWebServicePort()));
+        JettyHttpServer httpServer = cluster.getHttp().getHttpServer().orElse(null);
+        if (httpServer == null) {
+            httpServer = new JettyHttpServer(new ComponentId("DefaultHttpServer"), cluster, cluster.isHostedVespa());
+            cluster.getHttp().setHttpServer(httpServer);
+        }
+        int defaultPort = Defaults.getDefaults().vespaWebServicePort();
+        boolean defaultConnectorPresent = httpServer.getConnectorFactories().stream().anyMatch(connector -> connector.getListenPort() == defaultPort);
+        if (!defaultConnectorPresent) {
+            httpServer.addConnector(new ConnectorFactory.Builder("SearchServer", defaultPort).build());
         }
     }
 
@@ -798,8 +812,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
                 new SearchHandler(
                         cluster,
                         serverBindings(searchElement, SearchHandler.DEFAULT_BINDING),
-                        ContainerThreadpool.UserOptions.fromXml(searchElement).orElse(null),
-                        deployState));
+                        ContainerThreadpool.UserOptions.fromXml(searchElement).orElse(null)));
     }
 
     private void addGUIHandler(ApplicationContainerCluster cluster) {

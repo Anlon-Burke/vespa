@@ -30,6 +30,7 @@ import com.yahoo.path.Path;
 import com.yahoo.transaction.NestedTransaction;
 import com.yahoo.transaction.Transaction;
 import com.yahoo.vespa.config.server.application.Application;
+import com.yahoo.vespa.config.server.application.ApplicationReindexing;
 import com.yahoo.vespa.config.server.application.ApplicationSet;
 import com.yahoo.vespa.config.server.application.CompressedApplicationInputStream;
 import com.yahoo.vespa.config.server.application.ConfigConvergenceChecker;
@@ -93,6 +94,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.UnaryOperator;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -319,10 +321,11 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         return deploy(applicationPackage, prepareParams, DeployHandlerLogger.forPrepareParams(prepareParams));
     }
 
-    public PrepareResult deploy(File applicationPackage, PrepareParams prepareParams, DeployHandlerLogger logger) {
+    private PrepareResult deploy(File applicationPackage, PrepareParams prepareParams, DeployHandlerLogger logger) {
         ApplicationId applicationId = prepareParams.getApplicationId();
         long sessionId = createSession(applicationId, prepareParams.getTimeoutBudget(), applicationPackage);
         Deployment deployment = prepare(sessionId, prepareParams, logger);
+
         deployment.activate();
 
         return new PrepareResult(sessionId, deployment.configChangeActions(), logger);
@@ -484,11 +487,9 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
             Optional<Long> activeSession = tenantApplications.activeSessionOf(applicationId);
             if (activeSession.isEmpty()) return false;
 
-            // Deleting an application is done by deleting the remote session, other config
-            // servers will pick this up and clean up through the watcher in this class
             try {
                 Session session = getRemoteSession(tenant, activeSession.get());
-                tenant.getSessionRepository().delete(session);
+                transaction.add(tenant.getSessionRepository().createSetStatusTransaction(session, Session.Status.DELETE));
             } catch (NotFoundException e) {
                 log.log(Level.INFO, TenantRepository.logPre(applicationId) + "Active session exists, but has not been deleted properly. Trying to cleanup");
             }
@@ -596,7 +597,7 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         return tenantRepository.getTenant(applicationId.tenant());
     }
 
-    private Application getApplication(ApplicationId applicationId) {
+    Application getApplication(ApplicationId applicationId) {
         return getApplication(applicationId, Optional.empty());
     }
 
@@ -901,6 +902,15 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         return getLocalSession(tenant, sessionId).getMetaData();
     }
 
+    public ApplicationReindexing getReindexing(ApplicationId id) {
+        return getTenant(id).getApplicationRepo().database().readReindexingStatus(id)
+                .orElse(ApplicationReindexing.ready(clock.instant()));
+    }
+
+    public void modifyReindexing(ApplicationId id, UnaryOperator<ApplicationReindexing> modifications) {
+        getTenant(id).getApplicationRepo().database().modifyReindexing(id, ApplicationReindexing.ready(clock.instant()), modifications);
+    }
+
     public ConfigserverConfig configserverConfig() {
         return configserverConfig;
     }
@@ -999,21 +1009,19 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         RestartActions restartActions = actions.getRestartActions();
         if ( ! restartActions.isEmpty()) {
             logger.log(Level.WARNING, "Change(s) between active and new application that require restart:\n" +
-                    restartActions.format());
+                                      restartActions.format());
         }
         RefeedActions refeedActions = actions.getRefeedActions();
         if ( ! refeedActions.isEmpty()) {
-            boolean allAllowed = refeedActions.getEntries().stream().allMatch(RefeedActions.Entry::allowed);
-            logger.log(allAllowed ? Level.INFO : Level.WARNING,
+            logger.log(Level.WARNING,
                        "Change(s) between active and new application that may require re-feed:\n" +
-                               refeedActions.format());
+                       refeedActions.format());
         }
         ReindexActions reindexActions = actions.getReindexActions();
         if ( ! reindexActions.isEmpty()) {
-            boolean allAllowed = reindexActions.getEntries().stream().allMatch(ReindexActions.Entry::allowed);
-            logger.log(allAllowed ? Level.INFO : Level.WARNING,
-                    "Change(s) between active and new application that may require re-index:\n" +
-                            reindexActions.format());
+            logger.log(Level.WARNING,
+                       "Change(s) between active and new application that may require re-index:\n" +
+                       reindexActions.format());
         }
     }
 
@@ -1023,7 +1031,8 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         // most applications under hosted-vespa are not known to the model and it's OK for a user to get
         // logs for any host if they are authorized for the hosted-vespa tenant.
         if (hostname.isPresent() && HOSTED_VESPA_TENANT.equals(applicationId.tenant())) {
-            return "http://" + hostname.get() + ":8080/logs";
+            int port = List.of("zone-config-servers", "controller").contains(applicationId.application().value()) ? 19071 : 8080;
+            return "http://" + hostname.get() + ":" + port + "/logs";
         }
 
         Application application = getApplication(applicationId);
@@ -1052,6 +1061,8 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
                         Environment.from(configserverConfig.environment()),
                         RegionName.from(configserverConfig.region()));
     }
+
+    public Clock clock() { return clock; }
 
     /** Emits as a metric the time in millis spent while holding this timer, with deployment ID as dimensions. */
     public ActionTimer timerFor(ApplicationId id, String metricName) {

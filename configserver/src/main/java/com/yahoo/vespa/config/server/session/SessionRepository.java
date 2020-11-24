@@ -299,6 +299,8 @@ public class SessionRepository {
      * @param sessionId session id for the new session
      */
     public synchronized void sessionAdded(long sessionId) {
+        if (hasStatusDeleted(sessionId)) return;
+
         log.log(Level.FINE, () -> "Adding remote session " + sessionId);
         Session session = createRemoteSession(sessionId);
         if (session.getStatus() == Session.Status.NEW) {
@@ -308,13 +310,17 @@ public class SessionRepository {
         createLocalSessionFromDistributedApplicationPackage(sessionId);
     }
 
+    private boolean hasStatusDeleted(long sessionId) {
+        SessionZooKeeperClient sessionZKClient = createSessionZooKeeperClient(sessionId);
+        RemoteSession session = new RemoteSession(tenantName, sessionId, sessionZKClient);
+        return session.getStatus() == Session.Status.DELETE;
+    }
+
     void activate(RemoteSession session) {
         long sessionId = session.getSessionId();
         Curator.CompletionWaiter waiter = createSessionZooKeeperClient(sessionId).getActiveWaiter();
-        log.log(Level.FINE, () -> session.logPre() + "Getting session from repo: " + session);
-        ApplicationSet app = ensureApplicationLoaded(session);
-        log.log(Level.FINE, () -> session.logPre() + "Reloading config for " + sessionId);
-        applicationRepo.reloadConfig(app);
+        log.log(Level.FINE, () -> session.logPre() + "Activating " + sessionId);
+        applicationRepo.activateApplication(ensureApplicationLoaded(session), sessionId);
         log.log(Level.FINE, () -> session.logPre() + "Notifying " + waiter);
         notifyCompletion(waiter, session);
         log.log(Level.INFO, session.logPre() + "Session activated: " + sessionId);
@@ -322,14 +328,13 @@ public class SessionRepository {
 
     public void delete(Session remoteSession) {
         long sessionId = remoteSession.getSessionId();
-        // TODO: Change log level to FINE when debugging is finished
-        log.log(Level.INFO, () -> remoteSession.logPre() + "Deactivating and deleting remote session " + sessionId);
+        log.log(Level.FINE, () -> remoteSession.logPre() + "Deactivating and deleting remote session " + sessionId);
+        createSetStatusTransaction(remoteSession, Session.Status.DELETE).commit();
         deleteRemoteSessionFromZooKeeper(remoteSession);
         remoteSessionCache.remove(sessionId);
         LocalSession localSession = getLocalSession(sessionId);
         if (localSession != null) {
-            // TODO: Change log level to FINE when debugging is finished
-            log.log(Level.INFO, () -> localSession.logPre() + "Deleting local session " + sessionId);
+            log.log(Level.FINE, () -> localSession.logPre() + "Deleting local session " + sessionId);
             deleteLocalSession(localSession);
         }
     }
@@ -345,7 +350,7 @@ public class SessionRepository {
         for (ApplicationId applicationId : applicationRepo.activeApplications()) {
             if (applicationRepo.requireActiveSessionOf(applicationId) == session.getSessionId()) {
                 log.log(Level.FINE, () -> "Found active application for session " + session.getSessionId() + " , loading it");
-                applicationRepo.reloadConfig(ensureApplicationLoaded(session));
+                applicationRepo.activateApplication(ensureApplicationLoaded(session), session.getSessionId());
                 log.log(Level.INFO, session.logPre() + "Application activated successfully: " + applicationId + " (generation " + session.getSessionId() + ")");
                 return;
             }
@@ -564,8 +569,10 @@ public class SessionRepository {
     }
 
     private void copyApp(File sourceDir, File destinationDir) throws IOException {
-        if (destinationDir.exists())
-            throw new RuntimeException("Destination dir " + destinationDir + " already exists");
+        if (destinationDir.exists()) {
+            log.log(Level.INFO, "Destination dir " + destinationDir + " already exists, app has already been copied");
+            return;
+        }
         if (! sourceDir.isDirectory())
             throw new IllegalArgumentException(sourceDir.getAbsolutePath() + " is not a directory");
 
@@ -724,7 +731,7 @@ public class SessionRepository {
         return transaction;
     }
 
-    private Transaction createSetStatusTransaction(Session session, Session.Status status) {
+    public Transaction createSetStatusTransaction(Session session, Session.Status status) {
         return session.sessionZooKeeperClient.createWriteStatusTransaction(status);
     }
 

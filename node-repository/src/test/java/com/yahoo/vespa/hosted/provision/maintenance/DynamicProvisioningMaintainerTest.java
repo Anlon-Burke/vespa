@@ -20,6 +20,7 @@ import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.flags.custom.HostCapacity;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
+import com.yahoo.vespa.hosted.provision.node.Address;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.Allocation;
 import com.yahoo.vespa.hosted.provision.node.Generation;
@@ -66,9 +67,9 @@ public class DynamicProvisioningMaintainerTest {
         assertTrue("No IP addresses assigned",
                    Stream.of(host3, host4, host41).map(node -> node.ipConfig().primary()).allMatch(Set::isEmpty));
 
-        Node host3new = host3.with(host3.ipConfig().with(Set.of("::3:0")));
-        Node host4new = host4.with(host4.ipConfig().with(Set.of("::4:0")));
-        Node host41new = host41.with(host41.ipConfig().with(Set.of("::4:1", "::4:2")));
+        Node host3new = host3.with(host3.ipConfig().withPrimary(Set.of("::3:0")));
+        Node host4new = host4.with(host4.ipConfig().withPrimary(Set.of("::4:0")));
+        Node host41new = host41.with(host41.ipConfig().withPrimary(Set.of("::4:1", "::4:2")));
 
         tester.maintainer.maintain();
         assertEquals(host3new, tester.nodeRepository.getNode("host3").get());
@@ -182,7 +183,7 @@ public class DynamicProvisioningMaintainerTest {
         tester.provisioningTester.activateTenantHosts();
 
         // Allocating nodes to a host does not result in provisioning of additional capacity
-        ApplicationId application = ProvisioningTester.makeApplicationId();
+        ApplicationId application = ProvisioningTester.applicationId();
         tester.provisioningTester.deploy(application,
                                          Capacity.from(new ClusterResources(2, 1, new NodeResources(4, 8, 50, 0.1))));
         assertEquals(2, tester.nodeRepository.list().owner(application).size());
@@ -208,12 +209,12 @@ public class DynamicProvisioningMaintainerTest {
         tester.maintainer.maintain();
 
         assertTrue("No IP addresses written as DNS updates are failing",
-                   provisioning.get().stream().allMatch(host -> host.ipConfig().pool().isEmpty()));
+                   provisioning.get().stream().allMatch(host -> host.ipConfig().pool().getIpSet().isEmpty()));
 
         tester.hostProvisioner.without(Behaviour.failDnsUpdate);
         tester.maintainer.maintain();
         assertTrue("IP addresses written as DNS updates are succeeding",
-                   provisioning.get().stream().noneMatch(host -> host.ipConfig().pool().isEmpty()));
+                   provisioning.get().stream().noneMatch(host -> host.ipConfig().pool().getIpSet().isEmpty()));
     }
 
     private static class DynamicProvisioningTester {
@@ -290,7 +291,7 @@ public class DynamicProvisioningMaintainerTest {
                             Generation.initial(),
                             false));
             Node.Builder builder = Node.create("fake-id-" + hostname, hostname, flavor, state, nodeType)
-                    .ipConfig(state == Node.State.active ? Set.of("::1") : Set.of(), Set.of());
+                    .ipConfigWithEmptyPool(state == Node.State.active ? Set.of("::1") : Set.of());
             parentHostname.ifPresent(builder::parentHostname);
             allocation.ifPresent(builder::allocation);
             return builder.build();
@@ -338,7 +339,7 @@ public class DynamicProvisioningMaintainerTest {
                                               "hostname" + index,
                                               hostFlavor,
                                               Optional.empty(),
-                                              "nodename" + index,
+                                              List.of(new Address("nodename" + index)),
                                               resources,
                                               osVersion));
             }
@@ -382,16 +383,18 @@ public class DynamicProvisioningMaintainerTest {
             if (node.parentHostname().isPresent()) return node;
             int hostIndex = Integer.parseInt(node.hostname().replaceAll("^[a-z]+|-\\d+$", ""));
             Set<String> addresses = Set.of("::" + hostIndex + ":0");
-            Set<String> pool = new HashSet<>();
+            Set<String> ipAddressPool = new HashSet<>();
             if (!behaviours.contains(Behaviour.failDnsUpdate)) {
                 nameResolver.addRecord(node.hostname(), addresses.iterator().next());
                 for (int i = 1; i <= 2; i++) {
                     String ip = "::" + hostIndex + ":" + i;
-                    pool.add(ip);
+                    ipAddressPool.add(ip);
                     nameResolver.addRecord(node.hostname() + "-" + i, ip);
                 }
             }
-            return node.with(node.ipConfig().with(addresses).with(IP.Pool.of(pool)));
+
+            IP.Pool pool = node.ipConfig().pool().withIpAddresses(ipAddressPool);
+            return node.with(node.ipConfig().withPrimary(addresses).withPool(pool));
         }
 
         enum Behaviour {

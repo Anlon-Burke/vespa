@@ -77,6 +77,10 @@ enum PathGroup {
             PathPrefix.api,
             "/billing/v1/tenant/{tenant}/plan/{*}"),
 
+    billingCollection(Matcher.tenant,
+            PathPrefix.api,
+            "/billing/v1/tenant/{tenant}/collection/{*}"),
+
     billingList(Matcher.tenant,
                 PathPrefix.api,
                 "/billing/v1/tenant/{tenant}/billing/{*}"),
@@ -149,6 +153,13 @@ enum PathGroup {
                       "/application/v4/tenant/{tenant}/application/{application}/environment/prod/region/{region}/instance/{ignored}/restart",
                       "/application/v4/tenant/{tenant}/application/{application}/environment/test/region/{region}/instance/{ignored}/restart",
                       "/application/v4/tenant/{tenant}/application/{application}/environment/staging/region/{region}/instance/{ignored}/restart"),
+
+    /** Path used to manipulate reindexing status. */
+    reindexing(Matcher.tenant,
+               Matcher.application,
+               PathPrefix.api,
+               "/application/v4/tenant/{tenant}/application/{application}/instance/{ignored}/environment/{environment}/region/{region}/reindex",
+               "/application/v4/tenant/{tenant}/application/{application}/instance/{ignored}/environment/{environment}/region/{region}/reindexing"),
 
     /** Paths used for development deployments. */
     developmentDeployment(Matcher.tenant,

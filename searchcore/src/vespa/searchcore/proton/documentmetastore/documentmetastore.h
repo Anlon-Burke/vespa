@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "gid_compare.h"
 #include "document_meta_store_adapter.h"
 #include "documentmetastoreattribute.h"
 #include "lid_allocator.h"
@@ -44,8 +43,6 @@ public:
     typedef documentmetastore::IStore::GlobalId GlobalId;
     typedef documentmetastore::IStore::BucketId BucketId;
     typedef documentmetastore::IStore::Timestamp Timestamp;
-    typedef documentmetastore::IGidCompare IGidCompare;
-    typedef documentmetastore::DefaultGidCompare DefaultGidCompare;
 
     // If using proton::DocumentMetaStore directly, the
     // DocumentMetaStoreAttribute functions here are used instead of
@@ -63,7 +60,7 @@ private:
     // Lids are stored as keys in the tree, sorted by their gid
     // counterpart.  The LidGidKeyComparator class maps from lids -> metadata by
     // using the metadata store.
-    typedef vespalib::btree::BTree<DocId, vespalib::btree::BTreeNoLeafData,
+    typedef vespalib::btree::BTree<documentmetastore::GidToLidMapKey, vespalib::btree::BTreeNoLeafData,
                                  vespalib::btree::NoAggregated, const KeyComp &> TreeType;
 
     MetaDataStore       _metaDataStore;
@@ -71,7 +68,6 @@ private:
     Iterator            _gid_to_lid_map_write_itr; // Iterator used for all updates of _gidToLidMap
     SerialNum           _gid_to_lid_map_write_itr_prepare_serial_num;
     documentmetastore::LidAllocator _lidAlloc;
-    IGidCompare::SP     _gidCompare;
     BucketDBOwner::SP   _bucketDB;
     uint32_t            _shrinkLidSpaceBlockers;
     const SubDbType     _subDbType;
@@ -81,7 +77,7 @@ private:
     DocId getFreeLid();
     DocId peekFreeLid();
     VESPA_DLL_LOCAL void ensureSpace(DocId lid);
-    void insert(DocId lid, const RawDocumentMetaData &metaData);
+    void insert(documentmetastore::GidToLidMapKey key, const RawDocumentMetaData &metaData);
 
     const GlobalId & getRawGid(DocId lid) const { return getRawMetaData(lid).getGid(); }
 
@@ -141,8 +137,6 @@ public:
     DocumentMetaStore(BucketDBOwner::SP bucketDB,
                       const vespalib::string & name=getFixedName(),
                       const search::GrowStrategy & grow=search::GrowStrategy(),
-                      const IGidCompare::SP &gidCompare =
-                      IGidCompare::SP(new documentmetastore::DefaultGidCompare),
                       SubDbType subDbType = SubDbType::READY);
     ~DocumentMetaStore();
 
@@ -271,10 +265,10 @@ public:
 
 namespace vespalib::btree {
 
-extern template class BTreeIteratorBase<proton::DocumentMetaStore::DocId, BTreeNoLeafData, NoAggregated, BTreeDefaultTraits::INTERNAL_SLOTS, BTreeDefaultTraits::LEAF_SLOTS, BTreeDefaultTraits::PATH_SIZE>;
+extern template class BTreeIteratorBase<proton::documentmetastore::GidToLidMapKey, BTreeNoLeafData, NoAggregated, BTreeDefaultTraits::INTERNAL_SLOTS, BTreeDefaultTraits::LEAF_SLOTS, BTreeDefaultTraits::PATH_SIZE>;
 
-extern template class BTreeConstIterator<proton::DocumentMetaStore::DocId, BTreeNoLeafData, NoAggregated, const proton::DocumentMetaStore::KeyComp &>;
+extern template class BTreeConstIterator<proton::documentmetastore::GidToLidMapKey, BTreeNoLeafData, NoAggregated, const proton::DocumentMetaStore::KeyComp &>;
 
-extern template class BTreeIterator<proton::DocumentMetaStore::DocId, BTreeNoLeafData, NoAggregated, const proton::DocumentMetaStore::KeyComp &>;
+extern template class BTreeIterator<proton::documentmetastore::GidToLidMapKey, BTreeNoLeafData, NoAggregated, const proton::DocumentMetaStore::KeyComp &>;
 
 }

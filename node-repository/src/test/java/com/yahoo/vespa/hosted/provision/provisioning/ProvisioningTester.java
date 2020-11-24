@@ -242,8 +242,8 @@ public class ProvisioningTester {
     public void deactivate(ApplicationId applicationId) {
         try (var lock = nodeRepository.lock(applicationId)) {
             NestedTransaction deactivateTransaction = new NestedTransaction();
-            nodeRepository.deactivate(new ApplicationTransaction(new ProvisionLock(applicationId, lock),
-                                                                 deactivateTransaction));
+            nodeRepository.remove(new ApplicationTransaction(new ProvisionLock(applicationId, lock),
+                                                             deactivateTransaction));
             deactivateTransaction.commit();
         }
     }
@@ -342,14 +342,14 @@ public class ProvisioningTester {
         return removed;
     }
 
-    public static ApplicationId makeApplicationId() {
+    public static ApplicationId applicationId() {
         return ApplicationId.from(
                 TenantName.from(UUID.randomUUID().toString()),
                 ApplicationName.from(UUID.randomUUID().toString()),
                 InstanceName.from(UUID.randomUUID().toString()));
     }
 
-    public static ApplicationId makeApplicationId(String applicationName) {
+    public static ApplicationId applicationId(String applicationName) {
         return ApplicationId.from("tenant", applicationName, "default");
     }
 
@@ -527,7 +527,7 @@ public class ProvisioningTester {
     }
 
     public void activateTenantHosts() {
-        ApplicationId applicationId = makeApplicationId();
+        ApplicationId applicationId = applicationId();
         List<HostSpec> list = prepare(applicationId,
                                       ClusterSpec.request(ClusterSpec.Type.container, ClusterSpec.Id.from("node-admin")).vespaVersion("6.42").build(),
                                       Capacity.fromRequiredNodeType(NodeType.host));

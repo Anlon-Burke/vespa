@@ -2,18 +2,25 @@ package com.yahoo.vespa.hosted.controller.restapi.billing;
 
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.TenantName;
+import com.yahoo.vespa.hosted.controller.ControllerTester;
+import com.yahoo.vespa.hosted.controller.api.integration.billing.CollectionMethod;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.Invoice;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.MockBillingController;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.PlanId;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
 import com.yahoo.vespa.hosted.controller.restapi.ContainerTester;
 import com.yahoo.vespa.hosted.controller.restapi.ControllerContainerCloudTest;
+import com.yahoo.vespa.hosted.controller.security.Auth0Credentials;
+import com.yahoo.vespa.hosted.controller.security.CloudTenantSpec;
+import com.yahoo.vespa.hosted.controller.security.Credentials;
+import com.yahoo.vespa.hosted.controller.security.TenantSpec;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
 import java.math.BigDecimal;
+import java.security.Principal;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -164,13 +171,15 @@ public class BillingApiHandlerTest extends ControllerContainerCloudTest {
 
     @Test
     public void list_all_uninvoiced_items() {
+        tester.controller().tenants().create(new CloudTenantSpec(tenant, ""), new Auth0Credentials(() -> "foo", Set.of(Role.hostedOperator())));
+        tester.controller().tenants().create(new CloudTenantSpec(tenant2, ""), new Auth0Credentials(() -> "foo", Set.of(Role.hostedOperator())));
+
         var invoice = createInvoice();
         billingController.setPlan(tenant, PlanId.from("some-plan"), true);
         billingController.setPlan(tenant2, PlanId.from("some-plan"), true);
         billingController.addInvoice(tenant, invoice, false);
         billingController.addLineItem(tenant, "support", new BigDecimal("42"), "Smith");
         billingController.addInvoice(tenant2, invoice, false);
-
 
         var request = request("/billing/v1/billing?until=2020-05-28").roles(financeAdmin);
 
@@ -186,6 +195,27 @@ public class BillingApiHandlerTest extends ControllerContainerCloudTest {
         assertEquals("new-plan", billingController.getPlan(tenant).value());
     }
 
+    @Test
+    public void patch_collection_method() {
+        test_patch_collection_with_field_name("collectionMethod");
+        test_patch_collection_with_field_name("collection");
+    }
+
+    private void test_patch_collection_with_field_name(String fieldName) {
+        var planRequest = request("/billing/v1/tenant/tenant1/collection", PATCH)
+                .data("{\"" + fieldName + "\": \"invoice\"}")
+                .roles(financeAdmin);
+        tester.assertResponse(planRequest, "Collection method updated to INVOICE");
+        assertEquals(CollectionMethod.INVOICE, billingController.getCollectionMethod(tenant));
+
+        // Test that not event tenant administrators can do this
+        planRequest = request("/billing/v1/tenant/tenant1/collection", PATCH)
+                .data("{\"collectionMethod\": \"epay\"}")
+                .roles(tenantRole);
+        tester.assertResponse(planRequest, accessDenied, 403);
+        assertEquals(CollectionMethod.INVOICE, billingController.getCollectionMethod(tenant));
+    }
+
     private Invoice createInvoice() {
         var start = LocalDate.of(2020, 5, 23).atStartOfDay(ZoneId.systemDefault());
         var end = start.plusDays(5);
@@ -199,13 +229,12 @@ public class BillingApiHandlerTest extends ControllerContainerCloudTest {
         );
     }
 
-
     private Invoice.LineItem createLineItem(ZonedDateTime addedAt) {
         return new Invoice.LineItem(
                 "some-id",
                 "description",
                 new BigDecimal("123.00"),
-                "plan",
+                "some-plan",
                 "Smith",
                 addedAt
         );

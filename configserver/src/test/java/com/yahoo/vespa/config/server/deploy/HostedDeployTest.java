@@ -3,7 +3,7 @@ package com.yahoo.vespa.config.server.deploy;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.Version;
-import com.yahoo.config.application.api.ValidationOverrides;
+import com.yahoo.config.application.api.ValidationId;
 import com.yahoo.config.model.api.ConfigChangeAction;
 import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.api.ModelCreateResult;
@@ -49,6 +49,8 @@ import static com.yahoo.vespa.config.server.deploy.DeployTester.createFailingMod
 import static com.yahoo.vespa.config.server.deploy.DeployTester.createHostedModelFactory;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -389,7 +391,7 @@ public class HostedDeployTest {
     }
 
     @Test
-    public void testThatConfigChangeActionsAreActedUpon() throws IOException {
+    public void testThatAllowedConfigChangeActionsAreActedUpon() throws IOException {
         List<Host> hosts = List.of(createHost("host1", "6.1.0"),
                                    createHost("host2", "6.1.0"),
                                    createHost("host3", "6.1.0"),
@@ -400,8 +402,8 @@ public class HostedDeployTest {
         ManualClock clock = new ManualClock(Instant.EPOCH);
         List<ModelFactory> modelFactories = List.of(
                 new ConfigChangeActionsModelFactory(Version.fromString("6.1.0"),
-                                                    VespaReindexAction.of(ClusterSpec.Id.from("test"), "reindex", ValidationOverrides.empty,
-                                                                          "reindex please", services, "music", clock.instant()),
+                                                    VespaReindexAction.of(ClusterSpec.Id.from("test"), ValidationId.indexModeChange,
+                                                                          "reindex please", services, "music"),
                                                     new VespaRestartAction(ClusterSpec.Id.from("test"), "change", services)));
 
         DeployTester tester = createTester(hosts, modelFactories, prodZone, clock);

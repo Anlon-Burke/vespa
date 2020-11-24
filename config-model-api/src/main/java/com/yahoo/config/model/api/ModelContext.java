@@ -94,17 +94,11 @@ public interface ModelContext {
         boolean skipCommunicationManagerThread();
         boolean skipMbusRequestThread();
         boolean skipMbusReplyThread();
-        // TODO(balder) Last used on 7.305
-        default boolean tlsUseFSync() { return true; }
-        default String tlsCompressionType() { return "ZSTD"; }
-        default double visibilityDelay() { return 0.0; }
 
         boolean useAsyncMessageHandlingOnSchedule();
         int contentNodeBucketDBStripeBits();
         int mergeChunkSize();
-
-        // TODO(balder) Last used on 7.306
-        default boolean useContentNodeBtreeDb() { return true; }
+        double feedConcurrency();
 
         boolean useThreePhaseUpdates();
 
@@ -118,9 +112,6 @@ public interface ModelContext {
         default String proxyProtocol() { return "https+proxy-protocol"; }
 
         default Optional<AthenzDomain> athenzDomain() { return Optional.empty(); }
-
-        // TODO(mpolden): Remove after May 2020
-        default boolean useDedicatedNodesWhenUnspecified() { return true; }
 
         Optional<ApplicationRoles> applicationRoles();
 
