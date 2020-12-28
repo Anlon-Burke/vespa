@@ -5,6 +5,7 @@
 #include <vespa/eval/eval/value_codec.h>
 #include <vespa/eval/instruction/generic_map.h>
 #include <vespa/eval/eval/interpreted_function.h>
+#include <vespa/eval/eval/test/reference_operations.h>
 #include <vespa/eval/eval/test/tensor_model.hpp>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/gtest/gtest.h>
@@ -30,16 +31,6 @@ std::vector<Layout> map_layouts = {
     float_cells({x({"a","b","c"}),y(5),z({"i","j","k","l"})})
 };
 
-TensorSpec reference_map(const TensorSpec &a, map_fun_t func) {
-    ValueType res_type = ValueType::from_spec(a.type());
-    EXPECT_FALSE(res_type.is_error());
-    TensorSpec result(res_type.to_spec());
-    for (const auto &cell: a.cells()) {
-        result.add(cell.first, func(cell.second));
-    }
-    return result;
-}
-
 TensorSpec perform_generic_map(const TensorSpec &a, map_fun_t func, const ValueBuilderFactory &factory)
 {
     auto lhs = value_from_spec(a, factory);
@@ -54,7 +45,7 @@ void test_generic_map_with(const ValueBuilderFactory &factory) {
         ValueType lhs_type = ValueType::from_spec(lhs.type());
         for (auto func : {operation::Floor::f, operation::Fabs::f, operation::Square::f, operation::Inv::f}) {
             SCOPED_TRACE(fmt("\n===\nLHS: %s\n===\n", lhs.to_string().c_str()));
-            auto expect = reference_map(lhs, func);
+            auto expect = ReferenceOperations::map(lhs, func);
             auto actual = perform_generic_map(lhs, func, factory);
             EXPECT_EQ(actual, expect);
         }
@@ -67,26 +58,6 @@ TEST(GenericMapTest, generic_map_works_for_simple_values) {
 
 TEST(GenericMapTest, generic_map_works_for_fast_values) {
     test_generic_map_with(FastValueBuilderFactory::get());
-}
-
-TensorSpec immediate_generic_map(const TensorSpec &a, map_fun_t func, const ValueBuilderFactory &factory)
-{
-    auto lhs = value_from_spec(a, factory);
-    auto up = GenericMap::perform_map(*lhs, func, factory);
-    return spec_from_value(*up);
-}
-
-TEST(GenericMapTest, immediate_generic_map_works) {
-    for (const auto & layout : map_layouts) {
-        TensorSpec lhs = spec(layout, Div16(N()));
-        ValueType lhs_type = ValueType::from_spec(lhs.type());
-        for (auto func : {operation::Floor::f, operation::Fabs::f, operation::Square::f, operation::Inv::f}) {
-            SCOPED_TRACE(fmt("\n===\nLHS: %s\n===\n", lhs.to_string().c_str()));
-            auto expect = reference_map(lhs, func);
-            auto actual = immediate_generic_map(lhs, func, SimpleValueBuilderFactory::get());
-            EXPECT_EQ(actual, expect);
-        }
-    }
 }
 
 GTEST_MAIN_RUN_ALL_TESTS()

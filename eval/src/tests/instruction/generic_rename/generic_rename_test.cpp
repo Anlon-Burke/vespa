@@ -6,6 +6,7 @@
 #include <vespa/eval/instruction/generic_rename.h>
 #include <vespa/eval/eval/interpreted_function.h>
 #include <vespa/eval/eval/test/tensor_model.hpp>
+#include <vespa/eval/eval/test/reference_operations.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/gtest/gtest.h>
 
@@ -98,20 +99,6 @@ vespalib::string rename_dimension(const vespalib::string &name, const FromTo &ft
     return name;
 }
 
-TensorSpec reference_rename(const TensorSpec &a, const FromTo &ft) {
-    ValueType res_type = ValueType::from_spec(a.type()).rename(ft.from, ft.to);
-    EXPECT_FALSE(res_type.is_error());
-    TensorSpec result(res_type.to_spec());
-    for (const auto &cell: a.cells()) {
-        TensorSpec::Address addr;
-        for (const auto &dim: cell.first) {
-            addr.insert_or_assign(rename_dimension(dim.first, ft), dim.second);
-        }
-        result.add(addr, cell.second);
-    }
-    return result;
-}
-
 TensorSpec perform_generic_rename(const TensorSpec &a,
                                   const FromTo &ft, const ValueBuilderFactory &factory)
 {
@@ -132,7 +119,7 @@ void test_generic_rename_with(const ValueBuilderFactory &factory) {
             if (renamed_type.is_error()) continue;
             // printf("type %s -> %s\n", lhs_type.to_spec().c_str(), renamed_type.to_spec().c_str());
             SCOPED_TRACE(fmt("\n===\nLHS: %s\n===\n", lhs.to_string().c_str()));
-            auto expect = reference_rename(lhs, from_to);
+            auto expect = ReferenceOperations::rename(lhs, from_to.from, from_to.to);
             auto actual = perform_generic_rename(lhs, from_to, factory);
             EXPECT_EQ(actual, expect);
         }
@@ -145,31 +132,6 @@ TEST(GenericRenameTest, generic_rename_works_for_simple_values) {
 
 TEST(GenericRenameTest, generic_rename_works_for_fast_values) {
     test_generic_rename_with(FastValueBuilderFactory::get());
-}
-
-TensorSpec immediate_generic_rename(const TensorSpec &a, const FromTo &ft)
-{
-    auto &factory = SimpleValueBuilderFactory::get();
-    auto lhs = value_from_spec(a, factory);
-    auto up = GenericRename::perform_rename(*lhs, ft.from, ft.to, factory);
-    return spec_from_value(*up);
-}
-
-TEST(GenericRenameTest, immediate_generic_rename_works) {
-    for (const auto & layout : rename_layouts) {
-        TensorSpec lhs = spec(layout, N());
-        ValueType lhs_type = ValueType::from_spec(lhs.type());
-        // printf("lhs_type: %s\n", lhs_type.to_spec().c_str());
-        for (const auto & from_to : rename_from_to) {
-            ValueType renamed_type = lhs_type.rename(from_to.from, from_to.to);
-            if (renamed_type.is_error()) continue;
-            // printf("type %s -> %s\n", lhs_type.to_spec().c_str(), renamed_type.to_spec().c_str());
-            SCOPED_TRACE(fmt("\n===\nLHS: %s\n===\n", lhs.to_string().c_str()));
-            auto expect = reference_rename(lhs, from_to);
-            auto actual = immediate_generic_rename(lhs, from_to);
-            EXPECT_EQ(actual, expect);
-        }
-    }
 }
 
 GTEST_MAIN_RUN_ALL_TESTS()

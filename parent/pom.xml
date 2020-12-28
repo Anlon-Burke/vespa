@@ -570,9 +570,19 @@
                 <version>${apache.httpclient.version}</version>
             </dependency>
             <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-csv</artifactId>
+                <version>1.8</version>
+            </dependency>
+            <dependency>
                 <groupId>org.apache.httpcomponents</groupId>
                 <artifactId>httpcore</artifactId>
                 <version>${apache.httpcore.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.httpcomponents.client5</groupId>
+                <artifactId>httpclient5</artifactId>
+                <version>${apache.httpclient5.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.httpcomponents</groupId>
@@ -691,6 +701,11 @@
             </dependency>
             <dependency>
                 <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
                 <artifactId>junit-jupiter-engine</artifactId>
                 <version>${junit.version}</version>
             </dependency>
@@ -749,6 +764,7 @@
         <antlr4.version>4.5</antlr4.version>
         <apache.httpclient.version>4.5.12</apache.httpclient.version>
         <apache.httpcore.version>4.4.13</apache.httpcore.version>
+        <apache.httpclient5.version>5.0.3</apache.httpclient5.version>
         <asm.version>7.0</asm.version>
         <!-- Athenz dependencies. Make sure these dependencies match those in Vespa's internal repositories -->
         <athenz.version>1.8.49</athenz.version>
@@ -783,7 +799,6 @@
         <surefire.version>2.22.0</surefire.version>
         <tensorflow.version>1.12.0</tensorflow.version>
         <zookeeper.client.version>3.5.8</zookeeper.client.version>
-        <zookeeper.server.version>3.5.6</zookeeper.server.version>
 
         <doclint>all</doclint>
         <test.hide>true</test.hide>

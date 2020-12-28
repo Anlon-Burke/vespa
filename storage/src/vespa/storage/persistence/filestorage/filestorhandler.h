@@ -13,10 +13,10 @@
 
 #pragma once
 
-#include "mergestatus.h"
 #include <vespa/document/bucket/bucket.h>
 #include <vespa/storage/storageutil/resumeguard.h>
 #include <vespa/storage/common/messagesender.h>
+#include <vespa/storageapi/messageapi/storagemessage.h>
 
 namespace storage {
 namespace api {
@@ -34,6 +34,7 @@ struct FileStorMetrics;
 struct MessageSender;
 struct ServiceLayerComponentRegister;
 class AbortBucketOperationsCommand;
+class MergeStatus;
 
 class FileStorHandler : public MessageSender {
 public:
@@ -85,7 +86,6 @@ public:
 
     enum DiskState {
         AVAILABLE,
-        DISABLED,
         CLOSED
     };
 
@@ -107,11 +107,6 @@ public:
     /** Check whether it is enabled or not. */
     bool enabled() { return (getDiskState() == AVAILABLE); }
     bool closed() { return (getDiskState() == CLOSED); }
-    /**
-     * Disable the disk. Operations towards threads using this disk will
-     * start to fail. Typically called when disk errors are detected.
-     */
-    void disable() { setDiskState(DISABLED); }
     /** Closes all disk threads. */
     virtual void close() = 0;
 
@@ -220,7 +215,7 @@ public:
     /**
      * Add a new merge state to the registry.
      */
-    virtual void addMergeStatus(const document::Bucket&, MergeStatus::SP) = 0;
+    virtual void addMergeStatus(const document::Bucket&, std::shared_ptr<MergeStatus>) = 0;
 
     /**
      * Returns the reference to the current merge status for the given bucket.

@@ -7,6 +7,7 @@
 #include "messages.h"
 #include <vespa/storage/common/bucketmessages.h>
 #include <vespa/persistence/spi/persistenceprovider.h>
+#include <vespa/storageapi/message/bucket.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".persistence.splitjoinhandler");
@@ -267,49 +268,23 @@ SplitJoinHandler::handleJoinBuckets(api::JoinBucketsCommand& cmd, MessageTracker
     return tracker;
 }
 
-MessageTracker::UP
-SplitJoinHandler::handleInternalBucketJoin(InternalBucketJoinCommand& cmd, MessageTracker::UP tracker) const
-{
-    tracker->setMetric(_env._metrics.internalJoin);
-    document::Bucket destBucket = cmd.getBucket();
-    {
-        // Create empty bucket for target.
-        StorBucketDatabase::WrappedEntry entry =
-                _env.getBucketDatabase(destBucket.getBucketSpace()).get(
-                        destBucket.getBucketId(), "join", StorBucketDatabase::CREATE_IF_NONEXISTING);
-
-        entry.write();
-    }
-    assert(cmd.getDiskOfInstanceToJoin() == 0u);
-    assert(cmd.getDiskOfInstanceToKeep() == 0u);
-    spi::Result result =
-            _spi.join(spi::Bucket(destBucket),
-                      spi::Bucket(destBucket),
-                      spi::Bucket(destBucket),
-                      tracker->context());
-    if (tracker->checkForError(result)) {
-        tracker->setReply(std::make_shared<InternalBucketJoinReply>(cmd, _env.getBucketInfo(cmd.getBucket())));
-    }
-    return tracker;
-}
-
 bool
 SplitJoinHandler::validateJoinCommand(const api::JoinBucketsCommand& cmd, MessageTracker& tracker)
 {
     if (cmd.getSourceBuckets().size() != 2) {
-        tracker.fail(ReturnCode::ILLEGAL_PARAMETERS,
+        tracker.fail(api::ReturnCode::ILLEGAL_PARAMETERS,
                      "Join needs exactly two buckets to be joined together" + cmd.getBucketId().toString());
         return false;
     }
     // Verify that source and target buckets look sane.
     for (uint32_t i = 0; i < cmd.getSourceBuckets().size(); i++) {
         if (cmd.getSourceBuckets()[i] == cmd.getBucketId()) {
-            tracker.fail(ReturnCode::ILLEGAL_PARAMETERS,
+            tracker.fail(api::ReturnCode::ILLEGAL_PARAMETERS,
                          "Join had both source and target bucket " + cmd.getBucketId().toString());
             return false;
         }
         if (!cmd.getBucketId().contains(cmd.getSourceBuckets()[i])) {
-            tracker.fail(ReturnCode::ILLEGAL_PARAMETERS,
+            tracker.fail(api::ReturnCode::ILLEGAL_PARAMETERS,
                          "Source bucket " + cmd.getSourceBuckets()[i].toString()
                          + " is not contained in target " + cmd.getBucketId().toString());
             return false;

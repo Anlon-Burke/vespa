@@ -1,7 +1,6 @@
 // Copyright 2019 Oath Inc. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "dense_tensor_peek_function.h"
-#include <vespa/eval/tensor/dense/dense_tensor_view.h>
 #include <vespa/eval/eval/value.h>
 
 namespace vespalib::eval {
@@ -61,7 +60,7 @@ DenseTensorPeekFunction::push_children(std::vector<Child::CREF> &target) const
 }
 
 InterpretedFunction::Instruction
-DenseTensorPeekFunction::compile_self(EngineOrFactory, Stash &) const
+DenseTensorPeekFunction::compile_self(const ValueBuilderFactory &, Stash &) const
 {
     using MyTypify = TypifyCellType;
     auto op = typify_invoke<1,MyTypify,MyTensorPeekOp>(_children[0].get().result_type().cell_type());
@@ -75,10 +74,10 @@ DenseTensorPeekFunction::optimize(const TensorFunction &expr, Stash &stash)
         const ValueType &peek_type = peek->param_type();
         if (expr.result_type().is_double() && peek_type.is_dense()) {
             std::vector<std::pair<int64_t,size_t>> spec;
-            assert(peek_type.dimensions().size() == peek->spec().size());
+            assert(peek_type.dimensions().size() == peek->map().size());
             for (auto dim = peek_type.dimensions().rbegin(); dim != peek_type.dimensions().rend(); ++dim) {
-                auto dim_spec = peek->spec().find(dim->name);
-                assert(dim_spec != peek->spec().end());
+                auto dim_spec = peek->map().find(dim->name);
+                assert(dim_spec != peek->map().end());
 
                 std::visit(vespalib::overload
                            {

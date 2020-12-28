@@ -16,15 +16,19 @@
 #include "types.h"
 #include <vespa/persistence/spi/bucket.h>
 #include <vespa/persistence/spi/docentry.h>
-#include <vespa/storage/persistence/filestorage/mergestatus.h>
 #include <vespa/storageapi/message/bucket.h>
+#include <vespa/storage/common/cluster_context.h>
 #include <vespa/storage/common/messagesender.h>
 
 namespace storage {
 
-namespace spi { struct PersistenceProvider; }
+namespace spi {
+    struct PersistenceProvider;
+    class Context;
+}
 class PersistenceUtil;
 class ApplyBucketDiffEntryResult;
+class MergeStatus;
 
 class MergeHandler : public Types {
 
@@ -36,25 +40,22 @@ public:
     };
 
     MergeHandler(PersistenceUtil& env, spi::PersistenceProvider& spi,
-                 const vespalib::string & clusterName, const framework::Clock & clock,
+                 const ClusterContext& cluster_context, const framework::Clock & clock,
                  uint32_t maxChunkSize = 4190208,
                  uint32_t commonMergeChainOptimalizationMinimumSize = 64);
 
     bool buildBucketInfoList(
             const spi::Bucket& bucket,
-            const documentapi::LoadType&,
             Timestamp maxTimestamp,
             uint8_t myNodeIndex,
             std::vector<api::GetBucketDiffCommand::Entry>& output,
             spi::Context& context) const;
     void fetchLocalData(const spi::Bucket& bucket,
-                        const documentapi::LoadType&,
                         std::vector<api::ApplyBucketDiffCommand::Entry>& diff,
                         uint8_t nodeIndex,
                         spi::Context& context) const;
     api::BucketInfo applyDiffLocally(
                           const spi::Bucket& bucket,
-                          const documentapi::LoadType&,
                           std::vector<api::ApplyBucketDiffCommand::Entry>& diff,
                           uint8_t nodeIndex,
                           spi::Context& context) const;
@@ -67,7 +68,7 @@ public:
 
 private:
     const framework::Clock   &_clock;
-    const vespalib::string   &_clusterName;
+    const ClusterContext &_cluster_context;
     PersistenceUtil          &_env;
     spi::PersistenceProvider &_spi;
     const uint32_t            _maxChunkSize;

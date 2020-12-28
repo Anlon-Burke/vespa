@@ -2,13 +2,13 @@
 
 #include "filestorhandlerimpl.h"
 #include "filestormetrics.h"
+#include "mergestatus.h"
 #include <vespa/storageapi/message/bucketsplitting.h>
 #include <vespa/storageapi/message/persistence.h>
 #include <vespa/storageapi/message/removelocation.h>
 #include <vespa/storage/bucketdb/storbucketdb.h>
 #include <vespa/storage/common/bucketmessages.h>
 #include <vespa/storage/common/statusmessages.h>
-#include <vespa/storage/common/bucketoperationlogger.h>
 #include <vespa/storage/common/messagebucket.h>
 #include <vespa/storage/persistence/asynchandler.h>
 #include <vespa/storage/persistence/messages.h>
@@ -77,7 +77,7 @@ FileStorHandlerImpl::FileStorHandlerImpl(uint32_t numThreads, uint32_t numStripe
 FileStorHandlerImpl::~FileStorHandlerImpl() = default;
 
 void
-FileStorHandlerImpl::addMergeStatus(const document::Bucket& bucket, MergeStatus::SP status)
+FileStorHandlerImpl::addMergeStatus(const document::Bucket& bucket, std::shared_ptr<MergeStatus> status)
 {
     std::lock_guard mlock(_mergeStatesLock);
     if (_mergeStates.find(bucket) != _mergeStates.end()) {
@@ -90,7 +90,7 @@ MergeStatus&
 FileStorHandlerImpl::editMergeStatus(const document::Bucket& bucket)
 {
     std::lock_guard mlock(_mergeStatesLock);
-    MergeStatus::SP status = _mergeStates[bucket];
+    std::shared_ptr<MergeStatus> status = _mergeStates[bucket];
     if ( ! status ) {
         throw vespalib::IllegalStateException("No merge state exist for " + bucket.toString(), VESPA_STRLOC);
     }
@@ -140,7 +140,7 @@ FileStorHandlerImpl::clearMergeStatus(const document::Bucket& bucket, const api:
         return;
     }
     if (code != 0) {
-        MergeStatus::SP statusPtr(it->second);
+        std::shared_ptr<MergeStatus> statusPtr(it->second);
         assert(statusPtr.get());
         MergeStatus& status(*statusPtr);
         if (status.reply.get()) {
@@ -191,20 +191,6 @@ FileStorHandlerImpl::flush(bool killPendingMerges)
             }
         }
         _mergeStates.clear();
-    }
-}
-
-void
-FileStorHandlerImpl::reply(api::StorageMessage& msg, DiskState state) const
-{
-    if (!msg.getType().isReply()) {
-        std::shared_ptr<api::StorageReply> rep = static_cast<api::StorageCommand&>(msg).makeReply();
-        if (state == FileStorHandler::DISABLED) {
-            rep->setResult(api::ReturnCode(api::ReturnCode::DISK_FAILURE, "Disk disabled"));
-        } else {
-            rep->setResult(api::ReturnCode(api::ReturnCode::ABORTED, "Shutting down storage node."));
-        }
-        _messageSender.sendReply(rep);
     }
 }
 
@@ -325,12 +311,9 @@ FileStorHandlerImpl::updateMetrics(const MetricLockGuard &)
     _metrics->pendingMerges.addValue(_mergeStates.size());
     _metrics->queueSize.addValue(getQueueSize());
 
-    for (auto & entry : _metrics->averageQueueWaitingTime.getMetricMap()) {
-        metrics::LoadType loadType(entry.first, "ignored");
-        for (const auto & stripe : _metrics->stripes) {
-            const auto & m = stripe->averageQueueWaitingTime[loadType];
-            entry.second->addTotalValueWithCount(m.getTotal(), m.getCount());
-        }
+    for (const auto & stripe : _metrics->stripes) {
+        const auto & m = stripe->averageQueueWaitingTime;
+        _metrics->averageQueueWaitingTime.addTotalValueWithCount(m.getTotal(), m.getCount());
     }
 }
 
@@ -496,16 +479,6 @@ FileStorHandlerImpl::remapMessage(api::StorageMessage& msg, const document::Buck
                 if (idx > -1) {
                     cmd.remapBucketId(targets[idx]->bucket.getBucketId());
                     targets[idx]->foundInQueue = true;
-#if defined(ENABLE_BUCKET_OPERATION_LOGGING)
-                    {
-                        vespalib::string desc = vespalib::make_string(
-                                "Remapping %s from %s to %s, targetDisk = %u",
-                                cmd.toString().c_str(), source.toString().c_str(),
-                                targets[idx]->bid.toString().c_str(), targetDisk);
-                        LOG_BUCKET_OPERATION_NO_LOCK(source, desc);
-                        LOG_BUCKET_OPERATION_NO_LOCK(targets[idx]->bid, desc);
-                    }
-#endif
                     newBucket = targets[idx]->bucket;
                 } else {
                     document::DocumentId did(getDocId(msg));
@@ -538,16 +511,6 @@ FileStorHandlerImpl::remapMessage(api::StorageMessage& msg, const document::Buck
                     cmd.toString().c_str(), targets[0]->bucket.getBucketId().toString().c_str());
                 cmd.remapBucketId(targets[0]->bucket.getBucketId());
                 newBucket = targets[0]->bucket;
-#ifdef ENABLE_BUCKET_OPERATION_LOGGING
-                {
-                    vespalib::string desc = vespalib::make_string(
-                            "Remapping %s from %s to %s, targetDisk = %u",
-                            cmd.toString().c_str(), source.toString().c_str(),
-                            targets[0]->bid.toString().c_str(), targetDisk);
-                    LOG_BUCKET_OPERATION_NO_LOCK(source, desc);
-                    LOG_BUCKET_OPERATION_NO_LOCK(targets[0]->bid, desc);
-                }
-#endif
             }
         } else {
             LOG(debug, "Did not remap %s with bucket %s from bucket %s",
@@ -660,7 +623,6 @@ FileStorHandlerImpl::remapMessage(api::StorageMessage& msg, const document::Buck
                 source.getBucketId().toString().c_str(), op);
             break;
         }
-        case InternalBucketJoinCommand::ID:
         default:
             // Fail and log error
         {
@@ -854,7 +816,7 @@ FileStorHandlerImpl::MessageEntry::MessageEntry(const std::shared_ptr<api::Stora
 { }
 
 
-FileStorHandlerImpl::MessageEntry::MessageEntry(const MessageEntry& entry)
+FileStorHandlerImpl::MessageEntry::MessageEntry(const MessageEntry& entry) noexcept
     : _command(entry._command),
       _timer(entry._timer),
       _bucket(entry._bucket),
@@ -944,8 +906,7 @@ FileStorHandlerImpl::Stripe::get_next_async_message(monitor_guard& guard)
 FileStorHandler::LockedMessage
 FileStorHandlerImpl::Stripe::getMessage(monitor_guard & guard, PriorityIdx & idx, PriorityIdx::iterator iter) {
 
-    api::StorageMessage & m(*iter->_command);
-    std::chrono::milliseconds waitTime(uint64_t(iter->_timer.stop(_metrics->averageQueueWaitingTime[m.getLoadType()])));
+    std::chrono::milliseconds waitTime(uint64_t(iter->_timer.stop(_metrics->averageQueueWaitingTime)));
 
     std::shared_ptr<api::StorageMessage> msg = std::move(iter->_command);
     document::Bucket bucket(iter->_bucket);
@@ -1263,7 +1224,6 @@ FileStorHandlerImpl::getStatus(std::ostream& out, const framework::HttpUrlPath& 
     out << "Disk state: ";
     switch (getState()) {
         case FileStorHandler::AVAILABLE: out << "AVAILABLE"; break;
-        case FileStorHandler::DISABLED: out << "DISABLED"; break;
         case FileStorHandler::CLOSED: out << "CLOSED"; break;
     }
     out << "<h4>Active operations</h4>\n";
