@@ -104,13 +104,6 @@ FileStorHandlerImpl::isMerging(const document::Bucket& bucket) const
     return (_mergeStates.find(bucket) != _mergeStates.end());
 }
 
-uint32_t
-FileStorHandlerImpl::getNumActiveMerges() const
-{
-    std::lock_guard mlock(_mergeStatesLock);
-    return _mergeStates.size();
-}
-
 void
 FileStorHandlerImpl::clearMergeStatus(const document::Bucket& bucket)
 {
@@ -383,7 +376,10 @@ struct MultiLockGuard {
     std::map<uint16_t, std::mutex*> monitors;
     std::vector<std::shared_ptr<monitor_guard>> guards;
 
-    MultiLockGuard() = default;
+    MultiLockGuard();
+    MultiLockGuard(const MultiLockGuard &) = delete;
+    MultiLockGuard & operator=(const MultiLockGuard &) = delete;
+    ~MultiLockGuard();
 
     void addLock(std::mutex & lock, uint16_t stripe_index) {
         monitors[stripe_index] = & lock;
@@ -394,6 +390,9 @@ struct MultiLockGuard {
         }
     }
 };
+
+MultiLockGuard::MultiLockGuard() = default;
+MultiLockGuard::~MultiLockGuard() = default;
 
 document::DocumentId
 getDocId(const api::StorageMessage& msg) {
@@ -699,13 +698,6 @@ FileStorHandlerImpl::remapQueueNoLock(const RemapInfo& source, std::vector<Remap
 }
 
 void
-FileStorHandlerImpl::remapQueueAfterDiskMove(const document::Bucket& bucket)
-{
-    RemapInfo target(bucket);
-    remapQueue(RemapInfo(bucket), target, FileStorHandlerImpl::MOVE);
-}
-
-void
 FileStorHandlerImpl::remapQueueAfterJoin(const RemapInfo& source, RemapInfo& target)
 {
     remapQueue(source, target, FileStorHandlerImpl::JOIN);
@@ -868,7 +860,7 @@ FileStorHandlerImpl::Stripe::getNextMessage(vespalib::duration timeout)
     // if none can be found and then exiting if the same is the case on the
     // second attempt. This is key to allowing the run loop to register
     // ticks at regular intervals while not busy-waiting.
-    for (int attempt = 0; (attempt < 2) && ! _owner.isClosed() && !_owner.isPaused(); ++attempt) {
+    for (int attempt = 0; (attempt < 2) && !_owner.isPaused(); ++attempt) {
         PriorityIdx& idx(bmi::get<1>(*_queue));
         PriorityIdx::iterator iter(idx.begin()), end(idx.end());
 
@@ -888,7 +880,7 @@ FileStorHandlerImpl::Stripe::getNextMessage(vespalib::duration timeout)
 FileStorHandler::LockedMessage
 FileStorHandlerImpl::Stripe::get_next_async_message(monitor_guard& guard)
 {
-    if (_owner.isClosed() || _owner.isPaused()) {
+    if (_owner.isPaused()) {
         return {};
     }
     PriorityIdx& idx(bmi::get<1>(*_queue));
@@ -1120,7 +1112,7 @@ FileStorHandlerImpl::BucketLock::BucketLock(const monitor_guard & guard, Stripe&
 {
     if (_bucket.getBucketId().getRawId() != 0) {
         _stripe.lock(guard, _bucket, lockReq, Stripe::LockEntry(priority, msgType, msgId));
-        LOG(debug, "Locked bucket %s for message %" PRIu64 " with priority %u in mode %s",
+        LOG(spam, "Locked bucket %s for message %" PRIu64 " with priority %u in mode %s",
             bucket.getBucketId().toString().c_str(), msgId, priority, api::to_string(lockReq));
     }
 }
@@ -1129,7 +1121,7 @@ FileStorHandlerImpl::BucketLock::BucketLock(const monitor_guard & guard, Stripe&
 FileStorHandlerImpl::BucketLock::~BucketLock() {
     if (_bucket.getBucketId().getRawId() != 0) {
         _stripe.release(_bucket, _lockReq, _uniqueMsgId);
-        LOG(debug, "Unlocked bucket %s for message %" PRIu64 " in mode %s",
+        LOG(spam, "Unlocked bucket %s for message %" PRIu64 " in mode %s",
             _bucket.getBucketId().toString().c_str(), _uniqueMsgId, api::to_string(_lockReq));
     }
 }

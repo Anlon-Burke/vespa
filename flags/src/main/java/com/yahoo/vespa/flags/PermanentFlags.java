@@ -61,7 +61,7 @@ public class PermanentFlags {
             "Takes effect on next iteration of DynamicProvisioningMaintainer.");
 
     public static final UnboundIntFlag REBOOT_INTERVAL_IN_DAYS = defineIntFlag(
-            "reboot-interval-in-days", 30,
+            "reboot-interval-in-days", 15,
             "No reboots are scheduled 0x-1x reboot intervals after the previous reboot, while reboot is " +
                     "scheduled evenly distributed in the 1x-2x range (and naturally guaranteed at the 2x boundary).",
             "Takes effect on next run of NodeRebooter");
@@ -130,6 +130,12 @@ public class PermanentFlags {
             "Show the public signup flow for a user in the console",
             "takes effect on browser reload of api/user/v1/user",
             CONSOLE_USER_EMAIL);
+
+    public static final UnboundLongFlag INVALIDATE_CONSOLE_SESSIONS = defineLongFlag(
+            "invalidate-console-sessions", 0,
+            "Invalidate console sessions (cookies) issued before this unix timestamp",
+            "Takes effect on next api request"
+    );
 
     private PermanentFlags() {}
 

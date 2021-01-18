@@ -30,8 +30,8 @@ case $SHOULD_BUILD in
   cpp)
     ./bootstrap.sh full
     cmake3 -DVESPA_UNPRIVILEGED=no .
-    make -j ${NUM_THREADS}
-    ctest3 --output-on-failure -j ${NUM_THREADS}
+    time make -j ${NUM_THREADS}
+    time ctest3 --output-on-failure -j ${NUM_THREADS}
     ccache --show-stats
     ;;
   java)
@@ -40,13 +40,40 @@ case $SHOULD_BUILD in
     ;;
   *)
     ./bootstrap.sh java
-    mvn -V $VESPA_MAVEN_EXTRA_OPTS install
+    time mvn -V $VESPA_MAVEN_EXTRA_OPTS install
     cmake3 -DVESPA_UNPRIVILEGED=no .
-    make -j ${NUM_THREADS}
-    ctest3 --output-on-failure -j ${NUM_THREADS}
+    time make -j ${NUM_THREADS}
+    time ctest3 --output-on-failure -j ${NUM_THREADS}
     ccache --show-stats
     make install
     ;;    
 esac
 
+if [[ $SHOULD_BUILD == systemtest ]]; then  
+  yum -y --setopt=skip_missing_names_on_install=False install \
+    zstd \
+    devtoolset-9-gcc-c++ \
+    devtoolset-9-libatomic-devel \
+    devtoolset-9-binutils \
+    libxml2-devel \
+    rh-ruby25-rubygems-devel \
+    rh-ruby25-ruby-devel \
+    rh-ruby25 \
+    rh-ruby25-rubygem-net-telnet
+
+  source /opt/rh/rh-ruby25/enable
+  gem install libxml-ruby gnuplot distribution test-unit builder concurrent-ruby
+
+  cd $HOME
+  git clone https://github.com/vespa-engine/system-test
+  export SYSTEM_TEST_DIR=$(pwd)/system-test
+  export RUBYLIB="$SYSTEM_TEST_DIR/lib:$SYSTEM_TEST_DIR/tests"
+  useradd vespa
+  export USER=$(whoami)
+
+  $SYSTEM_TEST_DIR/lib/node_server.rb &
+  NODE_SERVER_PID=$!
+  sleep 3
+  ruby $SYSTEM_TEST_DIR/tests/search/basicsearch/basic_search.rb || (/opt/vespa/bin/vespa-logfmt -N && false)
+fi
 

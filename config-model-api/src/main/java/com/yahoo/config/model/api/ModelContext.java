@@ -31,7 +31,9 @@ public interface ModelContext {
     ApplicationPackage applicationPackage();
     Optional<Model> previousModel();
     Optional<ApplicationPackage> permanentApplicationPackage();
-    Optional<HostProvisioner> hostProvisioner();
+    // TODO: Remove after 7.338 has been released
+    default Optional<HostProvisioner> hostProvisioner() { return Optional.of(getHostProvisioner()); }
+    HostProvisioner getHostProvisioner();
     Provisioned provisioned();
     DeployLogger deployLogger();
     ConfigDefinitionRepo configDefinitionRepo();
@@ -66,10 +68,9 @@ public interface ModelContext {
     interface FeatureFlags {
         @ModelFeatureFlag(owners = {"bjorncs", "jonmv"}) default boolean enableAutomaticReindexing() { return false; }
         @ModelFeatureFlag(owners = {"bjorncs", "jonmv"}) default double reindexerWindowSizeIncrement() { return 0.2; }
-        @ModelFeatureFlag(owners = {"baldersheim"}, comment = "Revisit in May or June 2020") default double defaultTermwiseLimit() { throw new UnsupportedOperationException("TODO specify default value"); }
+        @ModelFeatureFlag(owners = {"baldersheim"}, comment = "Revisit in May or June 2021") default double defaultTermwiseLimit() { throw new UnsupportedOperationException("TODO specify default value"); }
         @ModelFeatureFlag(owners = {"vekterli"}) default boolean useThreePhaseUpdates() { throw new UnsupportedOperationException("TODO specify default value"); }
-        @ModelFeatureFlag(owners = {"geirst"}, comment = "Remove on 7.XXX when this is default on") default boolean useDirectStorageApiRpc() { throw new UnsupportedOperationException("TODO specify default value"); }
-        @ModelFeatureFlag(owners = {"geirst"}, comment = "Remove when 7.328 is no longer in use") default boolean useFastValueTensorImplementation() { return true; }
+        @ModelFeatureFlag(owners = {"geirst"}, comment = "Remove when 7.342 is no longer in use") default boolean useDirectStorageApiRpc() { return true; }
         @ModelFeatureFlag(owners = {"baldersheim"}, comment = "Select sequencer type use while feeding") default String feedSequencerType() { throw new UnsupportedOperationException("TODO specify default value"); }
         @ModelFeatureFlag(owners = {"baldersheim"}) default String responseSequencerType() { throw new UnsupportedOperationException("TODO specify default value"); }
         @ModelFeatureFlag(owners = {"baldersheim"}) default int defaultNumResponseThreads() { return 2; }
@@ -82,6 +83,7 @@ public interface ModelContext {
         @ModelFeatureFlag(owners = {"baldersheim"}) default int mergeChunkSize() { throw new UnsupportedOperationException("TODO specify default value"); }
         @ModelFeatureFlag(owners = {"baldersheim"}) default double feedConcurrency() { throw new UnsupportedOperationException("TODO specify default value"); }
         @ModelFeatureFlag(owners = {"musum", "mpolden"}, comment = "Revisit in February 2021") default boolean reconfigurableZookeeperServer() { return false; }
+        @ModelFeatureFlag(owners = {"bjorncs", "tokle"}) default boolean enableJdiscConnectionLog() { return false; }
     }
 
     /** Warning: As elsewhere in this package, do not make backwards incompatible changes that will break old config models! */
@@ -114,22 +116,6 @@ public interface ModelContext {
         // TODO(somebody): Only needed for LbServicesProducerTest
         default boolean useDedicatedNodeForLogserver() { return true; }
 
-        // NOTE: Use FeatureFlags interface above instead of non-permament flags
-        @Deprecated double defaultTermwiseLimit();
-        @Deprecated default int defaultNumResponseThreads() { return 2; }
-        @Deprecated String feedSequencerType();
-        @Deprecated String responseSequencerType();
-        @Deprecated boolean skipCommunicationManagerThread();
-        @Deprecated boolean skipMbusRequestThread();
-        @Deprecated boolean skipMbusReplyThread();
-        @Deprecated boolean useAsyncMessageHandlingOnSchedule();
-        @Deprecated int contentNodeBucketDBStripeBits();
-        @Deprecated int mergeChunkSize();
-        @Deprecated double feedConcurrency();
-        @Deprecated boolean useThreePhaseUpdates();
-        @Deprecated boolean useDirectStorageApiRpc();
-        @Deprecated default boolean useFastValueTensorImplementation() { return true; }
-        @Deprecated default boolean useAccessControlTlsHandshakeClientAuth() { return false; }
     }
 
     @Retention(RetentionPolicy.RUNTIME)

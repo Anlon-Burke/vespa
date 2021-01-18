@@ -2,7 +2,8 @@
 
 #include "attribute_populator.h"
 #include <vespa/searchcore/proton/common/eventlogger.h>
-#include <vespa/searchlib/common/idestructorcallback.h>
+#include <vespa/vespalib/util/idestructorcallback.h>
+#include <vespa/searchlib/common/flush_token.h>
 #include <vespa/searchlib/common/gatecallback.h>
 #include <vespa/vespalib/util/gate.h>
 #include <vespa/searchlib/attribute/attributevector.h>
@@ -10,7 +11,7 @@
 #include <vespa/log/log.h>
 LOG_SETUP(".proton.attribute.attribute_populator");
 
-using search::IDestructorCallback;
+using vespalib::IDestructorCallback;
 
 namespace proton {
 
@@ -88,7 +89,7 @@ AttributePopulator::done()
     auto flushTargets = mgr->getFlushTargets();
     for (const auto &flushTarget : flushTargets) {
         assert(flushTarget->getFlushedSerialNum() < _configSerialNum);
-        auto task = flushTarget->initFlush(_configSerialNum);
+        auto task = flushTarget->initFlush(_configSerialNum, std::make_shared<search::FlushToken>());
         // shrink target only return task if able to shrink.
         if (task) {
             task->run();

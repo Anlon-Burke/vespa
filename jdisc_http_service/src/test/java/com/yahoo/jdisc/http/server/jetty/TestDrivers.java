@@ -4,6 +4,7 @@ package com.yahoo.jdisc.http.server.jetty;
 import com.google.inject.AbstractModule;
 import com.google.inject.Module;
 import com.google.inject.util.Modules;
+import com.yahoo.container.logging.ConnectionLog;
 import com.yahoo.jdisc.handler.RequestHandler;
 import com.yahoo.jdisc.http.ConnectorConfig;
 import com.yahoo.jdisc.http.ServerConfig;
@@ -51,22 +52,23 @@ public class TestDrivers {
         return TestDriver.newInstance(
                 JettyHttpServer.class,
                 requestHandler,
-                newConfigModule(
-                        new ServerConfig.Builder(),
-                        new ConnectorConfig.Builder()
-                                .tlsClientAuthEnforcer(
-                                        new ConnectorConfig.TlsClientAuthEnforcer.Builder()
-                                                .enable(true)
-                                                .pathWhitelist("/status.html"))
-                                .ssl(new ConnectorConfig.Ssl.Builder()
-                                             .enabled(true)
-                                             .clientAuth(tlsClientAuth == TlsClientAuth.NEED
-                                                                 ? ConnectorConfig.Ssl.ClientAuth.Enum.NEED_AUTH
-                                                                 : ConnectorConfig.Ssl.ClientAuth.Enum.WANT_AUTH)
-                                             .privateKeyFile(privateKeyFile.toString())
-                                             .certificateFile(certificateFile.toString())
-                                             .caCertificateFile(certificateFile.toString())),
-                        Modules.combine(guiceModules)));
+                Modules.override(
+                        newConfigModule(
+                                new ServerConfig.Builder().connectionLog(new ServerConfig.ConnectionLog.Builder().enabled(true)),
+                                new ConnectorConfig.Builder()
+                                        .tlsClientAuthEnforcer(
+                                                new ConnectorConfig.TlsClientAuthEnforcer.Builder()
+                                                        .enable(true)
+                                                        .pathWhitelist("/status.html"))
+                                        .ssl(new ConnectorConfig.Ssl.Builder()
+                                                .enabled(true)
+                                                .clientAuth(tlsClientAuth == TlsClientAuth.NEED
+                                                        ? ConnectorConfig.Ssl.ClientAuth.Enum.NEED_AUTH
+                                                        : ConnectorConfig.Ssl.ClientAuth.Enum.WANT_AUTH)
+                                                .privateKeyFile(privateKeyFile.toString())
+                                                .certificateFile(certificateFile.toString())
+                                                .caCertificateFile(certificateFile.toString()))))
+                        .with(guiceModules));
     }
 
     private static Module newConfigModule(ServerConfig.Builder serverConfig,
@@ -80,6 +82,7 @@ public class TestDrivers {
                         bind(ServerConfig.class).toInstance(new ServerConfig(serverConfig));
                         bind(ConnectorConfig.class).toInstance(new ConnectorConfig(connectorConfigBuilder));
                         bind(FilterBindings.class).toInstance(new FilterBindings.Builder().build());
+                        bind(ConnectionLog.class).toInstance(new VoidConnectionLog());
                     }
                 },
                 new ConnectorFactoryRegistryModule(connectorConfigBuilder),

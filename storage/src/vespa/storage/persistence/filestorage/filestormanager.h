@@ -12,7 +12,6 @@
 #include <vespa/vespalib/util/document_runnable.h>
 #include <vespa/vespalib/util/isequencedtaskexecutor.h>
 #include <vespa/document/bucket/bucketid.h>
-#include <vespa/persistence/spi/persistenceprovider.h>
 #include <vespa/storage/bucketdb/storbucketdb.h>
 #include <vespa/storage/common/messagesender.h>
 #include <vespa/storage/common/servicelayercomponent.h>
@@ -21,7 +20,6 @@
 #include <vespa/config-stor-filestor.h>
 #include <vespa/storage/persistence/diskthread.h>
 
-#include <vespa/storage/persistence/provider_error_wrapper.h>
 #include <vespa/storage/common/nodestateupdater.h>
 #include <vespa/storageframework/generic/status/htmlstatusreporter.h>
 
@@ -35,6 +33,7 @@ namespace api {
     class StorageReply;
     class BucketCommand;
 }
+namespace spi { class PersistenceProvider; }
 
 struct FileStorManagerTest;
 class ReadBucketList;
@@ -43,6 +42,7 @@ class AbortBucketOperationsCommand;
 struct DoneInitializeHandler;
 class PersistenceHandler;
 struct FileStorMetrics;
+class ProviderErrorWrapper;
 
 class FileStorManager : public StorageLinkQueued,
                         public framework::HtmlStatusReporter,
@@ -50,22 +50,18 @@ class FileStorManager : public StorageLinkQueued,
                         private config::IFetcherCallback<vespa::config::content::StorFilestorConfig>,
                         public MessageSender
 {
-    ServiceLayerComponentRegister   & _compReg;
-    ServiceLayerComponent             _component;
-    spi::PersistenceProvider        & _providerCore;
-    ProviderErrorWrapper              _providerErrorWrapper;
-    spi::PersistenceProvider        * _provider;
-    DoneInitializeHandler&            _init_handler;
-    const document::BucketIdFactory & _bucketIdFactory;
+    ServiceLayerComponentRegister             & _compReg;
+    ServiceLayerComponent                       _component;
+    std::unique_ptr<spi::PersistenceProvider>   _provider;
+    DoneInitializeHandler                     & _init_handler;
+    const document::BucketIdFactory           & _bucketIdFactory;
 
     std::vector<std::unique_ptr<PersistenceHandler>> _persistenceHandlers;
     std::vector<std::unique_ptr<DiskThread>>         _threads;
-    std::unique_ptr<BucketOwnershipNotifier> _bucketOwnershipNotifier;
+    std::unique_ptr<BucketOwnershipNotifier>         _bucketOwnershipNotifier;
 
     std::unique_ptr<vespa::config::content::StorFilestorConfig> _config;
     config::ConfigFetcher _configFetcher;
-    uint32_t              _threadLockCheckInterval; // In seconds
-    bool                  _failDiskOnError;
     bool                  _use_async_message_handling_on_schedule;
     std::shared_ptr<FileStorMetrics> _metrics;
     std::unique_ptr<FileStorHandler> _filestorHandler;
@@ -83,16 +79,14 @@ public:
 
     void print(std::ostream& out, bool verbose, const std::string& indent) const override;
 
-    FileStorHandler& getFileStorHandler() {
+    FileStorHandler& getFileStorHandler() noexcept {
         return *_filestorHandler;
     };
 
-    spi::PersistenceProvider& getPersistenceProvider() {
+    spi::PersistenceProvider& getPersistenceProvider() noexcept {
         return *_provider;
     }
-    ProviderErrorWrapper& error_wrapper() noexcept {
-        return _providerErrorWrapper;
-    }
+    ProviderErrorWrapper& error_wrapper() noexcept;
 
     void handleNewState() override;
 

@@ -13,7 +13,6 @@ import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.zone.ZoneId;
-import com.yahoo.documentapi.ProgressToken;
 import com.yahoo.vespa.flags.json.FlagData;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.ClusterMetrics;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.DeploymentData;
@@ -89,13 +88,13 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
     private final Map<DeploymentId, List<Log>> warnings = new HashMap<>();
     private final Map<DeploymentId, Set<String>> rotationNames = new HashMap<>();
     private final Map<DeploymentId, List<ClusterMetrics>> clusterMetrics = new HashMap<>();
+    private final Map<DeploymentId, TestReport> testReport = new HashMap<>();
     private List<ProtonMetrics> protonMetrics;
 
     private Version lastPrepareVersion = null;
     private RuntimeException prepareException = null;
     private ConfigChangeActions configChangeActions = null;
     private String log = "INFO - All good";
-    private Map<DeploymentId, TestReport> testReport = new HashMap<>();
 
     @Inject
     public ConfigServerMock(ZoneRegistryMock zoneRegistry) {
@@ -245,7 +244,8 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
         return Optional.ofNullable(applications.get(new DeploymentId(id, zone)));
     }
 
-    public void setSuspended(DeploymentId deployment, boolean suspend) {
+    @Override
+    public void setSuspension(DeploymentId deployment, boolean suspend) {
         if (suspend)
             suspendedApplications.add(deployment);
         else
@@ -422,15 +422,13 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
     }
 
     @Override
-    public void reindex(DeploymentId deployment, List<String> clusterNames, List<String> documentTypes) { }
+    public void reindex(DeploymentId deployment, List<String> clusterNames, List<String> documentTypes, boolean indexedOnly) { }
 
     @Override
     public Optional<ApplicationReindexing> getReindexing(DeploymentId deployment) {
         return Optional.of(new ApplicationReindexing(true,
-                                                     new Status(Instant.ofEpochMilli(123)),
                                                      Map.of("cluster",
-                                                            new ApplicationReindexing.Cluster(new Status(Instant.ofEpochMilli(234)),
-                                                                                              Map.of("type", 100L),
+                                                            new ApplicationReindexing.Cluster(Map.of("type", 100L),
                                                                                               Map.of("type", new Status(Instant.ofEpochMilli(345),
                                                                                                                         Instant.ofEpochMilli(456),
                                                                                                                         Instant.ofEpochMilli(567),

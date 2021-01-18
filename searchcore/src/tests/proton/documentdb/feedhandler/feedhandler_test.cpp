@@ -5,6 +5,8 @@
 #include <vespa/document/update/assignvalueupdate.h>
 #include <vespa/document/repo/documenttyperepo.h>
 #include <vespa/document/update/documentupdate.h>
+#include <vespa/document/update/clearvalueupdate.h>
+#include <vespa/document/update/removefieldpathupdate.h>
 #include <vespa/eval/eval/simple_value.h>
 #include <vespa/eval/eval/tensor_spec.h>
 #include <vespa/eval/eval/value.h>
@@ -18,6 +20,7 @@
 #include <vespa/searchcore/proton/feedoperation/updateoperation.h>
 #include <vespa/searchcore/proton/persistenceengine/i_resource_write_filter.h>
 #include <vespa/searchcore/proton/server/configstore.h>
+#include <vespa/document/util/feed_reject_helper.h>
 #include <vespa/searchcore/proton/server/ddbstate.h>
 #include <vespa/searchcore/proton/server/executorthreadingservice.h>
 #include <vespa/searchcore/proton/server/feedhandler.h>
@@ -44,7 +47,7 @@ using document::DocumentUpdate;
 using document::GlobalId;
 using document::TensorDataType;
 using document::TensorFieldValue;
-using search::IDestructorCallback;
+using vespalib::IDestructorCallback;
 using search::SerialNum;
 using search::index::schema::CollectionType;
 using search::index::schema::DataType;
@@ -278,7 +281,7 @@ struct SchemaContext {
 };
 
 SchemaContext::SchemaContext()
-    : schema(new Schema()),
+    : schema(std::make_shared<Schema>()),
       builder()
 {
     schema->addAttributeField(Schema::AttributeField("tensor", DataType::TENSOR, CollectionType::SINGLE, "tensor(x{},y{})"));
@@ -320,7 +323,7 @@ struct UpdateContext {
     DocumentUpdate::SP update;
     BucketId           bucketId;
     UpdateContext(const vespalib::string &docId, DocBuilder &builder) :
-        update(new DocumentUpdate(*builder.getDocumentTypeRepo(), builder.getDocumentType(), DocumentId(docId))),
+        update(std::make_shared<DocumentUpdate>(*builder.getDocumentTypeRepo(), builder.getDocumentType(), DocumentId(docId))),
         bucketId(BucketFactory::getBucketId(update->getId()))
     {
     }
@@ -683,6 +686,7 @@ TEST_F("require that update is rejected if resource limit is reached", FeedHandl
     f.writeFilter._message = "Attribute resource limit reached";
 
     UpdateContext updCtx("id:test:searchdocument::foo", *f.schema.builder);
+    updCtx.addFieldUpdate("tensor");
     auto op = std::make_unique<UpdateOperation>(updCtx.bucketId, Timestamp(10), updCtx.update);
     FeedTokenContext token;
     f.handler.performOperation(std::move(token.token), std::move(op));
@@ -804,6 +808,26 @@ TEST_F("require that put with different document type repo is ok", FeedHandlerFi
     f.handler.performOperation(std::move(token_context.token), std::move(op));
     EXPECT_EQUAL(1, f.feedView.put_count);
     EXPECT_EQUAL(1, f.tls_writer.store_count);
+}
+
+using namespace document;
+
+TEST_F("require that update with a fieldpath update will be rejected", SchemaContext) {
+    const DocumentType *docType = f.getRepo()->getDocumentType(f.getDocType().getName());
+    auto docUpdate = std::make_unique<DocumentUpdate>(*f.getRepo(), *docType, DocumentId("id:ns:" + docType->getName() + "::1"));
+    docUpdate->addFieldPathUpdate(FieldPathUpdate::CP(std::make_unique<RemoveFieldPathUpdate>()));
+    EXPECT_TRUE(FeedRejectHelper::mustReject(*docUpdate));
+}
+
+TEST_F("require that all value updates will be inspected before rejected", SchemaContext) {
+    const DocumentType *docType = f.getRepo()->getDocumentType(f.getDocType().getName());
+    auto docUpdate = std::make_unique<DocumentUpdate>(*f.getRepo(), *docType, DocumentId("id:ns:" + docType->getName() + "::1"));
+    docUpdate->addUpdate(FieldUpdate(docType->getField("i1")).addUpdate(ClearValueUpdate()));
+    EXPECT_FALSE(FeedRejectHelper::mustReject(*docUpdate));
+    docUpdate->addUpdate(FieldUpdate(docType->getField("i1")).addUpdate(ClearValueUpdate()));
+    EXPECT_FALSE(FeedRejectHelper::mustReject(*docUpdate));
+    docUpdate->addUpdate(FieldUpdate(docType->getField("i1")).addUpdate(AssignValueUpdate(StringFieldValue())));
+    EXPECT_TRUE(FeedRejectHelper::mustReject(*docUpdate));
 }
 
 }  // namespace

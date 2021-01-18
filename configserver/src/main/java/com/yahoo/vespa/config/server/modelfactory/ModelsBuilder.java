@@ -1,22 +1,22 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.modelfactory;
 
 import com.google.common.util.concurrent.UncheckedTimeoutException;
 import com.yahoo.cloud.config.ConfigserverConfig;
+import com.yahoo.component.Version;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.model.api.HostProvisioner;
 import com.yahoo.config.model.api.ModelFactory;
 import com.yahoo.config.model.api.Provisioned;
+import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationLockException;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.OutOfCapacityException;
-import com.yahoo.component.Version;
 import com.yahoo.config.provision.TransientException;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.lang.SettableOptional;
-import java.util.logging.Level;
 import com.yahoo.vespa.config.server.http.InternalServerException;
 import com.yahoo.vespa.config.server.http.UnknownVespaVersionException;
 import com.yahoo.vespa.config.server.provision.HostProvisionerProvider;
@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -48,7 +49,7 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
     protected final ConfigserverConfig configserverConfig;
 
     /** True if we are running in hosted mode */
-    private final boolean hosted;
+    protected final boolean hosted;
 
     private final Zone zone;
 
@@ -156,7 +157,7 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
                                                  Instant now,
                                                  boolean buildLatestModelForThisMajor,
                                                  int majorVersion) {
-        List<MODELRESULT> allApplicationVersions = new ArrayList<>();
+        List<MODELRESULT> builtModelVersions = new ArrayList<>();
         Optional<Version> latest = Optional.empty();
         if (buildLatestModelForThisMajor) {
             latest = Optional.of(findLatest(versions));
@@ -168,7 +169,7 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
                                                                wantedNodeVespaVersion,
                                                                allocatedHosts.asOptional());
             allocatedHosts.set(latestModelVersion.getModel().allocatedHosts()); // Update with additional clusters allocated
-            allApplicationVersions.add(latestModelVersion);
+            builtModelVersions.add(latestModelVersion);
         }
 
         // load old model versions
@@ -181,28 +182,28 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
         for (Version version : versions) {
             if (latest.isPresent() && version.equals(latest.get())) continue; // already loaded
 
-            MODELRESULT modelVersion;
             try {
-                modelVersion = buildModelVersion(modelFactoryRegistry.getFactory(version),
-                                                 applicationPackage,
-                                                 applicationId,
-                                                 wantedDockerImageRepository,
-                                                 wantedNodeVespaVersion,
-                                                 allocatedHosts.asOptional());
+                MODELRESULT modelVersion = buildModelVersion(modelFactoryRegistry.getFactory(version),
+                                                             applicationPackage,
+                                                             applicationId,
+                                                             wantedDockerImageRepository,
+                                                             wantedNodeVespaVersion,
+                                                             allocatedHosts.asOptional());
                 allocatedHosts.set(modelVersion.getModel().allocatedHosts()); // Update with additional clusters allocated
-                allApplicationVersions.add(modelVersion);
+                builtModelVersions.add(modelVersion);
             } catch (RuntimeException e) {
                 // allow failure to create old config models if there is a validation override that allow skipping old
                 // config models (which is always true for manually deployed zones)
-                if (allApplicationVersions.size() > 0 && allApplicationVersions.get(0).getModel().skipOldConfigModels(now))
-                    log.log(Level.INFO, applicationId + ": Skipping old version (due to validation override)");
+                if (builtModelVersions.size() > 0 && builtModelVersions.get(0).getModel().skipOldConfigModels(now))
+                    log.log(Level.INFO, applicationId + ": Failed to build version " + version +
+                                        ", but allow failure due to validation override ´skipOldConfigModels´");
                 else {
                     log.log(Level.SEVERE, applicationId + ": Failed to build version " + version);
                     throw e;
                 }
             }
         }
-        return allApplicationVersions;
+        return builtModelVersions;
     }
 
     private Set<Version> versionsToBuild(Set<Version> versions, Version wantedVersion, int majorVersion, AllocatedHosts allocatedHosts) {
@@ -250,12 +251,20 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
      * returns empty otherwise, which may either mean that no hosts are allocated or that we are running
      * non-hosted and should default to use hosts defined in the application package, depending on context
      */
-    Optional<HostProvisioner> createStaticProvisioner(Optional<AllocatedHosts> allocatedHosts,
-                                                      ApplicationId applicationId,
-                                                      Provisioned provisioned) {
+    HostProvisioner createStaticProvisioner(ApplicationPackage applicationPackage,
+                                            ApplicationId applicationId,
+                                            Provisioned provisioned) {
+        Optional<AllocatedHosts> allocatedHosts = applicationPackage.getAllocatedHosts();
         if (hosted && allocatedHosts.isPresent())
-            return Optional.of(new StaticProvisioner(allocatedHosts.get(), createNodeRepositoryProvisioner(applicationId, provisioned).get()));
-        return Optional.empty();
+            return createStaticProvisionerForHosted(allocatedHosts.get(), createNodeRepositoryProvisioner(applicationId, provisioned).get());
+        return DeployState.getDefaultModelHostProvisioner(applicationPackage);
+    }
+
+    /**
+     * Returns a host provisioner returning the previously allocated hosts
+     */
+    HostProvisioner createStaticProvisionerForHosted(AllocatedHosts allocatedHosts, HostProvisioner nodeRepositoryProvisioner) {
+        return new StaticProvisioner(allocatedHosts, nodeRepositoryProvisioner);
     }
 
     Optional<HostProvisioner> createNodeRepositoryProvisioner(ApplicationId applicationId, Provisioned provisioned) {

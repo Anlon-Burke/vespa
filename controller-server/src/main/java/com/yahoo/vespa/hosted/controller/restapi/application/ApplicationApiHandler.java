@@ -292,6 +292,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/reindex")) return reindex(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/reindexing")) return enableReindexing(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/restart")) return restart(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/suspend")) return suspend(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), true);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}")) return deploy(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/deploy")) return deploy(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request); // legacy synonym of the above
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/restart")) return restart(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
@@ -319,6 +320,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/job/{jobtype}/pause")) return resume(appIdFromPath(path), jobTypeFromPath(path));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}")) return deactivate(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/reindexing")) return disableReindexing(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/suspend")) return suspend(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), false);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/global-rotation/override")) return setGlobalRotationOverride(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), true, request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}")) return deactivate(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/global-rotation/override")) return setGlobalRotationOverride(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), true, request);
@@ -723,13 +725,16 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         }
     }
 
-    private static String valueOf(Node.ServiceState state) {
+    static String valueOf(Node.ServiceState state) {
         switch (state) {
             case expectedUp: return "expectedUp";
             case allowedDown: return "allowedDown";
+            case permanentlyDown: return "permanentlyDown";
             case unorchestrated: return "unorchestrated";
-            default: throw new IllegalArgumentException("Unexpected node state '" + state + "'.");
+            case unknown: break;
         }
+
+        return "unknown";
     }
 
     private static String valueOf(Node.ClusterType type) {
@@ -1556,7 +1561,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
                                              .filter(type -> ! type.isBlank())
                                              .collect(toUnmodifiableList());
 
-        controller.applications().reindex(id, zone, clusterNames, documentTypes);
+        controller.applications().reindex(id, zone, clusterNames, documentTypes, request.getBooleanProperty("indexedOnly"));
         return new MessageResponse("Requested reindexing of " + id + " in " + zone +
                                    (clusterNames.isEmpty() ? "" : ", on clusters " + String.join(", ", clusterNames) +
                                                                   (documentTypes.isEmpty() ? "" : ", for types " + String.join(", ", documentTypes))));
@@ -1572,14 +1577,12 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         Cursor root = slime.setObject();
 
         root.setBool("enabled", reindexing.enabled());
-        setStatus(root.setObject("status"), reindexing.common());
 
         Cursor clustersArray = root.setArray("clusters");
         reindexing.clusters().entrySet().stream().sorted(comparingByKey())
                   .forEach(cluster -> {
                       Cursor clusterObject = clustersArray.addObject();
                       clusterObject.setString("name", cluster.getKey());
-                      cluster.getValue().common().ifPresent(common -> setStatus(clusterObject.setObject("status"), common));
 
                       Cursor pendingArray = clusterObject.setArray("pending");
                       cluster.getValue().pending().entrySet().stream().sorted(comparingByKey())
@@ -1646,6 +1649,14 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
 
         controller.applications().restart(deploymentId, restartFilter);
         return new MessageResponse("Requested restart of " + deploymentId);
+    }
+
+    /** Set suspension status of the given deployment. */
+    private HttpResponse suspend(String tenantName, String applicationName, String instanceName, String environment, String region, boolean suspend) {
+        DeploymentId deploymentId = new DeploymentId(ApplicationId.from(tenantName, applicationName, instanceName),
+                                                     requireZone(environment, region));
+        controller.applications().setSuspension(deploymentId, suspend);
+        return new MessageResponse((suspend ? "Suspended" : "Resumed") + " orchestration of " + deploymentId);
     }
 
     private HttpResponse jobDeploy(ApplicationId id, JobType type, HttpRequest request) {
@@ -1916,6 +1927,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
                 else
                     toSlime(instance.id(), applicationArray.addObject(), request);
         }
+        tenantMetaDataToSlime(tenant, object.setObject("metaData"));
     }
 
     private void toSlime(Quota quota, QuotaUsage usage, Cursor object) {
@@ -1970,6 +1982,22 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
             default: throw new IllegalArgumentException("Unexpected tenant type '" + tenant.type() + "'.");
         }
         object.setString("url", withPath("/application/v4/tenant/" + tenant.name().value(), requestURI).toString());
+    }
+
+    private void tenantMetaDataToSlime(Tenant tenant, Cursor object) {
+        List<com.yahoo.vespa.hosted.controller.Application> applications = controller.applications().asList(tenant.name());
+        Optional<Instant> lastDev = applications.stream()
+                .flatMap(application -> application.instances().values().stream())
+                .flatMap(instance -> controller.jobController().jobs(instance.id()).stream()
+                        .filter(jobType -> jobType.environment() == Environment.dev)
+                        .flatMap(jobType -> controller.jobController().last(instance.id(), jobType).stream()))
+                .map(Run::start)
+                .max(Comparator.naturalOrder());
+        Optional<Instant> lastSubmission = applications.stream()
+                .flatMap(app -> app.latestVersion().flatMap(ApplicationVersion::buildTime).stream())
+                .max(Comparator.naturalOrder());
+        lastDev.ifPresent(instant -> object.setLong("lastDeploymentToDevMillis", instant.toEpochMilli()));
+        lastSubmission.ifPresent(instant -> object.setLong("lastSubmissionToProdMillis", instant.toEpochMilli()));
     }
 
     /** Returns a copy of the given URI with the host and port from the given URI, the path set to the given path and the query set to given query*/

@@ -92,6 +92,7 @@ import static com.yahoo.application.container.handler.Request.Method.GET;
 import static com.yahoo.application.container.handler.Request.Method.PATCH;
 import static com.yahoo.application.container.handler.Request.Method.POST;
 import static com.yahoo.application.container.handler.Request.Method.PUT;
+import static com.yahoo.vespa.hosted.controller.deployment.DeploymentContext.applicationPackage;
 import static java.net.URLEncoder.encode;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.Collectors.joining;
@@ -113,6 +114,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
                                                "z/4jKSTHwbYR8wdsOSrJGVEUPbS2nguIJ64OJH7gFnxM6sxUVj+Nm2HlXw==\n" +
                                                "-----END PUBLIC KEY-----\n";
     private static final String quotedPemPublicKey = pemPublicKey.replaceAll("\\n", "\\\\n");
+    private static final String accessDenied = "{\n  \"code\" : 403,\n  \"message\" : \"Access denied\"\n}";
 
     private static final ApplicationPackage applicationPackageDefault = new ApplicationPackageBuilder()
             .instances("default")
@@ -262,13 +264,13 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/otheruser/deploy/dev-us-east-1", POST)
                                       .userIdentity(OTHER_USER_ID)
                                       .data(createApplicationDeployData(applicationPackageInstance1, false)),
-                              "{\n  \"code\" : 403,\n  \"message\" : \"Access denied\"\n}",
+                              accessDenied,
                               403);
 
         // DELETE a dev deployment is not generally allowed under user instance
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/otheruser/environment/dev/region/us-east-1", DELETE)
                                       .userIdentity(OTHER_USER_ID),
-                              "{\n  \"code\" : 403,\n  \"message\" : \"Access denied\"\n}",
+                              accessDenied,
                               403);
 
         // When the user is a tenant admin, user instances are allowed.
@@ -613,7 +615,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // GET to get reindexing status
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/reindexing", GET)
                                       .userIdentity(USER_ID),
-                              "{\"enabled\":true,\"status\":{\"readyAtMillis\":123},\"clusters\":[{\"name\":\"cluster\",\"status\":{\"readyAtMillis\":234},\"pending\":[{\"type\":\"type\",\"requiredGeneration\":100}],\"ready\":[{\"type\":\"type\",\"readyAtMillis\":345,\"startedAtMillis\":456,\"endedAtMillis\":567,\"state\":\"failed\",\"message\":\"(＃｀д´)ﾉ\",\"progress\":0.1}]}]}");
+                              "{\"enabled\":true,\"clusters\":[{\"name\":\"cluster\",\"pending\":[{\"type\":\"type\",\"requiredGeneration\":100}],\"ready\":[{\"type\":\"type\",\"readyAtMillis\":345,\"startedAtMillis\":456,\"endedAtMillis\":567,\"state\":\"failed\",\"message\":\"(＃｀д´)ﾉ\",\"progress\":0.1}]}]}");
 
         // POST a 'restart application' command
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/environment/prod/region/us-central-1/instance/instance1/restart", POST)
@@ -647,6 +649,21 @@ public class ApplicationApiTest extends ControllerContainerTest {
                                       .properties(Map.of("hostname", "node-1-tenant-host-prod.us-central-1"))
                                       .screwdriverIdentity(SCREWDRIVER_ID),
                               "{\"message\":\"Requested restart of tenant1.application1.instance1 in prod.us-central-1\"}", 200);
+
+        // POST a 'suspend application' in dev environment
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/dev/region/us-east-1/suspend", POST)
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Suspended orchestration of tenant1.application1.instance1 in dev.us-east-1\"}");
+
+        // POST a 'resume application' in dev environment
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/dev/region/us-east-1/suspend", DELETE)
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Resumed orchestration of tenant1.application1.instance1 in dev.us-east-1\"}");
+
+        // POST a 'suspend application' in prod environment fails
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-east-3/suspend", POST)
+                                      .userIdentity(USER_ID),
+                              accessDenied, 403);
 
         // GET suspended
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/environment/prod/region/us-central-1/instance/instance1/suspended", GET)
@@ -1060,7 +1077,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
                                       .userIdentity(USER_ID)
                                       .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT)
                                       .data("{\"athensDomain\":\"domain1\", \"property\":\"property1\"}"),
-                              "{\n  \"code\" : 403,\n  \"message\" : \"Access denied\"\n}",
+                              accessDenied,
                               403);
 
         // GET non-existing tenant
@@ -1216,7 +1233,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // DELETE tenant again returns 403 as tenant access cannot be determined when the tenant does not exist
         tester.assertResponse(request("/application/v4/tenant/tenant1", DELETE)
                                       .userIdentity(USER_ID),
-                              "{\n  \"code\" : 403,\n  \"message\" : \"Access denied\"\n}",
+                              accessDenied,
                               403);
 
         // Create legancy tenant name containing underscores
@@ -1271,7 +1288,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1", POST)
                                       .userIdentity(unauthorizedUser)
                                       .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
-                              "{\n  \"code\" : 403,\n  \"message\" : \"Access denied\"\n}",
+                              accessDenied,
                               403);
 
         // (Create it with the right tenant id)
@@ -1286,13 +1303,13 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/environment/prod/region/us-west-1/instance/default/deploy", POST)
                                       .data(entity)
                                       .userIdentity(USER_ID),
-                              "{\n  \"code\" : 403,\n  \"message\" : \"Access denied\"\n}",
+                              accessDenied,
                               403);
 
         // Deleting an application for an Athens domain the user is not admin for is disallowed
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1", DELETE)
                                       .userIdentity(unauthorizedUser),
-                              "{\n  \"code\" : 403,\n  \"message\" : \"Access denied\"\n}",
+                              accessDenied,
                               403);
 
         // Create another instance under the application
@@ -1313,7 +1330,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant1", PUT)
                                       .data("{\"athensDomain\":\"domain1\", \"property\":\"property1\"}")
                                       .userIdentity(unauthorizedUser),
-                              "{\n  \"code\" : 403,\n  \"message\" : \"Access denied\"\n}",
+                              accessDenied,
                               403);
         
         // Change Athens domain
@@ -1322,13 +1339,13 @@ public class ApplicationApiTest extends ControllerContainerTest {
                                       .data("{\"athensDomain\":\"domain2\", \"property\":\"property1\"}")
                                       .userIdentity(authorizedUser)
                                       .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
-                              "{\"tenant\":\"tenant1\",\"type\":\"ATHENS\",\"athensDomain\":\"domain2\",\"property\":\"property1\",\"applications\":[]}",
+                              "{\"tenant\":\"tenant1\",\"type\":\"ATHENS\",\"athensDomain\":\"domain2\",\"property\":\"property1\",\"applications\":[],\"metaData\":{}}",
                               200);
 
         // Deleting a tenant for an Athens domain the user is not admin for is disallowed
         tester.assertResponse(request("/application/v4/tenant/tenant1", DELETE)
                                       .userIdentity(unauthorizedUser),
-                              "{\n  \"code\" : 403,\n  \"message\" : \"Access denied\"\n}",
+                              accessDenied,
                               403);
     }
 
@@ -1394,7 +1411,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/new-user/deploy/dev-us-east-1", POST)
                                       .data(entity)
                                       .userIdentity(userId),
-                              "{\n  \"code\" : 403,\n  \"message\" : \"Access denied\"\n}",
+                              accessDenied,
                               403);
 
         // Add "new-user" to the admin role, to allow service launches.

@@ -16,8 +16,12 @@ using namespace vespalib::eval::test;
 
 using vespalib::make_string_short::fmt;
 
-using PA = std::vector<vespalib::stringref *>;
-using CPA = std::vector<const vespalib::stringref *>;
+using PA = std::vector<string_id *>;
+using CPA = std::vector<const string_id *>;
+
+using Handle = SharedStringRepo::Handle;
+
+vespalib::string as_str(string_id label) { return Handle::string_from_id(label); }
 
 std::vector<Layout> layouts = {
     {},
@@ -79,6 +83,16 @@ TEST(SimpleValueTest, simple_values_can_be_converted_from_and_to_tensor_spec) {
     }
 }
 
+TEST(SimpleValueTest, simple_values_can_be_copied) {
+    for (const auto &layout: layouts) {
+        TensorSpec expect = spec(layout, N());
+        std::unique_ptr<Value> value = value_from_spec(expect, SimpleValueBuilderFactory::get());
+        std::unique_ptr<Value> copy = SimpleValueBuilderFactory::get().copy(*value);
+        TensorSpec actual = spec_from_value(*copy);
+        EXPECT_EQ(actual, expect);
+    }
+}
+
 TEST(SimpleValueTest, simple_value_can_be_built_and_inspected) {
     ValueType type = ValueType::from_spec("tensor<float>(x{},y[2],z{})");
     const auto &factory = SimpleValueBuilderFactory::get();
@@ -98,17 +112,18 @@ TEST(SimpleValueTest, simple_value_can_be_built_and_inspected) {
     std::unique_ptr<Value> value = builder->build(std::move(builder));
     EXPECT_EQ(value->index().size(), 6);
     auto view = value->index().create_view({0});
-    vespalib::stringref query = "b";
-    vespalib::stringref label;
+    Handle query_handle("b");
+    string_id query = query_handle.id();
+    string_id label;
     size_t subspace;
+    std::map<vespalib::string,size_t> result;
     view->lookup(CPA{&query});
-    EXPECT_TRUE(view->next_result(PA{&label}, subspace));
-    EXPECT_EQ(label, "aa");
-    EXPECT_EQ(subspace, 2);
-    EXPECT_TRUE(view->next_result(PA{&label}, subspace));
-    EXPECT_EQ(label, "bb");
-    EXPECT_EQ(subspace, 3);
-    EXPECT_FALSE(view->next_result(PA{&label}, subspace));
+    while (view->next_result(PA{&label}, subspace)) {
+        result[as_str(label)] = subspace;
+    }
+    EXPECT_EQ(result.size(), 2);
+    EXPECT_EQ(result["aa"], 2);
+    EXPECT_EQ(result["bb"], 3);
 }
 
 TEST(SimpleValueTest, new_generic_join_works_for_simple_values) {

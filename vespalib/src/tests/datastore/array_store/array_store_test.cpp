@@ -3,6 +3,7 @@
 #include <vespa/vespalib/test/datastore/buffer_stats.h>
 #include <vespa/vespalib/test/datastore/memstats.h>
 #include <vespa/vespalib/datastore/array_store.hpp>
+#include <vespa/vespalib/stllike/hash_map.hpp>
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/test/insertion_operators.h>
 #include <vespa/vespalib/util/traits.h>
@@ -26,7 +27,7 @@ struct Fixture
     using ConstArrayRef = typename ArrayStoreType::ConstArrayRef;
     using EntryVector = std::vector<EntryT>;
     using value_type = EntryT;
-    using ReferenceStore = std::map<EntryRef, EntryVector>;
+    using ReferenceStore = vespalib::hash_map<EntryRef, EntryVector>;
 
     ArrayStoreType store;
     ReferenceStore refStore;
@@ -143,6 +144,15 @@ TEST("require that we test with trivial and non-trivial types")
 {
     EXPECT_TRUE(vespalib::can_skip_destruction<NumberFixture::value_type>::value);
     EXPECT_FALSE(vespalib::can_skip_destruction<StringFixture::value_type>::value);
+}
+
+TEST_F("control static sizes", NumberFixture(3)) {
+    EXPECT_EQUAL(424u, sizeof(f.store));
+    EXPECT_EQUAL(328u, sizeof(NumberFixture::ArrayStoreType::DataStoreType));
+    EXPECT_EQUAL(64u, sizeof(NumberFixture::ArrayStoreType::SmallArrayType));
+    MemoryUsage usage = f.store.getMemoryUsage();
+    EXPECT_EQUAL(960u, usage.allocatedBytes());
+    EXPECT_EQUAL(32u, usage.usedBytes());
 }
 
 TEST_F("require that we can add and get small arrays of trivial type", NumberFixture(3))

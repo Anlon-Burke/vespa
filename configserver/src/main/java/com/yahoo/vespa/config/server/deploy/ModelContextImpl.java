@@ -49,7 +49,7 @@ public class ModelContextImpl implements ModelContext {
     private final DeployLogger deployLogger;
     private final ConfigDefinitionRepo configDefinitionRepo;
     private final FileRegistry fileRegistry;
-    private final Optional<HostProvisioner> hostProvisioner;
+    private final HostProvisioner hostProvisioner;
     private final Provisioned provisioned;
     private final Optional<? extends Reindexing> reindexing;
     private final ModelContext.Properties properties;
@@ -76,7 +76,7 @@ public class ModelContextImpl implements ModelContext {
                             ConfigDefinitionRepo configDefinitionRepo,
                             FileRegistry fileRegistry,
                             Optional<? extends Reindexing> reindexing,
-                            Optional<HostProvisioner> hostProvisioner,
+                            HostProvisioner hostProvisioner,
                             Provisioned provisioned,
                             ModelContext.Properties properties,
                             Optional<File> appDir,
@@ -112,9 +112,8 @@ public class ModelContextImpl implements ModelContext {
      * Returns the host provisioner to use, or empty to use the default provisioner,
      * creating hosts from the application package defined hosts
      */
-    // TODO: Don't allow empty here but create the right provisioner when this is set up instead
     @Override
-    public Optional<HostProvisioner> hostProvisioner() { return hostProvisioner; }
+    public HostProvisioner getHostProvisioner() { return hostProvisioner; }
 
     @Override
     public Provisioned provisioned() { return provisioned; }
@@ -152,8 +151,6 @@ public class ModelContextImpl implements ModelContext {
         private final double reindexerWindowSizeIncrement;
         private final double defaultTermwiseLimit;
         private final boolean useThreePhaseUpdates;
-        private final boolean useDirectStorageApiRpc;
-        private final boolean useFastValueTensorImplementation;
         private final String feedSequencer;
         private final String responseSequencer;
         private final int numResponseThreads;
@@ -166,14 +163,13 @@ public class ModelContextImpl implements ModelContext {
         private final int mergeChunkSize;
         private final double feedConcurrency;
         private final boolean reconfigurableZookeeperServer;
+        private final boolean enableJdiscConnectionLog;
 
         public FeatureFlags(FlagSource source, ApplicationId appId) {
             this.enableAutomaticReindexing = flagValue(source, appId, Flags.ENABLE_AUTOMATIC_REINDEXING);
             this.reindexerWindowSizeIncrement = flagValue(source, appId, Flags.REINDEXER_WINDOW_SIZE_INCREMENT);
             this.defaultTermwiseLimit = flagValue(source, appId, Flags.DEFAULT_TERM_WISE_LIMIT);
             this.useThreePhaseUpdates = flagValue(source, appId, Flags.USE_THREE_PHASE_UPDATES);
-            this.useDirectStorageApiRpc = flagValue(source, appId, Flags.USE_DIRECT_STORAGE_API_RPC);
-            this.useFastValueTensorImplementation = flagValue(source, appId, Flags.USE_FAST_VALUE_TENSOR_IMPLEMENTATION);
             this.feedSequencer = flagValue(source, appId, Flags.FEED_SEQUENCER_TYPE);
             this.responseSequencer = flagValue(source, appId, Flags.RESPONSE_SEQUENCER_TYPE);
             this.numResponseThreads = flagValue(source, appId, Flags.RESPONSE_NUM_THREADS);
@@ -186,14 +182,13 @@ public class ModelContextImpl implements ModelContext {
             this.mergeChunkSize = flagValue(source, appId, Flags.MERGE_CHUNK_SIZE);
             this.feedConcurrency = flagValue(source, appId, Flags.FEED_CONCURRENCY);
             this.reconfigurableZookeeperServer = flagValue(source, appId, Flags.RECONFIGURABLE_ZOOKEEPER_SERVER_FOR_CLUSTER_CONTROLLER);
+            this.enableJdiscConnectionLog = flagValue(source, appId, Flags.ENABLE_JDISC_CONNECTION_LOG);
         }
 
         @Override public boolean enableAutomaticReindexing() { return enableAutomaticReindexing; }
         @Override public double reindexerWindowSizeIncrement() { return reindexerWindowSizeIncrement; }
         @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
         @Override public boolean useThreePhaseUpdates() { return useThreePhaseUpdates; }
-        @Override public boolean useDirectStorageApiRpc() { return useDirectStorageApiRpc; }
-        @Override public boolean useFastValueTensorImplementation() { return useFastValueTensorImplementation; }
         @Override public String feedSequencerType() { return feedSequencer; }
         @Override public String responseSequencerType() { return responseSequencer; }
         @Override public int defaultNumResponseThreads() { return numResponseThreads; }
@@ -206,6 +201,7 @@ public class ModelContextImpl implements ModelContext {
         @Override public int mergeChunkSize() { return mergeChunkSize; }
         @Override public double feedConcurrency() { return feedConcurrency; }
         @Override public boolean reconfigurableZookeeperServer() { return reconfigurableZookeeperServer; }
+        @Override public boolean enableJdiscConnectionLog() { return enableJdiscConnectionLog; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)
@@ -215,7 +211,6 @@ public class ModelContextImpl implements ModelContext {
 
     }
 
-    @SuppressWarnings("deprecation") // for old feature flag methods in ModelContext.Properties
     public static class Properties implements ModelContext.Properties {
 
         private final ModelContext.FeatureFlags featureFlags;
@@ -236,23 +231,6 @@ public class ModelContextImpl implements ModelContext {
         private final Quota quota;
 
         private final String jvmGCOPtions;
-
-        // Old non-permanent feature flags. Use ModelContext.FeatureFlag instead
-        private final double defaultTermwiseLimit;
-        private final boolean useThreePhaseUpdates;
-        private final boolean useDirectStorageApiRpc;
-        private final boolean useFastValueTensorImplementation;
-        private final String feedSequencer;
-        private final String responseSequencer;
-        private final int numResponseThreads;
-        private final boolean skipCommunicationManagerThread;
-        private final boolean skipMbusRequestThread;
-        private final boolean skipMbusReplyThread;
-        private final boolean useAccessControlTlsHandshakeClientAuth;
-        private final boolean useAsyncMessageHandlingOnSchedule;
-        private final int contentNodeBucketDBStripeBits;
-        private final int mergeChunkSize;
-        private final double feedConcurrency;
 
         public Properties(ApplicationId applicationId,
                           ConfigserverConfig configserverConfig,
@@ -283,23 +261,6 @@ public class ModelContextImpl implements ModelContext {
             this.quota = maybeQuota.orElseGet(Quota::unlimited);
 
             jvmGCOPtions = flagValue(flagSource, applicationId, PermanentFlags.JVM_GC_OPTIONS);
-
-            // Old non-permanent feature flags. Use ModelContext.FeatureFlag instead
-            defaultTermwiseLimit = flagValue(flagSource, applicationId, Flags.DEFAULT_TERM_WISE_LIMIT);
-            useThreePhaseUpdates = flagValue(flagSource, applicationId, Flags.USE_THREE_PHASE_UPDATES);
-            useDirectStorageApiRpc = flagValue(flagSource, applicationId, Flags.USE_DIRECT_STORAGE_API_RPC);
-            useFastValueTensorImplementation = flagValue(flagSource, applicationId, Flags.USE_FAST_VALUE_TENSOR_IMPLEMENTATION);
-            feedSequencer = flagValue(flagSource, applicationId, Flags.FEED_SEQUENCER_TYPE);
-            responseSequencer = flagValue(flagSource, applicationId, Flags.RESPONSE_SEQUENCER_TYPE);
-            numResponseThreads = flagValue(flagSource, applicationId, Flags.RESPONSE_NUM_THREADS);
-            skipCommunicationManagerThread = flagValue(flagSource, applicationId, Flags.SKIP_COMMUNICATIONMANAGER_THREAD);
-            skipMbusRequestThread = flagValue(flagSource, applicationId, Flags.SKIP_MBUS_REQUEST_THREAD);
-            skipMbusReplyThread = flagValue(flagSource, applicationId, Flags.SKIP_MBUS_REPLY_THREAD);
-            this.useAccessControlTlsHandshakeClientAuth = flagValue(flagSource, applicationId, Flags.USE_ACCESS_CONTROL_CLIENT_AUTHENTICATION);
-            useAsyncMessageHandlingOnSchedule = flagValue(flagSource, applicationId, Flags.USE_ASYNC_MESSAGE_HANDLING_ON_SCHEDULE);
-            contentNodeBucketDBStripeBits = flagValue(flagSource, applicationId, Flags.CONTENT_NODE_BUCKET_DB_STRIPE_BITS);
-            mergeChunkSize = flagValue(flagSource, applicationId, Flags.MERGE_CHUNK_SIZE);
-            feedConcurrency = flagValue(flagSource, applicationId, Flags.FEED_CONCURRENCY);
         }
 
         @Override public ModelContext.FeatureFlags featureFlags() { return featureFlags; }
@@ -355,23 +316,6 @@ public class ModelContextImpl implements ModelContext {
         @Override public Quota quota() { return quota; }
 
         @Override public String jvmGCOptions() { return jvmGCOPtions; }
-
-        // Old non-permanent feature flags. Use ModelContext.FeatureFlag instead
-        @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
-        @Override public boolean useThreePhaseUpdates() { return useThreePhaseUpdates; }
-        @Override public boolean useDirectStorageApiRpc() { return useDirectStorageApiRpc; }
-        @Override public boolean useFastValueTensorImplementation() { return useFastValueTensorImplementation; }
-        @Override public String feedSequencerType() { return feedSequencer; }
-        @Override public String responseSequencerType() { return responseSequencer; }
-        @Override public int defaultNumResponseThreads() { return numResponseThreads; }
-        @Override public boolean skipCommunicationManagerThread() { return skipCommunicationManagerThread; }
-        @Override public boolean skipMbusRequestThread() { return skipMbusRequestThread; }
-        @Override public boolean skipMbusReplyThread() { return skipMbusReplyThread; }
-        @Override public boolean useAccessControlTlsHandshakeClientAuth() { return useAccessControlTlsHandshakeClientAuth; }
-        @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
-        @Override public int contentNodeBucketDBStripeBits() { return contentNodeBucketDBStripeBits; }
-        @Override public int mergeChunkSize() { return mergeChunkSize; }
-        @Override public double feedConcurrency() { return feedConcurrency; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)

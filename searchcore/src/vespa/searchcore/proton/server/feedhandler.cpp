@@ -6,6 +6,7 @@
 #include "i_feed_handler_owner.h"
 #include "ifeedview.h"
 #include "configstore.h"
+#include <vespa/document/util/feed_reject_helper.h>
 #include <vespa/document/base/exceptions.h>
 #include <vespa/document/datatype/documenttype.h>
 #include <vespa/document/repo/documenttyperepo.h>
@@ -108,7 +109,7 @@ TlsMgrWriter::sync(SerialNum syncTo)
     throw IllegalStateException(make_string("Failed to sync TLS to token %" PRIu64 ".", syncTo));
 }
 
-class OnCommitDone : public search::IDestructorCallback {
+class OnCommitDone : public vespalib::IDestructorCallback {
 public:
     OnCommitDone(Executor & executor, std::unique_ptr<Executor::Task> task) noexcept
         : _executor(executor),
@@ -583,14 +584,9 @@ FeedHandler::tlsPrune(SerialNum oldest_to_keep) {
 
 namespace {
 
-bool
-isRejectableFeedOperation(FeedOperation::Type type)
-{
-    return type == FeedOperation::PUT || type == FeedOperation::UPDATE_42 || type == FeedOperation::UPDATE;
-}
-
 template <typename ResultType>
-void feedOperationRejected(FeedToken & token, const vespalib::string &opType, const vespalib::string &docId,
+void
+feedOperationRejected(FeedToken & token, const vespalib::string &opType, const vespalib::string &docId,
                            const DocTypeName & docTypeName, const vespalib::string &rejectMessage)
 {
     if (token) {
@@ -616,12 +612,42 @@ notifyFeedOperationRejected(FeedToken & token, const FeedOperation &op,
     }
 }
 
+/**
+ * Tells wether an operation should be blocked when resourcelimits have been reached.
+ * It looks at the operation type and also the content if it is an 'update' operation.
+ */
+class FeedRejectHelper {
+public:
+    static bool isRejectableFeedOperation(const FeedOperation & op);
+    static bool mustReject(const UpdateOperation & updateOperation);
+};
+
+bool
+FeedRejectHelper::mustReject(const UpdateOperation & updateOperation) {
+    if (updateOperation.getUpdate()) {
+        return document::FeedRejectHelper::mustReject(*updateOperation.getUpdate());
+    }
+    return false;
+}
+
+bool
+FeedRejectHelper::isRejectableFeedOperation(const FeedOperation & op)
+{
+    FeedOperation::Type type = op.getType();
+    if (type == FeedOperation::PUT) {
+        return true;
+    } else if (type == FeedOperation::UPDATE_42 || type == FeedOperation::UPDATE) {
+        return mustReject(dynamic_cast<const UpdateOperation &>(op));
+    }
+    return false;
+}
+
 }
 
 bool
 FeedHandler::considerWriteOperationForRejection(FeedToken & token, const FeedOperation &op)
 {
-    if (!_writeFilter.acceptWriteOperation() && isRejectableFeedOperation(op.getType())) {
+    if (!_writeFilter.acceptWriteOperation() && FeedRejectHelper::isRejectableFeedOperation(op)) {
         IResourceWriteFilter::State state = _writeFilter.getAcceptState();
         if (!state.acceptWriteOperation()) {
             notifyFeedOperationRejected(token, op, _docTypeName, state.message());
@@ -720,7 +746,7 @@ FeedHandler::handleOperation(FeedToken token, FeedOperation::UP op)
 }
 
 void
-FeedHandler::handleMove(MoveOperation &op, std::shared_ptr<search::IDestructorCallback> moveDoneCtx)
+FeedHandler::handleMove(MoveOperation &op, std::shared_ptr<vespalib::IDestructorCallback> moveDoneCtx)
 {
     assert(_writeService.master().isCurrentThread());
     op.set_prepare_serial_num(inc_prepare_serial_num());

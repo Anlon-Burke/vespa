@@ -12,6 +12,7 @@
 #include <vespa/storage/persistence/bucketownershipnotifier.h>
 #include <vespa/storage/persistence/persistencethread.h>
 #include <vespa/storage/persistence/persistencehandler.h>
+#include <vespa/storage/persistence/provider_error_wrapper.h>
 #include <vespa/storageapi/message/bucketsplitting.h>
 #include <vespa/storageapi/message/state.h>
 #include <vespa/storageapi/message/persistence.h>
@@ -43,17 +44,13 @@ FileStorManager(const config::ConfigUri & configUri, spi::PersistenceProvider& p
       framework::HtmlStatusReporter("filestorman", "File store manager"),
       _compReg(compReg),
       _component(compReg, "filestormanager"),
-      _providerCore(provider),
-      _providerErrorWrapper(_providerCore),
-      _provider(&_providerErrorWrapper),
+      _provider(std::make_unique<ProviderErrorWrapper>(provider)),
       _init_handler(init_handler),
       _bucketIdFactory(_component.getBucketIdFactory()),
       _persistenceHandlers(),
       _threads(),
       _bucketOwnershipNotifier(std::make_unique<BucketOwnershipNotifier>(_component, *this)),
       _configFetcher(configUri.getContext()),
-      _threadLockCheckInterval(60),
-      _failDiskOnError(false),
       _use_async_message_handling_on_schedule(false),
       _metrics(std::make_unique<FileStorMetrics>()),
       _closed(false),
@@ -94,6 +91,11 @@ void
 FileStorManager::print(std::ostream& out, bool , const std::string& ) const
 {
     out << "FileStorManager";
+}
+
+ProviderErrorWrapper &
+FileStorManager::error_wrapper() noexcept {
+    return static_cast<ProviderErrorWrapper &>(*_provider);
 }
 
 namespace {
@@ -163,8 +165,6 @@ FileStorManager::configure(std::unique_ptr<vespa::config::content::StorFilestorC
     // If true, this is not the first configure.
     bool liveUpdate = ! _threads.empty();
 
-    _threadLockCheckInterval = config->diskOperationTimeout;
-    _failDiskOnError = (config->failDiskAfterErrorCount > 0);
     _use_async_message_handling_on_schedule = config->useAsyncMessageHandlingOnSchedule;
 
     if (!liveUpdate) {
