@@ -23,6 +23,7 @@
 #include <persistence/spi/types.h>
 #include <vespa/storage/bucketdb/storbucketdb.h>
 #include <vespa/storage/common/doneinitializehandler.h>
+#include <vespa/storage/common/hostreporter/hostinfo.h>
 #include <vespa/storage/common/node_identity.h>
 #include <vespa/storage/common/nodestateupdater.h>
 #include <vespa/storage/frameworkimpl/component/distributorcomponentregisterimpl.h>
@@ -34,7 +35,7 @@
 
 namespace storage {
 
-namespace spi { class PersistenceProvider; }
+namespace spi { struct PersistenceProvider; }
 class StorageBucketDBInitializer;
 
 DEFINE_PRIMITIVE_WRAPPER(uint16_t, NodeIndex);
@@ -112,6 +113,7 @@ class TestServiceLayerApp : public TestStorageApp
     ServiceLayerComponentRegisterImpl& _compReg;
     PersistenceProviderUP _persistenceProvider;
     std::unique_ptr<vespalib::ISequencedTaskExecutor> _executor;
+    HostInfo _host_info;
 
 public:
     TestServiceLayerApp(vespalib::stringref configId);
@@ -122,6 +124,7 @@ public:
     void setPersistenceProvider(PersistenceProviderUP);
 
     ServiceLayerComponentRegisterImpl& getComponentRegister() { return _compReg; }
+    HostInfo &get_host_info() noexcept { return _host_info; }
 
     spi::PersistenceProvider& getPersistenceProvider();
 

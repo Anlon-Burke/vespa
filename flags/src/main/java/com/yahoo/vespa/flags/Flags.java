@@ -43,7 +43,7 @@ public class Flags {
     private static volatile TreeMap<FlagId, FlagDefinition> flags = new TreeMap<>();
 
     public static final UnboundBooleanFlag RETIRE_WITH_PERMANENTLY_DOWN = defineFeatureFlag(
-            "retire-with-permanently-down", false,
+            "retire-with-permanently-down", true,
             List.of("hakonhall"), "2020-12-02", "2021-02-01",
             "If enabled, retirement will end with setting the host status to PERMANENTLY_DOWN, " +
             "instead of ALLOWED_TO_BE_DOWN (old behavior).",
@@ -283,6 +283,12 @@ public class Flags {
             "enable-jdisc-connection-log", false,
             List.of("bjorncs", "tokle"), "2021-01-12", "2021-04-01",
             "Whether to enable jdisc connection log",
+            "Takes effect on (re)deployment");
+
+    public static final UnboundBooleanFlag ENABLE_ZSTD_COMPRESSION_ACCESS_LOG = defineFeatureFlag(
+            "enable-zstd-compression-access-log", false,
+            List.of("bjorncs", "tokle", "baldersheim"), "2021-01-19", "2021-04-01",
+            "Whether to enable zstd compression of jdisc access logs",
             "Takes effect on (re)deployment");
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */

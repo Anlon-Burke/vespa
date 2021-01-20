@@ -6,6 +6,7 @@
 #include <vespa/persistence/spi/persistenceprovider.h>
 #include <vespa/document/update/documentupdate.h>
 #include <vespa/vespalib/util/isequencedtaskexecutor.h>
+#include <vespa/vespalib/util/destructor_callbacks.h>
 
 namespace storage {
 
@@ -20,7 +21,7 @@ public:
     }
 
     void addResultHandler(const spi::ResultHandler *resultHandler) {
-        // Only handles a signal handler now,
+        // Only handles a single handler now,
         // Can be extended if necessary later on
         assert(_resultHandler == nullptr);
         _resultHandler = resultHandler;
@@ -94,6 +95,18 @@ AsyncHandler::AsyncHandler(const PersistenceUtil & env, spi::PersistenceProvider
       _sequencedExecutor(executor),
       _bucketIdFactory(bucketIdFactory)
 {}
+
+MessageTracker::UP
+AsyncHandler::handleRunTask(RunTaskCommand& cmd, MessageTracker::UP tracker) const {
+    auto task = makeResultTask([tracker = std::move(tracker)](spi::Result::UP response) {
+        tracker->checkForError(*response);
+        tracker->sendReply();
+    });
+    spi::Bucket bucket(cmd.getBucket());
+    auto onDone = std::make_unique<ResultTaskOperationDone>(_sequencedExecutor, cmd.getBucketId(), std::move(task));
+    cmd.task().run(bucket, std::make_shared<vespalib::KeepAlive<decltype(onDone)>>(std::move(onDone)));
+    return tracker;
+}
 
 MessageTracker::UP
 AsyncHandler::handlePut(api::PutCommand& cmd, MessageTracker::UP trackerUP) const
@@ -219,4 +232,5 @@ AsyncHandler::tasConditionMatches(const api::TestAndSetCommand & cmd, MessageTra
 
     return true;
 }
+
 }

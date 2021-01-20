@@ -164,6 +164,7 @@ public class ModelContextImpl implements ModelContext {
         private final double feedConcurrency;
         private final boolean reconfigurableZookeeperServer;
         private final boolean enableJdiscConnectionLog;
+        private final boolean enableZstdCompressionAccessLog;
 
         public FeatureFlags(FlagSource source, ApplicationId appId) {
             this.enableAutomaticReindexing = flagValue(source, appId, Flags.ENABLE_AUTOMATIC_REINDEXING);
@@ -183,6 +184,7 @@ public class ModelContextImpl implements ModelContext {
             this.feedConcurrency = flagValue(source, appId, Flags.FEED_CONCURRENCY);
             this.reconfigurableZookeeperServer = flagValue(source, appId, Flags.RECONFIGURABLE_ZOOKEEPER_SERVER_FOR_CLUSTER_CONTROLLER);
             this.enableJdiscConnectionLog = flagValue(source, appId, Flags.ENABLE_JDISC_CONNECTION_LOG);
+            this.enableZstdCompressionAccessLog = flagValue(source, appId, Flags.ENABLE_ZSTD_COMPRESSION_ACCESS_LOG);
         }
 
         @Override public boolean enableAutomaticReindexing() { return enableAutomaticReindexing; }
@@ -202,6 +204,7 @@ public class ModelContextImpl implements ModelContext {
         @Override public double feedConcurrency() { return feedConcurrency; }
         @Override public boolean reconfigurableZookeeperServer() { return reconfigurableZookeeperServer; }
         @Override public boolean enableJdiscConnectionLog() { return enableJdiscConnectionLog; }
+        @Override public boolean enableZstdCompressionAccessLog() { return enableZstdCompressionAccessLog; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)
@@ -230,7 +233,7 @@ public class ModelContextImpl implements ModelContext {
         private final Optional<ApplicationRoles> applicationRoles;
         private final Quota quota;
 
-        private final String jvmGCOPtions;
+        private final String jvmGcOptions;
 
         public Properties(ApplicationId applicationId,
                           ConfigserverConfig configserverConfig,
@@ -260,7 +263,7 @@ public class ModelContextImpl implements ModelContext {
             this.applicationRoles = applicationRoles;
             this.quota = maybeQuota.orElseGet(Quota::unlimited);
 
-            jvmGCOPtions = flagValue(flagSource, applicationId, PermanentFlags.JVM_GC_OPTIONS);
+            jvmGcOptions = flagValue(flagSource, applicationId, PermanentFlags.JVM_GC_OPTIONS);
         }
 
         @Override public ModelContext.FeatureFlags featureFlags() { return featureFlags; }
@@ -315,7 +318,7 @@ public class ModelContextImpl implements ModelContext {
 
         @Override public Quota quota() { return quota; }
 
-        @Override public String jvmGCOptions() { return jvmGCOPtions; }
+        @Override public String jvmGCOptions() { return jvmGcOptions; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)

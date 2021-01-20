@@ -9,9 +9,11 @@
 #pragma once
 
 #include "filestorhandler.h"
+#include "service_layer_host_info_reporter.h"
 #include <vespa/vespalib/util/document_runnable.h>
 #include <vespa/vespalib/util/isequencedtaskexecutor.h>
 #include <vespa/document/bucket/bucketid.h>
+#include <vespa/persistence/spi/bucketexecutor.h>
 #include <vespa/storage/bucketdb/storbucketdb.h>
 #include <vespa/storage/common/messagesender.h>
 #include <vespa/storage/common/servicelayercomponent.h>
@@ -27,19 +29,22 @@
 #include <vespa/config/helper/ifetchercallback.h>
 #include <vespa/config/config.h>
 
+namespace vespalib { class IDestructorCallback; }
+
 namespace storage {
 namespace api {
     class ReturnCode;
     class StorageReply;
     class BucketCommand;
 }
-namespace spi { class PersistenceProvider; }
+namespace spi { struct PersistenceProvider; }
 
 struct FileStorManagerTest;
 class ReadBucketList;
 class BucketOwnershipNotifier;
 class AbortBucketOperationsCommand;
 struct DoneInitializeHandler;
+class HostInfo;
 class PersistenceHandler;
 struct FileStorMetrics;
 class ProviderErrorWrapper;
@@ -48,7 +53,8 @@ class FileStorManager : public StorageLinkQueued,
                         public framework::HtmlStatusReporter,
                         public StateListener,
                         private config::IFetcherCallback<vespa::config::content::StorFilestorConfig>,
-                        public MessageSender
+                        public MessageSender,
+                        public spi::BucketExecutor
 {
     ServiceLayerComponentRegister             & _compReg;
     ServiceLayerComponent                       _component;
@@ -66,12 +72,15 @@ class FileStorManager : public StorageLinkQueued,
     std::shared_ptr<FileStorMetrics> _metrics;
     std::unique_ptr<FileStorHandler> _filestorHandler;
     std::unique_ptr<vespalib::ISequencedTaskExecutor> _sequencedExecutor;
+
     bool       _closed;
     std::mutex _lock;
+    std::unique_ptr<vespalib::IDestructorCallback> _bucketExecutorRegistration;
+    ServiceLayerHostInfoReporter                   _host_info_reporter;
 
 public:
     FileStorManager(const config::ConfigUri &, spi::PersistenceProvider&,
-                    ServiceLayerComponentRegister&, DoneInitializeHandler&);
+                    ServiceLayerComponentRegister&, DoneInitializeHandler&, HostInfo&);
     FileStorManager(const FileStorManager &) = delete;
     FileStorManager& operator=(const FileStorManager &) = delete;
 
@@ -163,6 +172,9 @@ private:
     void updateState();
     void propagateClusterStates();
     void update_reported_state_after_db_init();
+
+    std::unique_ptr<spi::BucketTask> execute(const spi::Bucket &bucket, std::unique_ptr<spi::BucketTask> task) override;
+    void sync() override;
 };
 
 } // storage
