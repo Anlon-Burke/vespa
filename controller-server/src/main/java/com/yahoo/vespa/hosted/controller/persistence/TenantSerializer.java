@@ -18,6 +18,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.organization.Contact;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.BillingInfo;
 import com.yahoo.vespa.hosted.controller.tenant.AthenzTenant;
 import com.yahoo.vespa.hosted.controller.tenant.CloudTenant;
+import com.yahoo.vespa.hosted.controller.tenant.LastLoginInfo;
 import com.yahoo.vespa.hosted.controller.tenant.Tenant;
 import com.yahoo.vespa.hosted.controller.tenant.TenantInfo;
 import com.yahoo.vespa.hosted.controller.tenant.TenantInfoAddress;
@@ -28,9 +29,10 @@ import java.security.Principal;
 import java.security.PublicKey;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.function.Supplier;
 
 /**
  * Slime serialization of {@link Tenant} sub-types.
@@ -66,6 +68,7 @@ public class TenantSerializer {
     private static final String productCodeField = "productCode";
     private static final String pemDeveloperKeysField = "pemDeveloperKeys";
     private static final String tenantInfoField = "info";
+    private static final String lastLoginInfoField = "lastLoginInfo";
 
     public Slime toSlime(Tenant tenant) {
         Slime slime = new Slime();
@@ -73,6 +76,7 @@ public class TenantSerializer {
         tenantObject.setString(nameField, tenant.name().value());
         tenantObject.setString(typeField, valueOf(tenant.type()));
         tenantObject.setLong(createdAtField, tenant.createdAt().toEpochMilli());
+        toSlime(tenant.lastLoginInfo(), tenantObject.setObject(lastLoginInfoField));
 
         switch (tenant.type()) {
             case athenz: toSlime((AthenzTenant) tenant, tenantObject); break;
@@ -116,34 +120,43 @@ public class TenantSerializer {
         billingInfoObject.setString(productCodeField, billingInfo.productCode());
     }
 
-    public Tenant tenantFrom(Slime slime, Supplier<Instant> tenantCreateTimeSupplier) {
+    private void toSlime(LastLoginInfo lastLoginInfo, Cursor lastLoginInfoObject) {
+        for (LastLoginInfo.UserLevel userLevel: LastLoginInfo.UserLevel.values()) {
+            lastLoginInfo.get(userLevel).ifPresent(lastLoginAt ->
+                    lastLoginInfoObject.setLong(valueOf(userLevel), lastLoginAt.toEpochMilli()));
+        }
+    }
+
+    public Tenant tenantFrom(Slime slime) {
         Inspector tenantObject = slime.get();
         Tenant.Type type = typeOf(tenantObject.field(typeField).asString());
 
         switch (type) {
-            case athenz: return athenzTenantFrom(tenantObject, tenantCreateTimeSupplier);
-            case cloud:  return cloudTenantFrom(tenantObject, tenantCreateTimeSupplier);
+            case athenz: return athenzTenantFrom(tenantObject);
+            case cloud:  return cloudTenantFrom(tenantObject);
             default:     throw new IllegalArgumentException("Unexpected tenant type '" + type + "'.");
         }
     }
 
-    private AthenzTenant athenzTenantFrom(Inspector tenantObject, Supplier<Instant> tenantCreateTimeSupplier) {
+    private AthenzTenant athenzTenantFrom(Inspector tenantObject) {
         TenantName name = TenantName.from(tenantObject.field(nameField).asString());
         AthenzDomain domain = new AthenzDomain(tenantObject.field(athenzDomainField).asString());
         Property property = new Property(tenantObject.field(propertyField).asString());
         Optional<PropertyId> propertyId = SlimeUtils.optionalString(tenantObject.field(propertyIdField)).map(PropertyId::new);
         Optional<Contact> contact = contactFrom(tenantObject.field(contactField));
-        Instant createdAt = SlimeUtils.optionalLong(tenantObject.field(createdAtField)).map(Instant::ofEpochMilli).orElseGet(tenantCreateTimeSupplier);
-        return new AthenzTenant(name, domain, property, propertyId, contact, createdAt);
+        Instant createdAt = Instant.ofEpochMilli(tenantObject.field(createdAtField).asLong());
+        LastLoginInfo lastLoginInfo = lastLoginInfoFromSlime(tenantObject.field(lastLoginInfoField));
+        return new AthenzTenant(name, domain, property, propertyId, contact, createdAt, lastLoginInfo);
     }
 
-    private CloudTenant cloudTenantFrom(Inspector tenantObject, Supplier<Instant> tenantCreateTimeSupplier) {
+    private CloudTenant cloudTenantFrom(Inspector tenantObject) {
         TenantName name = TenantName.from(tenantObject.field(nameField).asString());
-        Instant createdAt = SlimeUtils.optionalLong(tenantObject.field(createdAtField)).map(Instant::ofEpochMilli).orElseGet(tenantCreateTimeSupplier);
+        Instant createdAt = Instant.ofEpochMilli(tenantObject.field(createdAtField).asLong());
+        LastLoginInfo lastLoginInfo = lastLoginInfoFromSlime(tenantObject.field(lastLoginInfoField));
         Optional<Principal> creator = SlimeUtils.optionalString(tenantObject.field(creatorField)).map(SimplePrincipal::new);
         BiMap<PublicKey, Principal> developerKeys = developerKeysFromSlime(tenantObject.field(pemDeveloperKeysField));
         TenantInfo info = tenantInfoFromSlime(tenantObject.field(tenantInfoField));
-        return new CloudTenant(name, createdAt, creator, developerKeys, info);
+        return new CloudTenant(name, createdAt, lastLoginInfo, creator, developerKeys, info);
     }
 
     private BiMap<PublicKey, Principal> developerKeysFromSlime(Inspector array) {
@@ -184,6 +197,13 @@ public class TenantSerializer {
                 .withEmail(billingObject.field("email").asString())
                 .withPhone(billingObject.field("phone").asString())
                 .withAddress(tenantInfoAddressFromSlime(billingObject.field("address")));
+    }
+
+    private LastLoginInfo lastLoginInfoFromSlime(Inspector lastLoginInfoObject) {
+        Map<LastLoginInfo.UserLevel, Instant> lastLoginByUserLevel = new HashMap<>();
+        lastLoginInfoObject.traverse((String name, Inspector value) ->
+                lastLoginByUserLevel.put(userLevelOf(name), Instant.ofEpochMilli(value.asLong())));
+        return new LastLoginInfo(lastLoginByUserLevel);
     }
 
     void toSlime(TenantInfo info, Cursor parentCursor) {
@@ -281,6 +301,24 @@ public class TenantSerializer {
             case athenz: return "athenz";
             case cloud:  return "cloud";
             default: throw new IllegalArgumentException("Unexpected tenant type '" + type + "'.");
+        }
+    }
+
+    private static LastLoginInfo.UserLevel userLevelOf(String value) {
+        switch (value) {
+            case "user": return LastLoginInfo.UserLevel.user;
+            case "developer": return LastLoginInfo.UserLevel.developer;
+            case "administrator": return LastLoginInfo.UserLevel.administrator;
+            default: throw new IllegalArgumentException("Unknown user level '" + value + "'.");
+        }
+    }
+
+    private static String valueOf(LastLoginInfo.UserLevel userLevel) {
+        switch (userLevel) {
+            case user: return "user";
+            case developer: return "developer";
+            case administrator: return "administrator";
+            default: throw new IllegalArgumentException("Unexpected user level '" + userLevel + "'.");
         }
     }
 }

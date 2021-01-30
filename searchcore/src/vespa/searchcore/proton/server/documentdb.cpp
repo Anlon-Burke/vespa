@@ -6,16 +6,17 @@
 #include "document_subdb_collection_explorer.h"
 #include "documentdb.h"
 #include "documentdbconfigscout.h"
+#include "feedhandler.h"
 #include "idocumentdbowner.h"
 #include "idocumentsubdb.h"
 #include "lid_space_compaction_handler.h"
 #include "maintenance_jobs_injector.h"
 #include "reconfig_params.h"
-#include "feedhandler.h"
-#include <vespa/searchcore/proton/persistenceengine/commit_and_wait_document_retriever.h>
 #include <vespa/document/repo/documenttyperepo.h>
+#include <vespa/metrics/updatehook.h>
 #include <vespa/searchcore/proton/attribute/attribute_config_inspector.h>
 #include <vespa/searchcore/proton/attribute/attribute_writer.h>
+#include <vespa/searchcore/proton/attribute/i_attribute_usage_listener.h>
 #include <vespa/searchcore/proton/attribute/imported_attributes_repo.h>
 #include <vespa/searchcore/proton/common/eventlogger.h>
 #include <vespa/searchcore/proton/common/statusreport.h>
@@ -26,6 +27,7 @@
 #include <vespa/searchcore/proton/initializer/task_runner.h>
 #include <vespa/searchcore/proton/metrics/executor_threading_service_stats.h>
 #include <vespa/searchcore/proton/metrics/metricswireservice.h>
+#include <vespa/searchcore/proton/persistenceengine/commit_and_wait_document_retriever.h>
 #include <vespa/searchcore/proton/reference/document_db_reference_resolver.h>
 #include <vespa/searchcore/proton/reference/i_document_db_reference_registry.h>
 #include <vespa/searchlib/attribute/attributefactory.h>
@@ -33,9 +35,7 @@
 #include <vespa/searchlib/engine/docsumreply.h>
 #include <vespa/searchlib/engine/searchreply.h>
 #include <vespa/vespalib/util/destructor_callbacks.h>
-#include <vespa/vespalib/util/closuretask.h>
 #include <vespa/vespalib/util/exceptions.h>
-#include <vespa/metrics/updatehook.h>
 
 #include <vespa/log/log.h>
 #include <vespa/searchcorespi/index/warmupconfig.h>
@@ -134,6 +134,7 @@ DocumentDB::DocumentDB(const vespalib::string &baseDir,
                        IDocumentDBOwner &owner,
                        vespalib::SyncableThreadExecutor &warmupExecutor,
                        vespalib::ThreadStackExecutorBase &sharedExecutor,
+                       storage::spi::BucketExecutor & bucketExecutor,
                        const search::transactionlog::WriterFactory &tlsWriterFactory,
                        MetricsWireService &metricsWireService,
                        const FileHeaderContext &fileHeaderContext,
@@ -174,6 +175,7 @@ DocumentDB::DocumentDB(const vespalib::string &baseDir,
       _refCount(),
       _syncFeedViewEnabled(false),
       _owner(owner),
+      _bucketExecutor(bucketExecutor),
       _state(),
       _dmUsageForwarder(_writeService.master()),
       _writeFilter(),
@@ -214,10 +216,6 @@ DocumentDB::DocumentDB(const vespalib::string &baseDir,
     _clusterStateHandler.addClusterStateChangedHandler(this);
     // Forward changes of cluster state to bucket handler
     _clusterStateHandler.addClusterStateChangedHandler(&_bucketHandler);
-
-    _lidSpaceCompactionHandlers.push_back(std::make_unique<LidSpaceCompactionHandler>(_maintenanceController.getReadySubDB(), _docTypeName.getName()));
-    _lidSpaceCompactionHandlers.push_back(std::make_unique<LidSpaceCompactionHandler>(_maintenanceController.getRemSubDB(), _docTypeName.getName()));
-    _lidSpaceCompactionHandlers.push_back(std::make_unique<LidSpaceCompactionHandler>(_maintenanceController.getNotReadySubDB(), _docTypeName.getName()));
 
     _writeFilter.setConfig(loaded_config->getMaintenanceConfigSP()->getAttributeUsageFilterConfig());
 }
@@ -414,6 +412,7 @@ DocumentDB::applyConfig(DocumentDBConfig::SP configSnapshot, SerialNum serialNum
         LOG(error, "Applying config to closed document db");
         return;
     }
+
     ConfigComparisonResult cmpres;
     Schema::SP oldSchema;
     int64_t generation = configSnapshot->getGeneration();
@@ -434,6 +433,7 @@ DocumentDB::applyConfig(DocumentDBConfig::SP configSnapshot, SerialNum serialNum
         cmpres.importedFieldsChanged = true;
     }
     const ReconfigParams params(cmpres);
+
     // Save config via config manager if replay is done.
     bool equalReplayConfig =
         *DocumentDBConfig::makeReplayConfig(configSnapshot) ==
@@ -455,6 +455,10 @@ DocumentDB::applyConfig(DocumentDBConfig::SP configSnapshot, SerialNum serialNum
         _feedView.get()->forceCommit(elidedConfigSave ? serialNum : serialNum - 1, std::make_shared<vespalib::KeepAlive<FeedHandler::CommitResult>>(std::move(commit_result)));
         _writeService.sync();
     }
+    if (params.shouldMaintenanceControllerChange()) {
+        _maintenanceController.killJobs();
+    }
+
     if (_state.getState() >= DDBState::State::APPLY_LIVE_CONFIG) {
         _writeServiceConfig.update(configSnapshot->get_threading_service_config());
     }
@@ -469,6 +473,7 @@ DocumentDB::applyConfig(DocumentDBConfig::SP configSnapshot, SerialNum serialNum
             // Changes applied while online should not trigger reprocessing
             assert(_subDBs.getReprocessingRunner().empty());
         }
+        syncFeedView();
     }
     if (params.shouldIndexManagerChange()) {
         setIndexSchema(*configSnapshot, serialNum);
@@ -481,7 +486,7 @@ DocumentDB::applyConfig(DocumentDBConfig::SP configSnapshot, SerialNum serialNum
         _state.clearDelayedConfig();
     }
     setActiveConfig(configSnapshot, generation);
-    if (params.shouldMaintenanceControllerChange()) {
+    if (params.shouldMaintenanceControllerChange() || _maintenanceController.getPaused()) {
         forwardMaintenanceConfig();
     }
     _writeFilter.setConfig(configSnapshot->getMaintenanceConfigSP()->getAttributeUsageFilterConfig());
@@ -697,9 +702,7 @@ DocumentDB::getAllowPrune() const
 void
 DocumentDB::start()
 {
-    LOG(debug,
-        "DocumentDB(%s): Database starting.",
-        _docTypeName.toString().c_str());
+    LOG(debug, "DocumentDB(%s): Database starting.", _docTypeName.toString().c_str());
 
     internalInit();
 }
@@ -909,6 +912,7 @@ DocumentDB::syncFeedView()
     IFeedView::SP oldFeedView(_feedView.get());
     IFeedView::SP newFeedView(_subDBs.getFeedView());
 
+    _maintenanceController.killJobs();
     _writeService.sync();
 
     _feedView.set(newFeedView);
@@ -932,8 +936,13 @@ DocumentDB::injectMaintenanceJobs(const DocumentDBMaintenanceConfig &config, std
 {
     // Called by executor thread
     _maintenanceController.killJobs();
+    _lidSpaceCompactionHandlers.clear();
+    _lidSpaceCompactionHandlers.push_back(std::make_shared<LidSpaceCompactionHandler>(_maintenanceController.getReadySubDB(), _docTypeName.getName()));
+    _lidSpaceCompactionHandlers.push_back(std::make_shared<LidSpaceCompactionHandler>(_maintenanceController.getRemSubDB(), _docTypeName.getName()));
+    _lidSpaceCompactionHandlers.push_back(std::make_shared<LidSpaceCompactionHandler>(_maintenanceController.getNotReadySubDB(), _docTypeName.getName()));
     MaintenanceJobsInjector::injectJobs(_maintenanceController,
             config,
+            _bucketExecutor,
             *_feedHandler, // IHeartBeatHandler
             *_sessionManager, // ISessionCachePruner
             _lidSpaceCompactionHandlers,
@@ -994,13 +1003,11 @@ DocumentDB::forwardMaintenanceConfig()
     // Called by executor thread
     DocumentDBConfig::SP activeConfig = getActiveConfig();
     assert(activeConfig);
-    DocumentDBMaintenanceConfig::SP
-        maintenanceConfig(activeConfig->getMaintenanceConfigSP());
+    auto maintenanceConfig(activeConfig->getMaintenanceConfigSP());
     const auto &attributes_config = activeConfig->getAttributesConfig();
     auto attribute_config_inspector = std::make_unique<AttributeConfigInspector>(attributes_config);
     if (!_state.getClosed()) {
-        if (_maintenanceController.getStarted() &&
-            !_maintenanceController.getStopping()) {
+        if (_maintenanceController.getPaused()) {
             injectMaintenanceJobs(*maintenanceConfig, std::move(attribute_config_inspector));
         }
         _maintenanceController.newConfig(maintenanceConfig);
@@ -1105,6 +1112,12 @@ std::shared_ptr<const ITransientMemoryUsageProvider>
 DocumentDB::transient_memory_usage_provider()
 {
     return _transient_memory_usage_provider;
+}
+
+void
+DocumentDB::set_attribute_usage_listener(std::unique_ptr<IAttributeUsageListener> listener)
+{
+    _writeFilter.set_listener(std::move(listener));
 }
 
 } // namespace proton

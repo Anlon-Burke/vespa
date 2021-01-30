@@ -3,16 +3,18 @@
 #include "document_scan_iterator.h"
 #include "ifeedview.h"
 #include "lid_space_compaction_handler.h"
-#include <vespa/document/fieldvalue/document.h>
-#include <vespa/searchcore/proton/docsummary/isummarymanager.h>
-#include <vespa/searchcore/proton/documentmetastore/i_document_meta_store_context.h>
+#include "maintenancedocumentsubdb.h"
+#include <vespa/searchcore/proton/feedoperation/moveoperation.h>
+#include <vespa/searchcore/proton/feedoperation/compact_lid_space_operation.h>
 #include <vespa/searchcore/proton/documentmetastore/operation_listener.h>
+#include <vespa/document/fieldvalue/document.h>
 #include <vespa/vespalib/util/idestructorcallback.h>
 
 using document::BucketId;
 using document::Document;
 using vespalib::IDestructorCallback;
 using search::LidUsageStats;
+using search::DocumentMetaData;
 using storage::spi::Timestamp;
 
 namespace proton {
@@ -25,6 +27,16 @@ LidSpaceCompactionHandler::LidSpaceCompactionHandler(const MaintenanceDocumentSu
 }
 
 LidSpaceCompactionHandler::~LidSpaceCompactionHandler() = default;
+
+vespalib::string
+LidSpaceCompactionHandler::getName() const {
+    return _docTypeName + "." + _subDb.name();
+}
+
+uint32_t
+LidSpaceCompactionHandler::getSubDbId() const {
+    return _subDb.sub_db_id();
+}
 
 void
 LidSpaceCompactionHandler::set_operation_listener(documentmetastore::OperationListener::SP op_listener)
@@ -42,6 +54,16 @@ IDocumentScanIterator::UP
 LidSpaceCompactionHandler::getIterator() const
 {
     return std::make_unique<DocumentScanIterator>(*_subDb.meta_store());
+}
+
+DocumentMetaData
+LidSpaceCompactionHandler::getMetaData(uint32_t lid) const {
+    if (_subDb.meta_store()->validLid(lid)) {
+        const RawDocumentMetaData &metaData = _subDb.meta_store()->getRawMetaData(lid);
+        return DocumentMetaData(lid, metaData.getTimestamp(),
+                                metaData.getBucketId(), metaData.getGid());
+    }
+    return DocumentMetaData();
 }
 
 MoveOperation::UP

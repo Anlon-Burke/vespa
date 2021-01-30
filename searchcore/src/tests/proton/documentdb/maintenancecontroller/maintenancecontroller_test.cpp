@@ -1,9 +1,6 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/document/repo/documenttyperepo.h>
-#include <vespa/document/test/make_bucket_space.h>
-#include <vespa/fastos/thread.h>
-#include <vespa/config-attributes.h>
+
 #include <vespa/searchcore/proton/attribute/attribute_config_inspector.h>
 #include <vespa/searchcore/proton/attribute/attribute_usage_filter.h>
 #include <vespa/searchcore/proton/attribute/i_attribute_manager.h>
@@ -17,6 +14,7 @@
 #include <vespa/searchcore/proton/feedoperation/removeoperation.h>
 #include <vespa/searchcore/proton/server/blockable_maintenance_job.h>
 #include <vespa/searchcore/proton/server/executor_thread_service.h>
+#include <vespa/searchcore/proton/server/i_document_scan_iterator.h>
 #include <vespa/searchcore/proton/server/i_operation_storer.h>
 #include <vespa/searchcore/proton/server/ibucketmodifiedhandler.h>
 #include <vespa/searchcore/proton/server/idocumentmovehandler.h>
@@ -30,14 +28,19 @@
 #include <vespa/searchcore/proton/test/disk_mem_usage_notifier.h>
 #include <vespa/searchcore/proton/test/mock_attribute_manager.h>
 #include <vespa/searchcore/proton/test/test.h>
+#include <vespa/persistence/dummyimpl/dummy_bucket_executor.h>
+#include <vespa/document/repo/documenttyperepo.h>
+#include <vespa/document/test/make_bucket_space.h>
+#include <vespa/config-attributes.h>
 #include <vespa/vespalib/util/destructor_callbacks.h>
 #include <vespa/searchlib/common/idocumentmetastore.h>
 #include <vespa/searchlib/index/docbuilder.h>
 #include <vespa/vespalib/data/slime/slime.h>
 #include <vespa/vespalib/testkit/testapp.h>
-#include <vespa/vespalib/util/closuretask.h>
+#include <vespa/vespalib/util/lambdatask.h>
 #include <vespa/vespalib/util/gate.h>
 #include <vespa/vespalib/util/threadstackexecutor.h>
+#include <vespa/fastos/thread.h>
 #include <unistd.h>
 
 #include <vespa/log/log.h>
@@ -60,9 +63,9 @@ using search::SerialNum;
 using storage::spi::BucketInfo;
 using storage::spi::Timestamp;
 using vespalib::Slime;
-using vespalib::makeClosure;
-using vespalib::makeTask;
+using vespalib::makeLambdaTask;
 using vespa::config::search::AttributesConfigBuilder;
+using storage::spi::dummy::DummyBucketExecutor;
 
 using BlockedReason = IBlockableMaintenanceJob::BlockedReason;
 
@@ -350,40 +353,40 @@ struct MockLidSpaceCompactionHandler : public ILidSpaceCompactionHandler
     MoveOperation::UP createMoveOperation(const search::DocumentMetaData &, uint32_t) const override { return MoveOperation::UP(); }
     void handleMove(const MoveOperation &, IDestructorCallback::SP) override {}
     void handleCompactLidSpace(const CompactLidSpaceOperation &, std::shared_ptr<IDestructorCallback>) override {}
+    search::DocumentMetaData getMetaData(uint32_t ) const override { return {}; }
 };
-
 
 class MaintenanceControllerFixture
 {
 public:
-    MyExecutor                    _executor;
-    MyExecutor                    _genericExecutor;
-    ExecutorThreadService         _threadService;
-    DocTypeName                   _docTypeName;
-    test::UserDocumentsBuilder    _builder;
-    std::shared_ptr<BucketDBOwner> _bucketDB;
-    test::BucketStateCalculator::SP _calc;
-    test::ClusterStateHandler     _clusterStateHandler;
-    test::BucketHandler           _bucketHandler;
-    MyBucketModifiedHandler       _bmc;
-    MyDocumentSubDB               _ready;
-    MyDocumentSubDB               _removed;
-    MyDocumentSubDB               _notReady;
-    MySessionCachePruner          _gsp;
-    MyFeedHandler                 _fh;
+    MyExecutor                         _executor;
+    MyExecutor                         _genericExecutor;
+    ExecutorThreadService              _threadService;
+    DummyBucketExecutor                _bucketExecutor;
+    DocTypeName                        _docTypeName;
+    test::UserDocumentsBuilder         _builder;
+    std::shared_ptr<BucketDBOwner>     _bucketDB;
+    test::BucketStateCalculator::SP    _calc;
+    test::ClusterStateHandler          _clusterStateHandler;
+    test::BucketHandler                _bucketHandler;
+    MyBucketModifiedHandler            _bmc;
+    MyDocumentSubDB                    _ready;
+    MyDocumentSubDB                    _removed;
+    MyDocumentSubDB                    _notReady;
+    MySessionCachePruner               _gsp;
+    MyFeedHandler                      _fh;
     ILidSpaceCompactionHandler::Vector _lscHandlers;
-    DocumentDBMaintenanceConfig::SP _mcCfg;
-    bool                          _injectDefaultJobs;
-    DocumentDBJobTrackers         _jobTrackers;
+    DocumentDBMaintenanceConfig::SP    _mcCfg;
+    bool                               _injectDefaultJobs;
+    DocumentDBJobTrackers              _jobTrackers;
     std::shared_ptr<proton::IAttributeManager> _readyAttributeManager;
     std::shared_ptr<proton::IAttributeManager> _notReadyAttributeManager;
-    AttributeUsageFilter          _attributeUsageFilter;
-    test::DiskMemUsageNotifier    _diskMemUsageNotifier;
-    BucketCreateNotifier          _bucketCreateNotifier;
-    MaintenanceController         _mc;
+    AttributeUsageFilter               _attributeUsageFilter;
+    test::DiskMemUsageNotifier         _diskMemUsageNotifier;
+    BucketCreateNotifier               _bucketCreateNotifier;
+    MaintenanceController              _mc;
 
     MaintenanceControllerFixture();
-
     ~MaintenanceControllerFixture();
 
     void syncSubDBs();
@@ -476,10 +479,9 @@ public:
     void
     notifyBucketStateChanged(const document::BucketId &bucketId, BucketInfo::ActiveState newState)
     {
-        _executor.execute(makeTask(makeClosure(this,
-                                               &MaintenanceControllerFixture::
-                                               performNotifyBucketStateChanged,
-                                               bucketId, newState)));
+        _executor.execute(makeLambdaTask([&]() {
+            performNotifyBucketStateChanged(bucketId, newState);
+        }));
         _executor.sync();
     }
 };
@@ -739,18 +741,17 @@ MyFeedHandler::appendOperation(const FeedOperation &op, DoneCallback)
     const_cast<FeedOperation &>(op).setSerialNum(inc_serial_num());
 }
 
-
 MyExecutor::MyExecutor()
     : vespalib::ThreadStackExecutor(1, 128 * 1024),
       _threadId()
 {
-    execute(makeTask(makeClosure(&sampleThreadId, &_threadId)));
+    execute(makeLambdaTask([this]() {
+        sampleThreadId(&_threadId);
+    }));
     sync();
 }
 
-
 MyExecutor::~MyExecutor() = default;
-
 
 bool
 MyExecutor::isIdle()
@@ -760,7 +761,6 @@ MyExecutor::isIdle()
     Stats stats(getStats());
     return stats.acceptedTasks == 0u;
 }
-
 
 bool
 MyExecutor::waitIdle(vespalib::duration timeout)
@@ -778,6 +778,7 @@ MaintenanceControllerFixture::MaintenanceControllerFixture()
     : _executor(),
       _genericExecutor(),
       _threadService(_executor),
+      _bucketExecutor(2),
       _docTypeName("searchdocument"), // must match document builder
       _builder(),
       _bucketDB(std::make_shared<BucketDBOwner>()),
@@ -786,10 +787,8 @@ MaintenanceControllerFixture::MaintenanceControllerFixture()
       _bucketHandler(),
       _bmc(),
       _ready(0u, SubDbType::READY, _builder.getRepo(), _bucketDB, _docTypeName),
-      _removed(1u, SubDbType::REMOVED, _builder.getRepo(), _bucketDB,
-               _docTypeName),
-      _notReady(2u, SubDbType::NOTREADY, _builder.getRepo(), _bucketDB,
-                _docTypeName),
+      _removed(1u, SubDbType::REMOVED, _builder.getRepo(), _bucketDB, _docTypeName),
+      _notReady(2u, SubDbType::NOTREADY, _builder.getRepo(), _bucketDB, _docTypeName),
       _gsp(),
       _fh(_executor._threadId),
       _lscHandlers(),
@@ -810,41 +809,30 @@ MaintenanceControllerFixture::MaintenanceControllerFixture()
     syncSubDBs();
 }
 
-
 MaintenanceControllerFixture::~MaintenanceControllerFixture()
 {
     stopMaintenance();
 }
 
-
 void
 MaintenanceControllerFixture::syncSubDBs()
 {
-    _executor.execute(makeTask(makeClosure(this,
-                                       &MaintenanceControllerFixture::
-                                       performSyncSubDBs)));
+    _executor.execute(makeLambdaTask([this]() { performSyncSubDBs(); }));
     _executor.sync();
 }
-
 
 void
 MaintenanceControllerFixture::performSyncSubDBs()
 {
-    _mc.syncSubDBs(_ready.getSubDB(),
-                   _removed.getSubDB(),
-                   _notReady.getSubDB());
+    _mc.syncSubDBs(_ready.getSubDB(), _removed.getSubDB(), _notReady.getSubDB());
 }
-
 
 void
 MaintenanceControllerFixture::notifyClusterStateChanged()
 {
-    _executor.execute(makeTask(makeClosure(this,
-                                       &MaintenanceControllerFixture::
-                                       performNotifyClusterStateChanged)));
+    _executor.execute(makeLambdaTask([this]() { performNotifyClusterStateChanged(); }));
     _executor.sync();
 }
-
 
 void
 MaintenanceControllerFixture::performNotifyClusterStateChanged()
@@ -852,13 +840,10 @@ MaintenanceControllerFixture::performNotifyClusterStateChanged()
     _clusterStateHandler.notifyClusterStateChanged(_calc);
 }
 
-
 void
 MaintenanceControllerFixture::startMaintenance()
 {
-    _executor.execute(makeTask(makeClosure(this,
-                                       &MaintenanceControllerFixture::
-                                       performStartMaintenance)));
+    _executor.execute(makeLambdaTask([this]() { performStartMaintenance(); }));
     _executor.sync();
 }
 
@@ -866,14 +851,10 @@ void
 MaintenanceControllerFixture::injectMaintenanceJobs()
 {
     if (_injectDefaultJobs) {
-        MaintenanceJobsInjector::injectJobs(_mc, *_mcCfg, _fh, _gsp,
-                                            _lscHandlers, _fh, _mc, _bucketCreateNotifier, _docTypeName.getName(), makeBucketSpace(),
-                                            _fh, _fh, _bmc, _clusterStateHandler, _bucketHandler,
-                                            _calc,
-                                            _diskMemUsageNotifier,
-                                            _jobTrackers,
-                                            _readyAttributeManager,
-                                            _notReadyAttributeManager,
+        MaintenanceJobsInjector::injectJobs(_mc, *_mcCfg, _bucketExecutor, _fh, _gsp, _lscHandlers, _fh, _mc,
+                                            _bucketCreateNotifier, _docTypeName.getName(), makeBucketSpace(), _fh, _fh,
+                                            _bmc, _clusterStateHandler, _bucketHandler, _calc, _diskMemUsageNotifier,
+                                            _jobTrackers, _readyAttributeManager, _notReadyAttributeManager,
                                             std::make_unique<const AttributeConfigInspector>(AttributesConfigBuilder()),
                                             std::make_shared<TransientMemoryUsageProvider>(),
                                             _attributeUsageFilter);
@@ -899,9 +880,7 @@ MaintenanceControllerFixture::stopMaintenance()
 void
 MaintenanceControllerFixture::forwardMaintenanceConfig()
 {
-    _executor.execute(makeTask(makeClosure(this,
-                                       &MaintenanceControllerFixture::
-                                       performForwardMaintenanceConfig)));
+    _executor.execute(makeLambdaTask([this]() { performForwardMaintenanceConfig(); }));
     _executor.sync();
 }
 

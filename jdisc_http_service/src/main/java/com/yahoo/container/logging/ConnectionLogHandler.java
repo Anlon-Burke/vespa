@@ -2,33 +2,30 @@
 
 package com.yahoo.container.logging;
 
-import java.util.logging.Logger;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
 
 /**
  * @author mortent
  */
 class ConnectionLogHandler {
-    public final Logger connection = Logger.getAnonymousLogger();
-    private final LogFileHandler logFileHandler;
+    private final LogFileHandler<ConnectionLogEntry> logFileHandler;
 
-    public ConnectionLogHandler(String clusterName) {
-        connection.setUseParentHandlers(false);
-
-        LogFormatter lf = new LogFormatter();
-        lf.messageOnly(true);
-        logFileHandler = new LogFileHandler(
+    public ConnectionLogHandler(String clusterName, LogWriter<ConnectionLogEntry> logWriter) {
+        logFileHandler = new LogFileHandler<>(
                 LogFileHandler.Compression.ZSTD,
-                String.format("logs/vespa/qrs/connection.%s.%s", clusterName, "%Y%m%d%H%M%S"),
-                new long[]{0},
-                null,
-                lf);
-        this.logFileHandler.setFormatter(lf);
-        connection.addHandler(this.logFileHandler);
+                String.format("logs/vespa/qrs/ConnectionLog.%s.%s", clusterName, "%Y%m%d%H%M%S"),
+                "0 60 ...",
+                String.format("ConnectionLog.%s", clusterName),
+                logWriter);
+    }
+
+    public void log(ConnectionLogEntry entry) {
+        logFileHandler.publish(entry);
     }
 
     public void shutdown() {
         logFileHandler.close();
-        connection.removeHandler(logFileHandler);
         logFileHandler.shutdown();
     }
 }

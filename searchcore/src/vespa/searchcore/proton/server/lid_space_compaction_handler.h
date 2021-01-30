@@ -6,30 +6,31 @@
 
 namespace proton {
 
+class MaintenanceDocumentSubDB;
+
 /**
  * Class that handles lid space compaction over a single document sub db.
  */
 class LidSpaceCompactionHandler : public ILidSpaceCompactionHandler
 {
 private:
-    const MaintenanceDocumentSubDB& _subDb;
-    vespalib::string _docTypeName;
+    const MaintenanceDocumentSubDB _subDb;
+    const vespalib::string         _docTypeName;
 
 public:
     LidSpaceCompactionHandler(const MaintenanceDocumentSubDB& subDb,
                               const vespalib::string& docTypeName);
     ~LidSpaceCompactionHandler() override;
 
-    vespalib::string getName() const override {
-        return _docTypeName + "." + _subDb.name();
-    }
+    vespalib::string getName() const override;
     void set_operation_listener(std::shared_ptr<documentmetastore::OperationListener> op_listener) override;
-    uint32_t getSubDbId() const override { return _subDb.sub_db_id(); }
+    uint32_t getSubDbId() const override;
     search::LidUsageStats getLidStatus() const override;
-    IDocumentScanIterator::UP getIterator() const override;
-    MoveOperation::UP createMoveOperation(const search::DocumentMetaData &document, uint32_t moveToLid) const override;
+    std::unique_ptr<IDocumentScanIterator> getIterator() const override;
+    std::unique_ptr<MoveOperation> createMoveOperation(const search::DocumentMetaData &document, uint32_t moveToLid) const override;
     void handleMove(const MoveOperation &op, std::shared_ptr<vespalib::IDestructorCallback> doneCtx) override;
     void handleCompactLidSpace(const CompactLidSpaceOperation &op, std::shared_ptr<vespalib::IDestructorCallback> compact_done_context) override;
+    search::DocumentMetaData getMetaData(uint32_t lid) const override;
 };
 
 } // namespace proton

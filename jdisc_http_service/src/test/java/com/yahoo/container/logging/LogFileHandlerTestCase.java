@@ -10,6 +10,8 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -20,11 +22,11 @@ import java.util.function.BiFunction;
 import java.util.logging.Formatter;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
-import java.util.logging.SimpleFormatter;
 import java.util.zip.GZIPInputStream;
 
 import static com.yahoo.yolean.Exceptions.uncheck;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.Assert.assertNotEquals;
 
 /**
  * @author Bob Travis
@@ -41,25 +43,19 @@ public class LogFileHandlerTestCase {
 
         String pattern = root.getAbsolutePath() + "/logfilehandlertest.%Y%m%d%H%M%S";
         long[] rTimes = {1000, 2000, 10000};
-        Formatter formatter = new Formatter() {
-            public String format(LogRecord r) {
-                DateFormat df = new SimpleDateFormat("yyyy.MM.dd:HH:mm:ss.SSS");
-                String timeStamp = df.format(new Date(r.getMillis()));
-                return ("["+timeStamp+"]" + " " + formatMessage(r) + "\n");
-            }
-        };
-        LogFileHandler h = new LogFileHandler(Compression.NONE, pattern, rTimes, null, formatter);
+        LogFileHandler<String> h = new LogFileHandler<>(Compression.NONE, pattern, rTimes, null, new StringLogWriter());
         long now = System.currentTimeMillis();
         long millisPerDay = 60*60*24*1000;
         long tomorrowDays = (now / millisPerDay) +1;
         long tomorrowMillis = tomorrowDays * millisPerDay;
-        assertThat(tomorrowMillis+1000).isEqualTo(h.getNextRotationTime(tomorrowMillis));
-        assertThat(tomorrowMillis+10000).isEqualTo(h.getNextRotationTime(tomorrowMillis+3000));
-        LogRecord lr = new LogRecord(Level.INFO, "test");
-        h.publish(lr);
-        h.publish(new LogRecord(Level.INFO, "another test"));
+
+        assertThat(tomorrowMillis+1000).isEqualTo(h.logThread.getNextRotationTime(tomorrowMillis));
+        assertThat(tomorrowMillis+10000).isEqualTo(h.logThread.getNextRotationTime(tomorrowMillis+3000));
+        String message = "test";
+        h.publish(message);
+        h.publish( "another test");
         h.rotateNow();
-        h.publish(lr);
+        h.publish(message);
         h.flush();
         h.shutdown();
     }
@@ -69,11 +65,10 @@ public class LogFileHandlerTestCase {
         File logFile = temporaryFolder.newFile("testLogFileG1.txt");
 
       //create logfilehandler
-      LogFileHandler h = new LogFileHandler(Compression.NONE, logFile.getAbsolutePath(), "0 5 ...", null, new SimpleFormatter());
+      LogFileHandler<String> h = new LogFileHandler<>(Compression.NONE, logFile.getAbsolutePath(), "0 5 ...", null, new StringLogWriter());
 
       //write log
-      LogRecord lr = new LogRecord(Level.INFO, "testDeleteFileFirst1");
-      h.publish(lr);
+      h.publish("testDeleteFileFirst1");
       h.flush();
       h.shutdown();
     }
@@ -83,19 +78,17 @@ public class LogFileHandlerTestCase {
       File logFile = temporaryFolder.newFile("testLogFileG2.txt");
 
       //create logfilehandler
-       LogFileHandler h = new LogFileHandler(Compression.NONE, logFile.getAbsolutePath(), "0 5 ...", null, new SimpleFormatter());
+       LogFileHandler<String> h = new LogFileHandler<>(Compression.NONE, logFile.getAbsolutePath(), "0 5 ...", null, new StringLogWriter());
 
       //write log
-      LogRecord lr = new LogRecord(Level.INFO, "testDeleteFileDuringLogging1");
-      h.publish(lr);
+      h.publish("testDeleteFileDuringLogging1");
       h.flush();
 
       //delete log file
         logFile.delete();
 
       //write log again
-      lr = new LogRecord(Level.INFO, "testDeleteFileDuringLogging2");
-      h.publish(lr);
+      h.publish("testDeleteFileDuringLogging2");
       h.flush();
       h.shutdown();
     }
@@ -107,48 +100,38 @@ public class LogFileHandlerTestCase {
             public String format(LogRecord r) {
                 DateFormat df = new SimpleDateFormat("yyyy.MM.dd:HH:mm:ss.SSS");
                 String timeStamp = df.format(new Date(r.getMillis()));
-                return ("[" + timeStamp + "]" + " " + formatMessage(r) + "\n");
+                return ("[" + timeStamp + "]" + " " + formatMessage(r));
             }
         };
-        LogFileHandler handler = new LogFileHandler(
-                Compression.NONE, root.getAbsolutePath() + "/logfilehandlertest.%Y%m%d%H%M%S%s", new long[]{0}, "symlink", formatter);
+        LogFileHandler<String> handler = new LogFileHandler<>(
+                Compression.NONE, root.getAbsolutePath() + "/logfilehandlertest.%Y%m%d%H%M%S%s", new long[]{0}, "symlink", new StringLogWriter());
 
-        handler.publish(new LogRecord(Level.INFO, "test"));
-        String firstFile;
-        do {
-             Thread.sleep(1);
-             firstFile = handler.getFileName();
-        } while (firstFile == null);
+        String message = formatter.format(new LogRecord(Level.INFO, "test"));
+        handler.publishAndWait(message);
+        String firstFile = handler.getFileName();
         handler.rotateNow();
-        String secondFileName;
-        do {
-            Thread.sleep(1);
-            secondFileName = handler.getFileName();
-        } while (firstFile.equals(secondFileName));
+        String secondFileName = handler.getFileName();
+        assertNotEquals(firstFile, secondFileName);
 
-        handler.publish(new LogRecord(Level.INFO, "string which is way longer than the word test"));
-        handler.waitDrained();
+        String longMessage = formatter.format(new LogRecord(Level.INFO, "string which is way longer than the word test"));
+        handler.publish(longMessage);
+        handler.flush();
         assertThat(Files.size(Paths.get(firstFile))).isEqualTo(31);
         final long expectedSecondFileLength = 72;
-        long secondFileLength;
-        do {
-            Thread.sleep(1);
-            secondFileLength = Files.size(Paths.get(secondFileName));
-        } while (secondFileLength != expectedSecondFileLength);
 
         long symlinkFileLength = Files.size(root.toPath().resolve("symlink"));
         assertThat(symlinkFileLength).isEqualTo(expectedSecondFileLength);
         handler.shutdown();
     }
 
-    @Test
+    @Test(timeout = /*5 minutes*/300_000)
     public void testcompression_gzip() throws InterruptedException, IOException {
         testcompression(
                 Compression.GZIP, "gz",
                 (compressedFile, __) -> uncheck(() -> new String(new GZIPInputStream(Files.newInputStream(compressedFile)).readAllBytes())));
     }
 
-    @Test
+    @Test(timeout = /*5 minutes*/300_000)
     public void testcompression_zstd() throws InterruptedException, IOException {
         testcompression(
                 Compression.ZSTD, "zst",
@@ -166,21 +149,13 @@ public class LogFileHandlerTestCase {
                                  BiFunction<Path, Integer, String> decompressor) throws IOException, InterruptedException {
         File root = temporaryFolder.newFolder("testcompression" + compression.name());
 
-        Formatter formatter = new Formatter() {
-            public String format(LogRecord r) {
-                DateFormat df = new SimpleDateFormat("yyyy.MM.dd:HH:mm:ss.SSS");
-                String timeStamp = df.format(new Date(r.getMillis()));
-                return ("[" + timeStamp + "]" + " " + formatMessage(r) + "\n");
-            }
-        };
-        LogFileHandler h = new LogFileHandler(
-                compression, root.getAbsolutePath() + "/logfilehandlertest.%Y%m%d%H%M%S%s", new long[]{0}, null, formatter);
+        LogFileHandler<String> h = new LogFileHandler<>(
+                compression, root.getAbsolutePath() + "/logfilehandlertest.%Y%m%d%H%M%S%s", new long[]{0}, null, new StringLogWriter());
         int logEntries = 10000;
         for (int i = 0; i < logEntries; i++) {
-            LogRecord lr = new LogRecord(Level.INFO, "test");
-            h.publish(lr);
+            h.publish("test");
         }
-        h.waitDrained();
+        h.flush();
         String f1 = h.getFileName();
         assertThat(f1).startsWith(root.getAbsolutePath() + "/logfilehandlertest.");
         File uncompressed = new File(f1);
@@ -199,4 +174,11 @@ public class LogFileHandlerTestCase {
         h.shutdown();
     }
 
+    static class StringLogWriter implements LogWriter<String> {
+
+        @Override
+        public void write(String record, OutputStream outputStream) throws IOException {
+            outputStream.write(record.getBytes(StandardCharsets.UTF_8));
+        }
+    }
 }

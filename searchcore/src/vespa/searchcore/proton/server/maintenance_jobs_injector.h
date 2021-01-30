@@ -9,6 +9,7 @@
 #include <vespa/searchcore/proton/matching/isessioncachepruner.h>
 #include <vespa/searchcore/proton/metrics/documentdb_job_trackers.h>
 
+namespace storage::spi {struct BucketExecutor; }
 namespace proton {
 
 class AttributeConfigInspector;
@@ -33,6 +34,7 @@ struct MaintenanceJobsInjector
     using IAttributeManagerSP = std::shared_ptr<IAttributeManager>;
     static void injectJobs(MaintenanceController &controller,
                            const DocumentDBMaintenanceConfig &config,
+                           storage::spi::BucketExecutor & bucketExecutor,
                            IHeartBeatHandler &hbHandler,
                            matching::ISessionCachePruner &scPruner,
                            const ILidSpaceCompactionHandler::Vector &lscHandlers,
@@ -44,10 +46,8 @@ struct MaintenanceJobsInjector
                            IPruneRemovedDocumentsHandler &prdHandler,
                            IDocumentMoveHandler &moveHandler,
                            IBucketModifiedHandler &bucketModifiedHandler,
-                           IClusterStateChangedNotifier &
-                           clusterStateChangedNotifier,
-                           IBucketStateChangedNotifier &
-                           bucketStateChangedNotifier,
+                           IClusterStateChangedNotifier & clusterStateChangedNotifier,
+                           IBucketStateChangedNotifier & bucketStateChangedNotifier,
                            const std::shared_ptr<IBucketStateCalculator> &calc,
                            IDiskMemUsageNotifier &diskMemUsageNotifier,
                            DocumentDBJobTrackers &jobTrackers,

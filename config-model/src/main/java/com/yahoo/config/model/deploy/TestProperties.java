@@ -26,7 +26,6 @@ import java.util.Set;
  *
  * @author hakonhall
  */
-@SuppressWarnings("deprecation")
 public class TestProperties implements ModelContext.Properties, ModelContext.FeatureFlags {
 
     private boolean multitenant = false;
@@ -48,11 +47,12 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private Quota quota = Quota.unlimited();
     private boolean useAccessControlTlsHandshakeClientAuth;
     private boolean useAsyncMessageHandlingOnSchedule = false;
-    private int contentNodeBucketDBStripeBits = 0;
     private int mergeChunkSize = 0x400000 - 0x1000; // 4M -4k
     private double feedConcurrency = 0.5;
     private boolean enableAutomaticReindexing = false;
     private boolean reconfigurableZookeeperServer = false;
+    private boolean useBucketExecutorForLidSpaceCompact;
+    private boolean enableFeedBlockInDistributor = false;
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
     @Override public boolean multitenant() { return multitenant; }
@@ -82,11 +82,12 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public Quota quota() { return quota; }
     @Override public boolean useAccessControlTlsHandshakeClientAuth() { return useAccessControlTlsHandshakeClientAuth; }
     @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
-    @Override public int contentNodeBucketDBStripeBits() { return contentNodeBucketDBStripeBits; }
     @Override public int mergeChunkSize() { return mergeChunkSize; }
     @Override public double feedConcurrency() { return feedConcurrency; }
     @Override public boolean enableAutomaticReindexing() { return enableAutomaticReindexing; }
     @Override public boolean reconfigurableZookeeperServer() { return reconfigurableZookeeperServer; }
+    @Override public boolean useBucketExecutorForLidSpaceCompact() { return useBucketExecutorForLidSpaceCompact; }
+    @Override public boolean enableFeedBlockInDistributor() { return enableFeedBlockInDistributor; }
 
     public TestProperties setFeedConcurrency(double feedConcurrency) {
         this.feedConcurrency = feedConcurrency;
@@ -95,10 +96,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setMergeChunkSize(int size) {
         mergeChunkSize = size;
-        return this;
-    }
-    public TestProperties setContentNodeBucketDBStripeBits(int bits) {
-        contentNodeBucketDBStripeBits = bits;
         return this;
     }
 
@@ -195,6 +192,15 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
+    public TestProperties useBucketExecutorForLidSpaceCompact(boolean enabled) {
+        useBucketExecutorForLidSpaceCompact = enabled;
+        return this;
+    }
+
+    public TestProperties enableFeedBlockInDistributor(boolean enabled) {
+        enableFeedBlockInDistributor = enabled;
+        return this;
+    }
 
     public static class Spec implements ConfigServerSpec {
 

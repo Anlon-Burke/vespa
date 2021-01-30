@@ -1,25 +1,28 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.container.logging;
 
+import com.yahoo.component.AbstractComponent;
 import com.yahoo.container.core.AccessLogConfig;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.TimeZone;
-import java.util.logging.Level;
 
 /**
  * @author Bjorn Borud
  * @author Oyvind Bakksjo
  */
-public final class VespaAccessLog implements AccessLogInterface {
+public final class VespaAccessLog extends AbstractComponent implements RequestLogHandler, LogWriter<RequestLogEntry> {
 
     private static final ThreadLocal<SimpleDateFormat> dateFormat = ThreadLocal.withInitial(VespaAccessLog::createDateFormat);
 
     private final AccessLogHandler logHandler;
 
     public VespaAccessLog(AccessLogConfig config) {
-        logHandler = new AccessLogHandler(config.fileHandler());
+        logHandler = new AccessLogHandler(config.fileHandler(), this);
     }
 
     private static SimpleDateFormat createDateFormat() {
@@ -40,7 +43,7 @@ public final class VespaAccessLog implements AccessLogInterface {
         return (user == null) ? "-" : user;
     }
 
-    private void writeLog(String ipAddr, String user, String request, String referer, String agent,
+    private String toLogline(String ipAddr, String user, String request, String referer, String agent,
                           long durationMillis, long byteCount, HitCounts hitcounts, int returnCode)
     {
         long ms = Math.max(0L, durationMillis);
@@ -67,9 +70,8 @@ public final class VespaAccessLog implements AccessLogInterface {
         sb.append(' ')
                 .append((hitcounts == null) ? 0 : hitcounts.getTotalHitCount())
                 .append(" 0.0 ")
-                .append((hitcounts == null) ? 0 : hitcounts.getSummaryCount())
-                .append('\n');
-        logHandler.access.log(Level.INFO, sb.toString());
+                .append((hitcounts == null) ? 0 : hitcounts.getSummaryCount());
+        return sb.toString();
     }
 
     private void decimalsOfSecondsFromMilliseconds(long ms, StringBuilder sb) {
@@ -83,29 +85,29 @@ public final class VespaAccessLog implements AccessLogInterface {
         sb.append(numbers);
     }
 
-    /**
-     * TODO: This is never called. We should have a DI provider and call this method from its deconstruct.
-     */
-    public void shutdown() {
-        if (logHandler!=null)
-            logHandler.shutdown();
+    @Override public void deconstruct() { logHandler.shutdown(); }
+
+    @Override
+    public void log(RequestLogEntry entry) {
+        logHandler.log(entry);
     }
 
     @Override
-    public void log(final AccessLogEntry accessLogEntry) {
-        writeLog(
-                accessLogEntry.getIpV4Address(),
-                accessLogEntry.getUser(),
-                getRequest(
-                        accessLogEntry.getHttpMethod(),
-                        accessLogEntry.getRawPath(),
-                        accessLogEntry.getRawQuery().orElse(null),
-                        accessLogEntry.getHttpVersion()),
-                accessLogEntry.getReferer(),
-                accessLogEntry.getUserAgent(),
-                accessLogEntry.getDurationBetweenRequestResponseMillis(),
-                accessLogEntry.getReturnedContentSize(),
-                accessLogEntry.getHitCounts(),
-                accessLogEntry.getStatusCode());
+    public void write(RequestLogEntry entry, OutputStream outputStream) throws IOException {
+        outputStream.write(
+                toLogline(
+                        entry.peerAddress().get(),
+                        null,
+                        getRequest(
+                                entry.httpMethod().orElse(null),
+                                entry.rawPath().orElse(null),
+                                entry.rawQuery().orElse(null),
+                                entry.httpVersion().orElse(null)),
+                        entry.referer().orElse(null),
+                        entry.userAgent().orElse(null),
+                        entry.duration().get().toMillis(),
+                        entry.contentSize().orElse(0L),
+                        entry.hitCounts().orElse(null),
+                        entry.statusCode().orElse(0)).getBytes(StandardCharsets.UTF_8));
     }
 }

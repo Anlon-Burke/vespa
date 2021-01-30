@@ -2,6 +2,7 @@
 package com.yahoo.vespa.config.server.modelfactory;
 
 import com.google.common.collect.ImmutableSet;
+import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.Version;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.model.api.ConfigDefinitionRepo;
@@ -14,8 +15,8 @@ import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.TenantName;
+import com.yahoo.config.provision.Zone;
 import com.yahoo.container.jdisc.secretstore.SecretStore;
-import com.yahoo.vespa.config.server.GlobalComponentRegistry;
 import com.yahoo.vespa.config.server.ServerCache;
 import com.yahoo.vespa.config.server.application.Application;
 import com.yahoo.vespa.config.server.application.ApplicationCuratorDatabase;
@@ -31,6 +32,7 @@ import com.yahoo.vespa.config.server.tenant.ApplicationRolesStore;
 import com.yahoo.vespa.config.server.tenant.ContainerEndpointsCache;
 import com.yahoo.vespa.config.server.tenant.EndpointCertificateMetadataStore;
 import com.yahoo.vespa.config.server.tenant.EndpointCertificateRetriever;
+import com.yahoo.vespa.config.server.tenant.TenantListener;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.flags.FlagSource;
@@ -65,23 +67,27 @@ public class ActivatedModelsBuilder extends ModelsBuilder<Application> {
                                   long applicationGeneration,
                                   SessionZooKeeperClient zkClient,
                                   Optional<ApplicationSet> currentActiveApplicationSet,
-                                  GlobalComponentRegistry globalComponentRegistry,
                                   Curator curator,
                                   Metrics metrics,
                                   PermanentApplicationPackage permanentApplicationPackage,
                                   FlagSource flagSource,
                                   SecretStore secretStore,
-                                  HostProvisionerProvider hostProvisionerProvider) {
-        super(globalComponentRegistry.getModelFactoryRegistry(),
-              globalComponentRegistry.getConfigserverConfig(),
-              globalComponentRegistry.getZone(),
+                                  HostProvisionerProvider hostProvisionerProvider,
+                                  ConfigserverConfig configserverConfig,
+                                  Zone zone,
+                                  ModelFactoryRegistry modelFactoryRegistry,
+                                  ConfigDefinitionRepo configDefinitionRepo,
+                                  TenantListener tenantListener) {
+        super(modelFactoryRegistry,
+              configserverConfig,
+              zone,
               hostProvisionerProvider);
         this.tenant = tenant;
         this.applicationGeneration = applicationGeneration;
         this.zkClient = zkClient;
         this.currentActiveApplicationSet = currentActiveApplicationSet;
         this.permanentApplicationPackage = permanentApplicationPackage;
-        this.configDefinitionRepo = globalComponentRegistry.getStaticConfigDefinitionRepo();
+        this.configDefinitionRepo = configDefinitionRepo;
         this.metrics = metrics;
         this.curator = curator;
         this.flagSource = flagSource;

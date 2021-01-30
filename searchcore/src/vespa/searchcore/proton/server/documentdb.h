@@ -45,6 +45,7 @@ namespace metrics {
     class UpdateHook;
     class MetricLockGuard;
 }
+namespace storage::spi { struct BucketExecutor; }
 
 namespace proton {
 class AttributeConfigInspector;
@@ -86,7 +87,6 @@ private:
     InitializeThreads             _initializeThreads;
 
     typedef search::SerialNum      SerialNum;
-    typedef vespalib::Closure      Closure;
     typedef search::index::Schema  Schema;
     using lock_guard = std::lock_guard<std::mutex>;
     // variables related to reconfig
@@ -115,6 +115,7 @@ private:
     MonitoredRefCount             _refCount;
     bool                          _syncFeedViewEnabled;
     IDocumentDBOwner             &_owner;
+    storage::spi::BucketExecutor &_bucketExecutor;
     DDBState                      _state;
     DiskMemUsageForwarder         _dmUsageForwarder;
     AttributeUsageFilter          _writeFilter;
@@ -198,6 +199,8 @@ private:
      */
     void tearDownReferences();
 
+    void syncFeedView();
+
     template <typename FunctionType>
     inline void masterExecute(FunctionType &&function);
 
@@ -233,6 +236,7 @@ public:
                IDocumentDBOwner &owner,
                vespalib::SyncableThreadExecutor &warmupExecutor,
                vespalib::ThreadStackExecutorBase &sharedExecutor,
+               storage::spi::BucketExecutor & bucketExecutor,
                const search::transactionlog::WriterFactory &tlsWriterFactory,
                MetricsWireService &metricsWireService,
                const search::common::FileHeaderContext &fileHeaderContext,
@@ -380,7 +384,6 @@ public:
     /*
      * Implements IDocumentSubDBOwner
      */
-    void syncFeedView() override;
     document::BucketSpace getBucketSpace() const override;
     vespalib::string getName() const override;
     uint32_t getDistributionKey() const override;
@@ -413,6 +416,8 @@ public:
     IDiskMemUsageListener *diskMemUsageListener() { return &_dmUsageForwarder; }
     std::shared_ptr<const ITransientMemoryUsageProvider> transient_memory_usage_provider();
     ExecutorThreadingService & getWriteService() { return _writeService; }
+
+    void set_attribute_usage_listener(std::unique_ptr<IAttributeUsageListener> listener);
 };
 
 } // namespace proton

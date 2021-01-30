@@ -50,7 +50,7 @@ private:
     double               _remove_batch_block_rate;
     double               _remove_block_rate;
     bool                 _disabled;
-    uint32_t             _maxDocsToScan;
+    bool                 _useBucketExecutor;
 
 public:
     DocumentDBLidSpaceCompactionConfig();
@@ -60,7 +60,7 @@ public:
                                        double remove_batch_block_rate,
                                        double remove_block_rate,
                                        bool disabled,
-                                       uint32_t maxDocsToScan = 10000);
+                                       bool useBucketExecutor);
 
     static DocumentDBLidSpaceCompactionConfig createDisabled();
     bool operator==(const DocumentDBLidSpaceCompactionConfig &rhs) const;
@@ -71,7 +71,7 @@ public:
     double get_remove_batch_block_rate() const { return _remove_batch_block_rate; }
     double get_remove_block_rate() const { return _remove_block_rate; }
     bool isDisabled() const { return _disabled; }
-    uint32_t getMaxDocsToScan() const { return _maxDocsToScan; }
+    bool useBucketExecutor() const { return _useBucketExecutor; }
 };
 
 class BlockableMaintenanceJobConfig {

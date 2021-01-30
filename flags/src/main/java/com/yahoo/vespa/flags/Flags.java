@@ -42,6 +42,14 @@ import static com.yahoo.vespa.flags.FetchVector.Dimension.ZONE_ID;
 public class Flags {
     private static volatile TreeMap<FlagId, FlagDefinition> flags = new TreeMap<>();
 
+    public static final UnboundStringFlag ALLOCATE_OS_REQUIREMENT = defineStringFlag(
+            "allocate-os-requirement", "rhel7",
+            List.of("hakonhall"), "2021-01-26", "2021-07-26",
+            "Allocations of new nodes are limited to the given host OS.  Must be one of 'rhel7', " +
+            "'rhel8', or 'any'",
+            "Takes effect on next (re)deployment.",
+            APPLICATION_ID);
+
     public static final UnboundBooleanFlag RETIRE_WITH_PERMANENTLY_DOWN = defineFeatureFlag(
             "retire-with-permanently-down", true,
             List.of("hakonhall"), "2020-12-02", "2021-02-01",
@@ -210,7 +218,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag HIDE_SHARED_ROUTING_ENDPOINT = defineFeatureFlag(
             "hide-shared-routing-endpoint", false,
-            List.of("tokle"), "2020-12-02", "2021-02-01",
+            List.of("tokle"), "2020-12-02", "2021-06-01",
             "Whether the controller should hide shared routing layer endpoint",
             "Takes effect immediately",
             APPLICATION_ID
@@ -230,15 +238,8 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundIntFlag CONTENT_NODE_BUCKET_DB_STRIPE_BITS = defineIntFlag(
-            "content-node-bucket-db-stripe-bits", 0,
-            List.of("baldersheim"), "2020-12-02", "2021-02-01",
-            "Number of bits used for striping the bucket DB in service layer",
-            "Takes effect at redeployment",
-            ZONE_ID, APPLICATION_ID);
-
     public static final UnboundIntFlag MERGE_CHUNK_SIZE = defineIntFlag(
-            "merge-chunk-size", 0x400000,
+            "merge-chunk-size", 0x2000000,
             List.of("baldersheim"), "2020-12-02", "2021-02-01",
             "Size of baldersheim buffer in service layer",
             "Takes effect at redeployment",
@@ -265,11 +266,25 @@ public class Flags {
             "Takes effect on (re)deployment",
             APPLICATION_ID);
 
+    public static final UnboundBooleanFlag USE_BUCKET_EXECUTOR_FOR_LID_SPACE_COMPACT = defineFeatureFlag(
+            "use-bucket-executor-for-lid-space-compact", false,
+            List.of("baldersheim"), "2021-01-24", "2021-03-01",
+            "Wheter to use content-level bucket executor or legacy frozen buckets",
+            "Takes effect on next internal redeployment",
+            APPLICATION_ID);
+
     public static final UnboundBooleanFlag USE_POWER_OF_TWO_CHOICES_LOAD_BALANCING = defineFeatureFlag(
             "use-power-of-two-choices-load-balancing", false,
             List.of("tokle"), "2020-12-02", "2021-02-01",
             "Whether to use Power of two load balancing algorithm for application",
             "Takes effect on next internal redeployment",
+            APPLICATION_ID);
+
+    public static final UnboundBooleanFlag GROUP_SUSPENSION = defineFeatureFlag(
+            "group-suspension", false,
+            List.of("hakon"), "2021-01-22", "2021-03-22",
+            "Allow all content nodes in a hierarchical group to suspend at the same time",
+            "Takes effect on the next suspension request to the Orchestrator.",
             APPLICATION_ID);
 
     public static final UnboundBooleanFlag RECONFIGURABLE_ZOOKEEPER_SERVER_FOR_CLUSTER_CONTROLLER = defineFeatureFlag(
@@ -290,6 +305,20 @@ public class Flags {
             List.of("bjorncs", "tokle", "baldersheim"), "2021-01-19", "2021-04-01",
             "Whether to enable zstd compression of jdisc access logs",
             "Takes effect on (re)deployment");
+
+    public static final UnboundBooleanFlag USE_ENDPOINT_CERTIFICATE_MAINTAINER = defineFeatureFlag(
+            "use-endpoint-certificate-maintainer", false,
+            List.of("andreer"), "2021-01-12", "2021-02-12",
+            "Use EndpointCertificateMaintainer instead of EndpointCertificateManager cleanup thread to handle certificate refreshes and deletions",
+            "Takes effect on next run of maintainer / next manager cleanup thread run");
+
+    public static final UnboundBooleanFlag ENABLE_FEED_BLOCK_IN_DISTRIBUTOR = defineFeatureFlag(
+            "enable-feed-block-in-distributor", false,
+            List.of("geirst"), "2021-01-27", "2021-04-01",
+            "Enables blocking of feed in the distributor if resource usage is above limit on at least one content node",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

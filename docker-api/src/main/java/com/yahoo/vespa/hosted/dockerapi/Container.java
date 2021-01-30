@@ -8,6 +8,7 @@ import java.util.Objects;
 /**
  * @author stiankri
  */
+// TODO: Move this to node-admin when docker-api module can be removed
 public class Container {
     public final String hostname;
     public final DockerImage image;
@@ -62,7 +63,7 @@ public class Container {
     }
 
     public enum State {
-        CREATED, RESTARTING, RUNNING, REMOVING, PAUSED, EXITED, DEAD;
+        CREATED, RESTARTING, RUNNING, REMOVING, PAUSED, EXITED, DEAD, UNKNOWN, CONFIGURED, STOPPED;
 
         public boolean isRunning() {
             return this == RUNNING;

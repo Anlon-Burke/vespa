@@ -13,6 +13,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.organization.Contact;
 import com.yahoo.vespa.hosted.controller.api.role.SimplePrincipal;
 import com.yahoo.vespa.hosted.controller.tenant.AthenzTenant;
 import com.yahoo.vespa.hosted.controller.tenant.CloudTenant;
+import com.yahoo.vespa.hosted.controller.tenant.LastLoginInfo;
 import com.yahoo.vespa.hosted.controller.tenant.TenantInfo;
 import com.yahoo.vespa.hosted.controller.tenant.TenantInfoAddress;
 import com.yahoo.vespa.hosted.controller.tenant.TenantInfoBillingContact;
@@ -21,8 +22,9 @@ import org.junit.Test;
 import java.net.URI;
 import java.security.PublicKey;
 import java.time.Instant;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
@@ -51,7 +53,7 @@ public class TenantSerializerTest {
                                                   new Property("property1"),
                                                   Optional.of(new PropertyId("1")),
                                                   Instant.ofEpochMilli(1234L));
-        AthenzTenant serialized = (AthenzTenant) serializer.tenantFrom(serializer.toSlime(tenant), () -> { throw new UnsupportedOperationException(); });
+        AthenzTenant serialized = (AthenzTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(tenant.name(), serialized.name());
         assertEquals(tenant.domain(), serialized.domain());
         assertEquals(tenant.property(), serialized.property());
@@ -67,7 +69,7 @@ public class TenantSerializerTest {
                                                              new Property("property1"),
                                                              Optional.empty(),
                                                              Instant.EPOCH);
-        AthenzTenant serialized = (AthenzTenant) serializer.tenantFrom(serializer.toSlime(tenant), () -> { throw new UnsupportedOperationException(); });
+        AthenzTenant serialized = (AthenzTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertFalse(serialized.propertyId().isPresent());
         assertEquals(tenant.propertyId(), serialized.propertyId());
     }
@@ -79,8 +81,9 @@ public class TenantSerializerTest {
                                                new Property("property1"),
                                                Optional.of(new PropertyId("1")),
                                                Optional.of(contact()),
-                                               Instant.EPOCH);
-        AthenzTenant serialized = (AthenzTenant) serializer.tenantFrom(serializer.toSlime(tenant), () -> { throw new UnsupportedOperationException(); });
+                                               Instant.EPOCH,
+                                               lastLoginInfo(321L, 654L, 987L));
+        AthenzTenant serialized = (AthenzTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(tenant.contact(), serialized.contact());
     }
 
@@ -88,11 +91,12 @@ public class TenantSerializerTest {
     public void cloud_tenant() {
         CloudTenant tenant = new CloudTenant(TenantName.from("elderly-lady"),
                                              Instant.ofEpochMilli(1234L),
+                                             lastLoginInfo(123L, 456L, null),
                                              Optional.of(new SimplePrincipal("foobar-user")),
                                              ImmutableBiMap.of(publicKey, new SimplePrincipal("joe"),
                                                                otherPublicKey, new SimplePrincipal("jane")),
                                              TenantInfo.EMPTY);
-        CloudTenant serialized = (CloudTenant) serializer.tenantFrom(serializer.toSlime(tenant), () -> { throw new UnsupportedOperationException(); });
+        CloudTenant serialized = (CloudTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(tenant.name(), serialized.name());
         assertEquals(tenant.creator(), serialized.creator());
         assertEquals(tenant.developerKeys(), serialized.developerKeys());
@@ -103,11 +107,12 @@ public class TenantSerializerTest {
     public void cloud_tenant_with_info() {
         CloudTenant tenant = new CloudTenant(TenantName.from("elderly-lady"),
                 Instant.EPOCH,
+                lastLoginInfo(null, 789L, 654L),
                 Optional.of(new SimplePrincipal("foobar-user")),
                 ImmutableBiMap.of(publicKey, new SimplePrincipal("joe"),
                         otherPublicKey, new SimplePrincipal("jane")),
                 TenantInfo.EMPTY.withName("Ofni Tnanet"));
-        CloudTenant serialized = (CloudTenant) serializer.tenantFrom(serializer.toSlime(tenant), () -> { throw new UnsupportedOperationException(); });
+        CloudTenant serialized = (CloudTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(tenant.info(), serialized.info());
     }
 
@@ -156,18 +161,25 @@ public class TenantSerializerTest {
         assertEquals(fullInfo, roundTripInfo);
     }
 
-    private Contact contact() {
+    private static Contact contact() {
         return new Contact(
                 URI.create("http://contact1.test"),
                 URI.create("http://property1.test"),
                 URI.create("http://issue-tracker-1.test"),
                 List.of(
-                        Collections.singletonList("person1"),
-                        Collections.singletonList("person2")
+                        List.of("person1"),
+                        List.of("person2")
                 ),
                 "queue",
                 Optional.empty()
         );
     }
 
+    private static LastLoginInfo lastLoginInfo(Long user, Long developer, Long administrator) {
+        Map<LastLoginInfo.UserLevel, Instant> lastLogins = new HashMap<>();
+        Optional.ofNullable(user).map(Instant::ofEpochMilli).ifPresent(i -> lastLogins.put(LastLoginInfo.UserLevel.user, i));
+        Optional.ofNullable(developer).map(Instant::ofEpochMilli).ifPresent(i -> lastLogins.put(LastLoginInfo.UserLevel.developer, i));
+        Optional.ofNullable(administrator).map(Instant::ofEpochMilli).ifPresent(i -> lastLogins.put(LastLoginInfo.UserLevel.administrator, i));
+        return new LastLoginInfo(lastLogins);
+    }
 }

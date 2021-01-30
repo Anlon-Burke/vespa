@@ -11,7 +11,7 @@ using BlockedReason = IBlockableMaintenanceJob::BlockedReason;
 struct MoveOperationLimiter::Callback : public vespalib::IDestructorCallback {
     MoveOperationLimiter::SP _limiter;
     Callback(MoveOperationLimiter::SP limiter) noexcept : _limiter(std::move(limiter)) {}
-    virtual ~Callback() { _limiter->endOperation(); }
+    ~Callback() override { _limiter->endOperation(); }
 };
 
 bool
@@ -55,6 +55,13 @@ MoveOperationLimiter::isAboveLimit() const
 {
     LockGuard guard(_mutex);
     return (_outstandingOps >= _maxOutstandingOps);
+}
+
+bool
+MoveOperationLimiter::hasPending() const
+{
+    LockGuard guard(_mutex);
+    return (_outstandingOps > 0);
 }
 
 std::shared_ptr<vespalib::IDestructorCallback>

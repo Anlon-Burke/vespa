@@ -18,7 +18,6 @@ import com.yahoo.vespa.config.server.ApplicationRepository;
 import com.yahoo.vespa.config.server.MockLogRetriever;
 import com.yahoo.vespa.config.server.MockProvisioner;
 import com.yahoo.vespa.config.server.MockTesterClient;
-import com.yahoo.vespa.config.server.TestComponentRegistry;
 import com.yahoo.vespa.config.server.application.ApplicationCuratorDatabase;
 import com.yahoo.vespa.config.server.application.ApplicationReindexing;
 import com.yahoo.vespa.config.server.application.ClusterReindexing;
@@ -109,16 +108,13 @@ public class ApplicationHandlerTest {
                 .configDefinitionsDir(temporaryFolder.newFolder().getAbsolutePath())
                 .fileReferencesDir(temporaryFolder.newFolder().getAbsolutePath())
                 .build();
-        TestComponentRegistry componentRegistry = new TestComponentRegistry.Builder()
-                .modelFactoryRegistry(new ModelFactoryRegistry(modelFactories))
-                .configServerConfig(configserverConfig)
-                .clock(clock)
-                .build();
         provisioner = new MockProvisioner();
         tenantRepository = new TestTenantRepository.Builder()
-                .withComponentRegistry(componentRegistry)
+                .withClock(clock)
+                .withConfigserverConfig(configserverConfig)
                 .withFileDistributionFactory(new MockFileDistributionFactory(configserverConfig))
                 .withHostProvisionerProvider(HostProvisionerProvider.withProvisioner(provisioner, false))
+                .withModelFactoryRegistry(new ModelFactoryRegistry(modelFactories))
                 .build();
         tenantRepository.addTenant(mytenantName);
         orchestrator = new OrchestratorMock();
@@ -126,7 +122,7 @@ public class ApplicationHandlerTest {
                 .withTenantRepository(tenantRepository)
                 .withProvisioner(provisioner)
                 .withOrchestrator(orchestrator)
-                .withClock(componentRegistry.getClock())
+                .withClock(clock)
                 .withTesterClient(testerClient)
                 .withLogRetriever(logRetriever)
                 .withConfigserverConfig(configserverConfig)

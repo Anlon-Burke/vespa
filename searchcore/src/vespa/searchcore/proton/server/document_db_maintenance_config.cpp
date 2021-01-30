@@ -56,7 +56,7 @@ DocumentDBLidSpaceCompactionConfig::DocumentDBLidSpaceCompactionConfig()
       _remove_batch_block_rate(0.5),
       _remove_block_rate(100),
       _disabled(false),
-      _maxDocsToScan(10000)
+      _useBucketExecutor(false)
 {
 }
 
@@ -66,7 +66,7 @@ DocumentDBLidSpaceCompactionConfig::DocumentDBLidSpaceCompactionConfig(vespalib:
                                                                        double remove_batch_block_rate,
                                                                        double remove_block_rate,
                                                                        bool disabled,
-                                                                       uint32_t maxDocsToScan)
+                                                                       bool useBucketExecutor)
     : _delay(std::min(MAX_DELAY_SEC, interval)),
       _interval(interval),
       _allowedLidBloat(allowedLidBloat),
@@ -74,7 +74,7 @@ DocumentDBLidSpaceCompactionConfig::DocumentDBLidSpaceCompactionConfig(vespalib:
       _remove_batch_block_rate(remove_batch_block_rate),
       _remove_block_rate(remove_block_rate),
       _disabled(disabled),
-      _maxDocsToScan(maxDocsToScan)
+      _useBucketExecutor(useBucketExecutor)
 {
 }
 

@@ -16,7 +16,6 @@
 #include <vespa/searchlib/fef/indexproperties.h>
 #include <vespa/searchlib/fef/properties.h>
 #include <vespa/eval/eval/fast_value.h>
-#include <vespa/vespalib/util/closuretask.h>
 
 using vespa::config::search::RankProfilesConfig;
 using proton::matching::MatchingStats;
@@ -65,7 +64,6 @@ SearchableDocSubDB::syncViews()
 {
     _iSearchView.set(_rSearchView.get());
     _iFeedView.set(_rFeedView.get());
-    _owner.syncFeedView();
 }
 
 SerialNum
@@ -245,7 +243,7 @@ SearchableDocSubDB::initFeedView(IAttributeWriter::SP attrWriter,
  * flush engine has not started.
  */
 bool
-SearchableDocSubDB::reconfigure(vespalib::Closure0<bool>::UP closure)
+SearchableDocSubDB::reconfigure(std::unique_ptr<Configure> configure)
 {
     assert(_writeService.master().isCurrentThread());
 
@@ -257,8 +255,8 @@ SearchableDocSubDB::reconfigure(vespalib::Closure0<bool>::UP closure)
 
     bool ret = true;
 
-    if (closure)
-        ret = closure->call();  // Perform index manager reconfiguration now
+    if (configure)
+        ret = configure->configure();  // Perform index manager reconfiguration now
     reconfigureIndexSearchable();
     return ret;
 }
@@ -269,8 +267,8 @@ SearchableDocSubDB::reconfigureIndexSearchable()
     std::lock_guard<std::mutex> guard(_configMutex);
     // Create new views as needed.
     _configurer.reconfigureIndexSearchable();
-    // Activate new feed view at once
-    syncViews();
+    // Activate new search view at once
+    _iSearchView.set(_rSearchView.get());
 }
 
 IFlushTarget::List

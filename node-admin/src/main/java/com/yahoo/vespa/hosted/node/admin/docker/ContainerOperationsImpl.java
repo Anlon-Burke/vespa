@@ -13,6 +13,7 @@ import com.yahoo.vespa.hosted.dockerapi.ContainerResources;
 import com.yahoo.vespa.hosted.dockerapi.ContainerStats;
 import com.yahoo.vespa.hosted.dockerapi.ProcessResult;
 import com.yahoo.vespa.hosted.dockerapi.RegistryCredentials;
+import com.yahoo.vespa.hosted.node.admin.component.TaskContext;
 import com.yahoo.vespa.hosted.node.admin.nodeadmin.ConvergenceException;
 import com.yahoo.vespa.hosted.node.admin.nodeagent.ContainerData;
 import com.yahoo.vespa.hosted.node.admin.nodeagent.NodeAgentContext;
@@ -40,6 +41,7 @@ import java.util.stream.Stream;
  *
  * @author Haakon Dybdahl
  */
+// TODO: Remove when Podman becomes the only implementation in use
 public class ContainerOperationsImpl implements ContainerOperations {
 
     private static final Logger logger = Logger.getLogger(ContainerOperationsImpl.class.getName());
@@ -98,10 +100,10 @@ public class ContainerOperationsImpl implements ContainerOperations {
         if (context.node().membership().map(m -> m.type().isContent()).orElse(false))
             command.withSecurityOpt("seccomp=unconfined");
 
-        DockerNetworking networking = context.dockerNetworking();
-        command.withNetworkMode(networking.getDockerNetworkMode());
+        ContainerNetworkMode networkMode = context.networkMode();
+        command.withNetworkMode(networkMode.networkName());
 
-        if (networking == DockerNetworking.NPT) {
+        if (networkMode == ContainerNetworkMode.NPT) {
             Optional<? extends InetAddress> ipV4Local = ipAddresses.getIPv4Address(context.node().hostname());
             Optional<? extends InetAddress> ipV6Local = ipAddresses.getIPv6Address(context.node().hostname());
 
@@ -109,7 +111,7 @@ public class ContainerOperationsImpl implements ContainerOperations {
             assertEqualIpAddresses(context.hostname(), ipV6Local, context.node().ipAddresses(), IPVersion.IPv6);
 
             if (ipV4Local.isEmpty() && ipV6Local.isEmpty()) {
-                throw new ConvergenceException("Container " + context.node().hostname() + " with " + networking +
+                throw new ConvergenceException("Container " + context.node().hostname() + " with " + networkMode +
                         " networking must have at least 1 IP address, but found none");
             }
 
@@ -120,7 +122,7 @@ public class ContainerOperationsImpl implements ContainerOperations {
             ipV4Local.ifPresent(command::withIpAddress);
 
             addEtcHosts(containerData, context.node().hostname(), ipV4Local, ipV6Local);
-        } else if (networking == DockerNetworking.LOCAL) {
+        } else if (networkMode == ContainerNetworkMode.LOCAL) {
             var ipv4Address = ipAddresses.getIPv4Address(context.node().hostname())
                                          .orElseThrow(() -> new IllegalArgumentException("No IPv4 address could be resolved from '" + context.hostname()+ "'"));
             command.withIpAddress(ipv4Address);
@@ -211,7 +213,7 @@ public class ContainerOperationsImpl implements ContainerOperations {
     }
 
     @Override
-    public boolean pullImageAsyncIfNeeded(DockerImage dockerImage, RegistryCredentials registryCredentials) {
+    public boolean pullImageAsyncIfNeeded(TaskContext context, DockerImage dockerImage, RegistryCredentials registryCredentials) {
         return containerEngine.pullImageAsyncIfNeeded(dockerImage, registryCredentials);
     }
 
@@ -321,12 +323,12 @@ public class ContainerOperationsImpl implements ContainerOperations {
     }
 
     @Override
-    public boolean noManagedContainersRunning() {
+    public boolean noManagedContainersRunning(TaskContext context) {
         return containerEngine.noManagedContainersRunning(MANAGER_NAME);
     }
 
     @Override
-    public boolean retainManagedContainers(Set<ContainerName> containerNames) {
+    public boolean retainManagedContainers(TaskContext context, Set<ContainerName> containerNames) {
         return containerEngine.listManagedContainers(MANAGER_NAME).stream()
                 .filter(containerName -> ! containerNames.contains(containerName))
                 .peek(containerName -> {
@@ -336,7 +338,7 @@ public class ContainerOperationsImpl implements ContainerOperations {
     }
 
     @Override
-    public boolean deleteUnusedContainerImages(List<DockerImage> excludes, Duration minImageAgeToDelete) {
+    public boolean deleteUnusedContainerImages(TaskContext context, List<DockerImage> excludes, Duration minImageAgeToDelete) {
         return containerEngine.deleteUnusedDockerImages(excludes, minImageAgeToDelete);
     }
 

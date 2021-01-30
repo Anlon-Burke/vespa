@@ -6,6 +6,7 @@
 
 #include <vespa/eval/instruction/dense_dot_product_function.h>
 #include <vespa/eval/instruction/mixed_inner_product_function.h>
+#include <vespa/eval/instruction/sum_max_dot_product_function.h>
 #include <vespa/eval/instruction/dense_xw_product_function.h>
 #include <vespa/eval/instruction/dense_matmul_function.h>
 #include <vespa/eval/instruction/dense_multi_matmul_function.h>
@@ -15,10 +16,10 @@
 #include <vespa/eval/instruction/remove_trivial_dimension_optimizer.h>
 #include <vespa/eval/instruction/dense_lambda_peek_optimizer.h>
 #include <vespa/eval/instruction/dense_simple_expand_function.h>
-#include <vespa/eval/instruction/dense_simple_join_function.h>
+#include <vespa/eval/instruction/mixed_simple_join_function.h>
 #include <vespa/eval/instruction/join_with_number_function.h>
 #include <vespa/eval/instruction/pow_as_map_optimizer.h>
-#include <vespa/eval/instruction/dense_simple_map_function.h>
+#include <vespa/eval/instruction/mixed_map_function.h>
 #include <vespa/eval/instruction/vector_from_doubles_function.h>
 #include <vespa/eval/instruction/dense_tensor_create_function.h>
 #include <vespa/eval/instruction/dense_tensor_peek_function.h>
@@ -44,6 +45,7 @@ const TensorFunction &optimize_for_factory(const ValueBuilderFactory &factory, c
         }
         while (!nodes.empty()) {
             const Child &child = nodes.back().get();
+            child.set(SumMaxDotProductFunction::optimize(child.get(), stash));
             child.set(DenseDotProductFunction::optimize(child.get(), stash));
             child.set(DenseXWProductFunction::optimize(child.get(), stash));
             child.set(DenseMatMulFunction::optimize(child.get(), stash));
@@ -68,8 +70,8 @@ const TensorFunction &optimize_for_factory(const ValueBuilderFactory &factory, c
             child.set(DenseLambdaPeekOptimizer::optimize(child.get(), stash));
             child.set(FastRenameOptimizer::optimize(child.get(), stash));
             child.set(PowAsMapOptimizer::optimize(child.get(), stash));
-            child.set(DenseSimpleMapFunction::optimize(child.get(), stash));
-            child.set(DenseSimpleJoinFunction::optimize(child.get(), stash));
+            child.set(MixedMapFunction::optimize(child.get(), stash));
+            child.set(MixedSimpleJoinFunction::optimize(child.get(), stash));
             child.set(JoinWithNumberFunction::optimize(child.get(), stash));
             child.set(DenseSingleReduceFunction::optimize(child.get(), stash));
             nodes.pop_back();

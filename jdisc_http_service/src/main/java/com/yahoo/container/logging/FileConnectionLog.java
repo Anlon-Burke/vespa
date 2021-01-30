@@ -5,7 +5,6 @@ package com.yahoo.container.logging;
 import com.google.inject.Inject;
 import com.yahoo.component.AbstractComponent;
 
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -18,20 +17,17 @@ public class FileConnectionLog extends AbstractComponent implements ConnectionLo
 
     @Inject
     public FileConnectionLog(ConnectionLogConfig config) {
-        logHandler = new ConnectionLogHandler(config.cluster());
+        logHandler = new ConnectionLogHandler(config.cluster(), new JsonConnectionLogWriter());
     }
 
     @Override
     public void log(ConnectionLogEntry connectionLogEntry) {
-        try {
-            logHandler.connection.log(Level.INFO, connectionLogEntry.toJson()+ '\n');
-        } catch (Exception e) {
-            logger.log(Level.WARNING, "Unable to write connection log entry for connection id " + connectionLogEntry.id(), e);
-        }
+        logHandler.log(connectionLogEntry);
     }
 
     @Override
     public void deconstruct() {
         logHandler.shutdown();
     }
+
 }

@@ -23,7 +23,6 @@ import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.config.server.ApplicationRepository;
 import com.yahoo.vespa.config.server.MockProvisioner;
-import com.yahoo.vespa.config.server.TestComponentRegistry;
 import com.yahoo.vespa.config.server.TimeoutBudget;
 import com.yahoo.vespa.config.server.application.OrchestratorMock;
 import com.yahoo.vespa.config.server.filedistribution.MockFileDistributionFactory;
@@ -283,17 +282,14 @@ public class DeployTester {
             List<ModelFactory> modelFactories = Optional.ofNullable(this.modelFactories)
                     .orElseGet(() -> List.of(createModelFactory(clock)));
 
-            TestComponentRegistry.Builder testComponentRegistryBuilder = new TestComponentRegistry.Builder()
-                    .clock(clock)
-                    .configServerConfig(configserverConfig)
-                    .modelFactoryRegistry(new ModelFactoryRegistry(modelFactories))
-                    .zone(zone);
-
             TestTenantRepository.Builder builder = new TestTenantRepository.Builder()
-                    .withComponentRegistry(testComponentRegistryBuilder.build())
+                    .withClock(clock)
+                    .withConfigserverConfig(configserverConfig)
                     .withCurator(curator)
+                    .withFileDistributionFactory(new MockFileDistributionFactory(configserverConfig))
                     .withMetrics(Optional.ofNullable(metrics).orElse(Metrics.createTestMetrics()))
-                    .withFileDistributionFactory(new MockFileDistributionFactory(configserverConfig));
+                    .withModelFactoryRegistry((new ModelFactoryRegistry(modelFactories)))
+                    .withZone(zone);
 
             if (configserverConfig.hostedVespa()) builder.withHostProvisionerProvider(HostProvisionerProvider.withProvisioner(provisioner, true));
 
