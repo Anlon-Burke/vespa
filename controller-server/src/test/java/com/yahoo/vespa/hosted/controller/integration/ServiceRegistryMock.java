@@ -7,14 +7,16 @@ import com.yahoo.component.AbstractComponent;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.test.ManualClock;
 import com.yahoo.vespa.hosted.controller.api.integration.ServiceRegistry;
-import com.yahoo.vespa.hosted.controller.api.integration.aws.ApplicationRoleService;
+import com.yahoo.vespa.hosted.controller.api.integration.aws.RoleService;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.MockAwsEventFetcher;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.MockResourceTagger;
-import com.yahoo.vespa.hosted.controller.api.integration.aws.NoopApplicationRoleService;
+import com.yahoo.vespa.hosted.controller.api.integration.aws.NoopRoleService;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.ResourceTagger;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingController;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.MockBillingController;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateMock;
+import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateValidator;
+import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateValidatorMock;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.MemoryNameService;
 import com.yahoo.vespa.hosted.controller.api.integration.entity.MemoryEntityService;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.MockContactRetriever;
@@ -44,6 +46,7 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     private final MemoryGlobalRoutingService memoryGlobalRoutingService = new MemoryGlobalRoutingService();
     private final MockMailer mockMailer = new MockMailer();
     private final EndpointCertificateMock endpointCertificateMock = new EndpointCertificateMock();
+    private final EndpointCertificateValidatorMock endpointCertificateValidatorMock = new EndpointCertificateValidatorMock();
     private final MockMeteringClient mockMeteringClient = new MockMeteringClient();
     private final MockContactRetriever mockContactRetriever = new MockContactRetriever();
     private final MockIssueHandler mockIssueHandler = new MockIssueHandler();
@@ -58,7 +61,7 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     private final ApplicationStoreMock applicationStoreMock = new ApplicationStoreMock();
     private final MockRunDataStore mockRunDataStore = new MockRunDataStore();
     private final MockResourceTagger mockResourceTagger = new MockResourceTagger();
-    private final ApplicationRoleService applicationRoleService = new NoopApplicationRoleService();
+    private final RoleService roleService = new NoopRoleService();
     private final BillingController billingController = new MockBillingController();
     private final ContainerRegistryMock containerRegistry = new ContainerRegistryMock();
 
@@ -100,6 +103,11 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     @Override
     public EndpointCertificateMock endpointCertificateProvider() {
         return endpointCertificateMock;
+    }
+
+    @Override
+    public EndpointCertificateValidator endpointCertificateValidator() {
+        return endpointCertificateValidatorMock;
     }
 
     @Override
@@ -178,8 +186,8 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     }
 
     @Override
-    public ApplicationRoleService applicationRoleService() {
-        return applicationRoleService;
+    public RoleService roleService() {
+        return roleService;
     }
 
     @Override

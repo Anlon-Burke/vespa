@@ -6,6 +6,7 @@
 #include <vespa/eval/instruction/generic_join.h>
 #include <vespa/vespalib/stllike/hashtable.hpp>
 #include <vespa/vespalib/util/shared_string_repo.h>
+#include <typeindex>
 
 namespace vespalib::eval {
 
@@ -135,9 +136,9 @@ struct FastIterateView : public Value::Index::View {
 //-----------------------------------------------------------------------------
 
 using JoinAddrSource = instruction::SparseJoinPlan::Source;
+
 // This is the class instructions will look for when optimizing sparse
 // operations by calling inline functions directly.
-
 struct FastValueIndex final : Value::Index {
     FastAddrMap map;
     FastValueIndex(size_t num_mapped_dims_in, const std::vector<string_id> &labels, size_t expected_subspaces_in)
@@ -154,15 +155,21 @@ struct FastValueIndex final : Value::Index {
                 const std::vector<JoinAddrSource> &addr_sources,
                 ConstArrayRef<LCT> lhs_cells, ConstArrayRef<RCT> rhs_cells, Stash &stash);
 
-    template <typename LCT, typename RCT, typename OCT, typename Fun>
-        static const Value &sparse_only_merge(const ValueType &res_type, const Fun &fun,
-                const FastValueIndex &lhs, const FastValueIndex &rhs,
-                ConstArrayRef<LCT> lhs_cells, ConstArrayRef<RCT> rhs_cells,
-                Stash &stash) __attribute((noinline));
-
     size_t size() const override { return map.size(); }
     std::unique_ptr<View> create_view(const std::vector<size_t> &dims) const override;
 };
+
+inline bool is_fast(const Value::Index &index) {
+    return (std::type_index(typeid(index)) == std::type_index(typeid(FastValueIndex)));
+}
+
+inline bool are_fast(const Value::Index &a, const Value::Index &b) {
+    return (is_fast(a) && is_fast(b));
+}
+
+constexpr const FastValueIndex &as_fast(const Value::Index &index) {
+    return static_cast<const FastValueIndex &>(index);
+}
 
 //-----------------------------------------------------------------------------
 
@@ -415,33 +422,5 @@ FastValueIndex::sparse_no_overlap_join(const ValueType &res_type, const Fun &fun
 }
 
 //-----------------------------------------------------------------------------
-
-template <typename LCT, typename RCT, typename OCT, typename Fun>
-const Value &
-FastValueIndex::sparse_only_merge(const ValueType &res_type, const Fun &fun,
-                             const FastValueIndex &lhs, const FastValueIndex &rhs,
-                             ConstArrayRef<LCT> lhs_cells, ConstArrayRef<RCT> rhs_cells, Stash &stash)
-{
-    size_t guess_size = lhs.map.size() + rhs.map.size();
-    auto &result = stash.create<FastValue<OCT,true>>(res_type, lhs.map.addr_size(), 1, guess_size);
-    lhs.map.each_map_entry([&](auto lhs_subspace, auto hash)
-                           {
-                               result.add_mapping(lhs.map.get_addr(lhs_subspace), hash);
-                               result.my_cells.push_back_fast(lhs_cells[lhs_subspace]);
-                           });
-    rhs.map.each_map_entry([&](auto rhs_subspace, auto hash)
-                           {
-                               auto rhs_addr = rhs.map.get_addr(rhs_subspace);
-                               auto result_subspace = result.my_index.map.lookup(rhs_addr, hash);
-                               if (result_subspace == FastAddrMap::npos()) {
-                                   result.add_mapping(rhs_addr, hash);
-                                   result.my_cells.push_back_fast(rhs_cells[rhs_subspace]);
-                               } else {
-                                   OCT &out_cell = *result.my_cells.get(result_subspace);
-                                   out_cell = fun(out_cell, rhs_cells[rhs_subspace]);
-                               }
-                           });
-    return result;
-}
 
 }

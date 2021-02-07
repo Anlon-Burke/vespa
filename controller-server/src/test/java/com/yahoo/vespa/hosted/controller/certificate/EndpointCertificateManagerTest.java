@@ -16,6 +16,7 @@ import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.controller.Instance;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateMock;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateMetadata;
+import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateValidatorImpl;
 import com.yahoo.vespa.hosted.controller.integration.SecretStoreMock;
 import com.yahoo.vespa.hosted.controller.integration.ZoneRegistryMock;
 import com.yahoo.vespa.hosted.controller.persistence.MockCuratorDb;
@@ -47,8 +48,9 @@ public class EndpointCertificateManagerTest {
     private final EndpointCertificateMock endpointCertificateMock = new EndpointCertificateMock();
     private final InMemoryFlagSource inMemoryFlagSource = new InMemoryFlagSource();
     private static final Clock clock = Clock.fixed(Instant.EPOCH, java.time.ZoneId.systemDefault());
+    private final EndpointCertificateValidatorImpl endpointCertificateValidator = new EndpointCertificateValidatorImpl(secretStore, clock);
     private final EndpointCertificateManager endpointCertificateManager =
-            new EndpointCertificateManager(zoneRegistryMock, mockCuratorDb, secretStore, endpointCertificateMock, clock, inMemoryFlagSource);
+            new EndpointCertificateManager(zoneRegistryMock, mockCuratorDb, endpointCertificateMock, endpointCertificateValidator, clock);
 
     private static final List<String> expectedSans = List.of(
             "vt2ktgkqme5zlnp4tj4ttyor7fj3v7q5o.vespa.oath.cloud",
@@ -103,7 +105,6 @@ public class EndpointCertificateManagerTest {
     public void setUp() {
         zoneRegistryMock.exclusiveRoutingIn(zoneRegistryMock.zones().all().zones());
         testZone = zoneRegistryMock.zones().directlyRouted().in(Environment.prod).zones().stream().findFirst().orElseThrow().getId();
-        inMemoryFlagSource.withBooleanFlag(Flags.VALIDATE_ENDPOINT_CERTIFICATES.id(), true);
     }
 
     @Test
@@ -143,27 +144,6 @@ public class EndpointCertificateManagerTest {
         assertEquals(testKeyName, endpointCertificateMetadata.get().keyName());
         assertEquals(testCertName, endpointCertificateMetadata.get().certName());
         assertEquals(7, endpointCertificateMetadata.get().version());
-    }
-
-    @Test
-    public void uses_refreshed_certificate_when_available_and_valid() {
-        secretStore.setSecret(testKeyName, "secret-key", 7);
-        secretStore.setSecret(testCertName, "cert", 7);
-        secretStore.setSecret(testKeyName, KeyUtils.toPem(testKeyPair.getPrivate()), 8);
-        secretStore.setSecret(testKeyName, KeyUtils.toPem(testKeyPair.getPrivate()), 9);
-        secretStore.setSecret(testCertName, X509CertificateUtils.toPem(testCertificate) + X509CertificateUtils.toPem(testCertificate), 8);
-        mockCuratorDb.writeEndpointCertificateMetadata(testInstance.id(), new EndpointCertificateMetadata(testKeyName, testCertName, 7, 0, "request_id",
-                List.of("vt2ktgkqme5zlnp4tj4ttyor7fj3v7q5o.vespa.oath.cloud",
-                        "default.default.global.vespa.oath.cloud",
-                        "*.default.default.global.vespa.oath.cloud",
-                        "default.default.aws-us-east-1a.vespa.oath.cloud",
-                        "*.default.default.aws-us-east-1a.vespa.oath.cloud"),
-                "issuer", Optional.empty(), Optional.empty()));
-        Optional<EndpointCertificateMetadata> endpointCertificateMetadata = endpointCertificateManager.getEndpointCertificateMetadata(testInstance, testZone, Optional.empty());
-        assertTrue(endpointCertificateMetadata.isPresent());
-        assertEquals(testKeyName, endpointCertificateMetadata.get().keyName());
-        assertEquals(testCertName, endpointCertificateMetadata.get().certName());
-        assertEquals(8, endpointCertificateMetadata.get().version());
     }
 
     @Test

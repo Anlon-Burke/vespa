@@ -1,7 +1,7 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include "filestorhandlerimpl.h"
 #include "filestormanager.h"
+#include "filestorhandlerimpl.h"
 #include <vespa/storage/bucketdb/minimumusedbitstracker.h>
 #include <vespa/storage/common/bucketmessages.h>
 #include <vespa/storage/common/content_bucket_space_repo.h>
@@ -49,10 +49,6 @@ public:
         return _executor.execute(bucket, std::move(task));
     }
 
-    void sync() override {
-        _executor.sync();
-    }
-
 private:
     spi::BucketExecutor & _executor;
 };
@@ -76,6 +72,8 @@ FileStorManager(const config::ConfigUri & configUri, spi::PersistenceProvider& p
       _configFetcher(configUri.getContext()),
       _use_async_message_handling_on_schedule(false),
       _metrics(std::make_unique<FileStorMetrics>()),
+      _filestorHandler(),
+      _sequencedExecutor(),
       _closed(false),
       _lock(),
       _host_info_reporter(_component.getStateUpdater()),
@@ -192,6 +190,7 @@ FileStorManager::configure(std::unique_ptr<vespa::config::content::StorFilestorC
     bool liveUpdate = ! _threads.empty();
 
     _use_async_message_handling_on_schedule = config->useAsyncMessageHandlingOnSchedule;
+    _host_info_reporter.set_noise_level(config->resourceUsageReporterNoiseLevel);
 
     if (!liveUpdate) {
         _config = std::move(config);
@@ -810,6 +809,8 @@ FileStorManager::sendUp(const std::shared_ptr<api::StorageMessage>& msg)
 void FileStorManager::onClose()
 {
     LOG(debug, "Start closing");
+    _bucketExecutorRegistration.reset();
+    _resource_usage_listener_registration.reset();
     // Avoid getting config during shutdown
     _configFetcher.close();
     LOG(debug, "Closed _configFetcher.");
@@ -978,13 +979,12 @@ FileStorManager::execute(const spi::Bucket &bucket, std::unique_ptr<spi::BucketT
     StorBucketDatabase::WrappedEntry entry(_component.getBucketDatabase(bucket.getBucketSpace()).get(
             bucket.getBucketId(), "FileStorManager::execute"));
     if (entry.exist()) {
-        _filestorHandler->schedule(std::make_shared<RunTaskCommand>(bucket, std::move(task)));
+        auto cmd = std::make_shared<RunTaskCommand>(bucket, std::move(task));
+        if ( ! _filestorHandler->schedule(cmd) ) {
+            task = cmd->stealTask();
+        }
     }
     return task;
-}
-
-void
-FileStorManager::sync() {
 }
 
 } // storage

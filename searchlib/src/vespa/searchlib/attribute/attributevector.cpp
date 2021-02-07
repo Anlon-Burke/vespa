@@ -21,6 +21,7 @@
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/searchlib/util/logutil.h>
 #include <vespa/searchcommon/attribute/attribute_utils.h>
+#include <thread>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".searchlib.attribute.attributevector");
@@ -45,13 +46,6 @@ const vespalib::string collectionTypeTag = "collectiontype";
 const vespalib::string docIdLimitTag = "docIdLimit";
 
 constexpr size_t DIRECTIO_ALIGNMENT(4096);
-
-template <typename T>
-struct FuncMax : public std::binary_function<T, T, T> {
-    T operator() (const T & x, const T & y) const {
-        return std::max(x, y);
-    }
-};
 
 }
 
@@ -767,6 +761,34 @@ AttributeVector::logEnumStoreEvent(const char *reason, const char *stage)
     jstr.endObject();
     vespalib::string eventName(make_string("%s.attribute.enumstore.%s", reason, stage));
     EV_STATE(eventName.c_str(), jstr.toString().data());
+}
+
+void
+AttributeVector::drain_hold(uint64_t hold_limit)
+{
+    incGeneration();
+    for (int retry = 0; retry < 40; ++retry) {
+        removeAllOldGenerations();
+        updateStat(true);
+        if (_status.getOnHold() <= hold_limit) {
+            return;
+        }
+        std::this_thread::sleep_for(retry < 20 ? 20ms : 100ms);
+    }
+}
+
+void
+AttributeVector::update_config(const Config& cfg)
+{
+    commit(true);
+    _config.setGrowStrategy(cfg.getGrowStrategy());
+    if (cfg.getCompactionStrategy() == _config.getCompactionStrategy()) {
+        return;
+    }
+    drain_hold(1024 * 1024); // Wait until 1MiB or less on hold
+    _config.setCompactionStrategy(cfg.getCompactionStrategy());
+    commit(); // might trigger compaction
+    drain_hold(1024 * 1024); // Wait until 1MiB or less on hold
 }
 
 template bool AttributeVector::append<StringChangeData>(ChangeVectorT< ChangeTemplate<StringChangeData> > &changes, uint32_t , const StringChangeData &, int32_t, bool);

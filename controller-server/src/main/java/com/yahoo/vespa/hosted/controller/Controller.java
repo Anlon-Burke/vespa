@@ -110,8 +110,8 @@ public class Controller extends AbstractComponent {
         metrics = new ConfigServerMetrics(serviceRegistry.configServer());
         nameServiceForwarder = new NameServiceForwarder(curator);
         jobController = new JobController(this);
-        applicationController = new ApplicationController(this, curator, accessControl, clock, secretStore, flagSource, serviceRegistry.billingController());
-        tenantController = new TenantController(this, curator, accessControl);
+        applicationController = new ApplicationController(this, curator, accessControl, clock, flagSource, serviceRegistry.billingController());
+        tenantController = new TenantController(this, curator, accessControl, flagSource);
         routingController = new RoutingController(this, Objects.requireNonNull(rotationsConfig, "RotationsConfig cannot be null"));
         auditLogger = new AuditLogger(curator, clock);
         jobControl = new JobControl(new JobControlFlags(curator, flagSource));

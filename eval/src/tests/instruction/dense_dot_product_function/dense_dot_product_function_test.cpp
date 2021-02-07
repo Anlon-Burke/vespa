@@ -3,7 +3,7 @@
 #include <vespa/eval/eval/fast_value.h>
 #include <vespa/eval/eval/tensor_function.h>
 #include <vespa/eval/eval/test/eval_fixture.h>
-#include <vespa/eval/eval/test/tensor_model.hpp>
+#include <vespa/eval/eval/test/gen_spec.h>
 #include <vespa/eval/instruction/dense_dot_product_function.h>
 #include <vespa/vespalib/testkit/test_kit.h>
 #include <vespa/vespalib/util/stash.h>
@@ -18,14 +18,8 @@ using namespace vespalib::eval::test;
 
 const ValueBuilderFactory &prod_factory = FastValueBuilderFactory::get();
 
-struct MyVecSeq : Sequence {
-    double bias;
-    double operator[](size_t i) const override { return (i + bias); }
-    MyVecSeq(double cellBias) : bias(cellBias) {}
-};
-
 TensorSpec makeTensor(size_t numCells, double cellBias) {
-    return spec({x(numCells)}, MyVecSeq(cellBias));
+    return GenSpec(cellBias).idx("x", numCells);
 }
 
 const double leftBias = 3.0;
@@ -45,7 +39,7 @@ void check_gen_with_result(size_t l, size_t r, double wanted) {
     param_repo.add("b", makeTensor(r, rightBias));
     vespalib::string expr = "reduce(a*b,sum,x)";
     EvalFixture evaluator(prod_factory, expr, param_repo, true);
-    EXPECT_EQUAL(spec(wanted), evaluator.result());
+    EXPECT_EQUAL(GenSpec(wanted), evaluator.result());
     EXPECT_EQUAL(evaluator.result(), EvalFixture::ref(expr, param_repo));
     auto info = evaluator.find_all<DenseDotProductFunction>();
     EXPECT_EQUAL(info.size(), 1u);
@@ -93,16 +87,16 @@ TEST("require that dot product with equal sizes is correct") {
 
 EvalFixture::ParamRepo make_params() {
     return EvalFixture::ParamRepo()
-        .add("v01_x1", spec({x(1)}, MyVecSeq(2.0)))
-        .add("v02_x3", spec({x(3)}, MyVecSeq(4.0)))
-        .add("v03_x3", spec({x(3)}, MyVecSeq(5.0)))
-        .add("v04_y3", spec({y(3)}, MyVecSeq(10)))
-        .add("v05_x5", spec({x(5)}, MyVecSeq(6.0)))
-        .add("v06_x5", spec({x(5)}, MyVecSeq(7.0)))
-        .add("v07_x5f", spec(float_cells({x(5)}), MyVecSeq(7.0)))
-        .add("v08_x5f", spec(float_cells({x(5)}), MyVecSeq(6.0)))
-        .add("m01_x3y3", spec({x(3),y(3)}, MyVecSeq(1.0)))
-        .add("m02_x3y3", spec({x(3),y(3)}, MyVecSeq(2.0)));
+        .add("v01_x1", GenSpec(2.0).idx("x", 1))
+        .add("v02_x3", GenSpec(4.0).idx("x", 3))
+        .add("v03_x3", GenSpec(5.0).idx("x", 3))
+        .add("v04_y3", GenSpec(10).idx("y", 3))
+        .add("v05_x5", GenSpec(6.0).idx("x", 5))
+        .add("v06_x5", GenSpec(7.0).idx("x", 5))
+        .add("v07_x5f", GenSpec(7.0).cells_float().idx("x", 5))
+        .add("v08_x5f", GenSpec(6.0).cells_float().idx("x", 5))
+        .add("m01_x3y3", GenSpec(1.0).idx("x", 3).idx("y", 3))
+        .add("m02_x3y3", GenSpec(2.0).idx("x", 3).idx("y", 3));
 }
 EvalFixture::ParamRepo param_repo = make_params();
 

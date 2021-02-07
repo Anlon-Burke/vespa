@@ -5,6 +5,8 @@
 #include "simple_value.h"
 
 #include <vespa/eval/instruction/dense_dot_product_function.h>
+#include <vespa/eval/instruction/sparse_dot_product_function.h>
+#include <vespa/eval/instruction/sparse_merge_function.h>
 #include <vespa/eval/instruction/mixed_inner_product_function.h>
 #include <vespa/eval/instruction/sum_max_dot_product_function.h>
 #include <vespa/eval/instruction/dense_xw_product_function.h>
@@ -31,11 +33,7 @@ namespace vespalib::eval {
 
 namespace {
 
-const TensorFunction &optimize_for_factory(const ValueBuilderFactory &factory, const TensorFunction &expr, Stash &stash) {
-    if (&factory == &SimpleValueBuilderFactory::get()) {
-        // never optimize simple value evaluation
-        return expr;
-    }
+const TensorFunction &optimize_for_factory(const ValueBuilderFactory &, const TensorFunction &expr, Stash &stash) {
     using Child = TensorFunction::Child;
     Child root(expr);
     {
@@ -47,6 +45,7 @@ const TensorFunction &optimize_for_factory(const ValueBuilderFactory &factory, c
             const Child &child = nodes.back().get();
             child.set(SumMaxDotProductFunction::optimize(child.get(), stash));
             child.set(DenseDotProductFunction::optimize(child.get(), stash));
+            child.set(SparseDotProductFunction::optimize(child.get(), stash));
             child.set(DenseXWProductFunction::optimize(child.get(), stash));
             child.set(DenseMatMulFunction::optimize(child.get(), stash));
             child.set(DenseMultiMatMulFunction::optimize(child.get(), stash));
@@ -74,6 +73,7 @@ const TensorFunction &optimize_for_factory(const ValueBuilderFactory &factory, c
             child.set(MixedSimpleJoinFunction::optimize(child.get(), stash));
             child.set(JoinWithNumberFunction::optimize(child.get(), stash));
             child.set(DenseSingleReduceFunction::optimize(child.get(), stash));
+            child.set(SparseMergeFunction::optimize(child.get(), stash));
             nodes.pop_back();
         }
     }

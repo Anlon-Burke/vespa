@@ -338,7 +338,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         addConfiguredComponents(deployState, cluster, spec, "server");
     }
 
-    private void addAccessLogs(DeployState deployState, ApplicationContainerCluster cluster, Element spec) {
+    protected void addAccessLogs(DeployState deployState, ApplicationContainerCluster cluster, Element spec) {
         List<Element> accessLogElements = getAccessLogElements(spec);
 
         for (Element accessLog : accessLogElements) {
@@ -350,9 +350,9 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
         // Add connection log if access log is configured
         if (cluster.getAllComponents().stream().anyMatch(component -> component instanceof AccessLogComponent)) {
-            cluster.addComponent(new ConnectionLogComponent(FileConnectionLog.class, cluster.getName()));
+            cluster.addComponent(new ConnectionLogComponent(cluster, FileConnectionLog.class, "qrs"));
         } else {
-            cluster.addComponent(new ConnectionLogComponent(VoidConnectionLog.class, cluster.getName()));
+            cluster.addComponent(new ConnectionLogComponent(cluster, VoidConnectionLog.class, "qrs"));
         }
     }
 
@@ -361,7 +361,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     }
 
 
-    private void addHttp(DeployState deployState, Element spec, ApplicationContainerCluster cluster, ConfigModelContext context) {
+    protected void addHttp(DeployState deployState, Element spec, ApplicationContainerCluster cluster, ConfigModelContext context) {
         Element httpElement = XML.getChild(spec, "http");
         if (httpElement != null) {
             cluster.setHttp(buildHttp(deployState, cluster, httpElement));

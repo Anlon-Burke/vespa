@@ -66,6 +66,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
     private final ProtonConfig.Indexing.Optimize.Enum feedSequencerType;
     private final double defaultFeedConcurrency;
     private final boolean useBucketExecutorForLidSpaceCompact;
+    private final double defaultMaxDeadBytesRatio;
 
     /** Whether the nodes of this cluster also hosts a container cluster in a hosted system */
     private final boolean combined;
@@ -79,13 +80,15 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
         private final Map<String, NewDocumentType> documentDefinitions;
         private final Set<NewDocumentType> globallyDistributedDocuments;
         private final boolean combined;
+        private final ResourceLimits resourceLimits;
 
         public Builder(Map<String, NewDocumentType> documentDefinitions,
                        Set<NewDocumentType> globallyDistributedDocuments,
-                       boolean combined) {
+                       boolean combined, ResourceLimits resourceLimits) {
             this.documentDefinitions = documentDefinitions;
             this.globallyDistributedDocuments = globallyDistributedDocuments;
             this.combined = combined;
+            this.resourceLimits = resourceLimits;
         }
 
         @Override
@@ -106,10 +109,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
             if (tuning != null) {
                 search.setTuning(new DomSearchTuningBuilder().build(deployState, search, tuning.getXml()));
             }
-            ModelElement protonElem = clusterElem.childByPath("engine.proton");
-            if (protonElem != null) {
-                search.setResourceLimits(DomResourceLimitsBuilder.build(protonElem));
-            }
+            search.setResourceLimits(resourceLimits);
 
             buildAllStreamingSearchClusters(deployState, clusterElem, clusterName, search);
             buildIndexedSearchCluster(deployState, clusterElem, clusterName, search);
@@ -190,7 +190,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
         }
     }
 
-    private ContentSearchCluster(AbstractConfigProducer parent,
+    private ContentSearchCluster(AbstractConfigProducer<?> parent,
                                  String clusterName,
                                  ModelContext.FeatureFlags featureFlags,
                                  Map<String, NewDocumentType> documentDefinitions,
@@ -207,6 +207,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
         feedSequencerType = convertFeedSequencerType(featureFlags.feedSequencerType());
         defaultFeedConcurrency = featureFlags.feedConcurrency();
         useBucketExecutorForLidSpaceCompact = featureFlags.useBucketExecutorForLidSpaceCompact();
+        defaultMaxDeadBytesRatio = featureFlags.maxDeadBytesRatio();
     }
 
     public void setVisibilityDelay(double delay) {
@@ -233,8 +234,8 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
             NamedSchema searchDefinition =
                     schemaDefinitionXMLHandler.getResponsibleSearchDefinition(deployState.getSchemas());
             if (searchDefinition == null)
-                throw new RuntimeException("Search definition parsing error or file does not exist: '" +
-                                           schemaDefinitionXMLHandler.getName() + "'");
+                throw new RuntimeException("Schema '" + schemaDefinitionXMLHandler.getName() + "' referenced in " +
+                                           this + " does not exist");
 
             // TODO: remove explicit building of user configs when the complete content model is built using builders.
             sc.getLocalSDS().add(new AbstractSearchCluster.SchemaSpec(searchDefinition,
@@ -377,6 +378,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
                 .configid(getConfigId())
                 .visibilitydelay(visibilityDelay)
                 .global(globalDocType);
+            ddbB.allocation.max_dead_bytes_ratio(defaultMaxDeadBytesRatio);
 
             if (hasIndexingModeStreaming(type)) {
                 hasAnyNonIndexedCluster = true;
@@ -445,4 +447,8 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
     public IndexedSearchCluster getIndexed() { return indexedCluster; }
     public boolean hasIndexedCluster()       { return indexedCluster != null; }
     public String getClusterName() { return clusterName; }
+
+    @Override
+    public String toString() { return "content cluster '" + clusterName + "'"; }
+
 }

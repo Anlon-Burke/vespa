@@ -47,12 +47,12 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private Quota quota = Quota.unlimited();
     private boolean useAccessControlTlsHandshakeClientAuth;
     private boolean useAsyncMessageHandlingOnSchedule = false;
-    private int mergeChunkSize = 0x400000 - 0x1000; // 4M -4k
     private double feedConcurrency = 0.5;
     private boolean enableAutomaticReindexing = false;
     private boolean reconfigurableZookeeperServer = false;
     private boolean useBucketExecutorForLidSpaceCompact;
     private boolean enableFeedBlockInDistributor = false;
+    private double maxDeadBytesRatio = 0.2;
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
     @Override public boolean multitenant() { return multitenant; }
@@ -82,20 +82,15 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public Quota quota() { return quota; }
     @Override public boolean useAccessControlTlsHandshakeClientAuth() { return useAccessControlTlsHandshakeClientAuth; }
     @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
-    @Override public int mergeChunkSize() { return mergeChunkSize; }
     @Override public double feedConcurrency() { return feedConcurrency; }
     @Override public boolean enableAutomaticReindexing() { return enableAutomaticReindexing; }
     @Override public boolean reconfigurableZookeeperServer() { return reconfigurableZookeeperServer; }
     @Override public boolean useBucketExecutorForLidSpaceCompact() { return useBucketExecutorForLidSpaceCompact; }
     @Override public boolean enableFeedBlockInDistributor() { return enableFeedBlockInDistributor; }
+    @Override public double maxDeadBytesRatio() { return maxDeadBytesRatio; }
 
     public TestProperties setFeedConcurrency(double feedConcurrency) {
         this.feedConcurrency = feedConcurrency;
-        return this;
-    }
-
-    public TestProperties setMergeChunkSize(int size) {
-        mergeChunkSize = size;
         return this;
     }
 
@@ -199,6 +194,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties enableFeedBlockInDistributor(boolean enabled) {
         enableFeedBlockInDistributor = enabled;
+        return this;
+    }
+
+    public TestProperties maxDeadBytesRatio(double ratio) {
+        maxDeadBytesRatio = ratio;
         return this;
     }
 

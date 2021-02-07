@@ -20,23 +20,27 @@ import com.yahoo.document.FixedBucketSpaces;
 import com.yahoo.document.TestAndSetCondition;
 import com.yahoo.document.config.DocumentmanagerConfig;
 import com.yahoo.document.fieldset.AllFields;
+import com.yahoo.document.fieldset.DocIdOnly;
+import com.yahoo.document.idstring.IdIdString;
 import com.yahoo.document.json.DocumentOperationType;
 import com.yahoo.document.json.JsonReader;
 import com.yahoo.document.json.JsonWriter;
 import com.yahoo.document.restapi.DocumentOperationExecutorConfig;
 import com.yahoo.document.select.parser.ParseException;
+import com.yahoo.documentapi.AckToken;
 import com.yahoo.documentapi.AsyncParameters;
 import com.yahoo.documentapi.AsyncSession;
 import com.yahoo.documentapi.DocumentAccess;
 import com.yahoo.documentapi.DocumentOperationParameters;
 import com.yahoo.documentapi.DocumentResponse;
-import com.yahoo.documentapi.DumpVisitorDataHandler;
 import com.yahoo.documentapi.ProgressToken;
 import com.yahoo.documentapi.Result;
 import com.yahoo.documentapi.VisitorControlHandler;
+import com.yahoo.documentapi.VisitorDataHandler;
 import com.yahoo.documentapi.VisitorParameters;
 import com.yahoo.documentapi.VisitorSession;
 import com.yahoo.documentapi.messagebus.protocol.DocumentProtocol;
+import com.yahoo.documentapi.messagebus.protocol.PutDocumentMessage;
 import com.yahoo.documentapi.metrics.DocumentApiMetrics;
 import com.yahoo.documentapi.metrics.DocumentOperationStatus;
 import com.yahoo.jdisc.Metric;
@@ -51,6 +55,8 @@ import com.yahoo.jdisc.handler.ResponseHandler;
 import com.yahoo.jdisc.handler.UnsafeContentInputStream;
 import com.yahoo.jdisc.http.HttpRequest;
 import com.yahoo.jdisc.http.HttpRequest.Method;
+import com.yahoo.messagebus.DynamicThrottlePolicy;
+import com.yahoo.messagebus.Message;
 import com.yahoo.messagebus.StaticThrottlePolicy;
 import com.yahoo.messagebus.Trace;
 import com.yahoo.messagebus.TraceNode;
@@ -60,6 +66,7 @@ import com.yahoo.search.query.ParameterParser;
 import com.yahoo.text.Text;
 import com.yahoo.vespa.config.content.AllClustersBucketSpacesConfig;
 import com.yahoo.yolean.Exceptions;
+import com.yahoo.yolean.Exceptions.RunnableThrowingIOException;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -79,13 +86,16 @@ import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Phaser;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiFunction;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -139,10 +149,12 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
     private static final String FIELD_SET = "fieldSet";
     private static final String SELECTION = "selection";
     private static final String CLUSTER = "cluster";
+    private static final String DESTINATION_CLUSTER = "destinationCluster";
     private static final String CONTINUATION = "continuation";
     private static final String WANTED_DOCUMENT_COUNT = "wantedDocumentCount";
     private static final String CONCURRENCY = "concurrency";
     private static final String BUCKET_SPACE = "bucketSpace";
+    private static final String TIME_CHUNK = "timeChunk";
     private static final String TIMEOUT = "timeout";
     private static final String TRACELEVEL = "tracelevel";
 
@@ -155,9 +167,12 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
     private final AsyncSession asyncSession;
     private final Map<String, StorageCluster> clusters;
     private final Deque<Operation> operations;
+    private final Deque<BooleanSupplier> visitOperations = new ConcurrentLinkedDeque<>();
     private final AtomicLong enqueued = new AtomicLong();
+    private final AtomicLong outstanding = new AtomicLong();
     private final Map<VisitorControlHandler, VisitorSession> visits = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(new DaemonThreadFactory("document-api-handler-"));
+    private final ScheduledExecutorService dispatcher = Executors.newSingleThreadScheduledExecutor(new DaemonThreadFactory("document-api-handler-"));
+    private final ScheduledExecutorService visitDispatcher = Executors.newSingleThreadScheduledExecutor(new DaemonThreadFactory("document-api-handler-visit-"));
     private final Map<String, Map<Method, Handler>> handlers = defineApi();
 
     @Inject
@@ -184,10 +199,14 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         this.asyncSession = access.createAsyncSession(new AsyncParameters());
         this.clusters = parseClusters(clusterListConfig, bucketSpacesConfig);
         this.operations = new ConcurrentLinkedDeque<>();
-        this.executor.scheduleWithFixedDelay(this::dispatchEnqueued,
-                                             executorConfig.resendDelayMillis(),
-                                             executorConfig.resendDelayMillis(),
-                                             TimeUnit.MILLISECONDS);
+        this.dispatcher.scheduleWithFixedDelay(this::dispatchEnqueued,
+                                               executorConfig.resendDelayMillis(),
+                                               executorConfig.resendDelayMillis(),
+                                               TimeUnit.MILLISECONDS);
+        this.visitDispatcher.scheduleWithFixedDelay(this::dispatchVisitEnqueued,
+                                                    executorConfig.resendDelayMillis(),
+                                                    executorConfig.resendDelayMillis(),
+                                                    TimeUnit.MILLISECONDS);
     }
 
     // ------------------------------------------------ Requests -------------------------------------------------
@@ -236,23 +255,43 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
     @Override
     public void destroy() {
-        executor.shutdown();
-        Instant doom = clock.instant().plus(Duration.ofSeconds(20));
-        while ( ! operations.isEmpty() && clock.instant().isBefore(doom))
+        Instant doom = clock.instant().plus(Duration.ofSeconds(30));
+
+        // This blocks until all visitors are done. These, in turn, may require the asyncSession to be alive
+        // to be able to run, as well as dispatch of operations against it, which is done by visitDispatcher.
+        visits.values().forEach(VisitorSession::destroy);
+
+        // Shut down both dispatchers, so only we empty the queues of outstanding operations, and can be sure they're empty.
+        dispatcher.shutdown();
+        visitDispatcher.shutdown();
+        while ( ! (operations.isEmpty() && visitOperations.isEmpty()) && clock.instant().isBefore(doom)) {
             dispatchEnqueued();
+            dispatchVisitEnqueued();
+        }
 
         if ( ! operations.isEmpty())
             log.log(WARNING, "Failed to empty request queue before shutdown timeout — " + operations.size() + " requests left");
 
-        asyncSession.destroy();
-        visits.values().forEach(VisitorSession::destroy);
+        if ( ! visitOperations.isEmpty())
+            log.log(WARNING, "Failed to empty visitor operations queue before shutdown timeout — " + operations.size() + " operations left");
 
         try {
-            if ( ! executor.awaitTermination(Duration.between(clock.instant(), doom).toMillis(), TimeUnit.MILLISECONDS))
-                executor.shutdownNow();
+            while (outstanding.get() > 0 && clock.instant().isBefore(doom))
+                Thread.sleep(Math.max(1, Duration.between(clock.instant(), doom).toMillis()));
+
+            if ( ! dispatcher.awaitTermination(Duration.between(clock.instant(), doom).toMillis(), TimeUnit.MILLISECONDS))
+                dispatcher.shutdownNow();
+
+            if ( ! visitDispatcher.awaitTermination(Duration.between(clock.instant(), doom).toMillis(), TimeUnit.MILLISECONDS))
+                visitDispatcher.shutdownNow();
         }
         catch (InterruptedException e) {
             log.log(WARNING, "Interrupted waiting for /document/v1 executor to shut down");
+        }
+        finally {
+            asyncSession.destroy();
+            if (outstanding.get() != 0)
+                log.log(WARNING, "Failed to receive a response to " + outstanding.get() + " outstanding document operations during shutdown");
         }
     }
 
@@ -266,16 +305,27 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         Map<String, Map<Method, Handler>> handlers = new LinkedHashMap<>();
 
         handlers.put("/document/v1/",
-                     Map.of(GET, this::getDocuments));
+                     Map.of(GET, this::getDocuments,
+                            POST, this::postDocuments,
+                            DELETE, this::deleteDocuments));
 
         handlers.put("/document/v1/{namespace}/{documentType}/docid/",
-                     Map.of(GET, this::getDocuments));
+                     Map.of(GET, this::getDocuments,
+                            POST, this::postDocuments,
+                            PUT, this::putDocuments,
+                            DELETE, this::deleteDocuments));
 
         handlers.put("/document/v1/{namespace}/{documentType}/group/{group}/",
-                     Map.of(GET, this::getDocuments));
+                     Map.of(GET, this::getDocuments,
+                            POST, this::postDocuments,
+                            PUT, this::putDocuments,
+                            DELETE, this::deleteDocuments));
 
         handlers.put("/document/v1/{namespace}/{documentType}/number/{number}/",
-                     Map.of(GET, this::getDocuments));
+                     Map.of(GET, this::getDocuments,
+                            POST, this::postDocuments,
+                            PUT, this::putDocuments,
+                            DELETE, this::deleteDocuments));
 
         handlers.put("/document/v1/{namespace}/{documentType}/docid/{*}",
                      Map.of(GET, this::getDocument,
@@ -300,9 +350,55 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
     private ContentChannel getDocuments(HttpRequest request, DocumentPath path, ResponseHandler handler) {
         enqueueAndDispatch(request, handler, () -> {
-            VisitorParameters parameters = parseParameters(request, path);
+            VisitorParameters parameters = parseGetParameters(request, path);
             return () -> {
-                visit(request, parameters, handler);
+                visitAndWrite(request, parameters, handler);
+                return true; // VisitorSession has its own throttle handling.
+            };
+        });
+        return ignoredContent;
+    }
+
+    private ContentChannel postDocuments(HttpRequest request, DocumentPath path, ResponseHandler handler) {
+        enqueueAndDispatch(request, handler, () -> {
+            StorageCluster destination = resolveCluster(Optional.of(requireProperty(request, DESTINATION_CLUSTER)), clusters);
+            VisitorParameters parameters = parseParameters(request, path);
+            parameters.setRemoteDataHandler("[Content:cluster=" + destination.name() + "]"); // Bypass indexing.
+            parameters.setFieldSet(AllFields.NAME);
+            return () -> {
+                visitWithRemote(request, parameters, handler);
+                return true; // VisitorSession has its own throttle handling.
+            };
+        });
+        return ignoredContent;
+    }
+
+    private ContentChannel putDocuments(HttpRequest request, DocumentPath path, ResponseHandler handler) {
+        return new ForwardingContentChannel(in -> {
+            enqueueAndDispatch(request, handler, () -> {
+                StorageCluster cluster = resolveCluster(Optional.of(requireProperty(request, CLUSTER)), clusters);
+                VisitorParameters parameters = parseParameters(request, path);
+                parameters.setFieldSet(DocIdOnly.NAME);
+                String type = path.documentType().orElseThrow(() -> new IllegalStateException("Document type must be specified for mass updates"));
+                IdIdString dummyId = new IdIdString("dummy", type, "", "");
+                DocumentUpdate update = parser.parseUpdate(in, dummyId.toString());
+                update.setCondition(new TestAndSetCondition(requireProperty(request, SELECTION)));
+                return () -> {
+                    visitAndUpdate(request, parameters, handler, update, cluster.name());
+                    return true; // VisitorSession has its own throttle handling.
+                };
+            });
+        });
+    }
+
+    private ContentChannel deleteDocuments(HttpRequest request, DocumentPath path, ResponseHandler handler) {
+        enqueueAndDispatch(request, handler, () -> {
+            VisitorParameters parameters = parseParameters(request, path);
+            parameters.setFieldSet(DocIdOnly.NAME);
+            TestAndSetCondition condition = new TestAndSetCondition(requireProperty(request, SELECTION));
+            StorageCluster cluster = resolveCluster(Optional.of(requireProperty(request, CLUSTER)), clusters);
+            return () -> {
+                visitAndDelete(request, parameters, handler, condition, cluster.name());
                 return true; // VisitorSession has its own throttle handling.
             };
         });
@@ -315,6 +411,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
             if (rawParameters.fieldSet().isEmpty())
                 rawParameters = rawParameters.withFieldSet(path.documentType().orElseThrow() + ":[document]");
             DocumentOperationParameters parameters = rawParameters.withResponseHandler(response -> {
+                outstanding.decrementAndGet();
                 handle(path, handler, response, (document, jsonResponse) -> {
                     if (document != null) {
                         jsonResponse.writeSingleDocument(document);
@@ -336,7 +433,10 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                 DocumentPut put = parser.parsePut(in, path.id().toString());
                 getProperty(request, CONDITION).map(TestAndSetCondition::new).ifPresent(put::setCondition);
                 DocumentOperationParameters parameters = parametersFromRequest(request, ROUTE)
-                        .withResponseHandler(response -> handle(path, handler, response));
+                        .withResponseHandler(response -> {
+                            outstanding.decrementAndGet();
+                            handle(path, handler, response);
+                        });
                 return () -> dispatchOperation(() -> asyncSession.put(put, parameters));
             });
         });
@@ -350,7 +450,10 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                 getProperty(request, CONDITION).map(TestAndSetCondition::new).ifPresent(update::setCondition);
                 getProperty(request, CREATE, booleanParser).ifPresent(update::setCreateIfNonExistent);
                 DocumentOperationParameters parameters = parametersFromRequest(request, ROUTE)
-                        .withResponseHandler(response -> handle(path, handler, response));
+                        .withResponseHandler(response -> {
+                            outstanding.decrementAndGet();
+                            handle(path, handler, response);
+                        });
                 return () -> dispatchOperation(() -> asyncSession.update(update, parameters));
             });
         });
@@ -362,7 +465,10 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
             DocumentRemove remove = new DocumentRemove(path.id());
             getProperty(request, CONDITION).map(TestAndSetCondition::new).ifPresent(remove::setCondition);
             DocumentOperationParameters parameters = parametersFromRequest(request, ROUTE)
-                    .withResponseHandler(response -> handle(path, handler, response));
+                    .withResponseHandler(response -> {
+                        outstanding.decrementAndGet();
+                        handle(path, handler, response);
+                    });
             return () -> dispatchOperation(() -> asyncSession.remove(remove, parameters));
         });
         return ignoredContent;
@@ -373,7 +479,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                                                                                                 .orElse(parameters());
         for (String name : names) switch (name) {
             case CLUSTER:
-                parameters = getProperty(request, CLUSTER).map(cluster -> resolveCluster(Optional.of(cluster), clusters).route())
+                parameters = getProperty(request, CLUSTER).map(cluster -> resolveCluster(Optional.of(cluster), clusters).name())
                                                           .map(parameters::withRoute)
                                                           .orElse(parameters);
                 break;
@@ -415,18 +521,41 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         return false;
     }
 
+    /** Dispatches enqueued requests until one is blocked. */
+    void dispatchVisitEnqueued() {
+        try {
+            while (dispatchFirstVisit());
+        }
+        catch (Exception e) {
+            log.log(WARNING, "Uncaught exception in /document/v1 dispatch thread", e);
+        }
+    }
+
+    /** Attempts to dispatch the first enqueued visit operations, and returns whether this was successful. */
+    private boolean dispatchFirstVisit() {
+        BooleanSupplier operation = visitOperations.poll();
+        if (operation == null)
+            return false;
+
+        if (operation.getAsBoolean())
+            return true;
+
+        visitOperations.push(operation);
+        return false;
+    }
+
     /**
      * Enqueues the given request and operation, or responds with "overload" if the queue is full,
      * and then attempts to dispatch an enqueued operation from the head of the queue.
      */
-    private void enqueueAndDispatch(HttpRequest request, ResponseHandler handler, Supplier<Supplier<Boolean>> operationParser) {
+    private void enqueueAndDispatch(HttpRequest request, ResponseHandler handler, Supplier<BooleanSupplier> operationParser) {
         if (enqueued.incrementAndGet() > maxThrottled) {
             enqueued.decrementAndGet();
             overload(request, "Rejecting execution due to overload: " + maxThrottled + " requests already enqueued", handler);
             return;
         }
         operations.offer(new Operation(request, handler) {
-            @Override Supplier<Boolean> parse() { return operationParser.get(); }
+            @Override BooleanSupplier parse() { return operationParser.get(); }
         });
         dispatchFirst();
     }
@@ -516,6 +645,10 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
             json.writeStringField("message", message);
         }
 
+        synchronized void writeDocumentCount(long count) throws IOException {
+            json.writeNumberField("documentCount", count);
+        }
+
         synchronized void writeDocId(DocumentId id) throws IOException {
             json.writeStringField("id", id.toString());
         }
@@ -548,7 +681,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
             json.writeArrayFieldStart("documents");
         }
 
-        synchronized void writeDocumentValue(Document document) throws IOException {
+        synchronized void writeDocumentValue(Document document) {
             new JsonWriter(json).write(document);
         }
 
@@ -619,7 +752,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         });
     }
 
-    private static void loggingException(Exceptions.RunnableThrowingIOException runnable) {
+    private static void loggingException(RunnableThrowingIOException runnable) {
         try {
             runnable.run();
         }
@@ -628,14 +761,14 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         }
     }
 
-    // ---------------------------------------------Document Operations ----------------------------------------
+    // -------------------------------------------- Document Operations ----------------------------------------
 
     private static abstract class Operation {
 
         private final Lock lock = new ReentrantLock();
         private final HttpRequest request;
         private final ResponseHandler handler;
-        private Supplier<Boolean> operation;
+        private BooleanSupplier operation;
 
         Operation(HttpRequest request, ResponseHandler handler) {
             this.request = request;
@@ -644,7 +777,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
         /**
          * Attempts to dispatch this operation to the document API, and returns whether this completed or not.
-         * This return {@code} true if dispatch was successful, or if it failed fatally; or {@code false} if
+         * Returns {@code} true if dispatch was successful, or if it failed fatally; or {@code false} if
          * dispatch should be retried at a later time.
          */
         boolean dispatch() {
@@ -658,7 +791,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                 if (operation == null)
                     operation = parse();
 
-                return operation.get();
+                return operation.getAsBoolean();
             }
             catch (IllegalArgumentException e) {
                 badRequest(request, e, handler);
@@ -672,12 +805,12 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
             return true;
         }
 
-        abstract Supplier<Boolean> parse();
+        abstract BooleanSupplier parse();
 
     }
 
-    /** Attempts to send the given document operation, returning false if thes needs to be retried. */
-    private static boolean dispatchOperation(Supplier<Result> documentOperation) {
+    /** Attempts to send the given document operation, returning false if this needs to be retried. */
+    private boolean dispatchOperation(Supplier<Result> documentOperation) {
         Result result = documentOperation.get();
         if (result.type() == Result.ResultType.TRANSIENT_ERROR)
             return false;
@@ -685,6 +818,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         if (result.type() == Result.ResultType.FATAL_ERROR)
             throw new RuntimeException(result.getError());
 
+        outstanding.incrementAndGet();
         return true;
     }
 
@@ -787,10 +921,10 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
     // ------------------------------------------------- Visits ------------------------------------------------
 
-    private VisitorParameters parseParameters(HttpRequest request, DocumentPath path) {
+    private VisitorParameters parseGetParameters(HttpRequest request, DocumentPath path) {
         int wantedDocumentCount = Math.min(1 << 10, getProperty(request, WANTED_DOCUMENT_COUNT, integerParser).orElse(1));
         if (wantedDocumentCount <= 0)
-             throw new IllegalArgumentException("wantedDocumentCount must be positive");
+            throw new IllegalArgumentException("wantedDocumentCount must be positive");
 
         int concurrency = Math.min(100, getProperty(request, CONCURRENCY, integerParser).orElse(1));
         if (concurrency <= 0)
@@ -800,6 +934,26 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         if (cluster.isEmpty() && path.documentType().isEmpty())
             throw new IllegalArgumentException("Must set 'cluster' parameter to a valid content cluster id when visiting at a root /document/v1/ level");
 
+        VisitorParameters parameters = parseCommonParameters(request, path, cluster);
+        parameters.setFieldSet(getProperty(request, FIELD_SET).orElse(path.documentType().map(type -> type + ":[document]").orElse(AllFields.NAME)));
+        parameters.setMaxTotalHits(wantedDocumentCount);
+        parameters.setThrottlePolicy(new StaticThrottlePolicy().setMaxPendingCount(concurrency));
+        parameters.visitInconsistentBuckets(true);
+        parameters.setSessionTimeoutMs(Math.max(1, request.getTimeout(TimeUnit.MILLISECONDS) - 5000));
+        return parameters;
+    }
+
+    private VisitorParameters parseParameters(HttpRequest request, DocumentPath path) {
+        disallow(request, CONCURRENCY, FIELD_SET, ROUTE, WANTED_DOCUMENT_COUNT);
+        requireProperty(request, SELECTION);
+        VisitorParameters parameters = parseCommonParameters(request, path, Optional.of(requireProperty(request, CLUSTER)));
+        parameters.setThrottlePolicy(new DynamicThrottlePolicy().setMinWindowSize(1).setWindowSizeIncrement(1));
+        long timeChunk = getProperty(request, TIME_CHUNK, timeoutMillisParser).orElse(60_000L);
+        parameters.setSessionTimeoutMs(Math.max(1, Math.min(timeChunk, request.getTimeout(TimeUnit.MILLISECONDS) - 5000L)));
+        return parameters;
+    }
+
+    private VisitorParameters parseCommonParameters(HttpRequest request, DocumentPath path, Optional<String> cluster) {
         VisitorParameters parameters = new VisitorParameters(Stream.of(getProperty(request, SELECTION),
                                                                        path.documentType(),
                                                                        path.namespace().map(value -> "id.namespace=='" + value + "'"),
@@ -811,43 +965,118 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                                                                    .toString());
 
         getProperty(request, CONTINUATION).map(ProgressToken::fromSerializedString).ifPresent(parameters::setResumeToken);
-        parameters.setFieldSet(getProperty(request, FIELD_SET).orElse(path.documentType().map(type -> type + ":[document]").orElse(AllFields.NAME)));
-        parameters.setMaxTotalHits(wantedDocumentCount);
-        parameters.setThrottlePolicy(new StaticThrottlePolicy().setMaxPendingCount(concurrency));
-        parameters.setSessionTimeoutMs(Math.max(1, request.getTimeout(TimeUnit.MILLISECONDS) - 5000));
-        parameters.visitInconsistentBuckets(true);
         parameters.setPriority(DocumentProtocol.Priority.NORMAL_4);
 
         StorageCluster storageCluster = resolveCluster(cluster, clusters);
-        parameters.setRoute(storageCluster.route());
+        parameters.setRoute(storageCluster.name());
         parameters.setBucketSpace(resolveBucket(storageCluster,
                                                 path.documentType(),
                                                 List.of(FixedBucketSpaces.defaultSpace(), FixedBucketSpaces.globalSpace()),
                                                 getProperty(request, BUCKET_SPACE)));
+
         return parameters;
     }
 
-    private void visit(HttpRequest request, VisitorParameters parameters, ResponseHandler handler) {
+    private interface VisitCallback {
+        /** Called at the start of response rendering. */
+        default void onStart(JsonResponse response) throws IOException { }
+
+        /** Called for every document received from backend visitors — must call the ack for these to proceed. */
+        default void onDocument(JsonResponse response, Document document, Runnable ack, Consumer<String> onError) { }
+
+        /** Called at the end of response rendering, before generic status data is written. */
+        default void onEnd(JsonResponse response) throws IOException { }
+    }
+
+    private void visitAndDelete(HttpRequest request, VisitorParameters parameters, ResponseHandler handler,
+                                TestAndSetCondition condition, String route) {
+        visitAndProcess(request, parameters, handler, route, (id, operationParameters) -> {
+            DocumentRemove remove = new DocumentRemove(id);
+            remove.setCondition(condition);
+            return asyncSession.remove(remove, operationParameters);
+        });
+    }
+
+    private void visitAndUpdate(HttpRequest request, VisitorParameters parameters, ResponseHandler handler,
+                                DocumentUpdate protoUpdate, String route) {
+        visitAndProcess(request, parameters, handler, route, (id, operationParameters) -> {
+                DocumentUpdate update = new DocumentUpdate(protoUpdate);
+                update.setId(id);
+                return asyncSession.update(update, operationParameters);
+        });
+    }
+
+    private void visitAndProcess(HttpRequest request, VisitorParameters parameters, ResponseHandler handler,
+                                 String route, BiFunction<DocumentId, DocumentOperationParameters, Result> operation) {
+        visit(request, parameters, handler, new VisitCallback() {
+            @Override public void onDocument(JsonResponse response, Document document, Runnable ack, Consumer<String> onError) {
+                DocumentOperationParameters operationParameters = parameters().withRoute(route)
+                        .withResponseHandler(operationResponse -> {
+                            outstanding.decrementAndGet();
+                            switch (operationResponse.outcome()) {
+                                case SUCCESS:
+                                case NOT_FOUND:
+                                case CONDITION_FAILED:
+                                    break; // This is all OK — the latter two are due to mitigating races.
+                                case ERROR:
+                                case INSUFFICIENT_STORAGE:
+                                    onError.accept(operationResponse.getTextMessage());
+                                    break;
+                                default:
+                                    onError.accept("Unexpected response " + operationResponse);
+                            }
+                        });
+                visitOperations.offer(() -> {
+                    Result result = operation.apply(document.getId(), operationParameters);
+                    if (result.type() == Result.ResultType.TRANSIENT_ERROR)
+                        return false;
+
+                    if (result.type() == Result.ResultType.FATAL_ERROR)
+                        onError.accept(result.getError().getMessage());
+                    else
+                        outstanding.incrementAndGet();
+
+                    ack.run();
+                    return true;
+                });
+                dispatchFirstVisit();
+            }
+        });
+    }
+
+    private void visitAndWrite(HttpRequest request, VisitorParameters parameters, ResponseHandler handler) {
+        visit(request, parameters, handler, new VisitCallback() {
+            @Override public void onStart(JsonResponse response) throws IOException {
+                response.writeDocumentsArrayStart();
+            }
+            @Override public void onDocument(JsonResponse response, Document document, Runnable ack, Consumer<String> onError) {
+                response.writeDocumentValue(document);
+                ack.run();
+            }
+            @Override public void onEnd(JsonResponse response) throws IOException {
+                response.writeArrayEnd();
+            }
+        });
+    }
+
+    private void visitWithRemote(HttpRequest request, VisitorParameters parameters, ResponseHandler handler) {
+        visit(request, parameters, handler, new VisitCallback() { });
+    }
+
+    private void visit(HttpRequest request, VisitorParameters parameters, ResponseHandler handler, VisitCallback callback) {
         try {
             JsonResponse response = JsonResponse.create(request, handler);
-            response.writeDocumentsArrayStart();
-            CountDownLatch latch = new CountDownLatch(1);
-            parameters.setLocalDataHandler(new DumpVisitorDataHandler() {
-                @Override public void onDocument(Document doc, long timeStamp) {
-                    loggingException(() -> {
-                        response.writeDocumentValue(doc);
-                    });
-                }
-                @Override public void onRemove(DocumentId id) { } // We don't visit removes.
-            });
-            parameters.setControlHandler(new VisitorControlHandler() {
+            Phaser phaser = new Phaser(2); // Synchronize this thread (dispatch) with the visitor callback thread.
+            AtomicReference<String> error = new AtomicReference<>(); // Set if error occurs during processing of visited documents.
+            callback.onStart(response);
+            VisitorControlHandler controller = new VisitorControlHandler() {
                 @Override public void onDone(CompletionCode code, String message) {
                     super.onDone(code, message);
                     loggingException(() -> {
-                        response.writeArrayEnd(); // Close "documents" array.
+                        callback.onEnd(response);
                         switch (code) {
                             case TIMEOUT:
-                                if ( ! hasVisitedAnyBuckets()) {
+                                if ( ! hasVisitedAnyBuckets() && parameters.getVisitInconsistentBuckets()) {
                                     response.writeMessage("No buckets visited within timeout of " +
                                                           parameters.getSessionTimeoutMs() + "ms (request timeout -5s)");
                                     response.respond(Response.Status.GATEWAY_TIMEOUT);
@@ -855,29 +1084,50 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                                 }
                             case SUCCESS: // Intentional fallthrough.
                             case ABORTED: // Intentional fallthrough.
-                                if (getProgress() != null && ! getProgress().isFinished())
-                                    response.writeContinuation(getProgress().serializeToString());
+                                if (error.get() == null) {
+                                    ProgressToken progress = getProgress() != null ? getProgress() : parameters.getResumeToken();
+                                    if (progress != null && ! progress.isFinished())
+                                        response.writeContinuation(progress.serializeToString());
 
-                                response.respond(Response.Status.OK);
-                                break;
+                                    if (getVisitorStatistics() != null)
+                                        response.writeDocumentCount(getVisitorStatistics().getDocumentsVisited());
+
+                                    response.respond(Response.Status.OK);
+                                    break;
+                                }
                             default:
-                                response.writeMessage(message != null ? message : "Visiting failed");
+                                response.writeMessage(error.get() != null ? error.get() : message != null ? message : "Visiting failed");
+                                if (getVisitorStatistics() != null)
+                                    response.writeDocumentCount(getVisitorStatistics().getDocumentsReturned());
+
                                 response.respond(Response.Status.INTERNAL_SERVER_ERROR);
                         }
-                        executor.execute(() -> {
-                            try {
-                                latch.await(); // We may get here while dispatching thread is still putting us in the map.
-                            }
-                            catch (InterruptedException e) {
-                                Thread.currentThread().interrupt();
-                            }
+                        visitDispatcher.execute(() -> {
+                            phaser.arriveAndAwaitAdvance(); // We may get here while dispatching thread is still putting us in the map.
                             visits.remove(this).destroy();
                         });
                     });
                 }
-            });
-            visits.put(parameters.getControlHandler(), access.createVisitorSession(parameters));
-            latch.countDown();
+            };
+            if (parameters.getRemoteDataHandler() == null) {
+                parameters.setLocalDataHandler(new VisitorDataHandler() {
+                    @Override public void onMessage(Message m, AckToken token) {
+                        if (m instanceof PutDocumentMessage)
+                            callback.onDocument(response,
+                                                ((PutDocumentMessage) m).getDocumentPut().getDocument(),
+                                                () -> ack(token),
+                                                errorMessage -> {
+                                                    error.set(errorMessage);
+                                                    controller.abort();
+                                                });
+                        else
+                            throw new UnsupportedOperationException("Only PutDocumentMessage is supported, but got a " + m.getClass());
+                    }
+                });
+            }
+            parameters.setControlHandler(controller);
+            visits.put(controller, access.createVisitorSession(parameters));
+            phaser.arriveAndDeregister();
         }
         catch (ParseException e) {
             badRequest(request, new IllegalArgumentException(e), handler);
@@ -889,6 +1139,12 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
     // ------------------------------------------------ Helpers ------------------------------------------------
 
+    private static String requireProperty(HttpRequest request, String name) {
+        return getProperty(request, name)
+                .orElseThrow(() -> new IllegalArgumentException("Must specify '" + name + "' at '" + request.getUri().getRawPath() + "'"));
+    }
+
+    /** Returns the last property with the given name, if present, or throws if this is empty or blank. */
     private static Optional<String> getProperty(HttpRequest request, String name) {
         if ( ! request.parameters().containsKey(name))
             return Optional.empty();
@@ -903,6 +1159,12 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
     private static <T> Optional<T> getProperty(HttpRequest request, String name, Parser<T> parser) {
         return getProperty(request, name).map(parser::parse);
+    }
+
+    private static void disallow(HttpRequest request, String... properties) {
+        for (String property : properties)
+            if (request.parameters().containsKey(property))
+                throw new IllegalArgumentException("May not specify '" + property + "' at '" + request.getUri().getRawPath() + "'");
     }
 
     @FunctionalInterface
@@ -952,7 +1214,6 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         }
 
         String name() { return name; }
-        String route() { return "[Content:cluster=" + name() + "]"; }
         Optional<String> bucketOf(String documentType) { return Optional.ofNullable(documentBuckets.get(documentType)); }
 
     }

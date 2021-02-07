@@ -8,8 +8,11 @@ import com.yahoo.vdslib.state.NodeType;
 import com.yahoo.vdslib.state.State;
 import org.junit.Test;
 
+import java.util.Set;
 import java.util.function.Function;
 
+import static com.yahoo.vespa.clustercontroller.core.FeedBlockUtil.exhaustion;
+import static com.yahoo.vespa.clustercontroller.core.FeedBlockUtil.setOf;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertEquals;
@@ -50,6 +53,12 @@ public class ClusterStateBundleTest {
     private static ClusterStateBundle createTestBundleWithFeedBlock(String description) {
         return createTestBundleBuilder(false)
                 .feedBlock(ClusterStateBundle.FeedBlock.blockedWithDescription(description))
+                .deriveAndBuild();
+    }
+
+    private static ClusterStateBundle createTestBundleWithFeedBlock(String description, Set<NodeResourceExhaustion> concreteExhaustions) {
+        return createTestBundleBuilder(false)
+                .feedBlock(ClusterStateBundle.FeedBlock.blockedWith(description, concreteExhaustions))
                 .deriveAndBuild();
     }
 
@@ -107,6 +116,19 @@ public class ClusterStateBundleTest {
         assertTrue(blockingBundle.similarTo(blockingBundle));
         // We currently consider different descriptions with same blocking status to be similar
         assertTrue(blockingBundle.similarTo(blockingBundleWithOtherDesc));
+    }
+
+    @Test
+    public void similarity_test_considers_cluster_feed_block_concrete_exhaustion_set() {
+        var blockingBundleNoSet        = createTestBundleWithFeedBlock("foo");
+        var blockingBundleWithSet      = createTestBundleWithFeedBlock("bar", setOf(exhaustion(1, "beer"), exhaustion(1, "wine")));
+        var blockingBundleWithOtherSet = createTestBundleWithFeedBlock("bar", setOf(exhaustion(1, "beer"), exhaustion(1, "soda")));
+
+        assertTrue(blockingBundleNoSet.similarTo(blockingBundleNoSet));
+        assertTrue(blockingBundleWithSet.similarTo(blockingBundleWithSet));
+        assertFalse(blockingBundleWithSet.similarTo(blockingBundleWithOtherSet));
+        assertFalse(blockingBundleNoSet.similarTo(blockingBundleWithSet));
+        assertFalse(blockingBundleNoSet.similarTo(blockingBundleWithOtherSet));
     }
 
     @Test
