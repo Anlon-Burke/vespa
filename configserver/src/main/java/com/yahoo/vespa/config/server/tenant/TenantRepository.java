@@ -30,6 +30,7 @@ import com.yahoo.vespa.config.server.monitoring.Metrics;
 import com.yahoo.vespa.config.server.provision.HostProvisionerProvider;
 import com.yahoo.vespa.config.server.session.SessionPreparer;
 import com.yahoo.vespa.config.server.session.SessionRepository;
+import com.yahoo.vespa.config.server.zookeeper.ConfigCurator;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.curator.transaction.CuratorOperations;
 import com.yahoo.vespa.curator.transaction.CuratorTransaction;
@@ -95,7 +96,8 @@ public class TenantRepository {
     private final Map<TenantName, Tenant> tenants = Collections.synchronizedMap(new LinkedHashMap<>());
     private final Locks<TenantName> tenantLocks = new Locks<>(1, TimeUnit.MINUTES);
     private final HostRegistry hostRegistry;
-    private final List<TenantListener> tenantListeners = Collections.synchronizedList(new ArrayList<>());
+    private final TenantListener tenantListener;
+    private final ConfigCurator configCurator;
     private final Curator curator;
     private final Metrics metrics;
     private final MetricUpdater metricUpdater;
@@ -112,7 +114,6 @@ public class TenantRepository {
     private final ModelFactoryRegistry modelFactoryRegistry;
     private final ConfigDefinitionRepo configDefinitionRepo;
     private final ReloadListener reloadListener;
-    private final TenantListener tenantListener;
     private final ExecutorService bootstrapExecutor;
     private final ScheduledExecutorService checkForRemovedApplicationsService =
             new ScheduledThreadPoolExecutor(1, new DaemonThreadFactory("check for removed applications"));
@@ -124,7 +125,7 @@ public class TenantRepository {
      */
     @Inject
     public TenantRepository(HostRegistry hostRegistry,
-                            Curator curator,
+                            ConfigCurator configCurator,
                             Metrics metrics,
                             FlagSource flagSource,
                             SecretStore secretStore,
@@ -137,7 +138,7 @@ public class TenantRepository {
                             ReloadListener reloadListener,
                             TenantListener tenantListener) {
         this(hostRegistry,
-             curator,
+             configCurator,
              metrics,
              new StripedExecutor<>(),
              new FileDistributionFactory(configserverConfig),
@@ -156,7 +157,7 @@ public class TenantRepository {
     }
 
     public TenantRepository(HostRegistry hostRegistry,
-                            Curator curator,
+                            ConfigCurator configCurator,
                             Metrics metrics,
                             StripedExecutor<TenantName> zkWatcherExecutor,
                             FileDistributionFactory fileDistributionFactory,
@@ -176,10 +177,9 @@ public class TenantRepository {
         this.configserverConfig = configserverConfig;
         this.bootstrapExecutor = Executors.newFixedThreadPool(configserverConfig.numParallelTenantLoaders(),
                                                               new DaemonThreadFactory("bootstrap-tenant-"));
-        this.curator = curator;
+        this.curator = configCurator.curator();
         this.metrics = metrics;
         metricUpdater = metrics.getOrCreateMetricUpdater(Collections.emptyMap());
-        this.tenantListeners.add(tenantListener);
         this.zkCacheExecutor = zkCacheExecutor;
         this.zkWatcherExecutor = zkWatcherExecutor;
         this.fileDistributionFactory = fileDistributionFactory;
@@ -193,6 +193,7 @@ public class TenantRepository {
         this.configDefinitionRepo = configDefinitionRepo;
         this.reloadListener = reloadListener;
         this.tenantListener = tenantListener;
+        this.configCurator = configCurator;
 
         curator.framework().getConnectionStateListenable().addListener(this::stateChanged);
 
@@ -213,9 +214,7 @@ public class TenantRepository {
     }
 
     private void notifyTenantsLoaded() {
-        for (TenantListener tenantListener : tenantListeners) {
-            tenantListener.onTenantsLoaded();
-        }
+        tenantListener.onTenantsLoaded();
     }
 
     public Tenant addTenant(TenantName tenantName) {
@@ -336,7 +335,7 @@ public class TenantRepository {
         SessionRepository sessionRepository = new SessionRepository(tenantName,
                                                                     applicationRepo,
                                                                     sessionPreparer,
-                                                                    curator,
+                                                                    configCurator,
                                                                     metrics,
                                                                     zkWatcherExecutor,
                                                                     permanentApplicationPackage,
@@ -376,15 +375,11 @@ public class TenantRepository {
     }
 
     private void notifyNewTenant(Tenant tenant) {
-        for (TenantListener listener : tenantListeners) {
-            listener.onTenantCreate(tenant);
-        }
+        tenantListener.onTenantCreate(tenant);
     }
 
     private void notifyRemovedTenant(TenantName name) {
-        for (TenantListener listener : tenantListeners) {
-            listener.onTenantDelete(name);
-        }
+        tenantListener.onTenantDelete(name);
     }
 
     /**
@@ -458,29 +453,31 @@ public class TenantRepository {
 
     /**
      * A helper to format a log preamble for messages with a tenant and app id
+     *
      * @param app the app
      * @return the log string
      */
     public static String logPre(ApplicationId app) {
         if (DEFAULT_TENANT.equals(app.tenant())) return "";
         StringBuilder ret = new StringBuilder()
-            .append(logPre(app.tenant()))
-            .append("app:"+app.application().value())
-            .append(":"+app.instance().value())
-            .append(" ");
+                .append(logPre(app.tenant()))
+                .append("app:" + app.application().value())
+                .append(":" + app.instance().value())
+                .append(" ");
         return ret.toString();
-    }    
+    }
 
     /**
      * A helper to format a log preamble for messages with a tenant
+     *
      * @param tenant tenant
      * @return the log string
      */
     public static String logPre(TenantName tenant) {
         if (DEFAULT_TENANT.equals(tenant)) return "";
         StringBuilder ret = new StringBuilder()
-            .append("tenant:" + tenant.value())
-            .append(" ");
+                .append("tenant:" + tenant.value())
+                .append(" ");
         return ret.toString();
     }
 

@@ -7,136 +7,159 @@
 #include <vespa/searchcore/proton/documentmetastore/i_document_meta_store.h>
 #include <vespa/searchcore/proton/feedoperation/moveoperation.h>
 #include <vespa/searchcore/proton/persistenceengine/i_document_retriever.h>
+#include <vespa/searchcore/proton/bucketdb/bucket_db_owner.h>
 #include <vespa/document/fieldvalue/document.h>
+#include <vespa/vespalib/util/destructor_callbacks.h>
 
 using document::BucketId;
 using document::Document;
 using document::GlobalId;
 using storage::spi::Timestamp;
 
-namespace proton {
+namespace proton::bucketdb {
 
 typedef IDocumentMetaStore::Iterator Iterator;
 
-bool
-DocumentBucketMover::moveDocument(uint32_t lid, const document::GlobalId &gid, Timestamp timestamp)
-{
-    if ( _source->lidNeedsCommit(lid) ) {
-        return false;
-    }
-    Document::SP doc(_source->retriever()->getFullDocument(lid));
-    if (!doc || doc->getId().getGlobalId() != gid)
-        return true; // Failed to retrieve document, removed or changed identity
-    // TODO(geirst): what if doc is NULL?
-    BucketId bucketId = _bucket.stripUnused();
-    MoveOperation op(bucketId, timestamp, doc, DbDocumentId(_source->sub_db_id(), lid), _targetSubDbId);
+BucketMover::GuardedMoveOp
+BucketMover::createMoveOperation(MoveKey &key) {
+    if (_source->lidNeedsCommit(key._lid)) return {};
 
-    // We cache the bucket for the document we are going to move to avoid getting
-    // inconsistent bucket info (getBucketInfo()) while moving between ready and not-ready
-    // sub dbs as the bucket info is not updated atomically in this case.
-    _bucketDb->takeGuard()->cacheBucket(bucketId);
-    _handler->handleMove(op, _limiter.beginOperation());
-    _bucketDb->takeGuard()->uncacheBucket();
-    return true;
+    const RawDocumentMetaData &metaNow = _source->meta_store()->getRawMetaData(key._lid);
+    if (metaNow.getGid() != key._gid) return {};
+    if (metaNow.getTimestamp() != key._timestamp) return {};
+
+    Document::SP doc(_source->retriever()->getFullDocument(key._lid));
+    if (!doc || doc->getId().getGlobalId() != key._gid)
+        return {}; // Failed to retrieve document, removed or changed identity
+    BucketId bucketId = _bucket.stripUnused();
+    return BucketMover::GuardedMoveOp(std::make_unique<MoveOperation>(bucketId, key._timestamp, std::move(doc),
+                                                                      DbDocumentId(_source->sub_db_id(), key._lid),
+                                                                      _targetSubDbId),
+                                      std::move(key._guard));
 }
 
+void
+BucketMover::moveDocument(MoveOperationUP moveOp, IDestructorCallbackSP onDone) {
+    _handler->handleMove(*moveOp, std::move(onDone));
+}
 
-DocumentBucketMover::DocumentBucketMover(IMoveOperationLimiter &limiter)
-    : _limiter(limiter),
-      _bucket(),
-      _source(nullptr),
-      _targetSubDbId(0),
-      _handler(nullptr),
-      _bucketDb(nullptr),
-      _bucketDone(true),
-      _lastGid(),
-      _lastGidValid(false)
+BucketMover::MoveKey::MoveKey(uint32_t lid, const document::GlobalId &gid, Timestamp timestamp, MoveGuard guard) noexcept
+    : _lid(lid),
+      _gid(gid),
+      _timestamp(timestamp),
+      _guard(std::move(guard))
 { }
 
+BucketMover::MoveKey::~MoveKey() = default;
 
-void
-DocumentBucketMover::setupForBucket(const BucketId &bucket,
-                                    const MaintenanceDocumentSubDB *source,
-                                    uint32_t targetSubDbId,
-                                    IDocumentMoveHandler &handler,
-                                    BucketDBOwner &bucketDb)
-{
-    _bucket = bucket;
-    _source = source;
-    _targetSubDbId = targetSubDbId;
-    _handler = &handler;
-    _bucketDb = &bucketDb;
-    _bucketDone = false;
-    _lastGid = GlobalId();
-    _lastGidValid = false;
+BucketMover::BucketMover(const BucketId &bucket, const MaintenanceDocumentSubDB *source,
+                         uint32_t targetSubDbId, IDocumentMoveHandler &handler) noexcept
+    : _source(source),
+      _handler(&handler),
+      _bucket(bucket),
+      _targetSubDbId(targetSubDbId),
+      _started(0),
+      _completed(0),
+      _bucketDone(false),
+      _lastGidValid(false),
+      _lastGid()
+{ }
+
+BucketMover::~BucketMover() {
+    assert(inSync());
 }
 
-
-namespace {
-
-class MoveKey
-{
-public:
-    uint32_t _lid;
-    document::GlobalId _gid;
-    Timestamp _timestamp;
-
-    MoveKey(uint32_t lid, const document::GlobalId &gid, Timestamp timestamp)
-        : _lid(lid),
-          _gid(gid),
-          _timestamp(timestamp)
-    {
-    }
-};
-
-}
-
-void
-DocumentBucketMover::setBucketDone() {
-    _bucketDone = true;
-}
-
-bool
-DocumentBucketMover::moveDocuments(size_t maxDocsToMove)
-{
-    if (_bucketDone) {
-        return true;
-    }
+std::pair<std::vector<BucketMover::MoveKey>, bool>
+BucketMover::getKeysToMove(size_t maxDocsToMove) {
+    std::pair<std::vector<BucketMover::MoveKey>, bool> result;
     Iterator itr = (_lastGidValid ? _source->meta_store()->upperBound(_lastGid)
-                    : _source->meta_store()->lowerBound(_bucket));
+                                  : _source->meta_store()->lowerBound(_bucket));
     const Iterator end = _source->meta_store()->upperBound(_bucket);
-    size_t docsMoved = 0;
-    size_t docsSkipped = 0; // In absence of a proper cost metric
-    typedef std::vector<MoveKey> MoveVec;
-    MoveVec toMove;
-    for (; itr != end && docsMoved < maxDocsToMove; ++itr) {
+    std::vector<MoveKey> toMove;
+    for (size_t docsMoved(0); itr != end && docsMoved < maxDocsToMove; ++itr) {
         uint32_t lid = itr.getKey().get_lid();
         const RawDocumentMetaData &metaData = _source->meta_store()->getRawMetaData(lid);
-        if (metaData.getBucketUsedBits() != _bucket.getUsedBits()) {
-            ++docsSkipped;
-            if (docsSkipped >= 50) {
-                ++docsMoved; // In absence of a proper cost metric
-                docsSkipped = 0;
-            }
-        } else {
-            // moveDocument(lid, metaData.getTimestamp());
-            toMove.push_back(MoveKey(lid, metaData.getGid(), metaData.getTimestamp()));
+        if (metaData.getBucketUsedBits() == _bucket.getUsedBits()) {
+            result.first.emplace_back(lid, metaData.getGid(), metaData.getTimestamp(), MoveGuard(*this));
             ++docsMoved;
         }
     }
-    bool done = (itr == end);
-    for (const MoveKey & key : toMove) {
-        if ( ! moveDocument(key._lid, key._gid, key._timestamp)) {
-            return false;
-        }
-        _lastGid = key._gid;
-        _lastGidValid = true;
-    }
-    if (done) {
-        setBucketDone();
-    }
-    return true;
+    result.second = (itr == end);
+    return result;
 }
 
+std::vector<BucketMover::GuardedMoveOp>
+BucketMover::createMoveOperations(std::vector<MoveKey> toMove) {
+    std::vector<GuardedMoveOp> successfulReads;
+    successfulReads.reserve(toMove.size());
+    for (MoveKey &key : toMove) {
+        auto moveOp = createMoveOperation(key);
+        if (!moveOp.first) {
+            break;
+        }
+        successfulReads.push_back(std::move(moveOp));
+    }
+    return successfulReads;
+}
 
-} // namespace proton
+void
+BucketMover::moveDocuments(std::vector<GuardedMoveOp> moveOps, IDestructorCallbackSP onDone) {
+    for (auto & moveOp : moveOps) {
+        moveDocument(std::move(moveOp.first), std::move(onDone));
+    }
+}
+
+}
+
+namespace proton {
+
+using bucketdb::BucketMover;
+using bucketdb::BucketDBOwner;
+
+DocumentBucketMover::DocumentBucketMover(IMoveOperationLimiter &limiter, BucketDBOwner &bucketDb) noexcept
+    : _limiter(limiter),
+      _bucketDb(&bucketDb),
+      _impl()
+{}
+
+void
+DocumentBucketMover::setupForBucket(const document::BucketId &bucket, const MaintenanceDocumentSubDB *source,
+                                    uint32_t targetSubDbId, IDocumentMoveHandler &handler)
+{
+    _impl = std::make_unique<BucketMover>(bucket, source, targetSubDbId, handler);
+}
+
+bool
+DocumentBucketMover::moveDocuments(size_t maxDocsToMove) {
+    return !_impl || moveDocuments(maxDocsToMove, _limiter);
+}
+
+bool
+DocumentBucketMover::moveDocuments(size_t maxDocsToMove, IMoveOperationLimiter &limiter)
+{
+    if (_impl->bucketDone()) {
+        return true;
+    }
+    auto [keys, done] = _impl->getKeysToMove(maxDocsToMove);
+    size_t numKeys = keys.size();
+    auto moveOps = _impl->createMoveOperations(std::move(keys));
+    bool allOk = (numKeys == moveOps.size());
+    if (done && allOk) {
+        _impl->setBucketDone();
+    }
+    if (moveOps.empty()) return allOk;
+
+    _impl->updateLastValidGid(moveOps.back().first->getDocument()->getId().getGlobalId());
+
+    for (auto & moveOp : moveOps) {
+        // We cache the bucket for the document we are going to move to avoid getting
+        // inconsistent bucket info (getBucketInfo()) while moving between ready and not-ready
+        // sub dbs as the bucket info is not updated atomically in this case.
+        _bucketDb->takeGuard()->cacheBucket(moveOp.first->getBucketId());
+        _impl->moveDocument(std::move(moveOp.first), limiter.beginOperation());
+        _bucketDb->takeGuard()->uncacheBucket();
+    }
+    return allOk;
+}
+
+}

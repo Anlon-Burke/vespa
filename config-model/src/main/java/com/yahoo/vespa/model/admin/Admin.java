@@ -142,7 +142,6 @@ public class Admin extends AbstractConfigProducer<Admin> implements Serializable
     public ClusterControllerContainerCluster getClusterControllers() { return clusterControllers; }
 
     public void setClusterControllers(ClusterControllerContainerCluster clusterControllers) {
-        if (multitenant) throw new RuntimeException("Should not use admin cluster controller in a multitenant environment");
         this.clusterControllers = clusterControllers;
     }
 
@@ -221,7 +220,7 @@ public class Admin extends AbstractConfigProducer<Admin> implements Serializable
         for (var host : hosts) {
             // Send hostname to be used in configId (instead of index), as the sorting of hosts seems to be unstable
             // between config changes, even when the set of hosts is unchanged.
-            var container = new MetricsProxyContainer(metricsProxyCluster, deployState.featureFlags(), host.getHostname(), index, deployState.isHosted());
+            var container = new MetricsProxyContainer(metricsProxyCluster, host.getHostname(), index, deployState.isHosted());
             addAndInitializeService(deployState.getDeployLogger(), host, container);
             metricsProxyCluster.addContainer(container);
         }

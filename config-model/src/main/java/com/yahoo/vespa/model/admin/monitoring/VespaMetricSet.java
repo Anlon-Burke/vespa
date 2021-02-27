@@ -222,6 +222,9 @@ public class VespaMetricSet {
 
         addMetric(metrics, "jdisc.application.failed_component_graphs", List.of("rate"));
 
+        addMetric(metrics, "jdisc.http.filter.rule.blocked_requests", List.of("rate"));
+        addMetric(metrics, "jdisc.http.filter.rule.allowed_requests", List.of("rate"));
+
         return metrics;
     }
 
@@ -240,6 +243,10 @@ public class VespaMetricSet {
         // TODO(hakonhall): Update this name once persistent "count" metrics has been implemented.
         // DO NOT RELY ON THIS METRIC YET.
         metrics.add(new Metric("cluster-controller.node-event.count"));
+
+        metrics.add(new Metric("cluster-controller.resource_usage.nodes_above_limit.last"));
+        metrics.add(new Metric("cluster-controller.resource_usage.max_memory_utilization.last"));
+        metrics.add(new Metric("cluster-controller.resource_usage.max_disk_utilization.last"));
 
         metrics.add(new Metric("reindexing.progress.last"));
 
@@ -425,6 +432,15 @@ public class VespaMetricSet {
         metrics.add(new Metric("content.proton.documentdb.ready.lid_space.lid_limit.last"));
         metrics.add(new Metric("content.proton.documentdb.notready.lid_space.lid_limit.last"));
         metrics.add(new Metric("content.proton.documentdb.removed.lid_space.lid_limit.last"));
+        metrics.add(new Metric("content.proton.documentdb.ready.lid_space.highest_used_lid.last"));
+        metrics.add(new Metric("content.proton.documentdb.notready.lid_space.highest_used_lid.last"));
+        metrics.add(new Metric("content.proton.documentdb.removed.lid_space.highest_used_lid.last"));
+        metrics.add(new Metric("content.proton.documentdb.ready.lid_space.used_lids.last"));
+        metrics.add(new Metric("content.proton.documentdb.notready.lid_space.used_lids.last"));
+        metrics.add(new Metric("content.proton.documentdb.removed.lid_space.used_lids.last"));
+
+        // bucket move
+        metrics.add(new Metric("content.proton.documentdb.bucket_move.buckets_pending.last"));
 
         // resource usage
         metrics.add(new Metric("content.proton.resource_usage.disk.average"));

@@ -1,6 +1,7 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "memory_flush_config_updater.h"
+#include <vespa/vespalib/util/size_literals.h>
 #include <vespa/log/log.h>
 
 LOG_SETUP(".proton.server.memory_flush_config_updater");
@@ -115,8 +116,7 @@ namespace {
 size_t
 getHardMemoryLimit(const HwInfo::Memory &memory)
 {
-    return std::max((size_t) memory.sizeBytes() / 4,
-                    (size_t) 16ul * 1024ul * 1024ul * 1024ul);
+    return memory.sizeBytes() / 4;
 }
 
 }
@@ -130,16 +130,14 @@ MemoryFlushConfigUpdater::convertConfig(const ProtonConfig::Flush::Memory &confi
     if (totalMaxMemory > hardMemoryLimit) {
         LOG(info, "flush.memory.maxmemory=%" PRId64 " cannot"
             " be set above the hard limit of %ld so we cap it to the hard limit",
-            config.maxmemory,
-            hardMemoryLimit);
+            config.maxmemory, hardMemoryLimit);
         totalMaxMemory = hardMemoryLimit;
     }
     size_t eachMaxMemory = config.each.maxmemory;
     if (eachMaxMemory > hardMemoryLimit) {
         LOG(info, "flush.memory.each.maxmemory=%" PRId64 " cannot"
             " be set above the hard limit of %ld so we cap it to the hard limit",
-            config.maxmemory,
-            hardMemoryLimit);
+            config.maxmemory, hardMemoryLimit);
         eachMaxMemory = hardMemoryLimit;
     }
     return MemoryFlush::Config(totalMaxMemory,

@@ -4,7 +4,6 @@ package com.yahoo.vespa.model.container;
 import com.yahoo.cloud.config.ClusterInfoConfig;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.cloud.config.CuratorConfig;
-import com.yahoo.cloud.config.RoutingProviderConfig;
 import com.yahoo.cloud.config.ZookeeperServerConfig;
 import com.yahoo.component.ComponentId;
 import com.yahoo.config.application.api.DeployLogger;
@@ -298,17 +297,6 @@ public class ContainerClusterTest {
     }
 
     @Test
-    public void requireThatRoutingProviderIsDisabledForNonHosted() {
-        DeployState state = new DeployState.Builder().properties(new TestProperties().setHostedVespa(false)).build();
-        MockRoot root = new MockRoot("foo", state);
-        ApplicationContainerCluster cluster = new ApplicationContainerCluster(root, "container0", "container1", state);
-        RoutingProviderConfig.Builder builder = new RoutingProviderConfig.Builder();
-        cluster.getConfig(builder);
-        RoutingProviderConfig config = new RoutingProviderConfig(builder);
-        assertFalse(config.enabled());
-    }
-
-    @Test
     public void requireThatBundlesForTesterApplicationAreInstalled() {
         List<String> expectedOnpremBundles =
                 List.of("vespa-testrunner-components-jar-with-dependencies.jar",
@@ -385,7 +373,7 @@ public class ContainerClusterTest {
     }
 
     private static void addContainerWithHostResource(DeployLogger deployLogger, ApplicationContainerCluster cluster, String name, HostResource hostResource) {
-        ApplicationContainer container = new ApplicationContainer(cluster, new TestProperties(), name, 0, cluster.isHostedVespa());
+        ApplicationContainer container = new ApplicationContainer(cluster, name, 0, cluster.isHostedVespa());
         container.setHostResource(hostResource);
         container.initService(deployLogger);
         cluster.addContainer(container);
@@ -395,7 +383,7 @@ public class ContainerClusterTest {
                                              ClusterControllerContainerCluster cluster,
                                              String hostName,
                                              DeployState deployState) {
-        ClusterControllerContainer container = new ClusterControllerContainer(cluster, 1, false, deployState);
+        ClusterControllerContainer container = new ClusterControllerContainer(cluster, 1, false, deployState, false);
         container.setHostResource(new HostResource(new Host(null, hostName)));
         container.initService(deployLogger);
         cluster.addContainer(container);

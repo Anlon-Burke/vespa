@@ -9,6 +9,7 @@
 #include <vespa/vespalib/stllike/hash_map.hpp>
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/util/rcuvector.hpp>
+#include <vespa/vespalib/util/size_literals.h>
 #include <thread>
 
 #include <vespa/log/log.h>
@@ -18,7 +19,7 @@ namespace search {
 
 namespace {
     constexpr size_t DEFAULT_MAX_FILESIZE = 1000000000ul;
-    constexpr uint32_t DEFAULT_MAX_LIDS_PER_FILE = 32 * 1024 * 1024;
+    constexpr uint32_t DEFAULT_MAX_LIDS_PER_FILE = 32_Mi;
 }
 
 using vespalib::getLastErrorString;
@@ -1242,6 +1243,37 @@ LogDataStore::shrinkLidSpace()
     }
     _lidInfo.shrink(getDocIdLimit());
     incGeneration();
+}
+
+FileChunk::FileId
+LogDataStore::getActiveFileId(const MonitorGuard & guard) const {
+    assert(hasUpdateLock(guard));
+    (void) guard;
+    return _active;
+}
+
+WriteableFileChunk &
+LogDataStore::getActive(const MonitorGuard & guard) {
+    assert(hasUpdateLock(guard));
+    return static_cast<WriteableFileChunk &>(*_fileChunks[_active.getId()]);
+}
+
+const WriteableFileChunk &
+LogDataStore::getActive(const MonitorGuard & guard) const {
+    assert(hasUpdateLock(guard));
+    return static_cast<const WriteableFileChunk &>(*_fileChunks[_active.getId()]);
+}
+
+const FileChunk *
+LogDataStore::getPrevActive(const MonitorGuard & guard) const {
+    assert(hasUpdateLock(guard));
+    return ( !_prevActive.isActive() ) ? _fileChunks[_prevActive.getId()].get() : nullptr;
+}
+void
+LogDataStore::setActive(const MonitorGuard & guard, FileId fileId) {
+    assert(hasUpdateLock(guard));
+    _prevActive = _active;
+    _active = fileId;
 }
 
 } // namespace search

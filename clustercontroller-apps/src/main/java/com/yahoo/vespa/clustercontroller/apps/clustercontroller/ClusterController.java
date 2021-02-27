@@ -16,6 +16,7 @@ import com.yahoo.vespa.zookeeper.VespaZooKeeperServer;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 /**
@@ -31,16 +32,13 @@ public class ClusterController extends AbstractComponent
     private final Map<String, StatusHandler.ContainerStatusPageServer> status = new TreeMap<>();
 
     /**
-     * Dependency injection constructor for controller. {@link VespaZooKeeperServer} argument given
-     * to ensure that zookeeper has started before we start polling it.
+     * Dependency injection constructor for controller. A {@link VespaZooKeeperServer} argument is required
+     * for all its users, to ensure that zookeeper has started before we start polling it, but
+     * should not be injected here, as that causes recreation of the cluster controller, and old and new
+     * will run master election, etc., concurrently, which breaks everything.
      */
-    @SuppressWarnings("unused")
     @Inject
-    public ClusterController(VespaZooKeeperServer ignored) {
-        this();
-    }
-
-    ClusterController() {
+    public ClusterController() {
         metricWrapper = new JDiscMetricWrapper(null);
     }
 
@@ -100,8 +98,10 @@ public class ClusterController extends AbstractComponent
      */
     private void verifyThatZooKeeperWorks(FleetControllerOptions options) throws Exception {
         if (options.zooKeeperServerAddress != null && !"".equals(options.zooKeeperServerAddress)) {
-            Curator curator = Curator.create(options.zooKeeperServerAddress);
-            curator.framework().blockUntilConnected();
+            try (Curator curator = Curator.create(options.zooKeeperServerAddress)) {
+                if ( ! curator.framework().blockUntilConnected(600, TimeUnit.SECONDS))
+                    com.yahoo.protect.Process.logAndDie("Failed to connect to ZK, dying and restarting container");
+            }
         }
     }
 

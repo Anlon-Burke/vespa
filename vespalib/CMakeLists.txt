@@ -100,6 +100,7 @@ vespa_define_module(
     src/tests/slime
     src/tests/slime/external_data_value
     src/tests/slime/summary-feature-benchmark
+    src/tests/small_vector
     src/tests/spin_lock
     src/tests/stash
     src/tests/stllike
@@ -132,8 +133,10 @@ vespa_define_module(
     src/tests/util/generationhandler
     src/tests/util/generationhandler_stress
     src/tests/util/md5
+    src/tests/util/mmap_file_allocator_factory
     src/tests/util/rcuvector
     src/tests/util/reusable_set
+    src/tests/util/size_literals
     src/tests/valgrind
     src/tests/visit_ranges
     src/tests/websocket

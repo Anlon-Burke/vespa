@@ -20,7 +20,10 @@ import com.yahoo.config.model.api.Reindexing;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.DockerImage;
+import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.HostName;
+import com.yahoo.config.provision.NodeResources;
+import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.flags.FetchVector;
 import com.yahoo.vespa.flags.FlagSource;
@@ -147,12 +150,13 @@ public class ModelContextImpl implements ModelContext {
 
     public static class FeatureFlags implements ModelContext.FeatureFlags {
 
-        private final double reindexerWindowSizeIncrement;
+        private final NodeResources dedicatedClusterControllerFlavor;
         private final double defaultTermwiseLimit;
         private final boolean useThreePhaseUpdates;
         private final String feedSequencer;
         private final String responseSequencer;
         private final int numResponseThreads;
+        private final int maxPendingMoveOps;
         private final boolean skipCommunicationManagerThread;
         private final boolean skipMbusRequestThread;
         private final boolean skipMbusReplyThread;
@@ -160,19 +164,23 @@ public class ModelContextImpl implements ModelContext {
         private final boolean useAsyncMessageHandlingOnSchedule;
         private final double feedConcurrency;
         private final boolean reconfigurableZookeeperServer;
-        private final boolean enableJdiscConnectionLog;
-        private final boolean enableZstdCompressionAccessLog;
         private final boolean useBucketExecutorForLidSpaceCompact;
+        private final boolean useBucketExecutorForBucketMove;
         private final boolean enableFeedBlockInDistributor;
         private final double maxDeadBytesRatio;
+        private final int clusterControllerMaxHeapSizeInMb;
+        private final List<String> allowedAthenzProxyIdentities;
+        private final boolean tenantIamRole;
+        private final int maxActivationInhibitedOutOfSyncGroups;
 
         public FeatureFlags(FlagSource source, ApplicationId appId) {
-            this.reindexerWindowSizeIncrement = flagValue(source, appId, Flags.REINDEXER_WINDOW_SIZE_INCREMENT);
+            this.dedicatedClusterControllerFlavor = parseDedicatedClusterControllerFlavor(flagValue(source, appId, Flags.DEDICATED_CLUSTER_CONTROLLER_FLAVOR));
             this.defaultTermwiseLimit = flagValue(source, appId, Flags.DEFAULT_TERM_WISE_LIMIT);
             this.useThreePhaseUpdates = flagValue(source, appId, Flags.USE_THREE_PHASE_UPDATES);
             this.feedSequencer = flagValue(source, appId, Flags.FEED_SEQUENCER_TYPE);
             this.responseSequencer = flagValue(source, appId, Flags.RESPONSE_SEQUENCER_TYPE);
             this.numResponseThreads = flagValue(source, appId, Flags.RESPONSE_NUM_THREADS);
+            this.maxPendingMoveOps = flagValue(source, appId, Flags.MAX_PENDING_MOVE_OPS);
             this.skipCommunicationManagerThread = flagValue(source, appId, Flags.SKIP_COMMUNICATIONMANAGER_THREAD);
             this.skipMbusRequestThread = flagValue(source, appId, Flags.SKIP_MBUS_REQUEST_THREAD);
             this.skipMbusReplyThread = flagValue(source, appId, Flags.SKIP_MBUS_REPLY_THREAD);
@@ -180,19 +188,23 @@ public class ModelContextImpl implements ModelContext {
             this.useAsyncMessageHandlingOnSchedule = flagValue(source, appId, Flags.USE_ASYNC_MESSAGE_HANDLING_ON_SCHEDULE);
             this.feedConcurrency = flagValue(source, appId, Flags.FEED_CONCURRENCY);
             this.reconfigurableZookeeperServer = flagValue(source, appId, Flags.RECONFIGURABLE_ZOOKEEPER_SERVER_FOR_CLUSTER_CONTROLLER);
-            this.enableJdiscConnectionLog = flagValue(source, appId, Flags.ENABLE_JDISC_CONNECTION_LOG);
-            this.enableZstdCompressionAccessLog = flagValue(source, appId, Flags.ENABLE_ZSTD_COMPRESSION_ACCESS_LOG);
             this.useBucketExecutorForLidSpaceCompact = flagValue(source, appId, Flags.USE_BUCKET_EXECUTOR_FOR_LID_SPACE_COMPACT);
+            this.useBucketExecutorForBucketMove = flagValue(source, appId, Flags.USE_BUCKET_EXECUTOR_FOR_BUCKET_MOVE);
             this.enableFeedBlockInDistributor = flagValue(source, appId, Flags.ENABLE_FEED_BLOCK_IN_DISTRIBUTOR);
             this.maxDeadBytesRatio = flagValue(source, appId, Flags.MAX_DEAD_BYTES_RATIO);
+            this.clusterControllerMaxHeapSizeInMb = flagValue(source, appId, Flags.CLUSTER_CONTROLLER_MAX_HEAP_SIZE_IN_MB);
+            this.allowedAthenzProxyIdentities = flagValue(source, appId, Flags.ALLOWED_ATHENZ_PROXY_IDENTITIES);
+            this.tenantIamRole = flagValue(source, appId.tenant(), Flags.TENANT_IAM_ROLE);
+            this.maxActivationInhibitedOutOfSyncGroups = flagValue(source, appId, Flags.MAX_ACTIVATION_INHIBITED_OUT_OF_SYNC_GROUPS);
         }
 
-        @Override public double reindexerWindowSizeIncrement() { return reindexerWindowSizeIncrement; }
+        @Override public Optional<NodeResources> dedicatedClusterControllerFlavor() { return Optional.ofNullable(dedicatedClusterControllerFlavor); }
         @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
         @Override public boolean useThreePhaseUpdates() { return useThreePhaseUpdates; }
         @Override public String feedSequencerType() { return feedSequencer; }
         @Override public String responseSequencerType() { return responseSequencer; }
         @Override public int defaultNumResponseThreads() { return numResponseThreads; }
+        @Override public int maxPendingMoveOps() { return maxPendingMoveOps; }
         @Override public boolean skipCommunicationManagerThread() { return skipCommunicationManagerThread; }
         @Override public boolean skipMbusRequestThread() { return skipMbusRequestThread; }
         @Override public boolean skipMbusReplyThread() { return skipMbusReplyThread; }
@@ -200,15 +212,24 @@ public class ModelContextImpl implements ModelContext {
         @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
         @Override public double feedConcurrency() { return feedConcurrency; }
         @Override public boolean reconfigurableZookeeperServer() { return reconfigurableZookeeperServer; }
-        @Override public boolean enableJdiscConnectionLog() { return enableJdiscConnectionLog; }
-        @Override public boolean enableZstdCompressionAccessLog() { return enableZstdCompressionAccessLog; }
         @Override public boolean useBucketExecutorForLidSpaceCompact() { return useBucketExecutorForLidSpaceCompact; }
+        @Override public boolean useBucketExecutorForBucketMove() { return useBucketExecutorForBucketMove; }
         @Override public boolean enableFeedBlockInDistributor() { return enableFeedBlockInDistributor; }
         @Override public double maxDeadBytesRatio() { return maxDeadBytesRatio; }
+        @Override public int clusterControllerMaxHeapSizeInMb() { return clusterControllerMaxHeapSizeInMb; }
+        @Override public List<String> allowedAthenzProxyIdentities() { return allowedAthenzProxyIdentities; }
+        @Override public boolean tenantIamRole() { return tenantIamRole; }
+        @Override public int maxActivationInhibitedOutOfSyncGroups() { return maxActivationInhibitedOutOfSyncGroups; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)
                     .with(FetchVector.Dimension.APPLICATION_ID, appId.serializedForm())
+                    .boxedValue();
+        }
+
+        private static <V> V flagValue(FlagSource source, TenantName tenant, UnboundFlag<? extends V, ?, ?> flag) {
+            return flag.bindTo(source)
+                    .with(FetchVector.Dimension.TENANT_ID, tenant.value())
                     .boxedValue();
         }
 
@@ -232,6 +253,7 @@ public class ModelContextImpl implements ModelContext {
         private final Optional<AthenzDomain> athenzDomain;
         private final Optional<ApplicationRoles> applicationRoles;
         private final Quota quota;
+        private final boolean dedicatedClusterControllerCluster;
 
         private final String jvmGcOptions;
 
@@ -245,7 +267,8 @@ public class ModelContextImpl implements ModelContext {
                           Optional<EndpointCertificateSecrets> endpointCertificateSecrets,
                           Optional<AthenzDomain> athenzDomain,
                           Optional<ApplicationRoles> applicationRoles,
-                          Optional<Quota> maybeQuota) {
+                          Optional<Quota> maybeQuota,
+                          boolean dedicatedClusterControllerCluster) {
             this.featureFlags = new FeatureFlags(flagSource, applicationId);
             this.applicationId = applicationId;
             this.multitenant = configserverConfig.multitenant() || configserverConfig.hostedVespa() || Boolean.getBoolean("multitenant");
@@ -262,6 +285,7 @@ public class ModelContextImpl implements ModelContext {
             this.athenzDomain = athenzDomain;
             this.applicationRoles = applicationRoles;
             this.quota = maybeQuota.orElseGet(Quota::unlimited);
+            this.dedicatedClusterControllerCluster = zoneHasRedundancyOrIsCD(zone) && dedicatedClusterControllerCluster;
 
             jvmGcOptions = flagValue(flagSource, applicationId, PermanentFlags.JVM_GC_OPTIONS);
         }
@@ -320,11 +344,31 @@ public class ModelContextImpl implements ModelContext {
 
         @Override public String jvmGCOptions() { return jvmGcOptions; }
 
+        @Override public boolean dedicatedClusterControllerCluster() { return dedicatedClusterControllerCluster; }
+
         private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)
                     .with(FetchVector.Dimension.APPLICATION_ID, appId.serializedForm())
                     .boxedValue();
         }
+    }
+
+    private static boolean zoneHasRedundancyOrIsCD(Zone zone) {
+        return    zone.system().isCd() && zone.environment() == Environment.dev
+               || List.of(Environment.staging, Environment.perf, Environment.prod).contains(zone.environment());
+    }
+
+    private static NodeResources parseDedicatedClusterControllerFlavor(String flagValue) {
+        String[] parts = flagValue.split("-");
+        if (parts.length != 3)
+            return null;
+
+        return new NodeResources(Double.parseDouble(parts[0]),
+                                 Double.parseDouble(parts[1]),
+                                 Double.parseDouble(parts[2]),
+                                 0.3,
+                                 NodeResources.DiskSpeed.any,
+                                 NodeResources.StorageType.any);
     }
 
 }

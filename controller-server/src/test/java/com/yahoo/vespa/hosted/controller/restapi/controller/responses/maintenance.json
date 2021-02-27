@@ -46,6 +46,9 @@
       "name": "NameServiceDispatcher"
     },
     {
+      "name": "OsUpgradeScheduler"
+    },
+    {
       "name": "OsVersionStatusUpdater"
     },
     {
@@ -68,6 +71,9 @@
     },
     {
       "name": "SystemUpgrader"
+    },
+    {
+      "name": "TrafficShareUpdater"
     },
     {
       "name": "Upgrader"

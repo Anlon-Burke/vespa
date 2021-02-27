@@ -1,6 +1,7 @@
 // Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "bucketmover_common.h"
+#include <vespa/searchcore/proton/server/documentbucketmover.h>
 #include <vespa/vespalib/gtest/gtest.h>
 
 #include <vespa/log/log.h>
@@ -13,7 +14,7 @@ using document::BucketId;
 struct MySubDbTwoBuckets : public MySubDb
 {
     MySubDbTwoBuckets(test::UserDocumentsBuilder &builder,
-                      std::shared_ptr<BucketDBOwner> bucketDB,
+                      std::shared_ptr<bucketdb::BucketDBOwner> bucketDB,
                       uint32_t subDbId,
                       SubDbType subDbType)
         : MySubDb(builder.getRepo(), bucketDB, subDbId, subDbType)
@@ -31,18 +32,18 @@ struct MySubDbTwoBuckets : public MySubDb
 struct DocumentMoverTest : ::testing::Test
 {
     test::UserDocumentsBuilder _builder;
-    std::shared_ptr<BucketDBOwner> _bucketDB;
+    std::shared_ptr<bucketdb::BucketDBOwner> _bucketDB;
     MyMoveOperationLimiter     _limiter;
     DocumentBucketMover        _mover;
     MySubDbTwoBuckets          _source;
-    BucketDBOwner              _bucketDb;
+    bucketdb::BucketDBOwner    _bucketDb;
     MyMoveHandler              _handler;
     PendingLidTracker          _pendingLidsForCommit;
     DocumentMoverTest()
         : _builder(),
-          _bucketDB(std::make_shared<BucketDBOwner>()),
+          _bucketDB(std::make_shared<bucketdb::BucketDBOwner>()),
           _limiter(),
-          _mover(_limiter),
+          _mover(_limiter, _bucketDb),
           _source(_builder, _bucketDB, 0u, SubDbType::READY),
           _bucketDb(),
           _handler(_bucketDb)
@@ -57,7 +58,7 @@ struct DocumentMoverTest : ::testing::Test
                                                   _source._subDb.retriever(),
                                                   _source._subDb.feed_view(),
                                                   &_pendingLidsForCommit);
-        _mover.setupForBucket(bucket, &_source._subDb, targetSubDbId, _handler, _bucketDb);
+        _mover.setupForBucket(bucket, &_source._subDb, targetSubDbId, _handler);
     }
     bool moveDocuments(size_t maxDocsToMove) {
         return _mover.moveDocuments(maxDocsToMove);
@@ -67,7 +68,7 @@ struct DocumentMoverTest : ::testing::Test
 TEST_F(DocumentMoverTest, require_that_initial_bucket_mover_is_done)
 {
     MyMoveOperationLimiter limiter;
-    DocumentBucketMover mover(limiter);
+    DocumentBucketMover mover(limiter, _bucketDb);
     EXPECT_TRUE(mover.bucketDone());
     mover.moveDocuments(2);
     EXPECT_TRUE(mover.bucketDone());

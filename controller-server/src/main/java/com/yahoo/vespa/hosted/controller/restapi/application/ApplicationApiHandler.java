@@ -65,6 +65,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartF
 import com.yahoo.vespa.hosted.controller.api.integration.resource.MeteringData;
 import com.yahoo.vespa.hosted.controller.api.integration.resource.ResourceAllocation;
 import com.yahoo.vespa.hosted.controller.api.integration.resource.ResourceSnapshot;
+import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
 import com.yahoo.vespa.hosted.controller.api.role.RoleDefinition;
 import com.yahoo.vespa.hosted.controller.api.role.SecurityContext;
@@ -267,6 +268,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     private HttpResponse handlePUT(Path path, HttpRequest request) {
         if (path.matches("/application/v4/tenant/{tenant}")) return updateTenant(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/info")) return updateTenantInfo(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/secret-store")) return addSecretStore(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/global-rotation/override")) return setGlobalRotationOverride(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), false, request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/global-rotation/override")) return setGlobalRotationOverride(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), false, request);
         return ErrorResponse.notFoundError("Nothing at " + path);
@@ -295,6 +297,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/reindexing")) return enableReindexing(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/restart")) return restart(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/suspend")) return suspend(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), true);
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/validate-parameter-store")) return validateParameterStore(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}")) return deploy(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/deploy")) return deploy(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request); // legacy synonym of the above
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/restart")) return restart(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
@@ -579,6 +582,26 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         return new SlimeJsonResponse(root);
     }
 
+
+    private HttpResponse validateParameterStore(String tenantName, String applicationName, String instanceName, String environment, String region, HttpRequest request) {
+        var tenant = TenantName.from(tenantName);
+        if (controller.tenants().require(tenant).type() != Tenant.Type.cloud)
+            throw new IllegalArgumentException("Tenant '" + tenant + "' is not a cloud tenant");
+
+        var application = ApplicationId.from(tenantName, applicationName, instanceName);
+        var zone = requireZone(environment, region);
+        var deployment = new DeploymentId(application, zone);
+
+        var data = toSlime(request.getData()).get();
+        var awsId = mandatory("awsId", data).asString();
+        var name = mandatory("name", data).asString();
+        var role = mandatory("role", data).asString();
+        var tenantSecretStore = new TenantSecretStore(name, awsId, role);
+
+        var response = controller.serviceRegistry().configServer().validateSecretStore(deployment, tenantSecretStore);
+        return new MessageResponse(response);
+    }
+
     private HttpResponse removeDeveloperKey(String tenantName, HttpRequest request) {
         if (controller.tenants().require(TenantName.from(tenantName)).type() != Tenant.Type.cloud)
             throw new IllegalArgumentException("Tenant '" + tenantName + "' is not a cloud tenant");
@@ -629,6 +652,36 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
             controller.applications().store(application);
         });
         return new SlimeJsonResponse(root);
+    }
+
+    private HttpResponse addSecretStore(String tenantName, HttpRequest request) {
+        if (controller.tenants().require(TenantName.from(tenantName)).type() != Tenant.Type.cloud)
+            throw new IllegalArgumentException("Tenant '" + tenantName + "' is not a cloud tenant");
+
+        var data = toSlime(request.getData()).get();
+        var awsId = mandatory("awsId", data).asString();
+        var externalId = mandatory("externalId", data).asString();
+        var name = mandatory("name", data).asString();
+        var role = mandatory("role", data).asString();
+
+        var tenant = (CloudTenant) controller.tenants().require(TenantName.from(tenantName));
+        var tenantSecretStore = new TenantSecretStore(name, awsId, role);
+
+        if (!tenantSecretStore.isValid()) {
+            return ErrorResponse.badRequest(String.format("Secret store " + tenantSecretStore + " is invalid"));
+        }
+        if (tenant.tenantSecretStores().contains(tenantSecretStore)) {
+            return ErrorResponse.badRequest(String.format("Secret store " + tenantSecretStore + " is already configured"));
+        }
+
+        controller.serviceRegistry().roleService().createTenantPolicy(TenantName.from(tenantName), name, awsId, role);
+        controller.serviceRegistry().tenantSecretService().addSecretStore(tenant.name(), tenantSecretStore, externalId);
+        // Store changes
+        controller.tenants().lockOrThrow(tenant.name(), LockedTenant.Cloud.class, lockedTenant -> {
+            lockedTenant = lockedTenant.withSecretStore(tenantSecretStore);
+            controller.tenants().store(lockedTenant);
+        });
+        return new MessageResponse("Configured secret store: " + tenantSecretStore);
     }
 
     private HttpResponse patchApplication(String tenantName, String applicationName, HttpRequest request) {
@@ -707,6 +760,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
                 && ! cluster.target().get().justNumbers().equals(cluster.current().justNumbers()))
                 toSlime(cluster.target().get(), clusterObject.setObject("target"));
             cluster.suggested().ifPresent(suggested -> toSlime(suggested, clusterObject.setObject("suggested")));
+            utilizationToSlime(cluster.utilization(), clusterObject.setObject("utilization"));
             scalingEventsToSlime(cluster.scalingEvents(), clusterObject.setArray("scalingEvents"));
             clusterObject.setString("autoscalingStatus", cluster.autoscalingStatus());
         }
@@ -1907,6 +1961,14 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
                     keyObject.setString("user", user.getName());
                 });
 
+                Cursor secretStore = object.setArray("secretStores");
+                cloudTenant.tenantSecretStores().forEach(store -> {
+                    Cursor storeObject = secretStore.addObject();
+                    storeObject.setString("name", store.getName());
+                    storeObject.setString("awsId", store.getAwsId());
+                    storeObject.setString("role", store.getRole());
+                });
+
                 var tenantQuota = controller.serviceRegistry().billingController().getQuota(tenant.name());
                 var usedQuota = applications.stream()
                         .map(com.yahoo.vespa.hosted.controller.Application::quotaUsage)
@@ -1947,8 +2009,16 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         object.setLong("nodes", resources.nodes());
         object.setLong("groups", resources.groups());
         toSlime(resources.nodeResources(), object.setObject("nodeResources"));
-        if ( ! controller.zoneRegistry().system().isPublic())
-            object.setDouble("cost", Math.round(resources.nodes() * resources.nodeResources().cost() * 100.0 / 3.0) / 100.0);
+
+        // Divide cost by 3 in non-public zones to show approx. AWS equivalent cost
+        double costDivisor = controller.zoneRegistry().system().isPublic() ? 1.0 : 3.0;
+        object.setDouble("cost", Math.round(resources.nodes() * resources.nodeResources().cost() * 100.0 / costDivisor) / 100.0);
+    }
+
+    private void utilizationToSlime(Cluster.Utilization utilization, Cursor utilizationObject) {
+        utilizationObject.setDouble("cpu", utilization.cpu());
+        utilizationObject.setDouble("memory", utilization.memory());
+        utilizationObject.setDouble("disk", utilization.disk());
     }
 
     private void scalingEventsToSlime(List<Cluster.ScalingEvent> scalingEvents, Cursor scalingEventsArray) {

@@ -3,10 +3,10 @@ package com.yahoo.vespa.model.container.http;
 
 import com.yahoo.component.ComponentId;
 import com.yahoo.component.ComponentSpecification;
-import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.container.bundle.BundleInstantiationSpecification;
 import com.yahoo.jdisc.http.ServerConfig;
 import com.yahoo.osgi.provider.model.ComponentModel;
+import com.yahoo.vespa.model.container.ApplicationContainerCluster;
 import com.yahoo.vespa.model.container.ContainerCluster;
 import com.yahoo.vespa.model.container.component.SimpleComponent;
 
@@ -23,11 +23,10 @@ import static com.yahoo.component.ComponentSpecification.fromString;
 public class JettyHttpServer extends SimpleComponent implements ServerConfig.Producer {
 
     private final ContainerCluster<?> cluster;
-    private final boolean isHostedVespa;
+    private volatile boolean isHostedVespa;
     private final List<ConnectorFactory> connectorFactories = new ArrayList<>();
-    private volatile boolean enableJdiscConnectionLog;
 
-    public JettyHttpServer(ComponentId id, ContainerCluster<?> cluster, ModelContext.FeatureFlags featureFlags, boolean isHostedVespa) {
+    public JettyHttpServer(ComponentId id, ContainerCluster<?> cluster, boolean isHostedVespa) {
         super(new ComponentModel(
                 new BundleInstantiationSpecification(id,
                                                      fromString("com.yahoo.jdisc.http.server.jetty.JettyHttpServer"),
@@ -38,23 +37,14 @@ public class JettyHttpServer extends SimpleComponent implements ServerConfig.Pro
         final FilterBindingsProviderComponent filterBindingsProviderComponent = new FilterBindingsProviderComponent(id);
         addChild(filterBindingsProviderComponent);
         inject(filterBindingsProviderComponent);
-        this.enableJdiscConnectionLog = featureFlags.enableJdiscConnectionLog();
     }
+
+    public void setHostedVespa(boolean isHostedVespa) { this.isHostedVespa = isHostedVespa; }
 
     public void addConnector(ConnectorFactory connectorFactory) {
         connectorFactories.add(connectorFactory);
         addChild(connectorFactory);
     }
-
-    public void removeConnector(ConnectorFactory connectorFactory) {
-        if (connectorFactory == null) {
-            return;
-        }
-        removeChild(connectorFactory);
-        connectorFactories.remove(connectorFactory);
-    }
-
-    public void enableConnectionLog(boolean enabled) { this.enableJdiscConnectionLog = enabled; }
 
     public List<ConnectorFactory> getConnectorFactories() {
         return Collections.unmodifiableList(connectorFactories);
@@ -71,6 +61,9 @@ public class JettyHttpServer extends SimpleComponent implements ServerConfig.Pro
             builder.accessLog(new ServerConfig.AccessLog.Builder()
                     .remoteAddressHeaders(List.of())
                     .remotePortHeaders(List.of()));
+
+            // Enable connection log hosted Vespa
+            builder.connectionLog(new ServerConfig.ConnectionLog.Builder().enabled(true));
         } else {
             // TODO Vespa 8: Remove legacy Yahoo headers
             builder.accessLog(new ServerConfig.AccessLog.Builder()
@@ -78,16 +71,21 @@ public class JettyHttpServer extends SimpleComponent implements ServerConfig.Pro
                     .remotePortHeaders(List.of("X-Forwarded-Port", "y-rp")));
         }
         configureJettyThreadpool(builder);
-        builder.connectionLog(new ServerConfig.ConnectionLog.Builder()
-                .enabled(enableJdiscConnectionLog));
     }
 
     private void configureJettyThreadpool(ServerConfig.Builder builder) {
         if (cluster == null) return;
+        if (cluster instanceof ApplicationContainerCluster) {
+            configureApplicationClusterJettyThreadPool(builder);
+        } else {
+            builder.minWorkerThreads(2).maxWorkerThreads(4);
+        }
+    }
+    private void configureApplicationClusterJettyThreadPool(ServerConfig.Builder builder) {
         double vcpu = cluster.vcpu().orElse(0);
         if (vcpu > 0) {
             int threads = 16 + (int) Math.ceil(vcpu);
-            builder.maxWorkerThreads(threads).minWorkerThreads(threads);
+            builder.minWorkerThreads(threads).maxWorkerThreads(threads);
         }
     }
 

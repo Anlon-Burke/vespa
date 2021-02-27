@@ -1,6 +1,7 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.clustercontroller.apps.clustercontroller;
 
+import com.google.inject.Inject;
 import com.yahoo.jdisc.Metric;
 import com.yahoo.vdslib.distribution.Distribution;
 import com.yahoo.vdslib.state.NodeType;
@@ -9,6 +10,7 @@ import com.yahoo.vespa.config.content.FleetcontrollerConfig;
 import com.yahoo.cloud.config.SlobroksConfig;
 import com.yahoo.vespa.config.content.StorDistributionConfig;
 import com.yahoo.cloud.config.ZookeepersConfig;
+import com.yahoo.vespa.zookeeper.VespaZooKeeperServer;
 
 import java.time.Duration;
 import java.util.Map;
@@ -19,31 +21,43 @@ import java.util.Map;
  */
 public class ClusterControllerClusterConfigurer {
 
-    private final FleetControllerOptions options = new FleetControllerOptions(null);
+    private final FleetControllerOptions options;
 
+    /**
+     * The {@link VespaZooKeeperServer} argument is required by the injected {@link ClusterController},
+     * to ensure that zookeeper has started before it starts polling it. It must be done here to avoid
+     * duplicates being created by the dependency injection framework.
+     */
+    @Inject
     public ClusterControllerClusterConfigurer(ClusterController controller,
                                               StorDistributionConfig distributionConfig,
                                               FleetcontrollerConfig fleetcontrollerConfig,
                                               SlobroksConfig slobroksConfig,
                                               ZookeepersConfig zookeepersConfig,
-                                              Metric metricImpl) throws Exception
-    {
-        configure(distributionConfig);
-        configure(fleetcontrollerConfig);
-        configure(slobroksConfig);
-        configure(zookeepersConfig);
+                                              Metric metricImpl,
+                                              VespaZooKeeperServer started) throws Exception {
+        this.options = configure(distributionConfig, fleetcontrollerConfig, slobroksConfig, zookeepersConfig);
         if (controller != null) {
             controller.setOptions(options, metricImpl);
         }
     }
 
-    public FleetControllerOptions getOptions() { return options; }
+    FleetControllerOptions getOptions() { return options; }
 
-    private void configure(StorDistributionConfig config) {
-        options.setStorageDistribution(new Distribution(config));
+    private static FleetControllerOptions configure(StorDistributionConfig distributionConfig,
+                                                    FleetcontrollerConfig fleetcontrollerConfig,
+                                                    SlobroksConfig slobroksConfig,
+                                                    ZookeepersConfig zookeepersConfig) {
+        Distribution distribution = new Distribution(distributionConfig);
+        FleetControllerOptions options = new FleetControllerOptions(fleetcontrollerConfig.cluster_name(), distribution.getNodes());
+        options.setStorageDistribution(distribution);
+        configure(options, fleetcontrollerConfig);
+        configure(options, slobroksConfig);
+        configure(options, zookeepersConfig);
+        return options;
     }
 
-    private void configure(FleetcontrollerConfig config) {
+    private static void configure(FleetControllerOptions options, FleetcontrollerConfig config) {
         options.clusterName = config.cluster_name();
         options.fleetControllerIndex = config.index();
         options.fleetControllerCount = config.fleet_controller_count();
@@ -78,9 +92,10 @@ public class ClusterControllerClusterConfigurer {
         options.enableTwoPhaseClusterStateActivation = config.enable_two_phase_cluster_state_transitions();
         options.clusterFeedBlockEnabled = config.enable_cluster_feed_block();
         options.clusterFeedBlockLimit = Map.copyOf(config.cluster_feed_block_limit());
+        options.clusterFeedBlockNoiseLevel = config.cluster_feed_block_noise_level();
     }
 
-    private void configure(SlobroksConfig config) {
+    private static void configure(FleetControllerOptions options, SlobroksConfig config) {
         String[] specs = new String[config.slobrok().size()];
         for (int i = 0; i < config.slobrok().size(); i++) {
             specs[i] = config.slobrok().get(i).connectionspec();
@@ -88,11 +103,11 @@ public class ClusterControllerClusterConfigurer {
         options.slobrokConnectionSpecs = specs;
     }
 
-    private void configure(ZookeepersConfig config) {
+    private static void configure(FleetControllerOptions options, ZookeepersConfig config) {
         options.zooKeeperServerAddress = verifyZooKeeperAddress(config.zookeeperserverlist());
     }
 
-    private String verifyZooKeeperAddress(String zooKeeperServerAddress) {
+    private static String verifyZooKeeperAddress(String zooKeeperServerAddress) {
         if (zooKeeperServerAddress == null || "".equals(zooKeeperServerAddress)) {
             throw new IllegalArgumentException("zookeeper server address must be set, was '" + zooKeeperServerAddress + "'");
         }

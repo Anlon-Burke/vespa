@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 /**
  * This moves expired failed nodes:
  *
- * - To parked: If the node has known hardware failure, Docker hosts are moved to parked only when all of their
+ * - To parked: If the node has known hardware failure, hosts are moved to parked only when all of their
  *              children are already in parked.
  * - To dirty: If the node is a host and has failed less than 5 times, or always if the node is a child.
  * - Otherwise the node will remain in failed.
@@ -29,7 +29,7 @@ import java.util.stream.Collectors;
  * Failed content nodes are given a long expiry time to enable us to manually moved them back to
  * active to recover data in cases where the node was failed accidentally.
  *
- * Failed container (Vespa, not Docker) nodes are expired early as there's no data to potentially recover.
+ * Failed containers (Vespa, not Linux) are expired early as there's no data to potentially recover.
  *
  * The purpose of the automatic recycling to dirty + fail count is that nodes which were moved
  * to failed due to some undetected hardware failure will end up being failed again.
@@ -68,7 +68,7 @@ public class FailedExpirer extends NodeRepositoryMaintainer {
 
     @Override
     protected boolean maintain() {
-        List<Node> remainingNodes = nodeRepository.getNodes(Node.State.failed).stream()
+        List<Node> remainingNodes = nodeRepository.nodes().list(Node.State.failed).stream()
                                                   .filter(node -> node.type() == NodeType.tenant ||
                                                                   node.type() == NodeType.host)
                                                   .collect(Collectors.toList());
@@ -95,14 +95,14 @@ public class FailedExpirer extends NodeRepositoryMaintainer {
         for (Node candidate : nodes) {
             if (NodeFailer.hasHardwareIssue(candidate, nodeRepository)) {
                 List<String> unparkedChildren = !candidate.type().isHost() ? List.of() :
-                                                nodeRepository.list()
+                                                nodeRepository.nodes().list()
                                                               .childrenOf(candidate)
                                                               .matching(node -> node.state() != Node.State.parked)
                                                               .mapToList(Node::hostname);
 
                 if (unparkedChildren.isEmpty()) {
-                    nodeRepository.park(candidate.hostname(), false, Agent.FailedExpirer,
-                            "Parked by FailedExpirer due to hardware issue");
+                    nodeRepository.nodes().park(candidate.hostname(), false, Agent.FailedExpirer,
+                                                "Parked by FailedExpirer due to hardware issue");
                 } else {
                     log.info(String.format("Expired failed node %s with hardware issue was not parked because of " +
                                            "unparked children: %s", candidate.hostname(),
@@ -112,7 +112,7 @@ public class FailedExpirer extends NodeRepositoryMaintainer {
                 nodesToRecycle.add(candidate);
             }
         }
-        nodeRepository.deallocate(nodesToRecycle, Agent.FailedExpirer, "Expired by FailedExpirer");
+        nodeRepository.nodes().deallocate(nodesToRecycle, Agent.FailedExpirer, "Expired by FailedExpirer");
     }
 
     /** Returns whether the current node fail count should be used as an indicator of hardware issue */

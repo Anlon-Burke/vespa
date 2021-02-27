@@ -54,13 +54,13 @@ public class AutoscalingIntegrationTest {
         ClusterResources min = new ClusterResources(2, 1, nodes);
         ClusterResources max = new ClusterResources(2, 1, nodes);
 
-        Application application = tester.nodeRepository().applications().get(application1).orElse(new Application(application1))
+        Application application = tester.nodeRepository().applications().get(application1).orElse(Application.empty(application1))
                                         .withCluster(cluster1.id(), false, min, max);
-        try (Mutex lock = tester.nodeRepository().lock(application1)) {
+        try (Mutex lock = tester.nodeRepository().nodes().lock(application1)) {
             tester.nodeRepository().applications().put(application, lock);
         }
-        var scaledResources = autoscaler.suggest(application.clusters().get(cluster1.id()),
-                                                 tester.nodeRepository().list(application1));
+        var scaledResources = autoscaler.suggest(application, application.clusters().get(cluster1.id()),
+                                                 tester.nodeRepository().nodes().list().owner(application1));
         assertTrue(scaledResources.isPresent());
     }
 

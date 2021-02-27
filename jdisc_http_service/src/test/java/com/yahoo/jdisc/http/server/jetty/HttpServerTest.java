@@ -5,6 +5,7 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Module;
 import com.yahoo.container.logging.ConnectionLog;
 import com.yahoo.container.logging.ConnectionLogEntry;
+import com.yahoo.container.logging.ConnectionLogEntry.SslHandshakeFailure.ExceptionEntry;
 import com.yahoo.container.logging.RequestLog;
 import com.yahoo.container.logging.RequestLogEntry;
 import com.yahoo.jdisc.References;
@@ -32,6 +33,7 @@ import com.yahoo.security.Pkcs10CsrBuilder;
 import com.yahoo.security.SslContextBuilder;
 import com.yahoo.security.X509CertificateBuilder;
 import com.yahoo.security.X509CertificateUtils;
+import com.yahoo.security.tls.TlsContext;
 import org.apache.http.conn.ssl.NoopHostnameVerifier;
 import org.apache.http.entity.ContentType;
 import org.apache.http.entity.mime.FormBodyPart;
@@ -62,6 +64,7 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -91,8 +94,8 @@ import static com.yahoo.jdisc.http.HttpHeaders.Names.X_DISABLE_CHUNKING;
 import static com.yahoo.jdisc.http.HttpHeaders.Values.APPLICATION_X_WWW_FORM_URLENCODED;
 import static com.yahoo.jdisc.http.HttpHeaders.Values.CLOSE;
 import static com.yahoo.jdisc.http.server.jetty.SimpleHttpClient.ResponseValidator;
-import static com.yahoo.security.KeyAlgorithm.RSA;
-import static com.yahoo.security.SignatureAlgorithm.SHA256_WITH_RSA;
+import static com.yahoo.security.KeyAlgorithm.EC;
+import static com.yahoo.security.SignatureAlgorithm.SHA256_WITH_ECDSA;
 import static org.cthul.matchers.CthulMatchers.containsPattern;
 import static org.cthul.matchers.CthulMatchers.matchesPattern;
 import static org.hamcrest.CoreMatchers.containsString;
@@ -100,11 +103,13 @@ import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.startsWith;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.anyOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeTrue;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -175,7 +180,7 @@ public class HttpServerTest {
 
     @Test
     public void requireThatAccessLogIsCalledForRequestRejectedByJetty() throws Exception {
-        InMemoryRequestLog requestLogMock = new InMemoryRequestLog();
+        BlockingQueueRequestLog requestLogMock = new BlockingQueueRequestLog();
         final TestDriver driver = TestDrivers.newConfiguredInstance(
                 mockRequestHandler(),
                 new ServerConfig.Builder(),
@@ -184,8 +189,7 @@ public class HttpServerTest {
         driver.client().get("/status.html")
                 .expectStatusCode(is(REQUEST_URI_TOO_LONG));
         assertThat(driver.close(), is(true));
-        assertThat(requestLogMock.entries().size(), equalTo(1));
-        RequestLogEntry entry = requestLogMock.entries().get(0);
+        RequestLogEntry entry = requestLogMock.poll(Duration.ofSeconds(30));
         assertEquals(414, entry.statusCode().getAsInt());
     }
 
@@ -643,13 +647,12 @@ public class HttpServerTest {
                 .build();
         assertHttpsRequestTriggersSslHandshakeException(
                 driver, clientCtx, null, null, "Received fatal alert: bad_certificate");
-        verify(metricConsumer.mockitoMock())
+        verify(metricConsumer.mockitoMock(), atLeast(1))
                 .add(MetricDefinitions.SSL_HANDSHAKE_FAILURE_MISSING_CLIENT_CERT, 1L, MetricConsumerMock.STATIC_CONTEXT);
         assertTrue(driver.close());
         Assertions.assertThat(connectionLog.logEntries()).hasSize(1);
-        ConnectionLogEntry logEntry = connectionLog.logEntries().get(0);
-        Assertions.assertThat(logEntry.sslHandshakeFailureException()).hasValue(SSLHandshakeException.class.getName());
-        Assertions.assertThat(logEntry.sslHandshakeFailureType()).hasValue(SslHandshakeFailure.MISSING_CLIENT_CERT.failureType());
+        assertSslHandshakeFailurePresent(
+                connectionLog.logEntries().get(0), SSLHandshakeException.class, SslHandshakeFailure.MISSING_CLIENT_CERT.failureType());
     }
 
     @Test
@@ -666,15 +669,16 @@ public class HttpServerTest {
                 .withKeyStore(privateKeyFile, certificateFile)
                 .build();
 
-        assertHttpsRequestTriggersSslHandshakeException(
-                driver, clientCtx, "TLSv1.3", null, "Received fatal alert: protocol_version");
-        verify(metricConsumer.mockitoMock())
+        boolean tlsv11Enabled = List.of(clientCtx.getDefaultSSLParameters().getProtocols()).contains("TLSv1.1");
+        assumeTrue("TLSv1.1 must be enabled in installed JDK", tlsv11Enabled);
+
+        assertHttpsRequestTriggersSslHandshakeException(driver, clientCtx, "TLSv1.1", null, "protocol");
+        verify(metricConsumer.mockitoMock(), atLeast(1))
                 .add(MetricDefinitions.SSL_HANDSHAKE_FAILURE_INCOMPATIBLE_PROTOCOLS, 1L, MetricConsumerMock.STATIC_CONTEXT);
         assertTrue(driver.close());
         Assertions.assertThat(connectionLog.logEntries()).hasSize(1);
-        ConnectionLogEntry logEntry = connectionLog.logEntries().get(0);
-        Assertions.assertThat(logEntry.sslHandshakeFailureException()).hasValue(SSLHandshakeException.class.getName());
-        Assertions.assertThat(logEntry.sslHandshakeFailureType()).hasValue(SslHandshakeFailure.INCOMPATIBLE_PROTOCOLS.failureType());
+        assertSslHandshakeFailurePresent(
+                connectionLog.logEntries().get(0), SSLHandshakeException.class, SslHandshakeFailure.INCOMPATIBLE_PROTOCOLS.failureType());
     }
 
     @Test
@@ -693,13 +697,12 @@ public class HttpServerTest {
 
         assertHttpsRequestTriggersSslHandshakeException(
                 driver, clientCtx, null, "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA", "Received fatal alert: handshake_failure");
-        verify(metricConsumer.mockitoMock())
+        verify(metricConsumer.mockitoMock(), atLeast(1))
                 .add(MetricDefinitions.SSL_HANDSHAKE_FAILURE_INCOMPATIBLE_CIPHERS, 1L, MetricConsumerMock.STATIC_CONTEXT);
         assertTrue(driver.close());
         Assertions.assertThat(connectionLog.logEntries()).hasSize(1);
-        ConnectionLogEntry logEntry = connectionLog.logEntries().get(0);
-        Assertions.assertThat(logEntry.sslHandshakeFailureException()).hasValue(SSLHandshakeException.class.getName());
-        Assertions.assertThat(logEntry.sslHandshakeFailureType()).hasValue(SslHandshakeFailure.INCOMPATIBLE_CIPHERS.failureType());
+        assertSslHandshakeFailurePresent(
+                connectionLog.logEntries().get(0), SSLHandshakeException.class, SslHandshakeFailure.INCOMPATIBLE_CIPHERS.failureType());
     }
 
     @Test
@@ -722,13 +725,12 @@ public class HttpServerTest {
 
         assertHttpsRequestTriggersSslHandshakeException(
                 driver, clientCtx, null, null, "Received fatal alert: certificate_unknown");
-        verify(metricConsumer.mockitoMock())
+        verify(metricConsumer.mockitoMock(), atLeast(1))
                 .add(MetricDefinitions.SSL_HANDSHAKE_FAILURE_INVALID_CLIENT_CERT, 1L, MetricConsumerMock.STATIC_CONTEXT);
         assertTrue(driver.close());
         Assertions.assertThat(connectionLog.logEntries()).hasSize(1);
-        ConnectionLogEntry logEntry = connectionLog.logEntries().get(0);
-        Assertions.assertThat(logEntry.sslHandshakeFailureException()).hasValue(SSLHandshakeException.class.getName());
-        Assertions.assertThat(logEntry.sslHandshakeFailureType()).hasValue(SslHandshakeFailure.INVALID_CLIENT_CERT.failureType());
+        assertSslHandshakeFailurePresent(
+                connectionLog.logEntries().get(0), SSLHandshakeException.class, SslHandshakeFailure.INVALID_CLIENT_CERT.failureType());
     }
 
     @Test
@@ -750,7 +752,7 @@ public class HttpServerTest {
 
         assertHttpsRequestTriggersSslHandshakeException(
                 driver, clientCtx, null, null, "Received fatal alert: certificate_unknown");
-        verify(metricConsumer.mockitoMock())
+        verify(metricConsumer.mockitoMock(), atLeast(1))
                 .add(MetricDefinitions.SSL_HANDSHAKE_FAILURE_EXPIRED_CLIENT_CERT, 1L, MetricConsumerMock.STATIC_CONTEXT);
         assertTrue(driver.close());
         Assertions.assertThat(connectionLog.logEntries()).hasSize(1);
@@ -848,7 +850,7 @@ public class HttpServerTest {
         Assertions.assertThat(logEntry.localPort()).hasValue(listenPort);
         Assertions.assertThat(logEntry.httpBytesReceived()).hasValueSatisfying(value -> Assertions.assertThat(value).isPositive());
         Assertions.assertThat(logEntry.httpBytesSent()).hasValueSatisfying(value -> Assertions.assertThat(value).isPositive());
-        Assertions.assertThat(logEntry.sslProtocol()).hasValue("TLSv1.2");
+        Assertions.assertThat(logEntry.sslProtocol()).hasValueSatisfying(TlsContext.ALLOWED_PROTOCOLS::contains);
         Assertions.assertThat(logEntry.sslPeerSubject()).hasValue("CN=localhost");
         Assertions.assertThat(logEntry.sslCipherSuite()).hasValueSatisfying(cipher -> Assertions.assertThat(cipher).isNotBlank());
         Assertions.assertThat(logEntry.sslSessionId()).hasValueSatisfying(sessionId -> Assertions.assertThat(sessionId).hasSize(64));
@@ -912,6 +914,15 @@ public class HttpServerTest {
         }
     }
 
+    private static void assertSslHandshakeFailurePresent(
+            ConnectionLogEntry entry, Class<? extends SSLHandshakeException> expectedException, String expectedType) {
+        Assertions.assertThat(entry.sslHandshakeFailure()).isPresent();
+        ConnectionLogEntry.SslHandshakeFailure failure = entry.sslHandshakeFailure().get();
+        assertEquals(expectedType, failure.type());
+        ExceptionEntry exceptionEntry = failure.exceptionChain().get(0);
+        assertEquals(expectedException.getName(), exceptionEntry.name());
+    }
+
     private static TestDriver createSslWithProxyProtocolTestDriver(
             Path certificateFile, Path privateKeyFile, RequestLog requestLog,
             ConnectionLog connectionLog, boolean mixedMode) {
@@ -960,17 +971,18 @@ public class HttpServerTest {
         } catch (SSLException e) {
             // This exception is thrown if Apache httpclient's write thread detects the handshake failure before the read thread.
             log.log(Level.WARNING, "Client failed to get a proper TLS handshake response: " + e.getMessage(), e);
-            assertThat(e.getMessage(), containsString("readHandshakeRecord")); // Only ignore this specific ssl exception
+            // Only ignore a subset of exceptions
+            assertThat(e.getMessage(), anyOf(containsString("readHandshakeRecord"), containsString("Broken pipe")));
         }
     }
 
     private static void generatePrivateKeyAndCertificate(Path privateKeyFile, Path certificateFile) throws IOException {
-        KeyPair keyPair = KeyUtils.generateKeypair(RSA, 2048);
+        KeyPair keyPair = KeyUtils.generateKeypair(EC);
         Files.writeString(privateKeyFile, KeyUtils.toPem(keyPair.getPrivate()));
 
         X509Certificate certificate = X509CertificateBuilder
                 .fromKeypair(
-                        keyPair, new X500Principal("CN=localhost"), Instant.EPOCH, Instant.EPOCH.plus(100_000, ChronoUnit.DAYS), SHA256_WITH_RSA, BigInteger.ONE)
+                        keyPair, new X500Principal("CN=localhost"), Instant.EPOCH, Instant.EPOCH.plus(100_000, ChronoUnit.DAYS), SHA256_WITH_ECDSA, BigInteger.ONE)
                 .build();
         Files.writeString(certificateFile, X509CertificateUtils.toPem(certificate));
     }
@@ -981,11 +993,11 @@ public class HttpServerTest {
         X509Certificate rootCertificate = X509CertificateUtils.fromPem(Files.readString(rootCertificateFile));
         PrivateKey privateKey = KeyUtils.fromPemEncodedPrivateKey(Files.readString(rootPrivateKeyFile));
 
-        KeyPair keyPair = KeyUtils.generateKeypair(RSA, 2048);
+        KeyPair keyPair = KeyUtils.generateKeypair(EC);
         Files.writeString(privateKeyFile, KeyUtils.toPem(keyPair.getPrivate()));
-        Pkcs10Csr csr = Pkcs10CsrBuilder.fromKeypair(new X500Principal("CN=myclient"), keyPair, SHA256_WITH_RSA).build();
+        Pkcs10Csr csr = Pkcs10CsrBuilder.fromKeypair(new X500Principal("CN=myclient"), keyPair, SHA256_WITH_ECDSA).build();
         X509Certificate certificate = X509CertificateBuilder
-                .fromCsr(csr, rootCertificate.getSubjectX500Principal(), Instant.EPOCH, notAfter, privateKey, SHA256_WITH_RSA, BigInteger.ONE)
+                .fromCsr(csr, rootCertificate.getSubjectX500Principal(), Instant.EPOCH, notAfter, privateKey, SHA256_WITH_ECDSA, BigInteger.ONE)
                 .build();
         Files.writeString(certificateFile, X509CertificateUtils.toPem(certificate));
     }

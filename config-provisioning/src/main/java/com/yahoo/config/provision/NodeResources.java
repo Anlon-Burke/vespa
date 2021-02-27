@@ -218,8 +218,12 @@ public class NodeResources {
         sb.append(x10/10).append('.').append(x10%10);
         return sb;
     }
+
     @Override
     public String toString() {
+        if (isUnspecified())
+            return "unspecified resources";
+
         StringBuilder sb = new StringBuilder("[vcpu: ");
         appendDouble(sb, vcpu);
         sb.append(", memory: ");

@@ -4,6 +4,12 @@
       "name": "AutoscalingMaintainer"
     },
     {
+      "name": "ConfigServerReconfigurer"
+    },
+    {
+      "name": "DedicatedClusterControllerClusterMigrator"
+    },
+    {
       "name": "DirtyExpirer"
     },
     {

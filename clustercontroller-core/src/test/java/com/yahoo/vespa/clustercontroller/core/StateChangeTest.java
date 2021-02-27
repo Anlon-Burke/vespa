@@ -52,11 +52,10 @@ public class StateChangeTest extends FleetControllerTest {
         communicator = new DummyCommunicator(nodes, timer);
         MetricUpdater metricUpdater = new MetricUpdater(new NoMetricReporter(), options.fleetControllerIndex);
         eventLog = new EventLog(timer, metricUpdater);
-        ContentCluster cluster = new ContentCluster(options.clusterName, options.nodes, options.storageDistribution,
-                                                    options.minStorageNodesUp, options.minRatioOfStorageNodesUp);
+        ContentCluster cluster = new ContentCluster(options.clusterName, options.nodes, options.storageDistribution);
         NodeStateGatherer stateGatherer = new NodeStateGatherer(timer, timer, eventLog);
         DatabaseHandler database = new DatabaseHandler(new ZooKeeperDatabaseFactory(), timer, options.zooKeeperServerAddress, options.fleetControllerIndex, timer);
-        StateChangeHandler stateGenerator = new StateChangeHandler(timer, eventLog, metricUpdater);
+        StateChangeHandler stateGenerator = new StateChangeHandler(timer, eventLog);
         SystemStateBroadcaster stateBroadcaster = new SystemStateBroadcaster(timer, timer);
         MasterElectionHandler masterElectionHandler = new MasterElectionHandler(options.fleetControllerIndex, options.fleetControllerCount, timer, timer);
         ctrl = new FleetController(timer, eventLog, cluster, stateGatherer, communicator, null, null, communicator, database, stateGenerator, stateBroadcaster, masterElectionHandler, metricUpdater, options);
@@ -955,7 +954,7 @@ public class StateChangeTest extends FleetControllerTest {
         options.minTimeBeforeFirstSystemStateBroadcast = 3 * 60 * 1000;
         setUpSystem(true, options);
         setUpVdsNodes(true, new DummyVdsNodeOptions(), true);
-            // Leave one node down to avoid sending cluster state due to having seen all node states.
+        // Leave one node down to avoid sending cluster state due to having seen all node states.
         for (int i=0; i<nodes.size(); ++i) {
             if (i != 3) {
                 nodes.get(i).connect();
@@ -974,7 +973,7 @@ public class StateChangeTest extends FleetControllerTest {
             @Override int expectedMessageCount(final DummyVdsNode node) { return 0; }
         };
 
-            // Pass time and see that the nodes get state
+        // Pass time and see that the nodes get state
         timer.advanceTime(3 * 60 * 1000);
         waiter.waitForState("version:\\d+ distributor:10 storage:10 .1.s:d", timeoutMS);
 

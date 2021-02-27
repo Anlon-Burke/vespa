@@ -12,6 +12,7 @@ import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.provision.Node;
+import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancer;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancerInstance;
 import com.yahoo.vespa.hosted.provision.lb.Real;
@@ -49,8 +50,8 @@ public class LoadBalancerProvisionerTest {
 
     @Test
     public void provision_load_balancer() {
-        Supplier<List<LoadBalancer>> lbApp1 = () -> tester.nodeRepository().loadBalancers(app1).asList();
-        Supplier<List<LoadBalancer>> lbApp2 = () -> tester.nodeRepository().loadBalancers(app2).asList();
+        Supplier<List<LoadBalancer>> lbApp1 = () -> tester.nodeRepository().loadBalancers().list(app1).asList();
+        Supplier<List<LoadBalancer>> lbApp2 = () -> tester.nodeRepository().loadBalancers().list(app2).asList();
         ClusterSpec.Id containerCluster1 = ClusterSpec.Id.from("qrs1");
         ClusterSpec.Id contentCluster = ClusterSpec.Id.from("content");
 
@@ -76,13 +77,13 @@ public class LoadBalancerProvisionerTest {
         // A container is failed
         Supplier<List<Node>> containers = () -> tester.getNodes(app1).container().asList();
         Node toFail = containers.get().get(0);
-        tester.nodeRepository().fail(toFail.hostname(), Agent.system, this.getClass().getSimpleName());
+        tester.nodeRepository().nodes().fail(toFail.hostname(), Agent.system, this.getClass().getSimpleName());
 
         // Redeploying replaces failed node and removes it from load balancer
         tester.activate(app1, prepare(app1,
                                       clusterRequest(ClusterSpec.Type.container, containerCluster1),
                                       clusterRequest(ClusterSpec.Type.content, contentCluster)));
-        LoadBalancer loadBalancer = tester.nodeRepository().loadBalancers(app1).asList().get(0);
+        LoadBalancer loadBalancer = tester.nodeRepository().loadBalancers().list(app1).asList().get(0);
         assertEquals(2, loadBalancer.instance().reals().size());
         assertTrue("Failed node is removed", loadBalancer.instance().reals().stream()
                                                          .map(Real::hostname)
@@ -92,7 +93,7 @@ public class LoadBalancerProvisionerTest {
         assertEquals(containers.get().get(1).hostname(), get(loadBalancer.instance().reals(), 1).hostname().value());
         assertSame("State is unchanged", LoadBalancer.State.active, loadBalancer.state());
 
-        // Add another container cluster
+        // Add another container cluster to first app
         ClusterSpec.Id containerCluster2 = ClusterSpec.Id.from("qrs2");
         tester.activate(app1, prepare(app1,
                                       clusterRequest(ClusterSpec.Type.container, containerCluster1),
@@ -133,10 +134,10 @@ public class LoadBalancerProvisionerTest {
                            .findFirst()
                            .get());
 
-        // Application is removed, nodes and load balancer are deactivated
+        // Entire application is removed: Nodes and load balancer are deactivated
         tester.remove(app1);
         dirtyNodesOf(app1);
-        assertTrue("No nodes are allocated to " + app1, tester.nodeRepository().getNodes(app1, Node.State.reserved, Node.State.active).isEmpty());
+        assertTrue("No nodes are allocated to " + app1, tester.nodeRepository().nodes().list(Node.State.reserved, Node.State.active).owner(app1).isEmpty());
         assertEquals(2, lbApp1.get().size());
         assertTrue("Deactivated load balancers", lbApp1.get().stream().allMatch(lb -> lb.state() == LoadBalancer.State.inactive));
         assertTrue("Load balancers for " + app2 + " remain active", lbApp2.get().stream().allMatch(lb -> lb.state() == LoadBalancer.State.active));
@@ -146,11 +147,17 @@ public class LoadBalancerProvisionerTest {
                                       clusterRequest(ClusterSpec.Type.container, containerCluster1),
                                       clusterRequest(ClusterSpec.Type.content, contentCluster)));
         assertSame("Re-activated load balancer for " + containerCluster1, LoadBalancer.State.active,
-                    lbApp1.get().stream()
-                                 .filter(lb -> lb.id().cluster().equals(containerCluster1))
-                                 .map(LoadBalancer::state)
-                                 .findFirst()
-                                 .orElseThrow());
+                   lbApp1.get().stream()
+                         .filter(lb -> lb.id().cluster().equals(containerCluster1))
+                         .map(LoadBalancer::state)
+                         .findFirst()
+                         .orElseThrow());
+
+        // Next redeploy does not create a new load balancer instance
+        tester.loadBalancerService().throwOnCreate(true);
+        tester.activate(app1, prepare(app1,
+                                      clusterRequest(ClusterSpec.Type.container, containerCluster1),
+                                      clusterRequest(ClusterSpec.Type.content, contentCluster)));
     }
 
     @Test
@@ -159,22 +166,22 @@ public class LoadBalancerProvisionerTest {
         tester.makeReadyHosts(2, resources);
         tester.activateTenantHosts();
         var nodes = tester.prepare(app1, clusterRequest(ClusterSpec.Type.container, ClusterSpec.Id.from("qrs")), 2 , 1, resources);
-        Supplier<LoadBalancer> lb = () -> tester.nodeRepository().loadBalancers(app1).asList().get(0);
+        Supplier<LoadBalancer> lb = () -> tester.nodeRepository().loadBalancers().list(app1).asList().get(0);
         assertTrue("Load balancer provisioned with empty reals", tester.loadBalancerService().instances().get(lb.get().id()).reals().isEmpty());
-        assignIps(tester.nodeRepository().getNodes(app1));
+        assignIps(tester.nodeRepository().nodes().list().owner(app1));
         tester.activate(app1, nodes);
         assertFalse("Load balancer is reconfigured with reals", tester.loadBalancerService().instances().get(lb.get().id()).reals().isEmpty());
 
         // Application is removed, nodes are deleted and load balancer is deactivated
         tester.remove(app1);
-        tester.nodeRepository().database().removeNodes(tester.nodeRepository().getNodes(NodeType.tenant));
-        assertTrue("Nodes are deleted", tester.nodeRepository().getNodes(NodeType.tenant).isEmpty());
+        tester.nodeRepository().database().removeNodes(tester.nodeRepository().nodes().list().nodeType(NodeType.tenant).asList());
+        assertTrue("Nodes are deleted", tester.nodeRepository().nodes().list().nodeType(NodeType.tenant).isEmpty());
         assertSame("Load balancer is deactivated", LoadBalancer.State.inactive, lb.get().state());
 
         // Application is redeployed
         nodes = tester.prepare(app1, clusterRequest(ClusterSpec.Type.container, ClusterSpec.Id.from("qrs")), 2 , 1, resources);
         assertTrue("Load balancer is reconfigured with empty reals", tester.loadBalancerService().instances().get(lb.get().id()).reals().isEmpty());
-        assignIps(tester.nodeRepository().getNodes(app1));
+        assignIps(tester.nodeRepository().nodes().list().owner(app1));
         tester.activate(app1, nodes);
         assertFalse("Load balancer is reconfigured with reals", tester.loadBalancerService().instances().get(lb.get().id()).reals().isEmpty());
     }
@@ -185,7 +192,7 @@ public class LoadBalancerProvisionerTest {
                                            clusterRequest(ClusterSpec.Type.container,
                                                           ClusterSpec.Id.from("tenant-host"))));
         assertTrue("No load balancer provisioned", tester.loadBalancerService().instances().isEmpty());
-        assertEquals(List.of(), tester.nodeRepository().loadBalancers(infraApp1).asList());
+        assertEquals(List.of(), tester.nodeRepository().loadBalancers().list(infraApp1).asList());
     }
 
     @Test
@@ -193,12 +200,12 @@ public class LoadBalancerProvisionerTest {
         tester.activate(app1, prepare(app1, clusterRequest(ClusterSpec.Type.content,
                                                            ClusterSpec.Id.from("tenant-host"))));
         assertTrue("No load balancer provisioned", tester.loadBalancerService().instances().isEmpty());
-        assertEquals(List.of(), tester.nodeRepository().loadBalancers(app1).asList());
+        assertEquals(List.of(), tester.nodeRepository().loadBalancers().list(app1).asList());
     }
 
     @Test
     public void provision_load_balancer_combined_cluster() {
-        Supplier<List<LoadBalancer>> lbs = () -> tester.nodeRepository().loadBalancers(app1).asList();
+        Supplier<List<LoadBalancer>> lbs = () -> tester.nodeRepository().loadBalancers().list(app1).asList();
         var combinedId = ClusterSpec.Id.from("container1");
         var nodes = prepare(app1, clusterRequest(ClusterSpec.Type.combined, ClusterSpec.Id.from("content1"), Optional.of(combinedId)));
         assertEquals(1, lbs.get().size());
@@ -211,7 +218,7 @@ public class LoadBalancerProvisionerTest {
     @Test
     public void provision_load_balancer_config_server_cluster() {
         ApplicationId configServerApp = ApplicationId.from("hosted-vespa", "zone-config-servers", "default");
-        Supplier<List<LoadBalancer>> lbs = () -> tester.nodeRepository().loadBalancers(configServerApp).asList();
+        Supplier<List<LoadBalancer>> lbs = () -> tester.nodeRepository().loadBalancers().list(configServerApp).asList();
         var cluster = ClusterSpec.Id.from("zone-config-servers");
         var nodes = prepare(configServerApp, Capacity.fromRequiredNodeType(NodeType.config),
                             clusterRequest(ClusterSpec.Type.admin, cluster));
@@ -226,7 +233,7 @@ public class LoadBalancerProvisionerTest {
     @Test
     public void provision_load_balancer_controller_cluster() {
         ApplicationId controllerApp = ApplicationId.from("hosted-vespa", "controller", "default");
-        Supplier<List<LoadBalancer>> lbs = () -> tester.nodeRepository().loadBalancers(controllerApp).asList();
+        Supplier<List<LoadBalancer>> lbs = () -> tester.nodeRepository().loadBalancers().list(controllerApp).asList();
         var cluster = ClusterSpec.Id.from("zone-config-servers");
         var nodes = prepare(controllerApp, Capacity.fromRequiredNodeType(NodeType.controller),
                             clusterRequest(ClusterSpec.Type.container, cluster));
@@ -263,7 +270,7 @@ public class LoadBalancerProvisionerTest {
     }
 
     private void dirtyNodesOf(ApplicationId application) {
-        tester.nodeRepository().deallocate(tester.nodeRepository().getNodes(application), Agent.system, this.getClass().getSimpleName());
+        tester.nodeRepository().nodes().deallocate(tester.nodeRepository().nodes().list().owner(application).asList(), Agent.system, this.getClass().getSimpleName());
     }
 
     private Set<HostSpec> prepare(ApplicationId application, ClusterSpec... specs) {
@@ -279,10 +286,10 @@ public class LoadBalancerProvisionerTest {
         return allNodes;
     }
 
-    private void assignIps(List<Node> nodes) {
-        try (var lock = tester.nodeRepository().lockUnallocated()) {
+    private void assignIps(NodeList nodes) {
+        try (var lock = tester.nodeRepository().nodes().lockUnallocated()) {
             for (int i = 0; i < nodes.size(); i++) {
-                tester.nodeRepository().write(nodes.get(i).with(IP.Config.EMPTY.withPrimary(Set.of("127.0.0." + i))), lock);
+                tester.nodeRepository().nodes().write(nodes.asList().get(i).with(IP.Config.EMPTY.withPrimary(Set.of("127.0.0." + i))), lock);
             }
         }
     }

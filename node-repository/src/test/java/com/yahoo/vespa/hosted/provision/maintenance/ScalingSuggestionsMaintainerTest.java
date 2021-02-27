@@ -14,6 +14,7 @@ import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.config.provisioning.FlavorsConfig;
 import com.yahoo.vespa.hosted.provision.Node;
+import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.applications.Cluster;
 import com.yahoo.vespa.hosted.provision.autoscale.MetricSnapshot;
@@ -71,9 +72,9 @@ public class ScalingSuggestionsMaintainerTest {
                                                                                    new TestMetric());
         maintainer.maintain();
 
-        assertEquals("14 nodes with [vcpu: 6.9, memory: 5.1 Gb, disk 15.0 Gb, bandwidth: 0.1 Gbps, storage type: remote]",
+        assertEquals("14 nodes with [vcpu: 6.9, memory: 5.1 Gb, disk 15.0 Gb, bandwidth: 0.1 Gbps]",
                      suggestionOf(app1, cluster1, tester).get().resources().toString());
-        assertEquals("8 nodes with [vcpu: 14.7, memory: 4.0 Gb, disk 11.8 Gb, bandwidth: 0.1 Gbps, storage type: remote]",
+        assertEquals("8 nodes with [vcpu: 14.7, memory: 4.0 Gb, disk 11.8 Gb, bandwidth: 0.1 Gbps]",
                      suggestionOf(app2, cluster2, tester).get().resources().toString());
 
         // Utilization goes way down
@@ -81,14 +82,14 @@ public class ScalingSuggestionsMaintainerTest {
         addMeasurements(0.10f, 0.10f, 0.10f, 0, 500, app1, tester.nodeRepository(), metricsDb);
         maintainer.maintain();
         assertEquals("Suggestion stays at the peak value observed",
-                     "14 nodes with [vcpu: 6.9, memory: 5.1 Gb, disk 15.0 Gb, bandwidth: 0.1 Gbps, storage type: remote]",
+                     "14 nodes with [vcpu: 6.9, memory: 5.1 Gb, disk 15.0 Gb, bandwidth: 0.1 Gbps]",
                      suggestionOf(app1, cluster1, tester).get().resources().toString());
         // Utilization is still way down and a week has passed
         tester.clock().advance(Duration.ofDays(7));
         addMeasurements(0.10f, 0.10f, 0.10f, 0, 500, app1, tester.nodeRepository(), metricsDb);
         maintainer.maintain();
         assertEquals("Peak suggestion has been  outdated",
-                     "6 nodes with [vcpu: 2.0, memory: 4.0 Gb, disk 10.0 Gb, bandwidth: 0.1 Gbps, storage type: remote]",
+                     "6 nodes with [vcpu: 2.0, memory: 4.0 Gb, disk 10.0 Gb, bandwidth: 0.1 Gbps]",
                      suggestionOf(app1, cluster1, tester).get().resources().toString());
         assertTrue(shouldSuggest(app1, cluster1, tester));
 
@@ -98,7 +99,7 @@ public class ScalingSuggestionsMaintainerTest {
         var suggested = tester.nodeRepository().applications().get(app1).get().cluster(cluster1.id()).get().suggestedResources().get().resources();
         tester.deploy(app1, cluster1, Capacity.from(suggested, suggested, false, true));
         tester.clock().advance(Duration.ofDays(2));
-        addMeasurements((float)Resource.cpu.idealAverageLoad(),
+        addMeasurements(0.2f,
                         (float)Resource.memory.idealAverageLoad(),
                         (float)Resource.disk.idealAverageLoad(),
                         0, 500, app1, tester.nodeRepository(), metricsDb);
@@ -114,14 +115,14 @@ public class ScalingSuggestionsMaintainerTest {
     }
 
     private boolean shouldSuggest(ApplicationId app, ClusterSpec cluster, ProvisioningTester tester) {
-        var currentResources = tester.nodeRepository().list(app).cluster(cluster.id()).not().retired().toResources();
+        var currentResources = tester.nodeRepository().nodes().list().owner(app).cluster(cluster.id()).not().retired().toResources();
         return tester.nodeRepository().applications().get(app).get().cluster(cluster.id()).get()
                      .shouldSuggestResources(currentResources);
     }
 
     public void addMeasurements(float cpu, float memory, float disk, int generation, int count, ApplicationId applicationId,
                                 NodeRepository nodeRepository, MetricsDb db) {
-        List<Node> nodes = nodeRepository.getNodes(applicationId, Node.State.active);
+        NodeList nodes = nodeRepository.nodes().list(Node.State.active).owner(applicationId);
         for (int i = 0; i < count; i++) {
             for (Node node : nodes)
                 db.add(List.of(new Pair<>(node.hostname(), new MetricSnapshot(nodeRepository.clock().instant(),

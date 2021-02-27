@@ -21,6 +21,7 @@
 #include <vespa/vespalib/io/fileutil.h>
 #include <vespa/vespalib/test/insertion_operators.h>
 #include <vespa/vespalib/util/exceptions.h>
+#include <vespa/vespalib/util/size_literals.h>
 #include <vespa/vespalib/util/threadstackexecutor.h>
 #include <thread>
 
@@ -92,10 +93,10 @@ struct BoolVector : public std::vector<bool> {
 using PutRes = DocumentMetaStore::Result;
 using Result = DocumentMetaStore::Result;
 
-BucketDBOwner::SP
+std::shared_ptr<bucketdb::BucketDBOwner>
 createBucketDB()
 {
-    return std::make_shared<BucketDBOwner>();
+    return std::make_shared<bucketdb::BucketDBOwner>();
 }
 
 void
@@ -774,7 +775,7 @@ requireThatBasicBucketInfoWorks()
     BucketId prevBucket = m.begin()->first.first;
     uint32_t cnt = 0u;
     uint32_t maxcnt = 0u;
-    BucketDBOwner::Guard bucketDB = dms.getBucketDB().takeGuard();
+    bucketdb::Guard bucketDB = dms.getBucketDB().takeGuard();
     for (Map::const_iterator i = m.begin(), ie = m.end(); i != ie; ++i) {
         if (i->first.first == prevBucket) {
             cksum.add(i->first.second, i->second, 1, SubDbType::READY);
@@ -862,7 +863,7 @@ struct Comparator {
 };
 
 struct UserDocFixture {
-    std::shared_ptr<BucketDBOwner> _bucketDB;
+    std::shared_ptr<bucketdb::BucketDBOwner> _bucketDB;
     DocumentMetaStore dms;
     std::vector<GlobalId> gids;
     BucketId bid1;
@@ -1106,19 +1107,15 @@ struct MyBucketCreateListener : public IBucketCreateListener {
 
     MyBucketCreateListener();
     ~MyBucketCreateListener();
-    virtual void notifyCreateBucket(const document::BucketId &bucket) override;
+    void notifyCreateBucket(const bucketdb::Guard & guard, const document::BucketId &bucket) override;
 };
 
-MyBucketCreateListener::MyBucketCreateListener()
-{
-}
+MyBucketCreateListener::MyBucketCreateListener() = default;
 
-MyBucketCreateListener::~MyBucketCreateListener()
-{
-}
+MyBucketCreateListener::~MyBucketCreateListener() = default;
 
 void
-MyBucketCreateListener::notifyCreateBucket(const document::BucketId &bucket)
+MyBucketCreateListener::notifyCreateBucket(const bucketdb::Guard &, const document::BucketId &bucket)
 {
     _buckets.emplace_back(bucket);
 }
@@ -1647,7 +1644,7 @@ TEST(DocumentMetaStoreTest, overlapping_bucket_active_state_works)
 }
 
 struct RemovedFixture {
-    std::shared_ptr<BucketDBOwner> _bucketDB;
+    std::shared_ptr<bucketdb::BucketDBOwner> _bucketDB;
     DocumentMetaStore dms;
     bucketdb::BucketDBHandler _bucketDBHandler;
 
@@ -1671,7 +1668,7 @@ RemovedFixture::RemovedFixture()
 {
     _bucketDBHandler.addDocumentMetaStore(&dms, 0);
 }
-RemovedFixture::~RemovedFixture() {}
+RemovedFixture::~RemovedFixture() = default;
 
 TEST(DocumentMetaStoreTest, remove_changed_bucket_works)
 {
@@ -1900,7 +1897,7 @@ TEST(DocumentMetaStoreTest, shrink_via_flush_target_works)
     EXPECT_TRUE(ft->getApproxMemoryGain().getBefore() >
                 ft->getApproxMemoryGain().getAfter());
 
-    vespalib::ThreadStackExecutor exec(1, 128 * 1024);
+    vespalib::ThreadStackExecutor exec(1, 128_Ki);
     vespalib::Executor::Task::UP task = ft->initFlush(11, std::make_shared<search::FlushToken>());
     exec.execute(std::move(task));
     exec.sync();

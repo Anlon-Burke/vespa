@@ -123,7 +123,7 @@ public class InfraDeployerImplTest {
         addNode(5, Node.State.dirty, Optional.empty());
         addNode(6, Node.State.ready, Optional.empty());
         Node node7 = addNode(7, Node.State.active, Optional.of(target));
-        nodeRepository.setRemovable(application.getApplicationId(), List.of(node7));
+        nodeRepository.nodes().setRemovable(application.getApplicationId(), List.of(node7));
 
         infraDeployer.getDeployment(application.getApplicationId()).orElseThrow().activate();
 
@@ -150,7 +150,7 @@ public class InfraDeployerImplTest {
         Node node = tester.addHost("id-" + id, "node-" + id, "default", nodeType);
         Optional<Node> nodeWithAllocation = wantedVespaVersion.map(version -> {
             ClusterSpec clusterSpec = application.getClusterSpecWithVersion(version).with(Optional.of(ClusterSpec.Group.from(0)));
-            ClusterMembership membership = ClusterMembership.from(clusterSpec, 1);
+            ClusterMembership membership = ClusterMembership.from(clusterSpec, 0);
             Allocation allocation = new Allocation(application.getApplicationId(), membership, node.resources(), Generation.initial(), false);
             return node.with(allocation);
         });

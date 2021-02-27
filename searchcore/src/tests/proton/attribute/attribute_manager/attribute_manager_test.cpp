@@ -12,6 +12,7 @@
 #include <vespa/searchcore/proton/attribute/imported_attributes_repo.h>
 #include <vespa/searchcore/proton/attribute/sequential_attributes_initializer.h>
 #include <vespa/searchcore/proton/common/hw_info.h>
+#include <vespa/searchcore/proton/bucketdb/bucket_db_owner.h>
 #include <vespa/searchcore/proton/documentmetastore/documentmetastorecontext.h>
 #include <vespa/searchcore/proton/flushengine/shrink_lid_space_flush_target.h>
 #include <vespa/searchcore/proton/initializer/initializer_task.h>
@@ -25,7 +26,6 @@
 #include <vespa/searchlib/attribute/imported_attribute_vector_factory.h>
 #include <vespa/searchlib/attribute/predicate_attribute.h>
 #include <vespa/searchlib/attribute/reference_attribute.h>
-#include <vespa/searchlib/attribute/singlenumericattribute.hpp>
 #include <vespa/searchlib/common/indexmetainfo.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
 #include <vespa/searchlib/predicate/predicate_index.h>
@@ -35,6 +35,7 @@
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/util/foreground_thread_executor.h>
 #include <vespa/vespalib/util/foregroundtaskexecutor.h>
+#include <vespa/vespalib/util/size_literals.h>
 #include <vespa/vespalib/util/threadstackexecutor.h>
 
 #include <vespa/log/log.h>
@@ -140,7 +141,7 @@ struct ImportedAttributesRepoBuilder {
         refAttr->setGidToLidMapperFactory(std::make_shared<MockGidToLidMapperFactory>());
         auto targetAttr = search::AttributeFactory::createAttribute(name + "_target", INT32_SINGLE);
         auto documentMetaStore = std::shared_ptr<search::IDocumentMetaStoreContext>();
-        auto targetDocumentMetaStore = std::make_shared<const DocumentMetaStoreContext>(std::make_shared<BucketDBOwner>());
+        auto targetDocumentMetaStore = std::make_shared<const DocumentMetaStoreContext>(std::make_shared<bucketdb::BucketDBOwner>());
         auto importedAttr = ImportedAttributeVectorFactory::create(name, refAttr, documentMetaStore, targetAttr, targetDocumentMetaStore, false);
         _repo->add(name, importedAttr);
     }
@@ -230,7 +231,7 @@ struct DummyInitializerTask : public InitializerTask
 struct ParallelAttributeManager
 {
     InitializerTask::SP documentMetaStoreInitTask;
-    BucketDBOwner::SP bucketDbOwner;
+    std::shared_ptr<bucketdb::BucketDBOwner> bucketDbOwner;
     DocumentMetaStore::SP documentMetaStore;
     AllocStrategy        alloc_strategy;
     bool fastAccessAttributesOnly;
@@ -247,12 +248,12 @@ struct ParallelAttributeManager
 ParallelAttributeManager::ParallelAttributeManager(search::SerialNum configSerialNum, AttributeManager::SP baseAttrMgr,
                                                    const AttributesConfig &attrCfg, uint32_t docIdLimit)
     : documentMetaStoreInitTask(std::make_shared<DummyInitializerTask>()),
-      bucketDbOwner(std::make_shared<BucketDBOwner>()),
+      bucketDbOwner(std::make_shared<bucketdb::BucketDBOwner>()),
       documentMetaStore(std::make_shared<DocumentMetaStore>(bucketDbOwner)),
       alloc_strategy(),
       fastAccessAttributesOnly(false),
       mgr(std::make_shared<AttributeManager::SP>()),
-      masterExecutor(1, 128 * 1024),
+      masterExecutor(1, 128_Ki),
       master(masterExecutor),
       initializer(std::make_shared<AttributeManagerInitializer>(configSerialNum, documentMetaStoreInitTask,
                                                                 documentMetaStore, baseAttrMgr, attrCfg,
@@ -260,7 +261,7 @@ ParallelAttributeManager::ParallelAttributeManager(search::SerialNum configSeria
                                                                 fastAccessAttributesOnly, master, mgr))
 {
     documentMetaStore->setCommittedDocIdLimit(docIdLimit);
-    vespalib::ThreadStackExecutor executor(3, 128 * 1024);
+    vespalib::ThreadStackExecutor executor(3, 128_Ki);
     initializer::TaskRunner taskRunner(executor);
     taskRunner.runTask(initializer);
 }

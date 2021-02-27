@@ -29,6 +29,7 @@
 #include <vespa/vespalib/test/insertion_operators.h>
 #include <vespa/vespalib/testkit/test_kit.h>
 #include <vespa/vespalib/util/lambdatask.h>
+#include <vespa/vespalib/util/size_literals.h>
 
 using namespace cloud::config::filedistribution;
 using namespace document;
@@ -139,7 +140,7 @@ struct MyStoreOnlyContext
     HwInfo           _hwInfo;
     StoreOnlyContext _ctx;
     MyStoreOnlyContext(IThreadingService &writeService,
-                       std::shared_ptr<BucketDBOwner> bucketDB,
+                       std::shared_ptr<bucketdb::BucketDBOwner> bucketDB,
                        IBucketDBHandlerInitializer & bucketDBHandlerInitializer);
     ~MyStoreOnlyContext();
     const MySubDBOwner &getOwner() const {
@@ -148,7 +149,7 @@ struct MyStoreOnlyContext
 };
 
 MyStoreOnlyContext::MyStoreOnlyContext(IThreadingService &writeService,
-                                       std::shared_ptr<BucketDBOwner> bucketDB,
+                                       std::shared_ptr<bucketdb::BucketDBOwner> bucketDB,
                                        IBucketDBHandlerInitializer &bucketDBHandlerInitializer)
     : _owner(), _syncProxy(), _getSerialNum(), _fileHeader(),
       _metrics(DOCTYPE_NAME, 1), _configMutex(), _hwInfo(),
@@ -175,7 +176,7 @@ struct MyFastAccessContext
     MyMetricsWireService _wireService;
     FastAccessContext _ctx;
     MyFastAccessContext(IThreadingService &writeService,
-                        std::shared_ptr<BucketDBOwner> bucketDB,
+                        std::shared_ptr<bucketdb::BucketDBOwner> bucketDB,
                         IBucketDBHandlerInitializer & bucketDBHandlerInitializer);
     ~MyFastAccessContext();
     const MyMetricsWireService &getWireService() const {
@@ -187,7 +188,7 @@ struct MyFastAccessContext
 };
 
 MyFastAccessContext::MyFastAccessContext(IThreadingService &writeService,
-                                         std::shared_ptr<BucketDBOwner> bucketDB,
+                                         std::shared_ptr<bucketdb::BucketDBOwner> bucketDB,
                                          IBucketDBHandlerInitializer & bucketDBHandlerInitializer)
     : _storeOnlyCtx(writeService, bucketDB, bucketDBHandlerInitializer),
       _attributeMetrics(nullptr),
@@ -212,7 +213,7 @@ struct MySearchableContext
     vespalib::Clock _clock;
     SearchableContext _ctx;
     MySearchableContext(IThreadingService &writeService,
-                        std::shared_ptr<BucketDBOwner> bucketDB,
+                        std::shared_ptr<bucketdb::BucketDBOwner> bucketDB,
                         IBucketDBHandlerInitializer & bucketDBHandlerInitializer);
     ~MySearchableContext();
     const MyMetricsWireService &getWireService() const {
@@ -225,7 +226,7 @@ struct MySearchableContext
 
 
 MySearchableContext::MySearchableContext(IThreadingService &writeService,
-                                         std::shared_ptr<BucketDBOwner> bucketDB,
+                                         std::shared_ptr<bucketdb::BucketDBOwner> bucketDB,
                                          IBucketDBHandlerInitializer & bucketDBHandlerInitializer)
     : _fastUpdCtx(writeService, bucketDB, bucketDBHandlerInitializer),
       _queryLimiter(), _clock(),
@@ -284,7 +285,7 @@ struct FixtureBase
     ThreadStackExecutor _summaryExecutor;
     ExecutorThreadingService _writeService;
     typename Traits::Config _cfg;
-    std::shared_ptr<BucketDBOwner> _bucketDB;
+    std::shared_ptr<bucketdb::BucketDBOwner> _bucketDB;
     BucketDBHandler _bucketDBHandler;
     typename Traits::Context _ctx;
     typename Traits::Schema _baseSchema;
@@ -293,10 +294,10 @@ struct FixtureBase
     typename Traits::SubDB _subDb;
     IFeedView::SP _tmpFeedView;
     FixtureBase()
-        : _summaryExecutor(1, 64 * 1024),
+        : _summaryExecutor(1, 64_Ki),
           _writeService(_summaryExecutor),
           _cfg(),
-          _bucketDB(std::make_shared<BucketDBOwner>()),
+          _bucketDB(std::make_shared<bucketdb::BucketDBOwner>()),
           _bucketDBHandler(*_bucketDB),
           _ctx(_writeService, _bucketDB, _bucketDBHandler),
           _baseSchema(),
@@ -317,11 +318,11 @@ struct FixtureBase
         proton::test::runInMaster(_writeService, func);
     }
     void init() {
-                DocumentSubDbInitializer::SP task =
-                    _subDb.createInitializer(*_snapshot->_cfg, Traits::configSerial(), IndexConfig());
-                vespalib::ThreadStackExecutor executor(1, 1024 * 1024);
-                initializer::TaskRunner taskRunner(executor);
-                taskRunner.runTask(task);
+        DocumentSubDbInitializer::SP task =
+            _subDb.createInitializer(*_snapshot->_cfg, Traits::configSerial(), IndexConfig());
+        vespalib::ThreadStackExecutor executor(1, 1_Mi);
+        initializer::TaskRunner taskRunner(executor);
+        taskRunner.runTask(task);
         auto sessionMgr = std::make_shared<SessionManager>(1);
         runInMaster([&] () { _subDb.initViews(*_snapshot->_cfg, sessionMgr); });
     }

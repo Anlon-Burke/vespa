@@ -47,7 +47,7 @@ struct FastFilterView : public Value::Index::View {
     const FastAddrMap        &map;
     std::vector<size_t>       match_dims;
     std::vector<size_t>       extract_dims;
-    std::vector<string_id>      query;
+    std::vector<string_id>    query;
     size_t                    pos;
 
     bool is_match(ConstArrayRef<string_id> addr) const {
@@ -135,26 +135,12 @@ struct FastIterateView : public Value::Index::View {
 
 //-----------------------------------------------------------------------------
 
-using JoinAddrSource = instruction::SparseJoinPlan::Source;
-
 // This is the class instructions will look for when optimizing sparse
 // operations by calling inline functions directly.
 struct FastValueIndex final : Value::Index {
     FastAddrMap map;
     FastValueIndex(size_t num_mapped_dims_in, const std::vector<string_id> &labels, size_t expected_subspaces_in)
         : map(num_mapped_dims_in, labels, expected_subspaces_in) {}
-
-    template <typename LCT, typename RCT, typename OCT, typename Fun>
-        static const Value &sparse_full_overlap_join(const ValueType &res_type, const Fun &fun,
-                const FastValueIndex &lhs, const FastValueIndex &rhs,
-                ConstArrayRef<LCT> lhs_cells, ConstArrayRef<RCT> rhs_cells, Stash &stash);
-
-    template <typename LCT, typename RCT, typename OCT, typename Fun>
-        static const Value &sparse_no_overlap_join(const ValueType &res_type, const Fun &fun,
-                const FastValueIndex &lhs, const FastValueIndex &rhs,
-                const std::vector<JoinAddrSource> &addr_sources,
-                ConstArrayRef<LCT> lhs_cells, ConstArrayRef<RCT> rhs_cells, Stash &stash);
-
     size_t size() const override { return map.size(); }
     std::unique_ptr<View> create_view(const std::vector<size_t> &dims) const override;
 };
@@ -275,6 +261,10 @@ struct FastValue final : Value, ValueBuilder<T> {
         }
         my_index.map.add_mapping(hash);
     }
+    void add_singledim_mapping(string_id label) {
+        my_handles.push_back(label);
+        my_index.map.add_mapping(FastAddrMap::hash_label(label));
+    }
     ArrayRef<T> add_subspace(ConstArrayRef<vespalib::stringref> addr) override {
         add_mapping(addr);
         return my_cells.add_cells(my_subspace_size);
@@ -349,77 +339,6 @@ struct FastScalarBuilder final : ValueBuilder<T> {
     ArrayRef<T> add_subspace(ConstArrayRef<string_id>) final override { return ArrayRef<T>(&_value, 1); };
     std::unique_ptr<Value> build(std::unique_ptr<ValueBuilder<T>>) final override { return std::make_unique<ScalarValue<T>>(_value); }
 };
-
-//-----------------------------------------------------------------------------
-
-template <typename LCT, typename RCT, typename OCT, typename Fun>
-const Value &
-FastValueIndex::sparse_full_overlap_join(const ValueType &res_type, const Fun &fun,
-                                         const FastValueIndex &lhs, const FastValueIndex &rhs,
-                                         ConstArrayRef<LCT> lhs_cells, ConstArrayRef<RCT> rhs_cells, Stash &stash)
-{
-    auto &result = stash.create<FastValue<OCT,true>>(res_type, lhs.map.addr_size(), 1, lhs.map.size());
-    lhs.map.each_map_entry([&](auto lhs_subspace, auto hash) {
-                auto lhs_addr = lhs.map.get_addr(lhs_subspace);
-                auto rhs_subspace = rhs.map.lookup(lhs_addr, hash);
-                if (rhs_subspace != FastAddrMap::npos()) {
-                    result.add_mapping(lhs_addr, hash);
-                    auto cell_value = fun(lhs_cells[lhs_subspace], rhs_cells[rhs_subspace]);
-                    result.my_cells.push_back_fast(cell_value);
-                }
-            });
-    return result;
-}
-
-//-----------------------------------------------------------------------------
-
-template <typename LCT, typename RCT, typename OCT, typename Fun>
-const Value &
-FastValueIndex::sparse_no_overlap_join(const ValueType &res_type, const Fun &fun,
-                                       const FastValueIndex &lhs, const FastValueIndex &rhs,
-                                       const std::vector<JoinAddrSource> &addr_sources,
-                                       ConstArrayRef<LCT> lhs_cells, ConstArrayRef<RCT> rhs_cells, Stash &stash)
-{
-    size_t num_mapped_dims = addr_sources.size();
-    auto &result = stash.create<FastValue<OCT,true>>(res_type, num_mapped_dims, 1, lhs.map.size()*rhs.map.size());
-    std::vector<string_id> output_addr(num_mapped_dims);
-    std::vector<size_t> store_lhs_idx;
-    std::vector<size_t> store_rhs_idx;
-    size_t out_idx = 0;
-    for (JoinAddrSource source : addr_sources) {
-        switch (source) {
-        case JoinAddrSource::LHS:
-            store_lhs_idx.push_back(out_idx++);
-            break;
-        case JoinAddrSource::RHS:
-            store_rhs_idx.push_back(out_idx++);
-            break;
-        default:
-            abort();
-        }
-    }
-    assert(out_idx == output_addr.size());
-    for (size_t lhs_subspace = 0; lhs_subspace < lhs.map.size(); ++lhs_subspace) {
-        auto l_addr = lhs.map.get_addr(lhs_subspace);
-        assert(l_addr.size() == store_lhs_idx.size());
-        for (size_t i = 0; i < store_lhs_idx.size(); ++i) {
-            size_t addr_idx = store_lhs_idx[i];
-            output_addr[addr_idx] = l_addr[i];
-        }
-        for (size_t rhs_subspace = 0; rhs_subspace < rhs.map.size(); ++rhs_subspace) {
-            auto r_addr = rhs.map.get_addr(rhs_subspace);
-            assert(r_addr.size() == store_rhs_idx.size());
-            for (size_t i = 0; i < store_rhs_idx.size(); ++i) {
-                size_t addr_idx = store_rhs_idx[i];
-                output_addr[addr_idx] = r_addr[i];
-            }
-            result.add_mapping(ConstArrayRef(output_addr));
-            auto cell_value = fun(lhs_cells[lhs_subspace], rhs_cells[rhs_subspace]);
-            result.my_cells.push_back_fast(cell_value);
-        }
-    }
-    return result;
-}
 
 //-----------------------------------------------------------------------------
 

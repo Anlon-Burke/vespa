@@ -4,13 +4,12 @@
 #include <vespa/searchcore/proton/bucketdb/bucket_create_notifier.h>
 #include <vespa/searchcore/proton/test/bucketfactory.h>
 #include <vespa/searchcore/proton/feedoperation/moveoperation.h>
-#include <vespa/searchcore/proton/server/bucketmovejob.h>
-#include <vespa/searchcore/proton/server/documentbucketmover.h>
 #include <vespa/searchcore/proton/server/i_move_operation_limiter.h>
 #include <vespa/searchcore/proton/server/idocumentmovehandler.h>
 #include <vespa/searchcore/proton/server/imaintenancejobrunner.h>
 #include <vespa/searchcore/proton/server/maintenancedocumentsubdb.h>
 #include <vespa/searchcore/proton/server/ibucketmodifiedhandler.h>
+#include <vespa/searchcore/proton/server/i_maintenance_job.h>
 #include <vespa/searchcore/proton/test/buckethandler.h>
 #include <vespa/searchcore/proton/test/clusterstatehandler.h>
 #include <vespa/searchcore/proton/test/disk_mem_usage_notifier.h>
@@ -28,17 +27,18 @@ struct MyMoveOperationLimiter : public IMoveOperationLimiter {
         ++beginOpCount;
         return {};
     }
+    size_t numPending() const override { return beginOpCount; }
 };
 
 struct MyMoveHandler : public IDocumentMoveHandler {
     using MoveOperationVector = std::vector<MoveOperation>;
-    BucketDBOwner &_bucketDb;
+    bucketdb::BucketDBOwner &_bucketDb;
     MoveOperationVector _moves;
     size_t _numCachedBuckets;
     bool _storeMoveDoneContexts;
     std::vector<vespalib::IDestructorCallback::SP> _moveDoneContexts;
 
-    MyMoveHandler(BucketDBOwner &bucketDb, bool storeMoveDoneContext = false);
+    MyMoveHandler(bucketdb::BucketDBOwner &bucketDb, bool storeMoveDoneContext = false);
     ~MyMoveHandler() override;
     void handleMove(MoveOperation &op, vespalib::IDestructorCallback::SP moveDoneCtx) override;
 
@@ -83,8 +83,9 @@ struct MyDocumentRetriever : public DocumentRetrieverBaseForTest {
 
 struct MyBucketModifiedHandler : public IBucketModifiedHandler {
     using BucketId = document::BucketId;
-    BucketId::List _modified;
+    std::vector<BucketId> _modified;
 
+    ~MyBucketModifiedHandler() override;
     void notifyBucketModified(const BucketId &bucket) override;
 
     void reset() { _modified.clear(); }
@@ -104,7 +105,7 @@ struct MySubDb {
     UserDocuments                         _docs;
     bucketdb::BucketDBHandler             _bucketDBHandler;
 
-    MySubDb(const std::shared_ptr<const DocumentTypeRepo> &repo, std::shared_ptr<BucketDBOwner> bucketDB,
+    MySubDb(const std::shared_ptr<const DocumentTypeRepo> &repo, std::shared_ptr<bucketdb::BucketDBOwner> bucketDB,
             uint32_t subDbId, SubDbType subDbType);
 
     ~MySubDb();
@@ -122,6 +123,14 @@ struct MySubDb {
     void setBucketState(const BucketId &bucketId, bool active) {
         _metaStore.setBucketState(bucketId, active);
     }
+};
+
+struct MyCountJobRunner : public IMaintenanceJobRunner {
+    uint32_t runCount;
+    explicit MyCountJobRunner(IMaintenanceJob &job) : runCount(0) {
+        job.registerRunner(this);
+    }
+    void run() override { ++runCount; }
 };
 
 bool

@@ -34,9 +34,9 @@ public class SwitchRebalancer extends NodeMover<Move> {
 
     @Override
     protected boolean maintain() {
-        if (!nodeRepository().isWorking()) return false;
+        if (!nodeRepository().nodes().isWorking()) return false;
         if (!nodeRepository().zone().environment().isProduction()) return true;
-        NodeList allNodes = nodeRepository().list(); // Lockless as strong consistency is not needed
+        NodeList allNodes = nodeRepository().nodes().list(); // Lockless as strong consistency is not needed
         if (!zoneIsStable(allNodes)) return true;
 
         findBestMove(allNodes).execute(false, Agent.SwitchRebalancer, deployer, metric, nodeRepository());
@@ -54,7 +54,7 @@ public class SwitchRebalancer extends NodeMover<Move> {
 
     @Override
     protected Move bestMoveOf(Move a, Move b) {
-        if (b.isEmpty()) return a;
+        if (!a.isEmpty()) return a;
         return b;
     }
 

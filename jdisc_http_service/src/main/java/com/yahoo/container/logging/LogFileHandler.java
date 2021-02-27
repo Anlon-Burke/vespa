@@ -18,6 +18,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
@@ -365,6 +366,7 @@ class LogFileHandler <LOGTYPE> {
                 throw new RuntimeException("Couldn't open log file '" + fileName + "'", e);
             }
 
+            if(oldFileName == null) oldFileName = getOldFileNameFromSymlink(); // To compress previous file, if so configured
             createSymlinkToCurrentFile();
 
             nextRotationTime = 0; //figure it out later (lazy evaluation)
@@ -400,9 +402,8 @@ class LogFileHandler <LOGTYPE> {
         private static void runCompressionZstd(NativeIO nativeIO, Path oldFile) {
             try {
                 Path compressedFile = Paths.get(oldFile.toString() + ".zst");
-                Files.createFile(compressedFile);
-                int bufferSize = 0x400000; // 4M
-                try (FileOutputStream fileOut = new FileOutputStream(compressedFile.toFile());
+                int bufferSize = 2*1024*1024;
+                try (FileOutputStream fileOut = AtomicFileOutputStream.create(compressedFile);
                      ZstdOuputStream out = new ZstdOuputStream(fileOut, bufferSize);
                      FileInputStream in = new FileInputStream(oldFile.toFile())) {
                     pageFriendlyTransfer(nativeIO, out, fileOut.getFD(), in, bufferSize);
@@ -420,7 +421,7 @@ class LogFileHandler <LOGTYPE> {
         private static void runCompressionGzip(NativeIO nativeIO, Path oldFile) {
             try {
                 Path gzippedFile = Paths.get(oldFile.toString() + ".gz");
-                try (FileOutputStream fileOut = new FileOutputStream(gzippedFile.toFile());
+                try (FileOutputStream fileOut = AtomicFileOutputStream.create(gzippedFile);
                      GZIPOutputStream compressor = new GZIPOutputStream(fileOut, 0x100000);
                      FileInputStream inputStream = new FileInputStream(oldFile.toFile())) {
                     pageFriendlyTransfer(nativeIO, compressor, fileOut.getFD(), inputStream, 0x400000);
@@ -465,6 +466,15 @@ class LogFileHandler <LOGTYPE> {
             }
         }
 
+        private String getOldFileNameFromSymlink() {
+            if(symlinkName == null) return null;
+            try {
+                return Paths.get(fileName).resolveSibling(symlinkName).toRealPath().toString();
+            } catch (IOException e) {
+                return null;
+            }
+        }
+
         private static final long lengthOfDayMillis = 24 * 60 * 60 * 1000;
         private static long timeOfDayMillis(long time) {
             return time % lengthOfDayMillis;
@@ -474,8 +484,6 @@ class LogFileHandler <LOGTYPE> {
 
     private static class Operation<LOGTYPE> {
         enum Type {log, flush, close, rotate}
-
-        ;
 
         final Type type;
 
@@ -527,5 +535,29 @@ class LogFileHandler <LOGTYPE> {
             }
         }
     }
-}
 
+    private static class AtomicFileOutputStream extends FileOutputStream {
+        private final Path path;
+        private final Path tmpPath;
+        private volatile boolean closed = false;
+
+        private AtomicFileOutputStream(Path path, Path tmpPath) throws FileNotFoundException {
+            super(tmpPath.toFile());
+            this.path = path;
+            this.tmpPath = tmpPath;
+        }
+
+        @Override
+        public synchronized void close() throws IOException {
+            super.close();
+            if (!closed) {
+                Files.move(tmpPath, path, StandardCopyOption.ATOMIC_MOVE);
+                closed = true;
+            }
+        }
+
+        private static AtomicFileOutputStream create(Path path) throws FileNotFoundException {
+            return new AtomicFileOutputStream(path, path.resolveSibling("." + path.getFileName() + ".tmp"));
+        }
+    }
+}

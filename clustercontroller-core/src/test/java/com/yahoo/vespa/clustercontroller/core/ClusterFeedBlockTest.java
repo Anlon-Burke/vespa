@@ -35,8 +35,6 @@ public class ClusterFeedBlockTest extends FleetControllerTest {
     private Supervisor supervisor;
     private FleetController ctrl;
     private DummyCommunicator communicator;
-    private EventLog eventLog;
-    private int dummyConfigGeneration = 2;
 
     @Before
     public void setUp() {
@@ -52,12 +50,11 @@ public class ClusterFeedBlockTest extends FleetControllerTest {
 
         communicator = new DummyCommunicator(nodes, timer);
         MetricUpdater metricUpdater = new MetricUpdater(new NoMetricReporter(), options.fleetControllerIndex);
-        eventLog = new EventLog(timer, metricUpdater);
-        ContentCluster cluster = new ContentCluster(options.clusterName, options.nodes, options.storageDistribution,
-                options.minStorageNodesUp, options.minRatioOfStorageNodesUp);
+        EventLog eventLog = new EventLog(timer, metricUpdater);
+        ContentCluster cluster = new ContentCluster(options.clusterName, options.nodes, options.storageDistribution);
         NodeStateGatherer stateGatherer = new NodeStateGatherer(timer, timer, eventLog);
         DatabaseHandler database = new DatabaseHandler(new ZooKeeperDatabaseFactory(), timer, options.zooKeeperServerAddress, options.fleetControllerIndex, timer);
-        StateChangeHandler stateGenerator = new StateChangeHandler(timer, eventLog, metricUpdater);
+        StateChangeHandler stateGenerator = new StateChangeHandler(timer, eventLog);
         SystemStateBroadcaster stateBroadcaster = new SystemStateBroadcaster(timer, timer);
         MasterElectionHandler masterElectionHandler = new MasterElectionHandler(options.fleetControllerIndex, options.fleetControllerCount, timer, timer);
         ctrl = new FleetController(timer, eventLog, cluster, stateGatherer, communicator, null, null, communicator, database, stateGenerator, stateBroadcaster, masterElectionHandler, metricUpdater, options);
@@ -83,13 +80,19 @@ public class ClusterFeedBlockTest extends FleetControllerTest {
         super.tearDown();
     }
 
-    private static FleetControllerOptions createOptions(Map<String, Double> feedBlockLimits) {
+    private static FleetControllerOptions createOptions(Map<String, Double> feedBlockLimits,
+                                                        double clusterFeedBlockNoiseLevel) {
         FleetControllerOptions options = defaultOptions("mycluster");
         options.setStorageDistribution(DistributionBuilder.forFlatCluster(NODE_COUNT));
         options.nodes = new HashSet<>(DistributionBuilder.buildConfiguredNodes(NODE_COUNT));
         options.clusterFeedBlockEnabled = true;
         options.clusterFeedBlockLimit = Map.copyOf(feedBlockLimits);
+        options.clusterFeedBlockNoiseLevel = clusterFeedBlockNoiseLevel;
         return options;
+    }
+
+    private static FleetControllerOptions createOptions(Map<String, Double> feedBlockLimits) {
+        return createOptions(feedBlockLimits, 0.0);
     }
 
     private void reportResourceUsageFromNode(int nodeIndex, Set<FeedBlockUtil.UsageDetails> resourceUsages) throws Exception {
@@ -98,7 +101,6 @@ public class ClusterFeedBlockTest extends FleetControllerTest {
         ctrl.tick();
     }
 
-    // TODO some form of hysteresis
     @Test
     public void cluster_feed_can_be_blocked_and_unblocked_by_single_node() throws Exception {
         initialize(createOptions(mapOf(usage("cheese", 0.7), usage("wine", 0.4))));
@@ -128,6 +130,7 @@ public class ClusterFeedBlockTest extends FleetControllerTest {
         assertTrue(ctrl.getClusterStateBundle().clusterFeedIsBlocked());
 
         // Increase cheese allowance. Should now automatically unblock since reported usage is lower.
+        int dummyConfigGeneration = 2;
         ctrl.updateOptions(createOptions(mapOf(usage("cheese", 0.9), usage("wine", 0.4))), dummyConfigGeneration);
         ctrl.tick(); // Options propagation
         ctrl.tick(); // State recomputation
@@ -168,5 +171,47 @@ public class ClusterFeedBlockTest extends FleetControllerTest {
         assertTrue(bundle.clusterFeedIsBlocked());
         assertEquals("cheese on node 1 [unknown hostname] (0.800 > 0.700)", bundle.getFeedBlock().get().getDescription());
     }
+
+    @Test
+    public void cluster_feed_block_state_is_recomputed_when_usage_enters_hysteresis_range() throws Exception {
+        initialize(createOptions(mapOf(usage("cheese", 0.7), usage("wine", 0.4)), 0.1));
+        assertFalse(ctrl.getClusterStateBundle().clusterFeedIsBlocked());
+
+        reportResourceUsageFromNode(1, setOf(usage("cheese", 0.75), usage("wine", 0.3)));
+        var bundle = ctrl.getClusterStateBundle();
+        assertTrue(bundle.clusterFeedIsBlocked());
+        assertEquals("cheese on node 1 [unknown hostname] (0.750 > 0.700)", bundle.getFeedBlock().get().getDescription());
+
+        reportResourceUsageFromNode(1, setOf(usage("cheese", 0.68), usage("wine", 0.3)));
+        bundle = ctrl.getClusterStateBundle();
+        assertTrue(bundle.clusterFeedIsBlocked());
+        // FIXME Effective limit is modified by hysteresis but due to how we check state deltas this
+        // is not discovered here. Still correct in terms of what resources are blocked or not, but
+        // the description is not up to date here.
+        assertEquals("cheese on node 1 [unknown hostname] (0.750 > 0.700)",
+                     bundle.getFeedBlock().get().getDescription());
+
+        // Trigger an explicit recompute by adding a separate resource exhaustion
+        reportResourceUsageFromNode(1, setOf(usage("cheese", 0.67), usage("wine", 0.5)));
+        bundle = ctrl.getClusterStateBundle();
+        assertTrue(bundle.clusterFeedIsBlocked());
+        assertEquals("cheese on node 1 [unknown hostname] (0.670 > 0.600), " +
+                     "wine on node 1 [unknown hostname] (0.500 > 0.400)", // Not under hysteresis
+                     bundle.getFeedBlock().get().getDescription());
+
+        // Wine usage drops beyond hysteresis range, should be unblocked immediately.
+        reportResourceUsageFromNode(1, setOf(usage("cheese", 0.61), usage("wine", 0.2)));
+        bundle = ctrl.getClusterStateBundle();
+        assertTrue(bundle.clusterFeedIsBlocked());
+        assertEquals("cheese on node 1 [unknown hostname] (0.610 > 0.600)",
+                     bundle.getFeedBlock().get().getDescription());
+
+        // Cheese now drops below hysteresis range, should be unblocked as well.
+        reportResourceUsageFromNode(1, setOf(usage("cheese", 0.59), usage("wine", 0.2)));
+        bundle = ctrl.getClusterStateBundle();
+        assertFalse(bundle.clusterFeedIsBlocked());
+    }
+
+    // FIXME implicit changes in limits due to hysteresis adds spurious exhaustion remove+add node event pair
 
 }

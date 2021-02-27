@@ -103,8 +103,6 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
 
     private final RunDataExtractor dataExtractor = new RunDataExtractor() {
         @Override
-        public com.yahoo.vdslib.state.ClusterState getLatestClusterState() { return stateVersionTracker.getVersionedClusterState(); }
-        @Override
         public FleetControllerOptions getOptions() { return options; }
         @Override
         public long getConfigGeneration() { return configGeneration; }
@@ -174,9 +172,7 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
         ContentCluster cluster = new ContentCluster(
                 options.clusterName,
                 options.nodes,
-                options.storageDistribution,
-                options.minStorageNodesUp,
-                options.minRatioOfStorageNodesUp);
+                options.storageDistribution);
         NodeStateGatherer stateGatherer = new NodeStateGatherer(timer, timer, log);
         Communicator communicator = new RPCCommunicator(
                 RPCCommunicator.createRealSupervisor(),
@@ -188,7 +184,7 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
                 options.nodeStateRequestRoundTripTimeMaxSeconds);
         DatabaseHandler database = new DatabaseHandler(new ZooKeeperDatabaseFactory(), timer, options.zooKeeperServerAddress, options.fleetControllerIndex, timer);
         NodeLookup lookUp = new SlobrokClient(timer);
-        StateChangeHandler stateGenerator = new StateChangeHandler(timer, log, metricUpdater);
+        StateChangeHandler stateGenerator = new StateChangeHandler(timer, log);
         SystemStateBroadcaster stateBroadcaster = new SystemStateBroadcaster(timer, timer);
         MasterElectionHandler masterElectionHandler = new MasterElectionHandler(options.fleetControllerIndex, options.fleetControllerCount, timer, timer);
         FleetController controller = new FleetController(
@@ -277,7 +273,6 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
         }
     }
 
-    public int getHttpPort() { return statusPageServer.getPort(); }
     public int getRpcPort() { return rpcServer.getPort(); }
 
     public void shutdown() throws InterruptedException, java.io.IOException {
@@ -345,7 +340,6 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
         if (!options.clusterFeedBlockEnabled) {
             return;
         }
-        // TODO hysteresis to prevent oscillations!
         var calc = createResourceExhaustionCalculator();
         // Important: nodeInfo contains the _current_ host info _prior_ to newHostInfo being applied.
         var previouslyExhausted = calc.enumerateNodeResourceExhaustions(nodeInfo);
@@ -383,7 +377,8 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
         verifyInControllerThread();
         ClusterState baselineState = stateBundle.getBaselineClusterState();
         newStates.add(stateBundle);
-        metricUpdater.updateClusterStateMetrics(cluster, baselineState);
+        metricUpdater.updateClusterStateMetrics(cluster, baselineState,
+                ResourceUsageStats.calculateFrom(cluster.getNodeInfo(), options.clusterFeedBlockLimit, stateBundle.getFeedBlock()));
         lastMetricUpdateCycleCount = cycleCount;
         systemStateBroadcaster.handleNewClusterStates(stateBundle);
         // Iff master, always store new version in ZooKeeper _before_ publishing to any
@@ -399,7 +394,8 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
         if (cycleCount > 300 + lastMetricUpdateCycleCount) {
             ClusterStateBundle stateBundle = stateVersionTracker.getVersionedClusterStateBundle();
             ClusterState baselineState = stateBundle.getBaselineClusterState();
-            metricUpdater.updateClusterStateMetrics(cluster, baselineState);
+            metricUpdater.updateClusterStateMetrics(cluster, baselineState,
+                    ResourceUsageStats.calculateFrom(cluster.getNodeInfo(), options.clusterFeedBlockLimit, stateBundle.getFeedBlock()));
             lastMetricUpdateCycleCount = cycleCount;
             return true;
         } else {
@@ -505,8 +501,6 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
         cluster.setPollingFrequency(options.statePollingFrequency);
         cluster.setDistribution(options.storageDistribution);
         cluster.setNodes(options.nodes);
-        cluster.setMinRatioOfStorageNodesUp(options.minRatioOfStorageNodesUp);
-        cluster.setMinStorageNodesUp(options.minStorageNodesUp);
         database.setZooKeeperAddress(options.zooKeeperServerAddress);
         database.setZooKeeperSessionTimeout(options.zooKeeperSessionTimeout);
         stateGatherer.setMaxSlobrokDisconnectGracePeriod(options.maxSlobrokDisconnectGracePeriod);
@@ -701,7 +695,8 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
                 // Reset timer to only see warning once.
                 firstAllowedStateBroadcast = currentTime;
             }
-            sentAny = systemStateBroadcaster.broadcastNewStateBundleIfRequired(databaseContext, communicator);
+            sentAny = systemStateBroadcaster.broadcastNewStateBundleIfRequired(
+                    databaseContext, communicator, database.getLastKnownStateBundleVersionWrittenBySelf());
             if (sentAny) {
                 // FIXME won't this inhibit resending to unresponsive nodes?
                 nextStateSendTime = currentTime + options.minTimeBetweenNewSystemStates;
@@ -951,7 +946,10 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
     }
 
     private ResourceExhaustionCalculator createResourceExhaustionCalculator() {
-        return new ResourceExhaustionCalculator(options.clusterFeedBlockEnabled, options.clusterFeedBlockLimit);
+        return new ResourceExhaustionCalculator(
+                options.clusterFeedBlockEnabled, options.clusterFeedBlockLimit,
+                stateVersionTracker.getLatestCandidateStateBundle().getFeedBlockOrNull(),
+                options.clusterFeedBlockNoiseLevel);
     }
 
     private static ClusterStateDeriver createIdentityClonedBucketSpaceStateDeriver() {

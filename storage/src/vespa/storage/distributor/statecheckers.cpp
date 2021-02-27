@@ -9,6 +9,8 @@
 #include <vespa/storage/distributor/operations/idealstate/setbucketstateoperation.h>
 #include <vespa/storage/distributor/operations/idealstate/mergeoperation.h>
 #include <vespa/storage/distributor/operations/idealstate/garbagecollectionoperation.h>
+#include <vespa/vdslib/distribution/distribution.h>
+#include <vespa/vdslib/state/clusterstate.h>
 #include <vespa/vespalib/stllike/asciistream.h>
 
 #include <vespa/log/log.h>
@@ -868,7 +870,8 @@ SynchronizeAndMoveStateChecker::check(StateChecker::Context& c)
         } else {
             // Since the default bucket space has a dependency on the global bucket space,
             // we prioritize scheduling of merges to global buckets over those for default buckets.
-            schedPri = MaintenancePriority::HIGH;
+            // We also prioritize these above bucket deletions for the default space to avoid starvation.
+            schedPri = MaintenancePriority::VERY_HIGH;
             op->setPriority(c.distributorConfig.getMaintenancePriorities().mergeGlobalBuckets);
         }
 
@@ -1059,7 +1062,8 @@ BucketStateStateChecker::check(StateChecker::Context& c)
     }
 
     ActiveList activeNodes(
-            ActiveCopy::calculate(c.idealState, c.distribution, c.entry));
+            ActiveCopy::calculate(c.idealState, c.distribution, c.entry,
+                                  c.distributorConfig.max_activation_inhibited_out_of_sync_groups()));
     if (activeNodes.empty()) {
         return Result::noMaintenanceNeeded();
     }
@@ -1119,7 +1123,7 @@ BucketStateStateChecker::check(StateChecker::Context& c)
         op->setPriority(c.distributorConfig.getMaintenancePriorities().activateWithExistingActive);
     }
     op->setDetailedReason(reason.str());
-    return Result::createStoredResult(std::move(op), MaintenancePriority::VERY_HIGH);
+    return Result::createStoredResult(std::move(op), MaintenancePriority::HIGHEST);
 }
 
 bool

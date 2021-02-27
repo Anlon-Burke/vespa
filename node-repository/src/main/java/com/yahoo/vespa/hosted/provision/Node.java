@@ -8,16 +8,19 @@ import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.TenantName;
+import com.yahoo.vespa.hosted.provision.lb.LoadBalancers;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.Allocation;
 import com.yahoo.vespa.hosted.provision.node.Generation;
 import com.yahoo.vespa.hosted.provision.node.History;
 import com.yahoo.vespa.hosted.provision.node.IP;
+import com.yahoo.vespa.hosted.provision.node.NodeAcl;
 import com.yahoo.vespa.hosted.provision.node.Reports;
 import com.yahoo.vespa.hosted.provision.node.Status;
 
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -53,7 +56,7 @@ public final class Node implements Nodelike {
     private final Optional<Allocation> allocation;
 
     /** Creates a node builder in the initial state (reserved) */
-    public static Node.Builder createDockerNode(Set<String> ipAddresses, String hostname, String parentHostname, NodeResources resources, NodeType type) {
+    public static Node.Builder reserve(Set<String> ipAddresses, String hostname, String parentHostname, NodeResources resources, NodeType type) {
         return new Node.Builder("fake-" + hostname, hostname, new Flavor(resources), State.reserved, type)
                 .ipConfig(IP.Config.ofEmptyPool(ipAddresses))
                 .parentHostname(parentHostname);
@@ -120,7 +123,7 @@ public final class Node implements Nodelike {
      *
      * - OpenStack: UUID
      * - AWS: Instance ID
-     * - Docker containers: fake-[hostname]
+     * - Linux containers: fake-[hostname]
      */
     public String id() { return id; }
 
@@ -205,6 +208,16 @@ public final class Node implements Nodelike {
         return withWantToRetire(wantToRetire, status.wantToDeprovision(), agent, at);
     }
 
+    /** Returns a copy of this node with preferToRetire set to given value and updated history */
+    public Node withPreferToRetire(boolean preferToRetire, Agent agent, Instant at) {
+        if (preferToRetire == status.preferToRetire()) return this;
+        Node node = this.with(status.withPreferToRetire(preferToRetire));
+        if (preferToRetire) {
+            node = node.with(history.with(new History.Event(History.Event.Type.preferToRetire, agent, at)));
+        }
+        return node;
+    }
+
     /**
      * Returns a copy of this node which is retired.
      * If the node was already retired it is returned as-is.
@@ -218,7 +231,7 @@ public final class Node implements Nodelike {
 
     /** Returns a copy of this node which is retired */
     public Node retire(Instant retiredAt) {
-        if (status.wantToRetire())
+        if (status.wantToRetire() || status.preferToRetire())
             return retire(Agent.system, retiredAt);
         else
             return retire(Agent.application, retiredAt);
@@ -429,6 +442,11 @@ public final class Node implements Nodelike {
                        .deviation();
     }
 
+    /** Returns the ACL for the node (trusted nodes, networks and ports) */
+    public NodeAcl acl(NodeList allNodes, LoadBalancers loadBalancers) {
+        return NodeAcl.from(this, allNodes, loadBalancers);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -492,7 +510,7 @@ public final class Node implements Nodelike {
         }
 
         public static Set<State> allocatedStates() {
-            return Set.of(reserved, active, inactive, failed, parked);
+            return EnumSet.of(reserved, active, inactive, dirty, failed, parked);
         }
 
     }

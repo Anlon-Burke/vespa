@@ -1,4 +1,4 @@
-// Copyright 2019 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.model.deploy;
 
 import com.google.common.collect.ImmutableList;
@@ -35,12 +35,14 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private Zone zone;
     private final Set<ContainerEndpoint> endpoints = Collections.emptySet();
     private boolean useDedicatedNodeForLogserver = false;
+    private boolean dedicatedClusterControllerCluster = false;
     private boolean useThreePhaseUpdates = false;
     private double defaultTermwiseLimit = 1.0;
     private String jvmGCOptions = null;
     private String sequencerType = "LATENCY";
     private String responseSequencerType = "ADAPTIVE";
     private int responseNumThreads = 2;
+    private int maxPendingMoveOps = 10;
     private Optional<EndpointCertificateSecrets> endpointCertificateSecrets = Optional.empty();
     private AthenzDomain athenzDomain;
     private ApplicationRoles applicationRoles;
@@ -48,11 +50,13 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private boolean useAccessControlTlsHandshakeClientAuth;
     private boolean useAsyncMessageHandlingOnSchedule = false;
     private double feedConcurrency = 0.5;
-    private boolean enableAutomaticReindexing = false;
     private boolean reconfigurableZookeeperServer = false;
     private boolean useBucketExecutorForLidSpaceCompact;
+    private boolean useBucketExecutorForBucketMove;
     private boolean enableFeedBlockInDistributor = false;
     private double maxDeadBytesRatio = 0.2;
+    private int clusterControllerMaxHeapSizeInMb = 512;
+    private int maxActivationInhibitedOutOfSyncGroups = 0;
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
     @Override public boolean multitenant() { return multitenant; }
@@ -69,6 +73,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public boolean isBootstrap() { return false; }
     @Override public boolean isFirstTimeDeployment() { return false; }
     @Override public boolean useDedicatedNodeForLogserver() { return useDedicatedNodeForLogserver; }
+    @Override public boolean dedicatedClusterControllerCluster() { return dedicatedClusterControllerCluster; }
     @Override public Optional<EndpointCertificateSecrets> endpointCertificateSecrets() { return endpointCertificateSecrets; }
     @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
     @Override public boolean useThreePhaseUpdates() { return useThreePhaseUpdates; }
@@ -76,6 +81,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public Optional<ApplicationRoles> applicationRoles() { return Optional.ofNullable(applicationRoles); }
     @Override public String responseSequencerType() { return responseSequencerType; }
     @Override public int defaultNumResponseThreads() { return responseNumThreads; }
+    @Override public int maxPendingMoveOps() { return maxPendingMoveOps; }
     @Override public boolean skipCommunicationManagerThread() { return false; }
     @Override public boolean skipMbusRequestThread() { return false; }
     @Override public boolean skipMbusReplyThread() { return false; }
@@ -83,11 +89,13 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public boolean useAccessControlTlsHandshakeClientAuth() { return useAccessControlTlsHandshakeClientAuth; }
     @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
     @Override public double feedConcurrency() { return feedConcurrency; }
-    @Override public boolean enableAutomaticReindexing() { return enableAutomaticReindexing; }
     @Override public boolean reconfigurableZookeeperServer() { return reconfigurableZookeeperServer; }
     @Override public boolean useBucketExecutorForLidSpaceCompact() { return useBucketExecutorForLidSpaceCompact; }
+    @Override public boolean useBucketExecutorForBucketMove() { return useBucketExecutorForBucketMove; }
     @Override public boolean enableFeedBlockInDistributor() { return enableFeedBlockInDistributor; }
     @Override public double maxDeadBytesRatio() { return maxDeadBytesRatio; }
+    @Override public int clusterControllerMaxHeapSizeInMb() { return clusterControllerMaxHeapSizeInMb; }
+    @Override public int maxActivationInhibitedOutOfSyncGroups() { return maxActivationInhibitedOutOfSyncGroups; }
 
     public TestProperties setFeedConcurrency(double feedConcurrency) {
         this.feedConcurrency = feedConcurrency;
@@ -113,6 +121,10 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     }
     public TestProperties setResponseNumThreads(int numThreads) {
         responseNumThreads = numThreads;
+        return this;
+    }
+    public TestProperties setMaxPendingMoveOps(int moveOps) {
+        maxPendingMoveOps = moveOps;
         return this;
     }
     public TestProperties setDefaultTermwiseLimit(double limit) {
@@ -150,6 +162,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
+    public TestProperties setDedicatedClusterControllerCluster(boolean dedicatedClusterControllerCluster) {
+        this.dedicatedClusterControllerCluster = dedicatedClusterControllerCluster;
+        return this;
+    }
+
     public TestProperties setEndpointCertificateSecrets(Optional<EndpointCertificateSecrets> endpointCertificateSecrets) {
         this.endpointCertificateSecrets = endpointCertificateSecrets;
         return this;
@@ -180,8 +197,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
-    public TestProperties enableAutomaticReindexing(boolean enabled) { this.enableAutomaticReindexing = enabled; return this; }
-
     public TestProperties reconfigurableZookeeperServer(boolean enabled) {
         this.reconfigurableZookeeperServer = enabled;
         return this;
@@ -192,6 +207,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
+    public TestProperties useBucketExecutorForBucketMove(boolean enabled) {
+        useBucketExecutorForBucketMove = enabled;
+        return this;
+    }
+
     public TestProperties enableFeedBlockInDistributor(boolean enabled) {
         enableFeedBlockInDistributor = enabled;
         return this;
@@ -199,6 +219,16 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties maxDeadBytesRatio(double ratio) {
         maxDeadBytesRatio = ratio;
+        return this;
+    }
+
+    public TestProperties clusterControllerMaxHeapSizeInMb(int heapSize) {
+        clusterControllerMaxHeapSizeInMb = heapSize;
+        return this;
+    }
+
+    public TestProperties maxActivationInhibitedOutOfSyncGroups(int nGroups) {
+        maxActivationInhibitedOutOfSyncGroups = nGroups;
         return this;
     }
 

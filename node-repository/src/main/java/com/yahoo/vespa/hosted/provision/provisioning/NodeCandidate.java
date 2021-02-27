@@ -77,6 +77,8 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
 
     public abstract boolean wantToRetire();
 
+    public abstract boolean preferToRetire();
+
     public abstract Flavor flavor();
 
     public abstract NodeCandidate allocate(ApplicationId owner, ClusterMembership membership, NodeResources requestedResources, Instant at);
@@ -97,6 +99,21 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
     /** Returns whether this node can - as far as we know - be used to run the application workload */
     public abstract boolean isValid();
 
+    /** Returns whether this can be replaced by any of the reserved candidates */
+    public boolean replacableBy(List<NodeCandidate> candidates) {
+        return candidates.stream()
+                         .filter(candidate -> candidate.state() == Node.State.reserved)
+                         .anyMatch(candidate -> {
+                             int switchPriority = candidate.switchPriority(this);
+                             if (switchPriority < 0) {
+                                 return true;
+                             } else if (switchPriority > 0) {
+                                 return false;
+                             }
+                             return candidate.hostPriority(this) < 0;
+                         });
+    }
+
     /**
      * Compare this candidate to another
      *
@@ -115,10 +132,6 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
         // Choose active node that is not retired first (surplus is active but retired)
         if (!this.isSurplus && other.isSurplus) return -1;
         if (!other.isSurplus && this.isSurplus) return 1;
-
-        // Prefer node on exclusive switch
-        if (this.exclusiveSwitch && !other.exclusiveSwitch) return -1;
-        if (other.exclusiveSwitch && !this.exclusiveSwitch) return 1;
 
         // Choose reserved nodes from a previous allocation attempt (which exist in node repo)
         if (this.isInNodeRepoAndReserved() && ! other.isInNodeRepoAndReserved()) return -1;
@@ -140,6 +153,11 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
             if ( this.parent.get().reservedTo().isPresent() && ! other.parent.get().reservedTo().isPresent()) return -1;
             if ( ! this.parent.get().reservedTo().isPresent() && other.parent.get().reservedTo().isPresent()) return 1;
 
+            // Prefer node on exclusive switch
+            int switchPriority = switchPriority(other);
+            if (switchPriority != 0) return switchPriority;
+
+            // Prefer node with cheapest storage
             int diskCostDifference = NodeResources.DiskSpeed.compare(this.parent.get().flavor().resources().diskSpeed(),
                                                                      other.parent.get().flavor().resources().diskSpeed());
             if (diskCostDifference != 0)
@@ -156,15 +174,15 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
             if ( ! lessThanHalfTheHost(this) && lessThanHalfTheHost(other)) return 1;
         }
 
-        int hostPriority = Double.compare(this.skewWithThis() - this.skewWithoutThis(),
-                                          other.skewWithThis() - other.skewWithoutThis());
+        // Prefer host with least skew
+        int hostPriority = hostPriority(other);
         if (hostPriority != 0) return hostPriority;
 
-        // Choose cheapest node
+        // Prefer node with cheapest flavor
         if (this.flavor().cost() < other.flavor().cost()) return -1;
         if (other.flavor().cost() < this.flavor().cost()) return 1;
 
-        // Choose nodes where host is in more desirable state
+        // Prefer node where host is in more desirable state
         int thisHostStatePri = this.parent.map(host -> HOST_STATE_PRIORITY.indexOf(host.state())).orElse(-2);
         int otherHostStatePri = other.parent.map(host -> HOST_STATE_PRIORITY.indexOf(host.state())).orElse(-2);
         if (thisHostStatePri != otherHostStatePri) return otherHostStatePri - thisHostStatePri;
@@ -186,6 +204,19 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
     /** Returns a copy of this with node set to given value */
     NodeCandidate withNode(Node node) {
         return new ConcreteNodeCandidate(node, freeParentCapacity, parent, violatesSpares, exclusiveSwitch, isSurplus, isNew, isResizable);
+    }
+
+    /** Returns the switch priority, based on switch exclusivity, of this compared to other */
+    private int switchPriority(NodeCandidate other) {
+        if (this.exclusiveSwitch && !other.exclusiveSwitch) return -1;
+        if (other.exclusiveSwitch && !this.exclusiveSwitch) return 1;
+        return 0;
+    }
+
+    /** Returns the host priority, based on allocation skew, of this compared to other */
+    private int hostPriority(NodeCandidate other) {
+        return Double.compare(this.skewWithThis() - this.skewWithoutThis(),
+                              other.skewWithThis() - other.skewWithoutThis());
     }
 
     private boolean lessThanHalfTheHost(NodeCandidate node) {
@@ -265,6 +296,9 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
 
         @Override
         public boolean wantToRetire() { return node.status().wantToRetire(); }
+
+        @Override
+        public boolean preferToRetire() { return node.status().preferToRetire(); }
 
         @Override
         public Flavor flavor() { return node.flavor(); }
@@ -350,6 +384,9 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
         public boolean wantToRetire() { return false; }
 
         @Override
+        public boolean preferToRetire() { return false; }
+
+        @Override
         public Flavor flavor() { return new Flavor(resources); }
 
         @Override
@@ -370,12 +407,12 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
                                                 "Failed when allocating address on host");
             }
 
-            Node node = Node.createDockerNode(allocation.get().addresses(),
-                                              allocation.get().hostname(),
-                                              parentHostname().get(),
-                                              resources.with(parent.get().resources().diskSpeed())
+            Node node = Node.reserve(allocation.get().addresses(),
+                                     allocation.get().hostname(),
+                                     parentHostname().get(),
+                                     resources.with(parent.get().resources().diskSpeed())
                                                        .with(parent.get().resources().storageType()),
-                                              NodeType.tenant).build();
+                                     NodeType.tenant).build();
             return new ConcreteNodeCandidate(node, freeParentCapacity, parent, violatesSpares, exclusiveSwitch, isSurplus, isNew, isResizable);
 
         }
@@ -441,6 +478,9 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
 
         @Override
         public boolean wantToRetire() { return false; }
+
+        @Override
+        public boolean preferToRetire() { return false; }
 
         @Override
         public Flavor flavor() { return new Flavor(resources); }

@@ -75,7 +75,7 @@ public class CapacityCheckerTester {
     }
 
     private void updateCapacityChecker() {
-        this.capacityChecker = new CapacityChecker(nodeRepository.list());
+        this.capacityChecker = new CapacityChecker(nodeRepository.nodes().list());
     }
 
     List<NodeModel> createDistinctChildren(int amount, List<NodeResources> childResources) {
@@ -191,12 +191,12 @@ public class CapacityCheckerTester {
                      int numEmptyHosts, NodeResources emptyHostExcessCapacity, int emptyHostExcessIps) {
         List<NodeModel> possibleChildren = createDistinctChildren(numDistinctChildren, childResources);
         Map<ApplicationId, List<Node>> hostsWithChildren = createHostsWithChildren(childrenPerHost, possibleChildren, numHosts, hostExcessCapacity, hostExcessIps);
-        nodeRepository.addNodes(hostsWithChildren.getOrDefault(tenantHostApp, List.of()), Agent.system);
+        nodeRepository.nodes().addNodes(hostsWithChildren.getOrDefault(tenantHostApp, List.of()), Agent.system);
         hostsWithChildren.forEach((applicationId, nodes) -> {
             if (applicationId.equals(tenantHostApp)) return;
-            nodeRepository.addNodes(nodes, Agent.system);
+            nodeRepository.database().addNodesInState(nodes, Node.State.active, Agent.system);
         });
-        nodeRepository.addNodes(createEmptyHosts(numHosts, numEmptyHosts, emptyHostExcessCapacity, emptyHostExcessIps), Agent.system);
+        nodeRepository.nodes().addNodes(createEmptyHosts(numHosts, numEmptyHosts, emptyHostExcessCapacity, emptyHostExcessIps), Agent.system);
 
         updateCapacityChecker();
     }
@@ -281,8 +281,8 @@ public class CapacityCheckerTester {
                                              nodeModel.fastDisk ? NodeResources.DiskSpeed.fast : NodeResources.DiskSpeed.slow);
         Flavor f = new Flavor(nr);
 
-        Node.Builder builder = Node.create(nodeModel.id, new IP.Config(nodeModel.ipAddresses, nodeModel.additionalIpAddresses),
-                nodeModel.hostname, f, nodeModel.type);
+        Node.Builder builder = Node.create(nodeModel.id, nodeModel.hostname, f, nodeModel.state, nodeModel.type)
+                .ipConfig(new IP.Config(nodeModel.ipAddresses, nodeModel.additionalIpAddresses));
         nodeModel.parentHostname.ifPresent(builder::parentHostname);
         Node node = builder.build();
 
@@ -314,9 +314,9 @@ public class CapacityCheckerTester {
             }
         }
 
-        nodeRepository.addNodes(hosts, Agent.system);
+        nodeRepository.database().addNodesInState(hosts, Node.State.active, Agent.system);
         nodes.forEach((application, applicationNodes) -> {
-            nodeRepository.addNodes(applicationNodes, Agent.system);
+            nodeRepository.database().addNodesInState(applicationNodes, Node.State.active, Agent.system);
         });
         updateCapacityChecker();
     }
