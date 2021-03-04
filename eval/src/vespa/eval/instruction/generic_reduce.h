@@ -17,9 +17,9 @@ namespace vespalib::eval::instruction {
 struct DenseReducePlan {
     size_t in_size;
     size_t out_size;
-    std::vector<size_t> loop_cnt;
-    std::vector<size_t> in_stride;
-    std::vector<size_t> out_stride;
+    SmallVector<size_t> loop_cnt;
+    SmallVector<size_t> in_stride;
+    SmallVector<size_t> out_stride;
     DenseReducePlan(const ValueType &type, const ValueType &res_type);
     ~DenseReducePlan();
     template <typename F> void execute(size_t in_idx, const F &f) const {
@@ -29,7 +29,7 @@ struct DenseReducePlan {
 
 struct SparseReducePlan {
     size_t num_reduce_dims;
-    std::vector<size_t> keep_dims;
+    SmallVector<size_t> keep_dims;
     bool should_forward_index() const;
     SparseReducePlan(const ValueType &type, const ValueType &res_type);
     ~SparseReducePlan();
@@ -39,7 +39,8 @@ struct SparseReducePlan {
 
 struct GenericReduce {
     static InterpretedFunction::Instruction
-    make_instruction(const ValueType &type, Aggr aggr,
+    make_instruction(const ValueType &result_type,
+                     const ValueType &input_type, Aggr aggr,
                      const std::vector<vespalib::string> &dimensions,
                      const ValueBuilderFactory &factory, Stash &stash);
 };

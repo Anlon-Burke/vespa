@@ -68,7 +68,8 @@ TensorSpec perform_generic_concat(const TensorSpec &a, const TensorSpec &b,
     Stash stash;
     auto lhs = value_from_spec(a, factory);
     auto rhs = value_from_spec(b, factory);
-    auto my_op = GenericConcat::make_instruction(lhs->type(), rhs->type(), concat_dim, factory, stash);
+    auto res_type = ValueType::concat(lhs->type(), rhs->type(), concat_dim);
+    auto my_op = GenericConcat::make_instruction(res_type, lhs->type(), rhs->type(), concat_dim, factory, stash);
     InterpretedFunction::EvalSingle single(factory, my_op);
     return spec_from_value(single.eval(std::vector<Value::CREF>({*lhs,*rhs})));
 }
@@ -78,12 +79,10 @@ void test_generic_concat_with(const ValueBuilderFactory &factory) {
     for (size_t i = 0; i < concat_layouts.size(); i += 2) {
         const auto l = concat_layouts[i];
         const auto r = concat_layouts[i+1].cpy().seq(N_16ths);
-        for (TensorSpec lhs : { l.cpy().cells_float(),
-                                l.cpy().cells_double() })
-        {
-            for (TensorSpec rhs : { r.cpy().cells_float(),
-                                    r.cpy().cells_double() })
-            {
+        for (CellType lct : CellTypeUtils::list_types()) {
+            TensorSpec lhs = l.cpy().cells(lct);
+            for (CellType rct : CellTypeUtils::list_types()) {
+                TensorSpec rhs = r.cpy().cells(rct);
                 SCOPED_TRACE(fmt("\n===\nin LHS: %s\nin RHS: %s\n===\n", lhs.to_string().c_str(), rhs.to_string().c_str()));
                 auto actual = perform_generic_concat(lhs, rhs, "y", factory);
                 auto expect = ReferenceOperations::concat(lhs, rhs, "y");
@@ -109,16 +108,16 @@ TEST(GenericConcatTest, dense_concat_plan_can_be_created) {
     EXPECT_EQ(plan.right_offset, 5*2*3*3*4);
     EXPECT_EQ(plan.output_size, 2*3*12*2*3*3*4);
     EXPECT_EQ(plan.left.input_size, 2*3*5*2*3);
-    std::vector<size_t> expect_left_loop  = {    6,  5,  6, 12 };
-    std::vector<size_t> expect_left_in_s  = {   30,  6,  1,  0 };
-    std::vector<size_t> expect_left_out_s = {  864, 72, 12,  1 };
+    SmallVector<size_t> expect_left_loop  = {    6,  5,  6, 12 };
+    SmallVector<size_t> expect_left_in_s  = {   30,  6,  1,  0 };
+    SmallVector<size_t> expect_left_out_s = {  864, 72, 12,  1 };
     EXPECT_EQ(plan.left.in_loop_cnt, expect_left_loop);
     EXPECT_EQ(plan.left.in_stride, expect_left_in_s);
     EXPECT_EQ(plan.left.out_stride, expect_left_out_s);
     EXPECT_EQ(plan.right.input_size, 2*3*7*3*4);
-    std::vector<size_t> expect_right_loop =  {   6,  7,  6, 12 };
-    std::vector<size_t> expect_right_in_s =  {  84, 12,  0,  1 };
-    std::vector<size_t> expect_right_out_s = { 864, 72, 12,  1 };
+    SmallVector<size_t> expect_right_loop =  {   6,  7,  6, 12 };
+    SmallVector<size_t> expect_right_in_s =  {  84, 12,  0,  1 };
+    SmallVector<size_t> expect_right_out_s = { 864, 72, 12,  1 };
     EXPECT_EQ(plan.right.in_loop_cnt, expect_right_loop);
     EXPECT_EQ(plan.right.in_stride, expect_right_in_s);
     EXPECT_EQ(plan.right.out_stride, expect_right_out_s);

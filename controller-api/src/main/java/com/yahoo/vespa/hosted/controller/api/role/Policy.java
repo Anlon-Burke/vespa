@@ -102,6 +102,11 @@ enum Policy {
                            .on(PathGroup.tenantKeys, PathGroup.applicationKeys)
                            .in(SystemName.all())),
 
+    /** Access to revoke keys from the tenant */
+    keyRevokal(Privilege.grant(Action.delete)
+                        .on(PathGroup.tenantKeys, PathGroup.applicationKeys)
+                        .in(SystemName.all())),
+
     /** Full access to application development deployments. */
     developmentDeployment(Privilege.grant(Action.all())
                                    .on(PathGroup.developmentDeployment, PathGroup.developmentRestart)
@@ -186,7 +191,12 @@ enum Policy {
     /** Listing endpoint certificate request info */
     endpointCertificateRequestInfo(Privilege.grant(Action.read)
             .on(PathGroup.endpointCertificateRequestInfo)
-            .in(SystemName.all()));
+            .in(SystemName.all())),
+
+    /** Secret store operations */
+    secretStoreOperations(Privilege.grant(Action.all())
+                                .on(PathGroup.secretStore)
+                                .in(SystemName.PublicCd, SystemName.Public));
 
     private final Set<Privilege> privileges;
 

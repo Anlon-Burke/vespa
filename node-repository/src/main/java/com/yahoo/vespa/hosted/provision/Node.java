@@ -103,10 +103,10 @@ public final class Node implements Nodelike {
         }
 
         if (type != NodeType.host && reservedTo.isPresent())
-            throw new IllegalArgumentException("Only hosts can be reserved to a tenant");
+            throw new IllegalArgumentException("Only tenant hosts can be reserved to a tenant");
 
         if (type != NodeType.host && exclusiveTo.isPresent())
-            throw new IllegalArgumentException("Only hosts can be exclusive to an application");
+            throw new IllegalArgumentException("Only tenant hosts can be exclusive to an application");
     }
 
     /** Returns the IP config of this node */

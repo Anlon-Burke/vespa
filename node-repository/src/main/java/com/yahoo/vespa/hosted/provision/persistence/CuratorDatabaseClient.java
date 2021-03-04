@@ -10,6 +10,7 @@ import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeType;
+import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.path.Path;
 import com.yahoo.transaction.NestedTransaction;
@@ -69,6 +70,7 @@ public class CuratorDatabaseClient {
     private static final Path osVersionsPath = root.append("osVersions");
     private static final Path containerImagesPath = root.append("dockerImages");
     private static final Path firmwareCheckPath = root.append("firmwareCheck");
+    private static final Path archiveUrisPath = root.append("archiveUris");
 
     private static final Duration defaultLockTimeout = Duration.ofMinutes(6);
 
@@ -102,6 +104,7 @@ public class CuratorDatabaseClient {
         db.create(osVersionsPath);
         db.create(containerImagesPath);
         db.create(firmwareCheckPath);
+        db.create(archiveUrisPath);
         db.create(loadBalancersPath);
         provisionIndexCounter.initialize(100);
     }
@@ -461,6 +464,24 @@ public class CuratorDatabaseClient {
         return read(firmwareCheckPath, data -> Instant.ofEpochMilli(Long.parseLong(new String(data))));
     }
 
+    // Archive URIs -----------------------------------------------------------
+
+    public void writeArchiveUris(Map<TenantName, String> archiveUris) {
+        byte[] data = TenantArchiveUriSerializer.toJson(archiveUris);
+        NestedTransaction transaction = new NestedTransaction();
+        CuratorTransaction curatorTransaction = db.newCuratorTransactionIn(transaction);
+        curatorTransaction.add(CuratorOperations.setData(archiveUrisPath.getAbsolute(), data));
+        transaction.commit();
+    }
+
+    public Map<TenantName, String> readArchiveUris() {
+        return read(archiveUrisPath, TenantArchiveUriSerializer::fromJson).orElseGet(Map::of);
+    }
+
+    public Lock lockArchiveUris() {
+        return db.lock(lockPath.append("archiveUris"), defaultLockTimeout);
+    }
+
     // Load balancers -----------------------------------------------------------
 
     public List<LoadBalancerId> readLoadBalancerIds() {
@@ -512,15 +533,15 @@ public class CuratorDatabaseClient {
                  .collect(Collectors.toUnmodifiableList());
     }
 
-    /** Returns a given number of unique provision indexes */
-    public List<Integer> getProvisionIndexes(int numIndexes) {
-        if (numIndexes < 1)
-            throw new IllegalArgumentException("numIndexes must be a positive integer, was " + numIndexes);
+    /** Returns a given number of unique provision indices */
+    public List<Integer> readProvisionIndices(int count) {
+        if (count < 1)
+            throw new IllegalArgumentException("count must be a positive integer, was " + count);
 
-        int firstProvisionIndex = (int) provisionIndexCounter.add(numIndexes) - numIndexes;
-        return IntStream.range(0, numIndexes)
-                .mapToObj(i -> firstProvisionIndex + i)
-                .collect(Collectors.toList());
+        int firstIndex = (int) provisionIndexCounter.add(count) - count;
+        return IntStream.range(0, count)
+                        .mapToObj(i -> firstIndex + i)
+                        .collect(Collectors.toList());
     }
 
     public CacheStats cacheStats() {

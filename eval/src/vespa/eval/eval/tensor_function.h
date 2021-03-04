@@ -306,6 +306,22 @@ public:
 
 //-----------------------------------------------------------------------------
 
+class CellCast : public Op1
+{
+    using Super = Op1;
+private:
+    CellType _cell_type;
+public:
+    CellCast(const ValueType &result_type_in, const TensorFunction &child_in, CellType cell_type)
+        : Super(result_type_in, child_in), _cell_type(cell_type) {}
+    CellType cell_type() const { return _cell_type; }
+    bool result_is_mutable() const override { return true; }
+    InterpretedFunction::Instruction compile_self(const ValueBuilderFactory &factory, Stash &stash) const override;
+    void visit_self(vespalib::ObjectVisitor &visitor) const override;
+};
+
+//-----------------------------------------------------------------------------
+
 class Create : public Node
 {
     using Super = Node;
@@ -451,6 +467,7 @@ const TensorFunction &merge(const TensorFunction &lhs, const TensorFunction &rhs
 const TensorFunction &concat(const TensorFunction &lhs, const TensorFunction &rhs, const vespalib::string &dimension, Stash &stash);
 const TensorFunction &create(const ValueType &type, const std::map<TensorSpec::Address, TensorFunction::CREF> &spec, Stash &stash);
 const TensorFunction &lambda(const ValueType &type, const std::vector<size_t> &bindings, const Function &function, NodeTypes node_types, Stash &stash);
+const TensorFunction &cell_cast(const TensorFunction &child, CellType cell_type, Stash &stash);
 const TensorFunction &peek(const TensorFunction &param, const std::map<vespalib::string, std::variant<TensorSpec::Label, TensorFunction::CREF>> &spec, Stash &stash);
 const TensorFunction &rename(const TensorFunction &child, const std::vector<vespalib::string> &from, const std::vector<vespalib::string> &to, Stash &stash);
 const TensorFunction &if_node(const TensorFunction &cond, const TensorFunction &true_child, const TensorFunction &false_child, Stash &stash);

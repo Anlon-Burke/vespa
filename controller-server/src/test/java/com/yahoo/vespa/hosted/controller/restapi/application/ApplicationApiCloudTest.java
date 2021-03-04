@@ -1,12 +1,17 @@
 // Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.restapi.application;
 
+import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
 import com.yahoo.config.provision.TenantName;
+import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.flags.PermanentFlags;
+import com.yahoo.vespa.hosted.controller.LockedTenant;
+import com.yahoo.vespa.hosted.controller.api.application.v4.model.DeployOptions;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.PlanId;
+import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.deployment.ApplicationPackageBuilder;
@@ -15,16 +20,16 @@ import com.yahoo.vespa.hosted.controller.restapi.ControllerContainerCloudTest;
 import com.yahoo.vespa.hosted.controller.security.Auth0Credentials;
 import com.yahoo.vespa.hosted.controller.security.CloudTenantSpec;
 import com.yahoo.vespa.hosted.controller.security.Credentials;
+import com.yahoo.vespa.hosted.controller.tenant.CloudTenant;
 import org.junit.Before;
 import org.junit.Test;
 
 import javax.ws.rs.ForbiddenException;
 import java.util.Collections;
+import java.util.Optional;
 import java.util.Set;
 
-import static com.yahoo.application.container.handler.Request.Method.GET;
-import static com.yahoo.application.container.handler.Request.Method.POST;
-import static com.yahoo.application.container.handler.Request.Method.PUT;
+import static com.yahoo.application.container.handler.Request.Method.*;
 import static com.yahoo.vespa.hosted.controller.restapi.application.ApplicationApiTest.createApplicationSubmissionData;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
@@ -117,33 +122,85 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
     @Test
     public void test_secret_store_configuration() {
         var secretStoreRequest =
-                request("/application/v4/tenant/scoober/secret-store", PUT)
+                request("/application/v4/tenant/scoober/secret-store/some-name", PUT)
                         .data("{" +
                                 "\"awsId\": \"123\"," +
-                                "\"name\": \"some-name\"," +
                                 "\"role\": \"role-id\"," +
                                 "\"externalId\": \"321\"" +
                                 "}")
                         .roles(Set.of(Role.administrator(tenantName)));
-        tester.assertResponse(secretStoreRequest, "{\"message\":\"Configured secret store: TenantSecretStore{name='some-name', awsId='123', role='role-id'}\"}", 200);
+        tester.assertResponse(secretStoreRequest, "{\"secretStores\":[{\"name\":\"some-name\",\"awsId\":\"123\",\"role\":\"role-id\"}]}", 200);
         tester.assertResponse(secretStoreRequest, "{" +
                 "\"error-code\":\"BAD_REQUEST\"," +
                 "\"message\":\"Secret store TenantSecretStore{name='some-name', awsId='123', role='role-id'} is already configured\"" +
                 "}", 400);
 
         secretStoreRequest =
-                request("/application/v4/tenant/scoober/secret-store", PUT)
+                request("/application/v4/tenant/scoober/secret-store/should-fail", PUT)
                         .data("{" +
-                                "\"awsId\": \"123\"," +
-                                "\"name\": \" \"," +
+                                "\"awsId\": \" \"," +
                                 "\"role\": \"role-id\"," +
                                 "\"externalId\": \"321\"" +
                                 "}")
                         .roles(Set.of(Role.administrator(tenantName)));
         tester.assertResponse(secretStoreRequest, "{" +
                 "\"error-code\":\"BAD_REQUEST\"," +
-                "\"message\":\"Secret store TenantSecretStore{name=' ', awsId='123', role='role-id'} is invalid\"" +
+                "\"message\":\"Secret store TenantSecretStore{name='should-fail', awsId=' ', role='role-id'} is invalid\"" +
                 "}", 400);
+    }
+
+    @Test
+    public void validate_secret_store() {
+        var secretStoreRequest =
+                request("/application/v4/tenant/scoober/secret-store/secret-foo/validate", GET)
+                        .roles(Set.of(Role.administrator(tenantName)));
+        tester.assertResponse(secretStoreRequest, "{" +
+                "\"error-code\":\"BAD_REQUEST\"," +
+                "\"message\":\"Tenant 'scoober' has no active deployments\"" +
+                "}", 400);
+
+        deployApplication();
+        secretStoreRequest =
+                request("/application/v4/tenant/scoober/secret-store/secret-foo/validate", GET)
+                        .roles(Set.of(Role.administrator(tenantName)));
+        tester.assertResponse(secretStoreRequest, "{" +
+                "\"error-code\":\"NOT_FOUND\"," +
+                "\"message\":\"No secret store 'secret-foo' configured for tenant 'scoober'\"" +
+                "}", 404);
+
+        tester.controller().tenants().lockOrThrow(tenantName, LockedTenant.Cloud.class, lockedTenant -> {
+            lockedTenant = lockedTenant.withSecretStore(new TenantSecretStore("secret-foo", "123", "some-role"));
+            tester.controller().tenants().store(lockedTenant);
+        });
+
+        // ConfigServerMock returns message on format deployment.toString() + " - " + tenantSecretStore.toString()
+        secretStoreRequest =
+                request("/application/v4/tenant/scoober/secret-store/secret-foo/validate", GET)
+                        .roles(Set.of(Role.administrator(tenantName)));
+        tester.assertResponse(secretStoreRequest, "{" +
+                "\"message\":\"scoober.albums in prod.us-central-1 - TenantSecretStore{name='secret-foo', awsId='123', role='some-role'}\"" +
+                "}", 200);
+    }
+
+    @Test
+    public void delete_secret_store() {
+        var deleteRequest =
+                request("/application/v4/tenant/scoober/secret-store/secret-foo", DELETE)
+                        .roles(Set.of(Role.administrator(tenantName)));
+        tester.assertResponse(deleteRequest, "{" +
+                "\"error-code\":\"NOT_FOUND\"," +
+                "\"message\":\"Could not delete secret store 'secret-foo': Secret store not found\"" +
+                "}", 404);
+
+        tester.controller().tenants().lockOrThrow(tenantName, LockedTenant.Cloud.class, lockedTenant -> {
+            lockedTenant = lockedTenant.withSecretStore(new TenantSecretStore("secret-foo", "123", "some-role"));
+            tester.controller().tenants().store(lockedTenant);
+        });
+        var tenant = (CloudTenant) tester.controller().tenants().require(tenantName);
+        assertEquals(1, tenant.tenantSecretStores().size());
+        tester.assertResponse(deleteRequest, "{\"secretStores\":[]}", 200);
+        tenant = (CloudTenant) tester.controller().tenants().require(tenantName);
+        assertEquals(0, tenant.tenantSecretStores().size());
     }
 
     private ApplicationPackageBuilder prodBuilder() {
@@ -166,5 +223,18 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
 
     private static Credentials credentials(String name) {
         return new Auth0Credentials(() -> name, Collections.emptySet());
+    }
+
+    private void deployApplication() {
+        var applicationPackage = new ApplicationPackageBuilder()
+                .instances("default")
+                .globalServiceId("foo")
+                .region("us-central-1")
+                .build();
+
+        tester.controller().applications().deploy(ApplicationId.from("scoober", "albums", "default"),
+                ZoneId.from("prod", "us-central-1"),
+                Optional.of(applicationPackage),
+                new DeployOptions(true, Optional.empty(), false, false));
     }
 }

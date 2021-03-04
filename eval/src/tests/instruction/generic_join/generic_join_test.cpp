@@ -55,7 +55,8 @@ TensorSpec perform_generic_join(const TensorSpec &a, const TensorSpec &b,
     Stash stash;
     auto lhs = value_from_spec(a, factory);
     auto rhs = value_from_spec(b, factory);
-    auto my_op = GenericJoin::make_instruction(lhs->type(), rhs->type(), function, factory, stash);
+    auto res_type = ValueType::join(lhs->type(), rhs->type());
+    auto my_op = GenericJoin::make_instruction(res_type, lhs->type(), rhs->type(), function, factory, stash);
     InterpretedFunction::EvalSingle single(factory, my_op);
     return spec_from_value(single.eval(std::vector<Value::CREF>({*lhs,*rhs})));
 }
@@ -64,9 +65,9 @@ TEST(GenericJoinTest, dense_join_plan_can_be_created) {
     auto lhs = ValueType::from_spec("tensor(a{},b[6],c[5],e[3],f[2],g{})");
     auto rhs = ValueType::from_spec("tensor(a{},b[6],c[5],d[4],h{})");
     auto plan = DenseJoinPlan(lhs, rhs);
-    std::vector<size_t> expect_loop = {30,4,6};
-    std::vector<size_t> expect_lhs_stride = {6,0,1};
-    std::vector<size_t> expect_rhs_stride = {4,1,0};
+    SmallVector<size_t> expect_loop = {30,4,6};
+    SmallVector<size_t> expect_lhs_stride = {6,0,1};
+    SmallVector<size_t> expect_rhs_stride = {4,1,0};
     EXPECT_EQ(plan.lhs_size, 180);
     EXPECT_EQ(plan.rhs_size, 120);
     EXPECT_EQ(plan.out_size, 720);
@@ -80,9 +81,9 @@ TEST(GenericJoinTest, sparse_join_plan_can_be_created) {
     auto rhs = ValueType::from_spec("tensor(b[6],c[5],d[4],g{},h{})");
     auto plan = SparseJoinPlan(lhs, rhs);
     using SRC = SparseJoinPlan::Source;
-    std::vector<SRC> expect_sources = {SRC::LHS,SRC::BOTH,SRC::RHS};
-    std::vector<size_t> expect_lhs_overlap = {1};
-    std::vector<size_t> expect_rhs_overlap = {0};
+    SmallVector<SRC> expect_sources = {SRC::LHS,SRC::BOTH,SRC::RHS};
+    SmallVector<size_t> expect_lhs_overlap = {1};
+    SmallVector<size_t> expect_rhs_overlap = {0};
     EXPECT_EQ(plan.sources, expect_sources);
     EXPECT_EQ(plan.lhs_overlap, expect_lhs_overlap);
     EXPECT_EQ(plan.rhs_overlap, expect_rhs_overlap);
@@ -107,12 +108,10 @@ TEST(GenericJoinTest, generic_join_works_for_simple_and_fast_values) {
     for (size_t i = 0; i < join_layouts.size(); i += 2) {
         const auto &l = join_layouts[i];
         const auto &r = join_layouts[i+1];
-        for (TensorSpec lhs : { l.cpy().cells_float(),
-                                l.cpy().cells_double() })
-        {
-            for (TensorSpec rhs : { r.cpy().cells_float(),
-                                    r.cpy().cells_double() })
-            {
+        for (CellType lct : CellTypeUtils::list_types()) {
+            TensorSpec lhs = l.cpy().cells(lct);
+            for (CellType rct : CellTypeUtils::list_types()) {
+                TensorSpec rhs = r.cpy().cells(rct);
                 for (auto fun: {operation::Add::f, operation::Sub::f, operation::Mul::f, operation::Div::f}) {
                     SCOPED_TRACE(fmt("\n===\nLHS: %s\nRHS: %s\n===\n", lhs.to_string().c_str(), rhs.to_string().c_str()));
                     auto expect = ReferenceOperations::join(lhs, rhs, fun);

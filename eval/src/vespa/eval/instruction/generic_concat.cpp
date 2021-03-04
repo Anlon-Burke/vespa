@@ -169,7 +169,7 @@ DenseConcatPlan::InOutLoop::fill_from(const ValueType &in_type,
                                       std::string concat_dimension,
                                       const ValueType &out_type)
 {
-    std::vector<size_t> out_loop_cnt;
+    SmallVector<size_t> out_loop_cnt;
     Case prev_case = Case::NONE;
     auto update_plan = [&](Case my_case, size_t in_size, size_t out_size, size_t in_val, size_t out_val) {
         if (my_case == prev_case) {
@@ -238,11 +238,13 @@ DenseConcatPlan::InOutLoop::~InOutLoop() = default;
 
 
 InterpretedFunction::Instruction
-GenericConcat::make_instruction(const ValueType &lhs_type, const ValueType &rhs_type,
+GenericConcat::make_instruction(const ValueType &result_type,
+                                const ValueType &lhs_type, const ValueType &rhs_type,
                                 const vespalib::string &dimension,
                                 const ValueBuilderFactory &factory, Stash &stash)
 {
     auto &param = stash.create<ConcatParam>(lhs_type, rhs_type, dimension, factory);
+    assert(result_type == param.res_type);
     auto fun = typify_invoke<3,TypifyCellType,SelectGenericConcatOp>(
             lhs_type.cell_type(), rhs_type.cell_type(), param.res_type.cell_type(),
             param);

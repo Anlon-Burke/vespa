@@ -40,7 +40,8 @@ TensorSpec perform_generic_merge(const TensorSpec &a, const TensorSpec &b, join_
     Stash stash;
     auto lhs = value_from_spec(a, factory);
     auto rhs = value_from_spec(b, factory);
-    auto my_op = GenericMerge::make_instruction(lhs->type(), rhs->type(), fun, factory, stash);
+    auto res_type = ValueType::merge(lhs->type(), rhs->type());
+    auto my_op = GenericMerge::make_instruction(res_type, lhs->type(), rhs->type(), fun, factory, stash);
     InterpretedFunction::EvalSingle single(factory, my_op);
     return spec_from_value(single.eval(std::vector<Value::CREF>({*lhs, *rhs})));
 }
@@ -50,12 +51,10 @@ void test_generic_merge_with(const ValueBuilderFactory &factory) {
     for (size_t i = 0; i < merge_layouts.size(); i += 2) {
         const auto l = merge_layouts[i];
         const auto r = merge_layouts[i+1].cpy().seq(N_16ths);
-        for (TensorSpec lhs : { l.cpy().cells_float(),
-                                l.cpy().cells_double() })
-        {
-            for (TensorSpec rhs : { r.cpy().cells_float(),
-                                    r.cpy().cells_double() })
-            {
+        for (CellType lct : CellTypeUtils::list_types()) {
+            TensorSpec lhs = l.cpy().cells(lct);
+            for (CellType rct : CellTypeUtils::list_types()) {
+                TensorSpec rhs = r.cpy().cells(rct);
                 SCOPED_TRACE(fmt("\n===\nLHS: %s\nRHS: %s\n===\n", lhs.to_string().c_str(), rhs.to_string().c_str()));
                 for (auto fun: {operation::Add::f, operation::Mul::f, operation::Sub::f, operation::Max::f}) {
                     auto expect = ReferenceOperations::merge(lhs, rhs, fun);

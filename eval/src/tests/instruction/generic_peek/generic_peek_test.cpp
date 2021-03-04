@@ -84,7 +84,7 @@ TensorSpec perform_generic_peek(const TensorSpec &a, const ValueType &result_typ
             label_or_child = child_idx++;
         }
     }
-    auto my_op = GenericPeek::make_instruction(param->type(), result_type, spec, factory, stash);
+    auto my_op = GenericPeek::make_instruction(result_type, param->type(), spec, factory, stash);
     InterpretedFunction::EvalSingle single(factory, my_op);
     return spec_from_value(single.eval(my_stack));
 }
@@ -151,7 +151,7 @@ void verify_peek_equal(const TensorSpec &input,
     }
     if (reduce_dims.empty()) return;
     ValueType result_type = param_type.reduce(reduce_dims);
-    auto expect = reference_peek(input, spec).normalize();
+    auto expect = reference_peek(input, spec);
     SCOPED_TRACE(fmt("peek input: %s\n  peek spec: %s\n  peek result %s\n",
                      input.to_string().c_str(),
                      to_str(spec).c_str(),
@@ -194,9 +194,8 @@ void fill_dims_and_check(const TensorSpec &input,
 
 void test_generic_peek_with(const ValueBuilderFactory &factory) {
     for (const auto &layout : peek_layouts) {
-        for (TensorSpec input : { layout.cpy().cells_float(),
-                                  layout.cpy().cells_double() })
-        {
+        for (CellType ct : CellTypeUtils::list_types()) {
+            TensorSpec input = layout.cpy().cells(ct);
             ValueType input_type = ValueType::from_spec(input.type());
             const auto &dims = input_type.dimensions();
             PeekSpec spec;

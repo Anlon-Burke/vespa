@@ -8,15 +8,24 @@
 
 namespace vespalib::eval::value_type {
 
-namespace {
-
-const char *to_name(CellType cell_type) {
+vespalib::string cell_type_to_name(CellType cell_type) {
     switch (cell_type) {
     case CellType::DOUBLE: return "double";
     case CellType::FLOAT: return "float";
     }
     abort();
 }
+
+std::optional<CellType> cell_type_from_name(const vespalib::string &name) {
+    for (CellType t : CellTypeUtils::list_types()) {
+        if (name == cell_type_to_name(t)) {
+            return t;
+        }
+    }
+    return std::nullopt;
+}
+
+namespace {
 
 class ParseContext
 {
@@ -161,12 +170,13 @@ CellType parse_cell_type(ParseContext &ctx) {
     ctx.eat('>');
     if (ctx.failed()) {
         ctx.revert(mark);
-        return CellType::DOUBLE;
-    }
-    if (cell_type == "float") {
-        return CellType::FLOAT;
-    } else if (cell_type != "double") {
-        ctx.fail();
+    } else {
+        auto result = cell_type_from_name(cell_type);
+        if (result.has_value()) {
+            return result.value();
+        } else {
+            ctx.fail();
+        }
     }
     return CellType::DOUBLE;
 }
@@ -232,11 +242,11 @@ to_spec(const ValueType &type)
     if (type.is_error()) {
         os << "error";
     } else if (type.is_scalar()) {
-        os << to_name(type.cell_type());
+        os << cell_type_to_name(type.cell_type());
     } else {
         os << "tensor";
         if (type.cell_type() != CellType::DOUBLE) {
-            os << "<" << to_name(type.cell_type()) << ">";
+            os << "<" << cell_type_to_name(type.cell_type()) << ">";
         }
         os << "(";
         for (const auto &d: type.dimensions()) {

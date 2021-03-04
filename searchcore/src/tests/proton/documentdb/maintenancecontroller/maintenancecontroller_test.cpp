@@ -8,6 +8,7 @@
 #include <vespa/searchcore/proton/common/doctypename.h>
 #include <vespa/searchcore/proton/common/transient_memory_usage_provider.h>
 #include <vespa/searchcore/proton/documentmetastore/operation_listener.h>
+#include <vespa/searchcore/proton/documentmetastore/documentmetastore.h>
 #include <vespa/searchcore/proton/feedoperation/moveoperation.h>
 #include <vespa/searchcore/proton/feedoperation/pruneremoveddocumentsoperation.h>
 #include <vespa/searchcore/proton/feedoperation/putoperation.h>
@@ -63,6 +64,7 @@ using search::DocumentIdT;
 using search::DocumentMetaData;
 using vespalib::IDestructorCallback;
 using search::SerialNum;
+using search::CommitParam;
 using storage::spi::BucketInfo;
 using storage::spi::Timestamp;
 using vespalib::Slime;
@@ -73,7 +75,6 @@ using storage::spi::dummy::DummyBucketExecutor;
 using BlockedReason = IBlockableMaintenanceJob::BlockedReason;
 
 typedef BucketId::List BucketIdVector;
-typedef std::set<BucketId> BucketIdSet;
 
 constexpr vespalib::duration TIMEOUT = 60s;
 
@@ -560,7 +561,7 @@ MyDocumentSubDB::handlePut(PutOperation &op)
         needCommit = true;
     }
     if (needCommit) {
-        _metaStore.commit(serialNum, serialNum);
+        _metaStore.commit(CommitParam(serialNum));
     }
 }
 
@@ -606,7 +607,7 @@ MyDocumentSubDB::handleRemove(RemoveOperationWithDocId &op)
         needCommit = true;
     }
     if (needCommit) {
-        _metaStore.commit(serialNum, serialNum);
+        _metaStore.commit(CommitParam(serialNum));
     }
 }
 
@@ -660,7 +661,7 @@ MyDocumentSubDB::handleMove(const MoveOperation &op)
         needCommit = true;
     }
     if (needCommit) {
-        _metaStore.commit(serialNum, serialNum);
+        _metaStore.commit(CommitParam(serialNum));
     }
 }
 

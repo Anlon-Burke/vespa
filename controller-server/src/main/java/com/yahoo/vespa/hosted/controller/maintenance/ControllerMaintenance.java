@@ -65,6 +65,8 @@ public class ControllerMaintenance extends AbstractComponent {
         maintainers.add(new ReindexingTriggerer(controller, intervals.reindexingTriggerer));
         maintainers.add(new EndpointCertificateMaintainer(controller, intervals.endpointCertificateMaintainer));
         maintainers.add(new TrafficShareUpdater(controller, intervals.trafficFractionUpdater));
+        maintainers.add(new ArchiveUriUpdater(controller, intervals.archiveUriUpdater));
+        maintainers.add(new TenantRoleMaintainer(controller, intervals.tenantRoleMaintainer));
     }
 
     public Upgrader upgrader() { return upgrader; }
@@ -115,6 +117,8 @@ public class ControllerMaintenance extends AbstractComponent {
         private final Duration reindexingTriggerer;
         private final Duration endpointCertificateMaintainer;
         private final Duration trafficFractionUpdater;
+        private final Duration archiveUriUpdater;
+        private final Duration tenantRoleMaintainer;
 
         public Intervals(SystemName system) {
             this.system = Objects.requireNonNull(system);
@@ -142,6 +146,8 @@ public class ControllerMaintenance extends AbstractComponent {
             this.reindexingTriggerer = duration(1, HOURS);
             this.endpointCertificateMaintainer = duration(12, HOURS);
             this.trafficFractionUpdater = duration(5, MINUTES);
+            this.archiveUriUpdater = duration(5, MINUTES);
+            this.tenantRoleMaintainer = duration(5, MINUTES);
         }
 
         private Duration duration(long amount, TemporalUnit unit) {

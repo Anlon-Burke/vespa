@@ -60,16 +60,16 @@ TensorSpec simple_value_join(const TensorSpec &a, const TensorSpec &b, join_fun_
     const auto &factory = SimpleValueBuilderFactory::get();
     auto lhs = value_from_spec(a, factory);
     auto rhs = value_from_spec(b, factory);
-    auto my_op = GenericJoin::make_instruction(lhs->type(), rhs->type(), function, factory, stash);
+    auto res_type = ValueType::join(lhs->type(), rhs->type());
+    auto my_op = GenericJoin::make_instruction(res_type, lhs->type(), rhs->type(), function, factory, stash);
     InterpretedFunction::EvalSingle single(factory, my_op);
     return spec_from_value(single.eval(std::vector<Value::CREF>({*lhs,*rhs})));
 }
 
 TEST(SimpleValueTest, simple_values_can_be_converted_from_and_to_tensor_spec) {
     for (const auto &layout: layouts) {
-        for (TensorSpec expect : { layout.cpy().cells_float(),
-                                   layout.cpy().cells_double() })
-        {
+        for (CellType ct : CellTypeUtils::list_types()) {
+            TensorSpec expect = layout.cpy().cells(ct);
             std::unique_ptr<Value> value = value_from_spec(expect, SimpleValueBuilderFactory::get());
             TensorSpec actual = spec_from_value(*value);
             EXPECT_EQ(actual, expect);
@@ -79,9 +79,8 @@ TEST(SimpleValueTest, simple_values_can_be_converted_from_and_to_tensor_spec) {
 
 TEST(SimpleValueTest, simple_values_can_be_copied) {
     for (const auto &layout: layouts) {
-        for (TensorSpec expect : { layout.cpy().cells_float(),
-                                   layout.cpy().cells_double() })
-        {
+        for (CellType ct : CellTypeUtils::list_types()) {
+            TensorSpec expect = layout.cpy().cells(ct);
             std::unique_ptr<Value> value = value_from_spec(expect, SimpleValueBuilderFactory::get());
             std::unique_ptr<Value> copy = SimpleValueBuilderFactory::get().copy(*value);
             TensorSpec actual = spec_from_value(*copy);
@@ -108,7 +107,8 @@ TEST(SimpleValueTest, simple_value_can_be_built_and_inspected) {
     }
     std::unique_ptr<Value> value = builder->build(std::move(builder));
     EXPECT_EQ(value->index().size(), 6);
-    auto view = value->index().create_view({0});
+    std::vector<size_t> view_dims = { 0 };
+    auto view = value->index().create_view(view_dims);
     Handle query_handle("b");
     string_id query = query_handle.id();
     string_id label;
@@ -130,12 +130,10 @@ TEST(SimpleValueTest, new_generic_join_works_for_simple_values) {
     for (size_t i = 0; i < join_layouts.size(); i += 2) {
         const auto l = join_layouts[i].cpy().seq(N_16ths);
         const auto r = join_layouts[i + 1].cpy().seq(N_16ths);
-        for (TensorSpec lhs : { l.cpy().cells_float(),
-                                l.cpy().cells_double() })
-        {
-            for (TensorSpec rhs : { r.cpy().cells_float(),
-                                    r.cpy().cells_double() })
-            {
+        for (CellType lct : CellTypeUtils::list_types()) {
+            TensorSpec lhs = l.cpy().cells(lct);
+            for (CellType rct : CellTypeUtils::list_types()) {
+                TensorSpec rhs = r.cpy().cells(rct);
                 for (auto fun: {operation::Add::f, operation::Sub::f, operation::Mul::f, operation::Div::f}) {
                     SCOPED_TRACE(fmt("\n===\nLHS: %s\nRHS: %s\n===\n", lhs.to_string().c_str(), rhs.to_string().c_str()));
                     auto expect = ReferenceOperations::join(lhs, rhs, fun);

@@ -49,6 +49,11 @@ public enum NodeType {
         return !childNodeTypes.isEmpty();
     }
 
+    /** Returns whether this supports host sharing */
+    public boolean isSharable() {
+        return this == NodeType.host;
+    }
+
     public String description() {
         return description;
     }
@@ -75,4 +80,16 @@ public enum NodeType {
     public boolean canRun(NodeType type) {
         return childNodeTypes.contains(type);
     }
+
+    /** Returns the host type of this */
+    public NodeType hostType() {
+        if (isHost()) return this;
+        for (NodeType nodeType : values()) {
+            if (nodeType.childNodeTypes.size() == 1 && nodeType.canRun(this)) {
+                return nodeType;
+            }
+        }
+        throw new IllegalArgumentException("No host of " + this + " exists");
+    }
+
 }

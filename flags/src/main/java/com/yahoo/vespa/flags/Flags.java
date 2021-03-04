@@ -102,7 +102,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag USE_THREE_PHASE_UPDATES = defineFeatureFlag(
             "use-three-phase-updates", false,
-            List.of("vekterli"), "2020-12-02", "2021-03-01",
+            List.of("vekterli"), "2020-12-02", "2021-04-01",
             "Whether to enable the use of three-phase updates when bucket replicas are out of sync.",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
@@ -152,7 +152,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag USE_ACCESS_CONTROL_CLIENT_AUTHENTICATION = defineFeatureFlag(
             "use-access-control-client-authentication", false,
-            List.of("tokle"), "2020-12-02", "2021-03-01",
+            List.of("tokle"), "2020-12-02", "2021-04-01",
             "Whether application container should set up client authentication on default port based on access control element",
             "Takes effect on next internal redeployment",
             APPLICATION_ID);
@@ -180,7 +180,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag USE_BUCKET_EXECUTOR_FOR_LID_SPACE_COMPACT = defineFeatureFlag(
             "use-bucket-executor-for-lid-space-compact", false,
-            List.of("baldersheim"), "2021-01-24", "2021-03-01",
+            List.of("baldersheim"), "2021-01-24", "2021-04-01",
             "Wheter to use content-level bucket executor or legacy frozen buckets",
             "Takes effect on next internal redeployment",
             APPLICATION_ID);
@@ -206,13 +206,6 @@ public class Flags {
             "Takes effect on the next suspension request to the Orchestrator.",
             APPLICATION_ID);
 
-    public static final UnboundBooleanFlag RECONFIGURABLE_ZOOKEEPER_SERVER_FOR_CLUSTER_CONTROLLER = defineFeatureFlag(
-            "reconfigurable-zookeeper-server-for-cluster-controller", false,
-            List.of("musum", "mpolden"), "2020-12-16", "2021-03-16",
-            "Whether to use reconfigurable zookeeper server for cluster controller",
-            "Takes effect on (re)redeployment",
-            APPLICATION_ID);
-
     public static final UnboundBooleanFlag ENABLE_FEED_BLOCK_IN_DISTRIBUTOR = defineFeatureFlag(
             "enable-feed-block-in-distributor", false,
             List.of("geirst"), "2021-01-27", "2021-04-01",
@@ -228,16 +221,22 @@ public class Flags {
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundStringFlag SYNC_HOST_LOGS_TO_S3_BUCKET = defineStringFlag(
-            "sync-host-logs-to-s3-bucket", "", List.of("andreer", "valerijf"), "2021-02-10", "2021-03-01",
+            "sync-host-logs-to-s3-bucket", "", List.of("andreer", "valerijf"), "2021-02-10", "2021-04-01",
             "Host-admin should sync host logs to an S3 bucket named by this flag. If left empty, sync is disabled",
             "Takes effect on next run of S3 log sync task in host-admin",
-            APPLICATION_ID, NODE_TYPE);
+            TENANT_ID, ZONE_ID);
 
     public static final UnboundIntFlag CLUSTER_CONTROLLER_MAX_HEAP_SIZE_IN_MB = defineIntFlag(
-            "cluster-controller-max-heap-size-in-mb", 512,
+            "cluster-controller-max-heap-size-in-mb", 256,
             List.of("hmusum"), "2021-02-10", "2021-04-10",
             "JVM max heap size for cluster controller in Mb",
             "Takes effect when restarting cluster controller");
+
+    public static final UnboundIntFlag METRICS_PROXY_MAX_HEAP_SIZE_IN_MB = defineIntFlag(
+            "metrics-proxy-max-heap-size-in-mb", 256,
+            List.of("hmusum"), "2021-03-01", "2021-05-01",
+            "JVM max heap size for metrics proxy in Mb",
+            "Takes effect when restarting metrics proxy");
 
     public static final UnboundBooleanFlag DEDICATED_CLUSTER_CONTROLLER_CLUSTER = defineFeatureFlag(
             "dedicated-cluster-controller-cluster", false,
@@ -275,9 +274,9 @@ public class Flags {
 
     public static final UnboundBooleanFlag DYNAMIC_CONFIG_SERVER_PROVISIONING = defineFeatureFlag(
             "dynamic-config-server-provisioning", false,
-            List.of("mpolden"), "2021-02-26", "2021-05-01",
+            List.of("mpolden", "hakon"), "2021-03-03", "2021-05-01",
             "Enable dynamic provisioning of config servers",
-            "Takes effect immediately");
+            "Takes effect immediately, for subsequent provisioning");
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

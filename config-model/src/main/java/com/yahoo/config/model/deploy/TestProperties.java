@@ -10,6 +10,7 @@ import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
+import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.Zone;
 
@@ -50,12 +51,12 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private boolean useAccessControlTlsHandshakeClientAuth;
     private boolean useAsyncMessageHandlingOnSchedule = false;
     private double feedConcurrency = 0.5;
-    private boolean reconfigurableZookeeperServer = false;
     private boolean useBucketExecutorForLidSpaceCompact;
     private boolean useBucketExecutorForBucketMove;
     private boolean enableFeedBlockInDistributor = false;
     private double maxDeadBytesRatio = 0.2;
-    private int clusterControllerMaxHeapSizeInMb = 512;
+    private int clusterControllerMaxHeapSizeInMb = 256;
+    private int metricsProxyMaxHeapSizeInMb = 256;
     private int maxActivationInhibitedOutOfSyncGroups = 0;
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
@@ -89,12 +90,12 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public boolean useAccessControlTlsHandshakeClientAuth() { return useAccessControlTlsHandshakeClientAuth; }
     @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
     @Override public double feedConcurrency() { return feedConcurrency; }
-    @Override public boolean reconfigurableZookeeperServer() { return reconfigurableZookeeperServer; }
     @Override public boolean useBucketExecutorForLidSpaceCompact() { return useBucketExecutorForLidSpaceCompact; }
     @Override public boolean useBucketExecutorForBucketMove() { return useBucketExecutorForBucketMove; }
     @Override public boolean enableFeedBlockInDistributor() { return enableFeedBlockInDistributor; }
     @Override public double maxDeadBytesRatio() { return maxDeadBytesRatio; }
     @Override public int clusterControllerMaxHeapSizeInMb() { return clusterControllerMaxHeapSizeInMb; }
+    @Override public int metricsProxyMaxHeapSizeInMb(ClusterSpec.Type type) { return metricsProxyMaxHeapSizeInMb; }
     @Override public int maxActivationInhibitedOutOfSyncGroups() { return maxActivationInhibitedOutOfSyncGroups; }
 
     public TestProperties setFeedConcurrency(double feedConcurrency) {
@@ -197,11 +198,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
-    public TestProperties reconfigurableZookeeperServer(boolean enabled) {
-        this.reconfigurableZookeeperServer = enabled;
-        return this;
-    }
-
     public TestProperties useBucketExecutorForLidSpaceCompact(boolean enabled) {
         useBucketExecutorForLidSpaceCompact = enabled;
         return this;
@@ -224,6 +220,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties clusterControllerMaxHeapSizeInMb(int heapSize) {
         clusterControllerMaxHeapSizeInMb = heapSize;
+        return this;
+    }
+
+    public TestProperties metricsProxyMaxHeapSizeInMb(int heapSize) {
+        metricsProxyMaxHeapSizeInMb = heapSize;
         return this;
     }
 

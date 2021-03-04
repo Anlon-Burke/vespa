@@ -149,9 +149,14 @@ TEST("require that we test with trivial and non-trivial types")
 }
 
 TEST_F("control static sizes", NumberFixture(3)) {
-    EXPECT_EQUAL(424u, sizeof(f.store));
+#ifdef _LIBCPP_VERSION
+    EXPECT_EQUAL(400u, sizeof(f.store));
+    EXPECT_EQUAL(296u, sizeof(NumberFixture::ArrayStoreType::DataStoreType));
+#else
+    EXPECT_EQUAL(432u, sizeof(f.store));
     EXPECT_EQUAL(328u, sizeof(NumberFixture::ArrayStoreType::DataStoreType));
-    EXPECT_EQUAL(64u, sizeof(NumberFixture::ArrayStoreType::SmallArrayType));
+#endif
+    EXPECT_EQUAL(72u, sizeof(NumberFixture::ArrayStoreType::SmallArrayType));
     MemoryUsage usage = f.store.getMemoryUsage();
     EXPECT_EQUAL(960u, usage.allocatedBytes());
     EXPECT_EQUAL(32u, usage.usedBytes());

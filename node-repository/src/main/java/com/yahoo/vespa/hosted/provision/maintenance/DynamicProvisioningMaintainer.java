@@ -90,13 +90,13 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
 
     /** Resume provisioning of already provisioned hosts and their children */
     private void resumeProvisioning(NodeList nodes, Mutex lock) {
-        Map<String, Set<Node>> nodesByProvisionedParentHostname = nodes.nodeType(NodeType.tenant).asList().stream()
+        Map<String, Set<Node>> nodesByProvisionedParentHostname = nodes.nodeType(NodeType.tenant, NodeType.config).asList().stream()
                                                                        .filter(node -> node.parentHostname().isPresent())
                                                                        .collect(Collectors.groupingBy(
                                                                                node -> node.parentHostname().get(),
                                                                                Collectors.toSet()));
 
-        nodes.state(Node.State.provisioned).hosts().forEach(host -> {
+        nodes.state(Node.State.provisioned).nodeType(NodeType.host, NodeType.confighost).forEach(host -> {
             Set<Node> children = nodesByProvisionedParentHostname.getOrDefault(host.hostname(), Set.of());
             try {
                 List<Node> updatedNodes = hostProvisioner.provision(host, children);
@@ -183,15 +183,24 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
 
     private List<Node> candidatesForRemoval(List<Node> nodes) {
         Map<String, Node> hostsByHostname = new HashMap<>(nodes.stream()
-                .filter(node -> node.type() == NodeType.host)
-                .filter(host -> host.state() != Node.State.parked || host.status().wantToDeprovision())
+                .filter(node -> {
+                    switch (node.type()) {
+                        case host:
+                            // TODO: Mark empty tenant hosts as wanttoretire & wanttodeprovision elsewhere, then handle as confighost here
+                            return node.state() != Node.State.parked || node.status().wantToDeprovision();
+                        case confighost:
+                            return node.state() == Node.State.parked && node.status().wantToDeprovision();
+                        default:
+                            return false;
+                    }
+                })
                 .collect(Collectors.toMap(Node::hostname, Function.identity())));
 
         nodes.stream()
-                .filter(node -> node.allocation().isPresent())
-                .flatMap(node -> node.parentHostname().stream())
-                .distinct()
-                .forEach(hostsByHostname::remove);
+             .filter(node -> node.allocation().isPresent())
+             .flatMap(node -> node.parentHostname().stream())
+             .distinct()
+             .forEach(hostsByHostname::remove);
 
         return List.copyOf(hostsByHostname.values());
     }
@@ -237,8 +246,8 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
     private List<Node> provisionHosts(int count, NodeResources nodeResources) {
         try {
             Version osVersion = nodeRepository().osVersions().targetFor(NodeType.host).orElse(Version.emptyVersion);
-            List<Integer> provisionIndexes = nodeRepository().database().getProvisionIndexes(count);
-            List<Node> hosts = hostProvisioner.provisionHosts(provisionIndexes, nodeResources,
+            List<Integer> provisionIndices = nodeRepository().database().readProvisionIndices(count);
+            List<Node> hosts = hostProvisioner.provisionHosts(provisionIndices, NodeType.host, nodeResources,
                     ApplicationId.defaultId(), osVersion, HostSharing.shared)
                     .stream()
                     .map(ProvisionedHost::generateHost)

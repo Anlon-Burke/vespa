@@ -15,7 +15,7 @@ struct MergeParam {
     const ValueBuilderFactory &factory;
     MergeParam(const ValueType &lhs_type, const ValueType &rhs_type,
                join_fun_t function_in, const ValueBuilderFactory &factory_in)
-        : res_type(ValueType::join(lhs_type, rhs_type)),
+        : res_type(ValueType::merge(lhs_type, rhs_type)),
           function(function_in),
           num_mapped_dimensions(lhs_type.count_mapped_dimensions()),
           dense_subspace_size(lhs_type.dense_subspace_size()),
@@ -41,7 +41,8 @@ generic_mixed_merge(const Value &a, const Value &b,
 
 struct GenericMerge {
     static InterpretedFunction::Instruction
-    make_instruction(const ValueType &lhs_type, const ValueType &rhs_type,
+    make_instruction(const ValueType &result_type,
+                     const ValueType &lhs_type, const ValueType &rhs_type,
                      join_fun_t function,
                      const ValueBuilderFactory &factory, Stash &stash);
 };

@@ -287,7 +287,11 @@ public class Nodes {
      * @throws NoSuchNodeException if the node is not found
      */
     public Node fail(String hostname, Agent agent, String reason) {
-        return move(hostname, true, Node.State.failed, agent, Optional.of(reason));
+        return fail(hostname, true, agent, reason);
+    }
+
+    public Node fail(String hostname, boolean keepAllocation, Agent agent, String reason) {
+        return move(hostname, keepAllocation, Node.State.failed, agent, Optional.of(reason));
     }
 
     /**
@@ -558,6 +562,22 @@ public class Nodes {
     /** Retire nodes matching given filter */
     public List<Node> retire(NodeFilter filter, Agent agent, Instant instant) {
         return performOn(filter, (node, lock) -> write(node.withWantToRetire(true, agent, instant), lock));
+    }
+
+    /** Retire and deprovision given host and all of its children */
+    public List<Node> deprovision(Node host, Agent agent, Instant instant) {
+        if (!host.type().isHost()) throw new IllegalArgumentException("Cannot deprovision non-host " + host);
+        Optional<NodeMutex> nodeMutex = lockAndGet(host);
+        if (nodeMutex.isEmpty()) return List.of();
+        List<Node> result;
+        try (NodeMutex lock = nodeMutex.get(); Mutex allocationLock = lockUnallocated()) {
+            // This takes allocationLock to prevent any further allocation of nodes on this host
+            host = lock.node();
+            NodeList children = list(allocationLock).childrenOf(host);
+            result = retire(NodeListFilter.from(children.asList()), agent, instant);
+            result.add(write(host.withWantToRetire(true, true, agent, instant), lock));
+        }
+        return result;
     }
 
     /**

@@ -9,6 +9,7 @@
 #include <vespa/vespalib/util/visit_ranges.h>
 #include <vespa/vespalib/util/shared_string_repo.h>
 #include <cassert>
+#include <map>
 
 using namespace vespalib::eval::tensor_function;
 
@@ -39,19 +40,18 @@ size_t count_children(const Spec &spec)
 
 struct DimSpec {
     enum class DimType { CHILD_IDX, LABEL_IDX, LABEL_STR };
-    vespalib::string name;
     DimType dim_type;
-    size_t idx;
     Handle str;
-    static DimSpec from_child(const vespalib::string &name_in, size_t child_idx) {
-        return {name_in, DimType::CHILD_IDX, child_idx, Handle()};
+    size_t idx;
+    static DimSpec from_child(size_t child_idx) {
+        return {DimType::CHILD_IDX, Handle(), child_idx};
     }
-    static DimSpec from_label(const vespalib::string &name_in, const TensorSpec::Label &label) {
+    static DimSpec from_label(const TensorSpec::Label &label) {
         if (label.is_mapped()) {
-            return {name_in, DimType::LABEL_STR, 0, Handle(label.name)};
+            return {DimType::LABEL_STR, Handle(label.name), 0};
         } else {
             assert(label.is_indexed());
-            return {name_in, DimType::LABEL_IDX, label.index, Handle()};
+            return {DimType::LABEL_IDX, Handle(), label.index};
         }
     }
     ~DimSpec();
@@ -83,7 +83,7 @@ struct ExtractedSpecs {
         bool operator() (const Spec::value_type &a, const Dimension &b) { return a.first < b.name; }
     };
     std::vector<Dimension> dimensions;
-    std::vector<DimSpec> specs;
+    std::map<vespalib::string, DimSpec> specs;
 
     ExtractedSpecs(bool indexed,
                    const std::vector<Dimension> &input_dims,
@@ -104,9 +104,9 @@ struct ExtractedSpecs {
                     const auto & [spec_dim_name, child_or_label] = b;
                     assert(a.name == spec_dim_name);
                     if (std::holds_alternative<size_t>(child_or_label)) {
-                        specs.push_back(DimSpec::from_child(a.name, std::get<size_t>(child_or_label)));
+                        specs[a.name] = DimSpec::from_child(std::get<size_t>(child_or_label));
                     } else {
-                        specs.push_back(DimSpec::from_label(a.name, std::get<TensorSpec::Label>(child_or_label)));
+                        specs[a.name] = DimSpec::from_label(std::get<TensorSpec::Label>(child_or_label));
                     }
                 }
             }
@@ -120,18 +120,17 @@ struct ExtractedSpecs {
 ExtractedSpecs::~ExtractedSpecs() = default;
 
 struct DenseSizes {
-    std::vector<size_t> size;
-    std::vector<size_t> stride;
+    SmallVector<size_t> size;
+    SmallVector<size_t> stride;
     size_t cur_size;
 
     DenseSizes(const std::vector<ValueType::Dimension> &dims)
-        : size(), stride(), cur_size(1)
+        : size(), stride(dims.size()), cur_size(1)
     {
         for (const auto &dim : dims) {
             assert(dim.is_indexed());
             size.push_back(dim.size);
         }
-        stride.resize(size.size());
         for (size_t i = size.size(); i-- > 0; ) {
             stride[i] = cur_size;
             cur_size *= size[i];
@@ -143,15 +142,15 @@ struct DenseSizes {
 struct DensePlan {
     size_t in_dense_size;
     size_t out_dense_size;
-    std::vector<size_t> loop_cnt;
-    std::vector<size_t> in_stride;
+    SmallVector<size_t> loop_cnt;
+    SmallVector<size_t> in_stride;
     size_t verbatim_offset = 0;
     struct Child {
         size_t idx;
         size_t stride;
         size_t limit;
     };
-    std::vector<Child> children;
+    SmallVector<Child,4> children;
 
     DensePlan(const ValueType &input_type, const Spec &spec)
     {
@@ -159,27 +158,24 @@ struct DensePlan {
         DenseSizes sizes(mine.dimensions);
         in_dense_size = sizes.cur_size;
         out_dense_size = 1;
-        auto pos = mine.specs.begin();
         for (size_t i = 0; i < mine.dimensions.size(); ++i) {
             const auto &dim = mine.dimensions[i];
-            if ((pos == mine.specs.end()) || (dim.name < pos->name)) {
+            auto pos = mine.specs.find(dim.name);
+            if (pos == mine.specs.end()) {
                 loop_cnt.push_back(sizes.size[i]);
                 in_stride.push_back(sizes.stride[i]);
                 out_dense_size *= sizes.size[i];
             } else {
-                assert(dim.name == pos->name);
-                if (pos->has_child()) {
-                    children.push_back(Child{pos->get_child_idx(), sizes.stride[i], sizes.size[i]});
+                if (pos->second.has_child()) {
+                    children.push_back(Child{pos->second.get_child_idx(), sizes.stride[i], sizes.size[i]});
                 } else {
-                    assert(pos->has_label());
-                    size_t label_index = pos->get_label_index();
+                    assert(pos->second.has_label());
+                    size_t label_index = pos->second.get_label_index();
                     assert(label_index < sizes.size[i]);
                     verbatim_offset += label_index * sizes.stride[i];
                 }
-                ++pos;
             }
         }
-        assert(pos == mine.specs.end());
     }
 
     /** Get initial offset (from verbatim labels and child values) */
@@ -203,13 +199,13 @@ struct DensePlan {
 };
 
 struct SparseState {
-    std::vector<Handle> handles;
-    std::vector<string_id> view_addr;
-    std::vector<const string_id *> lookup_refs;
-    std::vector<string_id> output_addr;
-    std::vector<string_id *> fetch_addr;
+    SmallVector<Handle> handles;
+    SmallVector<string_id> view_addr;
+    SmallVector<const string_id *> lookup_refs;
+    SmallVector<string_id> output_addr;
+    SmallVector<string_id *> fetch_addr;
 
-    SparseState(std::vector<Handle> handles_in, std::vector<string_id> view_addr_in, size_t out_dims)
+    SparseState(SmallVector<Handle> handles_in, SmallVector<string_id> view_addr_in, size_t out_dims)
         : handles(std::move(handles_in)),
           view_addr(std::move(view_addr_in)),
           lookup_refs(view_addr.size()),
@@ -229,8 +225,8 @@ SparseState::~SparseState() = default;
 
 struct SparsePlan {
     size_t out_mapped_dims;
-    std::vector<DimSpec> lookup_specs;
-    std::vector<size_t> view_dims;
+    SmallVector<DimSpec> lookup_specs;
+    SmallVector<size_t> view_dims;
 
     SparsePlan(const ValueType &input_type,
                const GenericPeek::SpecMap &spec)
@@ -238,27 +234,24 @@ struct SparsePlan {
           view_dims()
     {
         ExtractedSpecs mine(false, input_type.dimensions(), spec);
-        lookup_specs = std::move(mine.specs);
-        auto pos = lookup_specs.begin();
         for (size_t dim_idx = 0; dim_idx < mine.dimensions.size(); ++dim_idx) {
             const auto & dim = mine.dimensions[dim_idx];
-            if ((pos == lookup_specs.end()) || (dim.name < pos->name)) {
+            auto pos = mine.specs.find(dim.name);
+            if (pos == mine.specs.end()) {
                 ++out_mapped_dims;
             } else {
-                assert(dim.name == pos->name);
                 view_dims.push_back(dim_idx);
-                ++pos;
+                lookup_specs.push_back(pos->second);
             }
         }
-        assert(pos == lookup_specs.end());
     }
 
     ~SparsePlan();
 
     template <typename Getter>
     SparseState make_state(const Getter &get_child_value) const {
-        std::vector<Handle> handles;
-        std::vector<string_id> view_addr;
+        SmallVector<Handle> handles;
+        SmallVector<string_id> view_addr;
         for (const auto & dim : lookup_specs) {
             if (dim.has_child()) {
                 int64_t child_value = get_child_value(dim.get_child_idx());
@@ -363,14 +356,14 @@ struct SelectGenericPeekOp {
 } // namespace <unnamed>
 
 Instruction
-GenericPeek::make_instruction(const ValueType &input_type,
-                              const ValueType &res_type,
+GenericPeek::make_instruction(const ValueType &result_type,
+                              const ValueType &input_type,
                               const SpecMap &spec,
                               const ValueBuilderFactory &factory,
                               Stash &stash)
 {
-    const auto &param = stash.create<PeekParam>(input_type, res_type, spec, factory);
-    auto fun = typify_invoke<2,TypifyCellType,SelectGenericPeekOp>(input_type.cell_type(), res_type.cell_type());
+    const auto &param = stash.create<PeekParam>(input_type, result_type, spec, factory);
+    auto fun = typify_invoke<2,TypifyCellType,SelectGenericPeekOp>(input_type.cell_type(), result_type.cell_type());
     return Instruction(fun, wrap_param<PeekParam>(param));
 }
 

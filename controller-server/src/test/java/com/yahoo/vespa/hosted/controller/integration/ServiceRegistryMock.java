@@ -7,6 +7,8 @@ import com.yahoo.component.AbstractComponent;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.test.ManualClock;
 import com.yahoo.vespa.hosted.controller.api.integration.ServiceRegistry;
+import com.yahoo.vespa.hosted.controller.api.integration.archive.ArchiveService;
+import com.yahoo.vespa.hosted.controller.api.integration.archive.MockArchiveService;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.RoleService;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.MockAwsEventFetcher;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.MockResourceTagger;
@@ -67,6 +69,7 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     private final BillingController billingController = new MockBillingController();
     private final ContainerRegistryMock containerRegistry = new ContainerRegistryMock();
     private final NoopTenantSecretService tenantSecretService = new NoopTenantSecretService();
+    private final ArchiveService archiveService = new MockArchiveService();
 
     public ServiceRegistryMock(SystemName system) {
         this.zoneRegistryMock = new ZoneRegistryMock(system);
@@ -209,8 +212,13 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     }
 
     @Override
-    public TenantSecretService tenantSecretService() {
+    public NoopTenantSecretService tenantSecretService() {
         return tenantSecretService;
+    }
+
+    @Override
+    public ArchiveService archiveService() {
+        return archiveService;
     }
 
     public ConfigServerMock configServerMock() {

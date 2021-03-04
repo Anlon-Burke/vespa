@@ -41,12 +41,12 @@ struct EvalNode : public NodeVisitor {
     //-------------------------------------------------------------------------
 
     void eval_const(TensorSpec spec) {
-        result = spec;
+        result = spec.normalize();
     }
 
     void eval_param(size_t idx) {
         assert(idx < params.size());
-        result = params[idx];
+        result = params[idx].normalize();
     }
 
     void eval_if(const If &node) {
@@ -79,6 +79,10 @@ struct EvalNode : public NodeVisitor {
 
     void eval_concat(const Node &a, const Node &b, const vespalib::string &dimension) {
         result = ReferenceOperations::concat(eval_node(a, params), eval_node(b, params), dimension);
+    }
+
+    void eval_cell_cast(const Node &a, CellType cell_type) {
+        result = ReferenceOperations::cell_cast(eval_node(a, params), cell_type);
     }
 
     void eval_create(const TensorCreate &node) {
@@ -192,6 +196,9 @@ struct EvalNode : public NodeVisitor {
     }
     void visit(const TensorConcat &node) override {
         eval_concat(node.lhs(), node.rhs(), node.dimension());
+    }
+    void visit(const TensorCellCast &node) override {
+        eval_cell_cast(node.child(), node.cell_type());
     }
     void visit(const TensorCreate &node) override {
         eval_create(node);
@@ -333,7 +340,7 @@ struct EvalNode : public NodeVisitor {
 TensorSpec eval_node(const Node &node, const std::vector<TensorSpec> &params) {
     EvalNode my_eval(params);
     node.accept(my_eval);
-    return my_eval.result.normalize();
+    return my_eval.result;
 }
 
 } // <unnamed>

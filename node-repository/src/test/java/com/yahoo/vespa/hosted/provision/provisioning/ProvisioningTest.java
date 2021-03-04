@@ -33,7 +33,6 @@ import org.junit.Test;
 
 import java.time.Duration;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -182,7 +181,7 @@ public class ProvisioningTest {
         ApplicationId application1 = ProvisioningTester.applicationId();
         SystemState state1 = prepare(application1, tester, 1, 1, 1, 1, defaultResources, "1.2.3");
         String dockerImageRepo = "docker.domain.tld/my/image";
-        prepare(application1, tester, 1, 1, 1 , 1 , false, defaultResources, "1.2.3", Optional.of(dockerImageRepo));
+        prepare(application1, tester, 1, 1, 1 , 1 , false, defaultResources, "1.2.3");
         tester.activate(application1, state1.allHosts);
 
         HostSpec host1 = state1.container0.iterator().next();
@@ -191,7 +190,7 @@ public class ProvisioningTest {
         tester.nodeRepository().nodes().write(node1.with(node1.status().withContainerImage(dockerImage)), () -> {});
 
         // redeploy
-        SystemState state2 = prepare(application1, tester, 1, 1, 1 ,1 , false, defaultResources, "1.2.3", Optional.of(dockerImageRepo));
+        SystemState state2 = prepare(application1, tester, 1, 1, 1 ,1 , false, defaultResources, "1.2.3");
         tester.activate(application1, state2.allHosts);
 
         host1 = state2.container0.iterator().next();
@@ -423,7 +422,7 @@ public class ProvisioningTest {
 
         ApplicationId application = ProvisioningTester.applicationId();
         String dockerImageRepo = "docker.domain.tld/my/image";
-        SystemState state = prepare(application, tester, 2, 2, 3, 3, false, defaultResources, "6.91", Optional.of(dockerImageRepo));
+        SystemState state = prepare(application, tester, 2, 2, 3, 3, false, defaultResources, "6.91");
         assertEquals(4, state.allHosts.size());
         tester.activate(application, state.allHosts);
     }
@@ -861,7 +860,7 @@ public class ProvisioningTest {
         ProvisioningTester tester = new ProvisioningTester.Builder().zone(new Zone(Environment.prod, RegionName.from("us-east"))).build();
         ApplicationId application = ProvisioningTester.applicationId();
         try {
-            prepare(application, tester, 1, 0, 1, 0, true, defaultResources, "6.42", Optional.empty());
+            prepare(application, tester, 1, 0, 1, 0, true, defaultResources, "6.42");
             fail("Expected exception");
         } catch (IllegalArgumentException ignored) {}
     }
@@ -918,11 +917,11 @@ public class ProvisioningTest {
         String version2 = "6.43";
         tester.makeReadyNodes(2, defaultResources);
 
-        prepare(application, tester, 1, 0, 1, 0, true, defaultResources, version1, Optional.empty());
+        prepare(application, tester, 1, 0, 1, 0, true, defaultResources, version1);
         tester.getNodes(application, Node.State.reserved).forEach(node ->
                 assertEquals(Version.fromString(version1), node.allocation().get().membership().cluster().vespaVersion()));
 
-        prepare(application, tester, 1, 0, 1, 0, true, defaultResources, version2, Optional.empty());
+        prepare(application, tester, 1, 0, 1, 0, true, defaultResources, version2);
         tester.getNodes(application, Node.State.reserved).forEach(node ->
                 assertEquals(Version.fromString(version2), node.allocation().get().membership().cluster().vespaVersion()));
     }
@@ -970,11 +969,11 @@ public class ProvisioningTest {
     private SystemState prepare(ApplicationId application, ProvisioningTester tester, int container0Size, int container1Size, int content0Size,
                                 int content1Size, NodeResources nodeResources, String wantedVersion) {
         return prepare(application, tester, container0Size, container1Size, content0Size, content1Size, false, nodeResources,
-                       wantedVersion, Optional.empty());
+                       wantedVersion);
     }
 
     private SystemState prepare(ApplicationId application, ProvisioningTester tester, int container0Size, int container1Size, int content0Size,
-                                int content1Size, boolean required, NodeResources nodeResources, String wantedVersion, Optional<String> dockerImageRepo) {
+                                int content1Size, boolean required, NodeResources nodeResources, String wantedVersion) {
         // "deploy prepare" with a two container clusters and a storage cluster having of two groups
         ClusterSpec containerCluster0 = ClusterSpec.request(ClusterSpec.Type.container, ClusterSpec.Id.from("container0")).vespaVersion(wantedVersion).build();
         ClusterSpec containerCluster1 = ClusterSpec.request(ClusterSpec.Type.container, ClusterSpec.Id.from("container1")).vespaVersion(wantedVersion).build();
@@ -1017,7 +1016,7 @@ public class ProvisioningTest {
 
     private Set<HostSpec> prepare(ApplicationId application, ProvisioningTester tester, ClusterSpec cluster, int nodeCount, int groups,
                                   boolean required, NodeResources nodeResources) {
-        if (nodeCount == 0) return Collections.emptySet(); // this is a shady practice
+        if (nodeCount == 0) return Set.of(); // this is a shady practice
         return new HashSet<>(tester.prepare(application, cluster, nodeCount, groups, required, nodeResources));
     }
 

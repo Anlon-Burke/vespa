@@ -43,14 +43,15 @@ public class MetricReporterTest {
         // Dimensions that are always present
         HasMetricContext.Dimension controllerDim = withDimension("controller-index", "0");
         HasMetricContext.Dimension clusterDim = withDimension("cluster", "foo");
-        return new HasMetricContext.Dimension[] { controllerDim, clusterDim };
+        HasMetricContext.Dimension clusteridDim = withDimension("clusterid", "foo");
+        return new HasMetricContext.Dimension[] { controllerDim, clusterDim, clusteridDim };
     }
 
     private static HasMetricContext.Dimension[] withNodeTypeDimension(String type) {
         // Node type-specific dimension
         HasMetricContext.Dimension nodeType = withDimension("node-type", type);
         var otherDims = withClusterDimension();
-        return new HasMetricContext.Dimension[] { otherDims[0], otherDims[1], nodeType };
+        return new HasMetricContext.Dimension[] { otherDims[0], otherDims[1], otherDims[2], nodeType };
     }
 
     @Test
@@ -112,7 +113,7 @@ public class MetricReporterTest {
         Fixture f = new Fixture();
         f.metricUpdater.updateClusterStateMetrics(f.clusterFixture.cluster(),
                 ClusterState.stateFromString("distributor:10 storage:10"),
-                new ResourceUsageStats(0.5, 0.6, 5));
+                new ResourceUsageStats(0.5, 0.6, 5, 0.7, 0.8));
 
         verify(f.mockReporter).set(eq("cluster-controller.resource_usage.max_disk_utilization"),
                 doubleThat(closeTo(0.5, 0.0001)),
@@ -124,6 +125,14 @@ public class MetricReporterTest {
 
         verify(f.mockReporter).set(eq("cluster-controller.resource_usage.nodes_above_limit"),
                 eq(5),
+                argThat(hasMetricContext(withClusterDimension())));
+
+        verify(f.mockReporter).set(eq("cluster-controller.resource_usage.disk_limit"),
+                doubleThat(closeTo(0.7, 0.0001)),
+                argThat(hasMetricContext(withClusterDimension())));
+
+        verify(f.mockReporter).set(eq("cluster-controller.resource_usage.memory_limit"),
+                doubleThat(closeTo(0.8, 0.0001)),
                 argThat(hasMetricContext(withClusterDimension())));
     }
 

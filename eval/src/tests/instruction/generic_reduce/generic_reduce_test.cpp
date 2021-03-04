@@ -42,7 +42,8 @@ TensorSpec perform_generic_reduce(const TensorSpec &a, Aggr aggr, const std::vec
 {
     Stash stash;
     auto lhs = value_from_spec(a, factory);
-    auto my_op = GenericReduce::make_instruction(lhs->type(), aggr, dims, factory, stash);
+    auto res_type = lhs->type().reduce(dims);
+    auto my_op = GenericReduce::make_instruction(res_type, lhs->type(), aggr, dims, factory, stash);
     InterpretedFunction::EvalSingle single(factory, my_op);
     return spec_from_value(single.eval(std::vector<Value::CREF>({*lhs})));
 }
@@ -50,9 +51,9 @@ TensorSpec perform_generic_reduce(const TensorSpec &a, Aggr aggr, const std::vec
 TEST(GenericReduceTest, dense_reduce_plan_can_be_created) {
     auto type = ValueType::from_spec("tensor(a[2],aa{},b[2],bb[1],c[2],cc{},d[2],dd[1],e[2],ee{},f[2])");
     auto plan = DenseReducePlan(type, type.reduce({"a", "d", "e"}));
-    std::vector<size_t> expect_loop_cnt = {2,4,4,2};
-    std::vector<size_t> expect_in_stride = {32,2,8,1};
-    std::vector<size_t> expect_out_stride = {0,0,2,1};
+    SmallVector<size_t> expect_loop_cnt = {2,4,4,2};
+    SmallVector<size_t> expect_in_stride = {32,2,8,1};
+    SmallVector<size_t> expect_out_stride = {0,0,2,1};
     EXPECT_EQ(plan.in_size, 64);
     EXPECT_EQ(plan.out_size, 8);
     EXPECT_EQ(plan.loop_cnt, expect_loop_cnt);
@@ -63,26 +64,25 @@ TEST(GenericReduceTest, dense_reduce_plan_can_be_created) {
 TEST(GenericReduceTest, sparse_reduce_plan_can_be_created) {
     auto type = ValueType::from_spec("tensor(a{},aa[10],b{},c{},cc[5],d{},e{},ee[1],f{})");
     auto plan = SparseReducePlan(type, type.reduce({"a", "d", "e"}));
-    std::vector<size_t> expect_keep_dims = {1,2,5};
+    SmallVector<size_t> expect_keep_dims = {1,2,5};
     EXPECT_EQ(plan.num_reduce_dims, 3);
     EXPECT_EQ(plan.keep_dims, expect_keep_dims);
 }
 
 void test_generic_reduce_with(const ValueBuilderFactory &factory) {
     for (const auto &layout: layouts) {
-        for (TensorSpec input : { layout.cpy().cells_float(),
-                                  layout.cpy().cells_double() })
-        {
+        for (CellType ct : CellTypeUtils::list_types()) {
+            TensorSpec input = layout.cpy().cells(ct);
             SCOPED_TRACE(fmt("tensor type: %s, num_cells: %zu", input.type().c_str(), input.cells().size()));
             for (Aggr aggr: {Aggr::SUM, Aggr::AVG, Aggr::MIN, Aggr::MAX}) {
                 SCOPED_TRACE(fmt("aggregator: %s", AggrNames::name_of(aggr)->c_str()));
                 auto t = layout.type();
                 for (const auto & dim: t.dimensions()) {
-                    auto expect = ReferenceOperations::reduce(input, aggr, {dim.name}).normalize();
+                    auto expect = ReferenceOperations::reduce(input, aggr, {dim.name});
                     auto actual = perform_generic_reduce(input, aggr, {dim.name}, factory);
                     EXPECT_EQ(actual, expect);
                 }
-                auto expect = ReferenceOperations::reduce(input, aggr, {}).normalize();
+                auto expect = ReferenceOperations::reduce(input, aggr, {});
                 auto actual = perform_generic_reduce(input, aggr, {}, factory);
                 EXPECT_EQ(actual, expect);
             }
