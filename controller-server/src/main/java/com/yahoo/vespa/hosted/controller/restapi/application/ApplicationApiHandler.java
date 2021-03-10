@@ -33,6 +33,7 @@ import com.yahoo.restapi.SlimeJsonResponse;
 import com.yahoo.security.KeyUtils;
 import com.yahoo.slime.Cursor;
 import com.yahoo.slime.Inspector;
+import com.yahoo.slime.JsonParseException;
 import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
 import com.yahoo.vespa.hosted.controller.Controller;
@@ -223,7 +224,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         if (path.matches("/application/v4/tenant")) return tenants(request);
         if (path.matches("/application/v4/tenant/{tenant}")) return tenant(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/info")) return tenantInfo(path.get("tenant"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}/validate")) return validateSecretStore(path.get("tenant"), path.get("name"));
+        if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}/region/{region}/parameter-name/{parameter-name}/validate")) return validateSecretStore(path.get("tenant"), path.get("name"), path.get("region"), path.get("parameter-name"));
         if (path.matches("/application/v4/tenant/{tenant}/application")) return applications(path.get("tenant"), Optional.empty(), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}")) return application(path.get("tenant"), path.get("application"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/compile-version")) return compileVersion(path.get("tenant"), path.get("application"));
@@ -584,7 +585,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     }
 
 
-    private HttpResponse validateSecretStore(String tenantName, String name) {
+    private HttpResponse validateSecretStore(String tenantName, String name, String region, String parameterName) {
         var tenant = TenantName.from(tenantName);
         if (controller.tenants().require(tenant).type() != Tenant.Type.cloud)
             return ErrorResponse.badRequest("Tenant '" + tenant + "' is not a cloud tenant");
@@ -601,8 +602,18 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         if (tenantSecretStore.isEmpty())
             return ErrorResponse.notFoundError("No secret store '" + name + "' configured for tenant '" + tenantName + "'");
 
-        var response = controller.serviceRegistry().configServer().validateSecretStore(deployment.get(), tenantSecretStore.get());
-        return new MessageResponse(response);
+        var response = controller.serviceRegistry().configServer().validateSecretStore(deployment.get(), tenantSecretStore.get(), region, parameterName);
+        try {
+            var responseRoot = new Slime();
+            var responseCursor = responseRoot.setObject();
+            responseCursor.setString("target", deployment.get().toString());
+            var responseResultCursor = responseCursor.setObject("result");
+            var responseSlime = SlimeUtils.jsonToSlime(response);
+            SlimeUtils.copyObject(responseSlime.get(), responseResultCursor);
+            return new SlimeJsonResponse(responseRoot);
+        } catch (JsonParseException e) {
+            return ErrorResponse.internalServerError(response);
+        }
     }
 
     private Optional<DeploymentId> getActiveDeployment(TenantName tenant) {

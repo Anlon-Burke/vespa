@@ -303,13 +303,12 @@ public class ContentCluster extends AbstractConfigProducer implements
                 clusterControllers = overlappingCluster.getClusterControllers();
             }
             else if (admin.multitenant()) {
-                String clusterName = contentClusterName + "-controllers";
                 if (context.properties().dedicatedClusterControllerCluster())
                     clusterControllers = getDedicatedSharedControllers(contentElement, admin, context, deployState);
                 else {
                     clusterControllers = createClusterControllers(new ClusterControllerCluster(contentCluster, "standalone", deployState),
                                                                   drawControllerHosts(3, rootGroup),
-                                                                  clusterName,
+                                                                  contentClusterName + "-controllers",
                                                                   true,
                                                                   context.getDeployState());
                     contentCluster.clusterControllers = clusterControllers;
@@ -414,7 +413,7 @@ public class ContentCluster extends AbstractConfigProducer implements
             }
 
             List<HostResource> sortedHosts = new ArrayList<>(hosts);
-            sortedHosts.sort((a, b) -> (a.comparePrimarilyByIndexTo(b)));
+            sortedHosts.sort(HostResource::comparePrimarilyByIndexTo);
             sortedHosts = sortedHosts.subList(0, Math.min(count, hosts.size()));
             return sortedHosts;
         }

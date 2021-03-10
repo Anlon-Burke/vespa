@@ -42,7 +42,6 @@ import com.yahoo.vespa.config.server.modelfactory.PreparedModelsBuilder;
 import com.yahoo.vespa.config.server.provision.HostProvisionerProvider;
 import com.yahoo.vespa.config.server.tenant.ApplicationRolesStore;
 import com.yahoo.vespa.config.server.tenant.ContainerEndpointsCache;
-import com.yahoo.vespa.config.server.tenant.EndpointCertificateMetadataSerializer;
 import com.yahoo.vespa.config.server.tenant.EndpointCertificateMetadataStore;
 import com.yahoo.vespa.config.server.tenant.EndpointCertificateRetriever;
 import com.yahoo.vespa.config.server.tenant.SecretStoreExternalIdRetriever;
@@ -117,18 +116,15 @@ public class SessionPreparer {
                                  Optional<ApplicationSet> activeApplicationSet, Instant now, File serverDbSessionDir,
                                  ApplicationPackage applicationPackage, SessionZooKeeperClient sessionZooKeeperClient) {
         ApplicationId applicationId = params.getApplicationId();
-        boolean dedicatedClusterControllerCluster = new ApplicationCuratorDatabase(applicationId.tenant(), curator).getDedicatedClusterControllerCluster(applicationId);
-
         Preparation preparation = new Preparation(hostValidator, logger, params, activeApplicationSet,
                                                   TenantRepository.getTenantPath(applicationId.tenant()),
-                                                  serverDbSessionDir, applicationPackage, sessionZooKeeperClient,
-                                                  dedicatedClusterControllerCluster);
+                                                  serverDbSessionDir, applicationPackage, sessionZooKeeperClient, true);
         preparation.preprocess();
         try {
             AllocatedHosts allocatedHosts = preparation.buildModels(now);
             preparation.makeResult(allocatedHosts);
             if ( ! params.isDryRun()) {
-                preparation.writeStateZK(preparation.distributeApplicationPackage());
+                preparation.writeStateZK();
                 preparation.writeEndpointCertificateMetadataZK();
                 preparation.writeContainerEndpointsZK();
                 preparation.writeApplicationRoles();
@@ -208,8 +204,7 @@ public class SessionPreparer {
                                                               applicationRoles,
                                                               params.quota(),
                                                               params.tenantSecretStores(),
-                                                              secretStore,
-                                                              dedicatedClusterControllerCluster);
+                                                              secretStore);
             this.fileDistributionProvider = fileDistributionFactory.createProvider(serverDbSessionDir);
             this.preparedModelsBuilder = new PreparedModelsBuilder(modelFactoryRegistry,
                                                                    permanentApplicationPackage,
@@ -234,7 +229,7 @@ public class SessionPreparer {
             }
         }
 
-        Optional<FileReference> distributeApplicationPackage() {
+        Optional<FileReference> distributedApplicationPackage() {
             FileRegistry fileRegistry = fileDistributionProvider.getFileRegistry();
             FileReference fileReference = fileRegistry.addApplicationPackage();
             FileDistribution fileDistribution = fileDistributionProvider.getFileDistribution();
@@ -269,16 +264,16 @@ public class SessionPreparer {
             checkTimeout("making result from models");
         }
 
-        void writeStateZK(Optional<FileReference> distributedApplicationPackage) {
+        void writeStateZK() {
             log.log(Level.FINE, "Writing application package state to zookeeper");
             writeStateToZooKeeper(sessionZooKeeperClient,
                                   preprocessedApplicationPackage,
                                   applicationId,
-                                  distributedApplicationPackage,
+                                  distributedApplicationPackage(),
                                   dockerImageRepository,
                                   vespaVersion,
                                   logger,
-                                  prepareResult.getFileRegistries(), 
+                                  prepareResult.getFileRegistries(),
                                   prepareResult.allocatedHosts(),
                                   athenzDomain,
                                   params.quota(),

@@ -77,8 +77,11 @@ public class ApplicationCuratorDatabase {
         if ( ! id.tenant().equals(tenant))
             throw new IllegalArgumentException("Cannot write application id '" + id + "' for tenant '" + tenant + "'");
         try (Lock lock = lock(id)) {
+            if (curator.exists(applicationPath(id))) return;
+
             curator.create(applicationPath(id));
             modifyReindexing(id, ApplicationReindexing.empty(), UnaryOperator.identity());
+            setDedicatedClusterControllerCluster(id);
         }
     }
 
@@ -108,10 +111,6 @@ public class ApplicationCuratorDatabase {
         return (data.isEmpty() || data.get().length == 0)
                ? Optional.empty()
                : data.map(bytes -> Long.parseLong(Utf8.toString(bytes)));
-    }
-
-    public boolean getDedicatedClusterControllerCluster(ApplicationId id) {
-        return curator.exists(dedicatedClusterControllerClusterPath(id));
     }
 
     public void setDedicatedClusterControllerCluster(ApplicationId id) {
