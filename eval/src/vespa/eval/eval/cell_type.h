@@ -35,28 +35,35 @@ template <CellType cell_type> constexpr auto get_cell_value() {
 }
 template <CellType cell_type> using CellValueType = decltype(get_cell_value<cell_type>());
 
-// meta-information about the cell type and 'scalar-ness' of values
-// that are operation results. Used to reduce the number of
-// possibilities when typifying.
+// simple CellMeta value wrapper to reduce template expansion
+// -> for values that are results of operations that are not scalars
+struct LimitedCellMetaNotScalar {
+    const CellType cell_type;
+};
+
+// simple CellMeta value wrapper to reduce template expansion
+// -> for values that are results of operations
 struct LimitedCellMeta {
-    CellType cell_type;
-    bool is_scalar;
-    constexpr LimitedCellMeta(CellType cell_type_in, bool is_scalar_in)
-        : cell_type(cell_type_in), is_scalar(is_scalar_in)
-    {
-        // is_scalar -> double cell type
-        assert(!is_scalar || (cell_type == CellType::DOUBLE));
-        // cell type must be 'at least' float
-        assert((cell_type == CellType::DOUBLE) || (cell_type == CellType::FLOAT));
+    const CellType cell_type;
+    const bool is_scalar;
+    constexpr LimitedCellMetaNotScalar not_scalar() const {
+        assert(!is_scalar);
+        return {cell_type};
     }
+};
+
+// simple CellMeta value wrapper to reduce template expansion
+// -> for values that we known are not scalar
+struct CellMetaNotScalar {
+    const CellType cell_type;
 };
 
 // meta-information about the cell type and 'scalar-ness' of a value
 struct CellMeta {
-    CellType cell_type;
-    bool is_scalar;
+    const CellType cell_type;
+    const bool is_scalar;
     constexpr CellMeta(CellType cell_type_in, bool is_scalar_in)
-        noexcept : cell_type(cell_type_in), is_scalar(is_scalar_in)
+        : cell_type(cell_type_in), is_scalar(is_scalar_in)
     {
         // is_scalar -> double cell type
         assert(!is_scalar || (cell_type == CellType::DOUBLE));
@@ -67,6 +74,10 @@ struct CellMeta {
     constexpr LimitedCellMeta limit() const {
         assert(is_limited());
         return {cell_type, is_scalar};
+    }
+    constexpr CellMetaNotScalar not_scalar() const {
+        assert(!is_scalar);
+        return {cell_type};
     }
 
     constexpr CellMeta self() const { return *this; }
@@ -110,46 +121,16 @@ struct CellMeta {
 
     // convenience functions to be used for specific operations
     constexpr CellMeta map() const { return decay(); }
-    static constexpr CellMeta reduce(CellType input_cell_type, bool output_is_scalar) {
-        return normalize(input_cell_type, output_is_scalar).decay();
+    constexpr CellMeta reduce(bool output_is_scalar) const {
+        return normalize(cell_type, output_is_scalar).decay();
     }
     static constexpr CellMeta join(CellMeta a, CellMeta b) { return unify(a, b).decay(); }
     static constexpr CellMeta merge(CellMeta a, CellMeta b) { return unify(a, b).decay(); }
     static constexpr CellMeta concat(CellMeta a, CellMeta b) { return unify(a, b); }
-    static constexpr CellMeta peek(CellType input_cell_type, bool output_is_scalar) {
-        return normalize(input_cell_type, output_is_scalar);
+    constexpr CellMeta peek(bool output_is_scalar) const {
+        return normalize(cell_type, output_is_scalar);
     }
     constexpr CellMeta rename() const { return self(); }
-};
-
-template <typename A, typename B> constexpr auto unify_cell_types() {
-    constexpr CellMeta a(get_cell_type<A>(), false);
-    constexpr CellMeta b(get_cell_type<B>(), false);
-    return get_cell_value<CellMeta::unify(a, b).cell_type>();
-}
-
-struct CellTypeUtils {
-    static void bad_argument [[ noreturn ]] (uint32_t id);
-
-    static constexpr uint32_t alignment(CellType cell_type) {
-        switch (cell_type) {
-        case CellType::DOUBLE: return alignof(double);
-        case CellType::FLOAT: return alignof(float);
-        default: bad_argument((uint32_t)cell_type);
-        }
-    }
-
-    static constexpr size_t mem_size(CellType cell_type, size_t sz) {
-        switch (cell_type) {
-        case CellType::DOUBLE: return sz * sizeof(double);
-        case CellType::FLOAT:  return sz * sizeof(float);
-        default: bad_argument((uint32_t)cell_type);
-        }
-    }
-
-    static std::vector<CellType> list_types() {
-        return {CellType::FLOAT, CellType::DOUBLE};
-    }
 };
 
 struct TypifyCellType {
@@ -159,7 +140,7 @@ struct TypifyCellType {
         case CellType::DOUBLE: return f(Result<double>());
         case CellType::FLOAT:  return f(Result<float>());
         }
-        CellTypeUtils::bad_argument((uint32_t)value);
+        abort();
     }
 };
 
@@ -172,12 +153,15 @@ struct TypifyCellMeta {
             }
             abort();
         } else {
-            switch (value.cell_type) {
-            case CellType::DOUBLE: return f(Result<CellMeta(CellType::DOUBLE, false)>());
-            case CellType::FLOAT:  return f(Result<CellMeta(CellType::FLOAT, false)>());
-            }
-            abort();
+            return resolve(value.not_scalar(), std::forward<F>(f));
         }
+    }
+    template <typename F> static decltype(auto) resolve(CellMetaNotScalar value, F &&f) {
+        switch (value.cell_type) {
+        case CellType::DOUBLE: return f(Result<CellMeta(CellType::DOUBLE, false)>());
+        case CellType::FLOAT:  return f(Result<CellMeta(CellType::FLOAT, false)>());
+        }
+        abort();
     }
     template <typename F> static decltype(auto) resolve(LimitedCellMeta value, F &&f) {
         if (value.is_scalar) {
@@ -186,14 +170,23 @@ struct TypifyCellMeta {
             }
             abort();
         } else {
-            switch (value.cell_type) {
-            case CellType::DOUBLE: return f(Result<CellMeta(CellType::DOUBLE, false)>());
-            case CellType::FLOAT:  return f(Result<CellMeta(CellType::FLOAT, false)>());
-            default: break;
-            }
-            abort();
+            return resolve(value.not_scalar(), std::forward<F>(f));
         }
     }
+    template <typename F> static decltype(auto) resolve(LimitedCellMetaNotScalar value, F &&f) {
+        switch (value.cell_type) {
+        case CellType::DOUBLE: return f(Result<CellMeta(CellType::DOUBLE, false)>());
+        case CellType::FLOAT:  return f(Result<CellMeta(CellType::FLOAT, false)>());
+        default: break;
+        }
+        abort();
+    }
+};
+
+struct CellTypeUtils {
+    static uint32_t alignment(CellType cell_type);
+    static size_t mem_size(CellType cell_type, size_t sz);
+    static std::vector<CellType> list_types();
 };
 
 } // namespace

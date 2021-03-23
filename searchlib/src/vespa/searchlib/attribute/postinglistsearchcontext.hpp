@@ -20,7 +20,7 @@ namespace search::attribute {
 
 template <typename DataT>
 PostingListSearchContextT<DataT>::
-PostingListSearchContextT(const Dictionary &dictionary, uint32_t docIdLimit, uint64_t numValues, bool hasWeight,
+PostingListSearchContextT(const IEnumStoreDictionary& dictionary, uint32_t docIdLimit, uint64_t numValues, bool hasWeight,
                           const PostingList &postingList, uint32_t minBvDocFreq,
                           bool useBitVector, const ISearchContext &searchContext)
     : PostingListSearchContext(dictionary, docIdLimit, numValues, hasWeight, minBvDocFreq, useBitVector, searchContext),
@@ -138,8 +138,13 @@ PostingListSearchContextT<DataT>::diversify(bool forward, size_t wanted_hits, co
 {
     if (!_merger.merge_done()) {
         _merger.reserveArray(128, wanted_hits);
-        diversity::diversify(forward, _lowerDictItr, _upperDictItr, _postingList, wanted_hits, diversity_attr,
-                             max_per_group, cutoff_groups, cutoff_strict, _merger.getWritableArray(), _merger.getWritableStartPos());
+        if (_uniqueValues == 1u && !_lowerDictItr.valid() && _pidx.valid()) {
+            diversity::diversify_single(_pidx, _postingList, wanted_hits, diversity_attr,
+                                        max_per_group, cutoff_groups, cutoff_strict, _merger.getWritableArray(), _merger.getWritableStartPos());
+        } else {
+            diversity::diversify(forward, _lowerDictItr, _upperDictItr, _postingList, wanted_hits, diversity_attr,
+                                 max_per_group, cutoff_groups, cutoff_strict, _merger.getWritableArray(), _merger.getWritableStartPos());
+        }
         _merger.merge();
     }
 }
@@ -282,7 +287,7 @@ PostingListSearchContextT<DataT>::applyRangeLimit(int rangeLimit)
 
 template <typename DataT>
 PostingListFoldedSearchContextT<DataT>::
-PostingListFoldedSearchContextT(const Dictionary &dictionary, uint32_t docIdLimit, uint64_t numValues,
+PostingListFoldedSearchContextT(const IEnumStoreDictionary& dictionary, uint32_t docIdLimit, uint64_t numValues,
                                 bool hasWeight, const PostingList &postingList, uint32_t minBvDocFreq,
                                 bool useBitVector, const ISearchContext &searchContext)
     : Parent(dictionary, docIdLimit, numValues, hasWeight, postingList, minBvDocFreq, useBitVector, searchContext)

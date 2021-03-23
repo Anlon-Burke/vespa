@@ -22,9 +22,7 @@ import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.flags.StringFlag;
 import com.yahoo.vespa.hosted.controller.api.ActivateResult;
-import com.yahoo.vespa.hosted.controller.api.application.v4.model.DeployOptions;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.DeploymentData;
-import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbindings.ConfigChangeActions;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.identifiers.InstanceId;
 import com.yahoo.vespa.hosted.controller.api.identifiers.RevisionId;
@@ -39,12 +37,10 @@ import com.yahoo.vespa.hosted.controller.api.integration.configserver.ContainerE
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Log;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Node;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.NotFoundException;
-import com.yahoo.vespa.hosted.controller.api.integration.configserver.PrepareResponse;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationStore;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationVersion;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ArtifactRepository;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobId;
-import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.TesterId;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartFilter;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
@@ -63,7 +59,6 @@ import com.yahoo.vespa.hosted.controller.deployment.DeploymentTrigger;
 import com.yahoo.vespa.hosted.controller.deployment.JobStatus;
 import com.yahoo.vespa.hosted.controller.deployment.Run;
 import com.yahoo.vespa.hosted.controller.deployment.RunStatus;
-import com.yahoo.vespa.hosted.controller.deployment.Versions;
 import com.yahoo.vespa.hosted.controller.persistence.CuratorDb;
 import com.yahoo.vespa.hosted.controller.security.AccessControl;
 import com.yahoo.vespa.hosted.controller.security.Credentials;
@@ -334,28 +329,28 @@ public class ApplicationController {
         });
     }
 
-    public LockedApplication withNewInstance(LockedApplication application, ApplicationId id) {
-        if (id.instance().isTester())
-            throw new IllegalArgumentException("'" + id + "' is a tester application!");
-        InstanceId.validate(id.instance().value());
-
-        if (getInstance(id).isPresent())
-            throw new IllegalArgumentException("Could not create '" + id + "': Instance already exists");
-        if (getInstance(dashToUnderscore(id)).isPresent()) // VESPA-1945
-            throw new IllegalArgumentException("Could not create '" + id + "': Instance " + dashToUnderscore(id) + " already exists");
-
-        log.info("Created " + id);
-        return application.withNewInstance(id.instance());
+    /** Fetches the requested application package from the artifact store(s). */
+    public ApplicationPackage getApplicationPackage(ApplicationId id, ApplicationVersion version) {
+        return new ApplicationPackage(applicationStore.get(id.tenant(), id.application(), version));
     }
 
-    public ActivateResult deploy(ApplicationId applicationId, ZoneId zone,
-                                 Optional<ApplicationPackage> applicationPackageFromDeployer,
-                                 DeployOptions options) {
-        return deploy(applicationId, zone, applicationPackageFromDeployer, Optional.empty(), options);
+    /** Returns given application with a new instance */
+    public LockedApplication withNewInstance(LockedApplication application, ApplicationId instance) {
+        if (instance.instance().isTester())
+            throw new IllegalArgumentException("'" + instance + "' is a tester application!");
+        InstanceId.validate(instance.instance().value());
+
+        if (getInstance(instance).isPresent())
+            throw new IllegalArgumentException("Could not create '" + instance + "': Instance already exists");
+        if (getInstance(dashToUnderscore(instance)).isPresent()) // VESPA-1945
+            throw new IllegalArgumentException("Could not create '" + instance + "': Instance " + dashToUnderscore(instance) + " already exists");
+
+        log.info("Created " + instance);
+        return application.withNewInstance(instance.instance());
     }
 
     /** Deploys an application package for an existing application instance. */
-    public ActivateResult deploy2(JobId job, boolean deploySourceVersions) { // TODO jonmv: make it number one!
+    public ActivateResult deploy(JobId job, boolean deploySourceVersions) {
         if (job.application().instance().isTester())
             throw new IllegalArgumentException("'" + job.application() + "' is a tester application!");
 
@@ -380,14 +375,7 @@ public class ApplicationController {
             try (Lock lock = lock(applicationId)) {
                 LockedApplication application = new LockedApplication(requireApplication(applicationId), lock);
                 Instance instance = application.get().require(job.application().instance());
-
-                Deployment deployment = instance.deployments().get(zone);
-                if (   zone.environment().isProduction() && deployment != null
-                    && (   platform.compareTo(deployment.version()) < 0 && ! instance.change().isPinned()
-                        || revision.compareTo(deployment.applicationVersion()) < 0 && ! (revision.isUnknown() && controller.system().isCd())))
-                    throw new IllegalArgumentException(String.format("Rejecting deployment of application %s to %s, as the requested versions (platform: %s, application: %s)" +
-                                                                     " are older than the currently deployed (platform: %s, application: %s).",
-                                                                     job.application(), zone, platform, revision, deployment.version(), deployment.applicationVersion()));
+                rejectOldChange(instance, platform, revision, job, zone);
 
                 if (   ! applicationPackage.trustedCertificates().isEmpty()
                     &&   run.testerCertificate().isPresent())
@@ -412,108 +400,6 @@ public class ApplicationController {
                                                                                   quotaUsage))));
             return result;
         }
-    }
-
-    private QuotaUsage deploymentQuotaUsage(ZoneId zoneId, ApplicationId applicationId) {
-        var application = configServer.nodeRepository().getApplication(zoneId, applicationId);
-        return DeploymentQuotaCalculator.calculateQuotaUsage(application);
-    }
-
-    private ApplicationPackage getApplicationPackage(ApplicationId application, ZoneId zone, ApplicationVersion revision) {
-        return new ApplicationPackage(revision.isUnknown() ? applicationStore.getDev(application, zone)
-                                                           : applicationStore.get(application.tenant(), application.application(), revision));
-    }
-
-    public ActivateResult deploy(ApplicationId instanceId, ZoneId zone,
-                                 Optional<ApplicationPackage> applicationPackageFromDeployer,
-                                 Optional<ApplicationVersion> applicationVersionFromDeployer,
-                                 DeployOptions options) {
-        if (instanceId.instance().isTester())
-            throw new IllegalArgumentException("'" + instanceId + "' is a tester application!");
-
-        TenantAndApplicationId applicationId = TenantAndApplicationId.from(instanceId);
-        if (getInstance(instanceId).isEmpty())
-            createInstance(instanceId);
-
-        try (Lock deploymentLock = lockForDeployment(instanceId, zone)) {
-            Version platformVersion;
-            ApplicationVersion applicationVersion;
-            ApplicationPackage applicationPackage;
-            Set<ContainerEndpoint> endpoints;
-            Optional<EndpointCertificateMetadata> endpointCertificateMetadata;
-
-            try (Lock lock = lock(applicationId)) {
-                LockedApplication application = new LockedApplication(requireApplication(applicationId), lock);
-                InstanceName instance = instanceId.instance();
-
-                boolean manuallyDeployed = options.deployDirectly || zone.environment().isManuallyDeployed();
-                boolean preferOldestVersion = options.deployCurrentVersion;
-
-                // Determine versions to use.
-                if (manuallyDeployed) {
-                    applicationVersion = applicationVersionFromDeployer.orElse(ApplicationVersion.unknown);
-                    applicationPackage = applicationPackageFromDeployer.orElseThrow(
-                            () -> new IllegalArgumentException("Application package must be given when deploying to " + zone));
-                    platformVersion = options.vespaVersion.map(Version::new)
-                                                          .orElse(applicationPackage.deploymentSpec().majorVersion()
-                                                                                    .flatMap(this::lastCompatibleVersion)
-                                                                                    .orElseGet(controller::readSystemVersion));
-                }
-                else {
-                    JobType jobType = JobType.from(controller.system(), zone)
-                                             .orElseThrow(() -> new IllegalArgumentException("No job is known for " + zone + "."));
-                    var run = controller.jobController().last(instanceId, jobType);
-                    if (run.map(Run::hasEnded).orElse(true))
-                        return unexpectedDeployment(instanceId, zone);
-                    Versions versions = run.get().versions();
-                    platformVersion = preferOldestVersion ? versions.sourcePlatform().orElse(versions.targetPlatform())
-                                                          : versions.targetPlatform();
-                    applicationVersion = preferOldestVersion ? versions.sourceApplication().orElse(versions.targetApplication())
-                                                             : versions.targetApplication();
-
-                    applicationPackage = getApplicationPackage(instanceId, applicationVersion);
-                    applicationPackage = withTesterCertificate(applicationPackage, instanceId, jobType);
-                    validateRun(application.get().require(instance), zone, platformVersion, applicationVersion);
-                }
-
-                endpointCertificateMetadata = endpointCertificateManager.getEndpointCertificateMetadata(
-                        application.get().require(instance), zone, applicationPackage.deploymentSpec().instance(instance));
-
-                endpoints = controller.routing().registerEndpointsInDns(application.get(), instance, zone);
-            } // Release application lock while doing the deployment, which is a lengthy task.
-
-            // Carry out deployment without holding the application lock.
-            ActivateResult result = deploy(instanceId, applicationPackage, zone, platformVersion,
-                                           endpoints, endpointCertificateMetadata, Optional.empty());
-
-            // Record the quota usage for this application
-            var quotaUsage = deploymentQuotaUsage(zone, instanceId);
-
-            lockApplicationOrThrow(applicationId, application ->
-                    store(application.with(instanceId.instance(),
-                                           instance -> instance.withNewDeployment(zone, applicationVersion, platformVersion,
-                                                                                  clock.instant(), warningsFrom(result),
-                                                                                  quotaUsage))));
-            return result;
-        }
-    }
-
-    private ApplicationPackage withTesterCertificate(ApplicationPackage applicationPackage, ApplicationId id, JobType type) {
-        if (applicationPackage.trustedCertificates().isEmpty())
-            return applicationPackage;
-
-        // TODO jonmv: move this to the caller, when external build service is removed.
-        Run run = controller.jobController().last(id, type)
-                            .orElseThrow(() -> new IllegalStateException("Last run of " + type + " for " + id + " not found"));
-        if (run.testerCertificate().isEmpty())
-            return applicationPackage;
-
-        return applicationPackage.withTrustedCertificate(run.testerCertificate().get());
-    }
-
-    /** Fetches the requested application package from the artifact store(s). */
-    public ApplicationPackage getApplicationPackage(ApplicationId id, ApplicationVersion version) {
-        return new ApplicationPackage(applicationStore.get(id.tenant(), id.application(), version));
     }
 
     /** Stores the deployment spec and validation overrides from the application package, and runs cleanup. */
@@ -614,18 +500,6 @@ public class ApplicationController {
             // any DNS updates can be propagated as early as possible.
             controller.routing().policies().refresh(application, applicationPackage.deploymentSpec(), zone);
         }
-    }
-
-    private ActivateResult unexpectedDeployment(ApplicationId application, ZoneId zone) {
-        Log logEntry = new Log();
-        logEntry.level = "WARNING";
-        logEntry.time = clock.instant().toEpochMilli();
-        logEntry.message = "Ignoring deployment of application '" + application + "' to " + zone +
-                           " as a deployment is not currently expected";
-        PrepareResponse prepareResponse = new PrepareResponse();
-        prepareResponse.log = List.of(logEntry);
-        prepareResponse.configChangeActions = new ConfigChangeActions(List.of(), List.of(), List.of());
-        return new ActivateResult(new RevisionId("0"), prepareResponse, 0);
     }
 
     private LockedApplication withoutDeletedDeployments(LockedApplication application, InstanceName instance) {
@@ -793,6 +667,11 @@ public class ApplicationController {
         }
     }
 
+    /** Sets suspension status of the given deployment in its zone. */
+    public void setSuspension(DeploymentId deploymentId, boolean suspend) {
+        configServer.setSuspension(deploymentId, suspend);
+    }
+
     /** Deactivate application in the given zone */
     public void deactivate(ApplicationId id, ZoneId zone) {
         lockApplicationOrThrow(TenantAndApplicationId.from(id),
@@ -820,14 +699,6 @@ public class ApplicationController {
 
     public DeploymentTrigger deploymentTrigger() { return deploymentTrigger; }
 
-    private TenantAndApplicationId dashToUnderscore(TenantAndApplicationId id) {
-        return TenantAndApplicationId.from(id.tenant().value(), id.application().value().replaceAll("-", "_"));
-    }
-
-    private ApplicationId dashToUnderscore(ApplicationId id) {
-        return dashToUnderscore(TenantAndApplicationId.from(id)).instance(id.instance());
-    }
-
     /**
      * Returns a lock which provides exclusive rights to changing this application.
      * Any operation which stores an application need to first acquire this lock, then read, modify
@@ -842,17 +713,6 @@ public class ApplicationController {
      */
     private Lock lockForDeployment(ApplicationId application, ZoneId zone) {
         return curator.lockForDeployment(application, zone);
-    }
-
-    /** Verify that we don't downgrade an existing production deployment. */
-    private void validateRun(Instance instance, ZoneId zone, Version platformVersion, ApplicationVersion applicationVersion) {
-        Deployment deployment = instance.deployments().get(zone);
-        if (   zone.environment().isProduction() && deployment != null
-            && (   platformVersion.compareTo(deployment.version()) < 0 && ! instance.change().isPinned()
-                || applicationVersion.compareTo(deployment.applicationVersion()) < 0))
-            throw new IllegalArgumentException(String.format("Rejecting deployment of application %s to %s, as the requested versions (platform: %s, application: %s)" +
-                                                             " are older than the currently deployed (platform: %s, application: %s).",
-                                                             instance.id(), zone, platformVersion, applicationVersion, deployment.version(), deployment.applicationVersion()));
     }
 
     /**
@@ -919,6 +779,38 @@ public class ApplicationController {
         }
     }
 
+    private void rejectOldChange(Instance instance, Version platform, ApplicationVersion revision, JobId job, ZoneId zone) {
+        Deployment deployment = instance.deployments().get(zone);
+        if (deployment == null) return;
+        if (!zone.environment().isProduction()) return;
+
+        boolean platformIsOlder = platform.compareTo(deployment.version()) < 0 && !instance.change().isPinned();
+        boolean revisionIsOlder = revision.compareTo(deployment.applicationVersion()) < 0 &&
+                                  !(revision.isUnknown() && controller.system().isCd());
+        if (platformIsOlder || revisionIsOlder)
+            throw new IllegalArgumentException(String.format("Rejecting deployment of application %s to %s, as the requested versions (platform: %s, application: %s)" +
+                                                             " are older than the currently deployed (platform: %s, application: %s).",
+                                                             job.application(), zone, platform, revision, deployment.version(), deployment.applicationVersion()));
+    }
+
+    private TenantAndApplicationId dashToUnderscore(TenantAndApplicationId id) {
+        return TenantAndApplicationId.from(id.tenant().value(), id.application().value().replaceAll("-", "_"));
+    }
+
+    private ApplicationId dashToUnderscore(ApplicationId id) {
+        return dashToUnderscore(TenantAndApplicationId.from(id)).instance(id.instance());
+    }
+
+    private QuotaUsage deploymentQuotaUsage(ZoneId zoneId, ApplicationId applicationId) {
+        var application = configServer.nodeRepository().getApplication(zoneId, applicationId);
+        return DeploymentQuotaCalculator.calculateQuotaUsage(application);
+    }
+
+    private ApplicationPackage getApplicationPackage(ApplicationId application, ZoneId zone, ApplicationVersion revision) {
+        return new ApplicationPackage(revision.isUnknown() ? applicationStore.getDev(application, zone)
+                                              : applicationStore.get(application.tenant(), application.application(), revision));
+    }
+
     /*
      * Get the AthenzUser from this principal or Optional.empty if this does not represent a user.
      */
@@ -974,11 +866,6 @@ public class ApplicationController {
             warnings.merge(DeploymentMetrics.Warning.all, 1, Integer::sum);
         }
         return Map.copyOf(warnings);
-    }
-
-    /** Sets suspension status of the given deployment in its zone. */
-    public void setSuspension(DeploymentId deploymentId, boolean suspend) {
-        configServer.setSuspension(deploymentId, suspend);
     }
 
 }

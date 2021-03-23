@@ -13,6 +13,7 @@ vespa_define_module(
     src/tests/ann
     src/tests/eval/aggr
     src/tests/eval/array_array_map
+    src/tests/eval/cell_type_space
     src/tests/eval/compile_cache
     src/tests/eval/compiled_function
     src/tests/eval/fast_value
@@ -63,7 +64,7 @@ vespa_define_module(
     src/tests/instruction/index_lookup_table
     src/tests/instruction/join_with_number
     src/tests/instruction/mixed_inner_product_function
-    src/tests/instruction/mixed_map_function
+    src/tests/instruction/inplace_map_function
     src/tests/instruction/mixed_simple_join_function
     src/tests/instruction/pow_as_map_optimizer
     src/tests/instruction/remove_trivial_dimension_optimizer

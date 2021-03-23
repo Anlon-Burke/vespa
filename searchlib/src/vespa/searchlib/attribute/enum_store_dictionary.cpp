@@ -8,6 +8,7 @@
 #include <vespa/vespalib/btree/btreenodeallocator.hpp>
 #include <vespa/vespalib/btree/btreeroot.hpp>
 #include <vespa/vespalib/datastore/datastore.hpp>
+#include <vespa/vespalib/datastore/simple_hash_map.h>
 #include <vespa/vespalib/datastore/unique_store_dictionary.hpp>
 #include <vespa/searchlib/util/bufferwriter.h>
 
@@ -22,9 +23,9 @@ namespace search {
 
 using vespalib::btree::BTreeNode;
 
-template <typename DictionaryT>
+template <typename DictionaryT, typename UnorderedDictionaryT>
 void
-EnumStoreDictionary<DictionaryT>::remove_unused_values(const IndexSet& unused,
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::remove_unused_values(const IndexSet& unused,
                                                        const vespalib::datastore::EntryComparator& cmp)
 {
     if (unused.empty()) {
@@ -35,26 +36,19 @@ EnumStoreDictionary<DictionaryT>::remove_unused_values(const IndexSet& unused,
     }
 }
 
-template <typename DictionaryT>
-EnumStoreDictionary<DictionaryT>::EnumStoreDictionary(IEnumStore& enumStore)
-    : ParentUniqueStoreDictionary(),
+template <typename DictionaryT, typename UnorderedDictionaryT>
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::EnumStoreDictionary(IEnumStore& enumStore, std::unique_ptr<EntryComparator> compare)
+    : ParentUniqueStoreDictionary(std::move(compare)),
       _enumStore(enumStore)
 {
 }
 
-template <typename DictionaryT>
-EnumStoreDictionary<DictionaryT>::~EnumStoreDictionary() = default;
+template <typename DictionaryT, typename UnorderedDictionaryT>
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::~EnumStoreDictionary() = default;
 
-template <typename DictionaryT>
+template <typename DictionaryT, typename UnorderedDictionaryT>
 void
-EnumStoreDictionary<DictionaryT>::set_ref_counts(const EnumVector& hist)
-{
-    _enumStore.set_ref_counts(hist, this->_dict);
-}
-
-template <typename DictionaryT>
-void
-EnumStoreDictionary<DictionaryT>::free_unused_values(const vespalib::datastore::EntryComparator& cmp)
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::free_unused_values(const vespalib::datastore::EntryComparator& cmp)
 {
     IndexSet unused;
 
@@ -65,9 +59,9 @@ EnumStoreDictionary<DictionaryT>::free_unused_values(const vespalib::datastore::
     remove_unused_values(unused, cmp);
 }
 
-template <typename DictionaryT>
+template <typename DictionaryT, typename UnorderedDictionaryT>
 void
-EnumStoreDictionary<DictionaryT>::free_unused_values(const IndexSet& to_remove,
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::free_unused_values(const IndexSet& to_remove,
                                                      const vespalib::datastore::EntryComparator& cmp)
 {
     IndexSet unused;
@@ -77,9 +71,9 @@ EnumStoreDictionary<DictionaryT>::free_unused_values(const IndexSet& to_remove,
     remove_unused_values(unused, cmp);
 }
 
-template <typename DictionaryT>
+template <typename DictionaryT, typename UnorderedDictionaryT>
 void
-EnumStoreDictionary<DictionaryT>::remove(const EntryComparator &comp, EntryRef ref)
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::remove(const EntryComparator &comp, EntryRef ref)
 {
     assert(ref.valid());
     auto itr = this->_dict.lowerBound(ref, comp);
@@ -88,11 +82,15 @@ EnumStoreDictionary<DictionaryT>::remove(const EntryComparator &comp, EntryRef r
         assert(EntryRef(itr.getData()) == EntryRef());
     }
     this->_dict.remove(itr);
+    if constexpr (has_unordered_dictionary) {
+        auto *result = this->_unordered_dict.remove(comp, ref);
+        assert(result != nullptr && result->first.load_relaxed() == ref);
+    }
 }
 
-template <typename DictionaryT>
+template <typename DictionaryT, typename UnorderedDictionaryT>
 bool
-EnumStoreDictionary<DictionaryT>::find_index(const vespalib::datastore::EntryComparator& cmp,
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::find_index(const vespalib::datastore::EntryComparator& cmp,
                                              Index& idx) const
 {
     auto itr = this->_dict.find(Index(), cmp);
@@ -103,11 +101,19 @@ EnumStoreDictionary<DictionaryT>::find_index(const vespalib::datastore::EntryCom
     return true;
 }
 
-template <typename DictionaryT>
+template <typename DictionaryT, typename UnorderedDictionaryT>
 bool
-EnumStoreDictionary<DictionaryT>::find_frozen_index(const vespalib::datastore::EntryComparator& cmp,
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::find_frozen_index(const vespalib::datastore::EntryComparator& cmp,
                                                     Index& idx) const
 {
+    if constexpr (has_unordered_dictionary) {
+        auto find_result = this->_unordered_dict.find(cmp, EntryRef());
+        if (find_result != nullptr) {
+            idx = find_result->first.load_acquire();
+            return true;
+        }
+        return false;
+    }
     auto itr = this->_dict.getFrozenView().find(Index(), cmp);
     if (!itr.valid()) {
         return false;
@@ -116,9 +122,9 @@ EnumStoreDictionary<DictionaryT>::find_frozen_index(const vespalib::datastore::E
     return true;
 }
 
-template <typename DictionaryT>
+template <typename DictionaryT, typename UnorderedDictionaryT>
 std::vector<IEnumStore::EnumHandle>
-EnumStoreDictionary<DictionaryT>::find_matching_enums(const vespalib::datastore::EntryComparator& cmp) const
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::find_matching_enums(const vespalib::datastore::EntryComparator& cmp) const
 {
     std::vector<IEnumStore::EnumHandle> result;
     auto itr = this->_dict.getFrozenView().find(Index(), cmp);
@@ -129,6 +135,137 @@ EnumStoreDictionary<DictionaryT>::find_matching_enums(const vespalib::datastore:
     return result;
 }
 
+template <typename DictionaryT, typename UnorderedDictionaryT>
+EntryRef
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::get_frozen_root() const
+{
+    return this->_dict.getFrozenView().getRoot();
+}
+
+template <>
+std::pair<IEnumStore::Index, EntryRef>
+EnumStoreDictionary<EnumTree>::find_posting_list(const vespalib::datastore::EntryComparator&, EntryRef) const
+{
+    LOG_ABORT("should not be reached");
+}
+
+template <typename DictionaryT, typename UnorderedDictionaryT>
+std::pair<IEnumStore::Index, EntryRef>
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::find_posting_list(const vespalib::datastore::EntryComparator& cmp, EntryRef root) const
+{
+    if constexpr (has_unordered_dictionary) {
+        auto find_result = this->_unordered_dict.find(cmp, EntryRef());
+        if (find_result != nullptr) {
+            return std::make_pair(find_result->first.load_acquire(), find_result->second.load_acquire());
+        }
+        return std::make_pair(Index(), EntryRef());
+    }
+    typename DictionaryType::ConstIterator itr(vespalib::btree::BTreeNode::Ref(), this->_dict.getAllocator());
+    itr.lower_bound(root, Index(), cmp);
+    if (itr.valid() && !cmp.less(Index(), itr.getKey())) {
+        return std::make_pair(itr.getKey(), EntryRef(itr.getData()));
+    }
+    return std::make_pair(Index(), EntryRef());
+}
+
+template <typename DictionaryT, typename UnorderedDictionaryT>
+void
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::collect_folded(Index idx, EntryRef, const std::function<void(vespalib::datastore::EntryRef)>& callback) const
+{
+    callback(idx);
+}
+
+template <typename DictionaryT, typename UnorderedDictionaryT>
+IEnumStore::Index
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::remap_index(Index idx)
+{
+    return idx;
+}
+
+template <>
+void
+EnumStoreDictionary<EnumTree>::clear_all_posting_lists(std::function<void(EntryRef)>)
+{
+    LOG_ABORT("should not be reached");
+}
+
+template <typename DictionaryT, typename UnorderedDictionaryT>
+void
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::clear_all_posting_lists(std::function<void(EntryRef)> clearer)
+{
+    auto& dict = this->_dict;
+    auto itr = dict.begin();
+    EntryRef prev;
+    while (itr.valid()) {
+        EntryRef ref(itr.getData());
+        if (ref.ref() != prev.ref()) {
+            if (ref.valid()) {
+                clearer(ref);
+            }
+            prev = ref;
+        }
+        itr.writeData(EntryRef().ref());
+        ++itr;
+    }
+}
+
+template <>
+void
+EnumStoreDictionary<EnumTree>::update_posting_list(Index, const vespalib::datastore::EntryComparator&, std::function<EntryRef(EntryRef)>)
+{
+    LOG_ABORT("should not be reached");
+}
+
+template <typename DictionaryT, typename UnorderedDictionaryT>
+void
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::update_posting_list(Index idx, const vespalib::datastore::EntryComparator& cmp, std::function<EntryRef(EntryRef)> updater)
+{
+    auto& dict = this->_dict;
+    auto itr = dict.lowerBound(idx, cmp);
+    assert(itr.valid() && itr.getKey() == idx);
+    EntryRef old_posting_idx(itr.getData());
+    EntryRef new_posting_idx = updater(old_posting_idx);
+    dict.thaw(itr);
+    itr.writeData(new_posting_idx.ref());
+    if constexpr (has_unordered_dictionary) {
+        auto find_result = this->_unordered_dict.find(this->_unordered_dict.get_default_comparator(), idx);
+        assert(find_result != nullptr && find_result->first.load_relaxed() == idx);
+        assert(find_result->second.load_relaxed() == old_posting_idx);
+        find_result->second.store_release(new_posting_idx);
+    }
+}
+
+template <>
+bool
+EnumStoreDictionary<EnumTree>::check_posting_lists(std::function<EntryRef(EntryRef)>)
+{
+    LOG_ABORT("should not be reached");
+}
+
+template <typename DictionaryT, typename UnorderedDictionaryT>
+bool
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::check_posting_lists(std::function<EntryRef(EntryRef)> updater)
+{
+    bool changed = false;
+    auto& dict = this->_dict;
+    for (auto itr = dict.begin(); itr.valid(); ++itr) {
+        EntryRef old_posting_idx(itr.getData());
+        EntryRef new_posting_idx = updater(old_posting_idx);
+        if (new_posting_idx != old_posting_idx) {
+            changed = true;
+            dict.thaw(itr);
+            itr.writeData(new_posting_idx.ref());
+            if constexpr (has_unordered_dictionary) {
+                auto find_result = this->_unordered_dict.find(this->_unordered_dict.get_default_comparator(), itr.getKey());
+                assert(find_result != nullptr && find_result->first.load_relaxed() == itr.getKey());
+                assert(find_result->second.load_relaxed() == old_posting_idx);
+                find_result->second.store_release(new_posting_idx);
+            }
+        }
+    }
+    return changed;
+}
+
 template <>
 EnumPostingTree &
 EnumStoreDictionary<EnumTree>::get_posting_dictionary()
@@ -136,11 +273,11 @@ EnumStoreDictionary<EnumTree>::get_posting_dictionary()
     LOG_ABORT("should not be reached");
 }
 
-template <>
+template <typename DictionaryT, typename UnorderedDictionaryT>
 EnumPostingTree &
-EnumStoreDictionary<EnumPostingTree>::get_posting_dictionary()
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::get_posting_dictionary()
 {
-    return _dict;
+    return this->_dict;
 }
 
 template <>
@@ -150,15 +287,15 @@ EnumStoreDictionary<EnumTree>::get_posting_dictionary() const
     LOG_ABORT("should not be reached");
 }
 
-template <>
+template <typename DictionaryT, typename UnorderedDictionaryT>
 const EnumPostingTree &
-EnumStoreDictionary<EnumPostingTree>::get_posting_dictionary() const
+EnumStoreDictionary<DictionaryT, UnorderedDictionaryT>::get_posting_dictionary() const
 {
-    return _dict;
+    return this->_dict;
 }
 
-EnumStoreFoldedDictionary::EnumStoreFoldedDictionary(IEnumStore& enumStore, std::unique_ptr<EntryComparator> folded_compare)
-    : EnumStoreDictionary<EnumPostingTree>(enumStore),
+EnumStoreFoldedDictionary::EnumStoreFoldedDictionary(IEnumStore& enumStore, std::unique_ptr<vespalib::datastore::EntryComparator> compare, std::unique_ptr<EntryComparator> folded_compare)
+    : EnumStoreDictionary<EnumPostingTree>(enumStore, std::move(compare)),
       _folded_compare(std::move(folded_compare))
 {
 }
@@ -168,6 +305,7 @@ EnumStoreFoldedDictionary::~EnumStoreFoldedDictionary() = default;
 UniqueStoreAddResult
 EnumStoreFoldedDictionary::add(const EntryComparator& comp, std::function<EntryRef(void)> insertEntry)
 {
+    static_assert(!has_unordered_dictionary, "Folded Dictionary does not support unordered");
     auto it = _dict.lowerBound(EntryRef(), comp);
     if (it.valid() && !comp.less(EntryRef(), it.getKey())) {
         // Entry already exists
@@ -191,6 +329,7 @@ EnumStoreFoldedDictionary::add(const EntryComparator& comp, std::function<EntryR
 void
 EnumStoreFoldedDictionary::remove(const EntryComparator& comp, EntryRef ref)
 {
+    static_assert(!has_unordered_dictionary, "Folded Dictionary does not support unordered");
     assert(ref.valid());
     auto it = _dict.lowerBound(ref, comp);
     assert(it.valid() && it.getKey() == ref);
@@ -207,9 +346,30 @@ EnumStoreFoldedDictionary::remove(const EntryComparator& comp, EntryRef ref)
     }
 }
 
+void
+EnumStoreFoldedDictionary::collect_folded(Index idx, EntryRef root, const std::function<void(vespalib::datastore::EntryRef)>& callback) const
+{
+    DictionaryType::ConstIterator itr(vespalib::btree::BTreeNode::Ref(), _dict.getAllocator());
+    itr.lower_bound(root, idx, *_folded_compare);
+    while (itr.valid() && !_folded_compare->less(idx, itr.getKey())) {
+        callback(itr.getKey());
+        ++itr;
+    }
+}
+
+IEnumStore::Index
+EnumStoreFoldedDictionary::remap_index(Index idx)
+{
+    auto itr = _dict.find(idx, *_folded_compare);
+    assert(itr.valid());
+    return itr.getKey();
+}
+
 template class EnumStoreDictionary<EnumTree>;
 
 template class EnumStoreDictionary<EnumPostingTree>;
+
+template class EnumStoreDictionary<EnumPostingTree, vespalib::datastore::SimpleHashMap>;
 
 }
 

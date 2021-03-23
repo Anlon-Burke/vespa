@@ -12,29 +12,32 @@ class IEnumStore;
 /**
  * Concrete dictionary for an enum store that extends the functionality of a unique store dictionary.
  */
-template <typename DictionaryT>
-class EnumStoreDictionary : public vespalib::datastore::UniqueStoreDictionary<DictionaryT, IEnumStoreDictionary> {
+template <typename DictionaryT, typename UnorderedDictionaryT = vespalib::datastore::NoUnorderedDictionary>
+class EnumStoreDictionary : public vespalib::datastore::UniqueStoreDictionary<DictionaryT, IEnumStoreDictionary, UnorderedDictionaryT> {
+protected:
+    using EntryRef = IEnumStoreDictionary::EntryRef;
+    using Index = IEnumStoreDictionary::Index;
+    using DictionaryType = DictionaryT;
 private:
     using EnumVector = IEnumStoreDictionary::EnumVector;
-    using Index = IEnumStoreDictionary::Index;
     using IndexSet = IEnumStoreDictionary::IndexSet;
     using IndexVector = IEnumStoreDictionary::IndexVector;
-    using ParentUniqueStoreDictionary = vespalib::datastore::UniqueStoreDictionary<DictionaryT, IEnumStoreDictionary>;
+    using ParentUniqueStoreDictionary = vespalib::datastore::UniqueStoreDictionary<DictionaryT, IEnumStoreDictionary, UnorderedDictionaryT>;
     using generation_t = IEnumStoreDictionary::generation_t;
-
+protected:
+    using ParentUniqueStoreDictionary::has_unordered_dictionary;
+private:
     IEnumStore& _enumStore;
 
     void remove_unused_values(const IndexSet& unused,
                               const vespalib::datastore::EntryComparator& cmp);
 
 public:
-    EnumStoreDictionary(IEnumStore& enumStore);
+    EnumStoreDictionary(IEnumStore& enumStore, std::unique_ptr<vespalib::datastore::EntryComparator> compare);
 
     ~EnumStoreDictionary() override;
 
     const DictionaryT& get_raw_dictionary() const { return this->_dict; }
-
-    void set_ref_counts(const EnumVector& hist) override;
 
     void free_unused_values(const vespalib::datastore::EntryComparator& cmp) override;
 
@@ -47,6 +50,13 @@ public:
     std::vector<attribute::IAttributeVector::EnumHandle>
     find_matching_enums(const vespalib::datastore::EntryComparator& cmp) const override;
 
+    EntryRef get_frozen_root() const override;
+    std::pair<Index, EntryRef> find_posting_list(const vespalib::datastore::EntryComparator& cmp, EntryRef root) const override;
+    void collect_folded(Index idx, EntryRef root, const std::function<void(vespalib::datastore::EntryRef)>& callback) const override;
+    Index remap_index(Index idx) override;
+    void clear_all_posting_lists(std::function<void(EntryRef)> clearer) override;
+    void update_posting_list(Index idx, const vespalib::datastore::EntryComparator& cmp, std::function<EntryRef(EntryRef)> updater) override;
+    bool check_posting_lists(std::function<EntryRef(EntryRef)> updater) override;
     EnumPostingTree& get_posting_dictionary() override;
     const EnumPostingTree& get_posting_dictionary() const override;
 };
@@ -66,10 +76,12 @@ private:
     std::unique_ptr<vespalib::datastore::EntryComparator> _folded_compare;
 
 public:
-    EnumStoreFoldedDictionary(IEnumStore& enumStore, std::unique_ptr<vespalib::datastore::EntryComparator> folded_compare);
+    EnumStoreFoldedDictionary(IEnumStore& enumStore, std::unique_ptr<vespalib::datastore::EntryComparator> compare, std::unique_ptr<vespalib::datastore::EntryComparator> folded_compare);
     ~EnumStoreFoldedDictionary() override;
     vespalib::datastore::UniqueStoreAddResult add(const vespalib::datastore::EntryComparator& comp, std::function<vespalib::datastore::EntryRef(void)> insertEntry) override;
     void remove(const vespalib::datastore::EntryComparator& comp, vespalib::datastore::EntryRef ref) override;
+    void collect_folded(Index idx, EntryRef root, const std::function<void(vespalib::datastore::EntryRef)>& callback) const override;
+    Index remap_index(Index idx) override;
 };
 
 }

@@ -33,11 +33,15 @@ public:
                                         const std::vector<BucketCopy>& changed_nodes,
                                         uint32_t update_flags = 0) = 0;
     virtual void remove_node_from_bucket_database(const document::Bucket& bucket, uint16_t node_index) = 0;
+    virtual void remove_nodes_from_bucket_database(const document::Bucket& bucket,
+                                                   const std::vector<uint16_t>& nodes) = 0;
     virtual const DistributorBucketSpaceRepo& bucket_space_repo() const noexcept= 0;
     virtual DistributorBucketSpaceRepo& bucket_space_repo() noexcept = 0;
     virtual const DistributorBucketSpaceRepo& read_only_bucket_space_repo() const noexcept = 0;
     virtual DistributorBucketSpaceRepo& read_only_bucket_space_repo() noexcept = 0;
     virtual document::BucketId make_split_bit_constrained_bucket_id(const document::DocumentId& docId) const = 0;
+    virtual void recheck_bucket_info(uint16_t node_index, const document::Bucket& bucket) = 0;
+    virtual document::BucketId get_sibling(const document::BucketId& bid) const = 0;
 
     virtual const DistributorConfiguration& distributor_config() const noexcept = 0;
     virtual void send_inline_split_if_bucket_too_large(document::BucketSpace bucket_space,
@@ -50,6 +54,7 @@ public:
                                      uint32_t message_type) const = 0;
     virtual const lib::ClusterState* pending_cluster_state_or_null(const document::BucketSpace& bucket_space) const = 0;
     virtual const lib::ClusterStateBundle& cluster_state_bundle() const = 0;
+    virtual bool storage_node_is_up(document::BucketSpace bucket_space, uint32_t node_index) const = 0;
 
     // TODO: Move to being a free function instead.
     virtual const char* storage_node_up_states() const = 0;

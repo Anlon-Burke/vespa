@@ -15,6 +15,7 @@ import com.yahoo.vespa.hosted.provision.NoSuchNodeException;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeMutex;
+import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.maintenance.NodeFailer;
 import com.yahoo.vespa.hosted.provision.node.filter.NodeFilter;
 import com.yahoo.vespa.hosted.provision.node.filter.NodeListFilter;
@@ -33,6 +34,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -51,6 +54,8 @@ import java.util.stream.Stream;
 // Nodes might have an application assigned in dirty.
 public class Nodes {
 
+    private static final Logger log = Logger.getLogger(Nodes.class.getName());
+
     private final Zone zone;
     private final Clock clock;
     private final CuratorDatabaseClient db;
@@ -59,6 +64,20 @@ public class Nodes {
         this.zone = zone;
         this.clock = clock;
         this.db = db;
+    }
+
+    /** Read and write all nodes to make sure they are stored in the latest version of the serialized format */
+    public void rewrite() {
+        Instant start = clock.instant();
+        int nodesWritten = 0;
+        for (Node.State state : Node.State.values()) {
+            List<Node> nodes = db.readNodes(state);
+            // TODO(mpolden): This should take the lock before writing
+            db.writeTo(state, nodes, Agent.system, Optional.empty());
+            nodesWritten += nodes.size();
+        }
+        Instant end = clock.instant();
+        log.log(Level.INFO, String.format("Rewrote %d nodes in %s", nodesWritten, Duration.between(start, end)));
     }
 
     // ---------------- Query API ----------------------------------------------------------------
@@ -163,8 +182,6 @@ public class Nodes {
                                                    .map(node -> {
                                                        if (node.state() != Node.State.provisioned && node.state() != Node.State.dirty)
                                                            illegal("Can not set " + node + " ready. It is not provisioned or dirty.");
-                                                       if (node.type() == NodeType.host && node.ipConfig().pool().getIpSet().isEmpty())
-                                                           illegal("Can not set host " + node + " ready. Its IP address pool is empty.");
                                                        return node.withWantToRetire(false, false, Agent.system, clock.instant());
                                                    })
                                                    .collect(Collectors.toList());
@@ -199,9 +216,9 @@ public class Nodes {
      */
     public void setRemovable(ApplicationId application, List<Node> nodes) {
         try (Mutex lock = lock(application)) {
-            List<Node> removableNodes =
-                    nodes.stream().map(node -> node.with(node.allocation().get().removable(true)))
-                         .collect(Collectors.toList());
+            List<Node> removableNodes = nodes.stream()
+                                             .map(node -> node.with(node.allocation().get().removable(true)))
+                                             .collect(Collectors.toList());
             write(removableNodes, lock);
         }
     }
@@ -574,7 +591,9 @@ public class Nodes {
             // This takes allocationLock to prevent any further allocation of nodes on this host
             host = lock.node();
             NodeList children = list(allocationLock).childrenOf(host);
-            result = retire(NodeListFilter.from(children.asList()), agent, instant);
+            result = performOn(NodeListFilter.from(children.asList()),
+                               (node, nodeLock) -> write(node.withWantToRetire(true, true, agent, instant),
+                                                         nodeLock));
             result.add(write(host.withWantToRetire(true, true, agent, instant), lock));
         }
         return result;

@@ -1,3 +1,4 @@
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -72,7 +73,7 @@ public class DeploymentQuotaCalculatorTest {
         var mapper = new ObjectMapper();
         var application = mapper.readValue(content, ApplicationData.class).toApplication();
         var usage = DeploymentQuotaCalculator.calculateQuotaUsage(application);
-        assertEquals(1.164, usage.rate(), 0.001);
+        assertEquals(1.068, usage.rate(), 0.001);
     }
 
     @Test
@@ -82,42 +83,4 @@ public class DeploymentQuotaCalculatorTest {
         assertEquals(tenantQuota, calculated);
     }
 
-    @Test
-    public void temporary_deployments_are_excluded() {
-        var tenantQuota = Quota.unlimited().withBudget(42);
-
-        var instanceInTestEnv = new Instance(ApplicationId.from("default", "default", "foo")).withNewDeployment(
-                ZoneId.from("test", "apac1"),
-                ApplicationVersion.unknown,
-                Version.emptyVersion,
-                Instant.EPOCH,
-                Map.of(),
-                QuotaUsage.create(1));
-
-        var testerInstance = new Instance(ApplicationId.from("default", "default", "bar-t")).withNewDeployment(
-                ZoneId.from("prod", "apac1"),
-                ApplicationVersion.unknown,
-                Version.emptyVersion,
-                Instant.EPOCH,
-                Map.of(),
-                QuotaUsage.create(1));
-
-        var app = new Application(
-                TenantAndApplicationId.from(ApplicationId.defaultId()),
-                Instant.EPOCH,
-                DeploymentSpec.empty,
-                ValidationOverrides.empty,
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                OptionalInt.empty(),
-                new ApplicationMetrics(100, 100),
-                Set.of(),
-                OptionalLong.empty(),
-                Optional.empty(),
-                List.of(instanceInTestEnv, testerInstance));
-
-        Quota calculated = DeploymentQuotaCalculator.calculate(tenantQuota, List.of(app), ApplicationId.defaultId(), ZoneId.from("dev", "apac1"), DeploymentSpec.empty);
-        assertEquals(tenantQuota, calculated);
-    }
 }

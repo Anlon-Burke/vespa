@@ -15,7 +15,7 @@ using vespalib::btree::BTreeNoLeafData;
 // #define FORCE_BITVECTORS
 
 
-PostingStoreBase2::PostingStoreBase2(EnumPostingTree &dict, Status &status, const Config &config)
+PostingStoreBase2::PostingStoreBase2(IEnumStoreDictionary& dictionary, Status &status, const Config &config)
     :
 #ifdef FORCE_BITVECTORS
       _enableBitVectors(true),
@@ -29,7 +29,7 @@ PostingStoreBase2::PostingStoreBase2(EnumPostingTree &dict, Status &status, cons
       _minBvDocFreq(64),
       _maxBvDocFreq(std::numeric_limits<uint32_t>::max()),
       _bvs(),
-      _dict(dict),
+      _dictionary(dictionary),
       _status(status),
       _bvExtraBytes(0)
 {
@@ -62,10 +62,10 @@ PostingStoreBase2::resizeBitVectors(uint32_t newSize, uint32_t newCapacity)
 
 
 template <typename DataT>
-PostingStore<DataT>::PostingStore(EnumPostingTree &dict, Status &status,
+PostingStore<DataT>::PostingStore(IEnumStoreDictionary& dictionary, Status &status,
                                   const Config &config)
     : Parent(false),
-      PostingStoreBase2(dict, status, config),
+      PostingStoreBase2(dictionary, status, config),
       _bvType(1, 1024u, RefType::offsetSize())
 {
     // TODO: Add type for bitvector
@@ -124,44 +124,46 @@ PostingStore<DataT>::removeSparseBitVectors()
         }
     }
     if (needscan) {
-        typedef EnumPostingTree::Iterator EnumIterator;
-        for (EnumIterator dictItr = _dict.begin(); dictItr.valid(); ++dictItr) {
-            if (!isBitVector(getTypeId(EntryRef(dictItr.getData()))))
-                continue;
-            EntryRef ref(dictItr.getData());
-            RefType iRef(ref);
-            uint32_t typeId = getTypeId(iRef);
-            assert(isBitVector(typeId));
-            assert(_bvs.find(ref.ref() )!= _bvs.end());
-            BitVectorEntry *bve = getWBitVectorEntry(iRef);
-            BitVector &bv = *bve->_bv.get();
-            uint32_t docFreq = bv.countTrueBits();
-            if (bve->_tree.valid()) {
-                RefType iRef2(bve->_tree);
-                assert(isBTree(iRef2));
-                const BTreeType *tree = getTreeEntry(iRef2);
-                assert(tree->size(_allocator) == docFreq);
-                (void) tree;
-            }
-            if (docFreq < _minBvDocFreq) {
-                dropBitVector(ref);
-                if (ref.valid()) {
-                    iRef = ref;
-                    typeId = getTypeId(iRef);
-                    if (isBTree(typeId)) {
-                        BTreeType *tree = getWTreeEntry(iRef);
-                        normalizeTree(ref, tree, false);
-                    }
-                }
-                _dict.thaw(dictItr);
-                dictItr.writeData(ref.ref());
-                res = true;
-            }
-        }
+        res = _dictionary.check_posting_lists([this](EntryRef posting_idx) -> EntryRef
+                                              { return consider_remove_sparse_bitvector(posting_idx); });
     }
     return res;
 }
 
+template <typename DataT>
+typename PostingStore<DataT>::EntryRef
+PostingStore<DataT>::consider_remove_sparse_bitvector(EntryRef ref)
+{
+    if (!ref.valid() || !isBitVector(getTypeId(EntryRef(ref)))) {
+        return ref;
+    }
+    RefType iRef(ref);
+    uint32_t typeId = getTypeId(iRef);
+    assert(isBitVector(typeId));
+    assert(_bvs.find(ref.ref() )!= _bvs.end());
+    BitVectorEntry *bve = getWBitVectorEntry(iRef);
+    BitVector &bv = *bve->_bv.get();
+    uint32_t docFreq = bv.countTrueBits();
+    if (bve->_tree.valid()) {
+        RefType iRef2(bve->_tree);
+        assert(isBTree(iRef2));
+        const BTreeType *tree = getTreeEntry(iRef2);
+        assert(tree->size(_allocator) == docFreq);
+        (void) tree;
+    }
+    if (docFreq < _minBvDocFreq) {
+        dropBitVector(ref);
+        if (ref.valid()) {
+            iRef = ref;
+            typeId = getTypeId(iRef);
+            if (isBTree(typeId)) {
+                BTreeType *tree = getWTreeEntry(iRef);
+                normalizeTree(ref, tree, false);
+            }
+        }
+    }
+    return ref;
+}
 
 template <typename DataT>
 void

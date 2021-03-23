@@ -56,7 +56,7 @@ public class ControllerMaintenance extends AbstractComponent {
         maintainers.add(new NameServiceDispatcher(controller, intervals.nameServiceDispatcher));
         maintainers.add(new CostReportMaintainer(controller, intervals.costReportMaintainer, controller.serviceRegistry().costReportConsumer()));
         maintainers.add(new ResourceMeterMaintainer(controller, intervals.resourceMeterMaintainer, metric, controller.serviceRegistry().meteringService()));
-        maintainers.add(new CloudEventReporter(controller, intervals.cloudEventReporter, metric));
+        maintainers.add(new CloudEventReporter(controller, intervals.cloudEventReporter));
         maintainers.add(new ResourceTagMaintainer(controller, intervals.resourceTagMaintainer, controller.serviceRegistry().resourceTagger()));
         maintainers.add(new SystemRoutingPolicyMaintainer(controller, intervals.systemRoutingPolicyMaintainer));
         maintainers.add(new ApplicationMetaDataGarbageCollector(controller, intervals.applicationMetaDataGarbageCollector));
@@ -67,6 +67,7 @@ public class ControllerMaintenance extends AbstractComponent {
         maintainers.add(new TrafficShareUpdater(controller, intervals.trafficFractionUpdater));
         maintainers.add(new ArchiveUriUpdater(controller, intervals.archiveUriUpdater));
         maintainers.add(new TenantRoleMaintainer(controller, intervals.tenantRoleMaintainer));
+        maintainers.add(new ChangeRequestMaintainer(controller, intervals.changeRequestMaintainer));
     }
 
     public Upgrader upgrader() { return upgrader; }
@@ -119,6 +120,7 @@ public class ControllerMaintenance extends AbstractComponent {
         private final Duration trafficFractionUpdater;
         private final Duration archiveUriUpdater;
         private final Duration tenantRoleMaintainer;
+        private final Duration changeRequestMaintainer;
 
         public Intervals(SystemName system) {
             this.system = Objects.requireNonNull(system);
@@ -141,13 +143,14 @@ public class ControllerMaintenance extends AbstractComponent {
             this.resourceTagMaintainer = duration(30, MINUTES);
             this.systemRoutingPolicyMaintainer = duration(10, MINUTES);
             this.applicationMetaDataGarbageCollector = duration(12, HOURS);
-            this.containerImageExpirer = duration(2, HOURS);
+            this.containerImageExpirer = duration(12, HOURS);
             this.hostSwitchUpdater = duration(12, HOURS);
             this.reindexingTriggerer = duration(1, HOURS);
             this.endpointCertificateMaintainer = duration(12, HOURS);
             this.trafficFractionUpdater = duration(5, MINUTES);
             this.archiveUriUpdater = duration(5, MINUTES);
             this.tenantRoleMaintainer = duration(5, MINUTES);
+            this.changeRequestMaintainer = duration(12, HOURS);
         }
 
         private Duration duration(long amount, TemporalUnit unit) {

@@ -31,18 +31,18 @@ import java.util.stream.Stream;
 @SuppressWarnings("unused")
 public class ConfigServerApiHandler extends AuditLoggingRequestHandler {
 
-    private static final ZoneId CONTROLLER_ZONE = ZoneId.from("prod", "controller");
     private static final URI CONTROLLER_URI = URI.create("https://localhost:4443/");
-    private static final String OPTIONAL_PREFIX = "/api";
     private static final List<String> WHITELISTED_APIS = List.of("/flags/v1/", "/nodes/v2/", "/orchestrator/v1/");
 
     private final ZoneRegistry zoneRegistry;
     private final ConfigServerRestExecutor proxy;
+    private final ZoneId controllerZone;
 
     public ConfigServerApiHandler(Context parentCtx, ServiceRegistry serviceRegistry,
                                   ConfigServerRestExecutor proxy, Controller controller) {
         super(parentCtx, controller.auditLogger());
         this.zoneRegistry = serviceRegistry.zoneRegistry();
+        this.controllerZone = zoneRegistry.systemZone().getVirtualId();
         this.proxy = proxy;
     }
 
@@ -70,7 +70,7 @@ public class ConfigServerApiHandler extends AuditLoggingRequestHandler {
     }
 
     private HttpResponse get(HttpRequest request) {
-        Path path = new Path(request.getUri(), OPTIONAL_PREFIX);
+        Path path = new Path(request.getUri());
         if (path.matches("/configserver/v1")) {
             return root(request);
         }
@@ -78,13 +78,13 @@ public class ConfigServerApiHandler extends AuditLoggingRequestHandler {
     }
 
     private HttpResponse proxy(HttpRequest request) {
-        Path path = new Path(request.getUri(), OPTIONAL_PREFIX);
+        Path path = new Path(request.getUri());
         if ( ! path.matches("/configserver/v1/{environment}/{region}/{*}")) {
             return ErrorResponse.notFoundError("Nothing at " + path);
         }
 
         ZoneId zoneId = ZoneId.from(path.get("environment"), path.get("region"));
-        if (! zoneRegistry.hasZone(zoneId) && ! CONTROLLER_ZONE.equals(zoneId)) {
+        if (! zoneRegistry.hasZone(zoneId) && ! controllerZone.equals(zoneId)) {
             throw new IllegalArgumentException("No such zone: " + zoneId.value());
         }
 
@@ -103,7 +103,7 @@ public class ConfigServerApiHandler extends AuditLoggingRequestHandler {
         ZoneList zoneList = zoneRegistry.zones().reachable();
 
         Cursor zones = root.setArray("zones");
-        Stream.concat(Stream.of(CONTROLLER_ZONE), zoneRegistry.zones().reachable().ids().stream())
+        Stream.concat(Stream.of(controllerZone), zoneRegistry.zones().reachable().ids().stream())
                 .forEach(zone -> {
             Cursor object = zones.addObject();
             object.setString("environment", zone.environment().value());
@@ -119,7 +119,7 @@ public class ConfigServerApiHandler extends AuditLoggingRequestHandler {
     }
 
     private URI getEndpoint(ZoneId zoneId) {
-        return CONTROLLER_ZONE.equals(zoneId) ? CONTROLLER_URI : zoneRegistry.getConfigServerVipUri(zoneId);
+        return controllerZone.equals(zoneId) ? CONTROLLER_URI : zoneRegistry.getConfigServerVipUri(zoneId);
     }
 
 }

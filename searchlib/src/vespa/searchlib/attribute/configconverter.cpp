@@ -50,6 +50,24 @@ getCollectionTypeMap()
 static DataTypeMap _dataTypeMap = getDataTypeMap();
 static CollectionTypeMap _collectionTypeMap = getCollectionTypeMap();
 
+DictionaryConfig::Type
+convert(AttributesConfig::Attribute::Dictionary::Type type_cfg) {
+    switch (type_cfg) {
+    case AttributesConfig::Attribute::Dictionary::Type::BTREE:
+        return DictionaryConfig::Type::BTREE;
+    case AttributesConfig::Attribute::Dictionary::Type::HASH:
+        return DictionaryConfig::Type::HASH;
+    case AttributesConfig::Attribute::Dictionary::Type::BTREE_AND_HASH:
+        return DictionaryConfig::Type::BTREE_AND_HASH;
+    }
+    assert(false);
+}
+
+DictionaryConfig
+convert_dictionary(const AttributesConfig::Attribute::Dictionary & dictionary) {
+    return DictionaryConfig(convert(dictionary.type));
+}
+
 }
 
 namespace search::attribute {
@@ -74,6 +92,7 @@ ConfigConverter::convert(const AttributesConfig::Attribute & cfg)
     predicateParams.setBounds(cfg.lowerbound, cfg.upperbound);
     predicateParams.setDensePostingListThreshold(cfg.densepostinglistthreshold);
     retval.setPredicateParams(predicateParams);
+    retval.set_dictionary_config(convert_dictionary(cfg.dictionary));
     using CfgDm = AttributesConfig::Attribute::Distancemetric;
     DistanceMetric dm(DistanceMetric::Euclidean);
     switch (cfg.distancemetric) {

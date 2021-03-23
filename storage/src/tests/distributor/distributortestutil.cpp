@@ -5,7 +5,8 @@
 #include <vespa/document/test/make_document_bucket.h>
 #include <vespa/storage/distributor/distributor.h>
 #include <vespa/storage/distributor/distributor_bucket_space.h>
-#include <vespa/storage/distributor/distributorcomponent.h>
+#include <vespa/storage/distributor/distributor_stripe.h>
+#include <vespa/storage/distributor/distributor_stripe_component.h>
 #include <vespa/vdslib/distribution/distribution.h>
 #include <vespa/vespalib/text/stringtokenizer.h>
 
@@ -257,7 +258,8 @@ DistributorTestUtil::removeFromBucketDB(const document::BucketId& id)
 void
 DistributorTestUtil::addIdealNodes(const document::BucketId& id)
 {
-    addIdealNodes(*distributor_component().getClusterStateBundle().getBaselineClusterState(), id);
+    // TODO STRIPE roundabout way of getting state bundle..!
+    addIdealNodes(*operation_context().cluster_state_bundle().getBaselineClusterState(), id);
 }
 
 void
@@ -338,20 +340,26 @@ DistributorTestUtil::disableBucketActivationInConfig(bool disable)
 
 BucketDBUpdater&
 DistributorTestUtil::getBucketDBUpdater() {
-    return _distributor->_bucketDBUpdater;
+    return _distributor->bucket_db_updater();
 }
 IdealStateManager&
 DistributorTestUtil::getIdealStateManager() {
-    return _distributor->_idealStateManager;
+    return _distributor->ideal_state_manager();
 }
 ExternalOperationHandler&
 DistributorTestUtil::getExternalOperationHandler() {
-    return _distributor->_externalOperationHandler;
+    return _distributor->external_operation_handler();
 }
 
-storage::distributor::DistributorComponent&
+storage::distributor::DistributorStripeComponent&
 DistributorTestUtil::distributor_component() {
-    return _distributor->_component;
+    // TODO STRIPE tests use this to indirectly access bucket space repos/DBs!
+    return _distributor->distributor_component();
+}
+
+storage::distributor::DistributorOperationContext&
+DistributorTestUtil::operation_context() {
+    return _distributor->distributor_component();
 }
 
 bool
@@ -369,6 +377,7 @@ DistributorTestUtil::tick() {
 
 DistributorConfiguration&
 DistributorTestUtil::getConfig() {
+    // TODO STRIPE avoid const cast
     return const_cast<DistributorConfiguration&>(_distributor->getConfig());
 }
 

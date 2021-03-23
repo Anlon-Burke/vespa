@@ -26,12 +26,10 @@ public class Autoscaler {
     /** What resource difference is worth a reallocation? */
     private static final double resourceDifferenceWorthReallocation = 0.1;
 
-    private final MetricsDb metricsDb;
     private final NodeRepository nodeRepository;
     private final AllocationOptimizer allocationOptimizer;
 
-    public Autoscaler(MetricsDb metricsDb, NodeRepository nodeRepository) {
-        this.metricsDb = metricsDb;
+    public Autoscaler(NodeRepository nodeRepository) {
         this.nodeRepository = nodeRepository;
         this.allocationOptimizer = new AllocationOptimizer(nodeRepository);
     }
@@ -59,43 +57,58 @@ public class Autoscaler {
     }
 
     private Advice autoscale(Application application, Cluster cluster, NodeList clusterNodes, Limits limits) {
-        if ( ! stable(clusterNodes, nodeRepository))
+        ClusterModel clusterModel = new ClusterModel(application,
+                                                     cluster,
+                                                     clusterNodes.clusterSpec(),
+                                                     clusterNodes,
+                                                     nodeRepository.metricsDb(),
+                                                     nodeRepository.clock());
+
+        if ( ! clusterIsStable(clusterNodes, nodeRepository))
             return Advice.none("Cluster change in progress");
 
-        Duration scalingWindow = cluster.scalingDuration(clusterNodes.clusterSpec());
-        if (scaledIn(scalingWindow, cluster))
-            return Advice.dontScale("Won't autoscale now: Less than " + scalingWindow + " since last resource change");
+        if (scaledIn(clusterModel.scalingDuration(), cluster))
+            return Advice.dontScale("Won't autoscale now: Less than " + clusterModel.scalingDuration() + " since last resource change");
 
-        var clusterNodesTimeseries = new ClusterNodesTimeseries(scalingWindow, cluster, clusterNodes, metricsDb);
-        var currentAllocation = new AllocatableClusterResources(clusterNodes.asList(), nodeRepository, cluster.exclusive());
-
-        int measurementsPerNode = clusterNodesTimeseries.measurementsPerNode();
-        if  (measurementsPerNode < minimumMeasurementsPerNode(scalingWindow))
+        if  (clusterModel.nodeTimeseries().measurementsPerNode() < minimumMeasurementsPerNode(clusterModel.scalingDuration()))
             return Advice.none("Collecting more data before making new scaling decisions: Need to measure for " +
-                               scalingWindow + " since the last resource change completed");
+                               clusterModel.scalingDuration() + " since the last resource change completed");
 
-        int nodesMeasured = clusterNodesTimeseries.nodesMeasured();
-        if (nodesMeasured != clusterNodes.size())
+        if (clusterModel.nodeTimeseries().nodesMeasured() != clusterNodes.size())
             return Advice.none("Collecting more data before making new scaling decisions: " +
-                               "Have measurements from " + nodesMeasured + " nodes, but require from " + clusterNodes.size());
+                               "Have measurements from " + clusterModel.nodeTimeseries().nodesMeasured() +
+                               " nodes, but require from " + clusterNodes.size());
 
-
-        var clusterTimeseries = metricsDb.getClusterTimeseries(application.id(), cluster.id());
-        var target = ResourceTarget.idealLoad(clusterTimeseries, clusterNodesTimeseries, currentAllocation, application);
+        var currentAllocation = new AllocatableClusterResources(clusterNodes.asList(), nodeRepository, cluster.exclusive());
+        var target = ResourceTarget.idealLoad(clusterModel, currentAllocation);
 
         Optional<AllocatableClusterResources> bestAllocation =
-                allocationOptimizer.findBestAllocation(target, currentAllocation, limits);
+                allocationOptimizer.findBestAllocation(target, currentAllocation, clusterModel, limits);
         if (bestAllocation.isEmpty())
             return Advice.dontScale("No allocation improvements are possible within configured limits");
 
         if (similar(bestAllocation.get().realResources(), currentAllocation.realResources()))
             return Advice.dontScale("Cluster is ideally scaled within configured limits");
 
-        if (isDownscaling(bestAllocation.get(), currentAllocation) && scaledIn(scalingWindow.multipliedBy(3), cluster))
-            return Advice.dontScale("Waiting " + scalingWindow.multipliedBy(3) +
+        if (isDownscaling(bestAllocation.get(), currentAllocation) && scaledIn(clusterModel.scalingDuration().multipliedBy(3), cluster))
+            return Advice.dontScale("Waiting " + clusterModel.scalingDuration().multipliedBy(3) +
                                     " since the last change before reducing resources");
 
         return Advice.scaleTo(bestAllocation.get().advertisedResources());
+    }
+
+    public static boolean clusterIsStable(NodeList clusterNodes, NodeRepository nodeRepository) {
+        // The cluster is processing recent changes
+        if (clusterNodes.stream().anyMatch(node -> node.status().wantToRetire() ||
+                                                   node.allocation().get().membership().retired() ||
+                                                   node.allocation().get().isRemovable()))
+            return false;
+
+        // A deployment is ongoing
+        if (nodeRepository.nodes().list(Node.State.reserved).owner(clusterNodes.first().get().allocation().get().owner()).size() > 0)
+            return false;
+
+        return true;
     }
 
     /** Returns true if both total real resources and total cost are similar */
@@ -135,20 +148,6 @@ public class Autoscaler {
         minimumMeasurements = Math.round(0.8 * minimumMeasurements); // Allow 20% metrics collection blackout
         if (minimumMeasurements < 1) minimumMeasurements = 1;
         return (int)minimumMeasurements;
-    }
-
-    public static boolean stable(NodeList nodes, NodeRepository nodeRepository) {
-        // The cluster is processing recent changes
-        if (nodes.stream().anyMatch(node -> node.status().wantToRetire() ||
-                                            node.allocation().get().membership().retired() ||
-                                            node.allocation().get().isRemovable()))
-            return false;
-
-        // A deployment is ongoing
-        if (nodeRepository.nodes().list(Node.State.reserved).owner(nodes.first().get().allocation().get().owner()).size() > 0)
-            return false;
-
-        return true;
     }
 
     public static class Advice {

@@ -1,39 +1,56 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
-import com.yahoo.config.provision.ActivationContext;
+import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
-import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Deployer;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.NodeResources;
+import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.test.ManualClock;
+import com.yahoo.vespa.applicationmodel.HostName;
 import com.yahoo.vespa.hosted.provision.Node;
+import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
+import com.yahoo.vespa.hosted.provision.node.Agent;
+import com.yahoo.vespa.hosted.provision.node.IP;
+import com.yahoo.vespa.hosted.provision.node.filter.NodeTypeFilter;
+import com.yahoo.vespa.hosted.provision.provisioning.InfraDeployerImpl;
 import com.yahoo.vespa.hosted.provision.provisioning.NodeRepositoryProvisioner;
 import com.yahoo.vespa.hosted.provision.provisioning.ProvisioningTester;
 import com.yahoo.vespa.hosted.provision.testutils.MockDeployer;
+import com.yahoo.vespa.hosted.provision.testutils.MockDuperModel;
+import com.yahoo.vespa.hosted.provision.testutils.MockNameResolver;
 import com.yahoo.vespa.orchestrator.OrchestrationException;
 import com.yahoo.vespa.orchestrator.Orchestrator;
+import com.yahoo.vespa.service.duper.ConfigServerApplication;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * @author bratseth
@@ -150,6 +167,101 @@ public class RetiredExpirerTest {
         // inactivated nodes are not retired
         for (Node node : nodeRepository.nodes().list(Node.State.inactive).owner(applicationId))
             assertFalse(node.allocation().get().membership().retired());
+    }
+
+    @Test
+    public void config_server_reprovisioning() throws OrchestrationException {
+        NodeList configServers = tester.makeConfigServers(3, "default", Version.emptyVersion);
+        var cfg1 = new HostName("cfg1");
+        assertEquals(Set.of(cfg1.s(), "cfg2", "cfg3"), configServers.stream().map(Node::hostname).collect(Collectors.toSet()));
+
+        var configServerApplication = new ConfigServerApplication();
+        var duperModel = new MockDuperModel().support(configServerApplication);
+        InfraDeployerImpl infraDeployer = new InfraDeployerImpl(tester.nodeRepository(), tester.provisioner(), duperModel);
+
+        var deployer = mock(Deployer.class);
+        when(deployer.deployFromLocalActive(eq(configServerApplication.getApplicationId())))
+                .thenAnswer(invocation -> infraDeployer.getDeployment(configServerApplication.getApplicationId()));
+
+        // Set wantToRetire on all 3 config servers
+        List<Node> wantToRetireNodes = tester.nodeRepository().nodes()
+                .retire(NodeTypeFilter.from(NodeType.config, null), Agent.operator, Instant.now());
+        assertEquals(3, wantToRetireNodes.size());
+
+        // Redeploy to retire all 3 config servers
+        infraDeployer.activateAllSupportedInfraApplications(true);
+        List<Node> retiredNodes = tester.nodeRepository().nodes().list().retired().asList();
+        assertEquals(3, retiredNodes.size());
+
+        // The Orchestrator will allow only 1 to be removed, say cfg1
+        Node retiredNode = tester.nodeRepository().nodes().node(cfg1.s()).orElseThrow();
+        doThrow(new OrchestrationException("denied")).when(orchestrator).acquirePermissionToRemove(any());
+        doNothing().when(orchestrator).acquirePermissionToRemove(eq(new HostName(retiredNode.hostname())));
+
+        // RetiredExpirer should remove cfg1 from application
+        RetiredExpirer retiredExpirer = createRetiredExpirer(deployer);
+        retiredExpirer.run();
+        var activeConfigServerHostnames = new HashSet<>(Set.of("cfg1", "cfg2", "cfg3"));
+        assertTrue(activeConfigServerHostnames.contains(retiredNode.hostname()));
+        activeConfigServerHostnames.remove(retiredNode.hostname());
+        assertEquals(activeConfigServerHostnames, configServerHostnames(duperModel));
+        assertEquals(1, tester.nodeRepository().nodes().list(Node.State.inactive).nodeType(NodeType.config).size());
+        assertEquals(2, tester.nodeRepository().nodes().list(Node.State.active).nodeType(NodeType.config).size());
+
+        // no changes while 1 cfg is inactive
+        retiredExpirer.run();
+        assertEquals(activeConfigServerHostnames, configServerHostnames(duperModel));
+        assertEquals(1, tester.nodeRepository().nodes().list(Node.State.inactive).nodeType(NodeType.config).size());
+        assertEquals(2, tester.nodeRepository().nodes().list(Node.State.active).nodeType(NodeType.config).size());
+
+        // The node will eventually expire from inactive, and be removed by DynamicProvisioningMaintainer
+        // (depending on its host), and these events should not affect the 2 active config servers.
+        nodeRepository.nodes().deallocate(retiredNode, Agent.InactiveExpirer, "expired");
+        retiredNode = tester.nodeRepository().nodes().list(Node.State.parked).nodeType(NodeType.config).asList().get(0);
+        nodeRepository.nodes().removeRecursively(retiredNode, true);
+        infraDeployer.activateAllSupportedInfraApplications(true);
+        retiredExpirer.run();
+        assertEquals(activeConfigServerHostnames, configServerHostnames(duperModel));
+        assertEquals(2, tester.nodeRepository().nodes().list().nodeType(NodeType.config).size());
+        assertEquals(2, tester.nodeRepository().nodes().list(Node.State.active).nodeType(NodeType.config).size());
+
+        // Provision and ready new config server
+        MockNameResolver nameResolver = (MockNameResolver)tester.nodeRepository().nameResolver();
+        String ipv4 = "127.0.1.4";
+        nameResolver.addRecord(retiredNode.hostname(), ipv4);
+        Node node = Node.create(retiredNode.hostname(), new IP.Config(Set.of(ipv4), Set.of()), retiredNode.hostname(),
+                    tester.asFlavor("default", NodeType.config), NodeType.config).build();
+        var nodes = List.of(node);
+        nodes = nodeRepository.nodes().addNodes(nodes, Agent.system);
+        nodes = nodeRepository.nodes().deallocate(nodes, Agent.system, getClass().getSimpleName());
+        nodeRepository.nodes().setReady(nodes, Agent.system, getClass().getSimpleName());
+
+        // no changes while replacement config server is ready
+        retiredExpirer.run();
+        assertEquals(activeConfigServerHostnames, configServerHostnames(duperModel));
+        assertEquals(1, tester.nodeRepository().nodes().list(Node.State.ready).nodeType(NodeType.config).size());
+        assertEquals(2, tester.nodeRepository().nodes().list(Node.State.active).nodeType(NodeType.config).size());
+
+        // Activate replacement config server
+        infraDeployer.activateAllSupportedInfraApplications(true);
+        assertEquals(3, tester.nodeRepository().nodes().list(Node.State.active).nodeType(NodeType.config).size());
+
+        // There are now 2 retired config servers left
+        retiredExpirer.run();
+        assertEquals(3, tester.nodeRepository().nodes().list(Node.State.active).nodeType(NodeType.config).size());
+        var retiredHostnames = tester.nodeRepository()
+                                     .nodes().list(() -> {})
+                                     .stream()
+                                     .filter(n -> n.allocation().map(allocation -> allocation.membership().retired()).orElse(false))
+                                     .map(Node::hostname)
+                                     .collect(Collectors.toSet());
+        assertEquals(Set.of("cfg2", "cfg3"), retiredHostnames);
+    }
+
+    private Set<String> configServerHostnames(MockDuperModel duperModel) {
+        return duperModel.hostnamesOf(new ConfigServerApplication().getApplicationId()).stream()
+                .map(com.yahoo.config.provision.HostName::value)
+                .collect(Collectors.toSet());
     }
 
     private void activate(ApplicationId applicationId, ClusterSpec cluster, int nodes, int groups) {

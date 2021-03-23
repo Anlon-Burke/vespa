@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.TreeMap;
 
 import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
+import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_TYPE;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.HOSTNAME;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.NODE_TYPE;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.TENANT_ID;
@@ -201,7 +202,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag GROUP_SUSPENSION = defineFeatureFlag(
             "group-suspension", true,
-            List.of("hakon"), "2021-01-22", "2021-03-22",
+            List.of("hakon"), "2021-01-22", "2021-04-22",
             "Allow all content nodes in a hierarchical group to suspend at the same time",
             "Takes effect on the next suspension request to the Orchestrator.",
             APPLICATION_ID);
@@ -227,7 +228,7 @@ public class Flags {
             TENANT_ID, ZONE_ID);
 
     public static final UnboundIntFlag CLUSTER_CONTROLLER_MAX_HEAP_SIZE_IN_MB = defineIntFlag(
-            "cluster-controller-max-heap-size-in-mb", 256,
+            "cluster-controller-max-heap-size-in-mb", 128,
             List.of("hmusum"), "2021-02-10", "2021-04-10",
             "JVM max heap size for cluster controller in Mb",
             "Takes effect when restarting cluster controller");
@@ -236,14 +237,15 @@ public class Flags {
             "metrics-proxy-max-heap-size-in-mb", 256,
             List.of("hmusum"), "2021-03-01", "2021-05-01",
             "JVM max heap size for metrics proxy in Mb",
-            "Takes effect when restarting metrics proxy");
+            "Takes effect when restarting metrics proxy",
+            CLUSTER_TYPE);
 
-    public static final UnboundBooleanFlag DEDICATED_CLUSTER_CONTROLLER_CLUSTER = defineFeatureFlag(
-            "dedicated-cluster-controller-cluster", false,
-            List.of("jonmv"), "2021-02-15", "2021-04-15",
-            "Makes application eligible for switching to a dedicated, shared cluster controller cluster, by a maintainer",
-            "Takes effect immediately",
-            APPLICATION_ID);
+    public static final UnboundIntFlag CONFIG_PROXY_MAX_HEAP_SIZE_IN_MB = defineIntFlag(
+            "config-proxy-max-heap-size-in-mb", 256,
+            List.of("hmusum"), "2021-03-15", "2021-05-15",
+            "JVM max heap size for config proxy in Mb",
+            "Takes effect on restart of Docker container",
+            CLUSTER_TYPE);
 
     public static final UnboundStringFlag DEDICATED_CLUSTER_CONTROLLER_FLAVOR = defineStringFlag(
             "dedicated-cluster-controller-flavor", "", List.of("jonmv"), "2021-02-25", "2021-04-25",
@@ -271,12 +273,6 @@ public class Flags {
             "for query visibility if they are out of sync with a majority of other replicas",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundBooleanFlag DYNAMIC_CONFIG_SERVER_PROVISIONING = defineFeatureFlag(
-            "dynamic-config-server-provisioning", false,
-            List.of("mpolden", "hakon"), "2021-03-03", "2021-05-01",
-            "Enable dynamic provisioning of config servers",
-            "Takes effect immediately, for subsequent provisioning");
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

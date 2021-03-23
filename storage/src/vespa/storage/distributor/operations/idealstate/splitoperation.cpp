@@ -94,14 +94,14 @@ SplitOperation::onReceive(DistributorMessageSender&, const api::StorageReply::SP
             ost << sinfo.first << ",";
 
             BucketCopy copy(
-                    BucketCopy(_manager->getDistributorComponent().getUniqueTimestamp(),
+                    BucketCopy(_manager->operation_context().generate_unique_timestamp(),
                         node,
                         sinfo.second));
 
             // Must reset trusted since otherwise trustedness of inconsistent
             // copies would be arbitrarily determined by which copy managed
             // to finish its split first.
-            _manager->getDistributorComponent().updateBucketDatabase(
+            _manager->operation_context().update_bucket_database(
                     document::Bucket(msg->getBucket().getBucketSpace(), sinfo.first), copy,
                     (DatabaseUpdate::CREATE_IF_NONEXISTING
                      | DatabaseUpdate::RESET_TRUSTED));
@@ -111,7 +111,7 @@ SplitOperation::onReceive(DistributorMessageSender&, const api::StorageReply::SP
             rep.getResult().getResult() == api::ReturnCode::BUCKET_NOT_FOUND
             && _bucketSpace->getBucketDatabase().get(rep.getBucketId())->getNode(node) != 0)
     {
-        _manager->getDistributorComponent().recheckBucketInfo(node, getBucket());
+        _manager->operation_context().recheck_bucket_info(node, getBucket());
         LOGBP(debug, "Split failed for %s: bucket not found. Storage and "
                      "distributor bucket databases might be out of sync: %s",
               getBucketId().toString().c_str(),

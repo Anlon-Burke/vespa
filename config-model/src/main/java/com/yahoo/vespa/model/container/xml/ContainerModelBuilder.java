@@ -273,6 +273,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     }
 
     private void addCloudSecretStore(ApplicationContainerCluster cluster, Element secretStoreElement, DeployState deployState) {
+        if ( ! deployState.isHosted()) return;
         CloudSecretStore cloudSecretStore = new CloudSecretStore();
         Map<String, TenantSecretStore> secretStoresByName = deployState.getProperties().tenantSecretStores()
                 .stream()
@@ -281,7 +282,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
                         store -> store
                 ));
 
-        for (Element group : XML.getChildren(secretStoreElement, "group")) {
+        for (Element group : XML.getChildren(secretStoreElement, "aws-parameter-store")) {
             String name = group.getAttribute("name");
             String region = group.getAttribute("region");
             TenantSecretStore secretStore = secretStoresByName.get(name);
@@ -617,10 +618,11 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         String options = (jvmGCOPtions != null)
                 ? jvmGCOPtions
                 : deployState.getProperties().jvmGCOptions();
-        return (options == null ||options.isEmpty())
+        return (options == null || options.isEmpty())
                 ? (deployState.isHosted() ? ContainerCluster.CMS : ContainerCluster.G1GC)
                 : options;
     }
+
     private static String getJvmOptions(ApplicationContainerCluster cluster, Element nodesElement, DeployLogger deployLogger) {
         String jvmOptions;
         if (nodesElement.hasAttribute(VespaDomBuilder.JVM_OPTIONS)) {

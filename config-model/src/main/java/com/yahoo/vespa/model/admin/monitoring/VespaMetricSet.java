@@ -140,10 +140,10 @@ public class VespaMetricSet {
         metrics.add(new Metric("serverNumConnections.last"));
 
         {
-            List<String> suffices = List.of("sum", "count", "last", "min", "max");
-            addMetric(metrics, "jdisc.thread_pool.unhandled_exceptions", suffices);
-            addMetric(metrics, "jdisc.thread_pool.work_queue.capacity", suffices);
-            addMetric(metrics, "jdisc.thread_pool.work_queue.size", suffices);
+            List<String> suffixes = List.of("sum", "count", "last", "min", "max");
+            addMetric(metrics, "jdisc.thread_pool.unhandled_exceptions", suffixes);
+            addMetric(metrics, "jdisc.thread_pool.work_queue.capacity", suffixes);
+            addMetric(metrics, "jdisc.thread_pool.work_queue.size", suffixes);
         }
 
         metrics.add(new Metric("httpapi_latency.max"));
@@ -272,10 +272,6 @@ public class VespaMetricSet {
         metrics.add(new Metric("search_connections.sum"));
         metrics.add(new Metric("search_connections.count"));
         metrics.add(new Metric("search_connections.average")); // TODO: Remove in Vespa 8
-        metrics.add(new Metric("active_queries.max"));
-        metrics.add(new Metric("active_queries.sum"));
-        metrics.add(new Metric("active_queries.count"));
-        metrics.add(new Metric("active_queries.average")); // TODO: Remove in Vespa 8
         metrics.add(new Metric("feed.latency.max"));
         metrics.add(new Metric("feed.latency.sum"));
         metrics.add(new Metric("feed.latency.count"));

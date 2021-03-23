@@ -7,6 +7,7 @@ import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.model.NullConfigModelRegistry;
 import com.yahoo.config.model.api.ContainerEndpoint;
 import com.yahoo.config.model.api.EndpointCertificateSecrets;
+import com.yahoo.config.model.api.TenantSecretStore;
 import com.yahoo.config.model.builder.xml.test.DomBuilderTest;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.deploy.TestProperties;
@@ -15,6 +16,7 @@ import com.yahoo.config.model.provision.InMemoryProvisioner;
 import com.yahoo.config.model.provision.SingleNodeProvisioner;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.config.model.test.MockRoot;
+import com.yahoo.config.provision.Cloud;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.RegionName;
@@ -29,6 +31,7 @@ import com.yahoo.container.handler.VipStatusHandler;
 import com.yahoo.container.handler.metrics.MetricsV2Handler;
 import com.yahoo.container.handler.observability.ApplicationStatusHandler;
 import com.yahoo.container.jdisc.JdiscBindingsConfig;
+import com.yahoo.container.jdisc.secretstore.SecretStoreConfig;
 import com.yahoo.container.servlet.ServletConfigConfig;
 import com.yahoo.container.usability.BindingsOverviewHandler;
 import com.yahoo.jdisc.http.ConnectorConfig;
@@ -37,6 +40,7 @@ import com.yahoo.net.HostName;
 import com.yahoo.path.Path;
 import com.yahoo.prelude.cluster.QrMonitorConfig;
 import com.yahoo.search.config.QrStartConfig;
+import com.yahoo.security.tls.TlsContext;
 import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.model.AbstractService;
 import com.yahoo.vespa.model.VespaModel;
@@ -50,6 +54,7 @@ import com.yahoo.vespa.model.content.utils.ContentClusterUtils;
 import com.yahoo.vespa.model.test.VespaModelTester;
 import com.yahoo.vespa.model.test.utils.VespaModelCreatorWithFilePkg;
 import org.hamcrest.Matchers;
+import org.hamcrest.core.IsEqual;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -58,6 +63,8 @@ import org.xml.sax.SAXException;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -76,6 +83,7 @@ import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
@@ -84,6 +92,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -715,6 +724,58 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
     }
 
     @Test
+    public void cloud_secret_store_requires_configured_secret_store() {
+        Element clusterElem = DomBuilderTest.parse(
+                "<container version='1.0'>",
+                "  <secret-store type='cloud'>",
+                "    <aws-parameter-store name='store1' region='eu-north-1'/>",
+                "  </secret-store>",
+                "</container>");
+        try {
+            DeployState state = new DeployState.Builder()
+                    .properties(new TestProperties().setHostedVespa(true))
+                    .zone(new Zone(SystemName.Public, Environment.prod, RegionName.defaultName()))
+                    .build();
+            createModel(root, state, null, clusterElem);
+            fail("secret store not defined");
+        } catch (RuntimeException e) {
+            assertEquals("No configured secret store named store1", e.getMessage());
+        }
+    }
+
+
+    @Test
+    public void cloud_secret_store_can_be_set_up() {
+        Element clusterElem = DomBuilderTest.parse(
+                "<container version='1.0'>",
+                "  <secret-store type='cloud'>",
+                "    <aws-parameter-store name='store1' region='eu-north-1'/>",
+                "  </secret-store>",
+                "</container>");
+
+        DeployState state = new DeployState.Builder()
+                .properties(
+                        new TestProperties()
+                                .setHostedVespa(true)
+                                .setTenantSecretStores(List.of(new TenantSecretStore("store1", "1234", "role", Optional.of("externalid")))))
+                .zone(new Zone(SystemName.Public, Environment.prod, RegionName.defaultName()))
+                .build();
+        createModel(root, state, null, clusterElem);
+
+        ApplicationContainerCluster container = getContainerCluster("container");
+        assertComponentConfigured(container, "com.yahoo.jdisc.cloud.aws.AwsParameterStore");
+        CloudSecretStore secretStore = (CloudSecretStore) container.getComponentsMap().get(ComponentId.fromString("com.yahoo.jdisc.cloud.aws.AwsParameterStore"));
+
+
+        SecretStoreConfig.Builder configBuilder = new SecretStoreConfig.Builder();
+        secretStore.getConfig(configBuilder);
+        SecretStoreConfig secretStoreConfig = configBuilder.build();
+
+        assertEquals(1, secretStoreConfig.awsParameterStores().size());
+        assertEquals("store1", secretStoreConfig.awsParameterStores().get(0).name());
+    }
+
+    @Test
     public void missing_security_clients_pem_fails_in_public() {
         Element clusterElem = DomBuilderTest.parse("<container version='1.0' />");
 
@@ -874,6 +935,30 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
         assertThat("Connector must use Athenz truststore in a non-public system.",
                 connectorConfig.ssl().caCertificateFile(), equalTo("/opt/yahoo/share/ssl/certs/athenz_certificate_bundle.pem"));
         assertThat(connectorConfig.ssl().caCertificate(), isEmptyString());
+    }
+
+    @Test
+    public void require_allowed_ciphers() {
+        Element clusterElem = DomBuilderTest.parse(
+                "<container version='1.0'>",
+                nodesXml,
+                "</container>" );
+
+        DeployState state = new DeployState.Builder().properties(new TestProperties().setHostedVespa(true).setEndpointCertificateSecrets(Optional.of(new EndpointCertificateSecrets("CERT", "KEY")))).build();
+        createModel(root, state, null, clusterElem);
+        ApplicationContainer container = (ApplicationContainer)root.getProducer("container/container.0");
+
+        List<ConnectorFactory> connectorFactories = container.getHttp().getHttpServer().get().getConnectorFactories();
+        ConnectorFactory tlsPort = connectorFactories.stream().filter(connectorFactory -> connectorFactory.getListenPort() == 4443).findFirst().orElseThrow();
+        ConnectorConfig.Builder builder = new ConnectorConfig.Builder();
+        tlsPort.getConfig(builder);
+
+        ConnectorConfig connectorConfig = new ConnectorConfig(builder);
+        Set<String> expectedCiphers = new HashSet<>();
+        expectedCiphers.add("TLS_RSA_WITH_AES_256_GCM_SHA384");
+        expectedCiphers.addAll(TlsContext.ALLOWED_CIPHER_SUITES);
+
+        assertThat(connectorConfig.ssl().enabledCipherSuites(), containsInAnyOrder(expectedCiphers.toArray()));
     }
 
     @Test

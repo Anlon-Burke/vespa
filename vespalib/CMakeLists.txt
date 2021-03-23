@@ -42,6 +42,8 @@ vespa_define_module(
     src/tests/datastore/array_store_config
     src/tests/datastore/buffer_type
     src/tests/datastore/datastore
+    src/tests/datastore/fixed_size_hash_map
+    src/tests/datastore/simple_hash_map
     src/tests/datastore/unique_store
     src/tests/datastore/unique_store_dictionary
     src/tests/datastore/unique_store_string_allocator
@@ -91,6 +93,7 @@ vespa_define_module(
     src/tests/referencecounter
     src/tests/regex
     src/tests/rendezvous
+    src/tests/require
     src/tests/runnable_pair
     src/tests/sha1
     src/tests/shared_string_repo
@@ -130,6 +133,7 @@ vespa_define_module(
     src/tests/tutorial/simple
     src/tests/tutorial/threads
     src/tests/typify
+    src/tests/unwind_message
     src/tests/util/bfloat16
     src/tests/util/file_area_freelist
     src/tests/util/generationhandler

@@ -35,6 +35,7 @@ public interface MetricsDb {
      * the snapshots recorded after the given time (or an empty snapshot if none).
      *
      * @param period the duration into the past to return data for
+     * @param hostnames the host names to return timeseries for, or empty to return for all hostnames
      */
     List<NodeTimeseries> getNodeTimeseries(Duration period, Set<String> hostnames);
 
@@ -50,8 +51,8 @@ public interface MetricsDb {
 
     void close();
 
-    static MemoryMetricsDb createTestInstance(NodeRepository nodeRepository) {
-        return new MemoryMetricsDb(nodeRepository);
+    static MemoryMetricsDb createTestInstance(Clock clock) {
+        return new MemoryMetricsDb(clock);
     }
 
 }

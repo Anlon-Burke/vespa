@@ -27,7 +27,6 @@ import com.yahoo.vespa.hosted.controller.api.integration.resource.CostReportCons
 import com.yahoo.vespa.hosted.controller.api.integration.routing.GlobalRoutingService;
 import com.yahoo.vespa.hosted.controller.api.integration.routing.MemoryGlobalRoutingService;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.NoopTenantSecretService;
-import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretService;
 import com.yahoo.vespa.hosted.controller.api.integration.stubs.DummyOwnershipIssues;
 import com.yahoo.vespa.hosted.controller.api.integration.stubs.DummySystemMonitor;
 import com.yahoo.vespa.hosted.controller.api.integration.stubs.LoggingDeploymentIssues;
@@ -35,6 +34,8 @@ import com.yahoo.vespa.hosted.controller.api.integration.stubs.MockMailer;
 import com.yahoo.vespa.hosted.controller.api.integration.stubs.MockMeteringClient;
 import com.yahoo.vespa.hosted.controller.api.integration.stubs.MockRunDataStore;
 import com.yahoo.vespa.hosted.controller.api.integration.stubs.MockTesterCloud;
+import com.yahoo.vespa.hosted.controller.api.integration.vcmr.ChangeRequestClient;
+import com.yahoo.vespa.hosted.controller.api.integration.vcmr.MockChangeRequestClient;
 
 /**
  * A mock implementation of a {@link ServiceRegistry} for testing purposes.
@@ -70,6 +71,7 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     private final ContainerRegistryMock containerRegistry = new ContainerRegistryMock();
     private final NoopTenantSecretService tenantSecretService = new NoopTenantSecretService();
     private final ArchiveService archiveService = new MockArchiveService();
+    private final MockChangeRequestClient changeRequestClient = new MockChangeRequestClient();
 
     public ServiceRegistryMock(SystemName system) {
         this.zoneRegistryMock = new ZoneRegistryMock(system);
@@ -219,6 +221,11 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     @Override
     public ArchiveService archiveService() {
         return archiveService;
+    }
+
+    @Override
+    public MockChangeRequestClient changeRequestClient() {
+        return changeRequestClient;
     }
 
     public ConfigServerMock configServerMock() {

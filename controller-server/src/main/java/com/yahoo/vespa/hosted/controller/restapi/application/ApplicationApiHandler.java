@@ -36,13 +36,13 @@ import com.yahoo.slime.Inspector;
 import com.yahoo.slime.JsonParseException;
 import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
+import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.Instance;
 import com.yahoo.vespa.hosted.controller.LockedTenant;
 import com.yahoo.vespa.hosted.controller.NotExistsException;
 import com.yahoo.vespa.hosted.controller.api.ActivateResult;
 import com.yahoo.vespa.hosted.controller.api.application.v4.EnvironmentResource;
-import com.yahoo.vespa.hosted.controller.api.application.v4.model.DeployOptions;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.EndpointStatus;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.ProtonMetrics;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbindings.RefeedAction;
@@ -50,8 +50,8 @@ import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbi
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbindings.ServiceInfo;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.identifiers.TenantId;
+import com.yahoo.vespa.hosted.controller.api.integration.aws.TenantRoles;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.Quota;
-import com.yahoo.vespa.hosted.controller.api.integration.configserver.Application;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ApplicationReindexing;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Cluster;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServerException;
@@ -140,6 +140,7 @@ import static com.yahoo.jdisc.Response.Status.INTERNAL_SERVER_ERROR;
 import static com.yahoo.jdisc.Response.Status.NOT_FOUND;
 import static java.util.Map.Entry.comparingByKey;
 import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toUnmodifiableList;
 
 /**
@@ -153,8 +154,6 @@ import static java.util.stream.Collectors.toUnmodifiableList;
 public class ApplicationApiHandler extends LoggingRequestHandler {
 
     private static final ObjectMapper jsonMapper = new ObjectMapper();
-
-    private static final String OPTIONAL_PREFIX = "/api";
 
     private final Controller controller;
     private final AccessControlRequests accessControlRequests;
@@ -178,7 +177,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     @Override
     public HttpResponse handle(HttpRequest request) {
         try {
-            Path path = new Path(request.getUri(), OPTIONAL_PREFIX);
+            Path path = new Path(request.getUri());
             switch (request.getMethod()) {
                 case GET: return handleGET(path, request);
                 case PUT: return handlePUT(path, request);
@@ -224,7 +223,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         if (path.matches("/application/v4/tenant")) return tenants(request);
         if (path.matches("/application/v4/tenant/{tenant}")) return tenant(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/info")) return tenantInfo(path.get("tenant"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}/region/{region}/parameter-name/{parameter-name}/validate")) return validateSecretStore(path.get("tenant"), path.get("name"), path.get("region"), path.get("parameter-name"));
+        if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}/validate")) return validateSecretStore(path.get("tenant"), path.get("name"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application")) return applications(path.get("tenant"), Optional.empty(), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}")) return application(path.get("tenant"), path.get("application"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/compile-version")) return compileVersion(path.get("tenant"), path.get("application"));
@@ -270,6 +269,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     private HttpResponse handlePUT(Path path, HttpRequest request) {
         if (path.matches("/application/v4/tenant/{tenant}")) return updateTenant(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/info")) return updateTenantInfo(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/archive-access")) return allowArchiveAccess(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}")) return addSecretStore(path.get("tenant"), path.get("name"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/global-rotation/override")) return setGlobalRotationOverride(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), false, request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/global-rotation/override")) return setGlobalRotationOverride(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), false, request);
@@ -314,6 +314,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     private HttpResponse handleDELETE(Path path, HttpRequest request) {
         if (path.matches("/application/v4/tenant/{tenant}")) return deleteTenant(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/key")) return removeDeveloperKey(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/archive-access")) return removeArchiveAccess(path.get("tenant"));
         if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}")) return deleteSecretStore(path.get("tenant"), path.get("name"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}")) return deleteApplication(path.get("tenant"), path.get("application"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/deployment")) return removeAllProdDeployments(path.get("tenant"), path.get("application"));
@@ -345,8 +346,12 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     private HttpResponse recursiveRoot(HttpRequest request) {
         Slime slime = new Slime();
         Cursor tenantArray = slime.setArray();
+        List<Application> applications = controller.applications().asList();
         for (Tenant tenant : controller.tenants().asList())
-            toSlime(tenantArray.addObject(), tenant, request);
+            toSlime(tenantArray.addObject(),
+                    tenant,
+                    applications.stream().filter(app -> app.id().tenant().equals(tenant.name())).collect(toList()),
+                    request);
         return new SlimeJsonResponse(slime);
     }
 
@@ -372,7 +377,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
 
     private HttpResponse tenant(Tenant tenant, HttpRequest request) {
         Slime slime = new Slime();
-        toSlime(slime.setObject(), tenant, request);
+        toSlime(slime.setObject(), tenant, controller.applications().asList(tenant.name()), request);
         return new SlimeJsonResponse(slime);
     }
 
@@ -482,7 +487,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
 
         Slime slime = new Slime();
         Cursor applicationArray = slime.setArray();
-        for (com.yahoo.vespa.hosted.controller.Application application : controller.applications().asList(tenant)) {
+        for (Application application : controller.applications().asList(tenant)) {
             if (applicationName.map(application.id().application().value()::equals).orElse(true)) {
                 Cursor applicationObject = applicationArray.addObject();
                 applicationObject.setString("tenant", application.id().tenant().value());
@@ -584,29 +589,32 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         return new SlimeJsonResponse(root);
     }
 
+    private HttpResponse validateSecretStore(String tenantName, String secretStoreName, HttpRequest request) {
 
-    private HttpResponse validateSecretStore(String tenantName, String name, String region, String parameterName) {
-        var tenant = TenantName.from(tenantName);
-        if (controller.tenants().require(tenant).type() != Tenant.Type.cloud)
-            return ErrorResponse.badRequest("Tenant '" + tenant + "' is not a cloud tenant");
+        var awsRegion = request.getProperty("aws-region");
+        var parameterName = request.getProperty("parameter-name");
+        var applicationId = ApplicationId.fromFullString(request.getProperty("application-id"));
+        var zoneId = ZoneId.from(request.getProperty("zone"));
+        var deploymentId = new DeploymentId(applicationId, zoneId);
 
-        var cloudTenant = (CloudTenant)controller.tenants().require(tenant);
-        var tenantSecretStore = cloudTenant.tenantSecretStores()
+        var tenant = (CloudTenant)controller.tenants().require(applicationId.tenant());
+        if (tenant.type() != Tenant.Type.cloud) {
+            return ErrorResponse.badRequest("Tenant '" + applicationId.tenant() + "' is not a cloud tenant");
+        }
+
+        var tenantSecretStore = tenant.tenantSecretStores()
                 .stream()
-                .filter(secretStore -> secretStore.getName().equals(name))
+                .filter(secretStore -> secretStore.getName().equals(secretStoreName))
                 .findFirst();
-        var deployment = getActiveDeployment(tenant);
 
-        if (deployment.isEmpty())
-            return ErrorResponse.badRequest("Tenant '" + tenantName + "' has no active deployments");
         if (tenantSecretStore.isEmpty())
-            return ErrorResponse.notFoundError("No secret store '" + name + "' configured for tenant '" + tenantName + "'");
+            return ErrorResponse.notFoundError("No secret store '" + secretStoreName + "' configured for tenant '" + tenantName + "'");
 
-        var response = controller.serviceRegistry().configServer().validateSecretStore(deployment.get(), tenantSecretStore.get(), region, parameterName);
+        var response = controller.serviceRegistry().configServer().validateSecretStore(deploymentId, tenantSecretStore.get(), awsRegion, parameterName);
         try {
             var responseRoot = new Slime();
             var responseCursor = responseRoot.setObject();
-            responseCursor.setString("target", deployment.get().toString());
+            responseCursor.setString("target", deploymentId.toString());
             var responseResultCursor = responseCursor.setObject("result");
             var responseSlime = SlimeUtils.jsonToSlime(response);
             SlimeUtils.copyObject(responseSlime.get(), responseResultCursor);
@@ -614,23 +622,6 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         } catch (JsonParseException e) {
             return ErrorResponse.internalServerError(response);
         }
-    }
-
-    private Optional<DeploymentId> getActiveDeployment(TenantName tenant) {
-        for (var application : controller.applications().asList(tenant)) {
-            var optionalInstance = application.instances().values()
-                    .stream()
-                    .filter(instance -> instance.deployments().keySet().size() > 0)
-                    .findFirst();
-
-            if (optionalInstance.isPresent()) {
-                var instance = optionalInstance.get();
-                var applicationId = instance.id();
-                var zoneId = instance.deployments().keySet().stream().findFirst().orElseThrow();
-                return Optional.of(new DeploymentId(applicationId, zoneId));
-            }
-        }
-        return Optional.empty();
     }
 
     private HttpResponse removeDeveloperKey(String tenantName, HttpRequest request) {
@@ -742,6 +733,37 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         return new SlimeJsonResponse(slime);
     }
 
+    private HttpResponse allowArchiveAccess(String tenantName, HttpRequest request) {
+        if (controller.tenants().require(TenantName.from(tenantName)).type() != Tenant.Type.cloud)
+            throw new IllegalArgumentException("Tenant '" + tenantName + "' is not a cloud tenant");
+
+        var data = toSlime(request.getData()).get();
+        var role = mandatory("role", data).asString();
+
+        if (role.isBlank()) {
+            return ErrorResponse.badRequest("Archive access role can't be whitespace only");
+        }
+
+        controller.tenants().lockOrThrow(TenantName.from(tenantName), LockedTenant.Cloud.class, lockedTenant -> {
+            lockedTenant = lockedTenant.withArchiveAccessRole(Optional.of(role));
+            controller.tenants().store(lockedTenant);
+        });
+
+        return new MessageResponse("Archive access role set to '" + role + "' for tenant " + tenantName +  ".");
+    }
+
+    private HttpResponse removeArchiveAccess(String tenantName) {
+        if (controller.tenants().require(TenantName.from(tenantName)).type() != Tenant.Type.cloud)
+            throw new IllegalArgumentException("Tenant '" + tenantName + "' is not a cloud tenant");
+
+        controller.tenants().lockOrThrow(TenantName.from(tenantName), LockedTenant.Cloud.class, lockedTenant -> {
+            lockedTenant = lockedTenant.withArchiveAccessRole(Optional.empty());
+            controller.tenants().store(lockedTenant);
+        });
+
+        return new MessageResponse("Archive access role removed for tenant " + tenantName + ".");
+    }
+
     private HttpResponse patchApplication(String tenantName, String applicationName, HttpRequest request) {
         Inspector requestObject = toSlime(request.getData()).get();
         StringJoiner messageBuilder = new StringJoiner("\n").setEmptyValue("No applicable changes.");
@@ -767,7 +789,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         return new MessageResponse(messageBuilder.toString());
     }
 
-    private com.yahoo.vespa.hosted.controller.Application getApplication(String tenantName, String applicationName) {
+    private Application getApplication(String tenantName, String applicationName) {
         TenantAndApplicationId applicationId = TenantAndApplicationId.from(tenantName, applicationName);
         return controller.applications().getApplication(applicationId)
                          .orElseThrow(() -> new NotExistsException(applicationId + " not found"));
@@ -795,9 +817,12 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
             nodeObject.setString("version", node.currentVersion().toString());
             nodeObject.setString("flavor", node.flavor());
             toSlime(node.resources(), nodeObject);
-            nodeObject.setBool("fastDisk", node.resources().diskSpeed() == NodeResources.DiskSpeed.fast); // TODO: Remove
             nodeObject.setString("clusterId", node.clusterId());
             nodeObject.setString("clusterType", valueOf(node.clusterType()));
+            nodeObject.setBool("down", node.history().stream().anyMatch(event -> "down".equals(event.getEvent())));
+            nodeObject.setBool("retired", node.retired() || node.wantToRetire());
+            nodeObject.setBool("restarting", node.wantedRestartGeneration() > node.restartGeneration());
+            nodeObject.setBool("rebooting", node.wantedRebootGeneration() > node.rebootGeneration());
         }
         return new SlimeJsonResponse(slime);
     }
@@ -805,12 +830,13 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     private HttpResponse clusters(String tenantName, String applicationName, String instanceName, String environment, String region) {
         ApplicationId id = ApplicationId.from(tenantName, applicationName, instanceName);
         ZoneId zone = requireZone(environment, region);
-        Application application = controller.serviceRegistry().configServer().nodeRepository().getApplication(zone, id);
+        com.yahoo.vespa.hosted.controller.api.integration.configserver.Application application = controller.serviceRegistry().configServer().nodeRepository().getApplication(zone, id);
 
         Slime slime = new Slime();
         Cursor clustersObject = slime.setObject().setObject("clusters");
         for (Cluster cluster : application.clusters().values()) {
             Cursor clusterObject = clustersObject.setObject(cluster.id().value());
+            clusterObject.setString("type", cluster.type().name());
             toSlime(cluster.min(), clusterObject.setObject("min"));
             toSlime(cluster.max(), clusterObject.setObject("max"));
             toSlime(cluster.current(), clusterObject.setObject("current"));
@@ -821,6 +847,9 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
             utilizationToSlime(cluster.utilization(), clusterObject.setObject("utilization"));
             scalingEventsToSlime(cluster.scalingEvents(), clusterObject.setArray("scalingEvents"));
             clusterObject.setString("autoscalingStatus", cluster.autoscalingStatus());
+            clusterObject.setLong("scalingDuration", cluster.scalingDuration().toMillis());
+            clusterObject.setDouble("maxQueryGrowthRate", cluster.maxQueryGrowthRate());
+            clusterObject.setDouble("currentQueryFractionOfMax", cluster.currentQueryFractionOfMax());
         }
         return new SlimeJsonResponse(slime);
     }
@@ -942,7 +971,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         return new MessageResponse(type.jobName() + " for " + id + " resumed");
     }
 
-    private void toSlime(Cursor object, com.yahoo.vespa.hosted.controller.Application application, HttpRequest request) {
+    private void toSlime(Cursor object, Application application, HttpRequest request) {
         object.setString("tenant", application.id().tenant().value());
         object.setString("application", application.id().application().value());
         object.setString("deployments", withPath("/application/v4" +
@@ -1080,7 +1109,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     }
 
     private void toSlime(Cursor object, Instance instance, DeploymentStatus status, HttpRequest request) {
-        com.yahoo.vespa.hosted.controller.Application application = status.application();
+        Application application = status.application();
         object.setString("tenant", instance.id().tenant().value());
         object.setString("application", instance.id().application().value());
         object.setString("instance", instance.id().instance().value());
@@ -1582,7 +1611,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         Inspector requestObject = toSlime(request.getData()).get();
         TenantAndApplicationId id = TenantAndApplicationId.from(tenantName, applicationName);
         Credentials credentials = accessControlRequests.credentials(id.tenant(), requestObject, request.getJDiscRequest());
-        com.yahoo.vespa.hosted.controller.Application application = controller.applications().createApplication(id, credentials);
+        Application application = controller.applications().createApplication(id, credentials);
         Slime slime = new Slime();
         toSlime(id, slime.setObject(), request);
         return new SlimeJsonResponse(slime);
@@ -1813,99 +1842,30 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
             return ErrorResponse.badRequest("Missing required form part 'deployOptions'");
         Inspector deployOptions = SlimeUtils.jsonToSlime(dataParts.get("deployOptions")).get();
 
-        /*
-         * Special handling of the proxy application (the only system application with an application package)
-         * Setting any other deployOptions here is not supported for now (e.g. specifying version), but
-         * this might be handy later to handle emergency downgrades.
-         */
-        boolean isZoneApplication = SystemApplication.proxy.id().equals(applicationId);
-        if (isZoneApplication) { // TODO jvenstad: Separate out.
-            // Make it explicit that version is not yet supported here
-            String versionStr = deployOptions.field("vespaVersion").asString();
-            boolean versionPresent = !versionStr.isEmpty() && !versionStr.equals("null");
-            if (versionPresent) {
-                throw new RuntimeException("Version not supported for system applications");
-            }
-            // To avoid second guessing the orchestrated upgrades of system applications
-            // we don't allow to deploy these during an system upgrade (i.e when new vespa is being rolled out)
-            VersionStatus versionStatus = controller.readVersionStatus();
-            if (versionStatus.isUpgrading()) {
-                throw new IllegalArgumentException("Deployment of system applications during a system upgrade is not allowed");
-            }
-            Optional<VespaVersion> systemVersion = versionStatus.systemVersion();
-            if (systemVersion.isEmpty()) {
-                throw new IllegalArgumentException("Deployment of system applications is not permitted until system version is determined");
-            }
-            ActivateResult result = controller.applications()
-                    .deploySystemApplicationPackage(SystemApplication.proxy, zone, systemVersion.get().versionNumber());
-            return new SlimeJsonResponse(toSlime(result));
+        // Resolve system application
+        Optional<SystemApplication> systemApplication = SystemApplication.matching(applicationId);
+        if (systemApplication.isEmpty() || !systemApplication.get().hasApplicationPackage()) {
+            return ErrorResponse.badRequest("Deployment of " + applicationId + " is not supported through this API");
         }
 
-        /*
-         * Normal applications from here
-         */
-
-        Optional<ApplicationPackage> applicationPackage = Optional.ofNullable(dataParts.get("applicationZip"))
-                                                                  .map(ApplicationPackage::new);
-        Optional<com.yahoo.vespa.hosted.controller.Application> application = controller.applications().getApplication(TenantAndApplicationId.from(applicationId));
-
-        Inspector sourceRevision = deployOptions.field("sourceRevision");
-        Inspector buildNumber = deployOptions.field("buildNumber");
-        if (sourceRevision.valid() != buildNumber.valid())
-            throw new IllegalArgumentException("Source revision and build number must both be provided, or not");
-
-        Optional<ApplicationVersion> applicationVersion = Optional.empty();
-        if (sourceRevision.valid()) {
-            if (applicationPackage.isPresent())
-                throw new IllegalArgumentException("Application version and application package can't both be provided.");
-
-            applicationVersion = Optional.of(ApplicationVersion.from(toSourceRevision(sourceRevision),
-                                                                     buildNumber.asLong()));
-            applicationPackage = Optional.of(controller.applications().getApplicationPackage(applicationId,
-                                                                                             applicationVersion.get()));
+        // Make it explicit that version is not yet supported here
+        String vespaVersion = deployOptions.field("vespaVersion").asString();
+        if (!vespaVersion.isEmpty() && !vespaVersion.equals("null")) {
+            return ErrorResponse.badRequest("Specifying version for " + applicationId + " is not permitted");
         }
 
-        boolean deployDirectly = deployOptions.field("deployDirectly").asBool();
-        Optional<Version> vespaVersion = optional("vespaVersion", deployOptions).map(Version::new);
-
-        if (deployDirectly && applicationPackage.isEmpty() && applicationVersion.isEmpty() && vespaVersion.isEmpty()) {
-
-            // Redeploy the existing deployment with the same versions.
-            Optional<Deployment> deployment = controller.applications().getInstance(applicationId)
-                    .map(Instance::deployments)
-                    .flatMap(deployments -> Optional.ofNullable(deployments.get(zone)));
-
-            if(deployment.isEmpty())
-                throw new IllegalArgumentException("Can't redeploy application, no deployment currently exist");
-
-            ApplicationVersion version = deployment.get().applicationVersion();
-            if(version.isUnknown())
-                throw new IllegalArgumentException("Can't redeploy application, application version is unknown");
-
-            applicationVersion = Optional.of(version);
-            vespaVersion = Optional.of(deployment.get().version());
-            applicationPackage = Optional.of(controller.applications().getApplicationPackage(applicationId,
-                                                                                             applicationVersion.get()));
+        // To avoid second guessing the orchestrated upgrades of system applications
+        // we don't allow to deploy these during an system upgrade (i.e when new vespa is being rolled out)
+        VersionStatus versionStatus = controller.readVersionStatus();
+        if (versionStatus.isUpgrading()) {
+            throw new IllegalArgumentException("Deployment of system applications during a system upgrade is not allowed");
         }
-
-        // TODO: get rid of the json object
-        DeployOptions deployOptionsJsonClass = new DeployOptions(deployDirectly,
-                                                                 vespaVersion,
-                                                                 deployOptions.field("ignoreValidationErrors").asBool(),
-                                                                 deployOptions.field("deployCurrentVersion").asBool());
-
-        applicationPackage.ifPresent(aPackage -> controller.applications().verifyApplicationIdentityConfiguration(applicationId.tenant(),
-                                                                                                                  Optional.of(applicationId.instance()),
-                                                                                                                  Optional.of(zone),
-                                                                                                                  aPackage,
-                                                                                                                  Optional.of(requireUserPrincipal(request))));
-
-        ActivateResult result = controller.applications().deploy(applicationId,
-                                                                 zone,
-                                                                 applicationPackage,
-                                                                 applicationVersion,
-                                                                 deployOptionsJsonClass);
-
+        Optional<VespaVersion> systemVersion = versionStatus.systemVersion();
+        if (systemVersion.isEmpty()) {
+            throw new IllegalArgumentException("Deployment of system applications is not permitted until system version is determined");
+        }
+        ActivateResult result = controller.applications()
+                                          .deploySystemApplicationPackage(systemApplication.get(), zone, systemVersion.get().versionNumber());
         return new SlimeJsonResponse(toSlime(result));
     }
 
@@ -1987,10 +1947,9 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
                          .orElseThrow(() -> new NotExistsException(new TenantId(tenantName)));
     }
 
-    private void toSlime(Cursor object, Tenant tenant, HttpRequest request) {
+    private void toSlime(Cursor object, Tenant tenant, List<Application> applications, HttpRequest request) {
         object.setString("tenant", tenant.name().value());
         object.setString("type", tenantType(tenant));
-        List<com.yahoo.vespa.hosted.controller.Application> applications = controller.applications().asList(tenant.name());
         switch (tenant.type()) {
             case athenz:
                 AthenzTenant athenzTenant = (AthenzTenant) tenant;
@@ -2019,14 +1978,21 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
                     keyObject.setString("user", user.getName());
                 });
 
+                // TODO: remove this once console is updated
                 toSlime(object, cloudTenant.tenantSecretStores());
+
+                toSlime(object.setObject("integrations").setObject("aws"),
+                        controller.serviceRegistry().roleService().getTenantRole(tenant.name()),
+                        cloudTenant.tenantSecretStores());
 
                 var tenantQuota = controller.serviceRegistry().billingController().getQuota(tenant.name());
                 var usedQuota = applications.stream()
-                        .map(com.yahoo.vespa.hosted.controller.Application::quotaUsage)
+                        .map(Application::quotaUsage)
                         .reduce(QuotaUsage.none, QuotaUsage::add);
 
                 toSlime(tenantQuota, usedQuota, object.setObject("quota"));
+
+                cloudTenant.archiveAccessRole().ifPresent(role -> object.setString("archiveAccessRole", role));
 
                 break;
             }
@@ -2034,16 +2000,19 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         }
         // TODO jonmv: This should list applications, not instances.
         Cursor applicationArray = object.setArray("applications");
-        for (com.yahoo.vespa.hosted.controller.Application application : applications) {
-            DeploymentStatus status = controller.jobController().deploymentStatus(application);
+        for (Application application : applications) {
+            DeploymentStatus status = null;
             for (Instance instance : showOnlyProductionInstances(request) ? application.productionInstances().values()
                                                                           : application.instances().values())
-                if (recurseOverApplications(request))
+                if (recurseOverApplications(request)) {
+                    if (status == null) status = controller.jobController().deploymentStatus(application);
                     toSlime(applicationArray.addObject(), instance, status, request);
-                else
+                }
+                else {
                     toSlime(instance.id(), applicationArray.addObject(), request);
+                }
         }
-        tenantMetaDataToSlime(tenant, object.setObject("metaData"));
+        tenantMetaDataToSlime(tenant, applications, object.setObject("metaData"));
     }
 
     private void toSlime(Quota quota, QuotaUsage usage, Cursor object) {
@@ -2069,8 +2038,11 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
 
     private void utilizationToSlime(Cluster.Utilization utilization, Cursor utilizationObject) {
         utilizationObject.setDouble("cpu", utilization.cpu());
+        utilizationObject.setDouble("idealCpu", utilization.idealCpu());
         utilizationObject.setDouble("memory", utilization.memory());
+        utilizationObject.setDouble("idealMemory", utilization.idealMemory());
         utilizationObject.setDouble("disk", utilization.disk());
+        utilizationObject.setDouble("idealDisk", utilization.idealDisk());
     }
 
     private void scalingEventsToSlime(List<Cluster.ScalingEvent> scalingEvents, Cursor scalingEventsArray) {
@@ -2108,18 +2080,23 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         object.setString("url", withPath("/application/v4/tenant/" + tenant.name().value(), requestURI).toString());
     }
 
-    private void tenantMetaDataToSlime(Tenant tenant, Cursor object) {
-        List<com.yahoo.vespa.hosted.controller.Application> applications = controller.applications().asList(tenant.name());
+    private void tenantMetaDataToSlime(Tenant tenant, List<Application> applications, Cursor object) {
         Optional<Instant> lastDev = applications.stream()
-                .flatMap(application -> application.instances().values().stream())
-                .flatMap(instance -> controller.jobController().jobs(instance.id()).stream()
-                        .filter(jobType -> jobType.environment() == Environment.dev)
-                        .flatMap(jobType -> controller.jobController().last(instance.id(), jobType).stream()))
-                .map(Run::start)
-                .max(Comparator.naturalOrder());
+                                                .flatMap(application -> application.instances().values().stream())
+                                                .flatMap(instance -> instance.deployments().values().stream())
+                                                .filter(deployment -> deployment.zone().environment() == Environment.dev)
+                                                .map(Deployment::at)
+                                                .max(Comparator.naturalOrder())
+                                                .or(() -> applications.stream()
+                                                                      .flatMap(application -> application.instances().values().stream())
+                                                                      .flatMap(instance -> JobType.allIn(controller.system()).stream()
+                                                                                                  .filter(job -> job.environment() == Environment.dev)
+                                                                                                  .flatMap(jobType -> controller.jobController().last(instance.id(), jobType).stream()))
+                                                                      .map(Run::start)
+                                                                      .max(Comparator.naturalOrder()));
         Optional<Instant> lastSubmission = applications.stream()
-                .flatMap(app -> app.latestVersion().flatMap(ApplicationVersion::buildTime).stream())
-                .max(Comparator.naturalOrder());
+                                                       .flatMap(app -> app.latestVersion().flatMap(ApplicationVersion::buildTime).stream())
+                                                       .max(Comparator.naturalOrder());
         object.setLong("createdAtMillis", tenant.createdAt().toEpochMilli());
         lastDev.ifPresent(instant -> object.setLong("lastDeploymentToDevMillis", instant.toEpochMilli()));
         lastSubmission.ifPresent(instant -> object.setLong("lastSubmissionToProdMillis", instant.toEpochMilli()));
@@ -2281,11 +2258,22 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     private void toSlime(Cursor object, List<TenantSecretStore> tenantSecretStores) {
         Cursor secretStore = object.setArray("secretStores");
         tenantSecretStores.forEach(store -> {
-            Cursor storeObject = secretStore.addObject();
-            storeObject.setString("name", store.getName());
-            storeObject.setString("awsId", store.getAwsId());
-            storeObject.setString("role", store.getRole());
+            toSlime(secretStore.addObject(), store);
         });
+    }
+
+    private void toSlime(Cursor object, TenantRoles tenantRoles, List<TenantSecretStore> tenantSecretStores) {
+        object.setString("tenantRole", tenantRoles.containerRole());
+        var stores = object.setArray("accounts");
+        tenantSecretStores.forEach(secretStore -> {
+            toSlime(stores.addObject(), secretStore);
+        });
+    }
+
+    private void toSlime(Cursor object, TenantSecretStore secretStore) {
+        object.setString("name", secretStore.getName());
+        object.setString("awsId", secretStore.getAwsId());
+        object.setString("role", secretStore.getRole());
     }
 
     private String readToString(InputStream stream) {

@@ -11,16 +11,17 @@ namespace search::attribute {
 using vespalib::btree::BTreeNode;
 
 PostingListSearchContext::
-PostingListSearchContext(const Dictionary &dictionary,
+PostingListSearchContext(const IEnumStoreDictionary& dictionary,
                          uint32_t docIdLimit,
                          uint64_t numValues,
                          bool hasWeight,
                          uint32_t minBvDocFreq,
                          bool useBitVector,
                          const ISearchContext &baseSearchCtx)
-    : _frozenDictionary(dictionary.getFrozenView()),
-      _lowerDictItr(BTreeNode::Ref(), dictionary.getAllocator()),
-      _upperDictItr(BTreeNode::Ref(), dictionary.getAllocator()),
+    : _dictionary(dictionary),
+      _frozenDictionary(_dictionary.get_posting_dictionary().getFrozenView()),
+      _lowerDictItr(BTreeNode::Ref(), _frozenDictionary.getAllocator()),
+      _upperDictItr(BTreeNode::Ref(), _frozenDictionary.getAllocator()),
       _uniqueValues(0u),
       _docIdLimit(docIdLimit),
       _dictSize(_frozenDictionary.size()),
@@ -44,10 +45,9 @@ PostingListSearchContext::~PostingListSearchContext() = default;
 void
 PostingListSearchContext::lookupTerm(const vespalib::datastore::EntryComparator &comp)
 {
-    _lowerDictItr.lower_bound(_frozenDictionary.getRoot(), EnumIndex(), comp);
-    _upperDictItr = _lowerDictItr;
-    if (_upperDictItr.valid() && !comp.less(EnumIndex(), _upperDictItr.getKey())) {
-        ++_upperDictItr;
+    auto lookup_result = _dictionary.find_posting_list(comp, _frozenDictionary.getRoot());
+    if (lookup_result.first.valid()) {
+        _pidx = lookup_result.second;
         _uniqueValues = 1u;
     }
 }

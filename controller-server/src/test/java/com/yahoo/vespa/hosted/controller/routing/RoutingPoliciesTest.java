@@ -19,7 +19,6 @@ import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.vespa.hosted.controller.ControllerTester;
 import com.yahoo.vespa.hosted.controller.Instance;
 import com.yahoo.vespa.hosted.controller.RoutingController;
-import com.yahoo.vespa.hosted.controller.api.application.v4.model.DeployOptions;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.LoadBalancer;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
@@ -354,7 +353,7 @@ public class RoutingPoliciesTest {
               .exclusiveRoutingIn(zoneApi);
 
         // Deploy to dev
-        tester.controllerTester().controller().applications().deploy(context.instanceId(), zone, Optional.of(emptyApplicationPackage), DeployOptions.none());
+        context.runJob(zone, emptyApplicationPackage);
         assertEquals("DeploymentSpec is not persisted", DeploymentSpec.empty, context.application().deploymentSpec());
         context.flushDnsUpdates();
 
@@ -378,13 +377,14 @@ public class RoutingPoliciesTest {
         assertEquals(prodRecords, tester.recordNames());
 
         // Deploy to dev under different instance
-        var devInstance = context.application().id().instance("user");
-        tester.controllerTester().controller().applications().deploy(devInstance, zone, Optional.of(applicationPackage), DeployOptions.none());
+        var devContext = tester.newDeploymentContext(context.application().id().instance("user"));
+        devContext.runJob(zone, applicationPackage);
+
         assertEquals("DeploymentSpec is persisted", applicationPackage.deploymentSpec(), context.application().deploymentSpec());
         context.flushDnsUpdates();
 
         // Routing policy is created and DNS is updated
-        assertEquals(1, tester.policiesOf(devInstance).size());
+        assertEquals(1, tester.policiesOf(devContext.instanceId()).size());
         assertEquals(Sets.union(prodRecords, Set.of("user.app1.tenant1.us-east-1.dev.vespa.oath.cloud")), tester.recordNames());
     }
 
@@ -584,7 +584,7 @@ public class RoutingPoliciesTest {
               .setZones(zones)
               .setRoutingMethod(zones, RoutingMethod.exclusive);
         tester.controllerTester().configServer().bootstrap(List.of(prodZone, stagingZone, testZone),
-                                                           SystemApplication.all());
+                                                           SystemApplication.notController());
 
         var context = tester.tester.newDeploymentContext();
         var endpointId = EndpointId.of("r0");
@@ -732,6 +732,10 @@ public class RoutingPoliciesTest {
             return tester.newDeploymentContext(tenant, application, instance);
         }
 
+        public DeploymentContext newDeploymentContext(ApplicationId instance) {
+            return tester.newDeploymentContext(instance);
+        }
+
         public ControllerTester controllerTester() {
             return tester.controllerTester();
         }
@@ -746,7 +750,7 @@ public class RoutingPoliciesTest {
                   tester.controllerTester().zoneRegistry().exclusiveRoutingIn(zones);
             }
             tester.controllerTester().configServer().bootstrap(tester.controllerTester().zoneRegistry().zones().all().ids(),
-                                                               SystemApplication.all());
+                                                               SystemApplication.notController());
         }
 
         private void provisionLoadBalancers(int clustersPerZone, ApplicationId application, boolean shared, ZoneId... zones) {

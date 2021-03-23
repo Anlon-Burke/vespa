@@ -16,7 +16,11 @@ import java.util.Set;
 import java.util.logging.Logger;
 
 /**
- * Maintenance job that schedules upgrades of OS / kernel on nodes in the system.
+ * Trigger OS upgrade of zones in the system, according to the current OS version target.
+ *
+ * Target OS version is set per cloud, and an instance of this exists per cloud in the system.
+ *
+ * {@link OsUpgradeScheduler} may update the target automatically in supported clouds.
  *
  * @author mpolden
  */
@@ -33,7 +37,7 @@ public class OsUpgrader extends InfrastructureUpgrader<OsVersionTarget> {
     private final CloudName cloud;
 
     public OsUpgrader(Controller controller, Duration interval, CloudName cloud) {
-        super(controller, interval, controller.zoneRegistry().osUpgradePolicy(cloud), name(cloud));
+        super(controller, interval, controller.zoneRegistry().osUpgradePolicy(cloud), SystemApplication.all(), name(cloud));
         this.cloud = cloud;
     }
 
@@ -57,9 +61,9 @@ public class OsUpgrader extends InfrastructureUpgrader<OsVersionTarget> {
 
     @Override
     protected boolean expectUpgradeOf(Node node, SystemApplication application, ZoneApi zone) {
-        return cloud.equals(zone.getCloudName()) &&                  // Cloud is managed by this upgrader
-               application.shouldUpgradeOsIn(zone.getId(), controller()) && // Application should upgrade in this cloud
-               canUpgrade(node);                                            // Node is in an upgradable state
+        return cloud.equals(zone.getCloudName()) && // Cloud is managed by this upgrader
+               application.shouldUpgradeOs() &&     // Application should upgrade in this cloud
+               canUpgrade(node);                    // Node is in an upgradable state
     }
 
     @Override
@@ -72,7 +76,7 @@ public class OsUpgrader extends InfrastructureUpgrader<OsVersionTarget> {
 
     @Override
     protected boolean changeTargetTo(OsVersionTarget target, SystemApplication application, ZoneApi zone) {
-        if (!application.shouldUpgradeOsIn(zone.getId(), controller())) return false;
+        if (!application.shouldUpgradeOs()) return false;
         return controller().serviceRegistry().configServer().nodeRepository()
                            .targetVersionsOf(zone.getId())
                            .osVersion(application.nodeType())

@@ -28,6 +28,7 @@ using EnumPostingTree = vespalib::btree::BTree<IEnumStore::Index, uint32_t,
  */
 class IEnumStoreDictionary : public vespalib::datastore::IUniqueStoreDictionary {
 public:
+    using EntryRef = vespalib::datastore::EntryRef;
     using EnumVector = IEnumStore::EnumVector;
     using Index = IEnumStore::Index;
     using IndexSet = IEnumStore::IndexSet;
@@ -37,7 +38,6 @@ public:
 public:
     virtual ~IEnumStoreDictionary() = default;
 
-    virtual void set_ref_counts(const EnumVector& hist) = 0;
     virtual void free_unused_values(const vespalib::datastore::EntryComparator& cmp) = 0;
     virtual void free_unused_values(const IndexSet& to_remove,
                                     const vespalib::datastore::EntryComparator& cmp) = 0;
@@ -46,6 +46,13 @@ public:
     virtual std::vector<attribute::IAttributeVector::EnumHandle>
     find_matching_enums(const vespalib::datastore::EntryComparator& cmp) const = 0;
 
+    virtual EntryRef get_frozen_root() const = 0;
+    virtual std::pair<Index, EntryRef> find_posting_list(const vespalib::datastore::EntryComparator& cmp, EntryRef root) const = 0;
+    virtual void collect_folded(Index idx, EntryRef root, const std::function<void(vespalib::datastore::EntryRef)>& callback) const = 0;
+    virtual Index remap_index(Index idx) = 0;
+    virtual void clear_all_posting_lists(std::function<void(EntryRef)> clearer) = 0;
+    virtual void update_posting_list(Index idx, const vespalib::datastore::EntryComparator& cmp, std::function<EntryRef(EntryRef)> updater) = 0;
+    virtual bool check_posting_lists(std::function<EntryRef(EntryRef)> updater) = 0;
     virtual EnumPostingTree& get_posting_dictionary() = 0;
     virtual const EnumPostingTree& get_posting_dictionary() const = 0;
 };

@@ -26,6 +26,7 @@ public class SystemStateBroadcaster {
     private final static long minTimeBetweenNodeErrorLogging = 10 * 60 * 1000;
     private final Map<Node, Long> lastErrorReported = new TreeMap<>();
 
+    private int lastOfficialStateVersion = -1;
     private int lastStateVersionBundleAcked = 0;
     private int lastClusterStateVersionConverged = 0;
     private ClusterStateBundle lastClusterStateBundleConverged;
@@ -255,9 +256,17 @@ public class SystemStateBroadcaster {
         return lastClusterStateVersionConverged == clusterStateBundle.getVersion();
     }
 
+    private boolean currentBundleVersionIsTaggedOfficial() {
+        return clusterStateBundle.getVersion() == lastOfficialStateVersion;
+    }
+
+    private void tagCurrentBundleVersionAsOfficial() {
+        lastOfficialStateVersion = clusterStateBundle.getVersion();
+    }
+
     public boolean broadcastNewStateBundleIfRequired(DatabaseHandler.Context dbContext, Communicator communicator,
                                                      int lastClusterStateVersionWrittenToZooKeeper) {
-        if (clusterStateBundle == null) {
+        if (clusterStateBundle == null || clusterStateBundle.getVersion() == 0) {
             return false;
         }
         if (clusterStateBundle.getVersion() != lastClusterStateVersionWrittenToZooKeeper) {
@@ -266,9 +275,9 @@ public class SystemStateBroadcaster {
 
         ClusterState baselineState = clusterStateBundle.getBaselineClusterState();
 
-        if (!baselineState.isOfficial()) {
+        if (!currentBundleVersionIsTaggedOfficial()) {
             log.log(Level.INFO, String.format("Publishing cluster state version %d", baselineState.getVersion()));
-            baselineState.setOfficial(true); // FIXME this violates state bundle immutability
+            tagCurrentBundleVersionAsOfficial();
         }
 
         List<NodeInfo> recipients = resolveStateVersionSendSet(dbContext);
@@ -291,7 +300,7 @@ public class SystemStateBroadcaster {
     }
 
     public boolean broadcastStateActivationsIfRequired(DatabaseHandler.Context dbContext, Communicator communicator) {
-        if (clusterStateBundle == null || !clusterStateBundle.getBaselineClusterState().isOfficial()) {
+        if (clusterStateBundle == null || clusterStateBundle.getVersion() == 0 || !currentBundleVersionIsTaggedOfficial()) {
             return false;
         }
 

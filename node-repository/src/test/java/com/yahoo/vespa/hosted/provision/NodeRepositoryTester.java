@@ -4,12 +4,14 @@ package com.yahoo.vespa.hosted.provision;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.NodeFlavors;
+import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.config.provisioning.FlavorsConfig;
 import com.yahoo.test.ManualClock;
 import com.yahoo.vespa.curator.mock.MockCurator;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
+import com.yahoo.vespa.hosted.provision.autoscale.MemoryMetricsDb;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.provisioning.EmptyProvisionServiceProvider;
@@ -43,6 +45,7 @@ public class NodeRepositoryTester {
                                             new MockNameResolver().mockAnyLookup(),
                                             DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa"),
                                             new InMemoryFlagSource(),
+                                            new MemoryMetricsDb(clock),
                                             true,
                                             0, 1000);
     }
@@ -54,8 +57,16 @@ public class NodeRepositoryTester {
         return nodeRepository.nodes().list(inState).nodeType(type).asList();
     }
 
+    public Node addHost(String id, String flavor) {
+        return addNode(id, id, null, nodeFlavors.getFlavorOrThrow(flavor), NodeType.host);
+    }
+
     public Node addHost(String id, String hostname, String flavor, NodeType type) {
         return addNode(id, hostname, null, nodeFlavors.getFlavorOrThrow(flavor), type);
+    }
+
+    public Node addNode(String id, String parentHostname, NodeResources resources) {
+        return addNode(id, id, parentHostname, new Flavor(resources), NodeType.tenant);
     }
 
     public Node addNode(String id, String hostname, String parentHostname, String flavor, NodeType type) {
@@ -69,13 +80,16 @@ public class NodeRepositoryTester {
         return nodeRepository.nodes().addNodes(List.of(node), Agent.system).get(0);
     }
 
+    public void setNodeState(String hostname, Node.State state) {
+        setNodeState(nodeRepository.nodes().node(hostname).orElseThrow(RuntimeException::new), state);
+    }
+
     /**
      * Moves a node directly to the given state without doing any validation, useful
      * to create wanted test scenario without having to move every node through series
      * of valid state transitions
      */
-    public void setNodeState(String hostname, Node.State state) {
-        Node node = nodeRepository.nodes().node(hostname).orElseThrow(RuntimeException::new);
+    public void setNodeState(Node node, Node.State state) {
         nodeRepository.database().writeTo(state, node, Agent.system, Optional.empty());
     }
 

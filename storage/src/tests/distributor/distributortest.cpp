@@ -13,6 +13,8 @@
 #include <vespa/document/test/make_bucket_space.h>
 #include <vespa/storage/config/config-stor-distributormanager.h>
 #include <vespa/storage/distributor/distributor.h>
+#include <vespa/storage/distributor/distributor_stripe.h>
+#include <vespa/storage/distributor/distributor_status.h>
 #include <vespa/storage/distributor/distributor_bucket_space.h>
 #include <vespa/storage/distributor/distributormetricsset.h>
 #include <vespa/vespalib/text/stringtokenizer.h>
@@ -65,8 +67,7 @@ struct DistributorTest : Test, DistributorTestUtil {
     }
 
     auto currentReplicaCountingMode() const noexcept {
-        return _distributor->_bucketDBMetricUpdater
-                .getMinimumReplicaCountingMode();
+        return _distributor->bucket_db_metric_updater().getMinimumReplicaCountingMode();
     }
 
     std::string testOp(std::shared_ptr<api::StorageMessage> msg)
@@ -121,14 +122,14 @@ struct DistributorTest : Test, DistributorTestUtil {
                 }
             }
 
-            distributor_component().removeNodesFromDB(makeDocumentBucket(document::BucketId(16, 1)), removedNodes);
+            operation_context().remove_nodes_from_bucket_database(makeDocumentBucket(document::BucketId(16, 1)), removedNodes);
 
             uint32_t flags(DatabaseUpdate::CREATE_IF_NONEXISTING
                            | (resetTrusted ? DatabaseUpdate::RESET_TRUSTED : 0));
 
-            distributor_component().updateBucketDatabase(makeDocumentBucket(document::BucketId(16, 1)),
-                                                         changedNodes,
-                                                         flags);
+            operation_context().update_bucket_database(makeDocumentBucket(document::BucketId(16, 1)),
+                                                       changedNodes,
+                                                       flags);
         }
 
         std::string retVal = dumpBucket(document::BucketId(16, 1));
@@ -141,23 +142,25 @@ struct DistributorTest : Test, DistributorTestUtil {
     }
 
     StatusReporterDelegate& distributor_status_delegate() {
-        return _distributor->_distributorStatusDelegate;
+        // TODO STRIPE
+        return _distributor->_stripe->_distributorStatusDelegate;
     }
 
     framework::TickingThreadPool& distributor_thread_pool() {
         return _distributor->_threadPool;
     }
 
-    const std::vector<std::shared_ptr<Distributor::Status>>& distributor_status_todos() {
-        return _distributor->_statusToDo;
+    const std::vector<std::shared_ptr<DistributorStatus>>& distributor_status_todos() {
+        // TODO STRIPE
+        return _distributor->_stripe->_statusToDo;
     }
 
     Distributor::MetricUpdateHook distributor_metric_update_hook() {
         return _distributor->_metricUpdateHook;
     }
 
-    SimpleMaintenanceScanner::PendingMaintenanceStats& distributor_maintenance_stats() {
-        return _distributor->_maintenanceStats;
+    SimpleMaintenanceScanner::PendingMaintenanceStats distributor_maintenance_stats() {
+        return _distributor->pending_maintenance_stats();
     }
 
     BucketSpacesStatsProvider::PerNodeBucketSpacesStats distributor_bucket_spaces_stats() {
@@ -569,8 +572,8 @@ TEST_F(DistributorTest, no_db_resurrection_for_bucket_not_owned_in_pending_state
 
     std::vector<BucketCopy> copies;
     copies.emplace_back(1234, 0, api::BucketInfo(0x567, 1, 2));
-    distributor_component().updateBucketDatabase(makeDocumentBucket(nonOwnedBucket), copies,
-                                                 DatabaseUpdate::CREATE_IF_NONEXISTING);
+    operation_context().update_bucket_database(makeDocumentBucket(nonOwnedBucket), copies,
+                                               DatabaseUpdate::CREATE_IF_NONEXISTING);
 
     EXPECT_EQ("NONEXISTING", dumpBucket(nonOwnedBucket));
 }
@@ -582,8 +585,8 @@ TEST_F(DistributorTest, added_db_buckets_without_gc_timestamp_implicitly_get_cur
 
     std::vector<BucketCopy> copies;
     copies.emplace_back(1234, 0, api::BucketInfo(0x567, 1, 2));
-    distributor_component().updateBucketDatabase(makeDocumentBucket(bucket), copies,
-                                                 DatabaseUpdate::CREATE_IF_NONEXISTING);
+    operation_context().update_bucket_database(makeDocumentBucket(bucket), copies,
+                                               DatabaseUpdate::CREATE_IF_NONEXISTING);
     BucketDatabase::Entry e(getBucket(bucket));
     EXPECT_EQ(101234, e->getLastGarbageCollectionTime());
 }

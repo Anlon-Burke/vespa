@@ -71,6 +71,7 @@ public class TenantSerializer {
     private static final String tenantInfoField = "info";
     private static final String lastLoginInfoField = "lastLoginInfo";
     private static final String secretStoresField = "secretStores";
+    private static final String archiveAccessRoleField = "archiveAccessRole";
     private static final String awsIdField = "awsId";
     private static final String roleField = "role";
 
@@ -110,6 +111,7 @@ public class TenantSerializer {
         toSlime(legacyBillingInfo, root.setObject(billingInfoField));
         toSlime(tenant.info(), root);
         toSlime(tenant.tenantSecretStores(), root);
+        tenant.archiveAccessRole().ifPresent(role -> root.setString(archiveAccessRoleField, role));
     }
 
     private void developerKeysToSlime(BiMap<PublicKey, Principal> keys, Cursor array) {
@@ -149,20 +151,21 @@ public class TenantSerializer {
         Property property = new Property(tenantObject.field(propertyField).asString());
         Optional<PropertyId> propertyId = SlimeUtils.optionalString(tenantObject.field(propertyIdField)).map(PropertyId::new);
         Optional<Contact> contact = contactFrom(tenantObject.field(contactField));
-        Instant createdAt = Instant.ofEpochMilli(tenantObject.field(createdAtField).asLong());
+        Instant createdAt = Serializers.instant(tenantObject.field(createdAtField));
         LastLoginInfo lastLoginInfo = lastLoginInfoFromSlime(tenantObject.field(lastLoginInfoField));
         return new AthenzTenant(name, domain, property, propertyId, contact, createdAt, lastLoginInfo);
     }
 
     private CloudTenant cloudTenantFrom(Inspector tenantObject) {
         TenantName name = TenantName.from(tenantObject.field(nameField).asString());
-        Instant createdAt = Instant.ofEpochMilli(tenantObject.field(createdAtField).asLong());
+        Instant createdAt = Serializers.instant(tenantObject.field(createdAtField));
         LastLoginInfo lastLoginInfo = lastLoginInfoFromSlime(tenantObject.field(lastLoginInfoField));
         Optional<Principal> creator = SlimeUtils.optionalString(tenantObject.field(creatorField)).map(SimplePrincipal::new);
         BiMap<PublicKey, Principal> developerKeys = developerKeysFromSlime(tenantObject.field(pemDeveloperKeysField));
         TenantInfo info = tenantInfoFromSlime(tenantObject.field(tenantInfoField));
         List<TenantSecretStore> tenantSecretStores = secretStoresFromSlime(tenantObject.field(secretStoresField));
-        return new CloudTenant(name, createdAt, lastLoginInfo, creator, developerKeys, info, tenantSecretStores);
+        Optional<String> archiveAccessRole = SlimeUtils.optionalString(tenantObject.field(archiveAccessRoleField));
+        return new CloudTenant(name, createdAt, lastLoginInfo, creator, developerKeys, info, tenantSecretStores, archiveAccessRole);
     }
 
     private BiMap<PublicKey, Principal> developerKeysFromSlime(Inspector array) {
@@ -224,7 +227,7 @@ public class TenantSerializer {
     private LastLoginInfo lastLoginInfoFromSlime(Inspector lastLoginInfoObject) {
         Map<LastLoginInfo.UserLevel, Instant> lastLoginByUserLevel = new HashMap<>();
         lastLoginInfoObject.traverse((String name, Inspector value) ->
-                lastLoginByUserLevel.put(userLevelOf(name), Instant.ofEpochMilli(value.asLong())));
+                lastLoginByUserLevel.put(userLevelOf(name), Serializers.instant(value)));
         return new LastLoginInfo(lastLoginByUserLevel);
     }
 

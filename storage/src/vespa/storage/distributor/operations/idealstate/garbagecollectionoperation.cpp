@@ -27,7 +27,7 @@ void GarbageCollectionOperation::onStart(DistributorMessageSender& sender) {
 
     for (auto node : nodes) {
         auto command = std::make_shared<api::RemoveLocationCommand>(
-                _manager->getDistributorComponent().getDistributor().getConfig().getGarbageCollectionSelection(),
+                _manager->operation_context().distributor_config().getGarbageCollectionSelection(),
                 getBucket());
 
         command->setPriority(_priority);
@@ -51,7 +51,7 @@ GarbageCollectionOperation::onReceive(DistributorMessageSender&,
     uint16_t node = _tracker.handleReply(*rep);
 
     if (!rep->getResult().failed()) {
-        _replica_info.emplace_back(_manager->getDistributorComponent().getUniqueTimestamp(),
+        _replica_info.emplace_back(_manager->operation_context().generate_unique_timestamp(),
                                    node, rep->getBucketInfo());
         _max_documents_removed = std::max(_max_documents_removed, rep->documents_removed());
     } else {
@@ -69,11 +69,11 @@ GarbageCollectionOperation::onReceive(DistributorMessageSender&,
 
 void GarbageCollectionOperation::merge_received_bucket_info_into_db() {
     // TODO avoid two separate DB ops for this. Current API currently does not make this elegant.
-    _manager->getDistributorComponent().updateBucketDatabase(getBucket(), _replica_info);
+    _manager->operation_context().update_bucket_database(getBucket(), _replica_info);
     BucketDatabase::Entry dbentry = _bucketSpace->getBucketDatabase().get(getBucketId());
     if (dbentry.valid()) {
         dbentry->setLastGarbageCollectionTime(
-                _manager->getDistributorComponent().getClock().getTimeInSeconds().getTime());
+                _manager->node_context().clock().getTimeInSeconds().getTime());
         _bucketSpace->getBucketDatabase().update(dbentry);
     }
 }

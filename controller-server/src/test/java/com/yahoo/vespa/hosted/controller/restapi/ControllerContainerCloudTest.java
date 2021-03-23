@@ -36,14 +36,11 @@ public class ControllerContainerCloudTest extends ControllerContainerTest {
 
                "  <handler id='com.yahoo.vespa.hosted.controller.restapi.application.ApplicationApiHandler'>\n" +
                "    <binding>http://*/application/v4/*</binding>\n" +
-               "    <binding>http://*/api/application/v4/*</binding>\n" +
                "  </handler>\n" +
 
                "  <handler id='com.yahoo.vespa.hosted.controller.restapi.zone.v1.ZoneApiHandler'>\n" +
                "    <binding>http://*/zone/v1</binding>\n" +
                "    <binding>http://*/zone/v1/*</binding>\n" +
-               "    <binding>http://*/api/zone/v1</binding>\n" +
-               "    <binding>http://*/api/zone/v1/*</binding>\n" +
                "  </handler>\n" +
 
                "  <http>\n" +
@@ -88,6 +85,7 @@ public class ControllerContainerCloudTest extends ControllerContainerTest {
         public RequestBuilder principal(String principal) { this.principal = new SimplePrincipal(principal); return this; }
         public RequestBuilder user(User user) { this.user = user; return this; }
         public RequestBuilder roles(Set<Role> roles) { this.roles = roles; return this; }
+        public RequestBuilder roles(Role... roles) { return roles(Set.of(roles)); }
 
         @Override
         public Request get() {

@@ -35,6 +35,7 @@ import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.Nodelike;
+import com.yahoo.vespa.hosted.provision.autoscale.MemoryMetricsDb;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancerServiceMock;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
@@ -111,11 +112,15 @@ public class ProvisioningTester {
                                                  nameResolver,
                                                  containerImage,
                                                  flagSource,
+                                                 new MemoryMetricsDb(clock),
                                                  true,
                                                  spareCount,
                                                  1000);
         this.orchestrator = orchestrator;
-        this.provisioner = new NodeRepositoryProvisioner(nodeRepository, zone, provisionServiceProvider, flagSource);
+        this.provisioner = new NodeRepositoryProvisioner(nodeRepository,
+                                                         zone,
+                                                         provisionServiceProvider,
+                                                         flagSource);
         this.capacityPolicies = new CapacityPolicies(nodeRepository);
         this.provisionLogger = new NullProvisionLogger();
         this.loadBalancerService = loadBalancerService;
@@ -490,7 +495,7 @@ public class ProvisioningTester {
         return nodeRepository.nodes().setReady(nodes, Agent.system, getClass().getSimpleName());
     }
 
-    private Flavor asFlavor(String flavorString, NodeType type) {
+    public Flavor asFlavor(String flavorString, NodeType type) {
         Optional<Flavor> flavor = nodeFlavors.getFlavor(flavorString);
         if (flavor.isEmpty()) {
             // TODO: Remove the need for this by always adding hosts with a given capacity

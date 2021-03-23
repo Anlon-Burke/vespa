@@ -38,6 +38,12 @@ protected:
     }
 
 public:
+    UniqueStoreStringComparator(const DataStoreType &store)
+        : _store(store),
+          _fallback_value(nullptr)
+    {
+    }
+
     UniqueStoreStringComparator(const DataStoreType &store, const char *fallback_value)
         : _store(store),
           _fallback_value(fallback_value)
@@ -53,6 +59,11 @@ public:
         const char *lhs_value = get(lhs);
         const char *rhs_value = get(rhs);
         return (strcmp(lhs_value, rhs_value) == 0);
+    }
+    size_t hash(const EntryRef rhs) const override {
+        const char *rhs_value = get(rhs);
+        vespalib::hash<const char *> hasher;
+        return hasher(rhs_value);
     }
 };
 

@@ -259,6 +259,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
         // This blocks until all visitors are done. These, in turn, may require the asyncSession to be alive
         // to be able to run, as well as dispatch of operations against it, which is done by visitDispatcher.
+        visits.values().forEach(VisitorSession::abort);
         visits.values().forEach(VisitorSession::destroy);
 
         // Shut down both dispatchers, so only we empty the queues of outstanding operations, and can be sure they're empty.
@@ -554,9 +555,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
             overload(request, "Rejecting execution due to overload: " + maxThrottled + " requests already enqueued", handler);
             return;
         }
-        operations.offer(new Operation(request, handler) {
-            @Override BooleanSupplier parse() { return operationParser.get(); }
-        });
+        operations.offer(new Operation(request, handler, operationParser));
         dispatchFirst();
     }
 
@@ -763,16 +762,18 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
     // -------------------------------------------- Document Operations ----------------------------------------
 
-    private static abstract class Operation {
+    private static class Operation {
 
         private final Lock lock = new ReentrantLock();
         private final HttpRequest request;
         private final ResponseHandler handler;
-        private BooleanSupplier operation;
+        private BooleanSupplier operation; // The operation to attempt until it returns success.
+        private Supplier<BooleanSupplier> parser; // The unparsed operation—getting this will parse it.
 
-        Operation(HttpRequest request, ResponseHandler handler) {
+        Operation(HttpRequest request, ResponseHandler handler, Supplier<BooleanSupplier> parser) {
             this.request = request;
             this.handler = handler;
+            this.parser = parser;
         }
 
         /**
@@ -788,8 +789,10 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                 throw new IllegalStateException("Concurrent attempts at dispatch — this is a bug");
 
             try {
-                if (operation == null)
-                    operation = parse();
+                if (operation == null) {
+                    operation = parser.get();
+                    parser = null;
+                }
 
                 return operation.getAsBoolean();
             }
@@ -804,8 +807,6 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
             }
             return true;
         }
-
-        abstract BooleanSupplier parse();
 
     }
 
@@ -1102,10 +1103,10 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
                                 response.respond(Response.Status.INTERNAL_SERVER_ERROR);
                         }
-                        visitDispatcher.execute(() -> {
-                            phaser.arriveAndAwaitAdvance(); // We may get here while dispatching thread is still putting us in the map.
-                            visits.remove(this).destroy();
-                        });
+                    });
+                    visitDispatcher.execute(() -> {
+                        phaser.arriveAndAwaitAdvance(); // We may get here while dispatching thread is still putting us in the map.
+                        visits.remove(this).destroy();
                     });
                 }
             };

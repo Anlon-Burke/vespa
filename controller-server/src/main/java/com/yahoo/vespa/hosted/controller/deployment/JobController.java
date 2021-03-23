@@ -41,10 +41,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Optional;
-import java.util.Queue;
 import java.util.Set;
 import java.util.SortedMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -95,7 +93,7 @@ public class JobController {
         this.logs = new BufferedLogStore(curator, controller.serviceRegistry().runDataStore());
         this.cloud = controller.serviceRegistry().testerCloud();
         this.badges = new Badges(controller.zoneRegistry().badgeUrl());
-        this.metric = new JobMetrics(controller.metric(), controller.system());
+        this.metric = new JobMetrics(controller.metric(), controller::system);
     }
 
     public TesterCloud cloud() { return cloud; }
@@ -224,9 +222,9 @@ public class JobController {
 
     /** Returns all job types which have been run for the given application. */
     public List<JobType> jobs(ApplicationId id) {
-        return copyOf(Stream.of(JobType.values())
-                            .filter(type -> last(id, type).isPresent())
-                            .iterator());
+        return JobType.allIn(controller.system()).stream()
+                      .filter(type -> last(id, type).isPresent())
+                      .collect(toUnmodifiableList());
     }
 
     /** Returns an immutable map of all known runs for the given application and job type. */

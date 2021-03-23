@@ -5,8 +5,8 @@ import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Deployer;
+import com.yahoo.config.provision.Environment;
 import com.yahoo.jdisc.Metric;
-import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.applications.Application;
@@ -14,17 +14,16 @@ import com.yahoo.vespa.hosted.provision.applications.Applications;
 import com.yahoo.vespa.hosted.provision.applications.Cluster;
 import com.yahoo.vespa.hosted.provision.autoscale.AllocatableClusterResources;
 import com.yahoo.vespa.hosted.provision.autoscale.Autoscaler;
-import com.yahoo.vespa.hosted.provision.autoscale.NodeMetricSnapshot;
 import com.yahoo.vespa.hosted.provision.autoscale.MetricsDb;
+import com.yahoo.vespa.hosted.provision.autoscale.NodeMetricSnapshot;
 import com.yahoo.vespa.hosted.provision.autoscale.NodeTimeseries;
 import com.yahoo.vespa.hosted.provision.node.History;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
+import java.util.Set;
 
 /**
  * Maintainer making automatic scaling decisions
@@ -34,18 +33,15 @@ import java.util.stream.Collectors;
 public class AutoscalingMaintainer extends NodeRepositoryMaintainer {
 
     private final Autoscaler autoscaler;
-    private final MetricsDb metricsDb;
     private final Deployer deployer;
     private final Metric metric;
 
     public AutoscalingMaintainer(NodeRepository nodeRepository,
-                                 MetricsDb metricsDb,
                                  Deployer deployer,
                                  Metric metric,
                                  Duration interval) {
         super(nodeRepository, interval, metric);
-        this.autoscaler = new Autoscaler(metricsDb, nodeRepository);
-        this.metricsDb = metricsDb;
+        this.autoscaler = new Autoscaler(nodeRepository);
         this.deployer = deployer;
         this.metric = metric;
     }
@@ -55,40 +51,48 @@ public class AutoscalingMaintainer extends NodeRepositoryMaintainer {
         if ( ! nodeRepository().nodes().isWorking()) return false;
 
         boolean success = true;
-        if ( ! nodeRepository().zone().environment().isProduction()) return success;
+        if ( ! nodeRepository().zone().environment().isAnyOf(Environment.dev, Environment.prod)) return success;
 
-        activeNodesByApplication().forEach((applicationId, nodes) -> autoscale(applicationId, nodes));
+        activeNodesByApplication().forEach(this::autoscale);
         return success;
     }
 
-    private void autoscale(ApplicationId application, List<Node> applicationNodes) {
-        try (MaintenanceDeployment deployment = new MaintenanceDeployment(application, deployer, metric, nodeRepository())) {
-            if ( ! deployment.isValid()) return;
-            nodesByCluster(applicationNodes).forEach((clusterId, clusterNodes) -> autoscale(application, clusterId, NodeList.copyOf(clusterNodes), deployment));
-        }
+    private void autoscale(ApplicationId application, NodeList applicationNodes) {
+        nodesByCluster(applicationNodes).forEach((clusterId, clusterNodes) -> autoscale(application, clusterId, clusterNodes));
     }
 
-    private void autoscale(ApplicationId applicationId,
-                           ClusterSpec.Id clusterId,
-                           NodeList clusterNodes,
-                           MaintenanceDeployment deployment) {
-        Application application = nodeRepository().applications().get(applicationId).orElse(Application.empty(applicationId));
-        if (application.cluster(clusterId).isEmpty()) return;
-        Cluster cluster = application.cluster(clusterId).get();
-        cluster = updateCompletion(cluster, clusterNodes);
-        var advice = autoscaler.autoscale(application, cluster, clusterNodes);
-        cluster = cluster.withAutoscalingStatus(advice.reason());
+    private void autoscale(ApplicationId applicationId, ClusterSpec.Id clusterId, NodeList clusterNodes) {
+        Optional<Application> application = nodeRepository().applications().get(applicationId);
+        if (application.isEmpty()) return;
+        Optional<Cluster> cluster = application.get().cluster(clusterId);
+        if (cluster.isEmpty()) return;
 
-        if (advice.isPresent() && !cluster.targetResources().equals(advice.target())) { // autoscale
-            cluster = cluster.withTarget(advice.target());
-            applications().put(application.with(cluster), deployment.applicationLock().get());
-            if (advice.target().isPresent()) {
-                logAutoscaling(advice.target().get(), applicationId, cluster, clusterNodes);
-                deployment.activate();
+        Cluster updatedCluster = updateCompletion(cluster.get(), clusterNodes);
+        var advice = autoscaler.autoscale(application.get(), updatedCluster, clusterNodes);
+
+        // Lock and write if there are state updates and/or we should autoscale now
+        if (advice.isPresent() && !cluster.get().targetResources().equals(advice.target()) ||
+            (updatedCluster != cluster.get() || !advice.reason().equals(cluster.get().autoscalingStatus()))) {
+            try (var lock = nodeRepository().nodes().lock(applicationId)) {
+                application = nodeRepository().applications().get(applicationId);
+                if (application.isEmpty()) return;
+                cluster = application.get().cluster(clusterId);
+                if (cluster.isEmpty()) return;
+
+                // 1. Update cluster info
+                updatedCluster = updateCompletion(cluster.get(), clusterNodes)
+                                         .withAutoscalingStatus(advice.reason())
+                                         .withTarget(advice.target());
+                applications().put(application.get().with(updatedCluster), lock);
+                if (advice.isPresent() && advice.target().isPresent() && !cluster.get().targetResources().equals(advice.target())) {
+                    // 2. Also autoscale
+                    logAutoscaling(advice.target().get(), applicationId, updatedCluster, clusterNodes);
+                    try (MaintenanceDeployment deployment = new MaintenanceDeployment(applicationId, deployer, metric, nodeRepository())) {
+                        if (deployment.isValid())
+                            deployment.activate();
+                    }
+                }
             }
-        }
-        else { // store cluster update
-            applications().put(application.with(cluster), deployment.applicationLock().get());
         }
     }
 
@@ -108,8 +112,8 @@ public class AutoscalingMaintainer extends NodeRepositoryMaintainer {
                         .anyMatch(node -> node.history().hasEventAt(History.Event.Type.retired, event.at())))
             return cluster;
         // - 2. all nodes have switched to the right config generation
-        for (NodeTimeseries nodeTimeseries : metricsDb.getNodeTimeseries(Duration.between(event.at(), clock().instant()),
-                                                                         clusterNodes)) {
+        for (var nodeTimeseries : nodeRepository().metricsDb().getNodeTimeseries(Duration.between(event.at(), clock().instant()),
+                                                                                 clusterNodes)) {
             Optional<NodeMetricSnapshot> firstOnNewGeneration =
                     nodeTimeseries.asList().stream()
                                            .filter(snapshot -> snapshot.generation() >= event.generation()).findFirst();
@@ -135,8 +139,8 @@ public class AutoscalingMaintainer extends NodeRepositoryMaintainer {
         return r + " (total: " + r.totalResources() + ")";
     }
 
-    private Map<ClusterSpec.Id, List<Node>> nodesByCluster(List<Node> applicationNodes) {
-        return applicationNodes.stream().collect(Collectors.groupingBy(n -> n.allocation().get().membership().cluster().id()));
+    private Map<ClusterSpec.Id, NodeList> nodesByCluster(NodeList applicationNodes) {
+        return applicationNodes.groupingBy(n -> n.allocation().get().membership().cluster().id());
     }
 
 }

@@ -1,6 +1,7 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "enumstore.hpp"
+#include <vespa/vespalib/datastore/simple_hash_map.h>
 #include <vespa/vespalib/util/rcuvector.hpp>
 #include <iomanip>
 
@@ -41,16 +42,22 @@ EnumStoreT<const char*>::load_unique_value(const void* src,
 }
 
 std::unique_ptr<vespalib::datastore::IUniqueStoreDictionary>
-make_enum_store_dictionary(IEnumStore &store, bool has_postings, std::unique_ptr<vespalib::datastore::EntryComparator> folded_compare)
+make_enum_store_dictionary(IEnumStore &store, bool has_postings, search::DictionaryConfig::Type type, std::unique_ptr<vespalib::datastore::EntryComparator> compare, std::unique_ptr<vespalib::datastore::EntryComparator> folded_compare)
 {
     if (has_postings) {
         if (folded_compare) {
-            return std::make_unique<EnumStoreFoldedDictionary>(store, std::move(folded_compare));
+            return std::make_unique<EnumStoreFoldedDictionary>(store, std::move(compare), std::move(folded_compare));
         } else {
-            return std::make_unique<EnumStoreDictionary<EnumPostingTree>>(store);
+            switch (type) {
+            case search::DictionaryConfig::Type::HASH:
+            case search::DictionaryConfig::Type::BTREE_AND_HASH:
+                return std::make_unique<EnumStoreDictionary<EnumPostingTree, vespalib::datastore::SimpleHashMap>>(store, std::move(compare));
+            default:
+                return std::make_unique<EnumStoreDictionary<EnumPostingTree>>(store, std::move(compare));
+            }
         }
     } else {
-        return std::make_unique<EnumStoreDictionary<EnumTree>>(store);
+        return std::make_unique<EnumStoreDictionary<EnumTree>>(store, std::move(compare));
     }
 }
 

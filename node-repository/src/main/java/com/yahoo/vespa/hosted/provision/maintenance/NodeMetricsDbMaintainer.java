@@ -8,6 +8,7 @@ import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.autoscale.MetricsFetcher;
 import com.yahoo.vespa.hosted.provision.autoscale.MetricsDb;
 import com.yahoo.vespa.hosted.provision.autoscale.MetricsResponse;
+import com.yahoo.yolean.Exceptions;
 
 import java.time.Duration;
 import java.util.Set;
@@ -23,16 +24,13 @@ public class NodeMetricsDbMaintainer extends NodeRepositoryMaintainer {
     private static final int maxWarningsPerInvocation = 2;
 
     private final MetricsFetcher metricsFetcher;
-    private final MetricsDb metricsDb;
 
     public NodeMetricsDbMaintainer(NodeRepository nodeRepository,
                                    MetricsFetcher metricsFetcher,
-                                   MetricsDb metricsDb,
                                    Duration interval,
                                    Metric metric) {
         super(nodeRepository, interval, metric);
         this.metricsFetcher = metricsFetcher;
-        this.metricsDb = metricsDb;
     }
 
     @Override
@@ -53,7 +51,7 @@ public class NodeMetricsDbMaintainer extends NodeRepositoryMaintainer {
                 if (++done < applications.size())
                     Thread.sleep(pauseMs);
             }
-            metricsDb.gc();
+            nodeRepository().metricsDb().gc();
 
             // Suppress failures for manual zones for now to avoid noise
             return nodeRepository().zone().environment().isManuallyDeployed() || warnings.get() == 0;
@@ -69,12 +67,13 @@ public class NodeMetricsDbMaintainer extends NodeRepositoryMaintainer {
                                 ApplicationId application) {
         if (exception != null) {
             if (warnings.get() < maxWarningsPerInvocation)
-                log.log(Level.WARNING, "Could not update metrics for " + application, exception);
+                log.log(Level.WARNING, "Could not update metrics for " + application + ": " +
+                                       Exceptions.toMessageString(exception));
             warnings.add(1);
         }
         else if (response != null) {
-            metricsDb.addNodeMetrics(response.nodeMetrics());
-            metricsDb.addClusterMetrics(application, response.clusterMetrics());
+            nodeRepository().metricsDb().addNodeMetrics(response.nodeMetrics());
+            nodeRepository().metricsDb().addClusterMetrics(application, response.clusterMetrics());
         }
     }
 

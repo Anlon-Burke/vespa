@@ -8,6 +8,7 @@
 #include <vespa/storage/distributor/distributor_bucket_space.h>
 #include <vespa/storage/distributor/externaloperationhandler.h>
 #include <vespa/storage/distributor/distributor.h>
+#include <vespa/storage/distributor/distributor_stripe.h>
 #include <vespa/storage/distributor/distributormetricsset.h>
 #include <vespa/storage/distributor/operations/external/getoperation.h>
 #include <tests/distributor/distributortestutil.h>
@@ -45,7 +46,7 @@ struct GetOperationTest : Test, DistributorTestUtil {
         createLinks();
 
         docId = document::DocumentId("id:ns:text/html::uri");
-        bucketId = distributor_component().getBucketId(docId);
+        bucketId = operation_context().make_split_bit_constrained_bucket_id(docId);
     };
 
     void TearDown() override {

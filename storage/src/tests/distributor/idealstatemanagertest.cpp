@@ -3,6 +3,7 @@
 #include <vespa/storageapi/message/persistence.h>
 #include <vespa/storage/distributor/bucketdbupdater.h>
 #include <vespa/storage/distributor/distributor.h>
+#include <vespa/storage/distributor/distributor_stripe.h>
 #include <vespa/storage/distributor/operations/idealstate/mergeoperation.h>
 #include <vespa/storage/distributor/operation_sequencer.h>
 #include <vespa/storageapi/message/stat.h>
@@ -63,17 +64,17 @@ struct IdealStateManagerTest : Test, DistributorTestUtil {
 
 TEST_F(IdealStateManagerTest, sibling) {
     EXPECT_EQ(document::BucketId(1,1),
-              getIdealStateManager().getDistributorComponent()
-              .getSibling(document::BucketId(1, 0)));
+              getIdealStateManager().operation_context()
+              .get_sibling(document::BucketId(1, 0)));
     EXPECT_EQ(document::BucketId(1,0),
-              getIdealStateManager().getDistributorComponent()
-              .getSibling(document::BucketId(1, 1)));
+              getIdealStateManager().operation_context()
+              .get_sibling(document::BucketId(1, 1)));
     EXPECT_EQ(document::BucketId(2,3),
-              getIdealStateManager().getDistributorComponent()
-              .getSibling(document::BucketId(2, 1)));
+              getIdealStateManager().operation_context()
+              .get_sibling(document::BucketId(2, 1)));
     EXPECT_EQ(document::BucketId(2,1),
-              getIdealStateManager().getDistributorComponent()
-              .getSibling(document::BucketId(2, 3)));
+              getIdealStateManager().operation_context()
+              .get_sibling(document::BucketId(2, 3)));
 }
 
 TEST_F(IdealStateManagerTest, status_page) {

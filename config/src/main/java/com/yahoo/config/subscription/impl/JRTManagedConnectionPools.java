@@ -1,3 +1,4 @@
+// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.subscription.impl;
 
 import com.yahoo.config.subscription.ConfigSourceSet;
@@ -21,12 +22,14 @@ public class JRTManagedConnectionPools {
         }
     }
     private static class CountedPool {
-        long count;
         final JRTConnectionPool pool;
-        final ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(1, new JRTSourceThreadFactory());
+        final ScheduledThreadPoolExecutor scheduler;
+        long count;
         CountedPool(JRTConnectionPool requester) {
-            this.pool = requester;
+            pool = requester;
+            scheduler = new ScheduledThreadPoolExecutor(1, new JRTSourceThreadFactory());
             count = 0;
+            scheduler.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
         }
     }
 
@@ -56,9 +59,9 @@ public class JRTManagedConnectionPools {
         }
 
         countedPool.pool.close();
-        countedPool.scheduler.shutdown();
+        countedPool.scheduler.shutdownNow();
         try {
-            countedPool.scheduler.awaitTermination(30, TimeUnit.SECONDS);
+            countedPool.scheduler.awaitTermination(1, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             throw new RuntimeException("Failed shutting down scheduler:", e);
         }

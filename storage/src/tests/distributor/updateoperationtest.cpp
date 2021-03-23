@@ -10,6 +10,7 @@
 #include <vespa/document/test/make_document_bucket.h>
 #include <vespa/storage/distributor/operations/external/updateoperation.h>
 #include <vespa/storage/distributor/distributor.h>
+#include <vespa/storage/distributor/distributor_stripe.h>
 #include <vespa/config/helper/configgetter.hpp>
 #include <vespa/vespalib/gtest/gtest.h>
 
@@ -59,7 +60,7 @@ UpdateOperationTest::sendUpdate(const std::string& bucketState, bool create_if_m
             document::DocumentId("id:ns:" + _html_type->getName() + "::1"));
     update->setCreateIfNonExistent(create_if_missing);
 
-    _bId = distributor_component().getBucketId(update->getId());
+    _bId = operation_context().make_split_bit_constrained_bucket_id(update->getId());
 
     addNodesToBucketDB(_bId, bucketState);
 

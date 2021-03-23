@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <tests/common/dummystoragelink.h>
 #include <vespa/storage/distributor/distributor.h>
+#include <vespa/storage/distributor/distributor_stripe.h>
 #include <vespa/storageapi/message/persistence.h>
 #include <tests/distributor/distributortestutil.h>
 #include <vespa/document/test/make_document_bucket.h>
@@ -23,7 +24,7 @@ struct RemoveOperationTest : Test, DistributorTestUtil {
         createLinks();
 
         docId = document::DocumentId("id:test:test::uri");
-        bucketId = distributor_component().getBucketId(docId);
+        bucketId = operation_context().make_split_bit_constrained_bucket_id(docId);
         enableDistributorClusterState("distributor:1 storage:4");
     };
 
