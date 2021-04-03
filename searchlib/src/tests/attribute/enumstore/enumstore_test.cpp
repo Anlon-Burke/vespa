@@ -22,9 +22,14 @@ struct OrderedDoubleEnumStore {
     static constexpr Type type = Type::BTREE;
 };
 
-struct UnorderedDoubleEnumStore {
+struct HybridDoubleEnumStore {
     using EnumStoreType = DoubleEnumStore;
     static constexpr Type type = Type::BTREE_AND_HASH;
+};
+
+struct UnorderedDoubleEnumStore {
+    using EnumStoreType = DoubleEnumStore;
+    static constexpr Type type = Type::HASH;
 };
 
 struct OrderedFloatEnumStore {
@@ -32,9 +37,14 @@ struct OrderedFloatEnumStore {
     static constexpr Type type = Type::BTREE;
 };
 
-struct UnorderedFloatEnumStore {
+struct HybridFloatEnumStore {
     using EnumStoreType = FloatEnumStore;
     static constexpr Type type = Type::BTREE_AND_HASH;
+};
+
+struct UnorderedFloatEnumStore {
+    using EnumStoreType = FloatEnumStore;
+    static constexpr Type type = Type::HASH;
 };
 
 struct OrderedNumericEnumStore {
@@ -42,9 +52,14 @@ struct OrderedNumericEnumStore {
     static constexpr Type type = Type::BTREE;
 };
 
-struct UnorderedNumericEnumStore {
+struct HybridNumericEnumStore {
     using EnumStoreType = NumericEnumStore;
     static constexpr Type type = Type::BTREE_AND_HASH;
+};
+
+struct UnorderedNumericEnumStore {
+    using EnumStoreType = NumericEnumStore;
+    static constexpr Type type = Type::HASH;
 };
 
 struct OrderedStringEnumStore {
@@ -52,9 +67,14 @@ struct OrderedStringEnumStore {
     static constexpr Type type = Type::BTREE;
 };
 
-struct UnorderedStringEnumStore {
+struct HybridStringEnumStore {
     using EnumStoreType = StringEnumStore;
     static constexpr Type type = Type::BTREE_AND_HASH;
+};
+
+struct UnorderedStringEnumStore {
+    using EnumStoreType = StringEnumStore;
+    static constexpr Type type = Type::HASH;
 };
 
 using StringVector = std::vector<std::string>;
@@ -116,7 +136,7 @@ public:
 #pragma GCC diagnostic ignored "-Wsuggest-override"
 #endif
 
-using FloatEnumStoreTestTypes = ::testing::Types<OrderedFloatEnumStore, OrderedDoubleEnumStore, UnorderedFloatEnumStore, UnorderedDoubleEnumStore>;
+using FloatEnumStoreTestTypes = ::testing::Types<OrderedFloatEnumStore, OrderedDoubleEnumStore, HybridFloatEnumStore, HybridDoubleEnumStore, UnorderedFloatEnumStore, UnorderedDoubleEnumStore>;
 VESPA_GTEST_TYPED_TEST_SUITE(FloatEnumStoreTest, FloatEnumStoreTestTypes);
 
 TYPED_TEST(FloatEnumStoreTest, numbers_can_be_inserted_and_retrieved)
@@ -176,19 +196,18 @@ TEST(EnumStoreTest, test_find_folded_on_string_enum_store)
     EXPECT_EQ(1u, ses.find_folded_enums("three").size());
 }
 
-template <typename DictionaryT>
 void
 testUniques(const StringEnumStore& ses, const std::vector<std::string>& unique)
 {
-    const auto* enumDict = dynamic_cast<const EnumStoreDictionary<DictionaryT>*>(&ses.get_dictionary());
-    assert(enumDict != nullptr);
-    const DictionaryT& dict = enumDict->get_raw_dictionary();
+    auto read_snapshot = ses.get_dictionary().get_read_snapshot();
+    read_snapshot->fill();
+    read_snapshot->sort();
+    std::vector<EnumIndex> saved_indexes;
+    read_snapshot->foreach_key([&saved_indexes](EntryRef idx) { saved_indexes.push_back(idx); });
     uint32_t i = 0;
-    EnumIndex idx;
-    for (typename DictionaryT::Iterator iter = dict.begin();
-         iter.valid(); ++iter, ++i) {
-        idx = iter.getKey();
+    for (auto idx : saved_indexes) {
         EXPECT_TRUE(strcmp(unique[i].c_str(), ses.get_value(idx)) == 0);
+        ++i;
     }
     EXPECT_EQ(static_cast<uint32_t>(unique.size()), i);
 }
@@ -232,11 +251,7 @@ StringEnumStoreTest::testInsert(bool hasPostings)
         EXPECT_TRUE(strcmp(unique[i].c_str(), value) == 0);
     }
 
-    if (hasPostings) {
-        testUniques<EnumPostingTree>(ses, unique);
-    } else {
-        testUniques<EnumTree>(ses, unique);
-    }
+    testUniques(ses, unique);
 }
 
 TEST_F(StringEnumStoreTest, test_insert_on_store_without_posting_lists)
@@ -495,10 +510,11 @@ public:
     }
 
     void expect_posting_idx(size_t values_idx, uint32_t exp_posting_idx) const {
-        auto cmp = store.make_comparator();
-        auto itr = store.get_posting_dictionary().find(find_index(values_idx), cmp);
-        ASSERT_TRUE(itr.valid());
-        EXPECT_EQ(exp_posting_idx, itr.getData());
+        auto cmp = store.make_comparator(Values::values[values_idx]);
+        auto &dict = store.get_dictionary();
+        auto find_result = dict.find_posting_list(cmp, dict.get_frozen_root());
+        ASSERT_TRUE(find_result.first.valid());
+        EXPECT_EQ(exp_posting_idx, find_result.second.ref());
     }
 
 };
@@ -509,7 +525,7 @@ public:
 #pragma GCC diagnostic ignored "-Wsuggest-override"
 #endif
 
-using LoaderTestTypes = ::testing::Types<OrderedNumericEnumStore, OrderedFloatEnumStore, OrderedStringEnumStore, UnorderedNumericEnumStore, UnorderedFloatEnumStore, UnorderedStringEnumStore>;
+using LoaderTestTypes = ::testing::Types<OrderedNumericEnumStore, OrderedFloatEnumStore, OrderedStringEnumStore, HybridNumericEnumStore, HybridFloatEnumStore, HybridStringEnumStore, UnorderedNumericEnumStore, UnorderedFloatEnumStore, UnorderedStringEnumStore>;
 VESPA_GTEST_TYPED_TEST_SUITE(LoaderTest, LoaderTestTypes);
 
 TYPED_TEST(LoaderTest, store_is_instantiated_with_enumerated_loader)
@@ -554,6 +570,7 @@ TYPED_TEST(LoaderTest, store_is_instantiated_with_non_enumerated_loader)
     loader.build_dictionary();
 
     this->expect_values_in_store();
+    this->store.freeze_dictionary();
 
     this->expect_posting_idx(0, 100);
     this->expect_posting_idx(1, 101);
@@ -609,7 +626,7 @@ EnumStoreDictionaryTest<EnumStoreTypeAndOrdering>::insert_value(size_t value_idx
 #pragma GCC diagnostic ignored "-Wsuggest-override"
 #endif
 
-using EnumStoreDictionaryTestTypes = ::testing::Types<OrderedNumericEnumStore, UnorderedNumericEnumStore>;
+using EnumStoreDictionaryTestTypes = ::testing::Types<OrderedNumericEnumStore, HybridNumericEnumStore, UnorderedNumericEnumStore>;
 VESPA_GTEST_TYPED_TEST_SUITE(EnumStoreDictionaryTest, EnumStoreDictionaryTestTypes);
 
 TYPED_TEST(EnumStoreDictionaryTest, find_frozen_index_works)
@@ -659,7 +676,7 @@ TYPED_TEST(EnumStoreDictionaryTest, find_posting_list_works)
     this->update_posting_idx(value_0_idx, this->fake_pidx(), EntryRef());
 }
 
-TYPED_TEST(EnumStoreDictionaryTest, check_posting_lists_works)
+TYPED_TEST(EnumStoreDictionaryTest, normalize_posting_lists_works)
 {
     auto value_0_idx = this->insert_value(0);
     this->update_posting_idx(value_0_idx, EntryRef(), this->fake_pidx());
@@ -669,12 +686,12 @@ TYPED_TEST(EnumStoreDictionaryTest, check_posting_lists_works)
     auto find_result = dict.find_posting_list(this->make_bound_comparator(0), root);
     EXPECT_EQ(value_0_idx, find_result.first);
     EXPECT_EQ(this->fake_pidx(), find_result.second);
-    auto dummy = [](EntryRef posting_idx) { return posting_idx; };
+    auto dummy = [](EntryRef posting_idx) noexcept { return posting_idx; };
     std::vector<EntryRef> saved_refs;
     auto save_refs_and_clear = [&saved_refs](EntryRef posting_idx) { saved_refs.push_back(posting_idx); return EntryRef(); };
-    EXPECT_FALSE(dict.check_posting_lists(dummy));
-    EXPECT_TRUE(dict.check_posting_lists(save_refs_and_clear));
-    EXPECT_FALSE(dict.check_posting_lists(save_refs_and_clear));
+    EXPECT_FALSE(dict.normalize_posting_lists(dummy));
+    EXPECT_TRUE(dict.normalize_posting_lists(save_refs_and_clear));
+    EXPECT_FALSE(dict.normalize_posting_lists(save_refs_and_clear));
     EXPECT_EQ((std::vector<EntryRef>{ this->fake_pidx(), EntryRef() }), saved_refs);
     this->store.freeze_dictionary();
     root = dict.get_frozen_root();

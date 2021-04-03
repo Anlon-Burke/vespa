@@ -8,28 +8,53 @@
 namespace vespalib::datastore {
 
 class EntryComparatorWrapper;
+class IUniqueStoreDictionaryReadSnapshot;
 
-class NoUnorderedDictionary;
+class NoBTreeDictionary { };
+class NoHashDictionary;
 
-template <typename UnorderedDictionaryT>
-class UniqueStoreUnorderedDictionaryBase
+template <typename BTreeDictionaryT>
+class UniqueStoreBTreeDictionaryBase
 {
 protected:
-    UnorderedDictionaryT _unordered_dict;
+    BTreeDictionaryT _btree_dict;
 public:
-    static constexpr bool has_unordered_dictionary = true;
-    UniqueStoreUnorderedDictionaryBase(std::unique_ptr<EntryComparator> compare)
-        : _unordered_dict(std::move(compare))
+    static constexpr bool has_btree_dictionary = true;
+    UniqueStoreBTreeDictionaryBase()
+        : _btree_dict()
     {
     }
 };
 
 template <>
-class UniqueStoreUnorderedDictionaryBase<NoUnorderedDictionary>
+class UniqueStoreBTreeDictionaryBase<NoBTreeDictionary>
 {
 public:
-    static constexpr bool has_unordered_dictionary = false;
-    UniqueStoreUnorderedDictionaryBase(std::unique_ptr<EntryComparator>)
+    static constexpr bool has_btree_dictionary = false;
+    UniqueStoreBTreeDictionaryBase()
+    {
+    }
+};
+
+template <typename HashDictionaryT>
+class UniqueStoreHashDictionaryBase
+{
+protected:
+    HashDictionaryT _hash_dict;
+public:
+    static constexpr bool has_hash_dictionary = true;
+    UniqueStoreHashDictionaryBase(std::unique_ptr<EntryComparator> compare)
+        : _hash_dict(std::move(compare))
+    {
+    }
+};
+
+template <>
+class UniqueStoreHashDictionaryBase<NoHashDictionary>
+{
+public:
+    static constexpr bool has_hash_dictionary = false;
+    UniqueStoreHashDictionaryBase(std::unique_ptr<EntryComparator>)
     {
     }
 };
@@ -37,31 +62,15 @@ public:
 /**
  * A dictionary for unique store. Mostly accessed via base class.
  */
-template <typename DictionaryT, typename ParentT = IUniqueStoreDictionary, typename UnorderedDictionaryT = NoUnorderedDictionary>
-class UniqueStoreDictionary : public ParentT, public UniqueStoreUnorderedDictionaryBase<UnorderedDictionaryT> {
+template <typename BTreeDictionaryT, typename ParentT = IUniqueStoreDictionary, typename HashDictionaryT = NoHashDictionary>
+class UniqueStoreDictionary : public ParentT, public UniqueStoreBTreeDictionaryBase<BTreeDictionaryT>, public UniqueStoreHashDictionaryBase<HashDictionaryT> {
 protected:
-    using DictionaryType = DictionaryT;
-    using DataType = typename DictionaryType::DataType;
-    using FrozenView = typename DictionaryType::FrozenView;
-    using ReadSnapshot = typename ParentT::ReadSnapshot;
+    using BTreeDictionaryType = BTreeDictionaryT;
     using generation_t = typename ParentT::generation_t;
 
-    class ReadSnapshotImpl : public ReadSnapshot {
-    private:
-        FrozenView _frozen_view;
-
-    public:
-        ReadSnapshotImpl(FrozenView frozen_view);
-        size_t count(const EntryComparator& comp) const override;
-        size_t count_in_range(const EntryComparator& low, const EntryComparator& high) const override;
-        void foreach_key(std::function<void(EntryRef)> callback) const override;
-    };
-
-    DictionaryType _dict;
-
 public:
-    using UniqueStoreUnorderedDictionaryBase<UnorderedDictionaryT>::has_unordered_dictionary;
-    static constexpr bool has_ordered_dictionary = true;
+    using UniqueStoreBTreeDictionaryBase<BTreeDictionaryT>::has_btree_dictionary;
+    using UniqueStoreHashDictionaryBase<HashDictionaryT>::has_hash_dictionary;
     UniqueStoreDictionary(std::unique_ptr<EntryComparator> compare);
     ~UniqueStoreDictionary() override;
     void freeze() override;
@@ -76,8 +85,9 @@ public:
     void build(vespalib::ConstArrayRef<EntryRef>, vespalib::ConstArrayRef<uint32_t> ref_counts, std::function<void(EntryRef)> hold) override;
     void build(vespalib::ConstArrayRef<EntryRef> refs) override;
     void build_with_payload(vespalib::ConstArrayRef<EntryRef>, vespalib::ConstArrayRef<uint32_t> payloads) override;
-    std::unique_ptr<ReadSnapshot> get_read_snapshot() const override;
-    bool get_has_unordered_dictionary() const override;
+    std::unique_ptr<IUniqueStoreDictionaryReadSnapshot> get_read_snapshot() const override;
+    bool get_has_btree_dictionary() const override;
+    bool get_has_hash_dictionary() const override;
 };
 
 }

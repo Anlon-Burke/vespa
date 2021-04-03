@@ -54,6 +54,7 @@ public class VespaMetricSet {
 
         metrics.add(new Metric("slobrok.heartbeats.failed.count"));
         metrics.add(new Metric("logd.processed.lines.count"));
+        metrics.add(new Metric("worker.connections.max"));
 
         // Java (JRT) TLS metrics
         metrics.add(new Metric("jrt.transport.tls-certificate-verification-failures"));
@@ -240,6 +241,7 @@ public class VespaMetricSet {
         metrics.add(new Metric("cluster-controller.cluster-state-change.count"));
 
         metrics.add(new Metric("cluster-controller.is-master.last"));
+        metrics.add(new Metric("cluster-controller.remote-task-queue.size.last"));
         // TODO(hakonhall): Update this name once persistent "count" metrics has been implemented.
         // DO NOT RELY ON THIS METRIC YET.
         metrics.add(new Metric("cluster-controller.node-event.count"));
@@ -446,6 +448,7 @@ public class VespaMetricSet {
         metrics.add(new Metric("content.proton.resource_usage.memory.average"));
         metrics.add(new Metric("content.proton.resource_usage.memory_utilization.average"));
         metrics.add(new Metric("content.proton.resource_usage.transient_memory.average"));
+        metrics.add(new Metric("content.proton.resource_usage.transient_disk.average"));
         metrics.add(new Metric("content.proton.resource_usage.memory_mappings.max"));
         metrics.add(new Metric("content.proton.resource_usage.open_file_descriptors.max"));
         metrics.add(new Metric("content.proton.resource_usage.feeding_blocked.max"));

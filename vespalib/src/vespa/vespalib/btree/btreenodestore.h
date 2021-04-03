@@ -159,6 +159,8 @@ public:
 
     std::vector<uint32_t> startCompact();
 
+    std::vector<uint32_t> start_compact_worst();
+
     void finishCompact(const std::vector<uint32_t> &toHold);
 
     void transferHoldLists(generation_t generation) {
@@ -189,6 +191,10 @@ public:
         return _store.getCompacting(ref);
     }
 
+    bool has_held_buffers() const {
+        return _store.has_held_buffers();
+    }
+    
     template <typename FunctionType>
     void foreach_key(EntryRef ref, FunctionType func) const {
         if (!ref.valid())

@@ -89,6 +89,7 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
     private final MetricUpdater metricUpdater;
 
     private boolean isMaster = false;
+    private boolean inMasterMoratorium = false;
     private boolean isStateGatherer = false;
     private long firstAllowedStateBroadcast = Long.MAX_VALUE;
     private long tickStartTime = Long.MAX_VALUE;
@@ -169,7 +170,7 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
                                          StatusPageServerInterface statusPageServer,
                                          MetricReporter metricReporter) throws Exception {
         Timer timer = new RealTimer();
-        MetricUpdater metricUpdater = new MetricUpdater(metricReporter, options.fleetControllerIndex);
+        MetricUpdater metricUpdater = new MetricUpdater(metricReporter, options.fleetControllerIndex, options.clusterName);
         EventLog log = new EventLog(timer, metricUpdater);
         ContentCluster cluster = new ContentCluster(
                 options.clusterName,
@@ -712,10 +713,13 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
         if ((currentTime >= firstAllowedStateBroadcast || cluster.allStatesReported())
             && currentTime >= nextStateSendTime)
         {
-            if (currentTime < firstAllowedStateBroadcast) {
-                log.log(Level.FINE, "Not set to broadcast states just yet, but as we have gotten info from all nodes we can do so safely.");
-                // Reset timer to only see warning once.
+            if (inMasterMoratorium) {
+                log.info(currentTime < firstAllowedStateBroadcast ?
+                         "Master moratorium complete: all nodes have reported in" :
+                         "Master moratorium complete: timed out waiting for all nodes to report in");
+                // Reset firstAllowedStateBroadcast to make sure all future times are after firstAllowedStateBroadcast
                 firstAllowedStateBroadcast = currentTime;
+                inMasterMoratorium = false;
             }
             sentAny = systemStateBroadcaster.broadcastNewStateBundleIfRequired(
                     databaseContext, communicator, database.getLastKnownStateBundleVersionWrittenBySelf());
@@ -753,21 +757,25 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
     }
 
     private boolean processNextQueuedRemoteTask() {
-        if ( ! remoteTasks.isEmpty()) {
-            final RemoteClusterControllerTask.Context context = createRemoteTaskProcessingContext();
-            final RemoteClusterControllerTask task = remoteTasks.poll();
-            log.finest(() -> String.format("Processing remote task of type '%s'", task.getClass().getName()));
-            task.doRemoteFleetControllerTask(context);
-            if (taskMayBeCompletedImmediately(task)) {
-                log.finest(() -> String.format("Done processing remote task of type '%s'", task.getClass().getName()));
-                task.notifyCompleted();
-            } else {
-                log.finest(() -> String.format("Remote task of type '%s' queued until state recomputation", task.getClass().getName()));
-                tasksPendingStateRecompute.add(task);
-            }
-            return true;
+        metricUpdater.updateRemoteTaskQueueSize(remoteTasks.size());
+
+        RemoteClusterControllerTask task = remoteTasks.poll();
+        if (task == null) {
+            return false;
         }
-        return false;
+
+        final RemoteClusterControllerTask.Context context = createRemoteTaskProcessingContext();
+        log.finest(() -> String.format("Processing remote task of type '%s'", task.getClass().getName()));
+        task.doRemoteFleetControllerTask(context);
+        if (taskMayBeCompletedImmediately(task)) {
+            log.finest(() -> String.format("Done processing remote task of type '%s'", task.getClass().getName()));
+            task.notifyCompleted();
+        } else {
+            log.finest(() -> String.format("Remote task of type '%s' queued until state recomputation", task.getClass().getName()));
+            tasksPendingStateRecompute.add(task);
+        }
+
+        return true;
     }
 
     private boolean taskMayBeCompletedImmediately(RemoteClusterControllerTask task) {
@@ -780,7 +788,12 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
         context.cluster = cluster;
         context.currentConsolidatedState = consolidatedClusterState();
         context.publishedClusterStateBundle = stateVersionTracker.getVersionedClusterStateBundle();
-        context.masterInfo = masterElectionHandler;
+        context.masterInfo = new MasterInterface() {
+            @Override public boolean isMaster() { return isMaster; }
+            @Override public Integer getMaster() { return masterElectionHandler.getMaster(); }
+            @Override public boolean inMasterMoratorium() { return inMasterMoratorium; }
+        };
+
         context.nodeStateOrHostInfoChangeHandler = this;
         context.nodeAddedOrRemovedListener = this;
         return context;
@@ -1078,11 +1091,12 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
                         + stateVersionTracker.getCurrentVersion() + " to be in line.", timer.getCurrentTimeInMillis()));
                 long currentTime = timer.getCurrentTimeInMillis();
                 firstAllowedStateBroadcast = currentTime + options.minTimeBeforeFirstSystemStateBroadcast;
+                isMaster = true;
+                inMasterMoratorium = true;
                 log.log(Level.FINE, "At time " + currentTime + " we set first system state broadcast time to be "
                         + options.minTimeBeforeFirstSystemStateBroadcast + " ms after at time " + firstAllowedStateBroadcast + ".");
                 didWork = true;
             }
-            isMaster = true;
             if (wantedStateChanged) {
                 database.saveWantedStates(databaseContext);
                 wantedStateChanged = false;
@@ -1102,6 +1116,7 @@ public class FleetController implements NodeStateOrHostInfoChangeHandler, NodeAd
         }
         wantedStateChanged = false;
         isMaster = false;
+        inMasterMoratorium = false;
     }
 
     public void run() {

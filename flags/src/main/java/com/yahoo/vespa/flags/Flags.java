@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.TreeMap;
 
 import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
+import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_ID;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_TYPE;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.HOSTNAME;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.NODE_TYPE;
@@ -151,13 +152,6 @@ public class Flags {
             APPLICATION_ID
     );
 
-    public static final UnboundBooleanFlag USE_ACCESS_CONTROL_CLIENT_AUTHENTICATION = defineFeatureFlag(
-            "use-access-control-client-authentication", false,
-            List.of("tokle"), "2020-12-02", "2021-04-01",
-            "Whether application container should set up client authentication on default port based on access control element",
-            "Takes effect on next internal redeployment",
-            APPLICATION_ID);
-
     public static final UnboundBooleanFlag USE_ASYNC_MESSAGE_HANDLING_ON_SCHEDULE = defineFeatureFlag(
             "async-message-handling-on-schedule", false,
             List.of("baldersheim"), "2020-12-02", "2022-01-01",
@@ -245,7 +239,7 @@ public class Flags {
             List.of("hmusum"), "2021-03-15", "2021-05-15",
             "JVM max heap size for config proxy in Mb",
             "Takes effect on restart of Docker container",
-            CLUSTER_TYPE);
+            CLUSTER_TYPE, CLUSTER_ID);
 
     public static final UnboundStringFlag DEDICATED_CLUSTER_CONTROLLER_FLAVOR = defineStringFlag(
             "dedicated-cluster-controller-flavor", "", List.of("jonmv"), "2021-02-25", "2021-04-25",
@@ -273,6 +267,12 @@ public class Flags {
             "for query visibility if they are out of sync with a majority of other replicas",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag WAIT_FOR_ALL_CONFIG_SERVERS_WHEN_DELETING_APPLICATION = defineFeatureFlag(
+            "wait-for-all-config-servers-when-deleting-application", false,
+            List.of("hmusum"), "2021-03-24", "2021-06-24",
+            "Whether to wait for all participating servers to delete application on config servers (with timeout) on",
+            "Takes effect on next delete of an application");
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

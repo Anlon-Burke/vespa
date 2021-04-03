@@ -11,6 +11,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
+import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_ID;
+import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_TYPE;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.CONSOLE_USER_EMAIL;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.HOSTNAME;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.NODE_TYPE;
@@ -35,7 +37,7 @@ public class PermanentFlags {
 
     public static final UnboundStringFlag JVM_GC_OPTIONS = defineStringFlag(
             "jvm-gc-options", "",
-            "Sets deafult jvm gc options",
+            "Sets default jvm gc options",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
@@ -102,9 +104,9 @@ public class PermanentFlags {
     public static final UnboundDoubleFlag CONTAINER_CPU_CAP = defineDoubleFlag(
             "container-cpu-cap", 0,
             "Hard limit on how many CPUs a container may use. This value is multiplied by CPU allocated to node, so " +
-                    "to cap CPU at 200%, set this to 2, etc.",
+                    "to cap CPU at 200%, set this to 2, etc. 0 disables the cap to allow unlimited CPU.",
             "Takes effect on next node agent tick. Change is orchestrated, but does NOT require container restart",
-            HOSTNAME, APPLICATION_ID);
+            HOSTNAME, APPLICATION_ID, CLUSTER_ID, CLUSTER_TYPE);
 
     public static final UnboundListFlag<String> DISABLED_HOST_ADMIN_TASKS = defineListFlag(
             "disabled-host-admin-tasks", List.of(), String.class,
@@ -136,6 +138,12 @@ public class PermanentFlags {
             "Invalidate console sessions (cookies) issued before this unix timestamp",
             "Takes effect on next api request"
     );
+
+    public static final UnboundBooleanFlag JVM_OMIT_STACK_TRACE_IN_FAST_THROW = defineFeatureFlag(
+            "jvm-omit-stack-trace-in-fast-throw", true,
+            "Controls JVM option OmitStackTraceInFastThrow (default feature flag value is true, which is the default JVM option value as well)",
+            "takes effect on JVM restart",
+            NODE_TYPE, APPLICATION_ID);
 
     private PermanentFlags() {}
 

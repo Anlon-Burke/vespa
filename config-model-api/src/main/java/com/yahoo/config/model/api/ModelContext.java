@@ -77,7 +77,7 @@ public interface ModelContext {
         @ModelFeatureFlag(owners = {"baldersheim"}) default boolean skipCommunicationManagerThread() { throw new UnsupportedOperationException("TODO specify default value"); }
         @ModelFeatureFlag(owners = {"baldersheim"}) default boolean skipMbusRequestThread() { throw new UnsupportedOperationException("TODO specify default value"); }
         @ModelFeatureFlag(owners = {"baldersheim"}) default boolean skipMbusReplyThread() { throw new UnsupportedOperationException("TODO specify default value"); }
-        @ModelFeatureFlag(owners = {"tokle"}) default boolean useAccessControlTlsHandshakeClientAuth() { return false; }
+        @ModelFeatureFlag(owners = {"tokle"}) default boolean useAccessControlTlsHandshakeClientAuth() { return true; }
         @ModelFeatureFlag(owners = {"baldersheim"}) default boolean useAsyncMessageHandlingOnSchedule() { throw new UnsupportedOperationException("TODO specify default value"); }
         @ModelFeatureFlag(owners = {"baldersheim"}) default double feedConcurrency() { throw new UnsupportedOperationException("TODO specify default value"); }
         @ModelFeatureFlag(owners = {"baldersheim"}) default boolean useBucketExecutorForLidSpaceCompact() { throw new UnsupportedOperationException("TODO specify default value"); }
@@ -89,6 +89,7 @@ public interface ModelContext {
         @ModelFeatureFlag(owners = {"bjorncs", "tokle"}) default List<String> allowedAthenzProxyIdentities() { return List.of(); }
         @ModelFeatureFlag(owners = {"tokle"}) default boolean tenantIamRole() { return false; }
         @ModelFeatureFlag(owners = {"vekterli"}) default int maxActivationInhibitedOutOfSyncGroups() { return 0; }
+        @ModelFeatureFlag(owners = {"hmusum"}) default String jvmOmitStackTraceInFastThrowOption(ClusterSpec.Type type) { return ""; }
     }
 
     /** Warning: As elsewhere in this package, do not make backwards incompatible changes that will break old config models! */

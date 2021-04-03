@@ -109,13 +109,22 @@ diskMemUsageSamplerConfig(const ProtonConfig &proton, const HwInfo &hwInfo)
 }
 
 size_t
-derive_shared_threads(const ProtonConfig &proton,
-                      const HwInfo::Cpu &cpuInfo) {
+derive_shared_threads(const ProtonConfig &proton, const HwInfo::Cpu &cpuInfo) {
     size_t scaledCores = (size_t)std::ceil(cpuInfo.cores() * proton.feeding.concurrency);
 
     // We need at least 1 guaranteed free worker in order to ensure progress so #documentsdbs + 1 should suffice,
     // but we will not be cheap and give it one extra.
     return std::max(scaledCores, proton.documentdb.size() + proton.flush.maxconcurrent + 1);
+}
+
+uint32_t
+computeRpcTransportThreads(const ProtonConfig & cfg, const HwInfo::Cpu &cpuInfo) {
+    bool areSearchAndDocsumAsync = cfg.docsum.async && cfg.search.async;
+    return (cfg.rpc.transportthreads > 0)
+            ? cfg.rpc.transportthreads
+            : areSearchAndDocsumAsync
+                ? cpuInfo.cores()/8
+                : cpuInfo.cores();
 }
 
 struct MetricsUpdateHook : metrics::UpdateHook
@@ -281,9 +290,10 @@ Proton::init(const BootstrapConfig::SP & configSnapshot)
     _fileHeaderContext.setClusterName(protonConfig.clustername, protonConfig.basedir);
     _matchEngine = std::make_unique<MatchEngine>(protonConfig.numsearcherthreads,
                                                  protonConfig.numthreadspersearch,
-                                                 protonConfig.distributionkey);
+                                                 protonConfig.distributionkey,
+                                                 protonConfig.search.async);
     _distributionKey = protonConfig.distributionkey;
-    _summaryEngine= std::make_unique<SummaryEngine>(protonConfig.numsummarythreads);
+    _summaryEngine= std::make_unique<SummaryEngine>(protonConfig.numsummarythreads, protonConfig.docsum.async);
     _docsumBySlime = std::make_unique<DocsumBySlime>(*_summaryEngine);
 
     IFlushStrategy::SP strategy;
@@ -335,6 +345,7 @@ Proton::init(const BootstrapConfig::SP & configSnapshot)
 
     _prepareRestartHandler = std::make_unique<PrepareRestartHandler>(*_flushEngine);
     RPCHooks::Params rpcParams(*this, protonConfig.rpcport, _configUri.getConfigId(),
+                               std::max(2u, computeRpcTransportThreads(protonConfig, hwInfo.cpu())),
                                std::max(2u, hwInfo.cpu().cores()/4));
     rpcParams.slobrok_config = _configUri.createWithNewId(protonConfig.slobrokconfigid);
     _rpcHooks = std::make_unique<RPCHooks>(rpcParams);
@@ -643,7 +654,7 @@ Proton::addDocumentDB(const document::DocumentType &docType,
     auto flushHandler = std::make_shared<FlushHandlerProxy>(ret);
     _flushEngine->putFlushHandler(docTypeName, flushHandler);
     _diskMemUsageSampler->notifier().addDiskMemUsageListener(ret->diskMemUsageListener());
-    _diskMemUsageSampler->add_transient_memory_usage_provider(ret->transient_memory_usage_provider());
+    _diskMemUsageSampler->add_transient_usage_provider(ret->transient_usage_provider());
     return ret;
 }
 
@@ -681,7 +692,7 @@ Proton::removeDocumentDB(const DocTypeName &docTypeName)
     _metricsEngine->removeMetricsHook(old->getMetricsUpdateHook());
     _metricsEngine->removeDocumentDBMetrics(old->getMetrics());
     _diskMemUsageSampler->notifier().removeDiskMemUsageListener(old->diskMemUsageListener());
-    _diskMemUsageSampler->remove_transient_memory_usage_provider(old->transient_memory_usage_provider());
+    _diskMemUsageSampler->remove_transient_usage_provider(old->transient_usage_provider());
     // Caller should have removed & drained relevant timer tasks
     old->close();
 }
@@ -750,6 +761,7 @@ Proton::updateMetrics(const metrics::MetricLockGuard &)
         metrics.resourceUsage.memory.set(usageState.memoryState().usage());
         metrics.resourceUsage.memoryUtilization.set(usageState.memoryState().utilization());
         metrics.resourceUsage.transient_memory.set(usageFilter.get_relative_transient_memory_usage());
+        metrics.resourceUsage.transient_disk.set(usageFilter.get_relative_transient_disk_usage());
         metrics.resourceUsage.memoryMappings.set(usageFilter.getMemoryStats().getMappingsCount());
         metrics.resourceUsage.openFileDescriptors.set(FastOS_File::count_open_files());
         metrics.resourceUsage.feedingBlocked.set((usageFilter.acceptWriteOperation() ? 0.0 : 1.0));

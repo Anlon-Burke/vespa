@@ -110,6 +110,8 @@ public class InterleavedSearchInvoker extends SearchInvoker implements ResponseM
         InvokerResult result = new InvokerResult(query, query.getHits());
         List<LeanHit> merged = Collections.emptyList();
         long nextTimeout = query.getTimeLeft();
+        boolean extraDebug = (query.getOffset() == 0) && (query.getHits() == 7) && log.isLoggable(java.util.logging.Level.FINE);
+        List<InvokerResult> processed = new ArrayList<>();
         try {
             while (!invokers.isEmpty() && nextTimeout >= 0) {
                 SearchInvoker invoker = availableForProcessing.poll(nextTimeout, TimeUnit.MILLISECONDS);
@@ -117,7 +119,11 @@ public class InterleavedSearchInvoker extends SearchInvoker implements ResponseM
                     log.fine(() -> "Search timed out with " + askedNodes + " requests made, " + answeredNodes + " responses received");
                     break;
                 } else {
-                    merged = mergeResult(result.getResult(), invoker.getSearchResult(execution), merged);
+                    InvokerResult toMerge = invoker.getSearchResult(execution);
+                    if (extraDebug) {
+                        processed.add(toMerge);
+                    }
+                    merged = mergeResult(result.getResult(), toMerge, merged);
                     ejectInvoker(invoker);
                 }
                 nextTimeout = nextTimeout();
@@ -128,6 +134,33 @@ public class InterleavedSearchInvoker extends SearchInvoker implements ResponseM
 
         insertNetworkErrors(result.getResult());
         result.getResult().setCoverage(createCoverage());
+
+        if (extraDebug && merged.size() > 0) {
+            int firstPartId = merged.get(0).getPartId();
+            for (int index = 1; index < merged.size(); index++) {
+                if (merged.get(index).getPartId() != firstPartId) {
+                    extraDebug = false;
+                    log.fine("merged["+index+"/"+merged.size()+"] from partId "+merged.get(index).getPartId()+", first "+firstPartId);
+                    break;
+                }
+            }
+        }
+        if (extraDebug) {
+            log.fine("Interleaved "+processed.size()+" results");
+            for (int pIdx = 0; pIdx < processed.size(); ++pIdx) {
+                var p = processed.get(pIdx);
+                log.fine("InvokerResult "+pIdx+" total hits "+p.getResult().getTotalHitCount());
+                var lean = p.getLeanHits();
+                for (int idx = 0; idx < lean.size(); ++idx) {
+                    var hit = lean.get(idx);
+                    log.fine("lean hit "+idx+" relevance "+hit.getRelevance()+" partid "+hit.getPartId());
+                }
+            }
+            for (int mIdx = 0; mIdx < merged.size(); ++mIdx) {
+                var hit = merged.get(mIdx);
+                log.fine("merged hit "+mIdx+" relevance "+hit.getRelevance()+" partid "+hit.getPartId());                
+            }
+        }
         int needed = query.getOffset() + query.getHits();
         for (int index = query.getOffset(); (index < merged.size()) && (index < needed); index++) {
             result.getLeanHits().add(merged.get(index));
@@ -202,6 +235,17 @@ public class InterleavedSearchInvoker extends SearchInvoker implements ResponseM
         return nextAdaptive;
     }
 
+    private String dbg(LeanHit hit) {
+        var buf = new StringBuilder();
+        buf.append("LeanHit[");
+        if (hit.hasSortData()) buf.append("hasSortData,");
+        buf.append("relevance=").append(hit.getRelevance());
+        buf.append(",partId=").append(hit.getPartId());
+        buf.append(",distributionKey=").append(hit.getDistributionKey());
+        buf.append("]");
+        return buf.toString();
+    }
+
     private List<LeanHit> mergeResult(Result result, InvokerResult partialResult, List<LeanHit> current) {
         collectCoverage(partialResult.getResult().getCoverage(true));
 
@@ -225,15 +269,15 @@ public class InterleavedSearchInvoker extends SearchInvoker implements ResponseM
         int indexCurrent = 0;
         int indexPartial = 0;
         while (indexCurrent < current.size() && indexPartial < partial.size() && merged.size() < needed) {
-            LeanHit incommingHit = partial.get(indexPartial);
+            LeanHit incomingHit = partial.get(indexPartial);
             LeanHit currentHit = current.get(indexCurrent);
 
-            int cmpRes = currentHit.compareTo(incommingHit);
+            int cmpRes = currentHit.compareTo(incomingHit);
             if (cmpRes < 0) {
                 merged.add(currentHit);
                 indexCurrent++;
             } else if (cmpRes > 0) {
-                merged.add(incommingHit);
+                merged.add(incomingHit);
                 indexPartial++;
             } else { // Duplicates
                 merged.add(currentHit);
@@ -242,10 +286,12 @@ public class InterleavedSearchInvoker extends SearchInvoker implements ResponseM
             }
         }
         while ((indexCurrent < current.size()) && (merged.size() < needed)) {
-            merged.add(current.get(indexCurrent++));
+            LeanHit currentHit = current.get(indexCurrent++);
+            merged.add(currentHit);
         }
         while ((indexPartial < partial.size()) && (merged.size() < needed)) {
-            merged.add(partial.get(indexPartial++));
+            LeanHit incomingHit = partial.get(indexPartial++);
+            merged.add(incomingHit);
         }
         return merged;
     }

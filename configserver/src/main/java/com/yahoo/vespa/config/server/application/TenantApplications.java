@@ -3,7 +3,6 @@ package com.yahoo.vespa.config.server.application;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.Version;
-import com.yahoo.concurrent.InThreadExecutorService;
 import com.yahoo.concurrent.StripedExecutor;
 import com.yahoo.config.FileReference;
 import com.yahoo.config.provision.ApplicationId;
@@ -13,7 +12,6 @@ import com.yahoo.transaction.Transaction;
 import com.yahoo.vespa.config.ConfigKey;
 import com.yahoo.vespa.config.GetConfigRequest;
 import com.yahoo.vespa.config.protocol.ConfigResponse;
-import com.yahoo.vespa.config.server.ConfigServerDB;
 import com.yahoo.vespa.config.server.NotFoundException;
 import com.yahoo.vespa.config.server.ReloadListener;
 import com.yahoo.vespa.config.server.RequestHandler;
@@ -24,6 +22,7 @@ import com.yahoo.vespa.config.server.monitoring.MetricUpdater;
 import com.yahoo.vespa.config.server.monitoring.Metrics;
 import com.yahoo.vespa.config.server.rpc.ConfigResponseFactory;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
+import com.yahoo.vespa.curator.CompletionTimeoutException;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.curator.Lock;
 import com.yahoo.vespa.curator.transaction.CuratorTransaction;
@@ -33,6 +32,8 @@ import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -43,6 +44,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import static com.yahoo.vespa.curator.Curator.CompletionWaiter;
 import static java.util.stream.Collectors.toSet;
 
 /**
@@ -55,6 +57,7 @@ public class TenantApplications implements RequestHandler, HostValidator<Applica
 
     private static final Logger log = Logger.getLogger(TenantApplications.class.getName());
 
+    private final Curator curator;
     private final ApplicationCuratorDatabase database;
     private final Curator.DirectoryCache directoryCache;
     private final Executor zkWatcherExecutor;
@@ -67,11 +70,13 @@ public class TenantApplications implements RequestHandler, HostValidator<Applica
     private final MetricUpdater tenantMetricUpdater;
     private final Clock clock;
     private final TenantFileSystemDirs tenantFileSystemDirs;
+    private final ConfigserverConfig configserverConfig;
 
     public TenantApplications(TenantName tenant, Curator curator, StripedExecutor<TenantName> zkWatcherExecutor,
                               ExecutorService zkCacheExecutor, Metrics metrics, ReloadListener reloadListener,
                               ConfigserverConfig configserverConfig, HostRegistry hostRegistry,
                               TenantFileSystemDirs tenantFileSystemDirs, Clock clock) {
+        this.curator = curator;
         this.database = new ApplicationCuratorDatabase(tenant, curator);
         this.tenant = tenant;
         this.zkWatcherExecutor = command -> zkWatcherExecutor.execute(tenant, command);
@@ -85,25 +90,7 @@ public class TenantApplications implements RequestHandler, HostValidator<Applica
         this.hostRegistry = hostRegistry;
         this.tenantFileSystemDirs = tenantFileSystemDirs;
         this.clock = clock;
-    }
-
-    // For testing only
-    public static TenantApplications create(HostRegistry hostRegistry,
-                                            TenantName tenantName,
-                                            Curator curator,
-                                            ConfigserverConfig configserverConfig,
-                                            Clock clock,
-                                            ReloadListener reloadListener) {
-        return new TenantApplications(tenantName,
-                                      curator,
-                                      new StripedExecutor<>(new InThreadExecutorService()),
-                                      new InThreadExecutorService(),
-                                      Metrics.createTestMetrics(),
-                                      reloadListener,
-                                      configserverConfig,
-                                      hostRegistry,
-                                      new TenantFileSystemDirs(new ConfigServerDB(configserverConfig), tenantName),
-                                      clock);
+        this.configserverConfig = configserverConfig;
     }
 
     /** The curator backed ZK storage of this. */
@@ -209,8 +196,6 @@ public class TenantApplications implements RequestHandler, HostValidator<Applica
                 default:
                     break;
             }
-            // We may have lost events and may need to remove applications.
-            removeUnusedApplications();
         });
     }
 
@@ -252,21 +237,24 @@ public class TenantApplications implements RequestHandler, HostValidator<Applica
         }
     }
 
+    // Note: Assumes that caller already holds the application lock
+    // (when getting event from zookeeper to remove application,
+    // the lock should be held by the thread that causes the event to happen)
     public void removeApplication(ApplicationId applicationId) {
-        try (Lock lock = lock(applicationId)) {
-            if (exists(applicationId)) {
-                log.log(Level.INFO, "Tried removing application " + applicationId + ", but it seems to have been deployed again");
-                return;
-            }
+        log.log(Level.FINE, "Removing application " + applicationId);
+        if (exists(applicationId)) {
+            log.log(Level.INFO, "Tried removing application " + applicationId + ", but it seems to have been deployed again");
+            return;
+        }
 
-            if (hasApplication(applicationId)) {
-                applicationMapper.remove(applicationId);
-                hostRegistry.removeHostsForKey(applicationId);
-                reloadListenersOnRemove(applicationId);
-                tenantMetricUpdater.setApplications(applicationMapper.numApplications());
-                metrics.removeMetricUpdater(Metrics.createDimensions(applicationId));
-                log.log(Level.INFO, "Application removed: " + applicationId);
-            }
+        if (hasApplication(applicationId)) {
+            applicationMapper.remove(applicationId);
+            hostRegistry.removeHostsForKey(applicationId);
+            reloadListenersOnRemove(applicationId);
+            tenantMetricUpdater.setApplications(applicationMapper.numApplications());
+            metrics.removeMetricUpdater(Metrics.createDimensions(applicationId));
+            getRemoveApplicationWaiter(applicationId).notifyCompletion();
+            log.log(Level.INFO, "Application removed: " + applicationId);
         }
     }
 
@@ -277,7 +265,9 @@ public class TenantApplications implements RequestHandler, HostValidator<Applica
     public void removeApplicationsExcept(Set<ApplicationId> applications) {
         for (ApplicationId activeApplication : applicationMapper.listApplicationIds()) {
             if ( ! applications.contains(activeApplication)) {
-                removeApplication(activeApplication);
+                try (var applicationLock = lock(activeApplication)){
+                    removeApplication(activeApplication);
+                }
             }
         }
     }
@@ -408,5 +398,141 @@ public class TenantApplications implements RequestHandler, HostValidator<Applica
     }
 
     public TenantFileSystemDirs getTenantFileSystemDirs() { return tenantFileSystemDirs; }
+
+    public CompletionWaiter createRemoveApplicationWaiter(ApplicationId applicationId) {
+        return RemoveApplicationWaiter.createAndInitialize(curator, applicationId, configserverConfig.serverId());
+    }
+
+    public CompletionWaiter getRemoveApplicationWaiter(ApplicationId applicationId) {
+        return RemoveApplicationWaiter.create(curator, applicationId, configserverConfig.serverId());
+    }
+
+    /**
+     * Waiter for removing application. Will wait for some time for all servers to remove application,
+     * but will accept majority of servers to have removed app if it takes a long time.
+     */
+    static class RemoveApplicationWaiter implements CompletionWaiter {
+
+        private static final java.util.logging.Logger log = Logger.getLogger(RemoveApplicationWaiter.class.getName());
+        private static final Duration waitForAllDefault = Duration.ofSeconds(5);
+
+        private final Curator curator;
+        private final Path barrierPath;
+        private final Path waiterNode;
+        private final Duration waitForAll;
+        private final Clock clock = Clock.systemUTC();
+
+        RemoveApplicationWaiter(Curator curator, ApplicationId applicationId, String serverId) {
+            this(curator, applicationId, serverId, waitForAllDefault);
+        }
+
+        RemoveApplicationWaiter(Curator curator, ApplicationId applicationId, String serverId, Duration waitForAll) {
+            this.barrierPath = TenantRepository.getBarriersPath().append(applicationId.tenant().value())
+                                               .append("delete-application")
+                                               .append(applicationId.serializedForm());
+            this.waiterNode = barrierPath.append(serverId);
+            this.curator = curator;
+            this.waitForAll = waitForAll;
+        }
+
+        @Override
+        public void awaitCompletion(Duration timeout) {
+            List<String> respondents;
+            try {
+                respondents = awaitInternal(timeout);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            if (respondents.size() < barrierMemberCount()) {
+                throw new CompletionTimeoutException("Timed out waiting for peer config servers to remove application " +
+                                                     "(waited for barrier " + barrierPath + ")." +
+                                                     "Got response from " + respondents + ", but need response from " +
+                                                     "at least " + barrierMemberCount() + " server(s). " +
+                                                     "Timeout passed as argument was " + timeout.toMillis() + " ms");
+            }
+        }
+
+        private List<String> awaitInternal(Duration timeout) throws Exception {
+            Instant startTime = clock.instant();
+            Instant endTime = startTime.plus(timeout);
+            Instant gotQuorumTime = Instant.EPOCH;
+            List<String> respondents;
+            do {
+                respondents = curator.framework().getChildren().forPath(barrierPath.getAbsolute());
+                if (log.isLoggable(Level.FINE)) {
+                    log.log(Level.FINE, respondents.size() + "/" + curator.zooKeeperEnsembleCount() + " responded: " +
+                                        respondents + ", all participants: " + curator.zooKeeperEnsembleConnectionSpec());
+                }
+
+                // If all config servers responded, return
+                if (respondents.size() == curator.zooKeeperEnsembleCount()) {
+                    log.log(Level.FINE, barrierCompletedMessage(respondents, startTime));
+                    break;
+                }
+
+                // If some are missing, quorum is enough, but wait for all up to 5 seconds before returning
+                if (respondents.size() >= barrierMemberCount()) {
+                    if (gotQuorumTime.isBefore(startTime))
+                        gotQuorumTime = Instant.now();
+
+                    // Give up if more than some time has passed since we got quorum, otherwise continue
+                    if (Duration.between(Instant.now(), gotQuorumTime.plus(waitForAll)).isNegative()) {
+                        log.log(Level.FINE, barrierCompletedMessage(respondents, startTime));
+                        break;
+                    }
+                }
+
+                Thread.sleep(100);
+            } while (clock.instant().isBefore(endTime));
+
+            return respondents;
+        }
+
+        private String barrierCompletedMessage(List<String> respondents, Instant startTime) {
+            return barrierPath + " completed in " + Duration.between(startTime, Instant.now()).toString() +
+                   ", " + respondents.size() + "/" + curator.zooKeeperEnsembleCount() + " responded: " + respondents;
+        }
+
+        @Override
+        public void notifyCompletion() {
+            try {
+                curator.framework().create().forPath(waiterNode.getAbsolute());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        @Override
+        public String toString() { return "'" + barrierPath + "', " + barrierMemberCount() + " members"; }
+
+        public static CompletionWaiter create(Curator curator, ApplicationId applicationId, String serverId) {
+            return new RemoveApplicationWaiter(curator, applicationId, serverId);
+        }
+
+        public static CompletionWaiter create(Curator curator, ApplicationId applicationId, String serverId, Duration waitForAll) {
+            return new RemoveApplicationWaiter(curator, applicationId, serverId, waitForAll);
+        }
+
+        public static CompletionWaiter createAndInitialize(Curator curator, ApplicationId applicationId, String serverId) {
+            return createAndInitialize(curator, applicationId, serverId, waitForAllDefault);
+        }
+
+        public static CompletionWaiter createAndInitialize(Curator curator, ApplicationId applicationId, String serverId, Duration waitForAll) {
+            RemoveApplicationWaiter waiter = new RemoveApplicationWaiter(curator, applicationId, serverId, waitForAll);
+
+            // Cleanup and create a new barrier path
+            Path barrierPath = waiter.barrierPath();
+            curator.delete(barrierPath);
+            curator.create(barrierPath.getParentPath());
+            curator.createAtomically(barrierPath);
+
+            return waiter;
+        }
+
+        private int barrierMemberCount() { return (curator.zooKeeperEnsembleCount() / 2) + 1; /* majority */ }
+
+        private Path barrierPath() { return barrierPath; }
+
+    }
 
 }

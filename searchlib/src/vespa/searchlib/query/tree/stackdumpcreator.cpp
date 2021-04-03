@@ -169,18 +169,28 @@ class QueryNodeConverter : public QueryVisitor {
         if (typefield & ParseItem::IF_FLAGS) {
             appendByte(flags);
         }
-        appendCompressedPositiveNumber(node.getChildren().size());
+        appendCompressedPositiveNumber(node.getNumTerms());
         appendString(node.getView());
+    }
+
+    void createMultiTermNodes(const MultiTerm & mt) {
+        for (size_t i = 0; i < mt.getNumTerms(); ++i) {
+            auto term = mt.getAsString(i);
+            uint8_t typeField = static_cast<uint8_t>(ParseItem::ITEM_PURE_WEIGHTED_STRING) | static_cast<uint8_t>(ParseItem::IF_WEIGHT);
+            appendByte(typeField);
+            appendCompressedNumber(term.second.percent());
+            appendString(term.first);
+        }
     }
 
     void visit(WeightedSetTerm &node) override {
         createWeightedSet(node, static_cast<uint8_t>(ParseItem::ITEM_WEIGHTED_SET) | static_cast<uint8_t>(ParseItem::IF_WEIGHT));
-        visitNodes(node.getChildren());
+        createMultiTermNodes(node);
     }
 
     void visit(DotProduct &node) override {
         createWeightedSet(node, static_cast<uint8_t>(ParseItem::ITEM_DOT_PRODUCT) | static_cast<uint8_t>(ParseItem::IF_WEIGHT));
-        visitNodes(node.getChildren());
+        createMultiTermNodes(node);
     }
 
     void visit(WandTerm &node) override {
@@ -188,7 +198,7 @@ class QueryNodeConverter : public QueryVisitor {
         appendCompressedPositiveNumber(node.getTargetNumHits());
         appendDouble(node.getScoreThreshold());
         appendDouble(node.getThresholdBoostFactor());
-        visitNodes(node.getChildren());
+        createMultiTermNodes(node);
     }
 
     void visit(Rank &node) override {
@@ -264,8 +274,7 @@ class QueryNodeConverter : public QueryVisitor {
         createTermNode(node, ParseItem::ITEM_NEAREST_NEIGHBOR);
         appendString(node.get_query_tensor_name());
         appendCompressedPositiveNumber(node.get_target_num_hits());
-        // XXX subtract 0x40 later:
-        appendCompressedPositiveNumber(node.get_allow_approximate() ? 0x41 : 0x40);
+        appendCompressedPositiveNumber(node.get_allow_approximate() ? 0x1 : 0x0);
         appendCompressedPositiveNumber(node.get_explore_additional_hits());
         appendDouble(node.get_distance_threshold());
     }

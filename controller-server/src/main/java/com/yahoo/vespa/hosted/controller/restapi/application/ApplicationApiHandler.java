@@ -41,7 +41,7 @@ import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.Instance;
 import com.yahoo.vespa.hosted.controller.LockedTenant;
 import com.yahoo.vespa.hosted.controller.NotExistsException;
-import com.yahoo.vespa.hosted.controller.api.ActivateResult;
+import com.yahoo.vespa.hosted.controller.application.ActivateResult;
 import com.yahoo.vespa.hosted.controller.api.application.v4.EnvironmentResource;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.EndpointStatus;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.ProtonMetrics;
@@ -939,7 +939,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
             jsonObject.set("metrics", jsonArray);
             return new JsonResponse(200, jsonMapper.writerWithDefaultPrettyPrinter().writeValueAsString(jsonObject));
         } catch (JsonProcessingException e) {
-            log.log(Level.SEVERE, "Unable to build JsonResponse with Proton data: " + e.getMessage(), e);
+            log.log(Level.WARNING, "Unable to build JsonResponse with Proton data: " + e.getMessage(), e);
             return new JsonResponse(500, "");
         }
     }
@@ -1561,7 +1561,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         ZoneId zone = requireZone(environment, region);
         ServiceApiResponse response = new ServiceApiResponse(zone,
                                                              new ApplicationId.Builder().tenant(tenantName).applicationName(applicationName).instanceName(instanceName).build(),
-                                                             controller.zoneRegistry().getConfigServerApiUris(zone),
+                                                             List.of(controller.zoneRegistry().getConfigServerVipUri(zone)),
                                                              request.getUri());
         response.setResponse(applicationView);
         return response;
@@ -1579,7 +1579,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         Map<?,?> result = controller.serviceRegistry().configServer().getServiceApiResponse(deploymentId, serviceName, restPath);
         ServiceApiResponse response = new ServiceApiResponse(deploymentId.zoneId(),
                                                              deploymentId.applicationId(),
-                                                             controller.zoneRegistry().getConfigServerApiUris(deploymentId.zoneId()),
+                                                             List.of(controller.zoneRegistry().getConfigServerVipUri(deploymentId.zoneId())),
                                                              request.getUri());
         response.setResponse(result, serviceName, restPath);
         return response;

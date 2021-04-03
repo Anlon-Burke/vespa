@@ -12,20 +12,21 @@ class IEnumStore;
 /**
  * Concrete dictionary for an enum store that extends the functionality of a unique store dictionary.
  */
-template <typename DictionaryT, typename UnorderedDictionaryT = vespalib::datastore::NoUnorderedDictionary>
-class EnumStoreDictionary : public vespalib::datastore::UniqueStoreDictionary<DictionaryT, IEnumStoreDictionary, UnorderedDictionaryT> {
+template <typename BTreeDictionaryT, typename HashDictionaryT = vespalib::datastore::NoHashDictionary>
+class EnumStoreDictionary : public vespalib::datastore::UniqueStoreDictionary<BTreeDictionaryT, IEnumStoreDictionary, HashDictionaryT> {
 protected:
     using EntryRef = IEnumStoreDictionary::EntryRef;
     using Index = IEnumStoreDictionary::Index;
-    using DictionaryType = DictionaryT;
+    using BTreeDictionaryType = BTreeDictionaryT;
 private:
     using EnumVector = IEnumStoreDictionary::EnumVector;
     using IndexSet = IEnumStoreDictionary::IndexSet;
     using IndexVector = IEnumStoreDictionary::IndexVector;
-    using ParentUniqueStoreDictionary = vespalib::datastore::UniqueStoreDictionary<DictionaryT, IEnumStoreDictionary, UnorderedDictionaryT>;
+    using ParentUniqueStoreDictionary = vespalib::datastore::UniqueStoreDictionary<BTreeDictionaryT, IEnumStoreDictionary, HashDictionaryT>;
     using generation_t = IEnumStoreDictionary::generation_t;
 protected:
-    using ParentUniqueStoreDictionary::has_unordered_dictionary;
+    using ParentUniqueStoreDictionary::has_btree_dictionary;
+    using ParentUniqueStoreDictionary::has_hash_dictionary;
 private:
     IEnumStore& _enumStore;
 
@@ -36,8 +37,6 @@ public:
     EnumStoreDictionary(IEnumStore& enumStore, std::unique_ptr<vespalib::datastore::EntryComparator> compare);
 
     ~EnumStoreDictionary() override;
-
-    const DictionaryT& get_raw_dictionary() const { return this->_dict; }
 
     void free_unused_values(const vespalib::datastore::EntryComparator& cmp) override;
 
@@ -56,8 +55,7 @@ public:
     Index remap_index(Index idx) override;
     void clear_all_posting_lists(std::function<void(EntryRef)> clearer) override;
     void update_posting_list(Index idx, const vespalib::datastore::EntryComparator& cmp, std::function<EntryRef(EntryRef)> updater) override;
-    bool check_posting_lists(std::function<EntryRef(EntryRef)> updater) override;
-    EnumPostingTree& get_posting_dictionary() override;
+    bool normalize_posting_lists(std::function<EntryRef(EntryRef)> normalize) override;
     const EnumPostingTree& get_posting_dictionary() const override;
 };
 

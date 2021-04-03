@@ -79,6 +79,8 @@ public interface NodeRepository {
     void patchApplication(ZoneId zone, ApplicationId application,
                           double currentReadShare, double maxReadShare);
 
+    NodeRepoStats getStats(ZoneId zone);
+
     Map<TenantName, URI> getArchiveUris(ZoneId zone);
 
     void setArchiveUri(ZoneId zone, TenantName tenantName, URI archiveUri);
@@ -181,6 +183,8 @@ public interface NodeRepository {
             case proxyhost: return NodeType.proxyhost;
             case config: return NodeType.config;
             case confighost: return NodeType.confighost;
+            case controller: return NodeType.controller;
+            case controllerhost: return NodeType.controllerhost;
             default: throw new IllegalArgumentException("Unknown type: " + nodeType);
         }
     }
