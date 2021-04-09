@@ -17,6 +17,7 @@ import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.hosted.controller.api.integration.ServiceRegistry;
 import com.yahoo.vespa.hosted.controller.api.integration.maven.MavenRepository;
 import com.yahoo.vespa.hosted.controller.api.integration.zone.ZoneRegistry;
+import com.yahoo.vespa.hosted.controller.archive.CuratorArchiveBucketDb;
 import com.yahoo.vespa.hosted.controller.auditlog.AuditLogger;
 import com.yahoo.vespa.hosted.controller.config.ControllerConfig;
 import com.yahoo.vespa.hosted.controller.deployment.JobController;
@@ -80,6 +81,7 @@ public class Controller extends AbstractComponent {
     private final RoutingController routingController;
     private final ControllerConfig controllerConfig;
     private final SecretStore secretStore;
+    private final CuratorArchiveBucketDb archiveBucketDb;
 
     /**
      * Creates a controller 
@@ -115,6 +117,7 @@ public class Controller extends AbstractComponent {
         routingController = new RoutingController(this, Objects.requireNonNull(rotationsConfig, "RotationsConfig cannot be null"));
         auditLogger = new AuditLogger(curator, clock);
         jobControl = new JobControl(new JobControlFlags(curator, flagSource));
+        archiveBucketDb = new CuratorArchiveBucketDb(this);
         this.controllerConfig = controllerConfig;
         this.secretStore = secretStore;
 
@@ -214,16 +217,13 @@ public class Controller extends AbstractComponent {
     }
 
     /** Set the target OS version for infrastructure on cloud in this system */
-    public void upgradeOsIn(CloudName cloudName, Version version, Optional<Duration> upgradeBudget, boolean force) {
+    public void upgradeOsIn(CloudName cloudName, Version version, Duration upgradeBudget, boolean force) {
         if (version.isEmpty()) {
             throw new IllegalArgumentException("Invalid version '" + version.toFullString() + "'");
         }
         Set<CloudName> clouds = clouds();
         if (!clouds.contains(cloudName)) {
             throw new IllegalArgumentException("Cloud '" + cloudName + "' does not exist in this system");
-        }
-        if (!zoneRegistry.zones().ofCloud(cloudName).reprovisionToUpgradeOs().ids().isEmpty() && upgradeBudget.isEmpty()) {
-            throw new IllegalArgumentException("Cloud '" + cloudName.value() + "' requires a time budget for OS upgrades");
         }
         try (Lock lock = curator.lockOsVersions()) {
             Set<OsVersionTarget> targets = new TreeSet<>(curator.readOsVersionTargets());
@@ -236,7 +236,7 @@ public class Controller extends AbstractComponent {
             targets.add(new OsVersionTarget(new OsVersion(version, cloudName), upgradeBudget));
             curator.writeOsVersionTargets(targets);
             log.info("Triggered OS upgrade to " + version.toFullString() + " in cloud " +
-                     cloudName.value() + upgradeBudget.map(b -> ", with upgrade budget " + b).orElse(""));
+                     cloudName.value() + ", with upgrade budget " + upgradeBudget);
         }
     }
 
@@ -301,5 +301,9 @@ public class Controller extends AbstractComponent {
 
     public JobControl jobControl() {
         return jobControl;
+    }
+
+    public CuratorArchiveBucketDb archiveBucketDb() {
+        return archiveBucketDb;
     }
 }

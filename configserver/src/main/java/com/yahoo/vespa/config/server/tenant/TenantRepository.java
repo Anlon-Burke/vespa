@@ -103,7 +103,8 @@ public class TenantRepository {
     private final Metrics metrics;
     private final MetricUpdater metricUpdater;
     private final ExecutorService zkCacheExecutor;
-    private final StripedExecutor<TenantName> zkWatcherExecutor;
+    private final StripedExecutor<TenantName> zkSessionWatcherExecutor;
+    private final StripedExecutor<TenantName> zkApplicationWatcherExecutor;
     private final FileDistributionFactory fileDistributionFactory;
     private final FlagSource flagSource;
     private final SecretStore secretStore;
@@ -122,7 +123,6 @@ public class TenantRepository {
 
     /**
      * Creates a new tenant repository
-     * 
      */
     @Inject
     public TenantRepository(HostRegistry hostRegistry,
@@ -142,6 +142,7 @@ public class TenantRepository {
              configCurator,
              metrics,
              new StripedExecutor<>(),
+             new StripedExecutor<>(),
              new FileDistributionFactory(configserverConfig),
              flagSource,
              Executors.newFixedThreadPool(1, ThreadFactoryFactory.getThreadFactory(TenantRepository.class.getName())),
@@ -160,7 +161,8 @@ public class TenantRepository {
     public TenantRepository(HostRegistry hostRegistry,
                             ConfigCurator configCurator,
                             Metrics metrics,
-                            StripedExecutor<TenantName> zkWatcherExecutor,
+                            StripedExecutor<TenantName> zkApplicationWatcherExecutor ,
+                            StripedExecutor<TenantName> zkSessionWatcherExecutor,
                             FileDistributionFactory fileDistributionFactory,
                             FlagSource flagSource,
                             ExecutorService zkCacheExecutor,
@@ -182,7 +184,8 @@ public class TenantRepository {
         this.metrics = metrics;
         metricUpdater = metrics.getOrCreateMetricUpdater(Collections.emptyMap());
         this.zkCacheExecutor = zkCacheExecutor;
-        this.zkWatcherExecutor = zkWatcherExecutor;
+        this.zkApplicationWatcherExecutor = zkApplicationWatcherExecutor;
+        this.zkSessionWatcherExecutor = zkSessionWatcherExecutor;
         this.fileDistributionFactory = fileDistributionFactory;
         this.flagSource = flagSource;
         this.secretStore = secretStore;
@@ -198,11 +201,8 @@ public class TenantRepository {
 
         curator.framework().getConnectionStateListenable().addListener(this::stateChanged);
 
-        curator.create(tenantsPath);
-        curator.create(locksPath);
-        curator.create(barriersPath);
+        createPaths();
         createSystemTenants(configserverConfig);
-        curator.create(vespaPath);
 
         this.directoryCache = Optional.of(curator.createDirectoryCache(tenantsPath.getAbsolute(), false, false, zkCacheExecutor));
         this.directoryCache.get().addListener(this::childEvent);
@@ -256,8 +256,15 @@ public class TenantRepository {
         return metaData.orElse(new TenantMetaData(tenant.getName(), tenant.getCreatedTime(), tenant.getCreatedTime()));
     }
 
-     private static Set<TenantName> readTenantsFromZooKeeper(Curator curator) {
+    private static Set<TenantName> readTenantsFromZooKeeper(Curator curator) {
         return curator.getChildren(tenantsPath).stream().map(TenantName::from).collect(Collectors.toSet());
+    }
+
+    private void createPaths() {
+        curator.create(tenantsPath);
+        curator.create(locksPath);
+        curator.create(barriersPath);
+        curator.create(vespaPath);
     }
 
     private void bootstrapTenants() {
@@ -315,7 +322,7 @@ public class TenantRepository {
         TenantApplications applicationRepo =
                 new TenantApplications(tenantName,
                                        curator,
-                                       zkWatcherExecutor,
+                                       zkApplicationWatcherExecutor,
                                        zkCacheExecutor,
                                        metrics,
                                        reloadListener,
@@ -339,7 +346,7 @@ public class TenantRepository {
                                                                     sessionPreparer,
                                                                     configCurator,
                                                                     metrics,
-                                                                    zkWatcherExecutor,
+                                                                    zkSessionWatcherExecutor,
                                                                     permanentApplicationPackage,
                                                                     flagSource,
                                                                     zkCacheExecutor,
@@ -508,12 +515,12 @@ public class TenantRepository {
             case CHILD_ADDED:
                 TenantName t1 = getTenantNameFromEvent(event);
                 if ( ! tenants.containsKey(t1))
-                    zkWatcherExecutor.execute(t1, () -> bootstrapTenant(t1));
+                    zkApplicationWatcherExecutor.execute(t1, () -> bootstrapTenant(t1));
                 break;
             case CHILD_REMOVED:
                 TenantName t2 = getTenantNameFromEvent(event);
                 if (tenants.containsKey(t2))
-                    zkWatcherExecutor.execute(t2, () -> deleteTenant(t2));
+                    zkApplicationWatcherExecutor.execute(t2, () -> deleteTenant(t2));
                 break;
             default:
                 break; // Nothing to do
@@ -534,7 +541,8 @@ public class TenantRepository {
         try {
             zkCacheExecutor.shutdown();
             checkForRemovedApplicationsService.shutdown();
-            zkWatcherExecutor.shutdownAndWait();
+            zkApplicationWatcherExecutor.shutdownAndWait();
+            zkSessionWatcherExecutor.shutdownAndWait();
             zkCacheExecutor.awaitTermination(50, TimeUnit.SECONDS);
             checkForRemovedApplicationsService.awaitTermination(50, TimeUnit.SECONDS);
         }

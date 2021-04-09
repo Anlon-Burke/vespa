@@ -194,14 +194,36 @@ public final class Node implements Nodelike {
     }
 
     /**
+     * Returns a copy of this where wantToFail is set to true and history is updated to reflect this.
+     */
+    public Node withWantToFail(boolean wantToFail, Agent agent, String reason, Instant at) {
+        Node node = this.with(status.withWantToFail(wantToFail));
+        if (wantToFail)
+            node = node.with(history.with(new History.Event(History.Event.Type.wantToFail, agent, at)));
+        return node;
+
+    }
+
+    /**
      * Returns a copy of this node with wantToRetire and wantToDeprovision set to the given values and updated history.
      *
      * If both given wantToRetire and wantToDeprovision are equal to the current values, the method is no-op.
      */
     public Node withWantToRetire(boolean wantToRetire, boolean wantToDeprovision, Agent agent, Instant at) {
+        return withWantToRetire(wantToRetire, wantToDeprovision, false, agent, at);
+    }
+
+    /**
+     * Returns a copy of this node with wantToRetire, wantToDeprovision and wantToRebuild set to the given values
+     * and updated history.
+     *
+     * If all given values are equal to the current ones, the method is no-op.
+     */
+    public Node withWantToRetire(boolean wantToRetire, boolean wantToDeprovision, boolean wantToRebuild, Agent agent, Instant at) {
         if (wantToRetire == status.wantToRetire() &&
-            wantToDeprovision == status.wantToDeprovision()) return this;
-        Node node = this.with(status.withWantToRetire(wantToRetire, wantToDeprovision));
+            wantToDeprovision == status.wantToDeprovision() &&
+            wantToRebuild == status.wantToRebuild()) return this;
+        Node node = this.with(status.withWantToRetire(wantToRetire, wantToDeprovision, wantToRebuild));
         if (wantToRetire)
             node = node.with(history.with(new History.Event(History.Event.Type.wantToRetire, agent, at)));
         return node;

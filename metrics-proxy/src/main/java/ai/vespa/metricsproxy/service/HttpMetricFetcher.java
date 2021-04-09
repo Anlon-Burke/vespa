@@ -1,13 +1,24 @@
 // Copyright 2020 Oath Inc. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.metricsproxy.service;
 
-import ai.vespa.util.http.hc4.VespaHttpClientBuilder;
+import ai.vespa.util.http.hc5.VespaAsyncHttpClientBuilder;
+
+import java.io.InputStream;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.logging.Level;
+
 import com.yahoo.yolean.Exceptions;
-import org.apache.http.client.config.RequestConfig;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.BasicResponseHandler;
-import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.impl.async.CloseableHttpAsyncClient;
+import org.apache.hc.core5.http.ContentType;
+import org.apache.hc.core5.http.HttpResponse;
+import org.apache.hc.core5.http.Message;
+import org.apache.hc.core5.http.Method;
+import org.apache.hc.core5.http.nio.support.BasicRequestProducer;
+import org.apache.hc.core5.http.nio.support.BasicResponseConsumer;
+import org.apache.hc.core5.http.nio.support.classic.AbstractClassicEntityConsumer;
+import org.apache.hc.core5.util.Timeout;
 
 import java.io.IOException;
 import java.net.URI;
@@ -26,10 +37,10 @@ public abstract class HttpMetricFetcher {
     // The call to apache will do 3 retries. As long as we check the services in series, we can't have this too high.
     public static int CONNECTION_TIMEOUT = 5000;
     private final static int SOCKET_TIMEOUT = 60000;
+    private final static int BUFFER_SIZE = 0x40000; // 256k
     private final URI url;
     protected final VespaService service;
-    private static final CloseableHttpClient httpClient = createHttpClient();
-
+    private static final CloseableHttpAsyncClient httpClient = createHttpClient();
 
     /**
      * @param service the service to fetch metrics from
@@ -43,21 +54,29 @@ public abstract class HttpMetricFetcher {
         log.log(Level.FINE, "Fetching metrics from " + u + " with timeout " + CONNECTION_TIMEOUT);
     }
 
-    String getJson() throws IOException {
+    InputStream getJson() throws IOException,InterruptedException, ExecutionException {
         log.log(Level.FINE, "Connecting to url " + url + " for service '" + service + "'");
-        return httpClient.execute(new HttpGet(url), new BasicResponseHandler());
+        Future<Message<HttpResponse, InputStream>> response = httpClient.execute(
+                new BasicRequestProducer(Method.GET, url),
+                new BasicResponseConsumer<>(new AbstractClassicEntityConsumer<>(BUFFER_SIZE, Runnable::run) {
+                    @Override
+                    protected InputStream consumeData(ContentType contentType, InputStream inputStream) {
+                        return inputStream;
+                    }
+                }), null);
+        return response.get().getBody();
     }
 
     public String toString() {
         return this.getClass().getSimpleName() + " using " + url;
     }
 
-    String errMsgNoResponse(IOException e) {
+    String errMsgNoResponse(Exception e) {
         return "Unable to get response from service '" + service + "': " +
                 Exceptions.toMessageString(e);
     }
 
-    void handleException(Exception e, String data, int timesFetched) {
+    void handleException(Exception e, Object data, int timesFetched) {
         logMessage("Unable to parse json '" + data + "' for service '" + service + "': " +
                            Exceptions.toMessageString(e), timesFetched);
     }
@@ -78,14 +97,16 @@ public abstract class HttpMetricFetcher {
         }
     }
 
-    private static CloseableHttpClient createHttpClient() {
-        return VespaHttpClientBuilder.create()
+    private static CloseableHttpAsyncClient createHttpClient() {
+        CloseableHttpAsyncClient client =  VespaAsyncHttpClientBuilder.create()
                 .setUserAgent("metrics-proxy-http-client")
                 .setDefaultRequestConfig(RequestConfig.custom()
-                                                 .setConnectTimeout(CONNECTION_TIMEOUT)
-                                                 .setSocketTimeout(SOCKET_TIMEOUT)
+                                                 .setConnectTimeout(Timeout.ofMilliseconds(CONNECTION_TIMEOUT))
+                                                 .setResponseTimeout(Timeout.ofMilliseconds(SOCKET_TIMEOUT))
                                                  .build())
                 .build();
+        client.start();
+        return client;
     }
 
 }

@@ -48,6 +48,11 @@ public class NodeList extends AbstractFilteringList<Node, NodeList> {
         return matching(node -> node.status().wantToRetire() && node.status().wantToDeprovision());
     }
 
+    /** Returns the subset of nodes that are being rebuilt */
+    public NodeList rebuilding() {
+        return matching(node -> node.status().wantToRetire() && node.status().wantToRebuild());
+    }
+
     /** Returns the subset of nodes which are removable */
     public NodeList removable() {
         return matching(node -> node.allocation().isPresent() && node.allocation().get().isRemovable());
@@ -62,6 +67,11 @@ public class NodeList extends AbstractFilteringList<Node, NodeList> {
     /** Returns the subset of nodes not in the given set */
     public NodeList except(Set<Node> nodes) {
         return matching(node -> ! nodes.contains(node));
+    }
+
+    /** Returns the subset of nodes excluding given node */
+    public NodeList except(Node node) {
+        return except(Set.of(node));
     }
 
     /** Returns the subset of nodes assigned to the given cluster type */
@@ -89,6 +99,11 @@ public class NodeList extends AbstractFilteringList<Node, NodeList> {
         return matching(node -> node.status().vespaVersion().isPresent() &&
                                 node.allocation().isPresent() &&
                                 !node.status().vespaVersion().get().equals(node.allocation().get().membership().cluster().vespaVersion()));
+    }
+
+    /** Returns the subset of nodes with want to fail set to true */
+    public NodeList failing() {
+        return matching(node -> node.status().wantToFail());
     }
 
     /** Returns the subset of nodes that are currently changing their OS version to given version */
@@ -127,6 +142,11 @@ public class NodeList extends AbstractFilteringList<Node, NodeList> {
     /** Returns the subset of nodes owned by the given application */
     public NodeList owner(ApplicationId application) {
         return matching(node -> node.allocation().map(a -> a.owner().equals(application)).orElse(false));
+    }
+
+    /** Returns the subset of nodes allocated to a tester instance */
+    public NodeList tester() {
+        return matching(node -> node.allocation().isPresent() && node.allocation().get().owner().instance().isTester());
     }
 
     /** Returns the subset of nodes matching the given node type(s) */

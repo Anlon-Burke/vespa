@@ -82,7 +82,9 @@ public class NodeSerializer {
     private static final String nodeTypeKey = "type";
     private static final String wantToRetireKey = "wantToRetire";
     private static final String wantToDeprovisionKey = "wantToDeprovision";
+    private static final String wantToRebuildKey = "wantToRebuild";
     private static final String preferToRetireKey = "preferToRetire";
+    private static final String wantToFailKey = "wantToFailKey";
     private static final String osVersionKey = "osVersion";
     private static final String wantedOsVersionKey = "wantedOsVersion";
     private static final String firmwareCheckKey = "firmwareCheck";
@@ -164,6 +166,8 @@ public class NodeSerializer {
         object.setBool(wantToRetireKey, node.status().wantToRetire());
         object.setBool(preferToRetireKey, node.status().preferToRetire());
         object.setBool(wantToDeprovisionKey, node.status().wantToDeprovision());
+        object.setBool(wantToFailKey, node.status().wantToFail());
+        object.setBool(wantToRebuildKey, node.status().wantToRebuild());
         node.allocation().ifPresent(allocation -> toSlime(allocation, object.setObject(instanceKey)));
         toSlime(node.history(), object.setArray(historyKey));
         object.setString(nodeTypeKey, toString(node.type()));
@@ -271,7 +275,9 @@ public class NodeSerializer {
                           (int) object.field(failCountKey).asLong(),
                           object.field(wantToRetireKey).asBool(),
                           object.field(wantToDeprovisionKey).asBool(),
+                          object.field(wantToRebuildKey).asBool(),
                           object.field(preferToRetireKey).asBool(),
+                          object.field(wantToFailKey).asBool(),
                           new OsVersion(versionFromSlime(object.field(osVersionKey)),
                                         versionFromSlime(object.field(wantedOsVersionKey))),
                           instantFromSlime(object.field(firmwareCheckKey)));
@@ -413,6 +419,7 @@ public class NodeSerializer {
             case "reserved" : return History.Event.Type.reserved;
             case "activated" : return History.Event.Type.activated;
             case "wantToRetire": return History.Event.Type.wantToRetire;
+            case "wantToFail": return History.Event.Type.wantToFail;
             case "retired" : return History.Event.Type.retired;
             case "deactivated" : return History.Event.Type.deactivated;
             case "parked" : return History.Event.Type.parked;
@@ -438,6 +445,7 @@ public class NodeSerializer {
             case reserved : return "reserved";
             case activated : return "activated";
             case wantToRetire: return "wantToRetire";
+            case wantToFail: return "wantToFail";
             case retired : return "retired";
             case deactivated : return "deactivated";
             case parked : return "parked";
@@ -470,6 +478,7 @@ public class NodeSerializer {
             case "Rebalancer" : return Agent.Rebalancer;
             case "ReservationExpirer" : return Agent.ReservationExpirer;
             case "RetiringUpgrader" : return Agent.RetiringUpgrader;
+            case "RebuildingOsUpgrader" : return Agent.RebuildingOsUpgrader;
             case "SpareCapacityMaintainer": return Agent.SpareCapacityMaintainer;
             case "SwitchRebalancer": return Agent.SwitchRebalancer;
         }
@@ -490,6 +499,7 @@ public class NodeSerializer {
             case Rebalancer : return "Rebalancer";
             case ReservationExpirer : return "ReservationExpirer";
             case RetiringUpgrader: return "RetiringUpgrader";
+            case RebuildingOsUpgrader: return "RebuildingOsUpgrader";
             case SpareCapacityMaintainer: return "SpareCapacityMaintainer";
             case SwitchRebalancer: return "SwitchRebalancer";
         }

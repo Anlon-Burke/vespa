@@ -221,6 +221,9 @@ public class NodesV2ApiTest {
         // Make sure that wantToRetire is applied recursively, but wantToDeprovision isn't
         tester.assertResponseContains(new Request("http://localhost:8080/nodes/v2/node/host5.yahoo.com"),
                 "\"wantToRetire\":true,\"preferToRetire\":false,\"wantToDeprovision\":false,");
+        assertResponse(new Request("http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com",
+                                   Utf8.toBytes("{\"wantToRebuild\": true, \"wantToRetire\": true}"), Request.Method.PATCH),
+                       "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
 
         tester.assertResponseContains(new Request("http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com"), "\"modelName\":\"foo\"");
         assertResponse(new Request("http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com",
@@ -234,7 +237,16 @@ public class NodesV2ApiTest {
 
         assertFile(new Request("http://localhost:8080/nodes/v2/node/host4.yahoo.com"), "node4-after-changes.json");
 
-        // move the docker host to deprovisioned
+        // move a host marked as wantToRebuild to deprovisioned
+        assertResponse(new Request("http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com",
+                                   new byte[0], Request.Method.DELETE),
+                       "{\"message\":\"Removed dockerhost1.yahoo.com\"}");
+        // ... and then restore it
+        assertResponse(new Request("http://localhost:8080/nodes/v2/state/provisioned/dockerhost1.yahoo.com",
+                                   new byte[0], Request.Method.PUT),
+                       "{\"message\":\"Moved dockerhost1.yahoo.com to provisioned\"}");
+
+        // move a host to deprovisioned
         assertResponse(new Request("http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com",
                                    new byte[0], Request.Method.DELETE),
                        "{\"message\":\"Removed dockerhost1.yahoo.com\"}");
@@ -242,8 +254,6 @@ public class NodesV2ApiTest {
         assertResponse(new Request("http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com",
                                    new byte[0], Request.Method.DELETE),
                        "{\"message\":\"Permanently removed dockerhost1.yahoo.com\"}");
-
-
     }
 
     @Test
@@ -708,13 +718,13 @@ public class NodesV2ApiTest {
 
         // Upgrade OS for confighost and host
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/confighost",
-                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\"}"),
+                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\", \"upgradeBudget\": \"PT0S\"}"),
                                    Request.Method.PATCH),
-                       "{\"message\":\"Set osVersion to 7.5.2 for nodes of type confighost\"}");
+                       "{\"message\":\"Set osVersion to 7.5.2, upgradeBudget to PT0S for nodes of type confighost\"}");
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/host",
-                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\"}"),
+                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\", \"upgradeBudget\": \"PT0S\"}"),
                                    Request.Method.PATCH),
-                       "{\"message\":\"Set osVersion to 7.5.2 for nodes of type host\"}");
+                       "{\"message\":\"Set osVersion to 7.5.2, upgradeBudget to PT0S for nodes of type host\"}");
 
         // OS versions are set
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/"),
@@ -722,29 +732,29 @@ public class NodesV2ApiTest {
 
         // Upgrade OS and Vespa together
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/confighost",
-                                   Utf8.toBytes("{\"version\": \"6.124.42\", \"osVersion\": \"7.5.2\"}"),
+                                   Utf8.toBytes("{\"version\": \"6.124.42\", \"osVersion\": \"7.5.2\", \"upgradeBudget\": \"PT0S\"}"),
                                    Request.Method.PATCH),
-                       "{\"message\":\"Set version to 6.124.42, osVersion to 7.5.2 for nodes of type confighost\"}");
+                       "{\"message\":\"Set version to 6.124.42, osVersion to 7.5.2, upgradeBudget to PT0S for nodes of type confighost\"}");
 
         // Attempt to upgrade unsupported node type
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/config",
-                                          Utf8.toBytes("{\"osVersion\": \"7.5.2\"}"),
+                                          Utf8.toBytes("{\"osVersion\": \"7.5.2\", \"upgradeBudget\": \"PT0S\"}"),
                                           Request.Method.PATCH),
                               400,
                               "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Node type 'config' does not support OS upgrades\"}");
 
         // Attempt to downgrade OS
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/confighost",
-                                          Utf8.toBytes("{\"osVersion\": \"7.4.2\"}"),
+                                          Utf8.toBytes("{\"osVersion\": \"7.4.2\", \"upgradeBudget\": \"PT0S\"}"),
                                           Request.Method.PATCH),
                               400,
                               "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Cannot set target OS version to 7.4.2 without setting 'force', as it's lower than the current version: 7.5.2\"}");
 
         // Downgrading OS with force succeeds
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/confighost",
-                                   Utf8.toBytes("{\"osVersion\": \"7.4.2\", \"force\": true}"),
+                                   Utf8.toBytes("{\"osVersion\": \"7.4.2\", \"force\": true, \"upgradeBudget\": \"PT0S\"}"),
                                    Request.Method.PATCH),
-                       "{\"message\":\"Set osVersion to 7.4.2 for nodes of type confighost\"}");
+                       "{\"message\":\"Set osVersion to 7.4.2, upgradeBudget to PT0S for nodes of type confighost\"}");
 
         // Current target is considered bad, remove it
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/confighost",
@@ -778,9 +788,9 @@ public class NodesV2ApiTest {
     public void test_os_version() throws Exception {
         // Schedule OS upgrade
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/host",
-                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\"}"),
+                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\", \"upgradeBudget\": \"PT0S\"}"),
                                    Request.Method.PATCH),
-                       "{\"message\":\"Set osVersion to 7.5.2 for nodes of type host\"}");
+                       "{\"message\":\"Set osVersion to 7.5.2, upgradeBudget to PT0S for nodes of type host\"}");
 
         // Activate target
         var nodeRepository = (NodeRepository)tester.container().components().getComponent(MockNodeRepository.class.getName());

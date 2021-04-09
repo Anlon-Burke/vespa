@@ -16,12 +16,17 @@ class EnumeratedLoaderBase {
 protected:
     IEnumStore& _store;
     IndexVector _indexes;
+    EnumVector  _enum_value_remapping; // Empty if saved unique values are sorted.
 
     void release_enum_indexes();
 public:
     EnumeratedLoaderBase(IEnumStore& store);
+    ~EnumeratedLoaderBase();
     const IndexVector& get_enum_indexes() const { return _indexes; }
+    const EnumVector& get_enum_value_remapping() const noexcept { return _enum_value_remapping; }
     void load_unique_values(const void* src, size_t available);
+    void build_enum_value_remapping();
+    void free_enum_value_remapping();
     void free_unused_values();
 };
 
@@ -49,6 +54,7 @@ class EnumeratedPostingsLoader : public EnumeratedLoaderBase {
 private:
     attribute::LoadedEnumAttributeVector _loaded_enums;
     vespalib::Array<uint32_t>            _posting_indexes;
+    bool                                 _has_btree_dictionary;
 
 public:
     EnumeratedPostingsLoader(IEnumStore& store);
