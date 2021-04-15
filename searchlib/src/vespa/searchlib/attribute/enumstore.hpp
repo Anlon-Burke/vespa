@@ -214,14 +214,17 @@ EnumStoreT<EntryT>::update_stat()
     auto &store = _store.get_allocator().get_data_store();
     _cached_values_memory_usage = store.getMemoryUsage();
     _cached_values_address_space_usage = store.getAddressSpaceUsage();
+    _cached_dictionary_btree_usage = _dict->get_btree_memory_usage();
+    _cached_dictionary_hash_usage = _dict->get_hash_memory_usage();
     auto retval = _cached_values_memory_usage;
-    retval.merge(_dict->get_memory_usage());
+    retval.merge(_cached_dictionary_btree_usage);
+    retval.merge(_cached_dictionary_hash_usage);
     return retval;
 }
 
 template <typename EntryT>
 std::unique_ptr<IEnumStore::EnumIndexRemapper>
-EnumStoreT<EntryT>::consider_compact(const CompactionStrategy& compaction_strategy)
+EnumStoreT<EntryT>::consider_compact_values(const CompactionStrategy& compaction_strategy)
 {
     size_t used_bytes = _cached_values_memory_usage.usedBytes();
     size_t dead_bytes = _cached_values_memory_usage.deadBytes();
@@ -230,16 +233,38 @@ EnumStoreT<EntryT>::consider_compact(const CompactionStrategy& compaction_strate
     bool compact_memory = compaction_strategy.should_compact_memory(used_bytes, dead_bytes);
     bool compact_address_space = compaction_strategy.should_compact_address_space(used_address_space, dead_address_space);
     if (compact_memory || compact_address_space) {
-        return compact_worst(compact_memory, compact_address_space);
+        return compact_worst_values(compact_memory, compact_address_space);
     }
     return std::unique_ptr<IEnumStore::EnumIndexRemapper>();
 }
 
 template <typename EntryT>
 std::unique_ptr<IEnumStore::EnumIndexRemapper>
-EnumStoreT<EntryT>::compact_worst(bool compact_memory, bool compact_address_space)
+EnumStoreT<EntryT>::compact_worst_values(bool compact_memory, bool compact_address_space)
 {
     return _store.compact_worst(compact_memory, compact_address_space);
+}
+
+template <typename EntryT>
+bool
+EnumStoreT<EntryT>::consider_compact_dictionary(const CompactionStrategy& compaction_strategy)
+{
+    if (_dict->has_held_buffers()) {
+        return false;
+    }
+    if (compaction_strategy.should_compact_memory(_cached_dictionary_btree_usage.usedBytes(),
+                                                  _cached_dictionary_btree_usage.deadBytes()))
+    {
+        _dict->compact_worst(true, false);
+        return true;
+    }
+    if (compaction_strategy.should_compact_memory(_cached_dictionary_hash_usage.usedBytes(),
+                                                  _cached_dictionary_hash_usage.deadBytes()))
+    {
+        _dict->compact_worst(false, true);
+        return true;
+    }
+    return false;
 }
 
 template <typename EntryT>

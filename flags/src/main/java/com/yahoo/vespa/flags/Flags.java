@@ -46,7 +46,7 @@ public class Flags {
     private static volatile TreeMap<FlagId, FlagDefinition> flags = new TreeMap<>();
 
     public static final UnboundStringFlag ALLOCATE_OS_REQUIREMENT = defineStringFlag(
-            "allocate-os-requirement", "rhel7",
+            "allocate-os-requirement", "any",
             List.of("hakonhall"), "2021-01-26", "2021-07-26",
             "Allocations of new nodes are limited to the given host OS.  Must be one of 'rhel7', " +
             "'rhel8', or 'any'",
@@ -209,13 +209,13 @@ public class Flags {
 
     public static final UnboundIntFlag CLUSTER_CONTROLLER_MAX_HEAP_SIZE_IN_MB = defineIntFlag(
             "cluster-controller-max-heap-size-in-mb", 128,
-            List.of("hmusum"), "2021-02-10", "2021-04-10",
+            List.of("hmusum"), "2021-02-10", "2021-05-15",
             "JVM max heap size for cluster controller in Mb",
             "Takes effect when restarting cluster controller");
 
     public static final UnboundIntFlag METRICS_PROXY_MAX_HEAP_SIZE_IN_MB = defineIntFlag(
             "metrics-proxy-max-heap-size-in-mb", 256,
-            List.of("hmusum"), "2021-03-01", "2021-05-01",
+            List.of("hmusum"), "2021-03-01", "2021-05-15",
             "JVM max heap size for metrics proxy in Mb",
             "Takes effect when restarting metrics proxy",
             CLUSTER_TYPE);
@@ -260,11 +260,26 @@ public class Flags {
             "Whether to wait for all participating servers to delete application on config servers (with timeout) on",
             "Takes effect on next delete of an application");
 
+
     public static final UnboundBooleanFlag REBUILD_HOST = defineFeatureFlag(
             "rebuild-host", false,
             List.of("mpolden"), "2021-04-09", "2021-06-01",
             "Whether HostRebuilder should rebuild hosts marked wantToRebuild",
             "Takes effect on next HostRebuilder maintenance run");
+
+    public static final UnboundBooleanFlag ENABLE_JDISC_HTTP2 = defineFeatureFlag(
+            "enable-jdisc-http2", false,
+            List.of("bjorncs", "jonmv"), "2021-04-12", "2021-08-01",
+            "Whether jdisc HTTPS connectors should allow HTTP/2",
+            "Takes effect at redeployment",
+            APPLICATION_ID);
+
+    public static final UnboundBooleanFlag UPGRADE_DELL_SSD_FIRMWARE = defineFeatureFlag(
+            "upgrade_dell_ssd_firmware", false,
+            List.of("andreer"), "2021-04-13", "2021-05-13",
+            "Whether to consider upgrading Dell SSD firmware",
+            "Takes effect on next host-admin tick",
+            HOSTNAME);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

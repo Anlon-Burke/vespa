@@ -56,6 +56,7 @@ public class Node {
     private final boolean retired;
     private final boolean wantToRetire;
     private final boolean wantToDeprovision;
+    private final boolean wantToRebuild;
     private final Optional<TenantName> reservedTo;
     private final Optional<ApplicationId> exclusiveTo;
     private final Map<String, JsonNode> reports;
@@ -63,15 +64,16 @@ public class Node {
     private final Set<String> additionalIpAddresses;
     private final String openStackId;
     private final Optional<String> switchHostname;
+    private final Optional<String> modelName;
 
     public Node(HostName hostname, Optional<HostName> parentHostname, State state, NodeType type, NodeResources resources, Optional<ApplicationId> owner,
                 Version currentVersion, Version wantedVersion, Version currentOsVersion, Version wantedOsVersion,
                 Optional<Instant> currentFirmwareCheck, Optional<Instant> wantedFirmwareCheck, ServiceState serviceState,
                 Optional<Instant> suspendedSince, long restartGeneration, long wantedRestartGeneration, long rebootGeneration, long wantedRebootGeneration,
                 int cost, String flavor, String clusterId, ClusterType clusterType, boolean retired, boolean wantToRetire, boolean wantToDeprovision,
-                Optional<TenantName> reservedTo, Optional<ApplicationId> exclusiveTo,
+                boolean wantToRebuild, Optional<TenantName> reservedTo, Optional<ApplicationId> exclusiveTo,
                 DockerImage wantedDockerImage, DockerImage currentDockerImage, Map<String, JsonNode> reports, List<NodeHistory> history,
-                Set<String> additionalIpAddresses, String openStackId, Optional<String> switchHostname) {
+                Set<String> additionalIpAddresses, String openStackId, Optional<String> switchHostname, Optional<String> modelName) {
         this.hostname = hostname;
         this.parentHostname = parentHostname;
         this.state = state;
@@ -101,11 +103,13 @@ public class Node {
         this.exclusiveTo = exclusiveTo;
         this.wantedDockerImage = wantedDockerImage;
         this.currentDockerImage = currentDockerImage;
+        this.wantToRebuild = wantToRebuild;
         this.reports = reports;
         this.history = history;
         this.openStackId = openStackId;
         this.additionalIpAddresses = additionalIpAddresses;
         this.switchHostname = switchHostname;
+        this.modelName = modelName;
     }
 
     public HostName hostname() {
@@ -214,6 +218,10 @@ public class Node {
         return wantToDeprovision;
     }
 
+    public boolean wantToRebuild() {
+        return wantToRebuild;
+    }
+
     public Optional<TenantName> reservedTo() { return reservedTo; }
 
     public Optional<ApplicationId> exclusiveTo() { return exclusiveTo; }
@@ -237,6 +245,8 @@ public class Node {
     public Optional<String> switchHostname() {
         return switchHostname;
     }
+
+    public Optional<String> modelName() { return modelName; }
 
     @Override
     public boolean equals(Object o) {
@@ -312,6 +322,7 @@ public class Node {
         private boolean retired;
         private boolean wantToRetire;
         private boolean wantToDeprovision;
+        private boolean wantToRebuild;
         private Optional<TenantName> reservedTo = Optional.empty();
         private Optional<ApplicationId> exclusiveTo = Optional.empty();
         private Map<String, JsonNode> reports = new HashMap<>();
@@ -319,6 +330,7 @@ public class Node {
         private Set<String> additionalIpAddresses = new HashSet<>();
         private String openStackId;
         private Optional<String> switchHostname = Optional.empty();
+        private Optional<String> modelName = Optional.empty();
 
         public Builder() { }
 
@@ -350,6 +362,7 @@ public class Node {
             this.retired = node.retired;
             this.wantToRetire = node.wantToRetire;
             this.wantToDeprovision = node.wantToDeprovision;
+            this.wantToRebuild = node.wantToRebuild;
             this.reservedTo = node.reservedTo;
             this.exclusiveTo = node.exclusiveTo;
             this.reports = node.reports;
@@ -357,6 +370,7 @@ public class Node {
             this.additionalIpAddresses = node.additionalIpAddresses;
             this.openStackId = node.openStackId;
             this.switchHostname = node.switchHostname;
+            this.modelName = node.modelName;
         }
 
         public Builder hostname(HostName hostname) {
@@ -494,6 +508,11 @@ public class Node {
             return this;
         }
 
+        public Builder wantToRebuild(boolean wantToRebuild) {
+            this.wantToRebuild = wantToRebuild;
+            return this;
+        }
+
         public Builder reservedTo(TenantName tenant) {
             this.reservedTo = Optional.of(tenant);
             return this;
@@ -524,12 +543,17 @@ public class Node {
             return this;
         }
 
+        public Builder modelName(String modelName) {
+            this.modelName = Optional.ofNullable(modelName);
+            return this;
+        }
+
         public Node build() {
             return new Node(hostname, parentHostname, state, type, resources, owner, currentVersion, wantedVersion,
                             currentOsVersion, wantedOsVersion, currentFirmwareCheck, wantedFirmwareCheck, serviceState,
                             suspendedSince, restartGeneration, wantedRestartGeneration, rebootGeneration, wantedRebootGeneration,
-                            cost, flavor, clusterId, clusterType, retired, wantToRetire, wantToDeprovision, reservedTo, exclusiveTo,
-                            wantedDockerImage, currentDockerImage, reports, history, additionalIpAddresses, openStackId, switchHostname);
+                            cost, flavor, clusterId, clusterType, retired, wantToRetire, wantToDeprovision, wantToRebuild, reservedTo, exclusiveTo,
+                            wantedDockerImage, currentDockerImage, reports, history, additionalIpAddresses, openStackId, switchHostname, modelName);
         }
 
     }

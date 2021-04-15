@@ -9,7 +9,6 @@
 #include "feedhandler.h"
 #include "idocumentdbowner.h"
 #include "idocumentsubdb.h"
-#include "lid_space_compaction_handler.h"
 #include "maintenance_jobs_injector.h"
 #include "reconfig_params.h"
 #include <vespa/document/repo/documenttyperepo.h>
@@ -111,8 +110,33 @@ DocumentDB::masterExecute(FunctionType &&function) {
     _writeService.master().execute(makeLambdaTask(std::forward<FunctionType>(function)));
 }
 
+DocumentDB::SP
+DocumentDB::create(const vespalib::string &baseDir,
+                   DocumentDBConfig::SP currentSnapshot,
+                   const vespalib::string &tlsSpec,
+                   matching::QueryLimiter &queryLimiter,
+                   const vespalib::Clock &clock,
+                   const DocTypeName &docTypeName,
+                   document::BucketSpace bucketSpace,
+                   const ProtonConfig &protonCfg,
+                   IDocumentDBOwner &owner,
+                   vespalib::SyncableThreadExecutor &warmupExecutor,
+                   vespalib::ThreadExecutor &sharedExecutor,
+                   storage::spi::BucketExecutor &bucketExecutor,
+                   const search::transactionlog::WriterFactory &tlsWriterFactory,
+                   MetricsWireService &metricsWireService,
+                   const search::common::FileHeaderContext &fileHeaderContext,
+                   ConfigStore::UP config_store,
+                   InitializeThreads initializeThreads,
+                   const HwInfo &hwInfo)
+{
+    return DocumentDB::SP(
+            new DocumentDB(baseDir, std::move(currentSnapshot), tlsSpec, queryLimiter, clock, docTypeName, bucketSpace,
+                           protonCfg, owner, warmupExecutor, sharedExecutor, bucketExecutor, tlsWriterFactory,
+                           metricsWireService, fileHeaderContext, std::move(config_store), initializeThreads, hwInfo));
+}
 DocumentDB::DocumentDB(const vespalib::string &baseDir,
-                       const DocumentDBConfig::SP &configSnapshot,
+                       DocumentDBConfig::SP configSnapshot,
                        const vespalib::string &tlsSpec,
                        matching::QueryLimiter &queryLimiter,
                        const vespalib::Clock &clock,
@@ -121,7 +145,7 @@ DocumentDB::DocumentDB(const vespalib::string &baseDir,
                        const ProtonConfig &protonCfg,
                        IDocumentDBOwner &owner,
                        vespalib::SyncableThreadExecutor &warmupExecutor,
-                       vespalib::ThreadStackExecutorBase &sharedExecutor,
+                       vespalib::ThreadExecutor &sharedExecutor,
                        storage::spi::BucketExecutor & bucketExecutor,
                        const search::transactionlog::WriterFactory &tlsWriterFactory,
                        MetricsWireService &metricsWireService,
@@ -135,6 +159,7 @@ DocumentDB::DocumentDB(const vespalib::string &baseDir,
       IDocumentSubDBOwner(),
       IClusterStateChangedHandler(),
       search::transactionlog::SyncProxy(),
+      std::enable_shared_from_this<DocumentDB>(),
       _docTypeName(docTypeName),
       _bucketSpace(bucketSpace),
       _baseDir(baseDir + "/" + _docTypeName.toString()),
@@ -174,7 +199,6 @@ DocumentDB::DocumentDB(const vespalib::string &baseDir,
               DocumentSubDBCollection::Config(protonCfg.numsearcherthreads),
               hwInfo),
       _maintenanceController(_writeService.master(), sharedExecutor, _docTypeName),
-      _lidSpaceCompactionHandlers(),
       _jobTrackers(),
       _calc(),
       _metricsUpdater(_subDBs, _writeService, _jobTrackers, *_sessionManager, _writeFilter)
@@ -927,16 +951,11 @@ DocumentDB::injectMaintenanceJobs(const DocumentDBMaintenanceConfig &config, std
 {
     // Called by executor thread
     _maintenanceController.killJobs();
-    _lidSpaceCompactionHandlers.clear();
-    _lidSpaceCompactionHandlers.push_back(std::make_shared<LidSpaceCompactionHandler>(_maintenanceController.getReadySubDB(), _docTypeName.getName()));
-    _lidSpaceCompactionHandlers.push_back(std::make_shared<LidSpaceCompactionHandler>(_maintenanceController.getRemSubDB(), _docTypeName.getName()));
-    _lidSpaceCompactionHandlers.push_back(std::make_shared<LidSpaceCompactionHandler>(_maintenanceController.getNotReadySubDB(), _docTypeName.getName()));
     MaintenanceJobsInjector::injectJobs(_maintenanceController,
             config,
             _bucketExecutor,
             *_feedHandler, // IHeartBeatHandler
             *_sessionManager, // ISessionCachePruner
-            _lidSpaceCompactionHandlers,
             *_feedHandler, // IOperationStorer
             _maintenanceController, // IFrozenBucketHandler
             _subDBs.getBucketCreateNotifier(),
@@ -1026,8 +1045,8 @@ namespace {
 
 void
 notifyBucketsChanged(const documentmetastore::IBucketHandler &metaStore,
-                          IBucketModifiedHandler &handler,
-                          const vespalib::string &name)
+                     IBucketModifiedHandler &handler,
+                     const vespalib::string &name)
 {
     bucketdb::Guard buckets = metaStore.getBucketDB().takeGuard();
     for (const auto &kv : *buckets) {
