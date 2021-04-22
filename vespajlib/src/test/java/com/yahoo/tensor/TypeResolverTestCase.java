@@ -77,10 +77,14 @@ public class TypeResolverTestCase {
         checkJoin("tensor(x{})",                 "tensor<bfloat16>(y{})",                          "tensor(x{},y{})");
         checkJoin("tensor(x{})",                 "tensor<float>(y{})",                             "tensor(x{},y{})");
         checkJoin("tensor(x{})",                 "tensor<int8>(y{})",                              "tensor(x{},y{})");
+        // specific for Java
+        checkJoin("tensor(x[])",                 "tensor(x{})",                                    "tensor(x{})");
+        checkJoin("tensor(x[3])",                "tensor(x{})",                                    "tensor(x{})");
+        checkJoin("tensor(x{})",                 "tensor(x[])",                                    "tensor(x{})");
+        checkJoin("tensor(x{})",                 "tensor(x[3])",                                   "tensor(x{})");
         // dimension mismatch should fail:
         checkJoinFails("tensor(x[3])",           "tensor(x[5])");
         checkJoinFails("tensor(x[5])",           "tensor(x[3])");
-        checkJoinFails("tensor(x{})",            "tensor(x[5])");
     }
 
     @Test
@@ -156,6 +160,7 @@ public class TypeResolverTestCase {
         checkMerge("tensor(x{},y{})",             "tensor<float>(x{},y{})",                         "tensor(x{},y{})");
         checkMerge("tensor(x{},y{})",             "tensor<int8>(x{},y{})",                          "tensor(x{},y{})");
         checkMerge("tensor(y{})",                 "tensor(y{})",                                    "tensor(y{})");
+        checkMerge("tensor(x{})",                 "tensor(x[5])",                                   "tensor(x{})");
         checkMergeFails("tensor(a[10])",          "tensor()");
         checkMergeFails("tensor(a[10])",          "tensor(x{},y{},z{})");
         checkMergeFails("tensor<bfloat16>(x[5])", "tensor()");
@@ -168,7 +173,6 @@ public class TypeResolverTestCase {
         checkMergeFails("tensor(x[3])",           "tensor(x[5])");
         checkMergeFails("tensor(x[5])",           "tensor(x[3])");
         checkMergeFails("tensor(x{})",            "tensor()");
-        checkMergeFails("tensor(x{})",            "tensor(x[5])");
         checkMergeFails("tensor(x{},y{})",        "tensor(x{},z{})");
         checkMergeFails("tensor(y{})",            "tensor()");
     }
@@ -221,11 +225,14 @@ public class TypeResolverTestCase {
         checkConcat("tensor<float>(x[3])",    "tensor()", "x", "tensor<float>(x[4])");
         checkConcat("tensor<bfloat16>(x[3])", "tensor()", "x", "tensor<bfloat16>(x[4])");
         checkConcat("tensor<int8>(x[3])",     "tensor()", "x", "tensor<int8>(x[4])");
+        // specific for Java
+        checkConcat("tensor(x[])",            "tensor(x[2])", "x", "tensor(x[])");
+        checkConcat("tensor(x[])",            "tensor(x[2])", "y", "tensor(x[],y[2])");
+        checkConcat("tensor(x[3])",           "tensor(x[2])", "y", "tensor(x[2],y[2])");
         // invalid combinations must fail
         checkConcatFails("tensor(x{})",       "tensor(x[2])", "x");
         checkConcatFails("tensor(x{})",       "tensor(x{})",  "x");
         checkConcatFails("tensor(x{})",       "tensor()",     "x");
-        checkConcatFails("tensor(x[3])",      "tensor(x[2])", "y");
     }
 
     @Test

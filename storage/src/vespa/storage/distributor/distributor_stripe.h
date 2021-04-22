@@ -3,7 +3,6 @@
 #pragma once
 
 #include "bucket_spaces_stats_provider.h"
-#include "bucketdbupdater.h"
 #include "distributor_host_info_reporter.h"
 #include "distributor_stripe_interface.h"
 #include "externaloperationhandler.h"
@@ -11,6 +10,8 @@
 #include "min_replica_provider.h"
 #include "pendingmessagetracker.h"
 #include "statusreporterdelegate.h"
+#include "stripe_access_guard.h"
+#include "stripe_bucket_db_updater.h"
 #include <vespa/config/config.h>
 #include <vespa/storage/common/doneinitializehandler.h>
 #include <vespa/storage/common/messagesender.h>
@@ -44,8 +45,7 @@ class ThrottlingOperationStarter;
  * TODO STRIPE add class comment.
  */
 class DistributorStripe final
-    : public StorageLink, // TODO decouple
-      public DistributorStripeInterface,
+    : public DistributorStripeInterface,
       public StatusDelegator,
       public framework::StatusReporter,
       public framework::TickingThread,
@@ -59,7 +59,6 @@ public:
                       const NodeIdentity& node_identity,
                       framework::TickingThreadPool&,
                       DoneInitializeHandler&,
-                      bool manageActiveBucketCopies,
                       ChainedMessageSender& messageSender);
 
     ~DistributorStripe() override;
@@ -67,10 +66,9 @@ public:
     const ClusterContext& cluster_context() const override {
         return _component.cluster_context();
     }
-    void onOpen() override;
-    void onClose() override;
-    bool onDown(const std::shared_ptr<api::StorageMessage>&) override;
-    void sendUp(const std::shared_ptr<api::StorageMessage>&) override;
+    void flush_and_close();
+    bool handle_or_enqueue_message(const std::shared_ptr<api::StorageMessage>&);
+    void send_up_with_tracking(const std::shared_ptr<api::StorageMessage>&);
     // Bypasses message tracker component. Thread safe.
     void send_up_without_tracking(const std::shared_ptr<api::StorageMessage>&) override;
 
@@ -98,13 +96,13 @@ public:
 
     /**
      * Invoked when a pending cluster state for a distribution (config)
-     * change has been enabled. An invocation of storageDistributionChanged
+     * change has been enabled. An invocation of storage_distribution_changed
      * will eventually cause this method to be called, assuming the pending
      * cluster state completed successfully.
      */
     void notifyDistributionChangeEnabled() override;
 
-    void storageDistributionChanged() override;
+    void storage_distribution_changed();
 
     void recheckBucketInfo(uint16_t nodeIdx, const document::Bucket &bucket) override;
 
@@ -169,8 +167,8 @@ public:
         return *_bucketIdHasher;
     }
 
-    BucketDBUpdater& bucket_db_updater() { return _bucketDBUpdater; }
-    const BucketDBUpdater& bucket_db_updater() const { return _bucketDBUpdater; }
+    StripeBucketDBUpdater& bucket_db_updater() { return _bucketDBUpdater; }
+    const StripeBucketDBUpdater& bucket_db_updater() const { return _bucketDBUpdater; }
     IdealStateManager& ideal_state_manager() { return _idealStateManager; }
     const IdealStateManager& ideal_state_manager() const { return _idealStateManager; }
     ExternalOperationHandler& external_operation_handler() { return _externalOperationHandler; }
@@ -198,6 +196,7 @@ private:
     friend class DistributorTestUtil;
     friend class MetricUpdateHook;
     friend class Distributor;
+    friend class LegacySingleStripeAccessGuard;
 
     bool handleMessage(const std::shared_ptr<api::StorageMessage>& msg);
     bool isMaintenanceReply(const api::StorageReply& reply) const;
@@ -251,9 +250,10 @@ private:
     bool generateOperation(const std::shared_ptr<api::StorageMessage>& msg,
                            Operation::SP& operation);
 
-    void enableNextDistribution();
-    void propagateDefaultDistribution(std::shared_ptr<const lib::Distribution>);
+    void enableNextDistribution(); // TODO STRIPE remove once legacy is gone
+    void propagateDefaultDistribution(std::shared_ptr<const lib::Distribution>); // TODO STRIPE remove once legacy is gone
     void propagateClusterStates();
+    void update_distribution_config(const BucketSpaceDistributionConfigs& new_configs);
 
     BucketSpacesStatsProvider::BucketSpacesStats make_invalid_stats_per_configured_space() const;
     template <typename NodeFunctor>
@@ -276,7 +276,7 @@ private:
 
     std::unique_ptr<OperationSequencer> _operation_sequencer;
     PendingMessageTracker _pendingMessageTracker;
-    BucketDBUpdater _bucketDBUpdater;
+    StripeBucketDBUpdater _bucketDBUpdater;
     StatusReporterDelegate _distributorStatusDelegate;
     StatusReporterDelegate _bucketDBStatusDelegate;
     IdealStateManager _idealStateManager;

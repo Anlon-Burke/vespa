@@ -234,6 +234,7 @@ public class EvaluationTestCase {
                                "sum(tensor0, y)", "{ {x:0,y:0}:1.0, {x:1,y:0}:3.0, {x:0,y:1}:5.0, {x:1,y:1}:7.0 }");
         tester.assertEvaluates("{ {}:16 }",
                                "sum(tensor0, x, y)", "{ {x:0,y:0}:1.0, {x:1,y:0}:3.0, {x:0,y:1}:5.0, {x:1,y:1}:7.0 }");
+        tester.assertEvaluates("{ {}: -1 }", "reduce(tensor0, max)", "tensor(x[2]):[-2,-1]");
 
         // tensor join
         tester.assertEvaluates("{ {x:0,y:0}:15, {x:1,y:0}:35 }", "join(tensor0, tensor1, f(x,y) (x*y))", "{ {x:0}:3, {x:1}:7 }", "{ {y:0}:5 }");
@@ -408,8 +409,8 @@ public class EvaluationTestCase {
         tester.assertEvaluates("tensor<float>(x[3]):[1.0, 2.0, 3.0]",
                                "cell_cast(tensor0, float)",
                                "tensor<double>(x[3]):[1, 2, 3]");
-        tester.assertEvaluates("tensor<float>():{1}",
-                               "cell_cast(tensor0{x:1}, float)",
+        tester.assertEvaluates("tensor<float>(x[2]):[1.0, 2.0]",
+                               "cell_cast(tensor(x[2]):[tensor0{x:1}, tensor0{x:2}], float)",
                                "tensor<double>(x{}):{1:1, 2:2, 3:3}");
         tester.assertEvaluates("tensor<float>(x[2]):[3,8]",
                                "cell_cast(tensor0 * tensor1, float)",

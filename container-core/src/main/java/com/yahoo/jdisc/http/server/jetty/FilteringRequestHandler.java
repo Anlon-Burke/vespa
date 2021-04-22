@@ -2,12 +2,15 @@
 package com.yahoo.jdisc.http.server.jetty;
 
 import com.google.common.base.Preconditions;
+import com.yahoo.container.jdisc.RequestHandlerSpec;
+import com.yahoo.container.jdisc.HttpRequestHandler;
 import com.yahoo.jdisc.Request;
 import com.yahoo.jdisc.Response;
 import com.yahoo.jdisc.handler.AbstractRequestHandler;
 import com.yahoo.jdisc.handler.BindingNotFoundException;
 import com.yahoo.jdisc.handler.CompletionHandler;
 import com.yahoo.jdisc.handler.ContentChannel;
+import com.yahoo.jdisc.handler.DelegatedRequestHandler;
 import com.yahoo.jdisc.handler.RequestDeniedException;
 import com.yahoo.jdisc.handler.RequestHandler;
 import com.yahoo.jdisc.handler.ResponseHandler;
@@ -17,6 +20,7 @@ import com.yahoo.jdisc.http.filter.ResponseFilter;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -65,6 +69,9 @@ class FilteringRequestHandler extends AbstractRequestHandler {
             throw new BindingNotFoundException(request.getUri());
         }
 
+        getRequestHandlerSpec(resolvedRequestHandler)
+                .ifPresent(requestHandlerSpec -> request.context().put(RequestHandlerSpec.ATTRIBUTE_NAME, requestHandlerSpec));
+
         RequestHandler requestHandler = new ReferenceCountingRequestHandler(resolvedRequestHandler);
 
         ResponseHandler responseHandler;
@@ -87,6 +94,18 @@ class FilteringRequestHandler extends AbstractRequestHandler {
             throw new RequestDeniedException(request);
         }
         return contentChannel;
+    }
+
+    private Optional<RequestHandlerSpec> getRequestHandlerSpec(RequestHandler resolvedRequestHandler) {
+        RequestHandler delegate = resolvedRequestHandler;
+        if (delegate instanceof DelegatedRequestHandler) {
+            delegate = ((DelegatedRequestHandler) delegate).getDelegateRecursive();
+        }
+        if(delegate instanceof HttpRequestHandler) {
+            return Optional.ofNullable(((HttpRequestHandler) delegate).requestHandlerSpec());
+        } else {
+            return Optional.empty();
+        }
     }
 
     private static class FilteringResponseHandler implements ResponseHandler {

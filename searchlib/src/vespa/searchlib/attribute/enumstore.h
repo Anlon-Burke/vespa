@@ -43,21 +43,23 @@ public:
                                              vespalib::datastore::UniqueStoreStringAllocator<InternalIndex>,
                                              vespalib::datastore::UniqueStoreAllocator<EntryT, InternalIndex>>;
     using UniqueStoreType = vespalib::datastore::UniqueStore<EntryT, InternalIndex, ComparatorType, AllocatorType>;
-    using FoldedComparatorType = std::conditional_t<std::is_same_v<EntryT, const char *>,
-                                                    EnumStoreFoldedStringComparator,
-                                                    ComparatorType>;
+
     using EntryType = EntryT;
     using EnumStoreType = EnumStoreT<EntryT>;
     using EntryRef = vespalib::datastore::EntryRef;
+    using EntryComparator = vespalib::datastore::EntryComparator;
     using generation_t = vespalib::GenerationHandler::generation_t;
 
 private:
-    UniqueStoreType _store;
-    IEnumStoreDictionary* _dict;
-    vespalib::MemoryUsage _cached_values_memory_usage;
+    UniqueStoreType        _store;
+    IEnumStoreDictionary*  _dict;
+    bool                   _is_folded;
+    ComparatorType         _comparator;
+    ComparatorType         _foldedComparator;
+    vespalib::MemoryUsage  _cached_values_memory_usage;
     vespalib::AddressSpace _cached_values_address_space_usage;
-    vespalib::MemoryUsage _cached_dictionary_btree_usage;
-    vespalib::MemoryUsage _cached_dictionary_hash_usage;
+    vespalib::MemoryUsage  _cached_dictionary_btree_usage;
+    vespalib::MemoryUsage  _cached_dictionary_hash_usage;
 
     EnumStoreT(const EnumStoreT & rhs) = delete;
     EnumStoreT & operator=(const EnumStoreT & rhs) = delete;
@@ -75,6 +77,8 @@ private:
     ssize_t load_unique_values_internal(const void* src, size_t available, IndexVector& idx);
     ssize_t load_unique_value(const void* src, size_t available, Index& idx);
 
+    std::unique_ptr<EntryComparator> allocate_optionally_folded_comparator(bool folded) const;
+    ComparatorType make_optionally_folded_comparator(bool folded) const;
 public:
     EnumStoreT(bool has_postings, const search::DictionaryConfig & dict_cfg);
     ~EnumStoreT() override;
@@ -88,6 +92,7 @@ public:
     }
 
     uint32_t get_num_uniques() const override { return _dict->get_num_uniques(); }
+    bool is_folded() const { return _is_folded;}
 
     vespalib::MemoryUsage get_values_memory_usage() const override { return _store.get_allocator().get_data_store().getMemoryUsage(); }
     vespalib::MemoryUsage get_dictionary_memory_usage() const override { return _dict->get_memory_usage(); }
@@ -176,26 +181,21 @@ public:
         return BatchUpdater(*this);
     }
 
-    ComparatorType make_comparator() const {
-        return ComparatorType(_store.get_data_store());
+    const EntryComparator & get_comparator() const {
+        return _comparator;
     }
 
     ComparatorType make_comparator(const EntryType& fallback_value) const {
         return ComparatorType(_store.get_data_store(), fallback_value);
     }
 
-    FoldedComparatorType make_folded_comparator() const {
-        return FoldedComparatorType(_store.get_data_store());
-    }
-
-    FoldedComparatorType make_folded_comparator(const EntryType& fallback_value, bool prefix = false) const {
-        return FoldedComparatorType(_store.get_data_store(), fallback_value, prefix);
+    const EntryComparator & get_folded_comparator() const {
+        return _foldedComparator;
     }
 
     void write_value(BufferWriter& writer, Index idx) const override;
     bool is_folded_change(Index idx1, Index idx2) const override;
     bool find_enum(EntryType value, IEnumStore::EnumHandle& e) const;
-    std::vector<IEnumStore::EnumHandle> find_folded_enums(EntryType value) const;
     Index insert(EntryType value);
     bool find_index(EntryType value, Index& idx) const;
     void free_unused_values() override;
@@ -211,14 +211,26 @@ public:
         _store.get_allocator().get_data_store().inc_compaction_count();
     }
     std::unique_ptr<Enumerator> make_enumerator() const override;
-    std::unique_ptr<vespalib::datastore::EntryComparator> allocate_comparator() const override;
+    std::unique_ptr<EntryComparator> allocate_comparator() const override;
+
+    // Methods below are only relevant for strings, and are templated to only be instantiated on demand.
+    template <typename Type>
+    ComparatorType
+    make_folded_comparator(const Type& fallback_value) const {
+        return ComparatorType(_store.get_data_store(), is_folded(), fallback_value);
+    }
+    template<typename Type>
+    ComparatorType
+    make_folded_comparator_prefix(const Type& fallback_value) const {
+        return ComparatorType(_store.get_data_store(), is_folded(), fallback_value, true);
+    }
+    template<typename Type>
+    std::vector<IEnumStore::EnumHandle>
+    find_folded_enums(Type value) const {
+        auto cmp = make_folded_comparator(value);
+        return _dict->find_matching_enums(cmp);
+    }
 };
-
-std::unique_ptr<vespalib::datastore::IUniqueStoreDictionary>
-make_enum_store_dictionary(IEnumStore &store, bool has_postings, const search::DictionaryConfig & dict_cfg,
-                           std::unique_ptr<vespalib::datastore::EntryComparator> compare,
-                           std::unique_ptr<vespalib::datastore::EntryComparator> folded_compare);
-
 
 template <>
 void
@@ -226,9 +238,7 @@ EnumStoreT<const char*>::write_value(BufferWriter& writer, Index idx) const;
 
 template <>
 ssize_t
-EnumStoreT<const char*>::load_unique_value(const void* src,
-                                           size_t available,
-                                           Index& idx);
+EnumStoreT<const char*>::load_unique_value(const void* src, size_t available, Index& idx);
 
 }
 
