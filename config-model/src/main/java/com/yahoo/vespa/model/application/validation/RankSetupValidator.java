@@ -99,11 +99,11 @@ public class RankSetupValidator extends Validator {
                 // Give up, don't say same error msg repeatedly
                 deleteTempDir(tempDir);
             }
-            log.log(Level.FINE, String.format("Validating %s for %s, %s took %s ms",
-                                                  sdName,
-                                                  searchCluster,
-                                                  configId,
-                                                  Duration.between(start, Instant.now()).toMillis()));
+            log.log(Level.FINE, () -> String.format("Validating %s for %s, %s took %s ms",
+                                                    sdName,
+                                                    searchCluster,
+                                                    configId,
+                                                    Duration.between(start, Instant.now()).toMillis()));
             return ret;
         } catch (IllegalArgumentException e) {
             deleteTempDir(tempDir);
@@ -193,7 +193,7 @@ public class RankSetupValidator extends Validator {
     private void validateWarn(Exception e, DeployLogger deployLogger) {
         String msg = "Unable to execute '"+ binaryName + "', validation of rank expressions will only take place when you start Vespa: " +
                 Exceptions.toMessageString(e);
-        deployLogger.log(Level.WARNING, msg);
+        deployLogger.logApplicationPackage(Level.WARNING, msg);
     }
 
     private void validateFail(String output, SearchCluster sc, String sdName, DeployLogger deployLogger) {

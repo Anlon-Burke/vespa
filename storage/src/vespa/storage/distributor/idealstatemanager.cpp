@@ -29,13 +29,11 @@ IdealStateManager::IdealStateManager(
         DistributorBucketSpaceRepo& bucketSpaceRepo,
         DistributorBucketSpaceRepo& readOnlyBucketSpaceRepo,
         DistributorComponentRegister& compReg)
-    : HtmlStatusReporter("idealstateman", "Ideal state manager"),
-      _metrics(new IdealStateMetricSet),
+    : _metrics(new IdealStateMetricSet),
       _distributorComponent(owner, bucketSpaceRepo, readOnlyBucketSpaceRepo, compReg, "Ideal state manager"),
       _bucketSpaceRepo(bucketSpaceRepo),
       _has_logged_phantom_replica_warning(false)
 {
-    _distributorComponent.registerStatusPage(*this);
     _distributorComponent.registerMetric(*_metrics);
 
     LOG(debug, "Adding BucketStateStateChecker to state checkers");
@@ -288,8 +286,6 @@ IdealStateManager::getBucketStatus(
 }
 
 void IdealStateManager::dump_bucket_space_db_status(document::BucketSpace bucket_space, std::ostream& out) const {
-    out << "<h2>" << document::FixedBucketSpaces::to_string(bucket_space) << " - " << bucket_space << "</h2>\n";
-
     StatusBucketVisitor proc(*this, bucket_space, out);
     auto &distributorBucketSpace(_bucketSpaceRepo.get(bucket_space));
     distributorBucketSpace.getBucketDatabase().forEach(proc);
@@ -300,6 +296,7 @@ void IdealStateManager::getBucketStatus(std::ostream& out) const {
         _distributorComponent.getDistributor().getClusterStateBundle().getVersion());
 
     for (auto& space : _bucketSpaceRepo) {
+        out << "<h2>" << document::FixedBucketSpaces::to_string(space.first) << " - " << space.first << "</h2>\n";
         dump_bucket_space_db_status(space.first, out);
     }
 }

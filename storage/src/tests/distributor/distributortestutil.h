@@ -17,16 +17,17 @@ namespace framework { struct TickingThreadPool; }
 
 namespace distributor {
 
-class StripeBucketDBUpdater;
 class Distributor;
 class DistributorBucketSpace;
 class DistributorBucketSpaceRepo;
-class DistributorOperationContext;
 class DistributorStripe;
 class DistributorStripeComponent;
+class DistributorStripeOperationContext;
+class DistributorStripePool;
 class ExternalOperationHandler;
 class IdealStateManager;
 class Operation;
+class StripeBucketDBUpdater;
 
 // TODO STRIPE rename to DistributorStripeTestUtil?
 class DistributorTestUtil : private DoneInitializeHandler
@@ -116,11 +117,10 @@ public:
     IdealStateManager& getIdealStateManager();
     ExternalOperationHandler& getExternalOperationHandler();
     storage::distributor::DistributorStripeComponent& distributor_component();
-    storage::distributor::DistributorOperationContext& operation_context();
+    storage::distributor::DistributorStripeOperationContext& operation_context();
 
-    Distributor& getDistributor() {
-        return *_distributor;
-    }
+    Distributor& getDistributor() noexcept { return *_distributor; }
+    const Distributor& getDistributor() const noexcept { return *_distributor; }
 
     bool tick();
 
@@ -140,6 +140,12 @@ public:
     const DistributorBucketSpaceRepo &getBucketSpaceRepo() const;
     DistributorBucketSpaceRepo& getReadOnlyBucketSpaceRepo();
     const DistributorBucketSpaceRepo& getReadOnlyBucketSpaceRepo() const;
+    [[nodiscard]] bool distributor_is_in_recovery_mode() const noexcept;
+    [[nodiscard]] const lib::ClusterStateBundle& current_distributor_cluster_state_bundle() const noexcept;
+    [[nodiscard]] std::string active_ideal_state_operations() const;
+    [[nodiscard]] const PendingMessageTracker& pending_message_tracker() const noexcept;
+    [[nodiscard]] PendingMessageTracker& pending_message_tracker() noexcept;
+    [[nodiscard]] std::chrono::steady_clock::duration db_memory_sample_interval() const noexcept;
 
     const lib::Distribution& getDistribution() const;
     // "End to end" distribution change trigger, which will invoke the bucket
@@ -190,10 +196,18 @@ public:
 
     DistributorMessageSenderStub& sender() noexcept { return _sender; }
     const DistributorMessageSenderStub& sender() const noexcept { return _sender; }
+
+    void setSystemState(const lib::ClusterState& systemState);
+
+    // Must be called prior to createLinks() to have any effect
+    void set_num_distributor_stripes(uint32_t n_stripes) noexcept {
+        _num_distributor_stripes = n_stripes;
+    }
 protected:
     vdstestlib::DirConfig _config;
     std::unique_ptr<TestDistributorApp> _node;
     std::unique_ptr<framework::TickingThreadPool> _threadPool;
+    std::unique_ptr<DistributorStripePool> _stripe_pool;
     std::unique_ptr<Distributor> _distributor;
     std::unique_ptr<storage::DistributorComponent> _component;
     DistributorMessageSenderStub _sender;
@@ -214,6 +228,7 @@ protected:
         }
     };
     MessageSenderImpl _messageSender;
+    uint32_t _num_distributor_stripes;
 
     void enableDistributorClusterState(vespalib::stringref state);
     void enable_distributor_cluster_state(const lib::ClusterStateBundle& state);

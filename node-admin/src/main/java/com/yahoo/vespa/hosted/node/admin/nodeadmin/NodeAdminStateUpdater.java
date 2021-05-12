@@ -3,7 +3,7 @@ package com.yahoo.vespa.hosted.node.admin.nodeadmin;
 
 import com.yahoo.concurrent.ThreadFactoryFactory;
 import com.yahoo.config.provision.HostName;
-import java.util.logging.Level;
+import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.Acl;
 import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.NodeRepository;
 import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.NodeSpec;
@@ -15,18 +15,15 @@ import com.yahoo.yolean.Exceptions;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
-import java.util.function.Supplier;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -47,7 +44,6 @@ public class NodeAdminStateUpdater {
     private final ScheduledExecutorService metricsScheduler =
             Executors.newScheduledThreadPool(1, ThreadFactoryFactory.getDaemonThreadFactory("metricsscheduler"));
 
-    private final CachedSupplier<Map<String, Acl>> cachedAclSupplier;
     private final NodeAgentContextFactory nodeAgentContextFactory;
     private final NodeRepository nodeRepository;
     private final Orchestrator orchestrator;
@@ -64,13 +60,13 @@ public class NodeAdminStateUpdater {
             Orchestrator orchestrator,
             NodeAdmin nodeAdmin,
             HostName hostHostname,
-            Clock clock) {
+            Clock clock,
+            FlagSource flagSource) {
         this.nodeAgentContextFactory = nodeAgentContextFactory;
         this.nodeRepository = nodeRepository;
         this.orchestrator = orchestrator;
         this.nodeAdmin = nodeAdmin;
         this.hostHostname = hostHostname.value();
-        this.cachedAclSupplier = new CachedSupplier<>(clock, Duration.ofSeconds(115), () -> nodeRepository.getAcls(this.hostHostname));
     }
 
     public void start() {
@@ -166,16 +162,10 @@ public class NodeAdminStateUpdater {
 
     void adjustNodeAgentsToRunFromNodeRepository() {
         try {
-            Map<String, NodeSpec> nodeSpecByHostname = nodeRepository.getNodes(hostHostname).stream()
-                    .collect(Collectors.toMap(NodeSpec::hostname, Function.identity()));
-            Map<String, Acl> aclByHostname = Optional.of(cachedAclSupplier.get())
-                    .filter(acls -> acls.keySet().containsAll(nodeSpecByHostname.keySet()))
-                    .orElseGet(cachedAclSupplier::invalidateAndGet);
+            Map<String, Acl> aclByHostname = nodeRepository.getAcls(hostHostname);
 
-            Set<NodeAgentContext> nodeAgentContexts = nodeSpecByHostname.keySet().stream()
-                    .map(hostname -> nodeAgentContextFactory.create(
-                            nodeSpecByHostname.get(hostname),
-                            aclByHostname.getOrDefault(hostname, Acl.EMPTY)))
+            Set<NodeAgentContext> nodeAgentContexts = nodeRepository.getNodes(hostHostname).stream()
+                    .map(node -> nodeAgentContextFactory.create(node, aclByHostname.getOrDefault(node.hostname(), Acl.EMPTY)))
                     .collect(Collectors.toSet());
             nodeAdmin.refreshContainersToRun(nodeAgentContexts);
         } catch (ConvergenceException e) {
@@ -191,34 +181,5 @@ public class NodeAdminStateUpdater {
                              .filter(node -> node.state() == NodeState.active)
                              .map(NodeSpec::hostname)
                              .collect(Collectors.toList());
-    }
-
-    private static class CachedSupplier<T> implements Supplier<T> {
-        private final Clock clock;
-        private final Duration expiration;
-        private final Supplier<T> supplier;
-        private Instant refreshAt;
-        private T cachedValue;
-
-        private CachedSupplier(Clock clock, Duration expiration, Supplier<T> supplier) {
-            this.clock = clock;
-            this.expiration = expiration;
-            this.supplier = supplier;
-            this.refreshAt = Instant.MIN;
-        }
-
-        @Override
-        public T get() {
-            if (! clock.instant().isBefore(refreshAt)) {
-                cachedValue = supplier.get();
-                refreshAt = clock.instant().plus(expiration);
-            }
-            return cachedValue;
-        }
-
-        private T invalidateAndGet() {
-            refreshAt = Instant.MIN;
-            return get();
-        }
     }
 }

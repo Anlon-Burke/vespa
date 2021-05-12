@@ -228,7 +228,7 @@ public class InternalStepRunner implements StepRunner {
             // Retry certain failures for up to one hour.
             Optional<RunStatus> result = startTime.isBefore(controller.clock().instant().minus(Duration.ofHours(1)))
                                          ? Optional.of(deploymentFailed) : Optional.empty();
-            switch (e.getErrorCode()) {
+            switch (e.code()) {
                 case CERTIFICATE_NOT_READY:
                     logger.log("Waiting for certificate to become ready on config server: New application, or old one has expired");
                     if (startTime.plus(timeouts.endpointCertificate()).isBefore(controller.clock().instant())) {
@@ -238,15 +238,15 @@ public class InternalStepRunner implements StepRunner {
                     return result;
                 case ACTIVATION_CONFLICT:
                 case APPLICATION_LOCK_FAILURE:
-                    logger.log("Deployment failed with possibly transient error " + e.getErrorCode() +
+                    logger.log("Deployment failed with possibly transient error " + e.code() +
                             ", will retry: " + e.getMessage());
                     return result;
                 case LOAD_BALANCER_NOT_READY:
                 case PARENT_HOST_NOT_READY:
-                    logger.log(e.getServerMessage());
+                    logger.log(e.message());
                     return result;
                 case OUT_OF_CAPACITY:
-                    logger.log(e.getServerMessage());
+                    logger.log(e.message());
                     return controller.system().isCd() && startTime.plus(timeouts.capacity()).isAfter(controller.clock().instant())
                            ? Optional.empty()
                            : Optional.of(outOfCapacity);
@@ -712,13 +712,12 @@ public class InternalStepRunner implements StepRunner {
 
     private void updateConsoleNotification(Run run) {
         NotificationSource source = NotificationSource.from(run.id());
-        Consumer<String> updater = msg -> controller.notificationsDb().setNotification(source, Notification.Type.DEPLOYMENT_FAILURE, msg);
+        Consumer<String> updater = msg -> controller.notificationsDb().setNotification(source, Notification.Type.deployment, Notification.Level.error, msg);
         switch (run.status()) {
+            case aborted: return; // wait and see how the next run goes.
             case running:
-            case aborted:
-                return; // If running, its too early to update. If aborted, let's wait and see how the next run goes.
             case success:
-                controller.notificationsDb().removeNotification(source, Notification.Type.DEPLOYMENT_FAILURE);
+                controller.notificationsDb().removeNotification(source, Notification.Type.deployment);
                 return;
             case outOfCapacity:
                 if ( ! run.id().type().environment().isTest()) updater.accept("lack of capacity. Please contact the Vespa team to request more!");

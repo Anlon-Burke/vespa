@@ -8,7 +8,6 @@
 #include <vespa/searchlib/attribute/changevector.h>
 #include <vespa/searchlib/attribute/i_enum_store.h>
 #include <vespa/searchlib/attribute/loadedenumvalue.h>
-#include <vespa/searchlib/util/foldedstringcompare.h>
 #include <vespa/vespalib/regex/regex.h>
 #include <vespa/vespalib/text/lowercase.h>
 #include <vespa/vespalib/text/utf8.h>
@@ -16,6 +15,10 @@
 
 namespace search {
 
+/**
+ * Helper class for search context when scanning string fields
+ * It handles different search settings like prefix, regex and cased/uncased.
+ */
 class StringSearchHelper {
 public:
     StringSearchHelper(QueryTermUCS4 & qTerm, bool cased);
@@ -39,11 +42,13 @@ private:
 
 class ReaderBase;
 
+/**
+ * Base class for all string attributes.
+ */
 class StringAttribute : public AttributeVector
 {
 public:
     using EnumIndex = IEnumStore::Index;
-    using EnumIndexVector = IEnumStore::IndexVector;
     using EnumVector = IEnumStore::EnumVector;
     using LoadedValueType = const char*;
     using LoadedVector = NoLoadedVector;

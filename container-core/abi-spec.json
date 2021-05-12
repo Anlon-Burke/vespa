@@ -388,11 +388,7 @@
       "public long getQueryStartTime()",
       "public long getTimeout()"
     ],
-    "fields": [
-      "protected long summaryStartTime",
-      "protected long queryStartTime",
-      "protected long timeout"
-    ]
+    "fields": []
   },
   "com.yahoo.container.handler.VipStatus": {
     "superClass": "java.lang.Object",
@@ -546,20 +542,6 @@
     ],
     "fields": []
   },
-  "com.yahoo.container.jdisc.DefaultAclMapping": {
-    "superClass": "java.lang.Object",
-    "interfaces": [
-      "com.yahoo.container.jdisc.AclMapping"
-    ],
-    "attributes": [
-      "public"
-    ],
-    "methods": [
-      "public void <init>()",
-      "public com.yahoo.container.jdisc.AclMapping$Action get(com.yahoo.container.jdisc.RequestView)"
-    ],
-    "fields": []
-  },
   "com.yahoo.container.jdisc.EmptyResponse": {
     "superClass": "com.yahoo.container.jdisc.HttpResponse",
     "interfaces": [],
@@ -587,6 +569,33 @@
       "public com.yahoo.container.handler.Timing getTiming()",
       "public com.yahoo.container.handler.Coverage getCoverage()",
       "public com.yahoo.container.logging.HitCounts getHitCounts()"
+    ],
+    "fields": []
+  },
+  "com.yahoo.container.jdisc.HttpMethodAclMapping$Builder": {
+    "superClass": "java.lang.Object",
+    "interfaces": [],
+    "attributes": [
+      "public"
+    ],
+    "methods": [
+      "public void <init>()",
+      "public com.yahoo.container.jdisc.HttpMethodAclMapping$Builder override(com.yahoo.jdisc.http.HttpRequest$Method, com.yahoo.container.jdisc.AclMapping$Action)",
+      "public com.yahoo.container.jdisc.HttpMethodAclMapping build()"
+    ],
+    "fields": []
+  },
+  "com.yahoo.container.jdisc.HttpMethodAclMapping": {
+    "superClass": "java.lang.Object",
+    "interfaces": [
+      "com.yahoo.container.jdisc.AclMapping"
+    ],
+    "attributes": [
+      "public"
+    ],
+    "methods": [
+      "public com.yahoo.container.jdisc.AclMapping$Action get(com.yahoo.container.jdisc.RequestView)",
+      "public static com.yahoo.container.jdisc.HttpMethodAclMapping$Builder standard()"
     ],
     "fields": []
   },
@@ -638,6 +647,23 @@
       "public java.lang.String getHost()",
       "public int getPort()",
       "public java.io.InputStream getData()"
+    ],
+    "fields": []
+  },
+  "com.yahoo.container.jdisc.HttpRequestBuilder": {
+    "superClass": "java.lang.Object",
+    "interfaces": [],
+    "attributes": [
+      "public"
+    ],
+    "methods": [
+      "public static com.yahoo.container.jdisc.HttpRequestBuilder create(com.yahoo.jdisc.http.HttpRequest$Method, java.lang.String)",
+      "public com.yahoo.container.jdisc.HttpRequestBuilder withQueryParameter(java.lang.String, java.lang.String)",
+      "public com.yahoo.container.jdisc.HttpRequestBuilder withHeader(java.lang.String, java.lang.String)",
+      "public com.yahoo.container.jdisc.HttpRequestBuilder withRequestContent(java.io.InputStream)",
+      "public com.yahoo.container.jdisc.HttpRequestBuilder withScheme(java.lang.String)",
+      "public com.yahoo.container.jdisc.HttpRequestBuilder withHostname(java.lang.String)",
+      "public com.yahoo.container.jdisc.HttpRequest build()"
     ],
     "fields": []
   },
@@ -1400,6 +1426,18 @@
     ],
     "fields": []
   },
+  "com.yahoo.jdisc.http.CookieHelper": {
+    "superClass": "java.lang.Object",
+    "interfaces": [],
+    "attributes": [
+      "public"
+    ],
+    "methods": [
+      "public static java.util.List decodeSetCookieHeader(com.yahoo.jdisc.HeaderFields)",
+      "public static void encodeSetCookieHeader(com.yahoo.jdisc.HeaderFields, java.util.List)"
+    ],
+    "fields": []
+  },
   "com.yahoo.jdisc.http.HttpHeaders$Names": {
     "superClass": "java.lang.Object",
     "interfaces": [],
@@ -1606,6 +1644,7 @@
       "public boolean isChunked()",
       "public boolean hasChunkedResponse()",
       "public boolean isKeepAlive()",
+      "public long relativeCreatedAtNanoTime()",
       "public java.security.Principal getUserPrincipal()",
       "public void setUserPrincipal(java.security.Principal)",
       "public static com.yahoo.jdisc.http.HttpRequest newServerRequest(com.yahoo.jdisc.service.CurrentContainer, java.net.URI)",
@@ -2260,25 +2299,6 @@
       "public void setUserPrincipal(java.security.Principal)",
       "public java.util.List getClientCertificateChain()",
       "public void clearCookies()"
-    ],
-    "fields": []
-  },
-  "com.yahoo.jdisc.http.filter.JdiscFilterResponse": {
-    "superClass": "com.yahoo.jdisc.http.filter.DiscFilterResponse",
-    "interfaces": [],
-    "attributes": [
-      "public"
-    ],
-    "methods": [
-      "public void <init>(com.yahoo.jdisc.http.HttpResponse)",
-      "public void setStatus(int)",
-      "public void setHeader(java.lang.String, java.lang.String)",
-      "public void removeHeaders(java.lang.String)",
-      "public void setHeaders(java.lang.String, java.lang.String)",
-      "public void setHeaders(java.lang.String, java.util.List)",
-      "public void addHeader(java.lang.String, java.lang.String)",
-      "public java.lang.String getHeader(java.lang.String)",
-      "public void setCookies(java.util.List)"
     ],
     "fields": []
   },

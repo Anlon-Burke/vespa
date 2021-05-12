@@ -3,6 +3,7 @@ package com.yahoo.vespa.hosted.node.admin.nodeadmin;
 
 import com.yahoo.config.provision.HostName;
 import com.yahoo.test.ManualClock;
+import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.Acl;
 import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.NodeRepository;
 import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.NodeSpec;
@@ -49,9 +50,10 @@ public class NodeAdminStateUpdaterTest {
     private final NodeAdmin nodeAdmin = mock(NodeAdmin.class);
     private final HostName hostHostname = HostName.from("basehost1.test.yahoo.com");
     private final ManualClock clock = new ManualClock();
+    private final InMemoryFlagSource flagSource = new InMemoryFlagSource();
 
     private final NodeAdminStateUpdater updater = spy(new NodeAdminStateUpdater(
-            nodeAgentContextFactory, nodeRepository, orchestrator, nodeAdmin, hostHostname, clock));
+            nodeAgentContextFactory, nodeRepository, orchestrator, nodeAdmin, hostHostname, clock, flagSource));
 
 
     @Test
@@ -176,26 +178,6 @@ public class NodeAdminStateUpdaterTest {
     }
 
     @Test
-    public void uses_cached_acl() {
-        mockNodeRepo(NodeState.active, 1);
-        mockAcl(Acl.EMPTY, 1);
-
-        updater.adjustNodeAgentsToRunFromNodeRepository();
-        verify(nodeRepository, times(1)).getAcls(any());
-        clock.advance(Duration.ofSeconds(30));
-
-        updater.adjustNodeAgentsToRunFromNodeRepository();
-        clock.advance(Duration.ofSeconds(30));
-        updater.adjustNodeAgentsToRunFromNodeRepository();
-        clock.advance(Duration.ofSeconds(30));
-        verify(nodeRepository, times(1)).getAcls(any());
-
-        clock.advance(Duration.ofSeconds(30));
-        updater.adjustNodeAgentsToRunFromNodeRepository();
-        verify(nodeRepository, times(2)).getAcls(any());
-    }
-
-    @Test
     public void node_spec_and_acl_aligned() {
         Acl acl = new Acl.Builder().withTrustedPorts(22).build();
         mockNodeRepo(NodeState.active, 3);
@@ -209,7 +191,7 @@ public class NodeAdminStateUpdaterTest {
         verify(nodeAgentContextFactory, times(3)).create(argThat(spec -> spec.hostname().equals("host2.yahoo.com")), eq(acl));
         verify(nodeAgentContextFactory, times(3)).create(argThat(spec -> spec.hostname().equals("host3.yahoo.com")), eq(acl));
         verify(nodeRepository, times(3)).getNodes(eq(hostHostname.value()));
-        verify(nodeRepository, times(1)).getAcls(eq(hostHostname.value()));
+        verify(nodeRepository, times(3)).getAcls(eq(hostHostname.value()));
     }
 
     @Test
@@ -227,7 +209,7 @@ public class NodeAdminStateUpdaterTest {
         verify(nodeAgentContextFactory, times(3)).create(argThat(spec -> spec.hostname().equals("host2.yahoo.com")), eq(acl));
         verify(nodeAgentContextFactory, times(1)).create(argThat(spec -> spec.hostname().equals("host3.yahoo.com")), eq(Acl.EMPTY));
         verify(nodeRepository, times(3)).getNodes(eq(hostHostname.value()));
-        verify(nodeRepository, times(2)).getAcls(eq(hostHostname.value())); // During the first tick, the cache is invalidated and retried
+        verify(nodeRepository, times(3)).getAcls(eq(hostHostname.value()));
     }
 
     @Test
@@ -243,7 +225,7 @@ public class NodeAdminStateUpdaterTest {
         verify(nodeAgentContextFactory, times(3)).create(argThat(spec -> spec.hostname().equals("host1.yahoo.com")), eq(acl));
         verify(nodeAgentContextFactory, times(3)).create(argThat(spec -> spec.hostname().equals("host2.yahoo.com")), eq(acl));
         verify(nodeRepository, times(3)).getNodes(eq(hostHostname.value()));
-        verify(nodeRepository, times(1)).getAcls(eq(hostHostname.value()));
+        verify(nodeRepository, times(3)).getAcls(eq(hostHostname.value()));
     }
 
     private void assertConvergeError(NodeAdminStateUpdater.State targetState, String reason) {

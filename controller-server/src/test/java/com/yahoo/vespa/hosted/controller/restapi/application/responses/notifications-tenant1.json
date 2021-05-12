@@ -2,7 +2,8 @@
   "notifications": [
     {
       "at": "(ignore)",
-      "type": "APPLICATION_PACKAGE_WARNING",
+      "level": "warning",
+      "type": "applicationPackage",
       "messages": [
         "Something something deprecated..."
       ],
@@ -10,13 +11,14 @@
     },
     {
       "at": "(ignore)",
-      "type": "DEPLOYMENT_FAILURE",
+      "level": "error",
+      "type": "deployment",
       "messages": [
         "Failed to deploy: Out of capacity"
       ],
       "application": "app2",
       "instance": "instance1",
-      "jobType": "system-test",
+      "jobName": "system-test",
       "runNumber": 12
     }
   ]

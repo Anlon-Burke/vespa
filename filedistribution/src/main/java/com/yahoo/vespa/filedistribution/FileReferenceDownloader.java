@@ -127,7 +127,7 @@ public class FileReferenceDownloader {
                 return true;
             } else {
                 log.log(logLevel, "File reference '" + fileReference + "' not found at " + connection.getAddress());
-                connectionPool.setNewCurrentConnection();
+                connectionPool.switchConnection(connection);
                 return false;
             }
         } else {
@@ -181,6 +181,7 @@ public class FileReferenceDownloader {
     }
 
     public void close() {
+        downloadExecutor.shutdown();
         try {
             downloadExecutor.awaitTermination(1, TimeUnit.SECONDS);
         } catch (InterruptedException e) {

@@ -156,7 +156,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
     @Test
     public void testApplicationApi() {
         createAthenzDomainWithAdmin(ATHENZ_TENANT_DOMAIN, USER_ID); // (Necessary but not provided in this API)
-        ((InMemoryFlagSource) tester.controller().flagSource()).withStringFlag(Flags.SYNC_HOST_LOGS_TO_S3_BUCKET.id(), "my-bucket");
 
         // GET API root
         tester.assertResponse(request("/application/v4/", GET).userIdentity(USER_ID),
@@ -1127,7 +1126,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
                               400);
 
         ConfigServerMock configServer = tester.serviceRegistry().configServerMock();
-        configServer.throwOnNextPrepare(new ConfigServerException(new URI("server-url"), "Failed to prepare application", "Invalid application package", ConfigServerException.ErrorCode.INVALID_APPLICATION_PACKAGE, null));
+        configServer.throwOnNextPrepare(new ConfigServerException(ConfigServerException.ErrorCode.INVALID_APPLICATION_PACKAGE, "Failed to prepare application", "Invalid application package"));
 
         // GET non-existent application package
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/package", GET).userIdentity(HOSTED_VESPA_OPERATOR),
@@ -1473,6 +1472,12 @@ public class ApplicationApiTest extends ControllerContainerTest {
                                       .userIdentity(USER_ID),
                               new File("deployment-with-routing-policy.json"));
 
+        // GET deployment including legacy endpoints
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/environment/prod/region/us-west-1/instance/instance1", GET)
+                                      .userIdentity(USER_ID)
+                                      .properties(Map.of("includeLegacyEndpoints", "true")),
+                              new File("deployment-with-routing-policy-legacy.json"));
+
         // Hide shared endpoints
         ((InMemoryFlagSource) tester.controller().flagSource()).withBooleanFlag(Flags.HIDE_SHARED_ROUTING_ENDPOINT.id(), true);
 
@@ -1641,11 +1646,13 @@ public class ApplicationApiTest extends ControllerContainerTest {
     private void addNotifications(TenantName tenantName) {
         tester.controller().notificationsDb().setNotification(
                 NotificationSource.from(TenantAndApplicationId.from(tenantName.value(), "app1")),
-                Notification.Type.APPLICATION_PACKAGE_WARNING,
+                Notification.Type.applicationPackage,
+                Notification.Level.warning,
                 "Something something deprecated...");
         tester.controller().notificationsDb().setNotification(
                 NotificationSource.from(new RunId(ApplicationId.from(tenantName.value(), "app2", "instance1"), JobType.systemTest, 12)),
-                Notification.Type.DEPLOYMENT_FAILURE,
+                Notification.Type.deployment,
+                Notification.Level.error,
                 "Failed to deploy: Out of capacity");
     }
 

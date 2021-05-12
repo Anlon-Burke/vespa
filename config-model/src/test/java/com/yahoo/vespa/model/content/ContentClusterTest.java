@@ -1005,40 +1005,15 @@ public class ContentClusterTest extends ContentBaseTest {
         assertTrue(resolveThreePhaseUpdateConfigWithFeatureFlag(true));
     }
 
-    private double resolveMaxDeadBytesRatio(double maxDeadBytesRatio) {
-        VespaModel model = createEnd2EndOneNode(new TestProperties().maxDeadBytesRatio(maxDeadBytesRatio));
-        ContentCluster cc = model.getContentClusters().get("storage");
-        ProtonConfig.Builder protonBuilder = new ProtonConfig.Builder();
-        cc.getSearch().getConfig(protonBuilder);
-        ProtonConfig protonConfig = new ProtonConfig(protonBuilder);
-        assertEquals(1, protonConfig.documentdb().size());
-        return protonConfig.documentdb(0).allocation().max_dead_bytes_ratio();
-    }
-
-    @Test
-    public void default_max_dead_bytes_ratio_config_controlled_by_properties() {
-        assertEquals(0.2, resolveMaxDeadBytesRatio(0.2), 1e-5);
-        assertEquals(0.1, resolveMaxDeadBytesRatio(0.1), 1e-5);
-    }
-
-    void assertZookeeperServerImplementation(String expectedClassName) {
-        VespaModel model = createEnd2EndOneNode(new TestProperties().setMultitenant(true));
-
-        ContentCluster cc = model.getContentClusters().get("storage");
-        for (ClusterControllerContainer c : cc.getClusterControllers().getContainers()) {
+    void assertZookeeperServerImplementation(String expectedClassName,
+                                             ClusterControllerContainerCluster clusterControllerCluster) {
+        for (ClusterControllerContainer c : clusterControllerCluster.getContainers()) {
             var builder = new ComponentsConfig.Builder();
             c.getConfig(builder);
             assertEquals(1, new ComponentsConfig(builder).components().stream()
-                    .filter(component -> component.classId().equals(expectedClassName))
-                    .count());
+                                                         .filter(component -> component.classId().equals(expectedClassName))
+                                                         .count());
         }
-    }
-
-    @Test
-    public void reconfigurableZookeeperServerComponentsForClusterController() {
-        assertZookeeperServerImplementation("com.yahoo.vespa.zookeeper.ReconfigurableVespaZooKeeperServer");
-        assertZookeeperServerImplementation("com.yahoo.vespa.zookeeper.Reconfigurer");
-        assertZookeeperServerImplementation("com.yahoo.vespa.zookeeper.VespaZooKeeperAdminImpl");
     }
 
     private StorDistributormanagerConfig resolveStorDistributormanagerConfig(TestProperties props) {
@@ -1137,17 +1112,7 @@ public class ContentClusterTest extends ContentBaseTest {
         assertNull("No own cluster controller for content", twoContentModel.getContentClusters().get("dev-null").getClusterControllers());
         assertNotNull("Shared cluster controller with content", twoContentModel.getAdmin().getClusterControllers());
 
-        Map<String, ContentCluster> clustersWithOwnCCC = createEnd2EndOneNode(new TestProperties().setMultitenant(true), twoContentServices).getContentClusters();
         ClusterControllerContainerCluster clusterControllers = twoContentModel.getAdmin().getClusterControllers();
-        assertEquals("Union of components in own clusters is equal to those in shared cluster",
-                     clusterControllers.getAllComponents().stream()
-                                    .map(Component::getComponentId)
-                                    .collect(toList()),
-                     clustersWithOwnCCC.values().stream()
-                                       .flatMap(cluster -> Optional.ofNullable(cluster.getClusterControllers()).stream()
-                                                                   .flatMap(c -> c.getAllComponents().stream()))
-                                       .map(Component::getComponentId)
-                                       .collect(toList()));
 
         assertEquals(1, clusterControllers.reindexingContext().documentTypesForCluster("storage").size());
         assertEquals(1, clusterControllers.reindexingContext().documentTypesForCluster("dev-null").size());
@@ -1157,6 +1122,13 @@ public class ContentClusterTest extends ContentBaseTest {
         twoContentModel.getConfig(devNullBuilder, "admin/standalone/cluster-controllers/0/components/clustercontroller-dev-null-configurer");
         assertEquals(0.618, storageBuilder.build().min_distributor_up_ratio(), 1e-9);
         assertEquals(0.418, devNullBuilder.build().min_distributor_up_ratio(), 1e-9);
+
+        assertZookeeperServerImplementation("com.yahoo.vespa.zookeeper.ReconfigurableVespaZooKeeperServer",
+                                            clusterControllers);
+        assertZookeeperServerImplementation("com.yahoo.vespa.zookeeper.Reconfigurer",
+                                            clusterControllers);
+        assertZookeeperServerImplementation("com.yahoo.vespa.zookeeper.VespaZooKeeperAdminImpl",
+                                            clusterControllers);
     }
 
 }

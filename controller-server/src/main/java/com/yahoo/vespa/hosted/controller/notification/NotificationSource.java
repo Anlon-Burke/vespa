@@ -84,11 +84,10 @@ public class NotificationSource {
      * staging zone), or if this is at tenant or application level
      */
     public boolean isProduction() {
-        if (instance.isEmpty()) return true;
         return ! zoneId.map(ZoneId::environment)
                 .or(() -> jobType.map(JobType::environment))
                 .map(Environment::isManuallyDeployed)
-                .orElse(true); // Assume that notification with full application ID concern dev deployments
+                .orElse(false);
     }
 
     @Override
@@ -97,8 +96,7 @@ public class NotificationSource {
         if (o == null || getClass() != o.getClass()) return false;
         NotificationSource that = (NotificationSource) o;
         return tenant.equals(that.tenant) && application.equals(that.application) && instance.equals(that.instance) &&
-                zoneId.equals(that.zoneId) && clusterId.equals(that.clusterId) && jobType.equals(that.jobType) &&
-                runNumber.equals(that.runNumber);
+                zoneId.equals(that.zoneId) && clusterId.equals(that.clusterId) && jobType.equals(that.jobType); // Do not consider run number (it's unique!)
     }
 
     @Override

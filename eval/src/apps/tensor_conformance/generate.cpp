@@ -342,7 +342,7 @@ void generate_lambda(TestBuilder &dst) {
 
 void generate_cell_cast(TestBuilder &dst) {
     for (const auto &layout: basic_layouts) {
-        GenSpec a = GenSpec::from_desc(layout).seq(N());
+        GenSpec a = GenSpec::from_desc(layout).seq(N(-100));
         auto from_cell_types = a.dims().empty() ? just_double : dst.full ? all_types : just_float;
         auto to_cell_types = a.dims().empty() ? just_double : all_types;
         for (auto a_ct: from_cell_types) {
@@ -418,6 +418,90 @@ void generate_products(TestBuilder &dst) {
 
 //-----------------------------------------------------------------------------
 
+void generate_expanding_reduce(TestBuilder &dst) {
+    auto spec = GenSpec::from_desc("x5y0_0");
+    for (Aggr aggr: Aggregator::list()) {
+        // end up with more cells than you started with
+        auto expr1 = fmt("reduce(a,%s,y)", AggrNames::name_of(aggr)->c_str());
+        auto expr2 = fmt("reduce(a,%s)", AggrNames::name_of(aggr)->c_str());
+        dst.add(expr1, {{"a", spec}});
+        dst.add(expr2, {{"a", spec}});
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+void generate_converting_lambda(TestBuilder &dst) {
+    auto dense = GenSpec::from_desc("x3");
+    auto sparse = GenSpec::from_desc("y5_2");
+    auto mixed = GenSpec::from_desc("x3y5_2");
+    // change cell type and dimension types
+    dst.add("tensor<bfloat16>(x[5])(a{x:(x)})", {{"a", dense}});
+    dst.add("tensor<bfloat16>(y[10])(a{y:(y)})", {{"a", sparse}});
+    dst.add("tensor<bfloat16>(x[5],y[10])(a{x:(x),y:(y)})", {{"a", mixed}});
+}
+
+//-----------------------------------------------------------------------------
+
+void generate_shadowing_lambda(TestBuilder &dst) {
+    auto a = GenSpec::from_desc("a3");
+    auto b = GenSpec::from_desc("b3");
+    // index 'a' shadows external parameter 'a'
+    dst.add("tensor(a[5])(reduce(a,sum)+reduce(b,sum))", {{"a", a}, {"b", b}});
+}
+
+//-----------------------------------------------------------------------------
+
+void generate_strict_verbatim_peek(TestBuilder &dst) {
+    auto a = GenSpec(3);
+    auto b = GenSpec().map("x", {"3", "a"});
+    // 'a' without () is verbatim even if 'a' is a known value
+    dst.add("b{x:a}", {{"a", a}, {"b", b}});
+}
+
+//-----------------------------------------------------------------------------
+
+void generate_nested_tensor_lambda(TestBuilder &dst) {
+    auto a = GenSpec(2);
+    auto b = GenSpec::from_desc("x3").seq(Seq({3,5,7}));
+    // constant nested tensor lambda
+    dst.add("tensor(x[2],y[3],z[5])(tensor(x[5],y[3],z[2])(x*6+y*2+z){x:(z),y:(y),z:(x)})", {});
+    // dynamic nested tensor lambda
+    dst.add("tensor(x[2],y[3],z[5])(tensor(x[5],y[3],z[2])(20*(a+x)+2*(b{x:(a)}+y)+z){x:(z),y:(y),z:(x)})",
+            {{"a", a}, {"b", b}});
+}
+
+//-----------------------------------------------------------------------------
+
+void generate_erf_value_test(TestBuilder &dst) {
+    auto a = GenSpec().idx("x", 16 * 17 * 6).seq(Div17(Div16(N(0))));
+    dst.add("erf(a)", {{"a", a}});
+    dst.add("erf(-a)", {{"a", a}});
+}
+
+//-----------------------------------------------------------------------------
+
+void generate_nan_existence(TestBuilder &dst) {
+    auto seq1 = Seq({1.0, 1.0, my_nan, my_nan});
+    auto seq2 = Seq({2.0, 2.0, my_nan, my_nan});
+    auto sparse1 = GenSpec().from_desc("x8_1").seq(seq1);
+    auto sparse2 = GenSpec().from_desc("x8_2").seq(seq2);
+    auto mixed1 = GenSpec().from_desc("x4_1y4").seq(seq1);
+    auto mixed2 = GenSpec().from_desc("x4_2y4").seq(seq2);
+    // try to provoke differences between nan and non-existence
+    const vespalib::string inner_expr = "f(x,y)(if(isNan(x),11,x)+if(isNan(y),22,y))";
+    vespalib::string merge_expr = fmt("merge(a,b,%s)", inner_expr.c_str());
+    vespalib::string join_expr = fmt("join(a,b,%s)", inner_expr.c_str());
+    dst.add(merge_expr, {{"a", sparse1}, {"b", sparse2}});
+    dst.add(merge_expr, {{"a",  mixed1}, {"b",  mixed2}});
+    dst.add(join_expr, {{"a", sparse1}, {"b", sparse2}});
+    dst.add(join_expr, {{"a",  mixed1}, {"b",  mixed2}});
+    dst.add(join_expr, {{"a", sparse1}, {"b",  mixed2}});
+    dst.add(join_expr, {{"a",  mixed1}, {"b", sparse2}});
+}
+
+//-----------------------------------------------------------------------------
+
 } // namespace <unnamed>
 
 //-----------------------------------------------------------------------------
@@ -440,4 +524,11 @@ Generator::generate(TestBuilder &dst)
     generate_if(dst);
     //--------------------
     generate_products(dst);
+    generate_expanding_reduce(dst);
+    generate_converting_lambda(dst);
+    generate_shadowing_lambda(dst);
+    generate_strict_verbatim_peek(dst);
+    generate_nested_tensor_lambda(dst);
+    generate_erf_value_test(dst);
+    generate_nan_existence(dst);
 }

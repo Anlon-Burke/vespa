@@ -44,6 +44,7 @@ import static java.util.stream.Collectors.toList;
 public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> implements ProtonConfig.Producer, DispatchConfig.Producer {
 
     private final boolean flushOnShutdown;
+    private final Boolean syncTransactionLog;
 
     /** If this is set up for streaming search, it is modelled as one search cluster per search definition */
     private final Map<String, AbstractSearchCluster> clusters = new TreeMap<>();
@@ -63,11 +64,8 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
     private final Map<StorageGroup, NodeSpec> groupToSpecMap = new LinkedHashMap<>();
     private Optional<ResourceLimits> resourceLimits = Optional.empty();
     private final ProtonConfig.Indexing.Optimize.Enum feedSequencerType;
-    private final int maxPendingMoveOps;
     private final double defaultFeedConcurrency;
-    private final boolean useBucketExecutorForLidSpaceCompact;
-    private final boolean useBucketExecutorForBucketMove;
-    private final double defaultMaxDeadBytesRatio;
+    private final boolean useBucketExecutorForPruneRemoved;
 
     /** Whether the nodes of this cluster also hosts a container cluster in a hosted system */
     private final boolean combined;
@@ -97,13 +95,15 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
             ModelElement clusterElem = new ModelElement(producerSpec);
             String clusterName = ContentCluster.getClusterId(clusterElem);
             Boolean flushOnShutdownElem = clusterElem.childAsBoolean("engine.proton.flush-on-shutdown");
+            Boolean syncTransactionLog = clusterElem.childAsBoolean("engine.proton.sync-transactionlog");
 
             ContentSearchCluster search = new ContentSearchCluster(ancestor,
                                                                    clusterName,
                                                                    deployState.getProperties().featureFlags(),
                                                                    documentDefinitions,
                                                                    globallyDistributedDocuments,
-                                                                   getFlushOnShutdown(flushOnShutdownElem, deployState),
+                                                                   getFlushOnShutdown(flushOnShutdownElem),
+                                                                   syncTransactionLog,
                                                                    combined);
 
             ModelElement tuning = clusterElem.childByPath("engine.proton.tuning");
@@ -117,7 +117,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
             return search;
         }
 
-        private boolean getFlushOnShutdown(Boolean flushOnShutdownElem, DeployState deployState) {
+        private boolean getFlushOnShutdown(Boolean flushOnShutdownElem) {
             if (flushOnShutdownElem != null) {
                 return flushOnShutdownElem;
             }
@@ -197,6 +197,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
                                  Map<String, NewDocumentType> documentDefinitions,
                                  Set<NewDocumentType> globallyDistributedDocuments,
                                  boolean flushOnShutdown,
+                                 Boolean syncTransactionLog,
                                  boolean combined)
     {
         super(parent, "search");
@@ -204,13 +205,12 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
         this.documentDefinitions = documentDefinitions;
         this.globallyDistributedDocuments = globallyDistributedDocuments;
         this.flushOnShutdown = flushOnShutdown;
+        this.syncTransactionLog = syncTransactionLog;
+
         this.combined = combined;
-        maxPendingMoveOps = featureFlags.maxPendingMoveOps();
         feedSequencerType = convertFeedSequencerType(featureFlags.feedSequencerType());
         defaultFeedConcurrency = featureFlags.feedConcurrency();
-        useBucketExecutorForLidSpaceCompact = featureFlags.useBucketExecutorForLidSpaceCompact();
-        useBucketExecutorForBucketMove = featureFlags.useBucketExecutorForBucketMove();
-        defaultMaxDeadBytesRatio = featureFlags.maxDeadBytesRatio();
+        useBucketExecutorForPruneRemoved = featureFlags.useBucketExecutorForPruneRemoved();
     }
 
     public void setVisibilityDelay(double delay) {
@@ -278,12 +278,12 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
             searchNode.setHostResource(node.getHostResource());
             searchNode.initService(deployState.getDeployLogger());
 
-            tls = new TransactionLogServer(searchNode, clusterName);
+            tls = new TransactionLogServer(searchNode, clusterName, syncTransactionLog);
             tls.setHostResource(searchNode.getHostResource());
             tls.initService(deployState.getDeployLogger());
         } else {
             searchNode = new SearchNode.Builder(""+node.getDistributionKey(), spec, clusterName, node, flushOnShutdown, tuning, resourceLimits, combined).build(deployState, parent, element.getXml());
-            tls = new TransactionLogServer.Builder(clusterName).build(deployState, searchNode, element.getXml());
+            tls = new TransactionLogServer.Builder(clusterName, syncTransactionLog).build(deployState, searchNode, element.getXml());
         }
         searchNode.setTls(tls);
         if (hasIndexedCluster()) {
@@ -377,7 +377,6 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
                 .configid(getConfigId())
                 .visibilitydelay(visibilityDelay)
                 .global(globalDocType);
-            ddbB.allocation.max_dead_bytes_ratio(defaultMaxDeadBytesRatio);
 
             if (hasIndexingModeStreaming(type)) {
                 hasAnyNonIndexedCluster = true;
@@ -428,9 +427,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
         } else {
             builder.indexing.optimize(feedSequencerType);
         }
-        builder.maintenancejobs.maxoutstandingmoveops(maxPendingMoveOps);
-        builder.lidspacecompaction.usebucketexecutor(useBucketExecutorForLidSpaceCompact);
-        builder.bucketmove.usebucketexecutor(useBucketExecutorForBucketMove);
+        builder.pruneremoveddocuments.usebucketexecutor(useBucketExecutorForPruneRemoved);
     }
 
     private boolean isGloballyDistributed(NewDocumentType docType) {

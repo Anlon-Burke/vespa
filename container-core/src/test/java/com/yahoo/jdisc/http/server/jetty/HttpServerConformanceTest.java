@@ -8,7 +8,7 @@ import com.yahoo.container.logging.ConnectionLog;
 import com.yahoo.container.logging.RequestLog;
 import com.yahoo.jdisc.http.ServerConfig;
 import com.yahoo.jdisc.http.ServletPathsConfig;
-import com.yahoo.jdisc.http.guiceModules.ConnectorFactoryRegistryModule;
+import com.yahoo.jdisc.http.server.jetty.testutils.ConnectorFactoryRegistryModule;
 import com.yahoo.jdisc.test.ServerProviderConformanceTest;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpVersion;
@@ -169,7 +169,7 @@ public class HttpServerConformanceTest extends ServerProviderConformanceTest {
     @Override
     @Test
     public void testRequestNondeterministicExceptionWithSyncHandleResponse() throws Throwable {
-        new TestRunner().expect(anyOf(success(), serverError()))
+        new TestRunner().expect(anyOf(success(), successNoContent(), serverError()))
                         .execute();
     }
 
@@ -232,7 +232,7 @@ public class HttpServerConformanceTest extends ServerProviderConformanceTest {
     @Override
     @Test
     public void testRequestContentWriteWithNondeterministicSyncFailure() throws Throwable {
-        new TestRunner().expect(anyOf(success(), serverError()))
+        new TestRunner().expect(anyOf(success(), successNoContent(), serverError()))
                         .execute();
     }
 
@@ -253,7 +253,7 @@ public class HttpServerConformanceTest extends ServerProviderConformanceTest {
     @Override
     @Test
     public void testRequestContentWriteWithNondeterministicAsyncFailure() throws Throwable {
-        new TestRunner().expect(anyOf(success(), serverError()))
+        new TestRunner().expect(anyOf(success(), successNoContent(), serverError()))
                         .execute();
     }
 
@@ -281,7 +281,7 @@ public class HttpServerConformanceTest extends ServerProviderConformanceTest {
     @Override
     @Test
     public void testRequestContentWriteNondeterministicException() throws Throwable {
-        new TestRunner().expect(anyOf(success(), serverError(), successNoContent()))
+        new TestRunner().expect(anyOf(success(), successNoContent(), serverError(), successNoContent()))
                         .execute();
     }
 
@@ -309,7 +309,7 @@ public class HttpServerConformanceTest extends ServerProviderConformanceTest {
     @Override
     @Test
     public void testRequestContentWriteNondeterministicExceptionWithSyncCompletion() throws Throwable {
-        new TestRunner().expect(anyOf(success(), serverError()))
+        new TestRunner().expect(anyOf(success(), successNoContent(), serverError()))
                         .execute();
     }
 
@@ -394,7 +394,7 @@ public class HttpServerConformanceTest extends ServerProviderConformanceTest {
     @Override
     @Test
     public void testRequestContentWriteExceptionWithNondeterministicAsyncFailure() throws Throwable {
-        new TestRunner().expect(anyOf(success(), serverError()))
+        new TestRunner().expect(anyOf(success(), successNoContent(), serverError()))
                         .execute();
     }
 
@@ -520,7 +520,7 @@ public class HttpServerConformanceTest extends ServerProviderConformanceTest {
     @Override
     @Test
     public void testRequestContentCloseNondeterministicExceptionWithSyncCompletion() throws Throwable {
-        new TestRunner().expect(anyOf(success(), serverError(), successNoContent()))
+        new TestRunner().expect(anyOf(success(), successNoContent(), serverError(), successNoContent()))
                         .execute();
     }
 
@@ -548,7 +548,7 @@ public class HttpServerConformanceTest extends ServerProviderConformanceTest {
     @Override
     @Test
     public void testRequestContentCloseNondeterministicExceptionWithAsyncCompletion() throws Throwable {
-        new TestRunner().expect(anyOf(success(), serverError(), successNoContent()))
+        new TestRunner().expect(anyOf(success(), successNoContent(), serverError(), successNoContent()))
                         .execute();
     }
 

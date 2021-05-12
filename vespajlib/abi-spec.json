@@ -679,7 +679,8 @@
       "public static void ensureSmaller(java.lang.String, java.lang.Comparable, java.lang.String, java.lang.Comparable)",
       "public static void ensure(java.lang.String, boolean)",
       "public static varargs void ensure(boolean, java.lang.Object[])",
-      "public static void ensureInstanceOf(java.lang.String, java.lang.Object, java.lang.Class)"
+      "public static void ensureInstanceOf(java.lang.String, java.lang.Object, java.lang.Class)",
+      "public static void ensureNotInstanceOf(java.lang.String, java.lang.Object, java.lang.Class)"
     ],
     "fields": []
   },
@@ -890,6 +891,7 @@
       "public varargs double get(long[])",
       "public varargs float getFloat(long[])",
       "public double get(com.yahoo.tensor.TensorAddress)",
+      "public boolean has(com.yahoo.tensor.TensorAddress)",
       "public abstract double get(long)",
       "public abstract float getFloat(long)",
       "public com.yahoo.tensor.TensorType type()",
@@ -940,6 +942,7 @@
       "public com.yahoo.tensor.TensorType type()",
       "public long size()",
       "public double get(com.yahoo.tensor.TensorAddress)",
+      "public boolean has(com.yahoo.tensor.TensorAddress)",
       "public java.util.Iterator cellIterator()",
       "public java.util.Iterator valueIterator()",
       "public java.util.Map cells()",
@@ -1030,6 +1033,7 @@
       "public com.yahoo.tensor.TensorType type()",
       "public long size()",
       "public double get(com.yahoo.tensor.TensorAddress)",
+      "public boolean has(com.yahoo.tensor.TensorAddress)",
       "public java.util.Iterator cellIterator()",
       "public java.util.Iterator valueIterator()",
       "public java.util.Map cells()",
@@ -1150,6 +1154,7 @@
       "public boolean isEmpty()",
       "public abstract long size()",
       "public abstract double get(com.yahoo.tensor.TensorAddress)",
+      "public abstract boolean has(com.yahoo.tensor.TensorAddress)",
       "public abstract java.util.Iterator cellIterator()",
       "public abstract java.util.Iterator valueIterator()",
       "public abstract java.util.Map cells()",

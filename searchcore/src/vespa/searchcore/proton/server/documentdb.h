@@ -22,7 +22,6 @@
 #include <vespa/searchcore/proton/common/monitored_refcount.h>
 #include <vespa/searchcore/proton/metrics/documentdb_job_trackers.h>
 #include <vespa/searchcore/proton/metrics/documentdb_tagged_metrics.h>
-#include <vespa/searchcore/proton/persistenceengine/bucket_guard.h>
 #include <vespa/searchcore/proton/persistenceengine/i_resource_write_filter.h>
 #include <vespa/searchcore/proton/index/indexmanager.h>
 #include <vespa/searchlib/docstore/cachestats.h>
@@ -365,10 +364,7 @@ public:
         return _maintenanceController;
     }
 
-    BucketGuard::UP lockBucket(const document::BucketId &bucket);
-
     virtual SerialNum getOldestFlushedSerial();
-
     virtual SerialNum getNewestFlushedSerial();
 
     std::unique_ptr<search::engine::SearchReply>
@@ -385,8 +381,7 @@ public:
     /**
      * Reference counting
      */
-    void retain() { _refCount.retain(); }
-    void release() { _refCount.release(); }
+    RetainGuard retain() { return RetainGuard(_refCount); }
 
     bool getDelayedConfig() const { return _state.getDelayedConfig(); }
     void replayConfig(SerialNum serialNum) override;

@@ -12,6 +12,7 @@
 #include "statusreporterdelegate.h"
 #include "stripe_access_guard.h"
 #include "stripe_bucket_db_updater.h"
+#include "tickable_stripe.h"
 #include <vespa/config/config.h>
 #include <vespa/storage/common/doneinitializehandler.h>
 #include <vespa/storage/common/messagesender.h>
@@ -21,6 +22,7 @@
 #include <vespa/storageapi/message/state.h>
 #include <vespa/storageframework/generic/metric/metricupdatehook.h>
 #include <vespa/storageframework/generic/thread/tickingthread.h>
+#include <mutex>
 #include <queue>
 #include <unordered_map>
 
@@ -39,6 +41,7 @@ class DistributorBucketSpaceRepo;
 class OperationSequencer;
 class OwnershipTransferSafeTimePointCalculator;
 class SimpleMaintenanceScanner;
+class StripeHostInfoNotifier;
 class ThrottlingOperationStarter;
 
 /**
@@ -48,10 +51,10 @@ class DistributorStripe final
     : public DistributorStripeInterface,
       public StatusDelegator,
       public framework::StatusReporter,
-      public framework::TickingThread,
       public MinReplicaProvider,
       public BucketSpacesStatsProvider,
-      public NonTrackingMessageSender
+      public NonTrackingMessageSender,
+      public TickableStripe
 {
 public:
     DistributorStripe(DistributorComponentRegister&,
@@ -59,14 +62,16 @@ public:
                       const NodeIdentity& node_identity,
                       framework::TickingThreadPool&,
                       DoneInitializeHandler&,
-                      ChainedMessageSender& messageSender);
+                      ChainedMessageSender& messageSender,
+                      StripeHostInfoNotifier& stripe_host_info_notifier,
+                      bool use_legacy_mode);
 
     ~DistributorStripe() override;
 
     const ClusterContext& cluster_context() const override {
         return _component.cluster_context();
     }
-    void flush_and_close();
+    void flush_and_close() override;
     bool handle_or_enqueue_message(const std::shared_ptr<api::StorageMessage>&);
     void send_up_with_tracking(const std::shared_ptr<api::StorageMessage>&);
     // Bypasses message tracker component. Thread safe.
@@ -114,11 +119,13 @@ public:
 
     bool handleStatusRequest(const DelegatedStatusRequest& request) const override;
 
+    StripeAccessGuard::PendingOperationStats pending_operation_stats() const override;
+
     std::string getActiveIdealStateOperations() const;
     std::string getActiveOperations() const;
 
-    virtual framework::ThreadWaitInfo doCriticalTick(framework::ThreadIndex) override;
-    virtual framework::ThreadWaitInfo doNonCriticalTick(framework::ThreadIndex) override;
+    framework::ThreadWaitInfo doCriticalTick(framework::ThreadIndex);
+    framework::ThreadWaitInfo doNonCriticalTick(framework::ThreadIndex);
 
     /**
      * Checks whether a bucket needs to be split, and sends a split
@@ -129,14 +136,6 @@ public:
                              uint8_t priority) override;
 
     const lib::ClusterStateBundle& getClusterStateBundle() const override;
-
-    /**
-     * @return Returns the states in which the distributors consider
-     * storage nodes to be up.
-     */
-    const char* getStorageNodeUpStates() const override {
-        return "uri";
-    }
 
     /**
      * Called by bucket db updater after a merge has finished, and all the
@@ -150,7 +149,7 @@ public:
     }
 
     const DistributorConfiguration& getConfig() const override {
-        return _component.getTotalDistributorConfig();
+        return *_total_config;
     }
 
     bool isInRecoveryMode() const noexcept {
@@ -190,13 +189,16 @@ public:
         return _db_memory_sample_interval;
     }
 
+    bool tick() override;
+
 private:
+    // TODO reduce number of friends. DistributorStripe too popular for its own good.
     friend struct DistributorTest;
     friend class BucketDBUpdaterTest;
     friend class DistributorTestUtil;
     friend class MetricUpdateHook;
     friend class Distributor;
-    friend class LegacySingleStripeAccessGuard;
+    friend class MultiThreadedStripeAccessGuard;
 
     bool handleMessage(const std::shared_ptr<api::StorageMessage>& msg);
     bool isMaintenanceReply(const api::StorageReply& reply) const;
@@ -253,22 +255,47 @@ private:
     void enableNextDistribution(); // TODO STRIPE remove once legacy is gone
     void propagateDefaultDistribution(std::shared_ptr<const lib::Distribution>); // TODO STRIPE remove once legacy is gone
     void propagateClusterStates();
-    void update_distribution_config(const BucketSpaceDistributionConfigs& new_configs);
 
     BucketSpacesStatsProvider::BucketSpacesStats make_invalid_stats_per_configured_space() const;
     template <typename NodeFunctor>
     void for_each_available_content_node_in(const lib::ClusterState&, NodeFunctor&&);
     void invalidate_bucket_spaces_stats();
     void send_updated_host_info_if_required();
+    void propagate_config_snapshot_to_internal_components();
+
+    // Additional implementations of TickableStripe:
+    void update_distribution_config(const BucketSpaceDistributionConfigs& new_configs) override;
+    void update_total_distributor_config(std::shared_ptr<const DistributorConfiguration> config) override;
+    void set_pending_cluster_state_bundle(const lib::ClusterStateBundle& pending_state) override;
+    void clear_pending_cluster_state_bundle() override;
+    void enable_cluster_state_bundle(const lib::ClusterStateBundle& new_state) override;
+    void notify_distribution_change_enabled() override;
+    PotentialDataLossReport remove_superfluous_buckets(document::BucketSpace bucket_space,
+                                                       const lib::ClusterState& new_state,
+                                                       bool is_distribution_change) override;
+    void merge_entries_into_db(document::BucketSpace bucket_space,
+                               api::Timestamp gathered_at_timestamp,
+                               const lib::Distribution& distribution,
+                               const lib::ClusterState& new_state,
+                               const char* storage_up_states,
+                               const std::unordered_set<uint16_t>& outdated_nodes,
+                               const std::vector<dbtransition::Entry>& entries) override;
+    void update_read_snapshot_before_db_pruning() override;
+    void update_read_snapshot_after_db_pruning(const lib::ClusterStateBundle& new_state) override;
+    void update_read_snapshot_after_activation(const lib::ClusterStateBundle& activated_state) override;
+    void clear_read_only_bucket_repo_databases() override;
+    void report_bucket_db_status(document::BucketSpace bucket_space, std::ostream& out) const override;
+    void report_single_bucket_requests(vespalib::xml::XmlOutputStream& xos) const override;
+    void report_delayed_single_bucket_requests(vespalib::xml::XmlOutputStream& xos) const override;
 
     lib::ClusterStateBundle _clusterStateBundle;
-
     std::unique_ptr<DistributorBucketSpaceRepo> _bucketSpaceRepo;
     // Read-only bucket space repo with DBs that only contain buckets transiently
     // during cluster state transitions. Bucket set does not overlap that of _bucketSpaceRepo
     // and the DBs are empty during non-transition phases.
     std::unique_ptr<DistributorBucketSpaceRepo> _readOnlyBucketSpaceRepo;
     storage::distributor::DistributorStripeComponent _component;
+    std::shared_ptr<const DistributorConfiguration> _total_config;
     DistributorMetricSet& _metrics;
 
     OperationOwner _operationOwner;
@@ -281,6 +308,7 @@ private:
     StatusReporterDelegate _bucketDBStatusDelegate;
     IdealStateManager _idealStateManager;
     ChainedMessageSender& _messageSender;
+    StripeHostInfoNotifier& _stripe_host_info_notifier;
     ExternalOperationHandler _externalOperationHandler;
 
     std::shared_ptr<lib::Distribution> _distribution;
@@ -298,6 +326,7 @@ private:
             std::vector<std::shared_ptr<api::StorageMessage>>,
             IndirectHigherPriority
     >;
+    mutable std::mutex _external_message_mutex;
     MessageQueue _messageQueue;
     ClientRequestPriorityQueue _client_request_priority_queue;
     MessageQueue _fetchedMessages;
@@ -333,6 +362,7 @@ private:
     std::chrono::steady_clock::time_point _last_db_memory_sample_time_point;
     size_t _inhibited_maintenance_tick_count;
     bool _must_send_updated_host_info;
+    bool _use_legacy_mode;
 };
 
 }

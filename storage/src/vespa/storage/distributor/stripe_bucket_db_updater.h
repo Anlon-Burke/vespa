@@ -40,7 +40,8 @@ public:
                           DistributorBucketSpaceRepo& bucketSpaceRepo,
                           DistributorBucketSpaceRepo& readOnlyBucketSpaceRepo,
                           DistributorMessageSender& sender,
-                          DistributorComponentRegister& compReg);
+                          DistributorComponentRegister& compReg,
+                          bool use_legacy_mode);
     ~StripeBucketDBUpdater() override;
 
     void flush();
@@ -58,9 +59,14 @@ public:
     vespalib::string reportXmlStatus(vespalib::xml::XmlOutputStream&, const framework::HttpUrlPath&) const;
     vespalib::string getReportContentType(const framework::HttpUrlPath&) const override;
     bool reportStatus(std::ostream&, const framework::HttpUrlPath&) const override;
+
+    // Functions used for state reporting when a StripeAccessGuard is held.
+    void report_single_bucket_requests(vespalib::xml::XmlOutputStream& xos) const;
+    void report_delayed_single_bucket_requests(vespalib::xml::XmlOutputStream& xos) const;
+
     void print(std::ostream& out, bool verbose, const std::string& indent) const;
     const DistributorNodeContext& node_context() const { return _node_ctx; }
-    DistributorOperationContext& operation_context() { return _op_ctx; }
+    DistributorStripeOperationContext& operation_context() { return _op_ctx; }
 
     /**
      * Returns whether the current PendingClusterState indicates that there has
@@ -139,7 +145,8 @@ private:
 
     friend class DistributorTestUtil;
     // TODO refactor and rewire to avoid needing this direct meddling
-    friend class LegacySingleStripeAccessGuard;
+    friend class DistributorStripe;
+
     // Only to be used by tests that want to ensure both the BucketDBUpdater _and_ the Distributor
     // components agree on the currently active cluster state bundle.
     // Transitively invokes Distributor::enableClusterStateBundle
@@ -259,7 +266,7 @@ private:
 
     DistributorStripeComponent _distributorComponent;
     const DistributorNodeContext& _node_ctx;
-    DistributorOperationContext& _op_ctx;
+    DistributorStripeOperationContext& _op_ctx;
     DistributorStripeInterface& _distributor_interface;
     std::deque<std::pair<framework::MilliSecTime, BucketRequest> > _delayedRequests;
     std::map<uint64_t, BucketRequest> _sentMessages;
@@ -279,6 +286,7 @@ private:
                                         document::BucketSpace::hash>;
     DbGuards _explicit_transition_read_guard;
     mutable std::mutex _distribution_context_mutex;
+    bool _use_legacy_mode;
 };
 
 }

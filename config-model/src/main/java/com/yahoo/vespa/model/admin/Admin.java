@@ -9,12 +9,14 @@ import com.yahoo.config.model.ConfigModelContext.ApplicationType;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.AbstractConfigProducer;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.model.AbstractService;
 import com.yahoo.vespa.model.ConfigProxy;
 import com.yahoo.vespa.model.ConfigSentinel;
 import com.yahoo.vespa.model.HostResource;
 import com.yahoo.vespa.model.Logd;
+import com.yahoo.vespa.model.admin.clustercontroller.ClusterControllerContainer;
 import com.yahoo.vespa.model.admin.clustercontroller.ClusterControllerContainerCluster;
 import com.yahoo.vespa.model.admin.metricsproxy.MetricsProxyContainer;
 import com.yahoo.vespa.model.admin.metricsproxy.MetricsProxyContainerCluster;
@@ -27,6 +29,7 @@ import com.yahoo.vespa.model.filedistribution.FileDistributor;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -58,11 +61,13 @@ public class Admin extends AbstractConfigProducer<Admin> implements Serializable
     private Logserver logserver;
 
     private LogForwarder.Config logForwarderConfig = null;
+    private boolean logForwarderIncludeAdmin = false;
 
     private ApplicationType applicationType = ApplicationType.DEFAULT;
 
-    public void setLogForwarderConfig(LogForwarder.Config cfg) {
+    public void setLogForwarderConfig(LogForwarder.Config cfg, boolean includeAdmin) {
         this.logForwarderConfig = cfg;
+        this.logForwarderIncludeAdmin = includeAdmin;
     }
 
     /**
@@ -78,7 +83,7 @@ public class Admin extends AbstractConfigProducer<Admin> implements Serializable
     private final FileDistributionConfigProducer fileDistribution;
     private final boolean multitenant;
 
-    public Admin(AbstractConfigProducer parent,
+    public Admin(AbstractConfigProducer<?> parent,
                  Monitoring monitoring,
                  Metrics metrics,
                  boolean multitenant,
@@ -142,8 +147,22 @@ public class Admin extends AbstractConfigProducer<Admin> implements Serializable
 
     public ClusterControllerContainerCluster getClusterControllers() { return clusterControllers; }
 
-    public void setClusterControllers(ClusterControllerContainerCluster clusterControllers) {
+    public void setClusterControllers(ClusterControllerContainerCluster clusterControllers, DeployLogger deployLogger) {
         this.clusterControllers = clusterControllers;
+        if (isHostedVespa)
+            addSlobroks(createSlobroksOn(clusterControllers, deployLogger));
+    }
+
+    private List<Slobrok> createSlobroksOn(ClusterControllerContainerCluster clusterControllers, DeployLogger deployLogger) {
+        List<Slobrok> slobroks = new ArrayList<>();
+        int index = this.slobroks.size();
+        for (ClusterControllerContainer clusterController : clusterControllers.getContainers()) {
+            Slobrok slobrok = new Slobrok(this, index++);
+            slobrok.setHostResource(clusterController.getHostResource());
+            slobroks.add(slobrok);
+            slobrok.initService(deployLogger);
+        }
+        return slobroks;
     }
 
     public Optional<LogserverContainerCluster> getLogServerContainerCluster() { return logServerContainerCluster; }
@@ -186,19 +205,6 @@ public class Admin extends AbstractConfigProducer<Admin> implements Serializable
         return fileDistribution;
     }
 
-    public List<HostResource> getClusterControllerHosts() {
-        List<HostResource> hosts = new ArrayList<>();
-        if (multitenant) {
-            if (logserver != null)
-                hosts.add(logserver.getHostResource());
-        } else {
-            for (Configserver configserver : getConfigservers()) {
-                hosts.add(configserver.getHostResource());
-            }
-        }
-        return hosts;
-    }
-
     /**
      * Adds services to all hosts in the system.
      */
@@ -233,7 +239,18 @@ public class Admin extends AbstractConfigProducer<Admin> implements Serializable
         addConfigProxy(deployState.getDeployLogger(), host);
         addFileDistribution(host);
         if (logForwarderConfig != null) {
-            addLogForwarder(deployState.getDeployLogger(), host);
+            boolean actuallyAdd = true;
+            var membership = host.spec().membership();
+            if (membership.isPresent()) {
+                var clustertype = membership.get().cluster().type();
+                // XXX should skip only if this.isHostedVespa is true?
+                if (clustertype == ClusterSpec.Type.admin) {
+                    actuallyAdd = logForwarderIncludeAdmin;
+                }
+            }
+            if (actuallyAdd) {
+                addLogForwarder(deployState.getDeployLogger(), host);
+            }
         }
     }
 

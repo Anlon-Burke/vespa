@@ -80,6 +80,7 @@ import com.yahoo.vespa.hosted.controller.application.EndpointList;
 import com.yahoo.vespa.hosted.controller.application.QuotaUsage;
 import com.yahoo.vespa.hosted.controller.application.SystemApplication;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
+import com.yahoo.vespa.hosted.controller.auditlog.AuditLoggingRequestHandler;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentStatus;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentSteps;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentTrigger;
@@ -151,7 +152,7 @@ import static java.util.stream.Collectors.toUnmodifiableList;
  * @author mpolden
  */
 @SuppressWarnings("unused") // created by injection
-public class ApplicationApiHandler extends LoggingRequestHandler {
+public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private static final ObjectMapper jsonMapper = new ObjectMapper();
 
@@ -163,7 +164,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     public ApplicationApiHandler(LoggingRequestHandler.Context parentCtx,
                                  Controller controller,
                                  AccessControlRequests accessControlRequests) {
-        super(parentCtx);
+        super(parentCtx, controller.auditLogger());
         this.controller = controller;
         this.accessControlRequests = accessControlRequests;
         this.testConfigSerializer = new TestConfigSerializer(controller.system());
@@ -175,7 +176,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
     }
 
     @Override
-    public HttpResponse handle(HttpRequest request) {
+    public HttpResponse auditAndHandle(HttpRequest request) {
         try {
             Path path = new Path(request.getUri());
             switch (request.getMethod()) {
@@ -201,15 +202,15 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
             return ErrorResponse.badRequest(Exceptions.toMessageString(e));
         }
         catch (ConfigServerException e) {
-            switch (e.getErrorCode()) {
+            switch (e.code()) {
                 case NOT_FOUND:
                     return ErrorResponse.notFoundError(Exceptions.toMessageString(e));
                 case ACTIVATION_CONFLICT:
-                    return new ErrorResponse(CONFLICT, e.getErrorCode().name(), Exceptions.toMessageString(e));
+                    return new ErrorResponse(CONFLICT, e.code().name(), Exceptions.toMessageString(e));
                 case INTERNAL_SERVER_ERROR:
                     return ErrorResponse.internalServerError(Exceptions.toMessageString(e));
                 default:
-                    return new ErrorResponse(BAD_REQUEST, e.getErrorCode().name(), Exceptions.toMessageString(e));
+                    return new ErrorResponse(BAD_REQUEST, e.code().name(), Exceptions.toMessageString(e));
             }
         }
         catch (RuntimeException e) {
@@ -496,6 +497,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
 
     private static void toSlime(Cursor cursor, Notification notification) {
         cursor.setLong("at", notification.at().toEpochMilli());
+        cursor.setString("level", notificationLevelAsString(notification.level()));
         cursor.setString("type", notificationTypeAsString(notification.type()));
         Cursor messagesArray = cursor.setArray("messages");
         notification.messages().forEach(messagesArray::addString);
@@ -507,15 +509,24 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
             cursor.setString("region", zoneId.region().value());
         });
         notification.source().clusterId().ifPresent(clusterId -> cursor.setString("clusterId", clusterId.value()));
-        notification.source().jobType().ifPresent(jobType -> cursor.setString("jobType", jobType.jobName()));
+        notification.source().jobType().ifPresent(jobType -> cursor.setString("jobName", jobType.jobName()));
         notification.source().runNumber().ifPresent(runNumber -> cursor.setLong("runNumber", runNumber));
     }
 
     private static String notificationTypeAsString(Notification.Type type) {
         switch (type) {
-            case APPLICATION_PACKAGE_WARNING: return "APPLICATION_PACKAGE_WARNING";
-            case DEPLOYMENT_FAILURE: return "DEPLOYMENT_FAILURE";
+            case applicationPackage: return "applicationPackage";
+            case deployment: return "deployment";
+            case feedBlock: return "feedBlock";
             default: throw new IllegalArgumentException("No serialization defined for notification type " + type);
+        }
+    }
+
+    private static String notificationLevelAsString(Notification.Level level) {
+        switch (level) {
+            case warning: return "warning";
+            case error: return "error";
+            default: throw new IllegalArgumentException("No serialization defined for notification level " + level);
         }
     }
 
@@ -724,10 +735,10 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         var tenantSecretStore = new TenantSecretStore(name, awsId, role);
 
         if (!tenantSecretStore.isValid()) {
-            return ErrorResponse.badRequest(String.format("Secret store " + tenantSecretStore + " is invalid"));
+            return ErrorResponse.badRequest("Secret store " + tenantSecretStore + " is invalid");
         }
         if (tenant.tenantSecretStores().contains(tenantSecretStore)) {
-            return ErrorResponse.badRequest(String.format("Secret store " + tenantSecretStore + " is already configured"));
+            return ErrorResponse.badRequest("Secret store " + tenantSecretStore + " is already configured");
         }
 
         controller.serviceRegistry().roleService().createTenantPolicy(TenantName.from(tenantName), name, awsId, role);
@@ -1297,6 +1308,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         object.setString("url", endpoint.url().toString());
         object.setString("scope", endpointScopeString(endpoint.scope()));
         object.setString("routingMethod", routingMethodString(endpoint.routingMethod()));
+        object.setBool("legacy", endpoint.legacy());
     }
 
     private void toSlime(Cursor response, DeploymentId deploymentId, Deployment deployment, HttpRequest request) {
@@ -1308,17 +1320,22 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
         var application = controller.applications().requireApplication(TenantAndApplicationId.from(deploymentId.applicationId()));
 
         // Add zone endpoints
+        boolean legacyEndpoints = request.getBooleanProperty("includeLegacyEndpoints");
         var endpointArray = response.setArray("endpoints");
         EndpointList zoneEndpoints = controller.routing().endpointsOf(deploymentId)
-                                               .scope(Endpoint.Scope.zone)
-                                               .not().legacy();
+                                               .scope(Endpoint.Scope.zone);
+        if (!legacyEndpoints) {
+            zoneEndpoints = zoneEndpoints.not().legacy();
+        }
         for (var endpoint : controller.routing().directEndpoints(zoneEndpoints, deploymentId.applicationId())) {
             toSlime(endpoint, endpointArray.addObject());
         }
         // Add global endpoints
         EndpointList globalEndpoints = controller.routing().endpointsOf(application, deploymentId.applicationId().instance())
-                                                 .not().legacy()
                                                  .targets(deploymentId.zoneId());
+        if (!legacyEndpoints) {
+            globalEndpoints = globalEndpoints.not().legacy();
+        }
         for (var endpoint : controller.routing().directEndpoints(globalEndpoints, deploymentId.applicationId())) {
             toSlime(endpoint, endpointArray.addObject());
         }
@@ -1670,7 +1687,6 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
 
     /** Trigger deployment of the given Vespa version if a valid one is given, e.g., "7.8.9". */
     private HttpResponse deployPlatform(String tenantName, String applicationName, String instanceName, boolean pin, HttpRequest request) {
-        request = controller.auditLogger().log(request);
         String versionString = readToString(request.getData());
         ApplicationId id = ApplicationId.from(tenantName, applicationName, instanceName);
         StringBuilder response = new StringBuilder();
@@ -1699,7 +1715,6 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
 
     /** Trigger deployment to the last known application package for the given application. */
     private HttpResponse deployApplication(String tenantName, String applicationName, String instanceName, HttpRequest request) {
-        controller.auditLogger().log(request);
         ApplicationId id = ApplicationId.from(tenantName, applicationName, instanceName);
         StringBuilder response = new StringBuilder();
         controller.applications().lockApplicationOrThrow(TenantAndApplicationId.from(id), application -> {
@@ -2089,6 +2104,7 @@ public class ApplicationApiHandler extends LoggingRequestHandler {
             toSlime(scalingEvent.from(), scalingEventObject.setObject("from"));
             toSlime(scalingEvent.to(), scalingEventObject.setObject("to"));
             scalingEventObject.setLong("at", scalingEvent.at().toEpochMilli());
+            scalingEvent.completion().ifPresent(completion -> scalingEventObject.setLong("completion", completion.toEpochMilli()));
         }
     }
 

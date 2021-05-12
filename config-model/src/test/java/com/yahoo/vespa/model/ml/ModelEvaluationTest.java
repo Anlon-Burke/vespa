@@ -90,7 +90,6 @@ public class ModelEvaluationTest {
         RankProfilesConfig.Builder b = new RankProfilesConfig.Builder();
         cluster.getConfig(b);
         RankProfilesConfig config = new RankProfilesConfig(b);
-        // System.out.println(config);
 
         RankingConstantsConfig.Builder cb = new RankingConstantsConfig.Builder();
         cluster.getConfig(cb);
@@ -145,6 +144,7 @@ public class ModelEvaluationTest {
 
     private final String profile =
             "rankingExpression(imported_ml_function_small_constants_and_functions_exp_output).rankingScript: map(input, f(a)(exp(a)))\n" +
+            "rankingExpression(imported_ml_function_small_constants_and_functions_exp_output).type: tensor<float>(d0[3])\n" +
             "rankingExpression(default.output).rankingScript: join(rankingExpression(imported_ml_function_small_constants_and_functions_exp_output), reduce(join(join(reduce(rankingExpression(imported_ml_function_small_constants_and_functions_exp_output), sum, d0), tensor<float>(d0[1])(1.0), f(a,b)(a * b)), 9.999999974752427E-7, f(a,b)(a + b)), sum, d0), f(a,b)(a / b))\n" +
             "rankingExpression(default.output).input.type: tensor<float>(d0[3])\n" +
             "rankingExpression(default.output).type: tensor<float>(d0[3])\n";

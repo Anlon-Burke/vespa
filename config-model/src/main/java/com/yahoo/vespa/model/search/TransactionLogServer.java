@@ -1,7 +1,6 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.search;
 
-import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.searchlib.TranslogserverConfig;
 import com.yahoo.config.model.producer.AbstractConfigProducer;
@@ -15,19 +14,12 @@ import org.w3c.dom.Element;
  */
 public class TransactionLogServer extends AbstractService  {
 
-    private static final long serialVersionUID = 1L;
+    private final Boolean useFsync;
 
-    private static TranslogserverConfig.Compression.Type.Enum convertCompressionType(String type) {
-        try {
-            return TranslogserverConfig.Compression.Type.Enum.valueOf(type);
-        } catch (Throwable t) {
-            return TranslogserverConfig.Compression.Type.NONE;
-        }
-    }
-
-    public TransactionLogServer(AbstractConfigProducer searchNode, String clusterName) {
+    public TransactionLogServer(AbstractConfigProducer<?> searchNode, String clusterName, Boolean useFsync) {
         super(searchNode, "transactionlogserver");
         portsMeta.on(0).tag("tls");
+        this.useFsync = useFsync;
         setProp("clustername", clusterName);
         setProp("clustertype", "search");
     }
@@ -35,13 +27,15 @@ public class TransactionLogServer extends AbstractService  {
     public static class Builder extends VespaDomBuilder.DomConfigProducerBuilder<TransactionLogServer> {
 
         private final String clusterName;
-        public Builder(String clusterName) {
+        private final Boolean useFsync;
+        public Builder(String clusterName, Boolean useFsync) {
             this.clusterName = clusterName;
+            this.useFsync = useFsync;
         }
 
         @Override
-        protected TransactionLogServer doBuild(DeployState deployState, AbstractConfigProducer ancestor, Element producerSpec) {
-            return new TransactionLogServer(ancestor, clusterName);
+        protected TransactionLogServer doBuild(DeployState deployState, AbstractConfigProducer<?> ancestor, Element producerSpec) {
+            return new TransactionLogServer(ancestor, clusterName, useFsync);
         }
 
     }
@@ -75,8 +69,11 @@ public class TransactionLogServer extends AbstractService  {
     }
 
     public void getConfig(TranslogserverConfig.Builder builder) {
-        builder.listenport(getTlsPort()).basedir(getTlsDir());
-
+        builder.listenport(getTlsPort())
+                .basedir(getTlsDir());
+        if (useFsync != null) {
+            builder.usefsync(useFsync);
+        }
     }
 
 }

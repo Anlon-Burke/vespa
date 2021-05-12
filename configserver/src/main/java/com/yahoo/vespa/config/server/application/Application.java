@@ -1,6 +1,7 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.application;
 
+import com.yahoo.collections.Pair;
 import com.yahoo.component.Version;
 import com.yahoo.config.ConfigInstance;
 import com.yahoo.config.ConfigurationRuntimeException;
@@ -8,6 +9,8 @@ import com.yahoo.config.model.api.ApplicationInfo;
 import com.yahoo.config.model.api.Model;
 import com.yahoo.config.provision.ApplicationId;
 import java.util.logging.Level;
+
+import com.yahoo.text.AbstractUtf8Array;
 import com.yahoo.vespa.config.ConfigCacheKey;
 import com.yahoo.vespa.config.ConfigDefinitionKey;
 import com.yahoo.vespa.config.ConfigKey;
@@ -105,16 +108,12 @@ public class Application implements ModelResult {
             defMd5 = ConfigUtils.getDefMd5(req.getDefContent().asList());
         }
         ConfigCacheKey cacheKey = new ConfigCacheKey(configKey, defMd5);
-        if (logDebug()) {
-            debug("Resolving config " + cacheKey);
-        }
+        log.log(Level.FINE, () -> TenantRepository.logPre(getId()) + ("Resolving config " + cacheKey));
 
         if (useCache(req)) {
             ConfigResponse config = cache.get(cacheKey);
             if (config != null) {
-                if (logDebug()) {
-                    debug("Found config " + cacheKey + " in cache");
-                }
+                log.log(Level.FINE, () -> TenantRepository.logPre(getId()) + ("Found config " + cacheKey + " in cache"));
                 metricUpdater.incrementProcTime(System.currentTimeMillis() - start);
                 return config;
             }
@@ -125,42 +124,14 @@ public class Application implements ModelResult {
             metricUpdater.incrementFailedRequests();
             throw new UnknownConfigDefinitionException("Unable to find config definition for '" + configKey.getNamespace() + "." + configKey.getName());
         }
-        if (logDebug()) {
-            debug("Resolving " + configKey + " with config definition " + def);
-        }
+        log.log(Level.FINE, () -> TenantRepository.logPre(getId()) + ("Resolving " + configKey + " with config definition " + def));
 
-        ConfigInstance.Builder builder;
-        ConfigPayload payload;
-        boolean applyOnRestart = false;
-        try {
-            builder = model.getConfigInstance(configKey, def);
-            if (builder instanceof GenericConfig.GenericConfigBuilder) {
-                payload = ((GenericConfig.GenericConfigBuilder) builder).getPayload();
-                applyOnRestart = builder.getApplyOnRestart();
-            }
-            else {
-                try {
-                    ConfigInstance instance = ConfigInstanceBuilder.buildInstance(builder, def.getCNode());
-                    payload = ConfigPayload.fromInstance(instance);
-                    applyOnRestart = builder.getApplyOnRestart();
-                } catch (ConfigurationRuntimeException e) {
-                    // This can happen in cases where services ask for config that no longer exist before they have been able
-                    // to reconfigure themselves
-                    log.log(Level.INFO, TenantRepository.logPre(getId()) +
-                                        ": Error resolving instance for builder '" + builder.getClass().getName() +
-                                        "', returning empty config: " + Exceptions.toMessageString(e));
-                    payload = ConfigPayload.fromBuilder(new ConfigPayloadBuilder());
-                }
-                if (def.getCNode() != null)
-                    payload.applyDefaultsFromDef(def.getCNode());
-            }
-        } catch (Exception e) {
-            throw new ConfigurationRuntimeException("Unable to get config for " + app, e);
-        }
 
-        ConfigResponse configResponse = responseFactory.createResponse(payload,
+
+        var payload = createPayload(configKey, def);
+        ConfigResponse configResponse = responseFactory.createResponse(payload.getFirst(),
                                                                        applicationGeneration,
-                                                                       applyOnRestart);
+                                                                       payload.getSecond());
         metricUpdater.incrementProcTime(System.currentTimeMillis() - start);
         if (useCache(req)) {
             cache.put(cacheKey, configResponse, configResponse.getConfigMd5());
@@ -170,16 +141,41 @@ public class Application implements ModelResult {
         return configResponse;
     }
 
+    private Pair<AbstractUtf8Array, Boolean> createPayload(ConfigKey<?> configKey, ConfigDefinition def) {
+        try {
+            ConfigInstance.Builder builder = model.getConfigInstance(configKey, def);
+            boolean tempApplyOnRestart = builder.getApplyOnRestart();
+            if (builder instanceof GenericConfig.GenericConfigBuilder) {
+                return new Pair<>(((GenericConfig.GenericConfigBuilder) builder).getPayload().toUtf8Array(true),
+                        tempApplyOnRestart);
+            }
+            else {
+                String cacheBuilderClassNameForErrorReport = builder.getClass().getName();
+                ConfigPayload payload;
+                boolean applyOnRestart = false;
+                try {
+                    ConfigInstance instance = ConfigInstanceBuilder.buildInstance(builder, def.getCNode());
+                    payload = ConfigPayload.fromInstance(instance);
+                    applyOnRestart = tempApplyOnRestart;
+                } catch (ConfigurationRuntimeException e) {
+                    // This can happen in cases where services ask for config that no longer exist before they have been able
+                    // to reconfigure themselves
+                    log.log(Level.INFO, TenantRepository.logPre(getId()) +
+                            ": Error resolving instance for builder '" + cacheBuilderClassNameForErrorReport +
+                            "', returning empty config: " + Exceptions.toMessageString(e));
+                    payload = ConfigPayload.fromBuilder(new ConfigPayloadBuilder());
+                }
+                if (def.getCNode() != null)
+                    payload.applyDefaultsFromDef(def.getCNode());
+                return new Pair<>(payload.toUtf8Array(true), applyOnRestart);
+            }
+        } catch (Exception e) {
+            throw new ConfigurationRuntimeException("Unable to get config for " + app, e);
+        }
+    }
+
     private boolean useCache(GetConfigRequest request) {
         return !request.noCache();
-    }
-
-    private boolean logDebug() {
-        return log.isLoggable(Level.FINE);
-    }
-
-    private void debug(String message) {
-        log.log(Level.FINE, TenantRepository.logPre(getId()) + message);
     }
 
     private ConfigDefinition getTargetDef(GetConfigRequest req) {
@@ -187,14 +183,10 @@ public class Application implements ModelResult {
         DefContent def = req.getDefContent();
         ConfigDefinitionKey configDefinitionKey = new ConfigDefinitionKey(configKey.getName(), configKey.getNamespace());
         if (def.isEmpty()) {
-            if (logDebug()) {
-                debug("No config schema in request for " + configKey);
-            }
+            log.log(Level.FINE, () -> TenantRepository.logPre(getId()) + ("No config schema in request for " + configKey));
             return cache.getDef(configDefinitionKey);
         } else {
-            if (logDebug()) {
-                debug("Got config schema from request, length:" + def.asList().size() + " : " + configKey);
-            }
+            log.log(Level.FINE, () -> TenantRepository.logPre(getId()) + ("Got config schema from request, length:" + def.asList().size() + " : " + configKey));
             return new ConfigDefinition(configKey.getName(), def.asStringArray());
         }
     }

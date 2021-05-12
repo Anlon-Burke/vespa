@@ -162,10 +162,10 @@ public class StorageGroup {
     }
 
     /** Returns the total number of nodes below this group */
-    public int countNodes() {
-        int nodeCount = nodes.size();
+    public int countNodes(boolean includeRetired) {
+        int nodeCount = (int)nodes.stream().filter(node -> includeRetired || ! node.isRetired()).count();
         for (StorageGroup group : subgroups)
-            nodeCount += group.countNodes();
+            nodeCount += group.countNodes(includeRetired);
         return nodeCount;
     }
 
@@ -213,14 +213,14 @@ public class StorageGroup {
             if (group.isPresent() && nodes.isPresent())
                 throw new IllegalStateException("Both group and nodes exists, only one of these tags is legal");
             if (group.isPresent() && (group.get().stringAttribute("name") != null || group.get().integerAttribute("distribution-key") != null))
-                    deployState.getDeployLogger().log(Level.INFO, "'distribution-key' attribute on a content cluster's root group is ignored");
+                    deployState.getDeployLogger().logApplicationPackage(Level.INFO, "'distribution-key' attribute on a content cluster's root group is ignored");
 
             GroupBuilder groupBuilder = collectGroup(owner.isHosted(), group, nodes, null, null);
             StorageGroup storageGroup = (owner.isHosted())
                     ? groupBuilder.buildHosted(deployState, owner, Optional.empty())
                     : groupBuilder.buildNonHosted(deployState, owner, Optional.empty());
             Redundancy redundancy = redundancyBuilder.build(owner.getName(), owner.isHosted(), storageGroup.subgroups.size(),
-                                                            storageGroup.getNumberOfLeafGroups(), storageGroup.countNodes(),
+                                                            storageGroup.getNumberOfLeafGroups(), storageGroup.countNodes(false),
                                                             maxRedundancy);
             owner.setRedundancy(redundancy);
             if (storageGroup.partitions.isEmpty() && (redundancy.groups() > 1)) {
@@ -241,7 +241,7 @@ public class StorageGroup {
             int minNodesPerGroup = (int)Math.ceil((double)nodesSpec.minResources().nodes() / nodesSpec.minResources().groups());
 
             if (minNodesPerGroup < redundancy) { // TODO: Fail on this on Vespa 8, and simplify
-                context.getDeployLogger().log(Level.WARNING,
+                context.getDeployLogger().logApplicationPackage(Level.WARNING,
                                               "Cluster '" + clusterElement.stringAttribute("id") + "' " +
                                               "specifies redundancy " + redundancy + " but cannot be higher than " +
                                               "the minimum nodes per group, which is " + minNodesPerGroup);

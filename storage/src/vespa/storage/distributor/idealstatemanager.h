@@ -28,8 +28,7 @@ class SplitBucketStateChecker;
    may generate Operations. Once one does so, the rest of the state checkers
    aren't run.
 */
-class IdealStateManager : public framework::HtmlStatusReporter,
-                          public MaintenancePriorityGenerator,
+class IdealStateManager : public MaintenancePriorityGenerator,
                           public MaintenanceOperationGenerator
 {
 public:
@@ -68,17 +67,14 @@ public:
 
     IdealStateMetricSet& getMetrics() { return *_metrics; }
 
+
+    void dump_bucket_space_db_status(document::BucketSpace bucket_space, std::ostream& out) const;
+
     void getBucketStatus(std::ostream& out) const;
 
-    // HtmlStatusReporter
-    void reportHtmlStatus(
-            std::ostream& out, const framework::HttpUrlPath&) const override {
-        getBucketStatus(out);
-    }
-
     const DistributorNodeContext& node_context() const { return _distributorComponent; }
-    DistributorOperationContext& operation_context() { return _distributorComponent; }
-    const DistributorOperationContext& operation_context() const { return _distributorComponent; }
+    DistributorStripeOperationContext& operation_context() { return _distributorComponent; }
+    const DistributorStripeOperationContext& operation_context() const { return _distributorComponent; }
     DistributorBucketSpaceRepo &getBucketSpaceRepo() { return _bucketSpaceRepo; }
     const DistributorBucketSpaceRepo &getBucketSpaceRepo() const { return _bucketSpaceRepo; }
 
@@ -126,7 +122,6 @@ private:
 
     void getBucketStatus(document::BucketSpace bucketSpace, const BucketDatabase::ConstEntryRef& entry,
                          NodeMaintenanceStatsTracker& statsTracker, std::ostream& out) const;
-    void dump_bucket_space_db_status(document::BucketSpace bucket_space, std::ostream& out) const;
 };
 
 }

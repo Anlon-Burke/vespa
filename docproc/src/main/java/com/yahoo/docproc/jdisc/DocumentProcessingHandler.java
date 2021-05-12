@@ -194,13 +194,13 @@ public class DocumentProcessingHandler extends AbstractRequestHandler {
 
         private LaterTimerTask(DocumentProcessingTask processingTask, long delay) {
             this.delay = delay;
-            log.log(Level.FINE, "Enqueueing in " + delay + " ms due to Progress.LATER: " + processingTask);
+            log.log(Level.FINE, () -> "Enqueueing in " + delay + " ms due to Progress.LATER: " + processingTask);
             this.processingTask = processingTask;
         }
 
         @Override
         public void run() {
-            log.log(Level.FINE, "Submitting after having waited " + delay + " ms in LATER queue: " + processingTask);
+            log.log(Level.FINE, () -> "Submitting after having waited " + delay + " ms in LATER queue: " + processingTask);
             processingTask.submit();
         }
     }
