@@ -10,7 +10,9 @@ import com.yahoo.vespa.hosted.controller.api.integration.configserver.Node;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.NodeRepository;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.NodeRepositoryNode;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.NodeState;
+import com.yahoo.vespa.hosted.controller.api.integration.vcmr.ChangeRequest;
 import com.yahoo.vespa.hosted.controller.api.integration.vcmr.ChangeRequest.Impact;
+import com.yahoo.vespa.hosted.controller.api.integration.vcmr.ChangeRequestClient;
 import com.yahoo.vespa.hosted.controller.api.integration.vcmr.HostAction;
 import com.yahoo.vespa.hosted.controller.api.integration.vcmr.HostAction.State;
 import com.yahoo.vespa.hosted.controller.api.integration.vcmr.VespaChangeRequest;
@@ -24,6 +26,7 @@ import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -41,11 +44,15 @@ public class VCMRMaintainer extends ControllerMaintainer {
     private final Duration ALLOWED_POSTPONEMENT_TIME = Duration.ofDays(7);
     private final CuratorDb curator;
     private final NodeRepository nodeRepository;
+    private final ChangeRequestClient changeRequestClient;
+    private final SystemName system;
 
     public VCMRMaintainer(Controller controller, Duration interval) {
         super(controller, interval, null, SystemName.allOf(Predicate.not(SystemName::isPublic)));
         this.curator = controller.curator();
         this.nodeRepository = controller.serviceRegistry().configServer().nodeRepository();
+        this.changeRequestClient = controller.serviceRegistry().changeRequestClient();
+        this.system = controller.system();
     }
 
     @Override
@@ -65,11 +72,14 @@ public class VCMRMaintainer extends ControllerMaintainer {
             try (var lock = curator.lockChangeRequests()) {
                 // Read the vcmr again, in case the source status has been updated
                 curator.readChangeRequest(changeRequest.getId())
-                        .ifPresent(vcmr -> curator.writeChangeRequest(vcmr.withActionPlan(nextActions)
-                                                                            .withStatus(status)));
+                        .ifPresent(vcmr -> {
+                            var updatedVcmr = vcmr.withActionPlan(nextActions)
+                                    .withStatus(status);
+                            curator.writeChangeRequest(updatedVcmr);
+                            approveChangeRequest(updatedVcmr);
+                        });
             }
         });
-
         return true;
     }
 
@@ -77,7 +87,7 @@ public class VCMRMaintainer extends ControllerMaintainer {
      * Status is based on:
      *  1. Whether the source has reportedly closed the request
      *  2. Whether any host requires operator action
-     *  3. Whether any host has started/finished retiring
+     *  3. Whether any host is pending/started/finished retirement
      */
     private Status getStatus(List<HostAction> nextActions, VespaChangeRequest changeRequest) {
         if (changeRequest.getChangeRequestSource().isClosed()) {
@@ -90,8 +100,12 @@ public class VCMRMaintainer extends ControllerMaintainer {
             return Status.REQUIRES_OPERATOR_ACTION;
         }
 
-        if (byActionState.getOrDefault(State.RETIRING, 0L) + byActionState.getOrDefault(State.RETIRED, 0L) > 0) {
+        if (byActionState.getOrDefault(State.RETIRING, 0L) > 0) {
             return Status.IN_PROGRESS;
+        }
+
+        if (Set.of(State.RETIRED, State.NONE).containsAll(byActionState.keySet())) {
+            return Status.READY;
         }
 
         if (byActionState.getOrDefault(State.PENDING_RETIREMENT, 0L) > 0) {
@@ -132,6 +146,9 @@ public class VCMRMaintainer extends ControllerMaintainer {
             recycleNode(changeRequest.getZoneId(), node, hostAction);
             return hostAction.withState(State.COMPLETE);
         }
+
+        if (isLowImpact(changeRequest))
+            return hostAction;
 
         if (isPostponed(changeRequest, hostAction)) {
             logger.fine(() -> changeRequest.getChangeRequestSource().getId() + " is postponed, recycling " + node.hostname());
@@ -233,9 +250,12 @@ public class VCMRMaintainer extends ControllerMaintainer {
                         .orElse(false);
     }
     private Predicate<VespaChangeRequest> shouldUpdate() {
-        return changeRequest -> changeRequest.getStatus() != Status.COMPLETED &&
-                 List.of(Impact.HIGH, Impact.VERY_HIGH)
-                         .contains(changeRequest.getImpact());
+        return changeRequest -> changeRequest.getStatus() != Status.COMPLETED;
+    }
+
+    private boolean isLowImpact(VespaChangeRequest changeRequest) {
+        return !List.of(Impact.HIGH, Impact.VERY_HIGH)
+                .contains(changeRequest.getImpact());
     }
 
     private boolean hasSpareCapacity(ZoneId zoneId, List<Node> nodes) {
@@ -252,5 +272,17 @@ public class VCMRMaintainer extends ControllerMaintainer {
         var newNode = new NodeRepositoryNode();
         newNode.setWantToRetire(wantToRetire);
         nodeRepository.patchNode(zoneId, node.hostname().value(), newNode);
+    }
+
+    private void approveChangeRequest(VespaChangeRequest changeRequest) {
+        if (!system.equals(SystemName.main))
+            return;
+        if (changeRequest.getStatus() == Status.REQUIRES_OPERATOR_ACTION)
+            return;
+        if (changeRequest.getApproval() != ChangeRequest.Approval.REQUESTED)
+            return;
+
+        logger.info("Approving " + changeRequest.getChangeRequestSource().getId());
+        changeRequestClient.approveChangeRequest(changeRequest);
     }
 }
