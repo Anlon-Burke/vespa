@@ -9,22 +9,24 @@ import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.node.Agent;
+import com.yahoo.vespa.hosted.provision.node.Allocation;
+import com.yahoo.vespa.hosted.provision.node.ClusterId;
 import com.yahoo.vespa.hosted.provision.node.filter.NodeListFilter;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 
 /**
  * An upgrader that retires and rebuilds hosts on stale OS versions.
  *
  * - We limit the number of concurrent rebuilds to reduce impact of retiring too many hosts.
- * - We distribute rebuilds equally among all host flavors to preserve free capacity for deployments.
+ * - We limit rebuilds by cluster so that at most one node per stateful cluster per application is retired at a time.
  *
  * Used in cases where performing an OS upgrade requires rebuilding the host, e.g. when upgrading across major versions.
  *
@@ -44,10 +46,9 @@ public class RebuildingOsUpgrader implements OsUpgrader {
 
     @Override
     public void upgradeTo(OsVersionTarget target) {
-        NodeList allNodesOfType = nodeRepository.nodes().list().nodeType(target.nodeType());
+        NodeList allNodes = nodeRepository.nodes().list();
         Instant now = nodeRepository.clock().instant();
-        List<Node> rebuildableNodes = rebuildableNodes(target.version(), allNodesOfType);
-        rebuildableNodes.forEach(node -> rebuild(node, target.version(), now));
+        rebuildableHosts(target, allNodes).forEach(host -> rebuild(host, target.version(), now));
     }
 
     @Override
@@ -55,35 +56,38 @@ public class RebuildingOsUpgrader implements OsUpgrader {
         // No action needed in this implementation. Hosts that have started rebuilding cannot be halted
     }
 
-    private List<Node> rebuildableNodes(Version target, NodeList allNodesOfType) {
-        int upgradeLimit = Math.max(0, maxRebuilds.value() - allNodesOfType.rebuilding().size());
+    /** Returns the number of hosts of given type that can be rebuilt concurrently */
+    private int rebuildLimit(NodeType hostType, NodeList hostsOfType) {
+        if (hostsOfType.stream().anyMatch(host -> host.type() != hostType)) illegal("All hosts must a " + hostType);
+        int limit = hostType == NodeType.host ? maxRebuilds.value() : 1;
+        return Math.max(0, limit - hostsOfType.rebuilding().size());
+    }
 
-        // Nodes grouped by flavor, sorted descending by group count
-        List<List<Node>> nodeGroups = allNodesOfType.state(Node.State.active)
-                                                    .not().rebuilding()
-                                                    .osVersionIsBefore(target)
-                                                    .byIncreasingOsVersion()
-                                                    .asList()
-                                                    .stream()
-                                                    .collect(Collectors.groupingBy(Node::flavor))
-                                                    .values().stream()
-                                                    .sorted(Comparator.<List<Node>, Integer>comparing(List::size).reversed())
-                                                    .collect(Collectors.toList());
+    private List<Node> rebuildableHosts(OsVersionTarget target, NodeList allNodes) {
+        NodeList hostsOfTargetType = allNodes.nodeType(target.nodeType());
+        int rebuildLimit = rebuildLimit(target.nodeType(), hostsOfTargetType);
 
-        // Pick one node from each group until limit is fulfilled or we exhaust nodes to upgrade
-        List<Node> nodesToUpgrade = new ArrayList<>(upgradeLimit);
-        int emptyNodeGroups = 0;
-        while (nodesToUpgrade.size() < upgradeLimit && emptyNodeGroups < nodeGroups.size()) {
-            for (List<Node> nodeGroup : nodeGroups) {
-                if (nodeGroup.isEmpty()) {
-                    emptyNodeGroups++;
-                } else if (nodesToUpgrade.size() < upgradeLimit) {
-                    nodesToUpgrade.add(nodeGroup.remove(0));
-                }
+        // Find stateful clusters with retiring nodes
+        NodeList activeNodes = allNodes.state(Node.State.active);
+        Set<ClusterId> retiringClusters = statefulClustersOf(activeNodes.nodeType(target.nodeType().childNodeType())
+                                                                        .retiring());
+
+        // Rebuild hosts not containing stateful clusters with retiring nodes, up to rebuild limit
+        List<Node> hostsToRebuild = new ArrayList<>(rebuildLimit);
+        NodeList candidates = hostsOfTargetType.state(Node.State.active)
+                                               .not().rebuilding()
+                                               .osVersionIsBefore(target.version())
+                                               .byIncreasingOsVersion();
+        for (Node host : candidates) {
+            if (hostsToRebuild.size() == rebuildLimit) break;
+            Set<ClusterId> clustersOnHost = statefulClustersOf(activeNodes.childrenOf(host));
+            boolean canRebuild = Collections.disjoint(retiringClusters, clustersOnHost);
+            if (canRebuild) {
+                hostsToRebuild.add(host);
+                retiringClusters.addAll(clustersOnHost);
             }
         }
-
-        return Collections.unmodifiableList(nodesToUpgrade);
+        return Collections.unmodifiableList(hostsToRebuild);
     }
 
     private void rebuild(Node host, Version target, Instant now) {
@@ -92,6 +96,22 @@ public class RebuildingOsUpgrader implements OsUpgrader {
                  ", want " + target);
         nodeRepository.nodes().rebuild(host.hostname(), Agent.RebuildingOsUpgrader, now);
         nodeRepository.nodes().upgradeOs(NodeListFilter.from(host), Optional.of(target));
+    }
+
+    private static Set<ClusterId> statefulClustersOf(NodeList nodes) {
+        Set<ClusterId> clusters = new HashSet<>();
+        for (Node node : nodes) {
+            if (node.type().isHost()) illegal("All nodes must be children, got host " + node);
+            if (node.allocation().isEmpty()) continue;
+            Allocation allocation = node.allocation().get();
+            if (!allocation.membership().cluster().isStateful()) continue;
+            clusters.add(new ClusterId(allocation.owner(), allocation.membership().cluster().id()));
+        }
+        return clusters;
+    }
+
+    private static void illegal(String msg) {
+        throw new IllegalArgumentException(msg);
     }
 
 }

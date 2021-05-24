@@ -210,13 +210,6 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundBooleanFlag ENABLE_JDISC_HTTP2 = defineFeatureFlag(
-            "enable-jdisc-http2", false,
-            List.of("bjorncs", "jonmv"), "2021-04-12", "2021-08-01",
-            "Whether jdisc HTTPS connectors should allow HTTP/2",
-            "Takes effect at redeployment",
-            APPLICATION_ID);
-
     public static final UnboundBooleanFlag ENABLE_CUSTOM_ACL_MAPPING = defineFeatureFlag(
             "enable-custom-acl-mapping", false,
             List.of("mortent","bjorncs"), "2021-04-13", "2021-08-01",
@@ -237,6 +230,13 @@ public class Flags {
             "Whether to enable core dumps for routing layer",
             "Takes effect on next host-admin tick",
             HOSTNAME);
+
+    public static final UnboundBooleanFlag CFG_DEPLOY_MULTIPART = defineFeatureFlag(
+            "cfg-deploy-multipart", false,
+            List.of("tokle"), "2021-05-19", "2021-08-01",
+            "Wheter to deploy applications using multipart form data (instead of url params)",
+            "Takes effect immediately",
+            APPLICATION_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

@@ -15,7 +15,9 @@ import com.yahoo.path.Path;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
 import com.yahoo.vespa.config.search.RankProfilesConfig;
+import com.yahoo.vespa.config.search.core.OnnxModelsConfig;
 import com.yahoo.vespa.config.search.core.RankingConstantsConfig;
+import com.yahoo.vespa.config.search.core.RankingExpressionsConfig;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.container.ApplicationContainerCluster;
 import org.junit.Test;
@@ -95,6 +97,13 @@ public class ModelEvaluationTest {
         cluster.getConfig(cb);
         RankingConstantsConfig constantsConfig = new RankingConstantsConfig(cb);
 
+        RankingExpressionsConfig.Builder ce = new RankingExpressionsConfig.Builder();
+        RankingExpressionsConfig expressionsConfig = ce.build();
+
+        OnnxModelsConfig.Builder ob = new OnnxModelsConfig.Builder();
+        cluster.getConfig(ob);
+        OnnxModelsConfig onnxModelsConfig = new OnnxModelsConfig(ob);
+
         assertEquals(4, config.rankprofile().size());
         Set<String> modelNames = config.rankprofile().stream().map(v -> v.name()).collect(Collectors.toSet());
         assertTrue(modelNames.contains("xgboost_2_2"));
@@ -109,7 +118,7 @@ public class ModelEvaluationTest {
         assertEquals(profile, sb.toString());
 
         ModelsEvaluator evaluator = new ModelsEvaluator(new ToleratingMissingConstantFilesRankProfilesConfigImporter(MockFileAcquirer.returnFile(null))
-                                                                .importFrom(config, constantsConfig));
+                                                                .importFrom(config, constantsConfig, expressionsConfig, onnxModelsConfig));
 
         assertEquals(4, evaluator.models().size());
 
