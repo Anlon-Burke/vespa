@@ -19,6 +19,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.net.URI;
+import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -83,6 +84,8 @@ public interface ModelContext {
         @ModelFeatureFlag(owners = {"baldersheim"}) default boolean useBucketExecutorForLidSpaceCompact() { return true; }
         @ModelFeatureFlag(owners = {"baldersheim"}) default boolean useBucketExecutorForBucketMove() { return true; }
         @ModelFeatureFlag(owners = {"baldersheim"}) default boolean useBucketExecutorForPruneRemoved() { throw new UnsupportedOperationException("TODO specify default value"); }
+        @ModelFeatureFlag(owners = {"baldersheim"}) default boolean useExternalRankExpressions() { return false; }
+        @ModelFeatureFlag(owners = {"baldersheim"}) default boolean distributeExternalRankExpressions() { return false; }
         @ModelFeatureFlag(owners = {"geirst"}) default boolean enableFeedBlockInDistributor() { return true; }
         @ModelFeatureFlag(owners = {"baldersheim", "geirst", "toregge"}) default double maxDeadBytesRatio() { return 0.05; }
         @ModelFeatureFlag(owners = {"hmusum"}, removeAfter = "7.406") default int clusterControllerMaxHeapSizeInMb() { return 128; }
@@ -135,6 +138,8 @@ public interface ModelContext {
 
         // Allow disabling mTLS for now, harden later
         default boolean allowDisableMtls() { return true; }
+
+        default List<X509Certificate> operatorCertificates() { return List.of(); }
     }
 
     @Retention(RetentionPolicy.RUNTIME)

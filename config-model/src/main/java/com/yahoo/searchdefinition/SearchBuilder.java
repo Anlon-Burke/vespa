@@ -3,7 +3,9 @@ package com.yahoo.searchdefinition;
 
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.DeployLogger;
+import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.application.provider.BaseDeployLogger;
+import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.document.DocumentTypeManager;
 import com.yahoo.io.IOUtils;
@@ -41,53 +43,76 @@ import java.util.List;
 public class SearchBuilder {
 
     private final DocumentTypeManager docTypeMgr = new DocumentTypeManager();
-    private List<Search> searchList = new LinkedList<>();
-    private ApplicationPackage app;
-    private boolean isBuilt = false;
-    private DocumentModel model = new DocumentModel();
+    private final DocumentModel model = new DocumentModel();
+    private final ApplicationPackage app;
     private final RankProfileRegistry rankProfileRegistry;
     private final QueryProfileRegistry queryProfileRegistry;
-
+    private final DeployLogger deployLogger;
+    private final ModelContext.Properties properties;
     /** True to build the document aspect only, skipping instantiation of rank profiles */
     private final boolean documentsOnly;
 
+    private List<Search> searchList = new LinkedList<>();
+    private boolean isBuilt = false;
+
     /** For testing only */
     public SearchBuilder() {
-        this(MockApplicationPackage.createEmpty(), new RankProfileRegistry(), new QueryProfileRegistry());
+        this(new RankProfileRegistry(), new QueryProfileRegistry());
+    }
+
+    /** For testing only */
+    public SearchBuilder(DeployLogger deployLogger) {
+        this(MockApplicationPackage.createEmpty(), deployLogger);
+    }
+
+    /** For testing only */
+    public SearchBuilder(DeployLogger deployLogger, RankProfileRegistry rankProfileRegistry) {
+        this(MockApplicationPackage.createEmpty(), deployLogger, rankProfileRegistry);
     }
 
     /** Used for generating documents for typed access to document fields in Java */
     public SearchBuilder(boolean documentsOnly) {
-        this(MockApplicationPackage.createEmpty(), new RankProfileRegistry(), new QueryProfileRegistry(), documentsOnly);
+        this(MockApplicationPackage.createEmpty(), new BaseDeployLogger(), new TestProperties(), new RankProfileRegistry(), new QueryProfileRegistry(), documentsOnly);
     }
 
     /** For testing only */
-    public SearchBuilder(ApplicationPackage app) {
-        this(app, new RankProfileRegistry(), new QueryProfileRegistry());
+    public SearchBuilder(ApplicationPackage app, DeployLogger deployLogger) {
+        this(app, deployLogger, new TestProperties(), new RankProfileRegistry(), new QueryProfileRegistry());
+    }
+
+    /** For testing only */
+    public SearchBuilder(ApplicationPackage app, DeployLogger deployLogger, RankProfileRegistry rankProfileRegistry) {
+        this(app, deployLogger, new TestProperties(), rankProfileRegistry, new QueryProfileRegistry());
     }
 
     /** For testing only */
     public SearchBuilder(RankProfileRegistry rankProfileRegistry) {
-        this(MockApplicationPackage.createEmpty(), rankProfileRegistry, new QueryProfileRegistry());
+        this(rankProfileRegistry, new QueryProfileRegistry());
     }
 
     /** For testing only */
     public SearchBuilder(RankProfileRegistry rankProfileRegistry, QueryProfileRegistry queryProfileRegistry) {
-        this(MockApplicationPackage.createEmpty(), rankProfileRegistry, queryProfileRegistry);
+        this(MockApplicationPackage.createEmpty(), new BaseDeployLogger(), new TestProperties(), rankProfileRegistry, queryProfileRegistry);
     }
 
     public SearchBuilder(ApplicationPackage app,
+                         DeployLogger deployLogger,
+                         ModelContext.Properties properties,
                          RankProfileRegistry rankProfileRegistry,
                          QueryProfileRegistry queryProfileRegistry) {
-        this(app, rankProfileRegistry, queryProfileRegistry, false);
+        this(app, deployLogger, properties, rankProfileRegistry, queryProfileRegistry, false);
     }
-    public SearchBuilder(ApplicationPackage app,
-                         RankProfileRegistry rankProfileRegistry,
-                         QueryProfileRegistry queryProfileRegistry,
-                         boolean documentsOnly) {
+    private SearchBuilder(ApplicationPackage app,
+                          DeployLogger deployLogger,
+                          ModelContext.Properties properties,
+                          RankProfileRegistry rankProfileRegistry,
+                          QueryProfileRegistry queryProfileRegistry,
+                          boolean documentsOnly) {
         this.app = app;
         this.rankProfileRegistry = rankProfileRegistry;
         this.queryProfileRegistry = queryProfileRegistry;
+        this.deployLogger = deployLogger;
+        this.properties = properties;
         this.documentsOnly = documentsOnly;
     }
 
@@ -95,29 +120,17 @@ public class SearchBuilder {
      * Import search definition.
      *
      * @param fileName The name of the file to import.
-     * @param deployLogger Logger for deploy messages.
      * @return The name of the imported object.
      * @throws IOException    Thrown if the file can not be read for some reason.
      * @throws ParseException Thrown if the file does not contain a valid search definition.       ```
      */
-    public String importFile(String fileName, DeployLogger deployLogger) throws IOException, ParseException {
+    public String importFile(String fileName) throws IOException, ParseException {
         File file = new File(fileName);
-        return importString(IOUtils.readFile(file), file.getAbsoluteFile().getParent(), deployLogger);
+        return importString(IOUtils.readFile(file), file.getAbsoluteFile().getParent());
     }
 
-    /**
-     * Import search definition.
-     *
-     * @param fileName The name of the file to import.
-     * @return The name of the imported object.
-     * @throws IOException    Thrown if the file can not be read for some reason.
-     * @throws ParseException Thrown if the file does not contain a valid search definition.
-     */
-    public String importFile(String fileName) throws IOException, ParseException {
-        return importFile(fileName, new BaseDeployLogger());
-    }
-    public String importFile(Path file) throws IOException, ParseException {
-        return importFile(file.toString(), new BaseDeployLogger());
+    private String importFile(Path file) throws IOException, ParseException {
+        return importFile(file.toString());
     }
 
     /**
@@ -129,17 +142,8 @@ public class SearchBuilder {
      * @return The name of the imported object.
      * @throws ParseException Thrown if the file does not contain a valid search definition.
      */
-    public String importReader(NamedReader reader, String searchDefDir, DeployLogger deployLogger) throws IOException, ParseException {
-        return importString(IOUtils.readAll(reader), searchDefDir, deployLogger);
-    }
-
-    /**
-     * See #{@link #importReader}
-     *
-     * Convenience, should only be used for testing as logs will be swallowed.
-     */
     public String importReader(NamedReader reader, String searchDefDir) throws IOException, ParseException {
-        return importString(IOUtils.readAll(reader), searchDefDir, new BaseDeployLogger());
+        return importString(IOUtils.readAll(reader), searchDefDir);
     }
 
     /**
@@ -150,24 +154,13 @@ public class SearchBuilder {
      * @throws ParseException thrown if the file does not contain a valid search definition.
      */
     public String importString(String str) throws ParseException {
-        return importString(str, null, new BaseDeployLogger());
+        return importString(str, null);
     }
 
-    /**
-     * Import search definition.
-     *
-     * @param str the string to parse.
-     * @return the name of the imported object.
-     * @throws ParseException thrown if the file does not contain a valid search definition.
-     */
-    public String importString(String str, DeployLogger logger) throws ParseException {
-        return importString(str, null, logger);
-    }
-
-    private String importString(String str, String searchDefDir, DeployLogger deployLogger) throws ParseException {
+    private String importString(String str, String searchDefDir) throws ParseException {
         SimpleCharStream stream = new SimpleCharStream(str);
         try {
-            return importRawSearch(new SDParser(stream, deployLogger, app, rankProfileRegistry, documentsOnly)
+            return importRawSearch(new SDParser(stream, deployLogger, properties, app, rankProfileRegistry, documentsOnly)
                                            .search(docTypeMgr, searchDefDir));
         } catch (TokenMgrException e) {
             throw new ParseException("Unknown symbol: " + e.getMessage());
@@ -208,7 +201,7 @@ public class SearchBuilder {
      * @throws IllegalStateException Thrown if this method has already been called.
      */
     public void build() {
-        build(true, new BaseDeployLogger());
+        build(true);
     }
 
     /**
@@ -216,9 +209,8 @@ public class SearchBuilder {
      * #getSearch(String)} method.
      *
      * @throws IllegalStateException Thrown if this method has already been called.
-     * @param deployLogger The logger to use during build
      */
-    public void build(boolean validate, DeployLogger deployLogger) {
+    public void build(boolean validate) {
         if (isBuilt) throw new IllegalStateException("Model already built");
 
         List<Search> built = new ArrayList<>();
@@ -248,7 +240,7 @@ public class SearchBuilder {
         var builder = new DocumentModelBuilder(model);
         for (Search search : new SearchOrderer().order(searchList)) {
             new FieldOperationApplierForSearch().process(search); // TODO: Why is this not in the regular list?
-            process(search, deployLogger, new QueryProfiles(queryProfileRegistry, deployLogger), validate);
+            process(search, new QueryProfiles(queryProfileRegistry, deployLogger), validate);
             built.add(search);
         }
         builder.addToModel(searchList);
@@ -263,7 +255,7 @@ public class SearchBuilder {
      * Processes and returns the given {@link Search} object. This method has been factored out of the {@link
      * #build()} method so that subclasses can choose not to build anything.
      */
-    protected void process(Search search, DeployLogger deployLogger, QueryProfiles queryProfiles, boolean validate) {
+    private void process(Search search, QueryProfiles queryProfiles, boolean validate) {
         new Processing().process(search, deployLogger, rankProfileRegistry, queryProfiles, validate, documentsOnly);
     }
 
@@ -325,9 +317,9 @@ public class SearchBuilder {
     }
 
     public static SearchBuilder createFromString(String sd, DeployLogger logger) throws ParseException {
-        SearchBuilder builder = new SearchBuilder(MockApplicationPackage.createEmpty());
-        builder.importString(sd, logger);
-        builder.build(true, logger);
+        SearchBuilder builder = new SearchBuilder(logger);
+        builder.importString(sd);
+        builder.build(true);
         return builder;
     }
 
@@ -354,8 +346,8 @@ public class SearchBuilder {
         return createFromFile(fileName, logger, new RankProfileRegistry(), new QueryProfileRegistry());
     }
 
-    public static SearchBuilder createFromFiles(Collection<String> fileNames, DeployLogger logger) throws IOException, ParseException {
-        return createFromFiles(fileNames, logger, new RankProfileRegistry(), new QueryProfileRegistry());
+    private static SearchBuilder createFromFiles(Collection<String> fileNames, DeployLogger logger) throws IOException, ParseException {
+        return createFromFiles(fileNames, logger, new TestProperties(), new RankProfileRegistry(), new QueryProfileRegistry());
     }
 
     /**
@@ -368,60 +360,68 @@ public class SearchBuilder {
      * @throws IOException    if there was a problem reading the file.
      * @throws ParseException if there was a problem parsing the file content.
      */
-    public static SearchBuilder createFromFile(String fileName,
+    private static SearchBuilder createFromFile(String fileName,
                                                DeployLogger deployLogger,
                                                RankProfileRegistry rankProfileRegistry,
                                                QueryProfileRegistry queryprofileRegistry)
             throws IOException, ParseException {
-        return createFromFiles(Collections.singletonList(fileName), deployLogger,
+        return createFromFiles(Collections.singletonList(fileName), deployLogger, new TestProperties(),
                                rankProfileRegistry, queryprofileRegistry);
     }
 
     /**
      * Convenience factory methdd to create a SearchBuilder from multiple SD files..
      */
-    public static SearchBuilder createFromFiles(Collection<String> fileNames,
+    private static SearchBuilder createFromFiles(Collection<String> fileNames,
                                                 DeployLogger deployLogger,
+                                                ModelContext.Properties properties,
                                                 RankProfileRegistry rankProfileRegistry,
                                                 QueryProfileRegistry queryprofileRegistry)
             throws IOException, ParseException {
         SearchBuilder builder = new SearchBuilder(MockApplicationPackage.createEmpty(),
+                                                  deployLogger,
+                                                  properties,
                                                   rankProfileRegistry,
                                                   queryprofileRegistry);
         for (String fileName : fileNames) {
             builder.importFile(fileName);
         }
-        builder.build(true, deployLogger);
+        builder.build(true);
         return builder;
     }
 
-    public static SearchBuilder createFromDirectory(String dir, DeployLogger logger) throws IOException, ParseException {
-        return createFromDirectory(dir, new RankProfileRegistry(), logger);
+    public static SearchBuilder createFromDirectory(String dir, DeployLogger logger, ModelContext.Properties properties) throws IOException, ParseException {
+        return createFromDirectory(dir, logger, properties, new RankProfileRegistry());
     }
     public static SearchBuilder createFromDirectory(String dir,
-                                                    RankProfileRegistry rankProfileRegistry,
-                                                    DeployLogger logger) throws IOException, ParseException {
-        return createFromDirectory(dir, rankProfileRegistry, createQueryProfileRegistryFromDirectory(dir), logger);
+                                                    DeployLogger logger,
+                                                    ModelContext.Properties properties,
+                                                    RankProfileRegistry rankProfileRegistry) throws IOException, ParseException {
+        return createFromDirectory(dir, logger, properties, rankProfileRegistry, createQueryProfileRegistryFromDirectory(dir));
     }
-    public static SearchBuilder createFromDirectory(String dir,
-                                                    RankProfileRegistry rankProfileRegistry,
-                                                    QueryProfileRegistry queryProfileRegistry,
-                                                    DeployLogger logger) throws IOException, ParseException {
-        return createFromDirectory(dir, rankProfileRegistry, queryProfileRegistry, logger, MockApplicationPackage.fromSearchDefinitionDirectory(dir));
+    private static SearchBuilder createFromDirectory(String dir,
+                                                     DeployLogger logger,
+                                                     ModelContext.Properties properties,
+                                                     RankProfileRegistry rankProfileRegistry,
+                                                     QueryProfileRegistry queryProfileRegistry) throws IOException, ParseException {
+        return createFromDirectory(dir, MockApplicationPackage.fromSearchDefinitionDirectory(dir), logger, properties, rankProfileRegistry, queryProfileRegistry);
     }
 
-    public static SearchBuilder createFromDirectory(String dir,
-                                                    RankProfileRegistry rankProfileRegistry,
-                                                    QueryProfileRegistry queryProfileRegistry,
-                                                    DeployLogger logger,
-                                                    ApplicationPackage applicationPackage) throws IOException, ParseException {
+    private static SearchBuilder createFromDirectory(String dir,
+                                                     ApplicationPackage applicationPackage,
+                                                     DeployLogger deployLogger,
+                                                     ModelContext.Properties properties,
+                                                     RankProfileRegistry rankProfileRegistry,
+                                                     QueryProfileRegistry queryProfileRegistry) throws IOException, ParseException {
         SearchBuilder builder = new SearchBuilder(applicationPackage,
+                                                  deployLogger,
+                                                  properties,
                                                   rankProfileRegistry,
                                                   queryProfileRegistry);
         for (Iterator<Path> i = Files.list(new File(dir).toPath()).filter(p -> p.getFileName().toString().endsWith(".sd")).iterator(); i.hasNext(); ) {
             builder.importFile(i.next());
         }
-        builder.build(true, logger);
+        builder.build(true);
         return builder;
     }
 

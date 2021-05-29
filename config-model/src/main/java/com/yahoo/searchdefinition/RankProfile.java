@@ -78,6 +78,8 @@ public class RankProfile implements Cloneable {
     /** The ranking expression to be used for second phase */
     private RankingExpression secondPhaseRanking = null;
 
+    private Set<String> externalFileExpressions = new HashSet<>();
+
     /** Number of hits to be reranked in second phase, -1 means use default */
     private int rerankCount = -1;
 
@@ -120,6 +122,9 @@ public class RankProfile implements Cloneable {
 
     private List<ImmutableSDField> allFieldsList;
 
+    /** Global onnx models not tied to a search definition */
+    private OnnxModels onnxModels = new OnnxModels();
+
     /**
      * Creates a new rank profile for a particular search definition
      *
@@ -141,11 +146,12 @@ public class RankProfile implements Cloneable {
      * @param name  the name of the new profile
      * @param model the model owning this profile
      */
-    public RankProfile(String name, VespaModel model, RankProfileRegistry rankProfileRegistry) {
+    public RankProfile(String name, VespaModel model, RankProfileRegistry rankProfileRegistry, OnnxModels onnxModels) {
         this.name = Objects.requireNonNull(name, "name cannot be null");
         this.search = null;
         this.model = Objects.requireNonNull(model, "model cannot be null");
         this.rankProfileRegistry = rankProfileRegistry;
+        this.onnxModels = onnxModels;
     }
 
     public String getName() { return name; }
@@ -163,8 +169,12 @@ public class RankProfile implements Cloneable {
         return search != null ? search.rankingConstants() : model.rankingConstants();
     }
 
+    public RankExpressionFiles rankExpressionFiles() {
+        return search != null ? search.rankExpressionFiles() : model.rankExpressionFiles();
+    }
+
     public Map<String, OnnxModel> onnxModels() {
-        return search != null ? search.onnxModels().asMap() : Collections.emptyMap();
+        return search != null ? search.onnxModels().asMap() : onnxModels.asMap();
     }
 
     private Stream<ImmutableSDField> allFields() {
@@ -368,9 +378,44 @@ public class RankProfile implements Cloneable {
         this.firstPhaseRanking = rankingExpression;
     }
 
+    public String getUniqueExpressionName(String name) {
+        return getName() + "_" + name;
+    }
+    public String getFirstPhaseFile() {
+        String name = FIRST_PHASE;
+        if (externalFileExpressions.contains(name)) {
+            return rankExpressionFiles().get(getUniqueExpressionName(name)).getFileName();
+        }
+        if ((firstPhaseRanking == null) && (getInherited() != null)) {
+            return getInherited().getFirstPhaseFile();
+        }
+        return null;
+    }
+
+    public String getSecondPhaseFile() {
+        String name = SECOND_PHASE;
+        if (externalFileExpressions.contains(name)) {
+            return rankExpressionFiles().get(getUniqueExpressionName(name)).getFileName();
+        }
+        if ((secondPhaseRanking == null) && (getInherited() != null)) {
+            return getInherited().getSecondPhaseFile();
+        }
+        return null;
+    }
+
+    public String getExpressionFile(String name) {
+        if (externalFileExpressions.contains(name)) {
+            return rankExpressionFiles().get(getUniqueExpressionName(name)).getFileName();
+        }
+        if (getInherited() != null) {
+            return getInherited().getExpressionFile(name);
+        }
+        return null;
+    }
+
     public void setFirstPhaseRanking(String expression) {
         try {
-            this.firstPhaseRanking = parseRankingExpression("firstphase", expression);
+            this.firstPhaseRanking = parseRankingExpression(FIRST_PHASE, expression);
         }
         catch (ParseException e) {
             throw new IllegalArgumentException("Illegal first phase ranking function", e);
@@ -663,18 +708,27 @@ public class RankProfile implements Cloneable {
         }
     }
 
-    private Reader openRankingExpressionReader(String expName, String expression) {
-        if ( ! expression.startsWith("file:")) return new StringReader(expression);
-
+    private static String extractFileName(String expression) {
         String fileName = expression.substring("file:".length()).trim();
         if ( ! fileName.endsWith(ApplicationPackage.RANKEXPRESSION_NAME_SUFFIX))
             fileName = fileName + ApplicationPackage.RANKEXPRESSION_NAME_SUFFIX;
 
-        File file = new File(fileName);
-        if ( ! (file.isAbsolute()) && file.getPath().contains("/")) // See ticket 4102122
-            throw new IllegalArgumentException("In " + getName() +", " + expName + ", ranking references file '" + file +
-                                               "' in subdirectory, which is not supported.");
+        return fileName;
+    }
 
+    private Reader openRankingExpressionReader(String expName, String expression) {
+        if (!expression.startsWith("file:")) return new StringReader(expression);
+
+        String fileName = extractFileName(expression);
+        File file = new File(fileName);
+        if (!file.isAbsolute() && file.getPath().contains("/")) // See ticket 4102122
+            throw new IllegalArgumentException("In " + getName() + ", " + expName + ", ranking references file '" + file +
+                    "' in subdirectory, which is not supported.");
+
+        if (search.getDeployProperties().featureFlags().distributeExternalRankExpressions()) {
+            rankExpressionFiles().add(new RankExpressionFile(getUniqueExpressionName(expName), fileName), search.getDeployLogger());
+            externalFileExpressions.add(expName);
+        }
         return search.getRankingExpression(fileName);
     }
 

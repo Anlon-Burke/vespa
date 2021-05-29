@@ -16,10 +16,12 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.OptionalInt;
 
 /**
@@ -31,21 +33,28 @@ class CliArguments {
 
     private static final Options optionsDefinition = createOptions();
 
-    private static final String HELP_OPTION = "help";
-    private static final String VERSION_OPTION = "version";
+    private static final String BENCHMARK_OPTION = "benchmark";
+    private static final String CA_CERTIFICATES_OPTION = "ca-certificates";
+    private static final String CERTIFICATE_OPTION = "certificate";
+    private static final String CONNECTIONS_OPTION = "connections";
+    private static final String DISABLE_SSL_HOSTNAME_VERIFICATION_OPTION = "disable-ssl-hostname-verification";
     private static final String ENDPOINT_OPTION = "endpoint";
     private static final String FILE_OPTION = "file";
-    private static final String CONNECTIONS_OPTION = "connections";
-    private static final String MAX_STREAMS_PER_CONNECTION = "max-streams-per-connection";
-    private static final String CERTIFICATE_OPTION = "certificate";
-    private static final String PRIVATE_KEY_OPTION = "private-key";
-    private static final String CA_CERTIFICATES_OPTION = "ca-certificates";
-    private static final String DISABLE_SSL_HOSTNAME_VERIFICATION_OPTION = "disable-ssl-hostname-verification";
     private static final String HEADER_OPTION = "header";
+    private static final String HELP_OPTION = "help";
+    private static final String MAX_STREAMS_PER_CONNECTION = "max-streams-per-connection";
+    private static final String PRIVATE_KEY_OPTION = "private-key";
+    private static final String ROUTE_OPTION = "route";
+    private static final String TIMEOUT_OPTION = "timeout";
+    private static final String TRACE_OPTION = "trace";
+    private static final String VERBOSE_OPTION = "verbose";
+    private static final String VERSION_OPTION = "version";
+    private static final String STDIN_OPTION = "stdin";
 
     private final CommandLine arguments;
 
-    private CliArguments(CommandLine arguments) {
+    private CliArguments(CommandLine arguments) throws CliArgumentsException {
+        validateArgumentCombination(arguments);
         this.arguments = arguments;
     }
 
@@ -58,11 +67,26 @@ class CliArguments {
         }
     }
 
+    private static void validateArgumentCombination(CommandLine args) throws CliArgumentsException {
+        if (!args.hasOption(HELP_OPTION) && !args.hasOption(VERSION_OPTION)) {
+            if (!args.hasOption(ENDPOINT_OPTION)) {
+                throw new CliArgumentsException("Endpoint must be specified");
+            }
+            if (args.hasOption(FILE_OPTION) == args.hasOption(STDIN_OPTION)) {
+                throw new CliArgumentsException(String.format("Either option '%s' or '%s' must be specified", FILE_OPTION, STDIN_OPTION));
+            }
+            if (args.hasOption(CERTIFICATE_OPTION) != args.hasOption(PRIVATE_KEY_OPTION)) {
+                throw new CliArgumentsException(
+                        String.format("Both '%s' and '%s' must be specified together", CERTIFICATE_OPTION, PRIVATE_KEY_OPTION));
+            }
+        } else if (args.hasOption(HELP_OPTION) && args.hasOption(VERSION_OPTION)) {
+            throw new CliArgumentsException(String.format("Cannot specify both '%s' and '%s'", HELP_OPTION, VERSION_OPTION));
+        }
+    }
+
     URI endpoint() throws CliArgumentsException {
         try {
-            URL url = (URL) arguments.getParsedOptionValue(ENDPOINT_OPTION);
-            if (url == null) throw new CliArgumentsException("Endpoint must be specified");
-            return url.toURI();
+            return ((URL) arguments.getParsedOptionValue(ENDPOINT_OPTION)).toURI();
         } catch (ParseException | URISyntaxException e) {
             throw new CliArgumentsException("Invalid endpoint: " + e.getMessage(), e);
         }
@@ -79,18 +103,14 @@ class CliArguments {
     Optional<CertificateAndKey> certificateAndKey() throws CliArgumentsException {
         Path certificateFile = fileValue(CERTIFICATE_OPTION).orElse(null);
         Path privateKeyFile = fileValue(PRIVATE_KEY_OPTION).orElse(null);
-        if ((certificateFile == null) != (privateKeyFile == null)) {
-            throw new CliArgumentsException(String.format("Both '%s' and '%s' must be specified together", CERTIFICATE_OPTION, PRIVATE_KEY_OPTION));
-        }
         if (privateKeyFile == null && certificateFile == null) return Optional.empty();
         return Optional.of(new CertificateAndKey(certificateFile, privateKeyFile));
     }
 
     Optional<Path> caCertificates() throws CliArgumentsException { return fileValue(CA_CERTIFICATES_OPTION); }
 
-    Path inputFile() throws CliArgumentsException {
-        return fileValue(FILE_OPTION)
-            .orElseThrow(() -> new CliArgumentsException("Feed file must be specified"));
+    Optional<Path> inputFile() throws CliArgumentsException {
+        return fileValue(FILE_OPTION);
     }
 
     Map<String, String> headers() throws CliArgumentsException {
@@ -113,12 +133,29 @@ class CliArguments {
 
     boolean sslHostnameVerificationDisabled() { return has(DISABLE_SSL_HOSTNAME_VERIFICATION_OPTION); }
 
+    boolean benchmarkModeEnabled() { return has(BENCHMARK_OPTION); }
+
+    Optional<String> route() { return stringValue(ROUTE_OPTION); }
+
+    OptionalInt traceLevel() throws CliArgumentsException { return intValue(TRACE_OPTION); }
+
+    Optional<Duration> timeout() throws CliArgumentsException {
+        OptionalDouble timeout = doubleValue(TIMEOUT_OPTION);
+        return timeout.isPresent()
+                ? Optional.of(Duration.ofMillis((long)(timeout.getAsDouble()*1000)))
+                : Optional.empty();
+    }
+
+    boolean verboseSpecified() { return has(VERBOSE_OPTION); }
+
+    boolean readFeedFromStandardInput() { return has(STDIN_OPTION); }
+
     private OptionalInt intValue(String option) throws CliArgumentsException {
         try {
             Number number = (Number) arguments.getParsedOptionValue(option);
             return number != null ? OptionalInt.of(number.intValue()) : OptionalInt.empty();
         } catch (ParseException e) {
-            throw new CliArgumentsException(String.format("Invalid value for '%s': %s", option, e.getMessage()), e);
+            throw newInvalidValueException(option, e);
         }
     }
 
@@ -128,13 +165,29 @@ class CliArguments {
             if (certificateFile == null) return Optional.empty();
             return Optional.of(certificateFile.toPath());
         } catch (ParseException e) {
-            throw new CliArgumentsException(String.format("Invalid value for '%s': %s", option, e.getMessage()), e);
+            throw newInvalidValueException(option, e);
+        }
+    }
+
+    private Optional<String> stringValue(String option) { return Optional.ofNullable(arguments.getOptionValue(option)); }
+
+    private OptionalDouble doubleValue(String option) throws CliArgumentsException {
+        try {
+            Number number = (Number) arguments.getParsedOptionValue(option);
+            return number != null ? OptionalDouble.of(number.doubleValue()) : OptionalDouble.empty();
+        } catch (ParseException e) {
+            throw newInvalidValueException(option, e);
         }
     }
 
     private boolean has(String option) { return arguments.hasOption(option); }
 
+    private static CliArgumentsException newInvalidValueException(String option, ParseException cause) {
+        return new CliArgumentsException(String.format("Invalid value for '%s': %s", option, cause.getMessage()), cause);
+    }
+
     private static Options createOptions() {
+        // TODO Add description to each option
         return new Options()
                 .addOption(Option.builder()
                         .longOpt(HELP_OPTION)
@@ -167,11 +220,6 @@ class CliArguments {
                         .type(Number.class)
                         .build())
                 .addOption(Option.builder()
-                        .longOpt(CONNECTIONS_OPTION)
-                        .hasArg()
-                        .type(Number.class)
-                        .build())
-                .addOption(Option.builder()
                         .longOpt(CERTIFICATE_OPTION)
                         .type(File.class)
                         .hasArg()
@@ -188,6 +236,29 @@ class CliArguments {
                         .build())
                 .addOption(Option.builder()
                         .longOpt(DISABLE_SSL_HOSTNAME_VERIFICATION_OPTION)
+                        .build())
+                .addOption(Option.builder()
+                        .longOpt(BENCHMARK_OPTION)
+                        .build())
+                .addOption(Option.builder()
+                        .longOpt(ROUTE_OPTION)
+                        .hasArg()
+                        .build())
+                .addOption(Option.builder()
+                        .longOpt(TIMEOUT_OPTION)
+                        .hasArg()
+                        .type(Number.class)
+                        .build())
+                .addOption(Option.builder()
+                        .longOpt(TRACE_OPTION)
+                        .hasArg()
+                        .type(Number.class)
+                        .build())
+                .addOption(Option.builder()
+                        .longOpt(STDIN_OPTION)
+                        .build())
+                .addOption(Option.builder()
+                        .longOpt(VERBOSE_OPTION)
                         .build());
     }
 

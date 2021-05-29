@@ -305,10 +305,12 @@ public class Nodes {
     }
 
     public Node deallocate(Node node, Agent agent, String reason, NestedTransaction transaction) {
-        if (parkOnDeallocationOf(node, agent))
-            return park(node.hostname(), false, agent, reason, transaction);
-        else
+        if (parkOnDeallocationOf(node, agent)) {
+            boolean keepAllocation = node.reports().getReport(Report.WANT_TO_ENCRYPT_ID).isPresent();
+            return park(node.hostname(), keepAllocation, agent, reason, transaction);
+        } else {
             return db.writeTo(Node.State.dirty, List.of(node), agent, Optional.of(reason), transaction).get(0);
+        }
     }
 
     /**
@@ -367,7 +369,7 @@ public class Nodes {
         return parked;
     }
 
-    public Node park(String hostname, boolean keepAllocation, Agent agent, String reason, NestedTransaction transaction) {
+    private Node park(String hostname, boolean keepAllocation, Agent agent, String reason, NestedTransaction transaction) {
         return move(hostname, Node.State.parked, agent, keepAllocation, Optional.of(reason), transaction);
     }
 
@@ -520,32 +522,34 @@ public class Nodes {
 
     /**
      * Throws if the given node cannot be removed. Removal is allowed if:
-     *  - Tenant node: node is unallocated
+     *  - Tenant node:
+     *    - non-recursively: node is unallocated
+     *    - recursively: node is unallocated or node is in failed|parked
      *  - Host node: iff in state provisioned|failed|parked
      *  - Child node:
-     *      If only removing the container node: node in state ready
-     *      If also removing the parent node: child is in state provisioned|failed|parked|dirty|ready
+     *    - non-recursively: node in state ready
+     *    - recursively: child is in state provisioned|failed|parked|dirty|ready
      */
-    private void requireRemovable(Node node, boolean removingAsChild, boolean force) {
+    private void requireRemovable(Node node, boolean removingRecursively, boolean force) {
         if (force) return;
 
-        if (node.type() == NodeType.tenant && node.allocation().isPresent())
-            illegal(node + " is currently allocated and cannot be removed");
+        if (node.type() == NodeType.tenant && node.allocation().isPresent()) {
+            EnumSet<Node.State> removableStates = EnumSet.of(Node.State.failed, Node.State.parked);
+            if (!removingRecursively || !removableStates.contains(node.state()))
+                illegal(node + " is currently allocated and cannot be removed while in " + node.state());
+        }
 
-        if (!node.type().isHost() && !removingAsChild) {
-            if (node.state() != Node.State.ready)
-                illegal(node + " can not be removed as it is not in the state " + Node.State.ready);
+        final Set<Node.State> removableStates;
+        if (node.type().isHost()) {
+            removableStates = EnumSet.of(Node.State.provisioned, Node.State.failed, Node.State.parked);
+        } else {
+            removableStates = removingRecursively
+                    ? EnumSet.of(Node.State.provisioned, Node.State.failed, Node.State.parked, Node.State.dirty, Node.State.ready)
+                    // When not removing recursively, we can only remove children in state ready
+                    : EnumSet.of(Node.State.ready);
         }
-        else if (!node.type().isHost()) { // removing a child node
-            Set<Node.State> legalStates = EnumSet.of(Node.State.provisioned, Node.State.failed, Node.State.parked, Node.State.dirty, Node.State.ready);
-            if ( ! legalStates.contains(node.state()))
-                illegal(node + " can not be removed as it is not in the states " + legalStates);
-        }
-        else { // a host
-            Set<Node.State> legalStates = EnumSet.of(Node.State.provisioned, Node.State.failed, Node.State.parked);
-            if (! legalStates.contains(node.state()))
-                illegal(node + " can not be removed as it is not in the states " + legalStates);
-        }
+        if (!removableStates.contains(node.state()))
+            illegal(node + " can not be removed while in " + node.state());
     }
 
     /**
@@ -571,14 +575,22 @@ public class Nodes {
     }
 
     /**
-     * Increases the restart generation of the active nodes matching the filter.
+     * Increases the restart generation of the active nodes matching given filter.
+     *
+     * @return the nodes in their new state
+     */
+    public List<Node> restartActive(Predicate<Node> filter) {
+        return restart(StateFilter.from(Node.State.active).and(filter));
+    }
+
+    /**
+     * Increases the restart generation of the any nodes matching given filter.
      *
      * @return the nodes in their new state
      */
     public List<Node> restart(Predicate<Node> filter) {
-        return performOn(StateFilter.from(Node.State.active).and(filter),
-                         (node, lock) -> write(node.withRestart(node.allocation().get().restartGeneration().withIncreasedWanted()),
-                                               lock));
+        return performOn(filter, (node, lock) -> write(node.withRestart(node.allocation().get().restartGeneration().withIncreasedWanted()),
+                                                       lock));
     }
 
     /**
@@ -609,29 +621,39 @@ public class Nodes {
 
     /** Retire and deprovision given host and all of its children */
     public List<Node> deprovision(String hostname, Agent agent, Instant instant) {
-        return decomission(hostname, DecommisionOperation.deprovision, agent, instant);
+        return decommission(hostname, DecommissionOperation.deprovision, agent, instant);
     }
 
     /** Retire and rebuild given host and all of its children */
     public List<Node> rebuild(String hostname, Agent agent, Instant instant) {
-        return decomission(hostname, DecommisionOperation.rebuild, agent, instant);
+        return decommission(hostname, DecommissionOperation.rebuild, agent, instant);
     }
 
-    private List<Node> decomission(String hostname, DecommisionOperation op, Agent agent, Instant instant) {
+    /** Retire and encrypt given host and all of its children */
+    public List<Node> encrypt(String hostname, Agent agent, Instant instant) {
+        return decommission(hostname, DecommissionOperation.encrypt, agent, instant);
+    }
+
+    private List<Node> decommission(String hostname, DecommissionOperation op, Agent agent, Instant instant) {
         Optional<NodeMutex> nodeMutex = lockAndGet(hostname);
         if (nodeMutex.isEmpty()) return List.of();
         Node host = nodeMutex.get().node();
         if (!host.type().isHost()) throw new IllegalArgumentException("Cannot " + op + " non-host " + host);
         List<Node> result;
-        boolean wantToDeprovision = op == DecommisionOperation.deprovision;
-        boolean wantToRebuild = op == DecommisionOperation.rebuild;
+        boolean wantToDeprovision = op == DecommissionOperation.deprovision;
+        boolean wantToRebuild = op == DecommissionOperation.rebuild;
         try (NodeMutex lock = nodeMutex.get(); Mutex allocationLock = lockUnallocated()) {
             // This takes allocationLock to prevent any further allocation of nodes on this host
             host = lock.node();
             result = performOn(list(allocationLock).childrenOf(host),
                                (node, nodeLock) -> write(node.withWantToRetire(true, wantToDeprovision, wantToRebuild, agent, instant),
                                                          nodeLock));
-            result.add(write(host.withWantToRetire(true, wantToDeprovision, wantToRebuild, agent, instant), lock));
+            Node newHost = host.withWantToRetire(true, wantToDeprovision, wantToRebuild, agent, instant);
+            if (op == DecommissionOperation.encrypt) {
+                Report report = Report.basicReport(Report.WANT_TO_ENCRYPT_ID, Report.Type.UNSPECIFIED, instant, "");
+                newHost = newHost.with(newHost.reports().withReport(report));
+            }
+            result.add(write(newHost, lock));
         }
         return result;
     }
@@ -801,13 +823,15 @@ public class Nodes {
                                                     .orElse(false);
         return node.status().wantToDeprovision() ||
                node.status().wantToRebuild() ||
+               node.reports().getReport(Report.WANT_TO_ENCRYPT_ID).isPresent() ||
                retirementRequestedByOperator;
     }
 
-    /** The different ways a host can be decomissioned */
-    private enum DecommisionOperation {
+    /** The different ways a host can be decommissioned */
+    private enum DecommissionOperation {
         deprovision,
         rebuild,
+        encrypt,
     }
 
 }

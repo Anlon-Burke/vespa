@@ -5,22 +5,20 @@ import org.apache.hc.client5.http.async.methods.SimpleHttpRequest;
 import org.apache.hc.client5.http.async.methods.SimpleHttpResponse;
 import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.client5.http.impl.async.CloseableHttpAsyncClient;
-import org.apache.hc.client5.http.impl.async.HttpAsyncClientBuilder;
-import org.apache.hc.client5.http.impl.nio.PoolingAsyncClientConnectionManagerBuilder;
+import org.apache.hc.client5.http.impl.async.H2AsyncClientBuilder;
 import org.apache.hc.client5.http.ssl.ClientTlsStrategyBuilder;
 import org.apache.hc.core5.concurrent.FutureCallback;
 import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.message.BasicHeader;
-import org.apache.hc.core5.http2.HttpVersionPolicy;
 import org.apache.hc.core5.http2.config.H2Config;
 import org.apache.hc.core5.net.URIBuilder;
-import org.apache.hc.core5.pool.PoolConcurrencyPolicy;
 import org.apache.hc.core5.reactor.IOReactorConfig;
-import org.apache.hc.core5.util.TimeValue;
 import org.apache.hc.core5.util.Timeout;
 
+import javax.net.ssl.SSLContext;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.UncheckedIOException;
+import java.io.PrintStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -30,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import static java.util.Objects.requireNonNull;
@@ -45,57 +44,64 @@ class HttpFeedClient implements FeedClient {
     private final URI endpoint;
     private final Map<String, Supplier<String>> requestHeaders;
     private final HttpRequestStrategy requestStrategy;
-    private final CloseableHttpAsyncClient httpClient;
+    private final List<CloseableHttpAsyncClient> httpClients = new ArrayList<>();
+    private final List<AtomicInteger> inflight = new ArrayList<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    HttpFeedClient(FeedClientBuilder builder) {
+    HttpFeedClient(FeedClientBuilder builder) throws IOException {
         this.endpoint = builder.endpoint;
         this.requestHeaders = new HashMap<>(builder.requestHeaders);
-
         this.requestStrategy = new HttpRequestStrategy(builder);
-        this.httpClient = createHttpClient(builder, requestStrategy);
-        this.httpClient.start();
+
+        for (int i = 0; i < builder.maxConnections; i++) {
+            CloseableHttpAsyncClient hc = createHttpClient(builder, requestStrategy);
+            hc.start();
+            httpClients.add(hc);
+            inflight.add(new AtomicInteger());
+        }
     }
 
-    private static CloseableHttpAsyncClient createHttpClient(FeedClientBuilder builder, HttpRequestStrategy retryStrategy) {
-        HttpAsyncClientBuilder httpClientBuilder = HttpAsyncClientBuilder.create()
-                .setUserAgent(String.format("vespa-feed-client/%s", Vespa.VERSION))
-                .setDefaultHeaders(Collections.singletonList(new BasicHeader("Vespa-Client-Version", Vespa.VERSION)))
-                .disableCookieManagement()
-                .disableRedirectHandling()
-                .disableConnectionState()
-                .setRetryStrategy(retryStrategy)
-                .setIOReactorConfig(IOReactorConfig.custom()
-                        .setSoTimeout(Timeout.ofSeconds(10))
-                        .build())
-                .setDefaultRequestConfig(
-                        RequestConfig.custom()
-                                .setConnectTimeout(Timeout.ofSeconds(10))
-                                .setConnectionRequestTimeout(Timeout.DISABLED)
-                                .setResponseTimeout(Timeout.ofMinutes(5))
-                                .build())
-                .setVersionPolicy(HttpVersionPolicy.FORCE_HTTP_2)
-                .setH2Config(H2Config.initial()
-                        .setMaxConcurrentStreams(builder.maxStreamsPerConnection)
-                        .setCompressionEnabled(true)
-                        .setPushEnabled(false)
-                        .build());
+    private static CloseableHttpAsyncClient createHttpClient(FeedClientBuilder builder, HttpRequestStrategy retryStrategy) throws IOException {
+        H2AsyncClientBuilder httpClientBuilder = H2AsyncClientBuilder.create()
+                                                                     .setUserAgent(String.format("vespa-feed-client/%s", Vespa.VERSION))
+                                                                     .setDefaultHeaders(Collections.singletonList(new BasicHeader("Vespa-Client-Version", Vespa.VERSION)))
+                                                                     .disableCookieManagement()
+                                                                     .disableRedirectHandling()
+                                                                     .setRetryStrategy(retryStrategy)
+                                                                     .setIOReactorConfig(IOReactorConfig.custom()
+                                                                                                        .setSoTimeout(Timeout.ofSeconds(10))
+                                                                                                        .build())
+                                                                     .setDefaultRequestConfig(
+                                                                             RequestConfig.custom()
+                                                                                          .setConnectTimeout(Timeout.ofSeconds(10))
+                                                                                          .setConnectionRequestTimeout(Timeout.DISABLED)
+                                                                                          .setResponseTimeout(Timeout.ofMinutes(5))
+                                                                                          .build())
+                                                                     .setH2Config(H2Config.initial()
+                                                                                          .setMaxConcurrentStreams(builder.maxStreamsPerConnection)
+                                                                                          .setCompressionEnabled(true)
+                                                                                          .setPushEnabled(false)
+                                                                                          .build());
 
-        PoolingAsyncClientConnectionManagerBuilder connectionManagerBuilder = PoolingAsyncClientConnectionManagerBuilder.create()
-                .setConnectionTimeToLive(TimeValue.ofMinutes(10))
-                .setMaxConnTotal(builder.maxConnections)
-                .setMaxConnPerRoute(builder.maxConnections)
-                .setPoolConcurrencyPolicy(PoolConcurrencyPolicy.LAX);
-        if (builder.sslContext != null) {
-            ClientTlsStrategyBuilder tlsStrategyBuilder = ClientTlsStrategyBuilder.create()
-                    .setSslContext(builder.sslContext);
-            if (builder.hostnameVerifier != null) {
-                tlsStrategyBuilder.setHostnameVerifier(builder.hostnameVerifier);
-            }
-            connectionManagerBuilder.setTlsStrategy(tlsStrategyBuilder.build());
+        ClientTlsStrategyBuilder tlsStrategyBuilder = ClientTlsStrategyBuilder.create()
+                                                                              .setSslContext(constructSslContext(builder));
+        if (builder.hostnameVerifier != null) {
+            tlsStrategyBuilder.setHostnameVerifier(builder.hostnameVerifier);
         }
-        httpClientBuilder.setConnectionManager(connectionManagerBuilder.build());
-        return httpClientBuilder.build();
+        return httpClientBuilder.setTlsStrategy(tlsStrategyBuilder.build())
+                                .build();
+    }
+
+    private static SSLContext constructSslContext(FeedClientBuilder builder) throws IOException {
+        if (builder.sslContext != null) return builder.sslContext;
+        SslContextBuilder sslContextBuilder = new SslContextBuilder();
+        if (builder.certificate != null && builder.privateKey != null) {
+            sslContextBuilder.withCertificateAndKey(builder.certificate, builder.privateKey);
+        }
+        if (builder.caCertificates != null) {
+            sslContextBuilder.withCaCertificates(builder.caCertificates);
+        }
+        return sslContextBuilder.build();
     }
 
     @Override
@@ -116,7 +122,8 @@ class HttpFeedClient implements FeedClient {
     @Override
     public void close() throws IOException {
         if ( ! closed.getAndSet(true))
-            httpClient.close();
+            for (CloseableHttpAsyncClient hc : httpClients)
+                hc.close();
     }
 
     private CompletableFuture<Result> send(String method, DocumentId documentId, String operationJson, OperationParameters params) {
@@ -125,20 +132,34 @@ class HttpFeedClient implements FeedClient {
         if (operationJson != null)
             request.setBody(operationJson, ContentType.APPLICATION_JSON);
 
+        int index = 0;
+        int min = Integer.MAX_VALUE;
+        for (int i = 0; i < httpClients.size(); i++)
+            if (inflight.get(i).get() < min) {
+                min = inflight.get(i).get();
+                index = i;
+            }
+
+        CloseableHttpAsyncClient client = httpClients.get(index);
+        AtomicInteger counter = inflight.get(index);
+        counter.incrementAndGet();
         return requestStrategy.enqueue(documentId, future -> {
-            httpClient.execute(request,
-                               new FutureCallback<SimpleHttpResponse>() {
-                                   @Override public void completed(SimpleHttpResponse response) { future.complete(response); }
-                                   @Override public void failed(Exception ex) { future.completeExceptionally(ex); }
-                                   @Override public void cancelled() { future.cancel(false); }
-                               });
+            client.execute(request,
+                           new FutureCallback<SimpleHttpResponse>() {
+                               @Override public void completed(SimpleHttpResponse response) { future.complete(response); }
+                               @Override public void failed(Exception ex) { future.completeExceptionally(ex); }
+                               @Override public void cancelled() { future.cancel(false); }
+                           });
         }).handle((response, thrown) -> {
+            counter.decrementAndGet();
             if (thrown != null) {
                 if (requestStrategy.hasFailed()) {
                     try { close(); }
-                    catch (IOException exception) { throw new UncheckedIOException(exception); }
+                    catch (IOException exception) { thrown.addSuppressed(exception); }
                 }
-                return new Result(Result.Type.failure, documentId, thrown.getMessage(), null);
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                thrown.printStackTrace(new PrintStream(buffer));
+                return new Result(Result.Type.failure, documentId, buffer.toString(), null);
             }
             return toResult(response, documentId);
         });

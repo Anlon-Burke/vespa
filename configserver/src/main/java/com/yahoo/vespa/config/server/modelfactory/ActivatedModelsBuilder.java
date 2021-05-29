@@ -5,6 +5,7 @@ import com.google.common.collect.ImmutableSet;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.Version;
 import com.yahoo.config.application.api.ApplicationPackage;
+import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.api.ConfigDefinitionRepo;
 import com.yahoo.config.model.api.Model;
 import com.yahoo.config.model.api.ModelContext;
@@ -76,12 +77,12 @@ public class ActivatedModelsBuilder extends ModelsBuilder<Application> {
                                   ConfigserverConfig configserverConfig,
                                   Zone zone,
                                   ModelFactoryRegistry modelFactoryRegistry,
-                                  ConfigDefinitionRepo configDefinitionRepo,
-                                  TenantListener tenantListener) {
+                                  ConfigDefinitionRepo configDefinitionRepo) {
         super(modelFactoryRegistry,
               configserverConfig,
               zone,
-              hostProvisionerProvider);
+              hostProvisionerProvider,
+              new SilentDeployLogger());
         this.tenant = tenant;
         this.applicationGeneration = applicationGeneration;
         this.zkClient = zkClient;

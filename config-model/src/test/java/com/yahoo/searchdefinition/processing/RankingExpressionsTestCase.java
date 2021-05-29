@@ -3,6 +3,7 @@ package com.yahoo.searchdefinition.processing;
 
 import com.yahoo.collections.Pair;
 import com.yahoo.config.FileReference;
+import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.application.provider.BaseDeployLogger;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.search.query.profile.QueryProfileRegistry;
@@ -30,10 +31,12 @@ public class RankingExpressionsTestCase extends SchemaTestCase {
 
     @Test
     public void testFunctions() throws IOException, ParseException {
+        ModelContext.Properties deployProperties = new TestProperties().useExternalRankExpression(true);
         RankProfileRegistry rankProfileRegistry = new RankProfileRegistry();
         Search search = SearchBuilder.createFromDirectory("src/test/examples/rankingexpressionfunction",
-                                                          rankProfileRegistry,
-                                                          new TestableDeployLogger()).getSearch();
+                                                          new TestableDeployLogger(),
+                                                          deployProperties,
+                                                          rankProfileRegistry).getSearch();
         RankProfile functionsRankProfile = rankProfileRegistry.get(search, "macros");
         Map<String, RankProfile.RankingExpressionFunction> functions = functionsRankProfile.getFunctions();
         assertEquals(2, functions.get("titlematch$").function().arguments().size());
@@ -46,34 +49,34 @@ public class RankingExpressionsTestCase extends SchemaTestCase {
                      functions.get("artistmatch").function().getBody().getRoot().toString());
         assertEquals(0, functions.get("artistmatch").function().arguments().size());
 
-        List<Pair<String, String>> rankProperties = new RawRankProfile(functionsRankProfile,
-                                                                       new QueryProfileRegistry(),
-                                                                       new ImportedMlModels(),
-                                                                       new AttributeFields(search)).configProperties();
-        assertEquals(6, rankProperties.size());
+        RawRankProfile rawRankProfile = new RawRankProfile(functionsRankProfile, new QueryProfileRegistry(),
+                new ImportedMlModels(), new AttributeFields(search), deployProperties);
+        List<Pair<String, String>> rankProperties = rawRankProfile.configProperties();
+        assertEquals(5, rankProperties.size());
 
-        assertEquals("rankingExpression(titlematch$).rankingScript", rankProperties.get(2).getFirst());
-        assertEquals("var1 * var2 + 890", rankProperties.get(2).getSecond());
-
-        assertEquals("rankingExpression(artistmatch).rankingScript", rankProperties.get(3).getFirst());
-        assertEquals("78 + closeness(distance)", rankProperties.get(3).getSecond());
-
-        assertEquals("rankingExpression(firstphase).rankingScript", rankProperties.get(5).getFirst());
-        assertEquals("0.8 + 0.2 * rankingExpression(titlematch$@126063073eb2deb.ab95cd69909927c) + 0.8 * rankingExpression(titlematch$@c7e4c2d0e6d9f2a1.1d4ed08e56cce2e6) * closeness(distance)", rankProperties.get(5).getSecond());
+        assertEquals("rankingExpression(titlematch$@126063073eb2deb.ab95cd69909927c).rankingScript", rankProperties.get(0).getFirst());
+        assertEquals("4 * 5 + 890", rankProperties.get(0).getSecond());
 
         assertEquals("rankingExpression(titlematch$@c7e4c2d0e6d9f2a1.1d4ed08e56cce2e6).rankingScript", rankProperties.get(1).getFirst());
         assertEquals("7 * 8 + 890", rankProperties.get(1).getSecond());
 
-        assertEquals("rankingExpression(titlematch$@126063073eb2deb.ab95cd69909927c).rankingScript", rankProperties.get(0).getFirst());
-        assertEquals("4 * 5 + 890", rankProperties.get(0).getSecond());
+        assertEquals("rankingExpression(artistmatch).rankingScript", rankProperties.get(2).getFirst());
+        assertEquals("78 + closeness(distance)", rankProperties.get(2).getSecond());
+
+        assertEquals("vespa.rank.firstphase", rankProperties.get(3).getFirst());
+        assertEquals("rankingExpression(firstphase)", rankProperties.get(3).getSecond());
+
+        assertEquals("rankingExpression(firstphase).rankingScript", rankProperties.get(4).getFirst());
+        assertEquals("0.8 + 0.2 * rankingExpression(titlematch$@126063073eb2deb.ab95cd69909927c) + 0.8 * rankingExpression(titlematch$@c7e4c2d0e6d9f2a1.1d4ed08e56cce2e6) * closeness(distance)", rankProperties.get(4).getSecond());
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testThatIncludingFileInSubdirFails() throws IOException, ParseException {
         RankProfileRegistry registry = new RankProfileRegistry();
         Search search = SearchBuilder.createFromDirectory("src/test/examples/rankingexpressioninfile",
-                                                          registry,
-                                                          new TestableDeployLogger()).getSearch();
+                                                          new TestableDeployLogger(),
+                                                          new TestProperties(),
+                                                          registry).getSearch();
         new DerivedConfiguration(search, new BaseDeployLogger(), new TestProperties(), registry, new QueryProfileRegistry(), new ImportedMlModels()); // rank profile parsing happens during deriving
     }
 

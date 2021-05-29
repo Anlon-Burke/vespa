@@ -21,7 +21,7 @@ ExternSlobrokPolicy::ExternSlobrokPolicy(const std::map<string, string>& param)
       _threadPool(std::make_unique<FastOS_ThreadPool>(1024*60)),
       _transport(std::make_unique<FNET_Transport>()),
       _orb(std::make_unique<FRT_Supervisor>(_transport.get())),
-      _slobrokConfigId("admin/slobrok.0")
+      _slobrokConfigId("client")
 {
     if (param.find("config") != param.end()) {
        vespalib::StringTokenizer configServers(param.find("config")->second, ",");
@@ -55,10 +55,11 @@ ExternSlobrokPolicy::~ExternSlobrokPolicy()
     }
 }
 
-string ExternSlobrokPolicy::init() {
+string
+ExternSlobrokPolicy::init() {
     if (_slobroks.size() != 0) {
         slobrok::ConfiguratorFactory config(_slobroks);
-        _mirror.reset(new MirrorAPI(*_orb, config));
+        _mirror = std::make_unique<MirrorAPI>(*_orb, config);
     } else if (_configSources.size() != 0) {
         slobrok::ConfiguratorFactory config(
             config::ConfigUri(_slobrokConfigId,

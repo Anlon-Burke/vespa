@@ -3,6 +3,7 @@
 #include <vespa/slobrok/sbmirror.h>
 #include <vespa/config/common/configsystem.h>
 #include <vespa/config/common/exceptions.h>
+#include <vespa/vespalib/util/exceptions.h>
 #include <vespa/fnet/frt/supervisor.h>
 #include <vespa/fnet/frt/target.h>
 #include <vespa/vespalib/util/host_name.h>
@@ -117,7 +118,7 @@ public:
         std::string rtcPattern3 = "*/search/*/realtimecontroller";
 
         try {
-            slobrok::ConfiguratorFactory sbcfg("admin/slobrok.0");
+            slobrok::ConfiguratorFactory sbcfg("client");
             slobrok::api::MirrorAPI sbmirror(_frt->supervisor(), sbcfg);
             for (int timeout = 1; timeout < 20; timeout++) {
                 if (!sbmirror.ready()) {
@@ -158,6 +159,9 @@ public:
         } catch (config::InvalidConfigException& e) {
             fprintf(stderr, "ERROR: failed to get service location broker configuration\n");
             std::_Exit(1);
+        } catch (vespalib::IllegalStateException& e) {
+            fprintf(stderr, "ERROR: empty or invalid service location broker configuration: %s\n", e.what());
+            std::_Exit(2);
         }
         return "";
     }
@@ -166,7 +170,7 @@ public:
         std::string rtcPattern = "search/cluster.*/c*/r*/realtimecontroller";
 
         try {
-            slobrok::ConfiguratorFactory sbcfg("admin/slobrok.0");
+            slobrok::ConfiguratorFactory sbcfg("client");
             slobrok::api::MirrorAPI sbmirror(_frt->supervisor(), sbcfg);
             for (int timeout = 1; timeout < 20; timeout++) {
                 if (!sbmirror.ready()) {
