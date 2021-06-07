@@ -15,8 +15,6 @@ LOG_SETUP("config-sentinel");
 
 using namespace config;
 
-constexpr std::chrono::milliseconds CONFIG_TIMEOUT_MS(3 * 60 * 1000);
-
 static bool stop()
 {
     return (vespalib::SignalHandler::INT.check() ||
@@ -118,6 +116,6 @@ main(int argc, char **argv)
     }
 
     EV_STOPPING("config-sentinel", "normal exit");
-    int rv = manager.terminate();
-    return rv;
+    bool rv = manager.terminate();
+    return rv ? EXIT_SUCCESS : EXIT_FAILURE;
 }

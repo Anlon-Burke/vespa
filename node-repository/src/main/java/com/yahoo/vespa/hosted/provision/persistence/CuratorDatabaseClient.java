@@ -11,7 +11,6 @@ import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.TenantName;
-import com.yahoo.config.provision.Zone;
 import com.yahoo.path.Path;
 import com.yahoo.transaction.NestedTransaction;
 import com.yahoo.transaction.Transaction;
@@ -72,18 +71,15 @@ public class CuratorDatabaseClient {
     private static final Path firmwareCheckPath = root.append("firmwareCheck");
     private static final Path archiveUrisPath = root.append("archiveUris");
 
-    private static final Duration defaultLockTimeout = Duration.ofMinutes(6);
+    private static final Duration defaultLockTimeout = Duration.ofMinutes(10);
 
     private final NodeSerializer nodeSerializer;
     private final CuratorDatabase db;
     private final Clock clock;
-    private final Zone zone;
     private final CuratorCounter provisionIndexCounter;
 
-    public CuratorDatabaseClient(NodeFlavors flavors, Curator curator, Clock clock, Zone zone, boolean useCache,
-                                 long nodeCacheSize) {
+    public CuratorDatabaseClient(NodeFlavors flavors, Curator curator, Clock clock, boolean useCache, long nodeCacheSize) {
         this.nodeSerializer = new NodeSerializer(flavors, nodeCacheSize);
-        this.zone = zone;
         this.db = new CuratorDatabase(curator, root, useCache);
         this.clock = clock;
         this.provisionIndexCounter = new CuratorCounter(curator, root.append("provisionIndexCounter").getAbsolute());

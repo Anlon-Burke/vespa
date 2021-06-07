@@ -31,6 +31,7 @@ import com.yahoo.restapi.Path;
 import com.yahoo.restapi.ResourceResponse;
 import com.yahoo.restapi.SlimeJsonResponse;
 import com.yahoo.security.KeyUtils;
+import com.yahoo.security.X509CertificateUtils;
 import com.yahoo.slime.Cursor;
 import com.yahoo.slime.Inspector;
 import com.yahoo.slime.JsonParseException;
@@ -88,6 +89,7 @@ import com.yahoo.vespa.hosted.controller.deployment.DeploymentTrigger.ChangesToC
 import com.yahoo.vespa.hosted.controller.deployment.JobStatus;
 import com.yahoo.vespa.hosted.controller.deployment.Run;
 import com.yahoo.vespa.hosted.controller.deployment.TestConfigSerializer;
+import com.yahoo.vespa.hosted.controller.maintenance.ResourceMeterMaintainer;
 import com.yahoo.vespa.hosted.controller.notification.Notification;
 import com.yahoo.vespa.hosted.controller.notification.NotificationSource;
 import com.yahoo.vespa.hosted.controller.persistence.SupportAccessSerializer;
@@ -121,6 +123,7 @@ import java.net.URISyntaxException;
 import java.security.DigestInputStream;
 import java.security.Principal;
 import java.security.PublicKey;
+import java.security.cert.X509Certificate;
 import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
@@ -898,6 +901,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             cluster.suggested().ifPresent(suggested -> toSlime(suggested, clusterObject.setObject("suggested")));
             utilizationToSlime(cluster.utilization(), clusterObject.setObject("utilization"));
             scalingEventsToSlime(cluster.scalingEvents(), clusterObject.setArray("scalingEvents"));
+            clusterObject.setString("autoscalingStatusCode", cluster.autoscalingStatusCode());
             clusterObject.setString("autoscalingStatus", cluster.autoscalingStatus());
             clusterObject.setLong("scalingDuration", cluster.scalingDuration().toMillis());
             clusterObject.setDouble("maxQueryGrowthRate", cluster.maxQueryGrowthRate());
@@ -968,7 +972,9 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         return new HttpResponse(200) {
             @Override
             public void render(OutputStream outputStream) throws IOException {
-                logStream.transferTo(outputStream);
+                try (logStream) {
+                    logStream.transferTo(outputStream);
+                }
             }
         };
     }
@@ -1400,6 +1406,9 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                        else response.setString("status", "running");
                    });
         }
+
+        response.setDouble("quota", deployment.quota().rate());
+        deployment.cost().ifPresent(cost -> response.setDouble("cost", cost));
 
         controller.archiveBucketDb().archiveUriFor(deploymentId.zoneId(), deploymentId.applicationId().tenant())
                 .ifPresent(archiveUri -> response.setString("archiveUri", archiveUri.toString()));
@@ -2113,9 +2122,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         object.setLong("groups", resources.groups());
         toSlime(resources.nodeResources(), object.setObject("nodeResources"));
 
-        // Divide cost by 3 in non-public zones to show approx. AWS equivalent cost
-        double costDivisor = controller.zoneRegistry().system().isPublic() ? 1.0 : 3.0;
-        object.setDouble("cost", Math.round(resources.nodes() * resources.nodeResources().cost() * 100.0 / costDivisor) / 100.0);
+        double cost = ResourceMeterMaintainer.cost(resources, controller.serviceRegistry().zoneRegistry().system());
+        object.setDouble("cost", cost);
     }
 
     private void utilizationToSlime(Cluster.Utilization utilization, Cursor utilizationObject) {
