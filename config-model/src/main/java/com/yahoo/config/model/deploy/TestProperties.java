@@ -42,6 +42,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private double defaultTermwiseLimit = 1.0;
     private String jvmGCOptions = null;
     private String sequencerType = "LATENCY";
+    private boolean firstTimeDeployment = false;
     private String responseSequencerType = "ADAPTIVE";
     private int responseNumThreads = 2;
     private Optional<EndpointCertificateSecrets> endpointCertificateSecrets = Optional.empty();
@@ -54,13 +55,13 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private boolean enableFeedBlockInDistributor = true;
     private boolean useExternalRankExpression = false;
     private int clusterControllerMaxHeapSizeInMb = 128;
-    private int metricsProxyMaxHeapSizeInMb = 256;
     private int maxActivationInhibitedOutOfSyncGroups = 0;
     private List<TenantSecretStore> tenantSecretStores = Collections.emptyList();
     private String jvmOmitStackTraceInFastThrowOption;
     private int numDistributorStripes = 0;
     private int maxConcurrentMergesPerNode = 16;
     private int maxMergeQueueSize = 1024;
+    private int largeRankExpressionLimit = 0x10000;
     private boolean allowDisableMtls = true;
     private List<X509Certificate> operatorCertificates = Collections.emptyList();
 
@@ -77,7 +78,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public String jvmGCOptions(Optional<ClusterSpec.Type> clusterType) { return jvmGCOptions; }
     @Override public String feedSequencerType() { return sequencerType; }
     @Override public boolean isBootstrap() { return false; }
-    @Override public boolean isFirstTimeDeployment() { return false; }
+    @Override public boolean isFirstTimeDeployment() { return firstTimeDeployment; }
     @Override public boolean useDedicatedNodeForLogserver() { return useDedicatedNodeForLogserver; }
     @Override public Optional<EndpointCertificateSecrets> endpointCertificateSecrets() { return endpointCertificateSecrets; }
     @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
@@ -95,7 +96,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public double feedConcurrency() { return feedConcurrency; }
     @Override public boolean enableFeedBlockInDistributor() { return enableFeedBlockInDistributor; }
     @Override public int clusterControllerMaxHeapSizeInMb() { return clusterControllerMaxHeapSizeInMb; }
-    @Override public int metricsProxyMaxHeapSizeInMb(ClusterSpec.Type type) { return metricsProxyMaxHeapSizeInMb; }
     @Override public int maxActivationInhibitedOutOfSyncGroups() { return maxActivationInhibitedOutOfSyncGroups; }
     @Override public List<TenantSecretStore> tenantSecretStores() { return tenantSecretStores; }
     @Override public String jvmOmitStackTraceInFastThrowOption(ClusterSpec.Type type) { return jvmOmitStackTraceInFastThrowOption; }
@@ -104,11 +104,16 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public List<X509Certificate> operatorCertificates() { return operatorCertificates; }
     @Override public boolean useExternalRankExpressions() { return useExternalRankExpression; }
     @Override public boolean distributeExternalRankExpressions() { return useExternalRankExpression; }
+    @Override public int largeRankExpressionLimit() { return largeRankExpressionLimit; }
     @Override public int maxConcurrentMergesPerNode() { return maxConcurrentMergesPerNode; }
     @Override public int maxMergeQueueSize() { return maxMergeQueueSize; }
 
     public TestProperties useExternalRankExpression(boolean value) {
         useExternalRankExpression = value;
+        return this;
+    }
+    public TestProperties largeRankExpressionLimit(int value) {
+        largeRankExpressionLimit = value;
         return this;
     }
     public TestProperties setFeedConcurrency(double feedConcurrency) {
@@ -131,6 +136,10 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     }
     public TestProperties setResponseSequencerType(String type) {
         responseSequencerType = type;
+        return this;
+    }
+    public TestProperties setFirstTimeDeployment(boolean firstTimeDeployment) {
+        this.firstTimeDeployment = firstTimeDeployment;
         return this;
     }
     public TestProperties setResponseNumThreads(int numThreads) {
@@ -219,11 +228,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties clusterControllerMaxHeapSizeInMb(int heapSize) {
         clusterControllerMaxHeapSizeInMb = heapSize;
-        return this;
-    }
-
-    public TestProperties metricsProxyMaxHeapSizeInMb(int heapSize) {
-        metricsProxyMaxHeapSizeInMb = heapSize;
         return this;
     }
 

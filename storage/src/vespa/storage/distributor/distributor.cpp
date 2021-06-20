@@ -9,7 +9,7 @@
 #include "distributor_stripe.h"
 #include "distributor_stripe_pool.h"
 #include "distributor_stripe_thread.h"
-#include "distributormetricsset.h"
+#include "distributor_total_metrics.h"
 #include "idealstatemetricsset.h"
 #include "multi_threaded_stripe_access_guard.h"
 #include "operation_sequencer.h"
@@ -59,18 +59,29 @@ Distributor::Distributor(DistributorComponentRegister& compReg,
     : StorageLink("distributor"),
       framework::StatusReporter("distributor", "Distributor"),
       _comp_reg(compReg),
-      _metrics(std::make_shared<DistributorMetricSet>()),
-      _messageSender(messageSender),
       _use_legacy_mode(num_distributor_stripes == 0),
+      _metrics(std::make_shared<DistributorMetricSet>()),
+      _total_metrics(_use_legacy_mode ? std::shared_ptr<DistributorTotalMetrics>() :
+                     std::make_shared<DistributorTotalMetrics>(num_distributor_stripes)),
+      _ideal_state_metrics(_use_legacy_mode ? std::make_shared<IdealStateMetricSet>() : std::shared_ptr<IdealStateMetricSet>()),
+      _ideal_state_total_metrics(_use_legacy_mode ? std::shared_ptr<IdealStateTotalMetrics>() :
+                                 std::make_shared<IdealStateTotalMetrics>(num_distributor_stripes)),
+      _messageSender(messageSender),
       _n_stripe_bits(0),
-      _stripe(std::make_unique<DistributorStripe>(compReg, *_metrics, node_identity, threadPool,
+      _stripe(std::make_unique<DistributorStripe>(compReg,
+                                                  _use_legacy_mode ? *_metrics : _total_metrics->stripe(0),
+                                                  _use_legacy_mode ? *_ideal_state_metrics : _ideal_state_total_metrics->stripe(0),
+                                                  node_identity, threadPool,
                                                   doneInitHandler, *this, *this, _use_legacy_mode)),
       _stripe_pool(stripe_pool),
       _stripes(),
       _stripe_accessor(),
+      _random_stripe_gen(),
+      _random_stripe_gen_mutex(),
       _message_queue(),
       _fetched_messages(),
       _component(*this, compReg, "distributor"),
+      _ideal_state_component(compReg, "Ideal state manager"),
       _total_config(_component.total_distributor_config_sp()),
       _bucket_db_updater(),
       _distributorStatusDelegate(compReg, *this, *this),
@@ -89,7 +100,9 @@ Distributor::Distributor(DistributorComponentRegister& compReg,
       _next_distribution(),
       _current_internal_config_generation(_component.internal_config_generation())
 {
-    _component.registerMetric(*_metrics);
+    _component.registerMetric(_use_legacy_mode ? *_metrics : *_total_metrics);
+    _ideal_state_component.registerMetric(_use_legacy_mode ? *_ideal_state_metrics :
+                                          *_ideal_state_total_metrics);
     _component.registerMetricUpdateHook(_metricUpdateHook, framework::SecondTime(0));
     if (!_use_legacy_mode) {
         assert(num_distributor_stripes == adjusted_num_stripes(num_distributor_stripes));
@@ -103,7 +116,10 @@ Distributor::Distributor(DistributorComponentRegister& compReg,
                                                                *_stripe_accessor);
         _stripes.emplace_back(std::move(_stripe));
         for (size_t i = 1; i < num_distributor_stripes; ++i) {
-            _stripes.emplace_back(std::make_unique<DistributorStripe>(compReg, *_metrics, node_identity, threadPool,
+            _stripes.emplace_back(std::make_unique<DistributorStripe>(compReg,
+                                                                      _total_metrics->stripe(i),
+                                                                      _ideal_state_total_metrics->stripe(i),
+                                                                      node_identity, threadPool,
                                                                       doneInitHandler, *this, *this, _use_legacy_mode, i));
         }
         _stripe_scan_stats.resize(num_distributor_stripes);
@@ -122,16 +138,10 @@ Distributor::~Distributor()
     closeNextLink();
 }
 
-// TODO STRIPE remove
-DistributorStripe&
-Distributor::first_stripe() noexcept {
-    return *_stripes[0];
-}
-
-// TODO STRIPE remove
-const DistributorStripe&
-Distributor::first_stripe() const noexcept {
-    return *_stripes[0];
+DistributorMetricSet&
+Distributor::getMetrics()
+{
+    return _use_legacy_mode ? *_metrics : _total_metrics->bucket_db_updater_metrics();
 }
 
 // TODO STRIPE figure out how to handle inspection functions used by tests when legacy mode no longer exists.
@@ -320,6 +330,7 @@ namespace {
 bool should_be_handled_by_top_level_bucket_db_updater(const api::StorageMessage& msg) noexcept {
     switch (msg.getType().getId()) {
     case api::MessageType::SETSYSTEMSTATE_ID:
+    case api::MessageType::GETNODESTATE_ID:
     case api::MessageType::ACTIVATE_CLUSTER_STATE_VERSION_ID:
         return true;
     case api::MessageType::REQUESTBUCKETINFO_REPLY_ID:
@@ -342,15 +353,7 @@ get_bucket_id_for_striping(const api::StorageMessage& msg, const DistributorNode
             case api::MessageType::REMOVE_ID:
                 return node_ctx.bucket_id_factory().getBucketId(dynamic_cast<const api::TestAndSetCommand&>(msg).getDocumentId());
             case api::MessageType::REQUESTBUCKETINFO_REPLY_ID:
-            {
-                const auto& reply = dynamic_cast<const api::RequestBucketInfoReply&>(msg);
-                if (!reply.getBucketInfo().empty()) {
-                    // Note: All bucket ids in this reply belong to the same distributor stripe, so we just use the first entry.
-                    return reply.getBucketInfo()[0]._bucketId;
-                } else {
-                    return reply.getBucketId();
-                }
-            }
+                return dynamic_cast<const api::RequestBucketInfoReply&>(msg).super_bucket_id();
             case api::MessageType::GET_ID:
                 return node_ctx.bucket_id_factory().getBucketId(dynamic_cast<const api::GetCommand&>(msg).getDocumentId());
             case api::MessageType::VISITOR_CREATE_ID:
@@ -364,16 +367,31 @@ get_bucket_id_for_striping(const api::StorageMessage& msg, const DistributorNode
     return msg.getBucketId();
 }
 
-uint32_t
-stripe_of_bucket_id(const document::BucketId& bucketd_id, uint8_t n_stripe_bits)
-{
-    if (!bucketd_id.isSet()) {
-        // TODO STRIPE: Messages with a non-set bucket id should be handled by the top-level distributor instead.
-        return 0;
-    }
-    return storage::stripe_of_bucket_key(bucketd_id.toKey(), n_stripe_bits);
 }
 
+uint32_t
+Distributor::random_stripe_idx()
+{
+    std::lock_guard lock(_random_stripe_gen_mutex);
+    return _random_stripe_gen.nextUint32() % _stripes.size();
+}
+
+uint32_t
+Distributor::stripe_of_bucket_id(const document::BucketId& bucket_id, const api::StorageMessage& msg)
+{
+    if (!bucket_id.isSet()) {
+        LOG(error, "Message (%s) has a bucket id (%s) that is not set. Cannot route to stripe",
+            msg.toString(true).c_str(), bucket_id.toString().c_str());
+    }
+    assert(bucket_id.isSet());
+    if (bucket_id.getUsedBits() < spi::BucketLimits::MinUsedBits) {
+        if (msg.getType().getId() == api::MessageType::VISITOR_CREATE_ID) {
+            // This message will eventually be bounced with api::ReturnCode::WRONG_DISTRIBUTION,
+            // so we can just route it to a random distributor stripe.
+            return random_stripe_idx();
+        }
+    }
+    return storage::stripe_of_bucket_key(bucket_id.toKey(), _n_stripe_bits);
 }
 
 bool
@@ -389,7 +407,7 @@ Distributor::onDown(const std::shared_ptr<api::StorageMessage>& msg)
             return true;
         }
         auto bucket_id = get_bucket_id_for_striping(*msg, _component);
-        uint32_t stripe_idx = stripe_of_bucket_id(bucket_id, _n_stripe_bits);
+        uint32_t stripe_idx = stripe_of_bucket_id(bucket_id, *msg);
         MBUS_TRACE(msg->getTrace(), 9,
                    vespalib::make_string("Distributor::onDown(): Dispatch message to stripe %u", stripe_idx));
         bool handled = _stripes[stripe_idx]->handle_or_enqueue_message(msg);
@@ -506,44 +524,55 @@ Distributor::propagateDefaultDistribution(
 std::unordered_map<uint16_t, uint32_t>
 Distributor::getMinReplica() const
 {
-    // TODO STRIPE merged snapshot from all stripes
     if (_use_legacy_mode) {
         return _stripe->getMinReplica();
     } else {
-        return first_stripe().getMinReplica();
+        std::unordered_map<uint16_t, uint32_t> result;
+        for (const auto& stripe : _stripes) {
+            merge_min_replica_stats(result, stripe->getMinReplica());
+        }
+        return result;
     }
 }
 
 BucketSpacesStatsProvider::PerNodeBucketSpacesStats
 Distributor::getBucketSpacesStats() const
 {
-    // TODO STRIPE merged snapshot from all stripes
     if (_use_legacy_mode) {
         return _stripe->getBucketSpacesStats();
     } else {
-        return first_stripe().getBucketSpacesStats();
+        BucketSpacesStatsProvider::PerNodeBucketSpacesStats result;
+        for (const auto& stripe : _stripes) {
+            merge_per_node_bucket_spaces_stats(result, stripe->getBucketSpacesStats());
+        }
+        return result;
     }
 }
 
 SimpleMaintenanceScanner::PendingMaintenanceStats
 Distributor::pending_maintenance_stats() const {
-    // TODO STRIPE merged snapshot from all stripes
     if (_use_legacy_mode) {
         return _stripe->pending_maintenance_stats();
     } else {
-        return first_stripe().pending_maintenance_stats();
+        SimpleMaintenanceScanner::PendingMaintenanceStats result;
+        for (const auto& stripe : _stripes) {
+            result.merge(stripe->pending_maintenance_stats());
+        }
+        return result;
     }
 }
 
 void
 Distributor::propagateInternalScanMetricsToExternal()
 {
-    // TODO STRIPE propagate to all stripes
-    // TODO STRIPE reconsider metric wiring...
     if (_use_legacy_mode) {
         _stripe->propagateInternalScanMetricsToExternal();
     } else {
-        first_stripe().propagateInternalScanMetricsToExternal();
+        for (auto &stripe : _stripes) {
+            stripe->propagateInternalScanMetricsToExternal();
+        }
+        _total_metrics->aggregate();
+        _ideal_state_total_metrics->aggregate();
     }
 }
 
@@ -739,13 +768,8 @@ Distributor::getReportContentType(const framework::HttpUrlPath& path) const
 std::string
 Distributor::getActiveIdealStateOperations() const
 {
-    // TODO STRIPE need to aggregate status responses _across_ stripes..!
-    if (_use_legacy_mode) {
-        return _stripe->getActiveIdealStateOperations();
-    } else {
-        auto guard = _stripe_accessor->rendezvous_and_hold_all();
-        return first_stripe().getActiveIdealStateOperations();
-    }
+    assert(_use_legacy_mode);
+    return _stripe->getActiveIdealStateOperations();
 }
 
 bool

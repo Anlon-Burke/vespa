@@ -422,6 +422,7 @@
     "methods": [
       "public abstract com.yahoo.config.FileReference addFile(java.lang.String)",
       "public abstract com.yahoo.config.FileReference addUri(java.lang.String)",
+      "public abstract com.yahoo.config.FileReference addBlob(java.nio.ByteBuffer)",
       "public com.yahoo.config.FileReference addApplicationPackage()",
       "public abstract java.lang.String fileSourceHost()",
       "public abstract java.util.List export()"
@@ -539,7 +540,8 @@
       "public static final enum com.yahoo.config.application.api.ValidationId skipOldConfigModels",
       "public static final enum com.yahoo.config.application.api.ValidationId accessControl",
       "public static final enum com.yahoo.config.application.api.ValidationId globalEndpointChange",
-      "public static final enum com.yahoo.config.application.api.ValidationId redundancyIncrease"
+      "public static final enum com.yahoo.config.application.api.ValidationId redundancyIncrease",
+      "public static final enum com.yahoo.config.application.api.ValidationId redundancyOne"
     ]
   },
   "com.yahoo.config.application.api.ValidationOverrides$Allow": {

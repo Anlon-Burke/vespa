@@ -122,7 +122,7 @@ import static java.util.stream.Collectors.toUnmodifiableMap;
  */
 public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
-    private static final Duration defaultTimeout = Duration.ofSeconds(175);
+    private static final Duration defaultTimeout = Duration.ofSeconds(180); // Match document API default timeout.
 
     private static final Logger log = Logger.getLogger(DocumentV1ApiHandler.class.getName());
     private static final Parser<Integer> integerParser = Integer::parseInt;
@@ -160,6 +160,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
     private static final String TRACELEVEL = "tracelevel";
 
     private final Clock clock;
+    private final Duration handlerTimeout;
     private final Metric metric;
     private final DocumentApiMetrics metrics;
     private final DocumentOperationParser parser;
@@ -184,14 +185,15 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                                 ClusterListConfig clusterListConfig,
                                 AllClustersBucketSpacesConfig bucketSpacesConfig,
                                 DocumentOperationExecutorConfig executorConfig) {
-        this(Clock.systemUTC(), metric, metricReceiver, documentAccess,
+        this(Clock.systemUTC(), Duration.ofSeconds(5), metric, metricReceiver, documentAccess,
              documentManagerConfig, executorConfig, clusterListConfig, bucketSpacesConfig);
     }
 
-    DocumentV1ApiHandler(Clock clock, Metric metric, MetricReceiver metricReceiver, DocumentAccess access,
+    DocumentV1ApiHandler(Clock clock, Duration handlerTimeout, Metric metric, MetricReceiver metricReceiver, DocumentAccess access,
                          DocumentmanagerConfig documentmanagerConfig, DocumentOperationExecutorConfig executorConfig,
                          ClusterListConfig clusterListConfig, AllClustersBucketSpacesConfig bucketSpacesConfig) {
         this.clock = clock;
+        this.handlerTimeout = handlerTimeout;
         this.parser = new DocumentOperationParser(documentmanagerConfig);
         this.metric = metric;
         this.metrics = new DocumentApiMetrics(metricReceiver, "documentV1");
@@ -222,8 +224,9 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
         HttpRequest request = (HttpRequest) rawRequest;
         try {
-            request.setTimeout(getProperty(request, TIMEOUT, timeoutMillisParser)
-                                       .orElse(defaultTimeout.toMillis()),
+            // Set a higher HTTP layer timeout than the document API timeout, to prefer triggering the latter.
+            request.setTimeout(  getProperty(request, TIMEOUT, timeoutMillisParser).orElse(defaultTimeout.toMillis())
+                               + handlerTimeout.toMillis(),
                                TimeUnit.MILLISECONDS);
 
             Path requestPath = new Path(request.getUri());
@@ -251,7 +254,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
     @Override
     public void handleTimeout(Request request, ResponseHandler responseHandler) {
-        timeout((HttpRequest) request, "Request timeout after " + request.getTimeout(TimeUnit.MILLISECONDS) + "ms", responseHandler);
+        timeout((HttpRequest) request, "Timeout after " + (request.getTimeout(TimeUnit.MILLISECONDS) - handlerTimeout.toMillis()) + "ms", responseHandler);
     }
 
     @Override
@@ -743,8 +746,15 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
     private static void serverError(HttpRequest request, Throwable t, ResponseHandler handler) {
         loggingException(() -> {
-            log.log(WARNING, "Uncaught exception handling request " + request.getMethod() + " " + request.getUri().getRawPath() + ":", t);
+            log.log(WARNING, "Uncaught exception handling request " + request.getMethod() + " " + request.getUri().getRawPath(), t);
             JsonResponse.create(request, Exceptions.toMessageString(t), handler).respond(Response.Status.INTERNAL_SERVER_ERROR);
+        });
+    }
+
+    private static void badGateway(HttpRequest request, Throwable t, ResponseHandler handler) {
+        loggingException(() -> {
+            log.log(FINE, t, () -> "Document access error handling request " + request.getMethod() + " " + request.getUri().getRawPath());
+            JsonResponse.create(request, Exceptions.toMessageString(t), handler).respond(Response.Status.BAD_GATEWAY);
         });
     }
 
@@ -803,6 +813,9 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
             catch (IllegalArgumentException e) {
                 badRequest(request, e, handler);
             }
+            catch (DispatchException e) {
+                badGateway(request, e, handler);
+            }
             catch (RuntimeException e) {
                 serverError(request, e, handler);
             }
@@ -821,10 +834,14 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
             return false;
 
         if (result.type() == Result.ResultType.FATAL_ERROR)
-            throw new RuntimeException(result.getError());
+            throw new DispatchException(result.getError());
 
         outstanding.incrementAndGet();
         return true;
+    }
+
+    private static class DispatchException extends RuntimeException {
+        private DispatchException(Throwable cause) { super(cause); }
     }
 
     /** Readable content channel which forwards data to a reader when closed. */
@@ -923,7 +940,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                         log.log(WARNING, "Unexpected document API operation outcome '" + response.outcome() + "'");
                     case ERROR:
                         log.log(FINE, () -> "Exception performing document operation: " + response.getTextMessage());
-                        jsonResponse.commit(Response.Status.INTERNAL_SERVER_ERROR);
+                        jsonResponse.commit(Response.Status.BAD_GATEWAY);
                 }
             }
         }
@@ -956,7 +973,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         parameters.setMaxTotalHits(wantedDocumentCount);
         parameters.setThrottlePolicy(new StaticThrottlePolicy().setMaxPendingCount(concurrency));
         parameters.visitInconsistentBuckets(true);
-        parameters.setSessionTimeoutMs(Math.max(1, request.getTimeout(TimeUnit.MILLISECONDS) - 5000));
+        parameters.setSessionTimeoutMs(Math.max(1, request.getTimeout(TimeUnit.MILLISECONDS) - handlerTimeout.toMillis()));
         return parameters;
     }
 
@@ -966,7 +983,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         VisitorParameters parameters = parseCommonParameters(request, path, Optional.of(requireProperty(request, CLUSTER)));
         parameters.setThrottlePolicy(new DynamicThrottlePolicy().setMinWindowSize(1).setWindowSizeIncrement(1));
         long timeChunk = getProperty(request, TIME_CHUNK, timeoutMillisParser).orElse(60_000L);
-        parameters.setSessionTimeoutMs(Math.max(1, Math.min(timeChunk, request.getTimeout(TimeUnit.MILLISECONDS) - 5000L)));
+        parameters.setSessionTimeoutMs(Math.max(1, Math.min(timeChunk, request.getTimeout(TimeUnit.MILLISECONDS) - handlerTimeout.toMillis())));
         return parameters;
     }
 
@@ -1118,7 +1135,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                                 if (getVisitorStatistics() != null)
                                     response.writeDocumentCount(getVisitorStatistics().getDocumentsReturned());
 
-                                response.respond(Response.Status.INTERNAL_SERVER_ERROR);
+                                response.respond(Response.Status.BAD_GATEWAY);
                         }
                     });
                     visitDispatcher.execute(() -> {

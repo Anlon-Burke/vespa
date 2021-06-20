@@ -158,7 +158,7 @@ public class Flags {
 
     public static final UnboundIntFlag METRICS_PROXY_MAX_HEAP_SIZE_IN_MB = defineIntFlag(
             "metrics-proxy-max-heap-size-in-mb", 256,
-            List.of("hmusum"), "2021-03-01", "2021-06-15",
+            List.of("hmusum"), "2021-03-01", "2021-07-01",
             "JVM max heap size for metrics proxy in Mb",
             "Takes effect when restarting metrics proxy",
             CLUSTER_TYPE);
@@ -232,6 +232,13 @@ public class Flags {
             "Takes effect on next internal redeployment",
             APPLICATION_ID);
 
+    public static final UnboundIntFlag LARGE_RANK_EXPRESSION_LIMIT = defineIntFlag(
+            "large-rank-expression-limit", 0x10000,
+            List.of("baldersheim"), "2021-06-09", "2021-07-01",
+            "Limit for size of rank expressions distributed by filedistribution",
+            "Takes effect on next internal redeployment",
+            APPLICATION_ID);
+
     public static final UnboundBooleanFlag ENABLE_ROUTING_CORE_DUMP = defineFeatureFlag(
             "enable-routing-core-dumps", false,
             List.of("tokle"), "2021-04-16", "2021-08-01",
@@ -244,13 +251,6 @@ public class Flags {
             List.of("tokle"), "2021-05-19", "2021-08-01",
             "Whether to deploy applications using multipart form data (instead of url params)",
             "Takes effect immediately",
-            APPLICATION_ID);
-
-    public static final UnboundBooleanFlag VESPA_APP_DOMAIN_IN_CERTIFICATE = defineFeatureFlag(
-            "new-domain-in-certificate", false,
-            List.of("mpolden"), "2021-05-25", "2021-09-01",
-            "Whether to include the vespa-app.cloud names in certificate requests",
-            "Takes effect on next deployment through controller",
             APPLICATION_ID);
 
     public static final UnboundIntFlag MAX_ENCRYPTING_HOSTS = defineIntFlag(
@@ -268,10 +268,23 @@ public class Flags {
 
     public static final UnboundBooleanFlag THROW_EXCEPTION_IF_RESOURCE_LIMITS_SPECIFIED = defineFeatureFlag(
             "throw-exception-if-resource-limits-specified", false,
-            List.of("mpolden"), "2021-06-07", "2021-07-07",
+            List.of("hmusum"), "2021-06-07", "2021-08-07",
             "Whether to throw an exception in hosted Vespa if the application specifies resource limits in services.xml",
             "Takes effect on next deployment through controller",
             APPLICATION_ID);
+
+    public static final UnboundBooleanFlag MOVE_SEARCH_DEFINITIONS_TO_SCHEMAS_DIR = defineFeatureFlag(
+            "move-search-definitions-to-schemas-dir", false,
+            List.of("hmusum"), "2021-06-09", "2021-08-09",
+            "Whether to move files in searchdefinitions/ to schemas/ when deploying an application",
+            "Takes effect on next deployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag LOAD_LOCAL_SESSIONS_WHEN_BOOTSTRAPPING = defineFeatureFlag(
+            "load-local-sessions-when-bootstrapping", true,
+            List.of("hmusum"), "2021-06-15", "2021-07-15",
+            "Whether to load local sessions when bootstrapping config server",
+            "Takes effect on restart of config server");
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

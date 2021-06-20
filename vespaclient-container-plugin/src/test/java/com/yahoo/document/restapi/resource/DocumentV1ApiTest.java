@@ -60,17 +60,20 @@ import org.junit.Test;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Phaser;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -83,6 +86,7 @@ import static com.yahoo.jdisc.http.HttpRequest.Method.POST;
 import static com.yahoo.jdisc.http.HttpRequest.Method.PUT;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -130,7 +134,7 @@ public class DocumentV1ApiTest {
         access = new MockDocumentAccess(docConfig);
         metric = new NullMetric();
         metrics = new MetricReceiver.MockReceiver();
-        handler = new DocumentV1ApiHandler(clock, metric, metrics, access, docConfig, executorConfig, clusterConfig, bucketConfig);
+        handler = new DocumentV1ApiHandler(clock, Duration.ofMillis(1), metric, metrics, access, docConfig, executorConfig, clusterConfig, bucketConfig);
     }
 
     @After
@@ -176,7 +180,7 @@ public class DocumentV1ApiTest {
     }
 
     @Test
-    public void testResponses() {
+    public void testResponses() throws InterruptedException {
         RequestHandlerTestDriver driver = new RequestHandlerTestDriver(handler);
         List<AckToken> tokens = List.of(new AckToken(null), new AckToken(null), new AckToken(null));
         // GET at non-existent path returns 404 with available paths
@@ -204,7 +208,7 @@ public class DocumentV1ApiTest {
             assertEquals(100, ((StaticThrottlePolicy) parameters.getThrottlePolicy()).getMaxPendingCount());
             assertEquals("[id]", parameters.getFieldSet());
             assertEquals("(all the things)", parameters.getDocumentSelection());
-            assertEquals(1000, parameters.getSessionTimeoutMs());
+            assertEquals(6000, parameters.getSessionTimeoutMs());
             // Put some documents in the response
             parameters.getLocalDataHandler().onMessage(new PutDocumentMessage(new DocumentPut(doc1)), tokens.get(0));
             parameters.getLocalDataHandler().onMessage(new PutDocumentMessage(new DocumentPut(doc2)), tokens.get(1));
@@ -269,7 +273,7 @@ public class DocumentV1ApiTest {
         access.expect(parameters -> {
             assertEquals("[Content:cluster=content]", parameters.getRemoteDataHandler());
             assertEquals("[all]", parameters.fieldSet());
-            assertEquals(55_000L, parameters.getSessionTimeoutMs());
+            assertEquals(60_000L, parameters.getSessionTimeoutMs());
             parameters.getControlHandler().onDone(VisitorControlHandler.CompletionCode.SUCCESS, "We made it!");
         });
         response = driver.sendRequest("http://localhost/document/v1/space/music/docid?destinationCluster=content&selection=true&cluster=content&timeout=60", POST);
@@ -330,6 +334,7 @@ public class DocumentV1ApiTest {
         assertEquals(400, response.getStatus());
 
         // DELETE with namespace and document type is a restricted visit which deletes visited documents.
+        // When visiting fails fatally, a 502 BAD GATEWAY is returned.
         access.expect(tokens.subList(0, 1));
         access.expect(parameters -> {
             assertEquals("(false) and (music) and (id.namespace=='space')", parameters.getDocumentSelection());
@@ -351,7 +356,7 @@ public class DocumentV1ApiTest {
                        "  \"pathId\": \"/document/v1/space/music/docid\"," +
                        "  \"message\": \"boom\"" +
                        "}", response.readAll());
-        assertEquals(500, response.getStatus());
+        assertEquals(502, response.getStatus());
 
         // DELETE at the root is also a deletion visit. These also require a selection.
         access.expect(parameters -> {
@@ -386,7 +391,7 @@ public class DocumentV1ApiTest {
                        "  \"documents\": []," +
                        "  \"message\": \"error\"" +
                        "}", response.readAll());
-        assertEquals(500, response.getStatus());
+        assertEquals(502, response.getStatus());
 
         // GET with namespace, document type and number is a restricted visit.
         access.expect(parameters -> {
@@ -649,12 +654,12 @@ public class DocumentV1ApiTest {
                        "  \"pathId\": \"/document/v1/space/music/number/1/two\"," +
                        "  \"message\": \"error\"" +
                        "}", response1.readAll());
-        assertEquals(500, response1.getStatus());
+        assertEquals(502, response1.getStatus());
         assertSameJson("{" +
                        "  \"pathId\": \"/document/v1/space/music/number/1/two\"," +
                        "  \"message\": \"error\"" +
                        "}", response2.readAll());
-        assertEquals(500, response2.getStatus());
+        assertEquals(502, response2.getStatus());
 
         // Request response does not arrive before timeout has passed.
         AtomicReference<ResponseHandler> handler = new AtomicReference<>();
@@ -662,15 +667,89 @@ public class DocumentV1ApiTest {
             handler.set(parameters.responseHandler().get());
             return new Result(Result.ResultType.SUCCESS, null);
         });
-        var response4 = driver.sendRequest("http://localhost/document/v1/space/music/docid/one?timeout=1ms");
-        assertSameJson("{" +
-                       "  \"pathId\": \"/document/v1/space/music/docid/one\"," +
-                       "  \"message\": \"Request timeout after 1ms\"" +
-                       "}", response4.readAll());
-        assertEquals(504, response4.getStatus());
-        if (handler.get() != null)                          // Timeout may have occurred before dispatch, or ...
-            handler.get().handleResponse(new Response(0));  // response may eventually arrive, but too late.
+        try {
+            var response4 = driver.sendRequest("http://localhost/document/v1/space/music/docid/one?timeout=1ms");
+            assertSameJson("{" +
+                           "  \"pathId\": \"/document/v1/space/music/docid/one\"," +
+                           "  \"message\": \"Timeout after 1ms\"" +
+                           "}", response4.readAll());
+            assertEquals(504, response4.getStatus());
+        }
+        finally {
+            if (handler.get() != null)                          // Timeout may have occurred before dispatch, or ...
+                handler.get().handleResponse(new Response(0));  // response may eventually arrive, but too late.
+        }
 
+        driver.close();
+    }
+
+    @Test
+    public void testThroughput() throws InterruptedException {
+        DocumentOperationExecutorConfig executorConfig = new DocumentOperationExecutorConfig.Builder().build();
+        handler = new DocumentV1ApiHandler(clock, Duration.ofMillis(1), metric, metrics, access, docConfig, executorConfig, clusterConfig, bucketConfig);
+
+        int writers = 4;
+        int queueFill = executorConfig.maxThrottled() - writers;
+        RequestHandlerTestDriver driver = new RequestHandlerTestDriver(handler);
+        ScheduledExecutorService writer = Executors.newScheduledThreadPool(writers);
+        ScheduledExecutorService reader = Executors.newScheduledThreadPool(1);
+        ScheduledExecutorService replier = Executors.newScheduledThreadPool(writers);
+        BlockingQueue<RequestHandlerTestDriver.MockResponseHandler> responses = new LinkedBlockingQueue<>();
+
+        Response success = new Response(0, null, Response.Outcome.SUCCESS);
+        int docs = 1 << 14;
+        assertTrue(docs >= writers);
+        AtomicReference<com.yahoo.jdisc.Response> failed = new AtomicReference<>();
+
+        CountDownLatch latch = new CountDownLatch(docs);
+        reader.execute(() -> {
+            while ( ! reader.isShutdown()) {
+                try {
+                    var response = responses.take();
+                    response.awaitResponse().readAll();
+                    if (response.getStatus() != 200)
+                        failed.set(response.getResponse());
+                    latch.countDown();
+                }
+                catch (InterruptedException e) { break; }
+            }
+        });
+
+        // Fill the handler resend queue.
+        long startNanos = System.nanoTime();
+        CountDownLatch setup = new CountDownLatch(queueFill);
+        access.session.expect((id, parameters) -> {
+            setup.countDown();
+            return new Result(Result.ResultType.TRANSIENT_ERROR, new Error());
+        });
+        for (int i = 0; i < queueFill; i++) {
+            int j = i;
+            writer.execute(() -> {
+                responses.add(driver.sendRequest("http://localhost/document/v1/ns/music/docid/" + j,
+                                                 POST,
+                                                 "{ \"fields\": { \"artist\": \"Sigrid\" } }"));
+            });
+        }
+        setup.await();
+
+        // Let "messagebus" start accepting messages.
+        access.session.expect((id, parameters) -> {
+            replier.schedule(() -> parameters.responseHandler().get().handleResponse(success), 10, TimeUnit.MILLISECONDS);
+            return new Result(0);
+        });
+        // Send the rest of the documents. Rely on resender to empty queue of throttled oppperations.
+        for (int i = queueFill; i < docs; i++) {
+            int j = i;
+            writer.execute(() -> {
+                responses.add(driver.sendRequest("http://localhost/document/v1/ns/music/docid/" + j,
+                                                 POST,
+                                                 "{ \"fields\": { \"artist\": \"Sigrid\" } }"));
+            });
+        }
+        latch.await();
+        System.err.println(docs + " requests in " + (System.nanoTime() - startNanos) * 1e-9 + " seconds");
+
+        assertNull(failed.get());
         driver.close();
     }
 

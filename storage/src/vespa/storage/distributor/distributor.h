@@ -9,6 +9,7 @@
 #include "distributor_interface.h"
 #include "distributor_stripe_interface.h"
 #include "externaloperationhandler.h"
+#include "ideal_state_total_metrics.h"
 #include "idealstatemanager.h"
 #include "min_replica_provider.h"
 #include "pendingmessagetracker.h"
@@ -24,6 +25,7 @@
 #include <vespa/storageapi/message/state.h>
 #include <vespa/storageframework/generic/metric/metricupdatehook.h>
 #include <vespa/storageframework/generic/thread/tickingthread.h>
+#include <vespa/vdslib/state/random.h>
 #include <chrono>
 #include <queue>
 #include <unordered_map>
@@ -43,6 +45,7 @@ class DistributorBucketSpaceRepo;
 class DistributorStatus;
 class DistributorStripe;
 class DistributorStripePool;
+class DistributorTotalMetrics;
 class StripeAccessor;
 class OperationSequencer;
 class OwnershipTransferSafeTimePointCalculator;
@@ -77,7 +80,7 @@ public:
     void sendUp(const std::shared_ptr<api::StorageMessage>&) override;
     void sendDown(const std::shared_ptr<api::StorageMessage>&) override;
 
-    DistributorMetricSet& getMetrics() { return *_metrics; }
+    DistributorMetricSet& getMetrics();
 
     // Implements DistributorInterface and DistributorMessageSender.
     DistributorMetricSet& metrics() override { return getMetrics(); }
@@ -122,14 +125,10 @@ public:
     };
 
 private:
-    friend struct DistributorTest;
-    friend class BucketDBUpdaterTest;
     friend class DistributorTestUtil;
+    friend class LegacyBucketDBUpdaterTest;
     friend class MetricUpdateHook;
-
-    // TODO STRIPE remove
-    DistributorStripe& first_stripe() noexcept;
-    const DistributorStripe& first_stripe() const noexcept;
+    friend struct LegacyDistributorTest;
 
     void setNodeStateUp();
     bool handleMessage(const std::shared_ptr<api::StorageMessage>& msg);
@@ -189,6 +188,9 @@ private:
     // Precondition: _stripe_scan_notify_mutex is held
     [[nodiscard]] bool may_send_host_info_on_behalf_of_stripes(std::lock_guard<std::mutex>& held_lock) noexcept;
 
+    uint32_t random_stripe_idx();
+    uint32_t stripe_of_bucket_id(const document::BucketId& bucket_id, const api::StorageMessage& msg);
+
     struct StripeScanStats {
         bool wants_to_send_host_info = false;
         bool has_reported_in_at_least_once = false;
@@ -197,18 +199,24 @@ private:
     using MessageQueue = std::vector<std::shared_ptr<api::StorageMessage>>;
 
     DistributorComponentRegister&         _comp_reg;
-    std::shared_ptr<DistributorMetricSet> _metrics;
-    ChainedMessageSender*                 _messageSender;
     const bool                            _use_legacy_mode;
+    std::shared_ptr<DistributorMetricSet> _metrics;
+    std::shared_ptr<DistributorTotalMetrics> _total_metrics;
+    std::shared_ptr<IdealStateMetricSet>  _ideal_state_metrics;
+    std::shared_ptr<IdealStateTotalMetrics>  _ideal_state_total_metrics;
+    ChainedMessageSender*                 _messageSender;
     // TODO STRIPE multiple stripes...! This is for proof of concept of wiring.
     uint8_t                               _n_stripe_bits;
     std::unique_ptr<DistributorStripe>    _stripe;
     DistributorStripePool&                _stripe_pool;
     std::vector<std::unique_ptr<DistributorStripe>> _stripes;
     std::unique_ptr<StripeAccessor>      _stripe_accessor;
+    storage::lib::RandomGen              _random_stripe_gen;
+    std::mutex                           _random_stripe_gen_mutex;
     MessageQueue                         _message_queue; // Queue for top-level ops
     MessageQueue                         _fetched_messages;
     distributor::DistributorComponent    _component;
+    storage::DistributorComponent        _ideal_state_component;
     std::shared_ptr<const DistributorConfiguration> _total_config;
     std::unique_ptr<BucketDBUpdater>     _bucket_db_updater;
     StatusReporterDelegate               _distributorStatusDelegate;

@@ -5,19 +5,35 @@ import java.io.Closeable;
 import java.util.concurrent.CompletableFuture;
 
 /**
+ * Asynchronous feed client accepting document operations as JSON
+ *
  * @author bjorncs
  * @author jonmv
  */
 public interface FeedClient extends Closeable {
 
-    /** Send a document put with the given parameters, returning a future with the result of the operation. */
+    /**
+     * Send a document put with the given parameters, returning a future with the result of the operation.
+     * Exceptional completion will use be an instance of {@link FeedException} or one of its sub-classes.
+     * */
     CompletableFuture<Result> put(DocumentId documentId, String documentJson, OperationParameters params);
 
-    /** Send a document update with the given parameters, returning a future with the result of the operation. */
+    /**
+     * Send a document update with the given parameters, returning a future with the result of the operation.
+     * Exceptional completion will use be an instance of {@link FeedException} or one of its sub-classes.
+     * */
     CompletableFuture<Result> update(DocumentId documentId, String updateJson, OperationParameters params);
 
-    /** Send a document remove with the given parameters, returning a future with the result of the operation. */
+    /** Send a document remove with the given parameters, returning a future with the result of the operation.
+     *  Exceptional completion will use be an instance of {@link FeedException} or one of its sub-classes.
+     *  */
     CompletableFuture<Result> remove(DocumentId documentId, OperationParameters params);
+
+    /** Returns a snapshot of the stats for this feed client, such as requests made, and responses by status. */
+    OperationStats stats();
+
+    /** Current state of the circuit breaker. */
+    default CircuitBreaker.State circuitBreakerState() { return CircuitBreaker.State.CLOSED; }
 
     /** Shut down, and reject new operations. Operations in flight are allowed to complete normally if graceful. */
     void close(boolean graceful);

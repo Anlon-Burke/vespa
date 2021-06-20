@@ -83,7 +83,7 @@ public class Search implements ImmutableSearch {
     private final Map<String, DocumentSummary> summaries = new LinkedHashMap<>();
 
     /** External rank expression files of this */
-    private final RankExpressionFiles rankExpressionFiles = new RankExpressionFiles();
+    private final LargeRankExpressions largeRankExpressions = new LargeRankExpressions();
 
     /** Ranking constants of this */
     private final RankingConstants rankingConstants = new RankingConstants();
@@ -98,7 +98,7 @@ public class Search implements ImmutableSearch {
     private final DeployLogger deployLogger;
     private final ModelContext.Properties properties;
 
-    /** Testin only */
+    /** Testing only */
     public Search(String name) {
         this(name, null, new BaseDeployLogger(), new TestProperties());
     }
@@ -188,7 +188,7 @@ public class Search implements ImmutableSearch {
     }
 
     @Override
-    public RankExpressionFiles rankExpressionFiles() { return rankExpressionFiles; }
+    public LargeRankExpressions rankExpressionFiles() { return largeRankExpressions; }
 
     @Override
     public RankingConstants rankingConstants() { return rankingConstants; }
@@ -198,7 +198,7 @@ public class Search implements ImmutableSearch {
 
     public void sendTo(Collection<? extends AbstractService> services) {
         rankingConstants.sendTo(services);
-        rankExpressionFiles.sendTo(services);
+        largeRankExpressions.sendTo(services);
         onnxModels.sendTo(services);
     }
 

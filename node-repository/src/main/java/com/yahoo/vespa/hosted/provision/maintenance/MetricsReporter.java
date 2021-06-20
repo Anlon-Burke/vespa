@@ -27,6 +27,7 @@ import com.yahoo.vespa.service.monitor.ServiceModel;
 import com.yahoo.vespa.service.monitor.ServiceMonitor;
 
 import java.time.Duration;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -66,7 +67,9 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
 
     @Override
     public double maintain() {
-        NodeList nodes = nodeRepository().nodes().list();
+        // Sort by hostname to get deterministic metric reporting order (and hopefully avoid changes
+        // to metric reporting time so we get double reporting or no reporting within a minute)
+        NodeList nodes = nodeRepository().nodes().list().sortedBy(Comparator.comparing(Node::hostname));
         ServiceModel serviceModel = serviceMonitor.getServiceModelSnapshot();
 
         updateZoneMetrics();
@@ -199,6 +202,11 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
         metric.set("wantToRetire", node.status().wantToRetire() ? 1 : 0, context);
         metric.set("wantToDeprovision", node.status().wantToDeprovision() ? 1 : 0, context);
         metric.set("failReport", NodeFailer.reasonsToFailParentHost(node).isEmpty() ? 0 : 1, context);
+
+        if (node.type().isHost()) {
+            metric.set("wantToEncrypt", node.reports().getReport("wantToEncrypt").isPresent() ? 1 : 0, context);
+            metric.set("diskEncrypted", node.reports().getReport("diskEncrypted").isPresent() ? 1 : 0, context);
+        }
 
         HostName hostname = new HostName(node.hostname());
 

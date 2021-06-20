@@ -1,12 +1,9 @@
 // Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.feed.client;
 
-import org.apache.hc.client5.http.async.methods.SimpleHttpRequest;
-import org.apache.hc.client5.http.async.methods.SimpleHttpResponse;
+import ai.vespa.feed.client.FeedClient.CircuitBreaker.State;
 
-import java.io.Closeable;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.BiConsumer;
 
 /**
  * Controls execution of feed operations.
@@ -15,8 +12,11 @@ import java.util.function.BiConsumer;
  */
 interface RequestStrategy {
 
-    /** Whether this has failed fatally, and we should cease sending further operations. */
-    boolean hasFailed();
+    /** Stats for operations sent through this. */
+    OperationStats stats();
+
+    /** State of the circuit breaker. */
+    State circuitBreakerState();
 
     /** Forcibly terminates this, causing all inflight operations to complete immediately. */
     void destroy();
@@ -25,6 +25,6 @@ interface RequestStrategy {
     void await();
 
     /** Enqueue the given operation, returning its future result. This may block if the client send queue is full. */
-    CompletableFuture<SimpleHttpResponse> enqueue(DocumentId documentId, SimpleHttpRequest request);
+    CompletableFuture<HttpResponse> enqueue(DocumentId documentId, HttpRequest request);
 
 }

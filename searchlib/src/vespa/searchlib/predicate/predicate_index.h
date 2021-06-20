@@ -38,16 +38,15 @@ public:
     using BTreeIterator = SimpleIndex<vespalib::datastore::EntryRef>::BTreeIterator;
     using VectorIterator = SimpleIndex<vespalib::datastore::EntryRef>::VectorIterator;
 private:
-    uint32_t _arity;
-    GenerationHandler &_generation_handler;
+    uint32_t                  _arity;
     const DocIdLimitProvider &_limit_provider;
-    IntervalIndex _interval_index;
-    BoundsIndex _bounds_index;
-    PredicateIntervalStore _interval_store;
-    BTreeSet _zero_constraint_docs;
+    IntervalIndex             _interval_index;
+    BoundsIndex               _bounds_index;
+    PredicateIntervalStore    _interval_store;
+    BTreeSet                  _zero_constraint_docs;
 
-    DocumentFeaturesStore _features_store;
-    mutable BitVectorCache  _cache;
+    DocumentFeaturesStore     _features_store;
+    mutable BitVectorCache    _cache;
 
     template <typename IntervalT>
     void addPosting(uint64_t feature, uint32_t doc_id, vespalib::datastore::EntryRef ref);
@@ -55,15 +54,13 @@ private:
     template <typename IntervalT>
     void indexDocumentFeatures(uint32_t doc_id, const FeatureMap<IntervalT> &interval_map);
 
-    PopulateInterface::Iterator::UP lookup(uint64_t key) const override;
-
 public:
-    PredicateIndex(GenerationHandler &generation_handler, GenerationHolder &genHolder,
+    PredicateIndex(GenerationHolder &genHolder,
                    const DocIdLimitProvider &limit_provider,
                    const SimpleIndexConfig &simple_index_config, uint32_t arity);
     // deserializes PredicateIndex from buffer.
     // The observer can be used to gain some insight into what has been added to the index..
-    PredicateIndex(GenerationHandler &generation_handler, GenerationHolder &genHolder,
+    PredicateIndex(GenerationHolder &genHolder,
                    const DocIdLimitProvider &limit_provider,
                    const SimpleIndexConfig &simple_index_config, vespalib::DataBuffer &buffer,
                    SimpleIndexDeserializeObserver<> & observer, uint32_t version);
@@ -106,6 +103,9 @@ public:
      * Adjust size of structures to have space for docId.
      */
     void adjustDocIdLimit(uint32_t docId);
+    PopulateInterface::Iterator::UP lookup(uint64_t key) const override;
+    // Exposed for testing
+    void requireCachePopulation() const { _cache.requirePopulation(); }
 };
 
 extern template class SimpleIndex<vespalib::datastore::EntryRef>;

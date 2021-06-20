@@ -11,7 +11,7 @@
 #include <sys/wait.h>
 
 #include <vespa/log/log.h>
-LOG_SETUP(".manager");
+LOG_SETUP(".sentinel.manager");
 
 namespace config::sentinel {
 
@@ -116,6 +116,7 @@ Manager::doWork()
     if (_env.configOwner().checkForConfigUpdate()) {
         doConfigure();
     }
+    _env.modelOwner().checkForUpdates();
     handleRestarts();
     handleCommands();
     handleOutputs();

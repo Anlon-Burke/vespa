@@ -8,6 +8,7 @@ import org.apache.hc.client5.http.impl.async.CloseableHttpAsyncClient;
 import org.apache.hc.client5.http.impl.async.H2AsyncClientBuilder;
 import org.apache.hc.client5.http.ssl.ClientTlsStrategyBuilder;
 import org.apache.hc.core5.concurrent.FutureCallback;
+import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.message.BasicHeader;
 import org.apache.hc.core5.http2.config.H2Config;
 import org.apache.hc.core5.net.URIAuthority;
@@ -29,18 +30,23 @@ import static org.apache.hc.core5.http.ssl.TlsCiphers.excludeWeak;
 /**
  * @author jonmv
  */
-class HttpCluster implements Cluster {
+class ApacheCluster implements Cluster {
 
     private final List<Endpoint> endpoints = new ArrayList<>();
 
-    public HttpCluster(FeedClientBuilder builder) throws IOException {
+    ApacheCluster(FeedClientBuilder builder) throws IOException {
         for (URI endpoint : builder.endpoints)
             for (int i = 0; i < builder.connectionsPerEndpoint; i++)
                 endpoints.add(new Endpoint(createHttpClient(builder), endpoint));
     }
 
     @Override
-    public void dispatch(SimpleHttpRequest request, CompletableFuture<SimpleHttpResponse> vessel) {
+    public void dispatch(HttpRequest wrapped, CompletableFuture<HttpResponse> vessel) {
+        SimpleHttpRequest request = new SimpleHttpRequest(wrapped.method(), wrapped.path());
+        wrapped.headers().forEach((name, value) -> request.setHeader(name, value.get()));
+        if (wrapped.body() != null)
+            request.setBody(wrapped.body(), ContentType.APPLICATION_JSON);
+
         int index = 0;
         int min = Integer.MAX_VALUE;
         for (int i = 0; i < endpoints.size(); i++)
@@ -56,7 +62,7 @@ class HttpCluster implements Cluster {
             request.setAuthority(new URIAuthority(endpoint.url.getHost(), endpoint.url.getPort()));
             endpoint.client.execute(request,
                                     new FutureCallback<SimpleHttpResponse>() {
-                                        @Override public void completed(SimpleHttpResponse response) { vessel.complete(response); }
+                                        @Override public void completed(SimpleHttpResponse response) { vessel.complete(new ApacheHttpResponse(response)); }
                                         @Override public void failed(Exception ex) { vessel.completeExceptionally(ex); }
                                         @Override public void cancelled() { vessel.cancel(false); }
                                     });
@@ -105,23 +111,23 @@ class HttpCluster implements Cluster {
                                                                      .disableRedirectHandling()
                                                                      .disableAutomaticRetries()
                                                                      .setIOReactorConfig(IOReactorConfig.custom()
-                                                                                                        .setIoThreadCount(1)
+                                                                                                        .setIoThreadCount(2)
                                                                                                         .setTcpNoDelay(true)
                                                                                                         .setSoTimeout(Timeout.ofSeconds(10))
                                                                                                         .build())
-                                                                     .setDefaultRequestConfig(
-                                                                             RequestConfig.custom()
-                                                                                          .setConnectTimeout(Timeout.ofSeconds(10))
-                                                                                          .setConnectionRequestTimeout(Timeout.DISABLED)
-                                                                                          .setResponseTimeout(Timeout.ofMinutes(5))
-                                                                                          .build())
-                                                                     .setH2Config(H2Config.initial()
+                                                                     .setDefaultRequestConfig(RequestConfig.custom()
+                                                                                                           .setConnectTimeout(Timeout.ofSeconds(10))
+                                                                                                           .setConnectionRequestTimeout(Timeout.DISABLED)
+                                                                                                           .setResponseTimeout(Timeout.ofMinutes(5))
+                                                                                                           .build())
+                                                                     .setH2Config(H2Config.custom()
                                                                                           .setMaxConcurrentStreams(builder.maxStreamsPerConnection)
                                                                                           .setCompressionEnabled(true)
                                                                                           .setPushEnabled(false)
+                                                                                          .setInitialWindowSize(Integer.MAX_VALUE)
                                                                                           .build());
 
-        SSLContext sslContext = constructSslContext(builder);
+        SSLContext sslContext = builder.constructSslContext();
         String[] allowedCiphers = excludeH2Blacklisted(excludeWeak(sslContext.getSupportedSSLParameters().getCipherSuites()));
         if (allowedCiphers.length == 0)
             throw new IllegalStateException("No adequate SSL cipher suites supported by the JVM");
@@ -136,16 +142,24 @@ class HttpCluster implements Cluster {
                                 .build();
     }
 
-    private static SSLContext constructSslContext(FeedClientBuilder builder) throws IOException {
-        if (builder.sslContext != null) return builder.sslContext;
-        SslContextBuilder sslContextBuilder = new SslContextBuilder();
-        if (builder.certificate != null && builder.privateKey != null) {
-            sslContextBuilder.withCertificateAndKey(builder.certificate, builder.privateKey);
+    private static class ApacheHttpResponse implements HttpResponse {
+
+        private final SimpleHttpResponse wrapped;
+
+        private ApacheHttpResponse(SimpleHttpResponse wrapped) {
+            this.wrapped = wrapped;
         }
-        if (builder.caCertificates != null) {
-            sslContextBuilder.withCaCertificates(builder.caCertificates);
+
+        @Override
+        public int code() {
+            return wrapped.getCode();
         }
-        return sslContextBuilder.build();
+
+        @Override
+        public byte[] body() {
+            return wrapped.getBodyBytes();
+        }
+
     }
 
 }

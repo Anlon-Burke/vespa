@@ -3,10 +3,11 @@
 #pragma once
 
 #include "rpcserver.h"
+#include "cc-result.h"
 #include <vespa/config-sentinel.h>
 #include <vespa/config-model.h>
 #include <string>
-#include <vector>
+#include <map>
 
 using cloud::config::SentinelConfig;
 using cloud::config::ModelConfig;
@@ -18,19 +19,28 @@ namespace config::sentinel {
  **/
 class Connectivity {
 public:
-    Connectivity(const SentinelConfig::Connectivity & config, RpcServer &rpcServer);
+    using SpecMap = std::map<std::string, int>;
+    using HostAndPort = SpecMap::value_type;
+
+    Connectivity();
     ~Connectivity();
-
-    struct CheckResult {
-        bool enoughOk;
-        bool allOk;
-        std::vector<std::string> details;
-    };
-
-    CheckResult checkConnectivity(const ModelConfig &model);
+    void configure(const SentinelConfig::Connectivity &config,
+                   const ModelConfig &model);
+    bool checkConnectivity(RpcServer &rpcServer);
+    static SpecMap specsFrom(const ModelConfig &model);
 private:
-    const SentinelConfig::Connectivity _config;
-    RpcServer &_rpcServer;
+    class Accumulator {
+    private:
+        size_t _numOk = 0;
+        size_t _numBad = 0;
+        size_t _numHandled = 0;
+    public:
+        void handleResult(CcResult value);
+        bool enoughOk(const SentinelConfig::Connectivity &config) const;
+    };
+    SentinelConfig::Connectivity _config;
+    SpecMap _checkSpecs;
+    std::map<std::string, std::string> _detailsPerHost;
 };
 
 }

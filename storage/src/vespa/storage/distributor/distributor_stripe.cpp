@@ -36,6 +36,7 @@ namespace storage::distributor {
  */
 DistributorStripe::DistributorStripe(DistributorComponentRegister& compReg,
                                      DistributorMetricSet& metrics,
+                                     IdealStateMetricSet& ideal_state_metrics,
                                      const NodeIdentity& node_identity,
                                      framework::TickingThreadPool& threadPool,
                                      DoneInitializeHandler& doneInitHandler,
@@ -58,7 +59,7 @@ DistributorStripe::DistributorStripe(DistributorComponentRegister& compReg,
       _bucketDBUpdater(_component, _component, *this, *this, use_legacy_mode),
       _distributorStatusDelegate(compReg, *this, *this),
       _bucketDBStatusDelegate(compReg, *this, _bucketDBUpdater),
-      _idealStateManager(*this, *_bucketSpaceRepo, *_readOnlyBucketSpaceRepo, compReg, stripe_index),
+      _idealStateManager(_component, _component, ideal_state_metrics),
       _messageSender(messageSender),
       _stripe_host_info_notifier(stripe_host_info_notifier),
       _externalOperationHandler(_component, _component, getMetrics(), getMessageSender(),
@@ -71,7 +72,7 @@ DistributorStripe::DistributorStripe(DistributorComponentRegister& compReg,
       _bucketPriorityDb(std::make_unique<SimpleBucketPriorityDatabase>()),
       _scanner(std::make_unique<SimpleMaintenanceScanner>(*_bucketPriorityDb, _idealStateManager, *_bucketSpaceRepo)),
       _throttlingStarter(std::make_unique<ThrottlingOperationStarter>(_maintenanceOperationOwner)),
-      _blockingStarter(std::make_unique<BlockingOperationStarter>(_pendingMessageTracker, *_operation_sequencer,
+      _blockingStarter(std::make_unique<BlockingOperationStarter>(_component, *_operation_sequencer,
                                                                   *_throttlingStarter)),
       _scheduler(std::make_unique<MaintenanceScheduler>(_idealStateManager, *_bucketPriorityDb, *_blockingStarter)),
       _schedulingMode(MaintenanceScheduler::NORMAL_SCHEDULING_MODE),
@@ -748,7 +749,7 @@ void DistributorStripe::send_updated_host_info_if_required() {
         if (_use_legacy_mode) {
             _component.getStateUpdater().immediately_send_get_node_state_replies();
         } else {
-            _stripe_host_info_notifier.notify_stripe_wants_to_send_host_info(0); // TODO STRIPE correct stripe index!
+            _stripe_host_info_notifier.notify_stripe_wants_to_send_host_info(_stripe_index);
         }
         _must_send_updated_host_info = false;
     }

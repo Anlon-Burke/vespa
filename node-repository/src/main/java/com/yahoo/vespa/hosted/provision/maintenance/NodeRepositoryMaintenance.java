@@ -48,7 +48,7 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
 
         maintainers.add(new NodeFailer(deployer, nodeRepository, defaults.failGrace, defaults.nodeFailerInterval, orchestrator, defaults.throttlePolicy, metric));
         maintainers.add(new NodeHealthTracker(hostLivenessTracker, serviceMonitor, nodeRepository, defaults.nodeFailureStatusUpdateInterval, metric));
-        maintainers.add(new OperatorChangeApplicationMaintainer(deployer, metric, nodeRepository, defaults.operatorChangeRedeployInterval));
+        maintainers.add(new ExpeditedChangeApplicationMaintainer(deployer, metric, nodeRepository, defaults.expeditedChangeRedeployInterval));
         maintainers.add(new ReservationExpirer(nodeRepository, defaults.reservationExpiry, metric));
         maintainers.add(new RetiredExpirer(nodeRepository, orchestrator, deployer, metric, defaults.retiredInterval, defaults.retiredExpiry));
         maintainers.add(new InactiveExpirer(nodeRepository, defaults.inactiveExpiry, Map.of(NodeType.config, defaults.inactiveConfigServerExpiry,
@@ -91,7 +91,7 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
         /** Time between each run of maintainer that does periodic redeployment */
         private final Duration redeployMaintainerInterval;
         /** Applications are redeployed after manual operator changes within this time period */
-        private final Duration operatorChangeRedeployInterval;
+        private final Duration expeditedChangeRedeployInterval;
 
         /** The time a node must be continuously unresponsive before it is failed */
         private final Duration failGrace;
@@ -127,13 +127,13 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
             dynamicProvisionerInterval = Duration.ofMinutes(5);
             failedExpirerInterval = Duration.ofMinutes(10);
             failGrace = Duration.ofMinutes(30);
-            infrastructureProvisionInterval = Duration.ofMinutes(1);
+            infrastructureProvisionInterval = Duration.ofMinutes(3);
             loadBalancerExpirerInterval = Duration.ofMinutes(5);
             metricsInterval = Duration.ofMinutes(1);
             nodeFailerInterval = Duration.ofMinutes(15);
             nodeFailureStatusUpdateInterval = Duration.ofMinutes(2);
             nodeMetricsCollectionInterval = Duration.ofMinutes(1);
-            operatorChangeRedeployInterval = Duration.ofMinutes(3);
+            expeditedChangeRedeployInterval = Duration.ofMinutes(3);
             // Vespa upgrade frequency is higher in CD so (de)activate OS upgrades more frequently as well
             osUpgradeActivatorInterval = zone.system().isCd() ? Duration.ofSeconds(30) : Duration.ofMinutes(5);
             periodicRedeployInterval = Duration.ofMinutes(60);
@@ -152,7 +152,7 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
 
             if (zone.environment().isProduction() && ! zone.system().isCd()) {
                 inactiveExpiry = Duration.ofHours(4); // enough time for the application owner to discover and redeploy
-                retiredInterval = Duration.ofMinutes(30);
+                retiredInterval = Duration.ofMinutes(15);
                 dirtyExpiry = Duration.ofHours(2); // enough time to clean the node
                 retiredExpiry = Duration.ofDays(4); // give up migrating data after 4 days
             } else {
