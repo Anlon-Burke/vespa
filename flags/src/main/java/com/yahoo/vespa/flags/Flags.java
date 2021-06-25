@@ -73,7 +73,7 @@ public class Flags {
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag SKIP_COMMUNICATIONMANAGER_THREAD = defineFeatureFlag(
-            "skip-communicatiomanager-thread", false,
+            "skip-communicationmanager-thread", false,
             List.of("baldersheim"), "2020-12-02", "2022-01-01",
             "Should we skip the communicationmanager thread",
             "Takes effect at redeployment",
@@ -132,7 +132,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag GROUP_SUSPENSION = defineFeatureFlag(
             "group-suspension", true,
-            List.of("hakon"), "2021-01-22", "2021-06-22",
+            List.of("hakon"), "2021-01-22", "2021-08-22",
             "Allow all content nodes in a hierarchical group to suspend at the same time",
             "Takes effect on the next suspension request to the Orchestrator.",
             APPLICATION_ID);
@@ -274,7 +274,7 @@ public class Flags {
             APPLICATION_ID);
 
     public static final UnboundBooleanFlag MOVE_SEARCH_DEFINITIONS_TO_SCHEMAS_DIR = defineFeatureFlag(
-            "move-search-definitions-to-schemas-dir", false,
+            "move-search-definitions-to-schemas-dir", true,
             List.of("hmusum"), "2021-06-09", "2021-08-09",
             "Whether to move files in searchdefinitions/ to schemas/ when deploying an application",
             "Takes effect on next deployment",
@@ -285,6 +285,19 @@ public class Flags {
             List.of("hmusum"), "2021-06-15", "2021-07-15",
             "Whether to load local sessions when bootstrapping config server",
             "Takes effect on restart of config server");
+
+    public static final UnboundBooleanFlag DRY_RUN_ONNX_ON_SETUP = defineFeatureFlag(
+            "dry-run-onnx-on-setup", false,
+            List.of("baldersheim"), "2021-06-23", "2021-08-01",
+            "Whether to dry run onnx models on setup for better error checking",
+            "Takes effect on next internal redeployment",
+            APPLICATION_ID);
+
+    public static final UnboundListFlag<String> DEFER_APPLICATION_ENCRYPTION = defineListFlag(
+            "defer-application-encryption", List.of(), String.class,
+            List.of("mpolden", "hakonhall"), "2021-06-23", "2021-10-01",
+            "List of applications where encryption of their host should be deferred",
+            "Takes effect on next run of HostEncrypter");
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

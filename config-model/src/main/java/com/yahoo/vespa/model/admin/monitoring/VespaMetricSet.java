@@ -249,6 +249,10 @@ public class VespaMetricSet {
         metrics.add(new Metric("cluster-controller.idle-tick-time-ms.sum"));
         metrics.add(new Metric("cluster-controller.idle-tick-time-ms.count"));
 
+        metrics.add(new Metric("cluster-controller.work-ms.last"));
+        metrics.add(new Metric("cluster-controller.work-ms.sum"));
+        metrics.add(new Metric("cluster-controller.work-ms.count"));
+
         metrics.add(new Metric("cluster-controller.is-master.last"));
         metrics.add(new Metric("cluster-controller.remote-task-queue.size.last"));
         // TODO(hakonhall): Update this name once persistent "count" metrics has been implemented.
@@ -375,6 +379,7 @@ public class VespaMetricSet {
         metrics.add(new Metric("content.proton.documentdb.index.docs_in_memory.last"));
         metrics.add(new Metric("content.proton.documentdb.disk_usage.last"));
         metrics.add(new Metric("content.proton.documentdb.memory_usage.allocated_bytes.max"));
+        metrics.add(new Metric("content.proton.documentdb.heart_beat_age.last"));
         metrics.add(new Metric("content.proton.transport.query.count.rate"));
         metrics.add(new Metric("content.proton.docsum.docs.rate"));
         metrics.add(new Metric("content.proton.docsum.latency.max"));

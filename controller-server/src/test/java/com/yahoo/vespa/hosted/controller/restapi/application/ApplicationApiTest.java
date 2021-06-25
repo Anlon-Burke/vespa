@@ -217,6 +217,11 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant1", GET).userIdentity(USER_ID),
                               new File("tenant-with-application.json"));
 
+        tester.assertResponse(request("/application/v4/tenant/tenant1", GET)
+                                      .userIdentity(USER_ID)
+                                      .properties(Map.of("activeInstances", "true")),
+                              new File("tenant-without-applications.json"));
+
         // GET tenant applications
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/", GET).userIdentity(USER_ID),
                               new File("application-list.json"));
@@ -1554,6 +1559,9 @@ public class ApplicationApiTest extends ControllerContainerTest {
         List<SupportAccessGrant> activeGrants = tester.controller().supportAccess().activeGrantsFor(new DeploymentId(ApplicationId.fromSerializedForm("tenant1:application1:instance1"), zone));
         assertEquals(1, activeGrants.size());
 
+        // Adding grant should trigger job
+        app.assertRunning(JobType.productionUsWest1);
+
         // DELETE removes access
         String disallowedResponse = grantResponse
                 .replaceAll("ALLOWED\".*?}", "NOT_ALLOWED\"}")
@@ -1562,6 +1570,9 @@ public class ApplicationApiTest extends ControllerContainerTest {
                         .userIdentity(USER_ID),
                 disallowedResponse, 200
         );
+
+        // Revoking access should trigger job
+        app.assertRunning(JobType.productionUsWest1);
 
         // Should be no available grant
         activeGrants = tester.controller().supportAccess().activeGrantsFor(new DeploymentId(ApplicationId.fromSerializedForm("tenant1:application1:instance1"), zone));
