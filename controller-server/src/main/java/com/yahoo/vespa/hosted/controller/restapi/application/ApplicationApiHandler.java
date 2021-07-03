@@ -36,6 +36,7 @@ import com.yahoo.slime.Inspector;
 import com.yahoo.slime.JsonParseException;
 import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.Instance;
@@ -128,6 +129,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -1511,7 +1513,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         setGlobalRotationStatus(deploymentId, inService, request);
         setGlobalEndpointStatus(deploymentId, inService, request);
 
-        return new MessageResponse(String.format("Successfully set %s in %s %s service",
+        return new MessageResponse(Text.format("Successfully set %s in %s %s service",
                                                  instance.id().toShortString(), zone, inService ? "in" : "out of"));
     }
 
@@ -2094,8 +2096,13 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         Cursor applicationArray = object.setArray("applications");
         for (Application application : applications) {
             DeploymentStatus status = null;
-            for (Instance instance : showOnlyProductionInstances(request) ? application.productionInstances().values()
-                                                                          : application.instances().values()) {
+            Collection<Instance> instances = showOnlyProductionInstances(request) ? application.productionInstances().values()
+                                                                                  : application.instances().values();
+
+            if (instances.isEmpty() && !showOnlyActiveInstances(request))
+                toSlime(application.id(), applicationArray.addObject(), request);
+
+            for (Instance instance : instances) {
                 if (showOnlyActiveInstances(request) && instance.deployments().isEmpty())
                     continue;
                 if (recurseOverApplications(request)) {

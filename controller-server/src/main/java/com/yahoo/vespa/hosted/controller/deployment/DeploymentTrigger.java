@@ -5,6 +5,7 @@ import com.yahoo.config.application.api.DeploymentInstanceSpec;
 import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.InstanceName;
+import com.yahoo.text.Text;
 import com.yahoo.vespa.curator.Lock;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.ApplicationController;
@@ -201,10 +202,10 @@ public class DeploymentTrigger {
         return List.copyOf(jobs.keySet());
     }
 
-    /** retrigger job. If the job is already running, it will be canceled, and retrigger enqueued. */
+    /** Retrigger job. If the job is already running, it will be canceled, and retrigger enqueued. */
     public Optional<JobId> reTriggerOrAddToQueue(DeploymentId deployment) {
         JobType jobType = JobType.from(controller.system(), deployment.zoneId())
-                .orElseThrow(() -> new IllegalArgumentException(String.format("No job to trigger for (system/zone): %s/%s", controller.system().value(), deployment.zoneId().value())));
+                .orElseThrow(() -> new IllegalArgumentException(Text.format("No job to trigger for (system/zone): %s/%s", controller.system().value(), deployment.zoneId().value())));
         Optional<Run> existingRun = controller.jobController().active(deployment.applicationId()).stream()
                 .filter(run -> run.id().type().equals(jobType))
                 .findFirst();

@@ -94,7 +94,8 @@ public class SessionZooKeeperClient {
             String data = configCurator.getData(sessionStatusPath.getAbsolute());
             return Session.Status.parse(data);
         } catch (Exception e) {
-            log.log(Level.INFO, "Unable to read session status, assuming it was deleted");
+            log.log(Level.INFO, "Failed to read session status at " + sessionStatusPath.getAbsolute() +
+                    ", will assume session has been removed: " + e.getMessage());
             return Session.Status.NONE;
         }
     }
@@ -154,10 +155,8 @@ public class SessionZooKeeperClient {
     }
 
     public Optional<ApplicationId> readApplicationId() {
-        String idString = configCurator.getData(applicationIdPath());
-        return (idString == null)
-                ? Optional.empty()
-                : Optional.of(ApplicationId.fromSerializedForm(idString));
+        if ( ! configCurator.exists(applicationIdPath())) return Optional.empty();
+        return Optional.of(ApplicationId.fromSerializedForm(configCurator.getData(applicationIdPath())));
     }
 
     void writeApplicationPackageReference(Optional<FileReference> applicationPackageReference) {
