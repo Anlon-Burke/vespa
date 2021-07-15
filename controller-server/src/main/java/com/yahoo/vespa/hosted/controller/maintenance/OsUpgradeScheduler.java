@@ -47,10 +47,9 @@ public class OsUpgradeScheduler extends ControllerMaintainer {
         if (currentTarget.isEmpty()) return;
         if (upgradingToNewMajor(cloud)) return; // Skip further upgrades until major version upgrade is complete
 
-        controller().upgradeOsIn(cloud,
-                                 release.version(currentTarget.get(), now),
-                                 release.upgradeBudget(),
-                                 false);
+        Version version = release.version(currentTarget.get(), now);
+        if (!version.isAfter(currentTarget.get().osVersion().version())) return;
+        controller().upgradeOsIn(cloud, version, release.upgradeBudget(), false);
     }
 
     private boolean upgradingToNewMajor(CloudName cloud) {
@@ -112,7 +111,7 @@ public class OsUpgradeScheduler extends ControllerMaintainer {
 
         /** The cool-down period that must pass before a stable version can be used */
         private Duration cooldown() {
-            return system.isCd() ? Duration.ZERO : Duration.ofDays(14);
+            return system.isCd() ? Duration.ZERO : Duration.ofDays(7);
         }
 
     }

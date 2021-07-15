@@ -15,8 +15,8 @@ import org.junit.Test;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
+import static com.yahoo.vespa.hosted.controller.maintenance.ResourceTagMaintainer.SHARED_HOST_APPLICATION;
 import static org.junit.Assert.assertEquals;
 
 /**
@@ -24,7 +24,7 @@ import static org.junit.Assert.assertEquals;
  */
 public class ResourceTagMaintainerTest {
 
-    final ControllerTester tester = new ControllerTester();
+    private final ControllerTester tester = new ControllerTester();
 
     @Test
     public void maintain() {
@@ -35,9 +35,9 @@ public class ResourceTagMaintainerTest {
                                                                                 mockResourceTagger);
         resourceTagMaintainer.maintain();
         assertEquals(2, mockResourceTagger.getValues().size());
-        Map<HostName, Optional<ApplicationId>> applicationForHost = mockResourceTagger.getValues().get(ZoneId.from("prod.region-2"));
-        assertEquals(ApplicationId.from("t1", "a1", "i1"), applicationForHost.get(HostName.from("parentHostA.prod.region-2")).get());
-        assertEquals(Optional.empty(), applicationForHost.get(HostName.from("parentHostB.prod.region-2")));
+        Map<HostName, ApplicationId> applicationForHost = mockResourceTagger.getValues().get(ZoneId.from("prod.region-2"));
+        assertEquals(ApplicationId.from("t1", "a1", "i1"), applicationForHost.get(HostName.from("parentHostA.prod.region-2")));
+        assertEquals(SHARED_HOST_APPLICATION, applicationForHost.get(HostName.from("parentHostB.prod.region-2")));
     }
 
     private void setUpZones() {
@@ -50,24 +50,24 @@ public class ResourceTagMaintainerTest {
     }
 
     public void setNodes(ZoneId zone) {
-        var hostA = new Node.Builder()
-                .hostname(HostName.from("parentHostA." + zone.value()))
-                .type(NodeType.host)
-                .owner(ApplicationId.from(SystemApplication.TENANT.value(), "tenant-host", "default"))
-                .exclusiveTo(ApplicationId.from("t1", "a1", "i1"))
-                .build();
-        var nodeA = new Node.Builder()
-                .hostname(HostName.from("hostA." + zone.value()))
-                .type(NodeType.tenant)
-                .parentHostname(HostName.from("parentHostA." + zone.value()))
-                .owner(ApplicationId.from("tenant1", "app1", "default"))
-                .build();
-        var hostB = new Node.Builder()
-                .hostname(HostName.from("parentHostB." + zone.value()))
-                .type(NodeType.host)
-                .owner(ApplicationId.from(SystemApplication.TENANT.value(), "tenant-host", "default"))
-                .build();
-        tester.configServer().nodeRepository().setNodes(zone, List.of(hostA, nodeA, hostB));
+        var hostA = Node.builder()
+                        .hostname(HostName.from("parentHostA." + zone.value()))
+                        .type(NodeType.host)
+                        .owner(ApplicationId.from(SystemApplication.TENANT.value(), "tenant-host", "default"))
+                        .exclusiveTo(ApplicationId.from("t1", "a1", "i1"))
+                        .build();
+        var nodeA = Node.builder()
+                        .hostname(HostName.from("hostA." + zone.value()))
+                        .type(NodeType.tenant)
+                        .parentHostname(HostName.from("parentHostA." + zone.value()))
+                        .owner(ApplicationId.from("tenant1", "app1", "default"))
+                        .build();
+        var hostB = Node.builder()
+                        .hostname(HostName.from("parentHostB." + zone.value()))
+                        .type(NodeType.host)
+                        .owner(ApplicationId.from(SystemApplication.TENANT.value(), "tenant-host", "default"))
+                        .build();
+        tester.configServer().nodeRepository().putNodes(zone, List.of(hostA, nodeA, hostB));
     }
 
 }

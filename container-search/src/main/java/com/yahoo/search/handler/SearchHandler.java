@@ -87,7 +87,7 @@ public class SearchHandler extends LoggingRequestHandler {
 
     /** Event name for number of connections to the search subsystem */
     private static final String SEARCH_CONNECTIONS = "search_connections";
-    static final String RENDER_LATENCY_METRIC = "jdisc.search.render_latency";
+    static final String RENDER_LATENCY_METRIC = "jdisc.render.latency";
     static final String MIME_DIMENSION = "mime";
     static final String RENDERER_DIMENSION = "renderer";
 
@@ -494,8 +494,8 @@ public class SearchHandler extends LoggingRequestHandler {
         if (maxThreads > 3) {
             // cast to long to avoid overflows if maxThreads is at no
             // log value (maxint)
-            final long maxThreadsAsLong = maxThreads;
-            final long connectionsAsLong = connections;
+            long maxThreadsAsLong = maxThreads;
+            long connectionsAsLong = connections;
             // only log when exactly crossing the limit to avoid
             // spamming the log
             if (connectionsAsLong < maxThreadsAsLong * 9L / 10L) {
@@ -519,7 +519,7 @@ public class SearchHandler extends LoggingRequestHandler {
         // Attempted workaround for missing stack traces
         if (e.getStackTrace().length == 0) {
             log.log(Level.SEVERE, "Failed executing " + query.toDetailString() +
-                                    " [" + request + "], received exception with no context", e);
+                                  " [" + request + "], received exception with no context", e);
         } else {
             log.log(Level.SEVERE, "Failed executing " + query.toDetailString() + " [" + request + "]", e);
         }
@@ -654,6 +654,7 @@ public class SearchHandler extends LoggingRequestHandler {
                 .override(com.yahoo.jdisc.http.HttpRequest.Method.POST, AclMapping.Action.READ)
                 .build();
     }
+
 }
 
 

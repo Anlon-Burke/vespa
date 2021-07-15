@@ -61,13 +61,11 @@
         <module>container-disc</module>
         <module>container-documentapi</module>
         <module>container-integration-test</module>
-        <module>container-jersey2</module>
         <module>container-messagebus</module>
         <module>container-search-and-docproc</module>
         <module>container-search</module>
         <module>container-search-gui</module>
         <module>container-test</module>
-        <module>container-test-jars</module>
         <module>controller-api</module>
         <module>controller-server</module>
         <module>defaults</module>
