@@ -41,9 +41,7 @@ import com.yahoo.vespa.config.server.zookeeper.SessionCounter;
 import com.yahoo.vespa.config.server.zookeeper.ZKApplication;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.defaults.Defaults;
-import com.yahoo.vespa.flags.BooleanFlag;
 import com.yahoo.vespa.flags.FlagSource;
-import com.yahoo.vespa.flags.Flags;
 import com.yahoo.yolean.Exceptions;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.cache.ChildData;
@@ -165,21 +163,20 @@ public class SessionRepository {
         this.configDefinitionRepo = configDefinitionRepo;
         this.maxNodeSize = maxNodeSize;
 
-        loadSessions(Flags.LOAD_LOCAL_SESSIONS_WHEN_BOOTSTRAPPING.bindTo(flagSource)); // Needs to be done before creating cache below
+        loadSessions(); // Needs to be done before creating cache below
         this.directoryCache = curator.createDirectoryCache(sessionsPath.getAbsolute(), false, false, zkCacheExecutor);
         this.directoryCache.addListener(this::childEvent);
         this.directoryCache.start();
     }
 
-    private void loadSessions(BooleanFlag loadLocalSessions) {
+    private void loadSessions() {
         ExecutorService executor = Executors.newFixedThreadPool(Math.max(8, Runtime.getRuntime().availableProcessors()),
                                                                 new DaemonThreadFactory("load-sessions-"));
-        loadSessions(loadLocalSessions.value(), executor);
+        loadSessions(executor);
     }
 
-    void loadSessions(boolean loadLocalSessions, ExecutorService executor) {
-        if (loadLocalSessions)
-            loadLocalSessions(executor);
+    // For testing
+    void loadSessions(ExecutorService executor) {
         loadRemoteSessions(executor);
         try {
             executor.shutdown();
@@ -222,25 +219,6 @@ public class SessionRepository {
             sessionIds.add(localSession);
         }
         return sessionIds;
-    }
-
-    private void loadLocalSessions(ExecutorService executor) {
-        File[] sessions = tenantFileSystemDirs.sessionsPath().listFiles(sessionApplicationsFilter);
-        if (sessions == null) return;
-
-        Map<Long, Future<?>> futures = new HashMap<>();
-        for (File session : sessions) {
-            long sessionId = Long.parseLong(session.getName());
-            futures.put(sessionId, executor.submit(() -> createSessionFromId(sessionId)));
-        }
-        futures.forEach((sessionId, future) -> {
-            try {
-                future.get();
-                log.log(Level.FINE, () -> "Local session " + sessionId + " loaded");
-            } catch (ExecutionException | InterruptedException e) {
-                throw new RuntimeException("Could not load local session " + sessionId, e);
-            }
-        });
     }
 
     public ConfigChangeActions prepareLocalSession(Session session, DeployLogger logger, PrepareParams params, Instant now) {
@@ -573,8 +551,7 @@ public class SessionRepository {
                 Instant createTime = candidate.getCreateTime();
                 log.log(Level.FINE, () -> "Candidate session for deletion: " + candidate.getSessionId() + ", created: " + createTime);
 
-                // Sessions with state other than ACTIVATE
-                if (hasExpired(candidate) && !isActiveSession(candidate)) {
+                if (hasExpired(candidate) && canBeDeleted(candidate)) {
                     toDelete.add(candidate);
                 } else if (createTime.plus(Duration.ofDays(1)).isBefore(clock.instant())) {
                     //  Sessions with state ACTIVATE, but which are not actually active
@@ -602,8 +579,9 @@ public class SessionRepository {
         return candidate.getCreateTime().plus(sessionLifetime).isBefore(clock.instant());
     }
 
-    private boolean isActiveSession(LocalSession candidate) {
-        return candidate.getStatus() == Session.Status.ACTIVATE;
+    // Sessions with state other than UNKNOWN or ACTIVATE
+    private boolean canBeDeleted(LocalSession candidate) {
+        return  ! List.of(Session.Status.UNKNOWN, Session.Status.ACTIVATE).contains(candidate.getStatus());
     }
 
     private void ensureSessionPathDoesNotExist(long sessionId) {

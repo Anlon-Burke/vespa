@@ -255,16 +255,10 @@ public class Flags {
 
     public static final UnboundBooleanFlag THROW_EXCEPTION_IF_RESOURCE_LIMITS_SPECIFIED = defineFeatureFlag(
             "throw-exception-if-resource-limits-specified", false,
-            List.of("hmusum"), "2021-06-07", "2021-08-07",
+            List.of("hmusum"), "2021-06-07", "2021-09-07",
             "Whether to throw an exception in hosted Vespa if the application specifies resource limits in services.xml",
             "Takes effect on next deployment through controller",
             APPLICATION_ID);
-
-    public static final UnboundBooleanFlag LOAD_LOCAL_SESSIONS_WHEN_BOOTSTRAPPING = defineFeatureFlag(
-            "load-local-sessions-when-bootstrapping", true,
-            List.of("hmusum"), "2021-06-15", "2021-08-15",
-            "Whether to load local sessions when bootstrapping config server",
-            "Takes effect on restart of config server");
 
     public static final UnboundBooleanFlag DRY_RUN_ONNX_ON_SETUP = defineFeatureFlag(
             "dry-run-onnx-on-setup", false,
@@ -284,6 +278,14 @@ public class Flags {
             List.of("mpolden"), "2021-07-05", "2021-09-01",
             "Whether to use Podman 3 on supported hosts",
             "Takes effect on host-admin restart");
+
+    public static final UnboundDoubleFlag MIN_NODE_RATIO_PER_GROUP = defineDoubleFlag(
+            "min-node-ratio-per-group", 0.0,
+            List.of("geirst", "vekterli"), "2021-07-16", "2021-10-01",
+            "Minimum ratio of nodes that have to be available (i.e. not Down) in any hierarchic content cluster group for the group to be Up",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,
