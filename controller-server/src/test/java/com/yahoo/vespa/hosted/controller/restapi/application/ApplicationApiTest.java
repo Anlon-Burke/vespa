@@ -805,7 +805,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
 
         // GET system test job overview.
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/job/system-test", GET)
-                                      .userIdentity(USER_ID).properties(Map.of("limit", "100")),
+                                      .userIdentity(USER_ID),
                               new File("system-test-job.json"));
 
         // GET system test run 1 details.
@@ -1581,6 +1581,32 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // Should be no available grant
         activeGrants = tester.controller().supportAccess().activeGrantsFor(new DeploymentId(ApplicationId.fromSerializedForm("tenant1:application1:instance1"), zone));
         assertEquals(0, activeGrants.size());
+    }
+
+    @Test
+    public void testServiceView() throws Exception {
+        createAthenzDomainWithAdmin(ATHENZ_TENANT_DOMAIN, USER_ID);
+        String serviceApi="/application/v4/tenant/tenant1/application/application1/environment/prod/region/us-central-1/instance/instance1/service";
+        // Not allowed to request apis not listed in feature flag allowed-service-view-apis. e.g /document/v1
+        tester.assertResponse(request(serviceApi + "/storagenode-awe3slno6mmq2fye191y324jl/document/v1/", GET)
+                                      .userIdentity(USER_ID)
+                                      .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
+                              "{\"error-code\":\"FORBIDDEN\",\"message\":\"Access denied\"}",
+                              403);
+
+        // Test path traversal
+        tester.assertResponse(request(serviceApi + "/storagenode-awe3slno6mmq2fye191y324jl/state/v1/../../document/v1/", GET)
+                                      .userIdentity(USER_ID)
+                                      .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
+                              "{\"error-code\":\"FORBIDDEN\",\"message\":\"Access denied\"}",
+                              403);
+
+        // Test urlencoded path traversal
+        tester.assertResponse(request(serviceApi + "/storagenode-awe3slno6mmq2fye191y324jl/state%2Fv1%2F..%2F..%2Fdocument%2Fv1%2F", GET)
+                                      .userIdentity(USER_ID)
+                                      .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
+                              "{\"error-code\":\"FORBIDDEN\",\"message\":\"Access denied\"}",
+                              403);
     }
 
     private static String serializeInstant(Instant i) {

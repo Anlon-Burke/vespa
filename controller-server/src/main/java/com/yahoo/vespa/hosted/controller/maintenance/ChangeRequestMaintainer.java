@@ -34,12 +34,14 @@ public class ChangeRequestMaintainer extends ControllerMaintainer {
     private final ChangeRequestClient changeRequestClient;
     private final CuratorDb curator;
     private final NodeRepository nodeRepository;
+    private final SystemName system;
 
     public ChangeRequestMaintainer(Controller controller, Duration interval) {
         super(controller, interval, null, SystemName.allOf(Predicate.not(SystemName::isPublic)));
         this.changeRequestClient = controller.serviceRegistry().changeRequestClient();
         this.curator = controller.curator();
         this.nodeRepository = controller.serviceRegistry().configServer().nodeRepository();
+        this.system = controller.system();
     }
 
 
@@ -64,14 +66,15 @@ public class ChangeRequestMaintainer extends ControllerMaintainer {
         try (var lock = curator.lockChangeRequests()) {
             changeRequests.forEach(changeRequest -> {
                 var optionalZone = inferZone(changeRequest, hostsByZone);
-                optionalZone.ifPresent(zone -> {
+                optionalZone.ifPresentOrElse(zone -> {
                     var vcmr = existingChangeRequests
                             .getOrDefault(changeRequest.getId(), new VespaChangeRequest(changeRequest, zone))
                             .withSource(changeRequest.getChangeRequestSource())
                             .withApproval(changeRequest.getApproval());
                     logger.fine(() -> "Storing " + vcmr);
                     curator.writeChangeRequest(vcmr);
-                });
+                },
+                () -> approveChangeRequest(changeRequest));
             });
         }
     }
@@ -120,5 +123,13 @@ public class ChangeRequestMaintainer extends ControllerMaintainer {
                 source.getPlannedStartTime()
                         .plus(Duration.ofDays(7))
                         .isBefore(ZonedDateTime.now());
+    }
+
+    private void approveChangeRequest(ChangeRequest changeRequest) {
+        if (system.equals(SystemName.main) &&
+                changeRequest.getApproval() == ChangeRequest.Approval.REQUESTED) {
+            logger.info("Approving " + changeRequest.getChangeRequestSource().getId());
+            changeRequestClient.approveChangeRequest(changeRequest);
+        }
     }
 }

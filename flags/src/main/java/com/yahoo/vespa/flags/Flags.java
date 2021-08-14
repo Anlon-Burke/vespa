@@ -13,7 +13,6 @@ import java.util.Optional;
 import java.util.TreeMap;
 
 import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
-import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_TYPE;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.HOSTNAME;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.TENANT_ID;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.VESPA_VERSION;
@@ -122,16 +121,22 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundBooleanFlag GROUP_SUSPENSION = defineFeatureFlag(
-            "group-suspension", true,
-            List.of("hakon"), "2021-01-22", "2021-08-22",
-            "Allow all content nodes in a hierarchical group to suspend at the same time",
-            "Takes effect on the next suspension request to the Orchestrator.",
-            APPLICATION_ID);
+    public static final UnboundBooleanFlag ORCHESTRATE_MISSING_PROXIES = defineFeatureFlag(
+            "orchestrate-missing-proxies", true,
+            List.of("hakonhall"), "2021-08-05", "2021-10-05",
+            "Whether the Orchestrator can assume any missing proxy services are down.",
+            "Takes effect on first (re)start of config server");
+
+    public static final UnboundBooleanFlag GROUP_PERMANENT_SUSPENSION = defineFeatureFlag(
+            "group-permanent-suspension", true,
+            List.of("hakonhall"), "2021-09-11", "2021-11-11",
+            "Allow all content nodes in a hierarchical group to suspend at the same time when" +
+            "permanently suspending a host.",
+            "Takes effect on the next permanent suspension request to the Orchestrator.");
 
     public static final UnboundBooleanFlag ENCRYPT_DIRTY_DISK = defineFeatureFlag(
             "encrypt-dirty-disk", false,
-            List.of("hakonhall"), "2021-05-14", "2021-08-05",
+            List.of("hakonhall"), "2021-05-14", "2021-10-05",
             "Allow migrating an unencrypted data partition to being encrypted when (de)provisioned.",
             "Takes effect on next host-admin tick.");
 
@@ -168,13 +173,6 @@ public class Flags {
             "for query visibility if they are out of sync with a majority of other replicas",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundBooleanFlag ENABLE_CUSTOM_ACL_MAPPING = defineFeatureFlag(
-            "enable-custom-acl-mapping", false,
-            List.of("mortent","bjorncs"), "2021-04-13", "2021-09-01",
-            "Whether access control filters should read acl request mapping from handler or use default",
-            "Takes effect at redeployment",
-            APPLICATION_ID);
 
     public static final UnboundIntFlag NUM_DISTRIBUTOR_STRIPES = defineIntFlag(
             "num-distributor-stripes", 0,
@@ -218,13 +216,6 @@ public class Flags {
             "Takes effect on next internal redeployment",
             APPLICATION_ID);
 
-    public static final UnboundBooleanFlag CFG_DEPLOY_MULTIPART = defineFeatureFlag(
-            "cfg-deploy-multipart", false,
-            List.of("tokle"), "2021-05-19", "2021-09-01",
-            "Whether to deploy applications using multipart form data (instead of url params)",
-            "Takes effect immediately",
-            APPLICATION_ID);
-
     public static final UnboundIntFlag MAX_ENCRYPTING_HOSTS = defineIntFlag(
             "max-encrypting-hosts", 0,
             List.of("mpolden", "hakonhall"), "2021-05-27", "2021-10-01",
@@ -246,7 +237,7 @@ public class Flags {
             APPLICATION_ID);
 
     public static final UnboundBooleanFlag DRY_RUN_ONNX_ON_SETUP = defineFeatureFlag(
-            "dry-run-onnx-on-setup", false,
+            "dry-run-onnx-on-setup", true,
             List.of("baldersheim"), "2021-06-23", "2021-09-01",
             "Whether to dry run onnx models on setup for better error checking",
             "Takes effect on next internal redeployment",
@@ -271,6 +262,18 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
+    public static final UnboundListFlag<String> ALLOWED_SERVICE_VIEW_APIS = defineListFlag(
+            "allowed-service-view-apis", List.of("state/v1/"), String.class,
+            List.of("mortent"), "2021-08-05", "2021-11-01",
+            "Apis allowed to proxy through the service view api",
+            "Takes effect immediately");
+
+    public static final UnboundBooleanFlag SEPARATE_TENANT_IAM_ROLES = defineFeatureFlag(
+            "separate-tenant-iam-roles", false,
+            List.of("mortent"), "2021-08-12", "2021-11-01",
+            "Create separate iam roles for tenant",
+            "Takes effect on redeploy",
+            TENANT_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,
