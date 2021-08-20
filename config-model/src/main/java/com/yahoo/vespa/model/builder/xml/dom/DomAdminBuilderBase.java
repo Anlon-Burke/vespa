@@ -2,7 +2,6 @@
 package com.yahoo.vespa.model.builder.xml.dom;
 
 import com.yahoo.config.application.api.DeployLogger;
-import com.yahoo.config.application.api.FileRegistry;
 import com.yahoo.config.model.ConfigModelContext.ApplicationType;
 import com.yahoo.config.model.api.ConfigServerSpec;
 import com.yahoo.config.model.deploy.DeployState;
@@ -39,15 +38,12 @@ public abstract class DomAdminBuilderBase extends VespaDomBuilder.DomConfigProdu
 
     private final ApplicationType applicationType;
     protected final List<ConfigServerSpec> configServerSpecs;
-    private final FileRegistry fileRegistry;
     protected final boolean multitenant;
 
     DomAdminBuilderBase(ApplicationType applicationType,
-                        FileRegistry fileRegistry,
                         boolean multitenant,
                         List<ConfigServerSpec> configServerSpecs) {
         this.applicationType = applicationType;
-        this.fileRegistry = fileRegistry;
         this.multitenant = multitenant;
         this.configServerSpecs = configServerSpecs;
     }
@@ -68,11 +64,11 @@ public abstract class DomAdminBuilderBase extends VespaDomBuilder.DomConfigProdu
     }
 
     @Override
-    protected Admin doBuild(DeployState deployState, AbstractConfigProducer parent, Element adminElement) {
+    protected Admin doBuild(DeployState deployState, AbstractConfigProducer<?> parent, Element adminElement) {
         Monitoring monitoring = getMonitoring(XML.getChild(adminElement,"monitoring"), deployState.isHosted());
         Metrics metrics = new MetricsBuilder(applicationType, PredefinedMetricSets.get())
                                   .buildMetrics(XML.getChild(adminElement, "metrics"));
-        FileDistributionConfigProducer fileDistributionConfigProducer = getFileDistributionConfigProducer(parent, deployState.isHosted());
+        FileDistributionConfigProducer fileDistributionConfigProducer = getFileDistributionConfigProducer(parent);
 
         Admin admin = new Admin(parent, monitoring, metrics, multitenant, fileDistributionConfigProducer, deployState.isHosted());
         admin.setApplicationType(applicationType);
@@ -82,8 +78,8 @@ public abstract class DomAdminBuilderBase extends VespaDomBuilder.DomConfigProdu
         return admin;
     }
 
-    private FileDistributionConfigProducer getFileDistributionConfigProducer(AbstractConfigProducer parent, boolean isHosted) {
-        return new FileDistributionConfigProducer(parent, fileRegistry, configServerSpecs, isHosted);
+    private FileDistributionConfigProducer getFileDistributionConfigProducer(AbstractConfigProducer<?> parent) {
+        return new FileDistributionConfigProducer(parent);
     }
 
     protected abstract void doBuildAdmin(DeployState deployState, Admin admin, Element adminE);

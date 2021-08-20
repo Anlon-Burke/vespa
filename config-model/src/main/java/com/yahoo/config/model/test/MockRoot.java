@@ -26,7 +26,6 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.List;
 import java.util.Set;
 
 
@@ -41,10 +40,10 @@ public class MockRoot extends AbstractConfigProducerRoot {
 
     private static final long serialVersionUID = 1L;
 
-    private HostSystem hostSystem;
+    private final HostSystem hostSystem;
 
     private final DeployState deployState;
-    private FileDistributor fileDistributor;
+    private final FileDistributor fileDistributor;
     private Admin admin;
 
     public MockRoot() {
@@ -67,7 +66,7 @@ public class MockRoot extends AbstractConfigProducerRoot {
         super(rootConfigId);
         hostSystem = new HostSystem(this, "hostsystem", deployState.getProvisioner(), deployState.getDeployLogger());
         this.deployState = deployState;
-        fileDistributor = new FileDistributor(deployState.getFileRegistry(), List.of(), deployState.isHosted());
+        fileDistributor = new FileDistributor();
     }
 
     public FileDistributionConfigProducer getFileDistributionConfigProducer() {
@@ -150,8 +149,7 @@ public class MockRoot extends AbstractConfigProducerRoot {
 
         try {
             Document doc = XmlHelper.getDocumentBuilder().parse(new InputSource(new StringReader(servicesXml)));
-            setAdmin(new DomAdminV2Builder(ConfigModelContext.ApplicationType.DEFAULT, deployState.getFileRegistry(),
-                                           false, new ArrayList<>()).
+            setAdmin(new DomAdminV2Builder(ConfigModelContext.ApplicationType.DEFAULT, false, new ArrayList<>()).
                     build(deployState, this, XML.getChildren(doc.getDocumentElement(), "admin").get(0)));
         } catch (SAXException | IOException e) {
             throw new RuntimeException(e);

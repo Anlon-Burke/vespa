@@ -2,6 +2,7 @@
 #pragma once
 
 #include "named_service.h"
+#include "rpc_mapping_monitor.h"
 #include "rpc_server_map.h"
 #include "rpc_server_manager.h"
 #include "remote_slobrok.h"
@@ -10,6 +11,7 @@
 #include "ok_state.h"
 #include "local_rpc_monitor_map.h"
 #include "metrics_producer.h"
+#include "union_service_map.h"
 #include <vespa/config-slobroks.h>
 #include <vespa/slobrok/cfg.h>
 #include <vespa/vespalib/net/simple_health_producer.h>
@@ -56,7 +58,16 @@ private:
     MetricsProducer                            _metrics;
     vespalib::SimpleComponentConfigProducer    _components;
     LocalRpcMonitorMap                         _localRpcMonitorMap;
+    UnionServiceMap                            _consensusMap;
     ServiceMapHistory                          _globalVisibleHistory;
+
+    RpcServerManager                           _rpcsrvmanager;
+    ExchangeManager                            _exchanger;
+    RpcServerMap                               _rpcsrvmap;
+
+    std::unique_ptr<MapSubscription>           _localMonitorSubscription;
+    std::unique_ptr<MapSubscription>           _consensusSubscription;
+    std::unique_ptr<MapSubscription>           _globalHistorySubscription;
 
 public:
     explicit SBEnv(const ConfigShim &shim);
@@ -70,16 +81,24 @@ public:
     void suspend();
     void resume();
 
-    RpcServerManager         _rpcsrvmanager;
-    ExchangeManager          _exchanger;
-    RpcServerMap             _rpcsrvmap;
+    RpcServerManager& rpcServerManager() { return _rpcsrvmanager; }
+    ExchangeManager& exchangeManager() { return _exchanger; }
+    RpcServerMap& rpcServerMap() { return _rpcsrvmap; }
 
     ServiceMapHistory& globalHistory() {
         return _globalVisibleHistory;
     }
 
+    LocalRpcMonitorMap& localMonitorMap() {
+        return _localRpcMonitorMap;
+    }
+
     ServiceMapHistory& localHistory() {
         return _localRpcMonitorMap.history();
+    }
+
+    UnionServiceMap& consensusMap() {
+        return _consensusMap;
     }
 
     const std::string & mySpec() const { return _me; }

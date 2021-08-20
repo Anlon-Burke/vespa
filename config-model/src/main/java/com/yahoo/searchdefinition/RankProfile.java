@@ -121,7 +121,7 @@ public class RankProfile implements Cloneable {
     private List<ImmutableSDField> allFieldsList;
 
     /** Global onnx models not tied to a search definition */
-    private OnnxModels onnxModels = new OnnxModels();
+    private final OnnxModels onnxModels;
 
     /**
      * Creates a new rank profile for a particular search definition
@@ -135,6 +135,7 @@ public class RankProfile implements Cloneable {
         this.name = Objects.requireNonNull(name, "name cannot be null");
         this.search = Objects.requireNonNull(search, "search cannot be null");
         this.model = null;
+        this.onnxModels = null;
         this.rankProfileRegistry = rankProfileRegistry;
     }
 

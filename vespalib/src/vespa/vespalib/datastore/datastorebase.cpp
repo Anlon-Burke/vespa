@@ -171,7 +171,10 @@ DataStoreBase::switch_or_grow_primary_buffer(uint32_t typeId, size_t elemsNeeded
     uint32_t bufferId = _primary_buffer_ids[typeId];
     if (elemsNeeded + _states[bufferId].size() >= numEntriesForNewBuffer) {
         if (consider_grow_active_buffer(typeId, elemsNeeded)) {
-            fallbackResize(_primary_buffer_ids[typeId], elemsNeeded);
+            bufferId = _primary_buffer_ids[typeId];
+            if (elemsNeeded > _states[bufferId].remaining()) {
+                fallbackResize(bufferId, elemsNeeded);
+            }
         } else {
             switch_primary_buffer(typeId, elemsNeeded);
         }
@@ -442,6 +445,7 @@ void
 DataStoreBase::finishCompact(const std::vector<uint32_t> &toHold)
 {
     for (uint32_t bufferId : toHold) {
+        assert(_states[bufferId].getCompacting());
         holdBuffer(bufferId);
     }
 }
@@ -476,10 +480,7 @@ DataStoreBase::startCompactWorstBuffer(uint32_t typeId)
     assert(typeHandler->get_active_buffers_count() >= 1u);
     if (typeHandler->get_active_buffers_count() == 1u) {
         // Single active buffer for type, no need for scan
-        _states[buffer_id].setCompacting();
-        _states[buffer_id].disableElemHoldList();
-        disableFreeList(buffer_id);
-        switch_primary_buffer(typeId, 0u);
+        markCompacting(buffer_id);
         return buffer_id;
     }
     // Multiple active buffers for type, must perform full scan
@@ -496,6 +497,7 @@ DataStoreBase::startCompactWorstBuffer(uint32_t initWorstBufferId, BufferStateAc
     for (uint32_t bufferId = 0; bufferId < _numBuffers; ++bufferId) {
         const auto &state = getBufferState(bufferId);
         if (filterFunc(state)) {
+            assert(!state.getCompacting());
             size_t deadElems = state.getDeadElems() - state.getTypeHandler()->getReservedElements(bufferId);
             if (deadElems > worstDeadElems) {
                 worstBufferId = bufferId;
@@ -516,6 +518,7 @@ DataStoreBase::markCompacting(uint32_t bufferId)
     if ((bufferId == buffer_id) || primary_buffer_too_dead(getBufferState(buffer_id))) {
         switch_primary_buffer(typeId, 0u);
     }
+    assert(!state.getCompacting());
     state.setCompacting();
     state.disableElemHoldList();
     state.setFreeListList(nullptr);

@@ -5,6 +5,8 @@ import java.nio.ByteBuffer;
 import java.util.List;
 
 import com.yahoo.config.FileReference;
+import com.yahoo.net.HostName;
+import net.jpountz.xxhash.XXHashFactory;
 
 
 /**
@@ -19,8 +21,10 @@ public interface FileRegistry {
 
     /**
      * Returns the name of the host which is the source of the files
+     * @deprecated Remove after 7.253
      */
-    String fileSourceHost();
+    @Deprecated
+    default String fileSourceHost() { return HostName.getLocalhost(); }
 
     List<Entry> export();
 
@@ -32,6 +36,11 @@ public interface FileRegistry {
             this.relativePath = relativePath;
             this.reference = reference;
         }
+    }
+
+    static String blobName(ByteBuffer blob) {
+        long blobHash = XXHashFactory.fastestJavaInstance().hash64().hash(blob, 0);
+        return Long.toHexString(blobHash);
     }
 
 }

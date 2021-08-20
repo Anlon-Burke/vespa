@@ -25,14 +25,13 @@ public class MockFileRegistry implements FileRegistry {
         return fileReference;
     }
 
-    @Override
-    public String fileSourceHost() { return HostName.getLocalhost(); }
-
     public List<Entry> export() { return entries; }
 
     @Override
     public FileReference addUri(String uri) {
-        throw new IllegalArgumentException("FileReference addUri(String uri) is not implemented for " + getClass().getCanonicalName());
+        FileReference fileReference = new FileReference(uri);
+        entries.add(new Entry(uri, fileReference));
+        return fileReference;
     }
 
     @Override

@@ -25,6 +25,7 @@ import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.container.jdisc.secretstore.SecretStore;
 import com.yahoo.lang.SettableOptional;
+import com.yahoo.net.HostName;
 import com.yahoo.path.Path;
 import com.yahoo.vespa.config.server.TimeoutBudget;
 import com.yahoo.vespa.config.server.application.ApplicationSet;
@@ -36,6 +37,7 @@ import com.yahoo.vespa.config.server.filedistribution.FileDistributionFactory;
 import com.yahoo.vespa.config.server.filedistribution.FileDistributionProvider;
 import com.yahoo.vespa.config.server.host.HostValidator;
 import com.yahoo.vespa.config.server.http.InvalidApplicationException;
+import com.yahoo.vespa.config.server.http.UnknownVespaVersionException;
 import com.yahoo.vespa.config.server.modelfactory.ModelFactoryRegistry;
 import com.yahoo.vespa.config.server.modelfactory.PreparedModelsBuilder;
 import com.yahoo.vespa.config.server.provision.HostProvisionerProvider;
@@ -102,6 +104,10 @@ public class SessionPreparer {
         this.flagSource = flagSource;
     }
 
+    public FileDistributionFactory getFileDistributionFactory() {
+        return fileDistributionFactory;
+    }
+
     /**
      * Prepares a session (validates, builds model, writes to zookeeper and distributes files)
      *
@@ -127,7 +133,6 @@ public class SessionPreparer {
                 preparation.writeEndpointCertificateMetadataZK();
                 preparation.writeContainerEndpointsZK();
                 preparation.writeApplicationRoles();
-                preparation.distribute();
             }
             log.log(Level.FINE, () -> "time used " + params.getTimeoutBudget().timesUsed() + " : " + applicationId);
             return preparation.result();
@@ -235,7 +240,7 @@ public class SessionPreparer {
             FileDistribution fileDistribution = fileDistributionProvider.getFileDistribution();
             log.log(Level.FINE, () -> "Distribute application package for " + applicationId + " ("  + fileReference + ") to other config servers");
             properties.configServerSpecs().stream()
-                    .filter(spec -> ! spec.getHostName().equals(fileRegistry.fileSourceHost()))
+                    .filter(spec -> ! spec.getHostName().equals(HostName.getLocalhost()))
                     .forEach(spec -> fileDistribution.startDownload(spec.getHostName(), spec.getConfigServerPort(), Set.of(fileReference)));
 
             checkTimeout("distributeApplicationPackage");
@@ -296,12 +301,6 @@ public class SessionPreparer {
         void writeApplicationRoles() {
             applicationRoles.ifPresent(roles -> applicationRolesStore.writeApplicationRoles(applicationId, roles));
             checkTimeout("write application roles to zookeeper");
-        }
-
-        void distribute() {
-            prepareResult.asList().forEach(modelResult -> modelResult.model
-                                           .distributeFiles(modelResult.fileDistributionProvider.getFileDistribution()));
-            checkTimeout("distribute files");
         }
 
         PrepareResult result() {

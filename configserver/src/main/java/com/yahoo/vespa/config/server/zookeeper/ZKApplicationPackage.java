@@ -10,7 +10,6 @@ import com.yahoo.config.application.api.ComponentInfo;
 import com.yahoo.config.application.api.FileRegistry;
 import com.yahoo.config.application.api.UnparsedConfigDefinition;
 import com.yahoo.config.codegen.DefParser;
-import com.yahoo.config.model.application.provider.PreGeneratedFileRegistry;
 import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.serialization.AllocatedHostsSerializer;
@@ -20,6 +19,7 @@ import com.yahoo.path.Path;
 import com.yahoo.vespa.config.ConfigDefinition;
 import com.yahoo.vespa.config.ConfigDefinitionBuilder;
 import com.yahoo.vespa.config.ConfigDefinitionKey;
+import com.yahoo.vespa.config.server.filedistribution.FileDistributionProvider;
 import com.yahoo.vespa.config.util.ConfigUtils;
 import com.yahoo.vespa.curator.Curator;
 
@@ -29,9 +29,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static com.yahoo.vespa.config.server.zookeeper.ZKApplication.DEFCONFIGS_ZK_SUBPATH;
 import static com.yahoo.vespa.config.server.zookeeper.ZKApplication.USERAPP_ZK_SUBPATH;
@@ -45,24 +47,24 @@ public class ZKApplicationPackage implements ApplicationPackage {
 
     private final ZKApplication zkApplication;
 
-    private final Map<Version, PreGeneratedFileRegistry> fileRegistryMap = new HashMap<>();
+    private final Map<Version, FileRegistry> fileRegistryMap = new HashMap<>();
     private final Optional<AllocatedHosts> allocatedHosts;
 
     public static final String fileRegistryNode = "fileregistry";
     public static final String allocatedHostsNode = "allocatedHosts";
     private final ApplicationMetaData metaData;
 
-    public ZKApplicationPackage(Curator curator, Path sessionPath, int maxNodeSize) {
+    public ZKApplicationPackage(FileDistributionProvider fileDistributionProvider, Curator curator, Path sessionPath, int maxNodeSize) {
         verifyAppPath(curator, sessionPath);
         zkApplication = new ZKApplication(curator, sessionPath, maxNodeSize);
         metaData = readMetaDataFromLiveApp(zkApplication);
-        importFileRegistries();
+        importFileRegistries(fileDistributionProvider);
         allocatedHosts = importAllocatedHosts();
     }
 
     // For testing
-    ZKApplicationPackage(Curator curator, Path sessionPath) {
-        this(curator, sessionPath, 10 * 1024 * 1024);
+    ZKApplicationPackage(FileDistributionProvider fileDistributionProvider, Curator curator, Path sessionPath) {
+        this(fileDistributionProvider, curator, sessionPath, 10 * 1024 * 1024);
     }
 
     private Optional<AllocatedHosts> importAllocatedHosts() {
@@ -83,17 +85,17 @@ public class ZKApplicationPackage implements ApplicationPackage {
         }
     }
 
-    private void importFileRegistries() {
+    private void importFileRegistries(FileDistributionProvider fileDistributionProvider) {
         List<String> perVersionFileRegistryNodes = zkApplication.getChildren(Path.fromString(fileRegistryNode));
         perVersionFileRegistryNodes
                 .forEach(version ->
                                  fileRegistryMap.put(Version.fromString(version),
-                                                     importFileRegistry(Joiner.on("/").join(fileRegistryNode, version))));
+                                                     importFileRegistry(fileDistributionProvider, Joiner.on("/").join(fileRegistryNode, version))));
     }
 
-    private PreGeneratedFileRegistry importFileRegistry(String fileRegistryNode) {
+    private FileRegistry importFileRegistry(FileDistributionProvider fileDistributionProvider, String fileRegistryNode) {
         try {
-            return PreGeneratedFileRegistry.importRegistry(zkApplication.getDataReader(Path.fromString(fileRegistryNode)));
+            return fileDistributionProvider.createPregeneratedFileRegistry(zkApplication.getDataReader(Path.fromString(fileRegistryNode)));
         } catch (Exception e) {
             throw new RuntimeException("Could not determine which files to distribute", e);
         }
@@ -159,9 +161,9 @@ public class ZKApplicationPackage implements ApplicationPackage {
         return Collections.unmodifiableMap(fileRegistryMap);
     }
 
-    private Optional<PreGeneratedFileRegistry> getPreGeneratedFileRegistry(Version vespaVersion) {
+    private Optional<FileRegistry> getFileRegistry(Version vespaVersion) {
         // Assumes at least one file registry, which we always have.
-        Optional<PreGeneratedFileRegistry> fileRegistry = Optional.ofNullable(fileRegistryMap.get(vespaVersion));
+        Optional<FileRegistry> fileRegistry = Optional.ofNullable(fileRegistryMap.get(vespaVersion));
         if (fileRegistry.isEmpty()) {
             fileRegistry = Optional.of(fileRegistryMap.values().iterator().next());
         }
@@ -241,11 +243,21 @@ public class ZKApplicationPackage implements ApplicationPackage {
             return Optional.empty();
     }
 
+    private static Set<String> getPaths(FileRegistry fileRegistry) {
+        Set<String> paths = new LinkedHashSet<>();
+        synchronized (fileRegistry) {
+            for (FileRegistry.Entry e : fileRegistry.export()) {
+                paths.add(e.relativePath);
+            }
+        }
+        return paths;
+    }
+
     @Override
     public List<ComponentInfo> getComponentsInfo(Version vespaVersion) {
         List<ComponentInfo> components = new ArrayList<>();
-        PreGeneratedFileRegistry fileRegistry = getPreGeneratedFileRegistry(vespaVersion).get();
-        for (String path : fileRegistry.getPaths()) {
+        FileRegistry fileRegistry = getFileRegistry(vespaVersion).get();
+        for (String path : getPaths(fileRegistry)) {
             if (path.startsWith(COMPONENT_DIR + File.separator) && path.endsWith(".jar")) {
                 ComponentInfo component = new ComponentInfo(path);
                 components.add(component);
