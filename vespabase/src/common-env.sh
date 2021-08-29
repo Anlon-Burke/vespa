@@ -299,12 +299,12 @@ get_numa_ctl_cmd () {
         exit 1
     fi
 
-    numnodes=$(numactl --hardware 2>/dev/null |
-               grep available |
-               awk '$3 == "nodes" { print $2 }')
+    if numactl --interleave all echo &> /dev/null; then
+        # We are allowed to use numactl
+        numnodes=$(numactl --hardware 2>/dev/null |
+                   grep available |
+                   awk '$3 == "nodes" { print $2 }')
 
-    if [ -n "$numanodes" ]; then
-        # We are allowed to use numactl and have NUMA nodes
         if [ "$VESPA_AFFINITY_CPU_SOCKET" ] &&
            [ "$numnodes" -gt 1 ]
         then
@@ -319,3 +319,4 @@ get_numa_ctl_cmd () {
 
     echo $numactlcmd
 }
+
