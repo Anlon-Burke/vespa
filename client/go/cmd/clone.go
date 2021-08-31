@@ -1,12 +1,11 @@
 // Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
-// vespa init command
+// vespa clone command
 // author: bratseth
 
 package cmd
 
 import (
 	"archive/zip"
-	"errors"
 	"io"
 	"io/ioutil"
 	"log"
@@ -26,26 +25,21 @@ var existingSampleAppsZip string
 
 func init() {
 	existingSampleAppsZip = ""
-	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(cloneCmd)
 }
 
-var initCmd = &cobra.Command{
+var cloneCmd = &cobra.Command{
 	// TODO: "application" and "list" subcommands?
-	Use:   "init",
-	Short: "Creates the files and directory structure for a new Vespa application",
-	Long:  `TODO: vespa init applicationName source`,
-	Args: func(cmd *cobra.Command, args []string) error {
-		if len(args) != 2 {
-			return errors.New("vespa init requires a project name and source")
-		}
-		return nil
-	},
+	Use:     "clone",
+	Short:   "Create files and directory structure for a new Vespa application from a template",
+	Example: "$ vespa clone vespa-cloud/album-recommendation my-app",
+	Args:    cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		initApplication(args[0], args[1])
+		cloneApplication(args[0], args[1])
 	},
 }
 
-func initApplication(name string, source string) {
+func cloneApplication(source string, name string) {
 	zipFile := getSampleAppsZip()
 	if zipFile == nil {
 		return
@@ -54,17 +48,10 @@ func initApplication(name string, source string) {
 		defer os.Remove(zipFile.Name())
 	}
 
-	createErr := os.Mkdir(name, 0755)
-	if createErr != nil {
-		log.Print("Could not create directory '", color.Cyan(name), "'")
-		log.Print(createErr)
-		return
-	}
-
 	zipReader, zipOpenError := zip.OpenReader(zipFile.Name())
 	if zipOpenError != nil {
-		log.Print("Could not open sample apps zip '", color.Cyan(zipFile.Name()), "'")
-		log.Print(zipOpenError)
+		log.Print(color.Red("Error: "), "Could not open sample apps zip '", color.Cyan(zipFile.Name()), "'")
+		log.Print(color.Brown(zipOpenError))
 	}
 	defer zipReader.Close()
 
@@ -72,19 +59,28 @@ func initApplication(name string, source string) {
 	for _, f := range zipReader.File {
 		zipEntryPrefix := "sample-apps-master/" + source + "/"
 		if strings.HasPrefix(f.Name, zipEntryPrefix) {
+			if !found { // Create destination directory lazily when source is found
+				createErr := os.Mkdir(name, 0755)
+				if createErr != nil {
+					log.Print(color.Red("Error: "), "Could not create directory '", color.Cyan(name), "'")
+					log.Print(color.Brown(createErr))
+					return
+				}
+			}
 			found = true
+
 			copyError := copy(f, name, zipEntryPrefix)
 			if copyError != nil {
-				log.Print("Could not copy zip entry '", color.Cyan(f.Name), "' to ", color.Cyan(name))
-				log.Print(copyError)
+				log.Print(color.Red("Error: "), "Could not copy zip entry '", color.Cyan(f.Name), "' to ", color.Cyan(name))
+				log.Print(color.Brown(copyError))
 				return
 			}
 		}
 	}
 	if !found {
-		log.Print("Could not find source application '", color.Cyan(source), "'")
+		log.Print(color.Red("Error: "), "Could not find source application '", color.Cyan(source), "'")
 	} else {
-		log.Print("Created ", color.Green(name))
+		log.Print("Created ", color.Cyan(name))
 	}
 }
 
@@ -92,14 +88,14 @@ func getSampleAppsZip() *os.File {
 	if existingSampleAppsZip != "" {
 		existing, openExistingError := os.Open(existingSampleAppsZip)
 		if openExistingError != nil {
-			log.Print("Could not open existing sample apps zip file '", color.Cyan(existingSampleAppsZip), "'")
-			log.Print(openExistingError)
+			log.Print(color.Red("Error: "), "Could not open existing sample apps zip file '", color.Cyan(existingSampleAppsZip), "'")
+			log.Print(color.Brown(openExistingError))
 		}
 		return existing
 	}
 
 	// TODO: Cache it?
-	log.Print("Downloading sample apps ...") // TODO: Spawn thread to indicate progress
+	log.Print(color.Brown("Downloading sample apps ...")) // TODO: Spawn thread to indicate progress
 	zipUrl, _ := url.Parse("https://github.com/vespa-engine/sample-apps/archive/refs/heads/master.zip")
 	request := &http.Request{
 		URL:    zipUrl,
@@ -107,26 +103,27 @@ func getSampleAppsZip() *os.File {
 	}
 	response, reqErr := util.HttpDo(request, time.Minute*60, "GitHub")
 	if reqErr != nil {
-		log.Print("Request failed: ", color.Red(reqErr))
+		log.Print(color.Red("Error: "), "Could not download sample apps from github")
+		log.Print(color.Brown(reqErr))
 		return nil
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		log.Printf("Could not download sample apps from github (%s)", color.Red(response.StatusCode))
+		log.Print(color.Red("Error: "), "Could not download sample apps from github:", response.StatusCode)
 		return nil
 	}
 
 	destination, tempFileError := ioutil.TempFile("", "prefix")
 	if tempFileError != nil {
-		log.Print("Could not create a temp file to hold sample apps")
-		log.Print(tempFileError)
+		log.Print(color.Red("Error: "), "Could not create a temp file to hold sample apps")
+		log.Print(color.Brown(tempFileError))
 	}
 	// destination, _ := os.Create("./" + name + "/sample-apps.zip")
 	// defer destination.Close()
 	_, err := io.Copy(destination, response.Body)
 	if err != nil {
-		log.Print("Could not download sample apps from GitHub")
-		log.Print(err)
+		log.Print(color.Red("Error: "), "Could not download sample apps from GitHub")
+		log.Print(color.Brown(err))
 		return nil
 	}
 	return destination

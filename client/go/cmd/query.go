@@ -5,7 +5,6 @@
 package cmd
 
 import (
-	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -18,7 +17,6 @@ import (
 
 func init() {
 	rootCmd.AddCommand(queryCmd)
-	addTargetFlag(queryCmd)
 }
 
 var queryCmd = &cobra.Command{
@@ -26,12 +24,7 @@ var queryCmd = &cobra.Command{
 	Short: "Issue a query to Vespa",
 	Long:  `TODO, example  \"yql=select from sources * where title contains 'foo'\" hits=5`,
 	// TODO: Support referencing a query json file
-	Args: func(cmd *cobra.Command, args []string) error {
-		if len(args) < 1 {
-			return errors.New("vespa query requires at least one argument containing the query string")
-		}
-		return nil
-	},
+	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		query(args)
 	},
@@ -48,7 +41,7 @@ func query(arguments []string) {
 
 	response, err := util.HttpDo(&http.Request{URL: url}, time.Second*10, "Container")
 	if err != nil {
-		log.Print("Request failed: ", color.Red(err))
+		log.Print(color.Red("Error: "), "Request failed: ", err)
 		return
 	}
 	defer response.Body.Close()
@@ -56,10 +49,10 @@ func query(arguments []string) {
 	if response.StatusCode == 200 {
 		log.Print(util.ReaderToJSON(response.Body))
 	} else if response.StatusCode/100 == 4 {
-		log.Printf("Invalid query (%s):", color.Red(response.Status))
+		log.Print(color.Red("Error: "), "Invalid query: ", response.Status, "\n")
 		log.Print(util.ReaderToJSON(response.Body))
 	} else {
-		log.Printf("Error from container at %s (%s):", color.Cyan(url.Host), color.Red(response.Status))
+		log.Print(color.Red("Error: "), response.Status, " from container at ", color.Cyan(url.Host), "\n")
 		log.Print(util.ReaderToJSON(response.Body))
 	}
 }

@@ -4,27 +4,29 @@
 package cmd
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/vespa-engine/vespa/util"
 	"github.com/vespa-engine/vespa/vespa"
 )
 
 var overwriteCertificate bool
 
 func init() {
-	certCmd.Flags().BoolVarP(&overwriteCertificate, "force", "f", false, "Force overwrite of existing certificate and private key")
 	rootCmd.AddCommand(certCmd)
+	certCmd.Flags().BoolVarP(&overwriteCertificate, "force", "f", false, "Force overwrite of existing certificate and private key")
+	certCmd.MarkPersistentFlagRequired(applicationFlag)
 }
 
 var certCmd = &cobra.Command{
-	Use:   "cert",
-	Short: "Creates a new private key and self-signed certificate",
-	Long: `Applications in Vespa Cloud are required to secure their data plane with mutual TLS. ` +
-		`This command creates a self-signed certificate suitable for development purposes. ` +
-		`See https://cloud.vespa.ai/en/security-model for more information on the Vespa Cloud security model.`,
+	Use:     "cert",
+	Short:   "Create a new private key and self-signed certificate for a cloud deployment",
+	Example: "$ vespa cert -a my-tenant.my-app.my-instance",
+	Args:    cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		var path string
 		if len(args) > 0 {
@@ -35,23 +37,29 @@ var certCmd = &cobra.Command{
 			fatalIfErr(err)
 		}
 
-		pkg, err := vespa.FindApplicationPackage(path)
+		app := getApplication()
+		pkg, err := vespa.ApplicationPackageFrom(path)
 		fatalIfErr(err)
-		if pkg.HasCertificate() && !overwriteCertificate {
-			log.Print("Certificate already exists. Use -f option to recreate")
-			return
-		}
+		configDir, err := configDir(app)
+		fatalIfErr(err)
 
-		// TODO: Consider writing key pair inside ~/.vespa/<app-name>/ instead so that vespa document commands can easily
-		// locate key pair
 		securityDir := filepath.Join(pkg.Path, "security")
-		privateKeyFile := filepath.Join(path, "data-plane-private-key.pem")
-		certificateFile := filepath.Join(path, "data-plane-public-cert.pem")
 		pkgCertificateFile := filepath.Join(securityDir, "clients.pem")
+		privateKeyFile := filepath.Join(configDir, "data-plane-private-key.pem")
+		certificateFile := filepath.Join(configDir, "data-plane-public-cert.pem")
+		if !overwriteCertificate {
+			for _, file := range []string{pkgCertificateFile, privateKeyFile, certificateFile} {
+				if util.PathExists(file) {
+					errorWithHint(fmt.Errorf("Certificate or private key %s already exists", color.Cyan(file)), "Use -f flag to force overwriting")
+					return
+				}
+			}
+		}
 
 		keyPair, err := vespa.CreateKeyPair()
 		fatalIfErr(err)
-
+		err = os.MkdirAll(configDir, 0755)
+		fatalIfErr(err)
 		err = os.MkdirAll(securityDir, 0755)
 		fatalIfErr(err)
 		err = keyPair.WriteCertificateFile(pkgCertificateFile, overwriteCertificate)
@@ -61,10 +69,9 @@ var certCmd = &cobra.Command{
 		err = keyPair.WritePrivateKeyFile(privateKeyFile, overwriteCertificate)
 		fatalIfErr(err)
 
-		// TODO: Just use log package, which has Printf
-		log.Printf("Certificate written to %s", color.Green(pkgCertificateFile))
-		log.Printf("Certificate written to %s", color.Green(certificateFile))
-		log.Printf("Private key written to %s", color.Green(privateKeyFile))
+		log.Printf("Certificate written to %s", color.Cyan(pkgCertificateFile))
+		log.Printf("Certificate written to %s", color.Cyan(certificateFile))
+		log.Printf("Private key written to %s", color.Cyan(privateKeyFile))
 	},
 }
 

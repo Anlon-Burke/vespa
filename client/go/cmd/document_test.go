@@ -11,33 +11,29 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/vespa-engine/vespa/util"
+	"github.com/vespa-engine/vespa/vespa"
 )
 
 func TestDocumentPostWithIdArg(t *testing.T) {
-	assertDocumentPost([]string{"document", "post", "mynamespace/music/docid/1", "testdata/A-Head-Full-of-Dreams.json"},
-		"mynamespace/music/docid/1", "testdata/A-Head-Full-of-Dreams.json", t)
+	assertDocumentPost([]string{"document", "post", "id:mynamespace:music::a-head-full-of-dreams", "testdata/A-Head-Full-of-Dreams-Without-Id.json"},
+		"id:mynamespace:music::a-head-full-of-dreams", "testdata/A-Head-Full-of-Dreams-Without-Id.json", t)
 }
 
 func TestDocumentPostWithIdInDocument(t *testing.T) {
-	assertDocumentPost([]string{"document", "post", "testdata/A-Head-Full-of-Dreams-With-Id.json"},
-		"mynamespace/music/docid/1", "testdata/A-Head-Full-of-Dreams-With-Id.json", t)
+	assertDocumentPost([]string{"document", "post", "testdata/A-Head-Full-of-Dreams.json"},
+		"id:mynamespace:music::a-head-full-of-dreams", "testdata/A-Head-Full-of-Dreams.json", t)
 }
 
 func TestDocumentPostWithIdInDocumentShortForm(t *testing.T) {
-	assertDocumentPost([]string{"document", "testdata/A-Head-Full-of-Dreams-With-Id.json"},
-		"mynamespace/music/docid/1", "testdata/A-Head-Full-of-Dreams-With-Id.json", t)
-}
-
-func TestDocumentPostWithIdAsPutInDocument(t *testing.T) {
-	assertDocumentPost([]string{"document", "post", "testdata/A-Head-Full-of-Dreams-With-Put.json"},
-		"mynamespace/music/docid/1", "testdata/A-Head-Full-of-Dreams-With-Put.json", t)
+	assertDocumentPost([]string{"document", "testdata/A-Head-Full-of-Dreams.json"},
+		"id:mynamespace:music::a-head-full-of-dreams", "testdata/A-Head-Full-of-Dreams.json", t)
 }
 
 func TestDocumentIdNotSpecified(t *testing.T) {
-	arguments := []string{"document", "post", "testdata/A-Head-Full-of-Dreams.json"}
+	arguments := []string{"document", "post", "testdata/A-Head-Full-of-Dreams-Without-Id.json"}
 	client := &mockHttpClient{}
 	assert.Equal(t,
-		"No document id given neither as argument or an 'id' key in the json file\n",
+		"Error: No document id given neither as argument or as a 'put' key in the json file\n",
 		executeCommand(t, client, arguments, []string{}))
 }
 
@@ -55,7 +51,8 @@ func assertDocumentPost(arguments []string, documentId string, jsonFile string, 
 		documentId+"\n",
 		executeCommand(t, client, arguments, []string{}))
 	target := getTarget(documentContext).document
-	assert.Equal(t, target+"/document/v1/"+documentId, client.lastRequest.URL.String())
+	expectedPath, _ := vespa.IdToURLPath(documentId)
+	assert.Equal(t, target+"/document/v1/"+expectedPath, client.lastRequest.URL.String())
 	assert.Equal(t, "application/json", client.lastRequest.Header.Get("Content-Type"))
 	assert.Equal(t, "POST", client.lastRequest.Method)
 
@@ -75,17 +72,17 @@ func assertDocumentPostShortForm(documentId string, jsonFile string, t *testing.
 func assertDocumentError(t *testing.T, status int, errorMessage string) {
 	client := &mockHttpClient{nextStatus: status, nextBody: errorMessage}
 	assert.Equal(t,
-		"Invalid document (Status "+strconv.Itoa(status)+"):\n"+errorMessage+"\n",
+		"Error: Invalid document: Status "+strconv.Itoa(status)+"\n\n"+errorMessage+"\n",
 		executeCommand(t, client, []string{"document", "post",
-			"mynamespace/music/docid/1",
+			"id:mynamespace:music::a-head-full-of-dreams",
 			"testdata/A-Head-Full-of-Dreams.json"}, []string{}))
 }
 
 func assertDocumentServerError(t *testing.T, status int, errorMessage string) {
 	client := &mockHttpClient{nextStatus: status, nextBody: errorMessage}
 	assert.Equal(t,
-		"Error from container (document api) at 127.0.0.1:8080 (Status "+strconv.Itoa(status)+"):\n"+errorMessage+"\n",
+		"Error: Container (document API) at 127.0.0.1:8080: Status "+strconv.Itoa(status)+"\n\n"+errorMessage+"\n",
 		executeCommand(t, client, []string{"document", "post",
-			"mynamespace/music/docid/1",
+			"id:mynamespace:music::a-head-full-of-dreams",
 			"testdata/A-Head-Full-of-Dreams.json"}, []string{}))
 }

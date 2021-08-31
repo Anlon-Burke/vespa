@@ -16,13 +16,12 @@ func init() {
 	statusCmd.AddCommand(statusQueryCmd)
 	statusCmd.AddCommand(statusDocumentCmd)
 	statusCmd.AddCommand(statusDeployCmd)
-	addTargetFlag(statusCmd)
 }
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Verifies that a vespa target is ready to use (query by default)",
-	Long:  `TODO`,
+	Short: "Verify that a Vespa target is ready to use (query by default)",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		status(queryTarget(), "Query API")
 	},
@@ -30,8 +29,8 @@ var statusCmd = &cobra.Command{
 
 var statusQueryCmd = &cobra.Command{
 	Use:   "query",
-	Short: "Verifies that your Vespa query API container endpoint is ready [Default]",
-	Long:  `TODO`,
+	Short: "Verify that your Vespa query API container endpoint is ready [Default]",
+	Args:  cobra.ExactArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
 		status(queryTarget(), "Query API")
 	},
@@ -39,8 +38,8 @@ var statusQueryCmd = &cobra.Command{
 
 var statusDocumentCmd = &cobra.Command{
 	Use:   "document",
-	Short: "Verifies that your Vespa document API container endpoint is ready [Default]",
-	Long:  `TODO`,
+	Short: "Verify that your Vespa document API container endpoint is ready [Default]",
+	Args:  cobra.ExactArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
 		status(documentTarget(), "Document API")
 	},
@@ -48,8 +47,8 @@ var statusDocumentCmd = &cobra.Command{
 
 var statusDeployCmd = &cobra.Command{
 	Use:   "deploy",
-	Short: "Verifies that your Vespa deploy API config server endpoint is ready",
-	Long:  `TODO`,
+	Short: "Verify that your Vespa deploy API config server endpoint is ready",
+	Args:  cobra.ExactArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
 		status(deployTarget(), "Deploy API")
 	},
@@ -59,14 +58,15 @@ func status(target string, description string) {
 	path := "/ApplicationStatus"
 	response, err := util.HttpGet(target, path, description)
 	if err != nil {
-		log.Print("Request failed: ", color.Red(err))
+		log.Print(description, " at ", color.Cyan(target), " is ", color.Red("not ready"))
+		log.Print(color.Brown(err))
 		return
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode != 200 {
-		log.Print(description, " at ", color.Cyan(target), " is ", color.Yellow("not ready"))
-		log.Print(response.Status)
+		log.Print(description, " at ", color.Cyan(target), " is ", color.Red("not ready"))
+		log.Print(color.Brown(response.Status))
 	} else {
 		log.Print(description, " at ", color.Cyan(target), " is ", color.Green("ready"))
 	}

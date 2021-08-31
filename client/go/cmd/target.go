@@ -7,13 +7,11 @@ package cmd
 import (
 	"log"
 	"strings"
-
-	"github.com/spf13/cobra"
 )
 
-const flagName = "target"
-
-var targetArgument string
+const (
+	cloudApi = "https://api.vespa-external.aws.oath.cloud:4443"
+)
 
 type target struct {
 	deploy   string
@@ -29,11 +27,6 @@ const (
 	documentContext context = 2
 )
 
-func addTargetFlag(command *cobra.Command) {
-	command.PersistentFlags().StringVarP(&targetArgument, flagName, "t", "local", "The name or URL of the recipient of this command")
-	bindFlagToConfig(flagName, command)
-}
-
 func deployTarget() string {
 	return getTarget(deployContext).deploy
 }
@@ -46,11 +39,24 @@ func documentTarget() string {
 	return getTarget(documentContext).document
 }
 
-func getTarget(targetContext context) *target {
-	targetValue, err := getOption(flagName)
+func getApplication() string {
+	app, err := getOption(applicationFlag)
+	if err != nil {
+		log.Fatalf("a valid application must be specified")
+	}
+	return app
+}
+
+func getTargetType() string {
+	target, err := getOption(targetFlag)
 	if err != nil {
 		log.Fatalf("a valid target must be specified")
 	}
+	return target
+}
+
+func getTarget(targetContext context) *target {
+	targetValue := getTargetType()
 	if strings.HasPrefix(targetValue, "http") {
 		// TODO: Add default ports if missing
 		switch targetContext {
@@ -80,7 +86,7 @@ func getTarget(targetContext context) *target {
 	}
 
 	if targetValue == "cloud" {
-		panic("cloud target is not implemented")
+		return &target{deploy: cloudApi}
 	}
 
 	log.Printf("Unknown target '%s': Use %s, %s or an URL", color.Red(targetValue), color.Cyan("local"), color.Cyan("cloud"))
