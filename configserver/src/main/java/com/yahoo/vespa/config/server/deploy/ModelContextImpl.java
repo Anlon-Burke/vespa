@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.deploy;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
@@ -6,7 +6,6 @@ import com.yahoo.component.Version;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.application.api.FileRegistry;
-import com.yahoo.config.model.api.ApplicationRoles;
 import com.yahoo.config.model.api.ConfigDefinitionRepo;
 import com.yahoo.config.model.api.ConfigServerSpec;
 import com.yahoo.config.model.api.ContainerEndpoint;
@@ -23,7 +22,6 @@ import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.HostName;
-import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.container.jdisc.secretstore.SecretStore;
@@ -41,6 +39,7 @@ import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
 import java.util.function.ToIntFunction;
 
 import static com.yahoo.vespa.config.server.ConfigServerSpec.fromConfig;
@@ -59,6 +58,7 @@ public class ModelContextImpl implements ModelContext {
     private final DeployLogger deployLogger;
     private final ConfigDefinitionRepo configDefinitionRepo;
     private final FileRegistry fileRegistry;
+    private final ExecutorService executor;
     private final HostProvisioner hostProvisioner;
     private final Provisioned provisioned;
     private final Optional<? extends Reindexing> reindexing;
@@ -85,6 +85,7 @@ public class ModelContextImpl implements ModelContext {
                             DeployLogger deployLogger,
                             ConfigDefinitionRepo configDefinitionRepo,
                             FileRegistry fileRegistry,
+                            ExecutorService executor,
                             Optional<? extends Reindexing> reindexing,
                             HostProvisioner hostProvisioner,
                             Provisioned provisioned,
@@ -99,6 +100,7 @@ public class ModelContextImpl implements ModelContext {
         this.deployLogger = deployLogger;
         this.configDefinitionRepo = configDefinitionRepo;
         this.fileRegistry = fileRegistry;
+        this.executor = executor;
         this.reindexing = reindexing;
         this.hostProvisioner = hostProvisioner;
         this.provisioned = provisioned;
@@ -138,6 +140,11 @@ public class ModelContextImpl implements ModelContext {
     public FileRegistry getFileRegistry() { return fileRegistry; }
 
     @Override
+    public ExecutorService getExecutor() {
+        return executor;
+    }
+
+    @Override
     public Optional<? extends Reindexing> reindexing() { return  reindexing; }
 
     @Override
@@ -171,18 +178,18 @@ public class ModelContextImpl implements ModelContext {
         private final List<String> allowedAthenzProxyIdentities;
         private final int maxActivationInhibitedOutOfSyncGroups;
         private final ToIntFunction<ClusterSpec.Type> jvmOmitStackTraceInFastThrow;
-        private final boolean useExternalRankExpression;
-        private final boolean distributeExternalRankExpressions;
         private final int numDistributorStripes;
         private final boolean requireConnectivityCheck;
         private final int maxConcurrentMergesPerContentNode;
         private final int maxMergeQueueSize;
         private final int largeRankExpressionLimit;
         private final boolean throwIfResourceLimitsSpecified;
-        private final boolean dryRunOnnxOnSetup;
         private final double resourceLimitDisk;
         private final double resourceLimitMemory;
         private final double minNodeRatioPerGroup;
+        private final int metricsproxyNumThreads;
+        private final boolean enforceRankProfileInheritance;
+        private final boolean newLocationBrokerLogic;
 
         public FeatureFlags(FlagSource source, ApplicationId appId) {
             this.defaultTermwiseLimit = flagValue(source, appId, Flags.DEFAULT_TERM_WISE_LIMIT);
@@ -200,17 +207,17 @@ public class ModelContextImpl implements ModelContext {
             this.maxActivationInhibitedOutOfSyncGroups = flagValue(source, appId, Flags.MAX_ACTIVATION_INHIBITED_OUT_OF_SYNC_GROUPS);
             this.jvmOmitStackTraceInFastThrow = type -> flagValueAsInt(source, appId, type, PermanentFlags.JVM_OMIT_STACK_TRACE_IN_FAST_THROW);
             this.numDistributorStripes = flagValue(source, appId, Flags.NUM_DISTRIBUTOR_STRIPES);
-            this.useExternalRankExpression = flagValue(source, appId, Flags.USE_EXTERNAL_RANK_EXPRESSION);
-            this.distributeExternalRankExpressions = flagValue(source, appId, Flags.DISTRIBUTE_EXTERNAL_RANK_EXPRESSION);
             this.largeRankExpressionLimit = flagValue(source, appId, Flags.LARGE_RANK_EXPRESSION_LIMIT);
             this.requireConnectivityCheck = flagValue(source, appId, Flags.REQUIRE_CONNECTIVITY_CHECK);
             this.maxConcurrentMergesPerContentNode = flagValue(source, appId, Flags.MAX_CONCURRENT_MERGES_PER_NODE);
             this.maxMergeQueueSize = flagValue(source, appId, Flags.MAX_MERGE_QUEUE_SIZE);
             this.throwIfResourceLimitsSpecified = flagValue(source, appId, Flags.THROW_EXCEPTION_IF_RESOURCE_LIMITS_SPECIFIED);
-            this.dryRunOnnxOnSetup = flagValue(source, appId, Flags.DRY_RUN_ONNX_ON_SETUP);
             this.resourceLimitDisk = flagValue(source, appId, PermanentFlags.RESOURCE_LIMIT_DISK);
             this.resourceLimitMemory = flagValue(source, appId, PermanentFlags.RESOURCE_LIMIT_MEMORY);
             this.minNodeRatioPerGroup = flagValue(source, appId, Flags.MIN_NODE_RATIO_PER_GROUP);
+            this.metricsproxyNumThreads = flagValue(source, appId, Flags.METRICSPROXY_NUM_THREADS);
+            this.enforceRankProfileInheritance = flagValue(source, appId, Flags.ENFORCE_RANK_PROFILE_INHERITANCE);
+            this.newLocationBrokerLogic = flagValue(source, appId, Flags.NEW_LOCATION_BROKER_LOGIC);
         }
 
         @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
@@ -230,17 +237,18 @@ public class ModelContextImpl implements ModelContext {
             return translateJvmOmitStackTraceInFastThrowIntToString(jvmOmitStackTraceInFastThrow, type);
         }
         @Override public int numDistributorStripes() { return numDistributorStripes; }
-        @Override public boolean useExternalRankExpressions() { return useExternalRankExpression; }
-        @Override public boolean distributeExternalRankExpressions() { return distributeExternalRankExpressions; }
         @Override public int largeRankExpressionLimit() { return largeRankExpressionLimit; }
         @Override public boolean requireConnectivityCheck() { return requireConnectivityCheck; }
         @Override public int maxConcurrentMergesPerNode() { return maxConcurrentMergesPerContentNode; }
         @Override public int maxMergeQueueSize() { return maxMergeQueueSize; }
         @Override public boolean throwIfResourceLimitsSpecified() { return throwIfResourceLimitsSpecified; }
-        @Override public boolean dryRunOnnxOnSetup() { return dryRunOnnxOnSetup; }
         @Override public double resourceLimitDisk() { return resourceLimitDisk; }
         @Override public double resourceLimitMemory() { return resourceLimitMemory; }
         @Override public double minNodeRatioPerGroup() { return minNodeRatioPerGroup; }
+        @Override public int metricsproxyNumThreads() { return metricsproxyNumThreads; }
+        @Override public boolean newLocationBrokerLogic() { return newLocationBrokerLogic; }
+
+        @Override public boolean enforceRankProfileInheritance() { return enforceRankProfileInheritance; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)

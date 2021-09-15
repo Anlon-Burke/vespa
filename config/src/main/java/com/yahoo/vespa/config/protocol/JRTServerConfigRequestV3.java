@@ -1,8 +1,9 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.protocol;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.yahoo.vespa.config.PayloadChecksums;
 import com.yahoo.jrt.DataValue;
 import com.yahoo.jrt.Request;
 import com.yahoo.jrt.StringValue;
@@ -15,9 +16,11 @@ import com.yahoo.vespa.config.util.ConfigUtils;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.Optional;
 import java.util.logging.Logger;
+
+import static com.yahoo.vespa.config.PayloadChecksum.Type.MD5;
+import static com.yahoo.vespa.config.PayloadChecksum.Type.XXHASH64;
 
 /**
  * The V3 config protocol implemented on the server side. The V3 protocol uses 2 fields:
@@ -69,9 +72,9 @@ public class JRTServerConfigRequestV3 implements JRTServerConfigRequest {
     }
 
     @Override
-    public void addOkResponse(Payload payload, long generation, boolean applyOnRestart, String configMd5) {
+    public void addOkResponse(Payload payload, long generation, boolean applyOnRestart, PayloadChecksums payloadChecksums) {
         this.applyOnRestart = applyOnRestart;
-        boolean changedConfig = !configMd5.equals(getRequestConfigMd5());
+        boolean changedConfig = !payloadChecksums.equals(getRequestConfigChecksums());
         boolean changedConfigAndNewGeneration = changedConfig && ConfigUtils.isGenerationNewer(generation, getRequestGeneration());
         Payload responsePayload = payload.withCompression(getCompressionType());
         ByteArrayOutputStream byteArrayOutputStream = new NoCopyByteArrayOutputStream(4096);
@@ -79,7 +82,10 @@ public class JRTServerConfigRequestV3 implements JRTServerConfigRequest {
             JsonGenerator jsonGenerator = createJsonGenerator(byteArrayOutputStream);
             jsonGenerator.writeStartObject();
             addCommonReturnValues(jsonGenerator);
-            setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_CONFIG_MD5, configMd5);
+            if (payloadChecksums.getForType(MD5) != null)
+                setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_CONFIG_MD5, payloadChecksums.getForType(MD5).asString());
+            if (payloadChecksums.getForType(XXHASH64) != null)
+                setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_CONFIG_XXHASH64, payloadChecksums.getForType(XXHASH64).asString());
             setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_CONFIG_GENERATION, generation);
             setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_APPLY_ON_RESTART, applyOnRestart);
             jsonGenerator.writeObjectFieldStart(SlimeResponseData.RESPONSE_COMPRESSION_INFO);
@@ -192,6 +198,11 @@ public class JRTServerConfigRequestV3 implements JRTServerConfigRequest {
         return requestData.getRequestConfigMd5();
     }
 
+    @Override
+    public String getRequestDefMd5() { return requestData.getRequestDefMd5(); }
+
+    public PayloadChecksums getRequestConfigChecksums() { return requestData.getRequestConfigChecksums(); }
+
     private void addErrorResponse(int errorCode) {
         addErrorResponse(errorCode, ErrorCode.getName(errorCode));
     }
@@ -222,7 +233,7 @@ public class JRTServerConfigRequestV3 implements JRTServerConfigRequest {
         setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_VERSION, getProtocolVersion());
         setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_DEF_NAME, key.getName());
         setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_DEF_NAMESPACE, key.getNamespace());
-        setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_DEF_MD5, key.getMd5());
+        setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_DEF_MD5, requestData.getRequestDefMd5());
         setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_CONFIGID, key.getConfigId());
         setResponseField(jsonGenerator, SlimeResponseData.RESPONSE_CLIENT_HOSTNAME, requestData.getClientHostName());
         jsonGenerator.writeFieldName(SlimeResponseData.RESPONSE_TRACE);
@@ -264,7 +275,9 @@ public class JRTServerConfigRequestV3 implements JRTServerConfigRequest {
     }
 
     @Override
-    public Optional<VespaVersion> getVespaVersion() {
-        return requestData.getVespaVersion();
-    }
+    public Optional<VespaVersion> getVespaVersion() { return requestData.getVespaVersion(); }
+
+    @Override
+    public PayloadChecksums configPayloadChecksums() { return requestData.getRequestConfigChecksums(); }
+
 }

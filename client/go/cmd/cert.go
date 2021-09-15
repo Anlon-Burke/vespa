@@ -5,13 +5,12 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/vespa-engine/vespa/util"
-	"github.com/vespa-engine/vespa/vespa"
+	"github.com/vespa-engine/vespa/client/go/util"
+	"github.com/vespa-engine/vespa/client/go/vespa"
 )
 
 var overwriteCertificate bool
@@ -23,60 +22,79 @@ func init() {
 }
 
 var certCmd = &cobra.Command{
-	Use:     "cert",
-	Short:   "Create a new private key and self-signed certificate for a cloud deployment",
-	Example: "$ vespa cert -a my-tenant.my-app.my-instance",
-	Args:    cobra.MaximumNArgs(1),
+	Use:               "cert",
+	Short:             "Create a new private key and self-signed certificate for Vespa Cloud deployment",
+	Example:           "$ vespa cert -a my-tenant.my-app.my-instance",
+	DisableAutoGenTag: true,
+	Args:              cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		var path string
-		if len(args) > 0 {
-			path = args[0]
-		} else {
-			var err error
-			path, err = os.Getwd()
-			fatalIfErr(err)
+		app := getApplication()
+		pkg, err := vespa.FindApplicationPackage(applicationSource(args), false)
+		if err != nil {
+			fatalErr(err)
+			return
+		}
+		cfg, err := LoadConfig()
+		if err != nil {
+			fatalErr(err)
+			return
+		}
+		privateKeyFile, err := cfg.PrivateKeyPath(app)
+		if err != nil {
+			fatalErr(err)
+			return
+		}
+		certificateFile, err := cfg.CertificatePath(app)
+		if err != nil {
+			fatalErr(err)
+			return
 		}
 
-		app := getApplication()
-		pkg, err := vespa.ApplicationPackageFrom(path)
-		fatalIfErr(err)
-		configDir, err := configDir(app)
-		fatalIfErr(err)
-
-		securityDir := filepath.Join(pkg.Path, "security")
-		pkgCertificateFile := filepath.Join(securityDir, "clients.pem")
-		privateKeyFile := filepath.Join(configDir, "data-plane-private-key.pem")
-		certificateFile := filepath.Join(configDir, "data-plane-public-cert.pem")
 		if !overwriteCertificate {
-			for _, file := range []string{pkgCertificateFile, privateKeyFile, certificateFile} {
-				if util.PathExists(file) {
-					errorWithHint(fmt.Errorf("Certificate or private key %s already exists", color.Cyan(file)), "Use -f flag to force overwriting")
-					return
-				}
+			hint := "Use -f flag to force overwriting"
+			if pkg.HasCertificate() {
+				fatalErrHint(fmt.Errorf("Application package %s already contains a certificate", pkg.Path), hint)
+				return
 			}
+			if util.PathExists(privateKeyFile) {
+				fatalErrHint(fmt.Errorf("Private key %s already exists", color.Cyan(privateKeyFile)), hint)
+				return
+			}
+			if util.PathExists(certificateFile) {
+				fatalErrHint(fmt.Errorf("Certificate %s already exists", color.Cyan(certificateFile)), hint)
+				return
+			}
+		}
+		if pkg.IsZip() {
+			fatalErrHint(fmt.Errorf("Cannot add certificate to compressed application package %s", pkg.Path),
+				"Try running 'mvn clean' before 'vespa cert', and then 'mvn package'")
+			return
 		}
 
 		keyPair, err := vespa.CreateKeyPair()
-		fatalIfErr(err)
-		err = os.MkdirAll(configDir, 0755)
-		fatalIfErr(err)
-		err = os.MkdirAll(securityDir, 0755)
-		fatalIfErr(err)
-		err = keyPair.WriteCertificateFile(pkgCertificateFile, overwriteCertificate)
-		fatalIfErr(err)
-		err = keyPair.WriteCertificateFile(certificateFile, overwriteCertificate)
-		fatalIfErr(err)
-		err = keyPair.WritePrivateKeyFile(privateKeyFile, overwriteCertificate)
-		fatalIfErr(err)
-
-		log.Printf("Certificate written to %s", color.Cyan(pkgCertificateFile))
-		log.Printf("Certificate written to %s", color.Cyan(certificateFile))
-		log.Printf("Private key written to %s", color.Cyan(privateKeyFile))
+		if err != nil {
+			fatalErr(err, "Could not create key pair")
+			return
+		}
+		pkgCertificateFile := filepath.Join(pkg.Path, "security", "clients.pem")
+		if err := os.MkdirAll(filepath.Dir(pkgCertificateFile), 0755); err != nil {
+			fatalErr(err, "Could not create security directory")
+			return
+		}
+		if err := keyPair.WriteCertificateFile(pkgCertificateFile, overwriteCertificate); err != nil {
+			fatalErr(err, "Could not write certificate")
+			return
+		}
+		if err := keyPair.WriteCertificateFile(certificateFile, overwriteCertificate); err != nil {
+			fatalErr(err, "Could not write certificate")
+			return
+		}
+		if err := keyPair.WritePrivateKeyFile(privateKeyFile, overwriteCertificate); err != nil {
+			fatalErr(err, "Could not write private key")
+			return
+		}
+		printSuccess("Certificate written to ", color.Cyan(pkgCertificateFile))
+		printSuccess("Certificate written to ", color.Cyan(certificateFile))
+		printSuccess("Private key written to ", color.Cyan(privateKeyFile))
 	},
-}
-
-func fatalIfErr(err error) {
-	if err != nil {
-		log.Fatal(err)
-	}
 }

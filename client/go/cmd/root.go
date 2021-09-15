@@ -15,21 +15,30 @@ import (
 )
 
 var (
-	// global flags
 	// TODO: add timeout flag
 	// TODO: add flag to show http request made
 	rootCmd = &cobra.Command{
-		Use:   "vespa",
-		Short: "A command-line tool for working with Vespa instances",
+		Use:   "vespa command-name",
+		Short: "The command-line tool for Vespa.ai",
+		Long: `The command-line tool for Vespa.ai.
+
+Use it on Vespa instances running locally, remotely or in the cloud.
+Prefer web service API's to this in production.
+
+Vespa documentation: https://docs.vespa.ai`,
+		DisableAutoGenTag: true,
 	}
+
 	color          aurora.Aurora
 	targetArg      string
 	applicationArg string
+	waitSecsArg    int
 )
 
 const (
 	applicationFlag = "application"
 	targetFlag      = "target"
+	waitFlag        = "wait"
 )
 
 func configureLogger() {
@@ -40,11 +49,12 @@ func configureLogger() {
 
 func init() {
 	configureLogger()
-	cobra.OnInitialize(readConfig)
 	rootCmd.PersistentFlags().StringVarP(&targetArg, targetFlag, "t", "local", "The name or URL of the recipient of this command")
 	rootCmd.PersistentFlags().StringVarP(&applicationArg, applicationFlag, "a", "", "The application to manage")
+	rootCmd.PersistentFlags().IntVarP(&waitSecsArg, waitFlag, "w", 0, "Number of seconds to wait for a service to become ready")
 	bindFlagToConfig(targetFlag, rootCmd)
 	bindFlagToConfig(applicationFlag, rootCmd)
+	bindFlagToConfig(waitFlag, rootCmd)
 }
 
 // Execute executes the root command.

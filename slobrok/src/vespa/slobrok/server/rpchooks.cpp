@@ -3,6 +3,7 @@
 #include "rpchooks.h"
 #include "ok_state.h"
 #include "named_service.h"
+#include "request_completion_handler.h"
 #include "rpc_server_map.h"
 #include "rpc_server_manager.h"
 #include "remote_slobrok.h"
@@ -215,6 +216,10 @@ RPCHooks::initRPC(FRT_Supervisor *supervisor)
 }
 
 
+bool RPCHooks::useNewLogic() const {
+    return _env.useNewLogic();
+}
+
 void
 RPCHooks::rpc_listNamesServed(FRT_RPCRequest *req)
 {
@@ -228,6 +233,9 @@ RPCHooks::rpc_listNamesServed(FRT_RPCRequest *req)
 void
 RPCHooks::rpc_registerRpcServer(FRT_RPCRequest *req)
 {
+    if (useNewLogic()) {
+        return new_registerRpcServer(req);
+    }
     FRT_Values &args   = *req->GetParams();
     const char *dName  = args[0]._string._str;
     const char *dSpec  = args[1]._string._str;
@@ -236,9 +244,8 @@ RPCHooks::rpc_registerRpcServer(FRT_RPCRequest *req)
     _cnts.registerReqs++;
     {
         // TODO: run only this path, and complete the request instead of ignoring
-        auto script = ScriptCommand::makeIgnoreCmd(_env, dName, dSpec);
         ServiceMapping mapping{dName, dSpec};
-        _env.localMonitorMap().addLocal(mapping, std::make_unique<ScriptCommand>(std::move(script)));
+        _env.localMonitorMap().addLocal(mapping, std::make_unique<RequestCompletionHandler>(nullptr));
     }
     // is this already OK?
     if (_rpcsrvmanager.alreadyManaged(dName, dSpec)) {
@@ -260,9 +267,33 @@ RPCHooks::rpc_registerRpcServer(FRT_RPCRequest *req)
     completer.doRequest();
 }
 
+void RPCHooks::new_registerRpcServer(FRT_RPCRequest *req) {
+    FRT_Values &args   = *req->GetParams();
+    const char *dName  = args[0]._string._str;
+    const char *dSpec  = args[1]._string._str;
+    LOG(debug, "RPC: invoked registerRpcServer(%s,%s)", dName, dSpec);
+    _cnts.registerReqs++;
+    ServiceMapping mapping{dName, dSpec};
+    // can we say now, that this will fail?
+    if (_env.consensusMap().wouldConflict(mapping)) {
+        req->SetError(FRTE_RPC_METHOD_FAILED, "conflict detected");
+        LOG(info, "cannot register %s at %s: conflict", dName, dSpec);
+        return;
+    }
+    req->Detach();
+    _env.localMonitorMap().addLocal(mapping, std::make_unique<RequestCompletionHandler>(req));
+    // TODO: remove this
+    auto script = ScriptCommand::makeRegRpcSrvCmd(_env, dName, dSpec, nullptr);
+    script.doRequest();
+    return;
+}
+
 void
 RPCHooks::rpc_unregisterRpcServer(FRT_RPCRequest *req)
 {
+    if (useNewLogic()) {
+        return new_unregisterRpcServer(req);
+    }
     FRT_Values &args   = *req->GetParams();
     const char *dName  = args[0]._string._str;
     const char *dSpec  = args[1]._string._str;
@@ -278,6 +309,17 @@ RPCHooks::rpc_unregisterRpcServer(FRT_RPCRequest *req)
     return;
 }
 
+void RPCHooks::new_unregisterRpcServer(FRT_RPCRequest *req) {
+    FRT_Values &args   = *req->GetParams();
+    const char *dName  = args[0]._string._str;
+    const char *dSpec  = args[1]._string._str;
+    ServiceMapping mapping{dName, dSpec};
+    _env.localMonitorMap().removeLocal(mapping);
+    _env.exchangeManager().forwardRemove(dName, dSpec);
+    LOG(debug, "unregisterRpcServer(%s,%s)", dName, dSpec);
+    _cnts.otherReqs++;
+    return;
+}
 
 void
 RPCHooks::rpc_addPeer(FRT_RPCRequest *req)
@@ -322,6 +364,9 @@ RPCHooks::rpc_removePeer(FRT_RPCRequest *req)
 void
 RPCHooks::rpc_wantAdd(FRT_RPCRequest *req)
 {
+    if (useNewLogic()) {
+        return new_wantAdd(req);
+    }
     FRT_Values &args   = *req->GetParams();
     const char *remsb  = args[0]._string._str;
     const char *dName  = args[1]._string._str;
@@ -341,10 +386,38 @@ RPCHooks::rpc_wantAdd(FRT_RPCRequest *req)
     return;
 }
 
+void RPCHooks::new_wantAdd(FRT_RPCRequest *req) {
+    FRT_Values &args   = *req->GetParams();
+    const char *remsb  = args[0]._string._str;
+    const char *dName  = args[1]._string._str;
+    const char *dSpec  = args[2]._string._str;
+    FRT_Values &retval = *req->GetReturn();
+    ServiceMapping mapping{dName, dSpec};
+    bool conflict = (
+        _env.consensusMap().wouldConflict(mapping)
+        ||
+        _env.localMonitorMap().wouldConflict(mapping)
+    );
+    if (conflict) {
+        retval.AddInt32(13);
+        retval.AddString("conflict detected");
+        req->SetError(FRTE_RPC_METHOD_FAILED, "conflict detected");
+    } else {
+        retval.AddInt32(0);
+        retval.AddString("ok");
+    }
+    LOG(debug, "%s->wantAdd(%s,%s) %s",
+        remsb, dName, dSpec, conflict ? "conflict" : "OK");
+    _cnts.wantAddReqs++;
+    return;
+}
 
 void
 RPCHooks::rpc_doRemove(FRT_RPCRequest *req)
 {
+    if (useNewLogic()) {
+        return new_doRemove(req);
+    }
     FRT_Values &args   = *req->GetParams();
     const char *rname  = args[0]._string._str;
     const char *dname  = args[1]._string._str;
@@ -364,9 +437,27 @@ RPCHooks::rpc_doRemove(FRT_RPCRequest *req)
     return;
 }
 
+void RPCHooks::new_doRemove(FRT_RPCRequest *req) {
+    FRT_Values &args   = *req->GetParams();
+    const char *rname  = args[0]._string._str;
+    const char *dname  = args[1]._string._str;
+    const char *dspec  = args[2]._string._str;
+    FRT_Values &retval = *req->GetReturn();
+    ServiceMapping mapping{dname, dspec};
+    _env.localMonitorMap().removeLocal(mapping);
+    retval.AddInt32(0);
+    retval.AddString("ok");
+    LOG(debug, "%s->doRemove(%s,%s)", rname, dname, dspec);
+    _cnts.doRemoveReqs++;
+    return;
+}
+
 void
 RPCHooks::rpc_doAdd(FRT_RPCRequest *req)
 {
+    if (useNewLogic()) {
+        return new_doAdd(req);
+    }
     FRT_Values &args   = *req->GetParams();
     const char *rname  = args[0]._string._str;
     const char *dname  = args[1]._string._str;
@@ -386,6 +477,28 @@ RPCHooks::rpc_doAdd(FRT_RPCRequest *req)
     return;
 }
 
+void RPCHooks::new_doAdd(FRT_RPCRequest *req) {
+    FRT_Values &args   = *req->GetParams();
+    const char *remsb  = args[0]._string._str;
+    const char *dName  = args[1]._string._str;
+    const char *dSpec  = args[2]._string._str;
+    FRT_Values &retval = *req->GetReturn();
+    ServiceMapping mapping{dName, dSpec};
+    bool ok = true;
+    if (_env.consensusMap().wouldConflict(mapping)) {
+        retval.AddInt32(13);
+        retval.AddString("conflict detected");
+        req->SetError(FRTE_RPC_METHOD_FAILED, "conflict detected");
+        ok = false;
+    } else {
+        retval.AddInt32(0);
+        retval.AddString("ok");
+    }
+    LOG(debug, "%s->doAdd(%s,%s) %s",
+        remsb, dName, dSpec, ok ? "OK" : "failed");
+    _cnts.doAddReqs++;
+    return;
+}
 
 void
 RPCHooks::rpc_lookupRpcServer(FRT_RPCRequest *req)
@@ -455,6 +568,7 @@ RPCHooks::rpc_lookupManaged(FRT_RPCRequest *req)
     FRT_Values &args = *req->GetParams();
     const char *name = args[0]._string._str;
     LOG(debug, "RPC: lookupManaged(%s)", name);
+    // TODO: use local history here
     const auto & visible = _env.globalHistory();
     auto diff = visible.makeDiffFrom(0);
     for (const auto & entry : diff.updated) {

@@ -5,7 +5,7 @@
 #include <vespa/document/test/make_bucket_space.h>
 #include <vespa/document/test/make_document_bucket.h>
 #include <vespa/storage/distributor/bucket_spaces_stats_provider.h>
-#include <vespa/storage/distributor/distributor.h>
+#include <vespa/storage/distributor/top_level_distributor.h>
 #include <vespa/storage/distributor/distributor_bucket_space.h>
 #include <vespa/storage/distributor/distributor_stripe.h>
 #include <vespa/storageapi/message/bucketsplitting.h>
@@ -369,6 +369,25 @@ TEST_F(DistributorStripeTest, priority_config_is_propagated_to_distributor_confi
     EXPECT_EQ(10, static_cast<int>(mp.splitInconsistentBucket));
     EXPECT_EQ(11, static_cast<int>(mp.garbageCollection));
     EXPECT_EQ(12, static_cast<int>(mp.mergeGlobalBuckets));
+}
+
+TEST_F(DistributorStripeTest, no_db_resurrection_for_bucket_not_owned_in_pending_state) {
+    setup_stripe(Redundancy(1), NodeCount(10), "storage:2 distributor:2");
+    // Force new state into being the pending state. According to the initial
+    // state we own the bucket, but according to the pending state, we do
+    // not. This must be handled correctly by the database update code.
+    simulate_set_pending_cluster_state("storage:10 distributor:10");
+
+    document::BucketId nonOwnedBucket(16, 3);
+    EXPECT_FALSE(getDistributorBucketSpace().get_bucket_ownership_flags(nonOwnedBucket).owned_in_pending_state());
+    EXPECT_FALSE(getDistributorBucketSpace().check_ownership_in_pending_and_current_state(nonOwnedBucket).isOwned());
+
+    std::vector<BucketCopy> copies;
+    copies.emplace_back(1234, 0, api::BucketInfo(0x567, 1, 2));
+    operation_context().update_bucket_database(makeDocumentBucket(nonOwnedBucket), copies,
+                                               DatabaseUpdate::CREATE_IF_NONEXISTING);
+
+    EXPECT_EQ("NONEXISTING", dumpBucket(nonOwnedBucket));
 }
 
 TEST_F(DistributorStripeTest, added_db_buckets_without_gc_timestamp_implicitly_get_current_time)
@@ -851,7 +870,7 @@ DistributorStripeTest::set_up_and_start_get_op_with_stale_reads_enabled(bool ena
     _stripe->handle_or_enqueue_message(make_dummy_get_command_for_bucket_1());
 }
 
-TEST_F(DistributorStripeTest, gets_are_started_outside_main_distributor_logic_if_stale_reads_enabled)
+TEST_F(DistributorStripeTest, gets_are_started_outside_main_stripe_logic_if_stale_reads_enabled)
 {
     set_up_and_start_get_op_with_stale_reads_enabled(true);
     ASSERT_THAT(_sender.commands(), SizeIs(1));
@@ -864,7 +883,7 @@ TEST_F(DistributorStripeTest, gets_are_started_outside_main_distributor_logic_if
     EXPECT_THAT(_sender.replies(), SizeIs(1));
 }
 
-TEST_F(DistributorStripeTest, gets_are_not_started_outside_main_distributor_logic_if_stale_reads_disabled)
+TEST_F(DistributorStripeTest, gets_are_not_started_outside_main_stripe_logic_if_stale_reads_disabled)
 {
     set_up_and_start_get_op_with_stale_reads_enabled(false);
     // Get has been placed into distributor queue, so no external messages are produced.
@@ -875,7 +894,7 @@ TEST_F(DistributorStripeTest, gets_are_not_started_outside_main_distributor_logi
 // There's no need or desire to track "lockfree" Gets in the main pending message tracker,
 // as we only have to track mutations to inhibit maintenance ops safely. Furthermore,
 // the message tracker is a multi-index and therefore has some runtime cost.
-TEST_F(DistributorStripeTest, gets_started_outside_main_thread_are_not_tracked_by_main_pending_message_tracker)
+TEST_F(DistributorStripeTest, gets_started_outside_stripe_thread_are_not_tracked_by_pending_message_tracker)
 {
     set_up_and_start_get_op_with_stale_reads_enabled(true);
     Bucket bucket(FixedBucketSpaces::default_space(), BucketId(16, 1));
@@ -883,7 +902,7 @@ TEST_F(DistributorStripeTest, gets_started_outside_main_thread_are_not_tracked_b
             0, bucket, api::MessageType::GET_ID));
 }
 
-TEST_F(DistributorStripeTest, closing_aborts_gets_started_outside_main_distributor_thread)
+TEST_F(DistributorStripeTest, closing_aborts_gets_started_outside_stripe_thread)
 {
     set_up_and_start_get_op_with_stale_reads_enabled(true);
     _stripe->flush_and_close();

@@ -18,12 +18,14 @@ import com.yahoo.vespa.hosted.controller.api.identifiers.ApplicationId;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * @author bjorncs
@@ -145,8 +147,18 @@ public class ZmsClientMock implements ZmsClient {
     }
 
     @Override
-    public void addPolicyRule(AthenzDomain athenzDomain, String athenzPolicy, String action, AthenzResourceName resourceName, AthenzRole athenzRole) {
+    public void createPolicy(AthenzDomain athenzDomain, String athenzPolicy) {
+        List<AthenzDbMock.Policy> policies = athenz.getOrCreateDomain(athenzDomain).policies;
+        if (policies.stream().anyMatch(p -> p.name().equals(athenzPolicy))) {
+            throw new IllegalArgumentException("Policy already exists");
+        }
 
+        // Policy will be created in the mock when an assertion is added
+    }
+
+    @Override
+    public void addPolicyRule(AthenzDomain athenzDomain, String athenzPolicy, String action, AthenzResourceName resourceName, AthenzRole athenzRole) {
+        athenz.getOrCreateDomain(athenzDomain).policies.add(new AthenzDbMock.Policy(athenzPolicy, athenzRole.roleName(), action, resourceName.toResourceNameString()));
     }
 
     @Override
@@ -155,8 +167,8 @@ public class ZmsClientMock implements ZmsClient {
     }
 
     @Override
-    public List<AthenzUser> listPendingRoleApprovals(AthenzRole athenzRole) {
-        return List.of();
+    public Map<AthenzUser,String> listPendingRoleApprovals(AthenzRole athenzRole) {
+        return Map.of();
     }
 
     @Override
@@ -170,15 +182,42 @@ public class ZmsClientMock implements ZmsClient {
 
     @Override
     public List<AthenzService> listServices(AthenzDomain athenzDomain) {
-        return List.of();
+        return athenz.getOrCreateDomain(athenzDomain).services.keySet().stream()
+                .map(serviceName -> new AthenzService(athenzDomain, serviceName))
+                .collect(Collectors.toList());
     }
 
     @Override
     public void createOrUpdateService(AthenzService athenzService) {
+        athenz.getOrCreateDomain(athenzService.getDomain()).services.put(athenzService.getName(), new AthenzDbMock.Service(false));
     }
 
     @Override
     public void deleteService(AthenzService athenzService) {
+        athenz.getOrCreateDomain(athenzService.getDomain()).services.remove(athenzService.getName());
+    }
+
+    @Override
+    public void createRole(AthenzRole role, Map<String, Object> properties) {
+        List<AthenzDbMock.Role> roles = athenz.getOrCreateDomain(role.domain()).roles;
+        if (roles.stream().anyMatch(r -> r.name().equals(role.roleName()))) {
+            throw new IllegalArgumentException("Role already exists");
+        }
+        roles.add(new AthenzDbMock.Role(role.roleName()));
+    }
+
+    @Override
+    public Set<AthenzRole> listRoles(AthenzDomain domain) {
+        return athenz.getOrCreateDomain(domain).roles.stream()
+                .map(role -> new AthenzRole(domain, role.name()))
+                .collect(Collectors.toSet());
+    }
+
+    @Override
+    public Set<String> listPolicies(AthenzDomain domain) {
+        return athenz.getOrCreateDomain(domain).policies.stream()
+                .map(AthenzDbMock.Policy::name)
+                .collect(Collectors.toSet());
     }
 
     @Override
@@ -218,7 +257,7 @@ public class ZmsClientMock implements ZmsClient {
     }
 
     private static void log(String format, Object... args) {
-        log.log(Level.INFO, String.format(format, args));
+        log.log(Level.FINE, String.format(format, args));
     }
 
 }

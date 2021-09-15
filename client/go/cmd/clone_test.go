@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/vespa-engine/vespa/util"
+	"github.com/vespa-engine/vespa/client/go/util"
 )
 
 func TestClone(t *testing.T) {
@@ -27,7 +27,6 @@ func assertCreated(sampleAppName string, app string, t *testing.T) {
 	assert.True(t, util.IsDirectory(filepath.Join(app, "src", "main", "application")))
 
 	servicesStat, _ := os.Stat(filepath.Join(app, "src", "main", "application", "services.xml"))
-	var servicesSize int64
-	servicesSize = 2474
+	servicesSize := int64(2474)
 	assert.Equal(t, servicesSize, servicesStat.Size())
 }

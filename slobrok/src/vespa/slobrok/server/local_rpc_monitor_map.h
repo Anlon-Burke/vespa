@@ -8,6 +8,7 @@
 #include "mapping_monitor.h"
 #include "named_service.h"
 #include "proxy_map_source.h"
+#include "request_completion_handler.h"
 #include "service_map_history.h"
 #include "service_mapping.h"
 
@@ -66,12 +67,12 @@ private:
     struct PerService {
         bool up;
         bool localOnly;
-        std::unique_ptr<ScriptCommand> inflight;
+        std::unique_ptr<CompletionHandler> inflight;
         vespalib::string spec;
     };
 
     PerService localService(const ServiceMapping &mapping,
-                            std::unique_ptr<ScriptCommand> inflight)
+                            std::unique_ptr<CompletionHandler> inflight)
     {
         return PerService{
             .up = false,
@@ -103,28 +104,33 @@ private:
 
     PerService & lookup(const ServiceMapping &mapping);
 
-    void addToMap(const ServiceMapping &mapping, PerService psd);
+    void addToMap(const ServiceMapping &mapping, PerService psd, bool hurry);
 
     struct RemovedData {
         ServiceMapping mapping;
         bool up;
         bool localOnly;
-        std::unique_ptr<ScriptCommand> inflight;
+        std::unique_ptr<CompletionHandler> inflight;
     };
 
     RemovedData removeFromMap(Map::iterator iter);
 
 public:
-    LocalRpcMonitorMap(FRT_Supervisor &supervisor,
+    LocalRpcMonitorMap(FNET_Scheduler *scheduler,
                        MappingMonitorFactory mappingMonitorFactory);
     ~LocalRpcMonitorMap();
 
     MapSource &dispatcher() { return _dispatcher; }
     ServiceMapHistory & history();
 
+    bool wouldConflict(const ServiceMapping &mapping) const;
+
     /** for use by register API, will call doneHandler() on inflight script */
     void addLocal(const ServiceMapping &mapping,
-                  std::unique_ptr<ScriptCommand> inflight);
+                  std::unique_ptr<CompletionHandler> inflight);
+
+    /** for use by unregister API */
+    void removeLocal(const ServiceMapping &mapping);
 
     void add(const ServiceMapping &mapping) override;
     void remove(const ServiceMapping &mapping) override;

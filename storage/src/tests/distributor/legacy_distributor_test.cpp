@@ -12,7 +12,7 @@
 #include <vespa/document/test/make_document_bucket.h>
 #include <vespa/document/test/make_bucket_space.h>
 #include <vespa/storage/config/config-stor-distributormanager.h>
-#include <vespa/storage/distributor/distributor.h>
+#include <vespa/storage/distributor/top_level_distributor.h>
 #include <vespa/storage/distributor/distributor_stripe.h>
 #include <vespa/storage/distributor/distributor_status.h>
 #include <vespa/storage/distributor/distributor_bucket_space.h>
@@ -157,7 +157,7 @@ struct LegacyDistributorTest : Test, DistributorTestUtil {
         return _distributor->_stripe->_statusToDo;
     }
 
-    Distributor::MetricUpdateHook distributor_metric_update_hook() {
+    TopLevelDistributor::MetricUpdateHook distributor_metric_update_hook() {
         return _distributor->_metricUpdateHook;
     }
 
@@ -280,7 +280,7 @@ TEST_F(LegacyDistributorTest, operations_generated_and_started_without_duplicate
 
 
 // Migrated to DistributorStripeTest
-// TODO STRIPE also need to impl/test cross-stripe cluster state changes
+// Migrated to TopLevelDistributorTest
 TEST_F(LegacyDistributorTest, recovery_mode_on_cluster_state_change) {
     setupDistributor(Redundancy(1), NodeCount(2),
                      "storage:1 .0.s:d distributor:1");
@@ -299,6 +299,15 @@ TEST_F(LegacyDistributorTest, recovery_mode_on_cluster_state_change) {
 
     enableDistributorClusterState("storage:2 distributor:1");
     EXPECT_TRUE(distributor_is_in_recovery_mode());
+}
+
+TEST_F(LegacyDistributorTest, distributor_considered_initialized_once_self_observed_up) {
+    setupDistributor(Redundancy(1), NodeCount(2), "distributor:1 .0.s:d storage:1"); // We're down D:
+    EXPECT_FALSE(_distributor->done_initializing());
+    enableDistributorClusterState("distributor:1 storage:1"); // We're up :D
+    EXPECT_TRUE(_distributor->done_initializing());
+    enableDistributorClusterState("distributor:1 .0.s:d storage:1"); // And down again :I but that does not change init state
+    EXPECT_TRUE(_distributor->done_initializing());
 }
 
 // Migrated to DistributorStripeTest
@@ -334,7 +343,7 @@ TEST_F(LegacyDistributorTest, handle_unknown_maintenance_reply) {
     }
 }
 
-// TODO STRIPE -> generic, non distr/stripe test
+// Migrated to TopLevelDistributorTest
 TEST_F(LegacyDistributorTest, contains_time_statement) {
     setupDistributor(Redundancy(1), NodeCount(1), "storage:1 distributor:1");
 
@@ -416,8 +425,7 @@ public:
 
 }
 
-// TODO STRIPE -> stripe test
-// TODO STRIPE need to impl/test cross-stripe status requests
+// Migrated to TopLevelDistributorTest
 TEST_F(LegacyDistributorTest, tick_processes_status_requests) {
     setupDistributor(Redundancy(1), NodeCount(1), "storage:1 distributor:1");
 
@@ -446,8 +454,7 @@ TEST_F(LegacyDistributorTest, tick_processes_status_requests) {
     EXPECT_THAT(thread.getResult(), HasSubstr("BucketId(0x4000000000000001)"));
 }
 
-// TODO STRIPE -> distributor test since it owns metric hook
-// TODO STRIPE need to impl/test cross-stripe metrics aggregation
+// Migrated to TopLevelDistributorTest
 TEST_F(LegacyDistributorTest, metric_update_hook_updates_pending_maintenance_metrics) {
     setupDistributor(Redundancy(2), NodeCount(2), "storage:2 distributor:1");
     // To ensure we count all operations, not just those fitting within the
@@ -494,7 +501,7 @@ TEST_F(LegacyDistributorTest, metric_update_hook_updates_pending_maintenance_met
     }
 }
 
-// TODO STRIPE -> distributor test since it uses the distributor metric update hook
+// Migrated to TopLevelDistributorTest
 TEST_F(LegacyDistributorTest, bucket_db_memory_usage_metrics_only_updated_at_fixed_time_intervals) {
     getClock().setAbsoluteTimeInSeconds(1000);
 
@@ -569,8 +576,8 @@ TEST_F(LegacyDistributorTest, priority_config_is_propagated_to_distributor_confi
     EXPECT_EQ(12, static_cast<int>(mp.mergeGlobalBuckets));
 }
 
-// TODO STRIPE -> stripe test (that sets pending cluster state directly)
-// TODO STRIPE -> distributor test (that uses top-level BucketDBUpdater::onSetSystemState)
+// Migrated to DistributorStripeTest
+// Explicit cluster state edge test added in TopLevelDistributorTest::cluster_state_lifecycle_is_propagated_to_stripes
 TEST_F(LegacyDistributorTest, no_db_resurrection_for_bucket_not_owned_in_pending_state) {
     setupDistributor(Redundancy(1), NodeCount(10), "storage:2 distributor:2");
     lib::ClusterState newState("storage:10 distributor:10");
@@ -703,7 +710,7 @@ TEST_F(LegacyDistributorTest, stats_generated_for_preempted_operations) {
     }
 }
 
-// TODO STRIPE -> distributor test
+// Migrated to TopLevelDistributorTest
 TEST_F(LegacyDistributorTest, host_info_reporter_config_is_propagated_to_reporter) {
     setupDistributor(Redundancy(2), NodeCount(2), "storage:2 distributor:1");
 
@@ -832,10 +839,7 @@ void LegacyDistributorTest::assertNoMessageBounced() {
     ASSERT_EQ(0, _sender.replies().size());
 }
 
-// TODO refactor this to set proper highest timestamp as part of bucket info
-// reply once we have the "highest timestamp across all owned buckets" feature
-// in place.
-// TODO STRIPE where does this truly belong?
+// Migrated to TopLevelDistributorTest
 TEST_F(LegacyDistributorTest, configured_safe_time_point_rejection_works_end_to_end) {
     setupDistributor(Redundancy(2), NodeCount(2),
                      "bits:1 storage:1 distributor:2");
@@ -1023,8 +1027,7 @@ void assert_invalid_stats_for_all_spaces(
 }
 
 // Migrated to DistributorStripeTest
-// TODO STRIPE must impl/test cross-stripe bucket space stats
-// TODO STRIPE cross-stripe recovery mode handling how?
+// Cross-stripe bucket stats test added in TopLevelDistributorTest::entering_recovery_mode_resets_bucket_space_stats_across_all_stripes
 TEST_F(LegacyDistributorTest, entering_recovery_mode_resets_bucket_space_stats) {
     // Set up a cluster state + DB contents which implies merge maintenance ops
     setupDistributor(Redundancy(2), NodeCount(2), "version:1 distributor:1 storage:2");
@@ -1046,7 +1049,7 @@ TEST_F(LegacyDistributorTest, entering_recovery_mode_resets_bucket_space_stats) 
     assert_invalid_stats_for_all_spaces(stats, 2);
 }
 
-// TODO: migrate to TopLevelDistributorTest
+// Migrated to TopLevelDistributorTest
 TEST_F(LegacyDistributorTest, leaving_recovery_mode_immediately_sends_getnodestate_replies) {
     setupDistributor(Redundancy(2), NodeCount(2), "version:1 distributor:1 storage:2");
     // Should not send explicit replies during init stage
@@ -1262,7 +1265,7 @@ TEST_F(LegacyDistributorTest, wanted_split_bit_count_is_lower_bounded) {
     EXPECT_EQ(getConfig().getMinimalBucketSplit(), 8);
 }
 
-// TODO: migrate to TopLevelDistributorTest
+// Migrated to TopLevelDistributorTest
 TEST_F(LegacyDistributorTest, host_info_sent_immediately_once_all_stripes_first_reported) {
     set_num_distributor_stripes(4);
     createLinks();
@@ -1291,7 +1294,7 @@ TEST_F(LegacyDistributorTest, host_info_sent_immediately_once_all_stripes_first_
     EXPECT_EQ(1, explicit_node_state_reply_send_invocations());
 }
 
-// TODO: migrate to TopLevelDistributorTest
+// Migrated to TopLevelDistributorTest
 TEST_F(LegacyDistributorTest, non_bootstrap_host_info_send_request_delays_sending) {
     set_num_distributor_stripes(4);
     createLinks();

@@ -10,6 +10,26 @@ namespace slobrok {
 
 #pragma GCC diagnostic ignored "-Winline"
 
+namespace {
+
+struct ChainedCompletionHandler : CompletionHandler {
+    std::unique_ptr<CompletionHandler> first;
+    std::unique_ptr<CompletionHandler> second;
+
+    ChainedCompletionHandler(std::unique_ptr<CompletionHandler> f,
+                                     std::unique_ptr<CompletionHandler> s)
+        : first(std::move(f)), second(std::move(s))
+    {}
+
+    void doneHandler(OkState result) override {
+        first->doneHandler(result);
+        second->doneHandler(result);
+    }
+    ~ChainedCompletionHandler() override {}
+};
+
+}
+
 void LocalRpcMonitorMap::DelayedTasks::PerformTask() {
     std::vector<Event> todo;
     std::swap(todo, _queue);
@@ -25,9 +45,9 @@ void LocalRpcMonitorMap::DelayedTasks::PerformTask() {
     }
 }
 
-LocalRpcMonitorMap::LocalRpcMonitorMap(FRT_Supervisor &supervisor,
+LocalRpcMonitorMap::LocalRpcMonitorMap(FNET_Scheduler *scheduler,
                                        MappingMonitorFactory mappingMonitorFactory)
-  : _delayedTasks(supervisor.GetScheduler(), *this),
+  : _delayedTasks(scheduler, *this),
     _map(),
     _dispatcher(),
     _history(),
@@ -56,11 +76,11 @@ LocalRpcMonitorMap::lookup(const ServiceMapping &mapping) {
     return psd;
 }
 
-void LocalRpcMonitorMap::addToMap(const ServiceMapping &mapping, PerService psd) {
+void LocalRpcMonitorMap::addToMap(const ServiceMapping &mapping, PerService psd, bool hurry) {
     auto [ iter, was_inserted ] =
         _map.try_emplace(mapping.name, std::move(psd));
     LOG_ASSERT(was_inserted);
-    _mappingMonitor->start(mapping);
+    _mappingMonitor->start(mapping, hurry);
 }
 
 LocalRpcMonitorMap::RemovedData
@@ -82,18 +102,37 @@ ServiceMapHistory & LocalRpcMonitorMap::history() {
     return _history;
 }
 
+bool LocalRpcMonitorMap::wouldConflict(const ServiceMapping &mapping) const {
+    auto iter = _map.find(mapping.name);
+    if (iter == _map.end()) {
+        return false; // no mapping, no conflict
+    }
+    return (iter->second.spec != mapping.spec);
+}
+
 void LocalRpcMonitorMap::addLocal(const ServiceMapping &mapping,
-                                  std::unique_ptr<ScriptCommand> inflight)
+                                  std::unique_ptr<CompletionHandler> inflight)
 {
     LOG(debug, "try local add: mapping %s->%s",
         mapping.name.c_str(), mapping.spec.c_str());
     auto old = _map.find(mapping.name);
     if (old != _map.end()) {
-        const PerService & exists = old->second;
+        PerService & exists = old->second;
         if (exists.spec == mapping.spec) {
             LOG(debug, "added mapping %s->%s was already present",
                 mapping.name.c_str(), mapping.spec.c_str());
-            inflight->doneHandler(OkState(0, "already registered"));
+            if (exists.up) {
+                inflight->doneHandler(OkState(0, "already registered"));
+            } else if (exists.inflight) {
+                auto newInflight = std::make_unique<ChainedCompletionHandler>(
+                    std::move(exists.inflight),
+                    std::move(inflight));
+                exists.inflight = std::move(newInflight);
+            } else {
+                _mappingMonitor->stop(mapping);
+                exists.inflight = std::move(inflight);
+                _mappingMonitor->start(mapping, true);
+            }
             return;
         }
         LOG(warning, "tried addLocal for mapping %s->%s, but already had conflicting mapping %s->%s",
@@ -102,7 +141,44 @@ void LocalRpcMonitorMap::addLocal(const ServiceMapping &mapping,
         inflight->doneHandler(OkState(FRTE_RPC_METHOD_FAILED, "conflict"));
         return;
     }
-    addToMap(mapping, localService(mapping, std::move(inflight)));
+    addToMap(mapping, localService(mapping, std::move(inflight)), true);
+}
+
+void LocalRpcMonitorMap::removeLocal(const ServiceMapping &mapping) {
+    LOG(debug, "try local remove: mapping %s->%s",
+        mapping.name.c_str(), mapping.spec.c_str());
+    auto old = _map.find(mapping.name);
+    if (old == _map.end()) {
+        return; // already removed, OK
+    }
+    PerService & exists = old->second;
+    if (exists.spec != mapping.spec) {
+        LOG(warning, "tried removeLocal for mapping %s->%s, but already had conflicting mapping %s->%s",
+            mapping.name.c_str(), mapping.spec.c_str(),
+            mapping.name.c_str(), exists.spec.c_str());
+        return; // unregister for old, conflicting mapping
+    }
+    if (exists.localOnly) {
+        // we can just remove it
+        auto removed = removeFromMap(old);
+        if (removed.inflight) {
+            auto target = std::move(removed.inflight);
+            target->doneHandler(OkState(13, "removed during initialization"));
+        }
+        if (removed.up) {
+            _dispatcher.remove(removed.mapping);            
+        }
+        return;
+    }
+    // also exists in consensus map, so we can't just remove it
+    // instead, pretend it's down and delay next ping
+    _mappingMonitor->stop(mapping);
+    if (exists.up) {
+        exists.up = false;
+        _dispatcher.remove(mapping);            
+    }
+    _mappingMonitor->start(mapping, false);
+    return;
 }
 
 void LocalRpcMonitorMap::add(const ServiceMapping &mapping) {
@@ -137,7 +213,7 @@ void LocalRpcMonitorMap::doAdd(const ServiceMapping &mapping) {
             _dispatcher.remove(removed.mapping);
         }
     }
-    addToMap(mapping, globalService(mapping));
+    addToMap(mapping, globalService(mapping), false);
 }
 
 void LocalRpcMonitorMap::doRemove(const ServiceMapping &mapping) {

@@ -1,6 +1,7 @@
 // Copyright 2018 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.tensor.serialization;
 
+import com.yahoo.tensor.IndexedTensor;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
 import org.junit.Test;
@@ -67,6 +68,21 @@ public class JsonFormatTestCase {
     }
 
     @Test
+    public void testDisallowedEmptyDenseTensor() {
+        TensorType type = TensorType.fromSpec("tensor(x[3])");
+        assertDecodeFails(type, "{\"values\":[]}", "The 'values' array does not contain any values");
+        assertDecodeFails(type, "{\"values\":\"\"}", "The 'values' string does not contain any values");
+    }
+
+    @Test
+    public void testDisallowedEmptyMixedTensor() {
+        TensorType type = TensorType.fromSpec("tensor(x{},y[3])");
+        assertDecodeFails(type, "{\"blocks\":{ \"a\": [] } }", "The 'block' value array does not contain any values");
+        assertDecodeFails(type, "{\"blocks\":[ {\"address\":{\"x\":\"a\"}, \"values\": [] } ] }",
+                "The 'block' value array does not contain any values");
+    }
+
+    @Test
     public void testDenseTensorInDenseForm() {
         Tensor.Builder builder = Tensor.Builder.of(TensorType.fromSpec("tensor(x[2],y[3])"));
         builder.cell().label("x", 0).label("y", 0).value(2.0);
@@ -79,6 +95,30 @@ public class JsonFormatTestCase {
         String denseJson = "{\"values\":[2.0, 3.0, 4.0, 5.0, 6.0, 7.0]}";
         Tensor decoded = JsonFormat.decode(expected.type(), denseJson.getBytes(StandardCharsets.UTF_8));
         assertEquals(expected, decoded);
+    }
+
+    @Test
+    public void testDenseTensorShortForm() {
+        assertEncodeShortForm("tensor(x[]):[1.0, 2.0]",
+                              "{\"type\":\"tensor(x[])\",\"value\":[1.0,2.0]}");
+        assertEncodeShortForm("tensor<float>(x[]):[1.0, 2.0]",
+                              "{\"type\":\"tensor<float>(x[])\",\"value\":[1.0,2.0]}");
+        assertEncodeShortForm("tensor(x[],y[]):[[1,2,3,4]]",
+                              "{\"type\":\"tensor(x[],y[])\",\"value\":[[1.0,2.0,3.0,4.0]]}");
+        assertEncodeShortForm("tensor(x[],y[]):[[1,2],[3,4]]",
+                              "{\"type\":\"tensor(x[],y[])\",\"value\":[[1.0,2.0],[3.0,4.0]]}");
+        assertEncodeShortForm("tensor(x[],y[]):[[1],[2],[3],[4]]",
+                              "{\"type\":\"tensor(x[],y[])\",\"value\":[[1.0],[2.0],[3.0],[4.0]]}");
+        assertEncodeShortForm("tensor(x[],y[],z[]):[[[1,2],[3,4]]]",
+                              "{\"type\":\"tensor(x[],y[],z[])\",\"value\":[[[1.0,2.0],[3.0,4.0]]]}");
+        assertEncodeShortForm("tensor(x[],y[],z[]):[[[1],[2],[3],[4]]]",
+                              "{\"type\":\"tensor(x[],y[],z[])\",\"value\":[[[1.0],[2.0],[3.0],[4.0]]]}");
+        assertEncodeShortForm("tensor(x[],y[],z[]):[[[1,2,3,4]]]",
+                              "{\"type\":\"tensor(x[],y[],z[])\",\"value\":[[[1.0,2.0,3.0,4.0]]]}");
+        assertEncodeShortForm("tensor(x[],y[],z[]):[[[1]],[[2]],[[3]],[[4]]]",
+                              "{\"type\":\"tensor(x[],y[],z[])\",\"value\":[[[1.0]],[[2.0]],[[3.0]],[[4.0]]]}");
+        assertEncodeShortForm("tensor(x[],y[],z[2]):[[[1, 2]],[[3, 4]]]",
+                              "{\"type\":\"tensor(x[],y[],z[2])\",\"value\":[[[1.0,2.0]],[[3.0,4.0]]]}");
     }
 
     @Test
@@ -272,6 +312,20 @@ public class JsonFormatTestCase {
         assertEncodeDecode(Tensor.from("tensor<float>(x[2],y[2]):[2.0, 3.0, 5.0 ,8.0]"));
         assertEncodeDecode(Tensor.from("tensor<bfloat16>(x[2],y[2]):[2.0, 3.0, 5.0 ,8.0]"));
         assertEncodeDecode(Tensor.from("tensor<int8>(x[2],y[2]):[2,3,5,8]"));
+    }
+
+    private void assertEncodeShortForm(String tensor, String expected) {
+        byte[] json = JsonFormat.encodeShortForm((IndexedTensor) Tensor.from(tensor));
+        assertEquals(expected, new String(json, StandardCharsets.UTF_8));
+    }
+
+    private void assertDecodeFails(TensorType type, String format, String msg) {
+        try {
+            Tensor decoded = JsonFormat.decode(type, format.getBytes(StandardCharsets.UTF_8));
+            fail("Did not get exception as expected, decoded as: " + decoded);
+        } catch (IllegalArgumentException e) {
+            assertEquals(e.getMessage(), msg);
+        }
     }
 
 }

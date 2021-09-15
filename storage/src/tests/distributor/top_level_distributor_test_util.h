@@ -17,15 +17,19 @@ namespace framework { struct TickingThreadPool; }
 
 namespace distributor {
 
-class Distributor;
+class TopLevelDistributor;
+class DistributorBucketSpace;
+class DistributorBucketSpaceRepo;
+class DistributorMetricSet;
 class DistributorNodeContext;
 class DistributorStripe;
 class DistributorStripeComponent;
 class DistributorStripeOperationContext;
 class DistributorStripePool;
+class StripeAccessGuard;
 class IdealStateMetricSet;
 class Operation;
-class BucketDBUpdater;
+class TopLevelBucketDBUpdater;
 
 class TopLevelDistributorTestUtil : private DoneInitializeHandler
 {
@@ -37,8 +41,13 @@ public:
 
     void close();
 
-    size_t stripe_of_bucket(const document::BucketId& id) const noexcept;
-    size_t stripe_of_bucket(const document::Bucket& bucket) const noexcept;
+    size_t stripe_index_of_bucket(const document::BucketId& id) const noexcept;
+    size_t stripe_index_of_bucket(const document::Bucket& bucket) const noexcept;
+
+    DistributorStripe& stripe_of_bucket(const document::BucketId& id) noexcept;
+    const DistributorStripe& stripe_of_bucket(const document::BucketId& id) const noexcept;
+    DistributorStripe& stripe_of_bucket(const document::Bucket& bucket) noexcept;
+    const DistributorStripe& stripe_of_bucket(const document::Bucket& bucket) const noexcept;
 
     /**
      * Parses the given string to a set of node => bucket info data,
@@ -51,23 +60,43 @@ public:
     // As the above, but always inserts into default bucket space
     void add_nodes_to_stripe_bucket_db(const document::BucketId& id, const std::string& nodeStr);
 
-    BucketDBUpdater& bucket_db_updater();
+    // TODO STRIPE replace with BucketSpaceStateMap once legacy is gone
+    DistributorBucketSpaceRepo& top_level_bucket_space_repo() noexcept;
+    const DistributorBucketSpaceRepo& top_level_bucket_space_repo() const noexcept;
+
+    std::unique_ptr<StripeAccessGuard> acquire_stripe_guard();
+
+    TopLevelBucketDBUpdater& bucket_db_updater();
     const IdealStateMetricSet& total_ideal_state_metrics() const;
+    const DistributorMetricSet& total_distributor_metrics() const;
     const storage::distributor::DistributorNodeContext& node_context() const;
-    storage::distributor::DistributorStripeOperationContext& operation_context();
+
+    DistributorBucketSpace& distributor_bucket_space(const document::BucketId& id);
+    const DistributorBucketSpace& distributor_bucket_space(const document::BucketId& id) const;
 
     std::vector<DistributorStripe*> distributor_stripes() const;
 
-    bool tick();
+    bool tick(bool only_tick_top_level = false);
 
     const DistributorConfig& current_distributor_config() const;
     void reconfigure(const DistributorConfig&);
+
+    framework::defaultimplementation::FakeClock& fake_clock() noexcept {
+        return _node->getClock();
+    }
+
+    framework::MetricUpdateHook& distributor_metric_update_hook();
 
     BucketDatabase& stripe_bucket_database(uint16_t stripe_idx); // Implicit default space only
     BucketDatabase& stripe_bucket_database(uint16_t stripe_idx, document::BucketSpace space);
     const BucketDatabase& stripe_bucket_database(uint16_t stripe_idx) const; // Implicit default space only
     const BucketDatabase& stripe_bucket_database(uint16_t stripe_idx, document::BucketSpace space) const;
     [[nodiscard]] bool all_distributor_stripes_are_in_recovery_mode() const;
+
+    void tick_distributor_and_stripes_n_times(uint32_t n);
+    void tick_top_level_distributor_n_times(uint32_t n);
+
+    void complete_recovery_mode_on_all_stripes();
 
     void setup_distributor(int redundancy,
                            int node_count,
@@ -87,6 +116,17 @@ public:
     // Gets bucket entry from default space only
     BucketDatabase::Entry get_bucket(const document::BucketId& bId) const;
 
+    std::string get_ideal_str(document::BucketId id, const lib::ClusterState& state);
+
+    void add_ideal_nodes(const lib::ClusterState& state, const document::BucketId& id);
+    void add_ideal_nodes(const document::BucketId& id);
+
+    /**
+     * Returns a string with the nodes currently stored in the bucket
+     * database for the given bucket.
+     */
+    std::string get_nodes(document::BucketId id);
+
     DistributorMessageSenderStub& sender() noexcept { return _sender; }
     const DistributorMessageSenderStub& sender() const noexcept { return _sender; }
 
@@ -95,12 +135,18 @@ public:
     void receive_set_system_state_command(const vespalib::string& state_str);
     bool handle_top_level_message(const std::shared_ptr<api::StorageMessage>& msg);
 
+    void trigger_distribution_change(std::shared_ptr<lib::Distribution> distr);
+
+    const lib::ClusterStateBundle& current_cluster_state_bundle() const;
+
+    static std::vector<document::BucketSpace> bucket_spaces();
+
 protected:
     vdstestlib::DirConfig _config;
     std::unique_ptr<TestDistributorApp> _node;
     std::unique_ptr<framework::TickingThreadPool> _thread_pool;
     std::unique_ptr<DistributorStripePool> _stripe_pool;
-    std::unique_ptr<Distributor> _distributor;
+    std::unique_ptr<TopLevelDistributor> _distributor;
     std::unique_ptr<storage::DistributorComponent> _component;
     DistributorMessageSenderStub _sender;
     DistributorMessageSenderStub _sender_down;
@@ -122,7 +168,7 @@ protected:
     MessageSenderImpl _message_sender;
     uint32_t _num_distributor_stripes;
 
-    void enable_distributor_cluster_state(vespalib::stringref state);
+    void enable_distributor_cluster_state(vespalib::stringref state, bool has_bucket_ownership_transfer = false);
     void enable_distributor_cluster_state(const lib::ClusterStateBundle& state);
 };
 

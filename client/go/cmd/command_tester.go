@@ -6,21 +6,30 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/tls"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/logrusorgru/aurora"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
-	"github.com/vespa-engine/vespa/util"
+	"github.com/vespa-engine/vespa/client/go/util"
 )
 
-func executeCommand(t *testing.T, client *mockHttpClient, args []string, moreArgs []string) string {
+type command struct {
+	homeDir  string
+	args     []string
+	moreArgs []string
+}
+
+func execute(cmd command, t *testing.T, client *mockHttpClient) string {
 	if client != nil {
 		util.ActiveHttpClient = client
 	}
@@ -28,48 +37,82 @@ func executeCommand(t *testing.T, client *mockHttpClient, args []string, moreArg
 	// Never print colors in tests
 	color = aurora.NewAurora(false)
 
-	// Use a separate config dir for each test
-	os.Setenv("VESPA_CLI_HOME", t.TempDir())
-	if len(args) > 0 && args[0] != "config" {
-		viper.Reset() // Reset config unless we're testing the config sub-command
+	// Set config dir. Use a separate one per test if none is specified
+	if cmd.homeDir == "" {
+		cmd.homeDir = t.TempDir()
+		viper.Reset()
 	}
+	os.Setenv("VESPA_CLI_HOME", filepath.Join(cmd.homeDir, ".vespa"))
 
-	// Reset to default target - persistent flags in Cobra persists over tests
-	log.SetOutput(bytes.NewBufferString(""))
-	rootCmd.SetArgs([]string{"status", "-t", "local"})
-	rootCmd.Execute()
+	// Reset flags to their default value - persistent flags in Cobra persists over tests
+	rootCmd.Flags().VisitAll(func(f *pflag.Flag) {
+		switch v := f.Value.(type) {
+		case pflag.SliceValue:
+			_ = v.Replace([]string{})
+		default:
+			switch v.Type() {
+			case "bool", "string", "int":
+				_ = v.Set(f.DefValue)
+			}
+		}
+	})
+
+	// Do not exit in tests
+	exitFunc = func(code int) {}
 
 	// Capture stdout and execute command
-	b := bytes.NewBufferString("")
-	log.SetOutput(b)
-	rootCmd.SetArgs(append(args, moreArgs...))
+	var b bytes.Buffer
+	log.SetOutput(&b)
+	rootCmd.SetArgs(append(cmd.args, cmd.moreArgs...))
 	rootCmd.Execute()
-	out, err := ioutil.ReadAll(b)
-	assert.Empty(t, err, "No error")
+	out, err := ioutil.ReadAll(&b)
+	assert.Nil(t, err, "No error")
 	return string(out)
 }
 
-type mockHttpClient struct {
-	// The HTTP status code that will be returned from the next invocation. Default: 200
-	nextStatus int
+func executeCommand(t *testing.T, client *mockHttpClient, args []string, moreArgs []string) string {
+	return execute(command{args: args, moreArgs: moreArgs}, t, client)
+}
 
-	// The response body code that will be returned from the next invocation. Default: ""
-	nextBody string
+type mockHttpClient struct {
+	// The responses to return for future requests. Once a response is consumed, it's removed from this array
+	nextResponses []mockResponse
 
 	// A recording of the last HTTP request made through this
 	lastRequest *http.Request
+
+	// All requests made through this
+	requests []*http.Request
 }
 
-func (c *mockHttpClient) Do(request *http.Request, timeout time.Duration) (response *http.Response, error error) {
-	if c.nextStatus == 0 {
-		c.nextStatus = 200
+type mockResponse struct {
+	status int
+	body   string
+}
+
+func (c *mockHttpClient) NextStatus(status int) { c.NextResponse(status, "") }
+
+func (c *mockHttpClient) NextResponse(status int, body string) {
+	c.nextResponses = append(c.nextResponses, mockResponse{status: status, body: body})
+}
+
+func (c *mockHttpClient) Do(request *http.Request, timeout time.Duration) (*http.Response, error) {
+	response := mockResponse{status: 200}
+	if len(c.nextResponses) > 0 {
+		response = c.nextResponses[0]
+		c.nextResponses = c.nextResponses[1:]
 	}
 	c.lastRequest = request
+	c.requests = append(c.requests, request)
 	return &http.Response{
-			Status:     "Status " + strconv.Itoa(c.nextStatus),
-			StatusCode: c.nextStatus,
-			Body:       ioutil.NopCloser(bytes.NewBufferString(c.nextBody)),
+			Status:     "Status " + strconv.Itoa(response.status),
+			StatusCode: response.status,
+			Body:       ioutil.NopCloser(bytes.NewBufferString(response.body)),
 			Header:     make(http.Header),
 		},
 		nil
 }
+
+func (c *mockHttpClient) UseCertificate(certificate tls.Certificate) {}
+
+func convergeServices(client *mockHttpClient) { client.NextResponse(200, `{"converged":true}`) }

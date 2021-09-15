@@ -17,6 +17,7 @@
 #include <vespa/searchlib/tensor/hnsw_index.h>
 #include <vespa/searchlib/tensor/nearest_neighbor_index.h>
 #include <vespa/searchlib/tensor/nearest_neighbor_index_factory.h>
+#include <vespa/searchlib/tensor/nearest_neighbor_index_loader.h>
 #include <vespa/searchlib/tensor/nearest_neighbor_index_saver.h>
 #include <vespa/searchlib/tensor/serialized_fast_value_attribute.h>
 #include <vespa/searchlib/tensor/tensor_attribute.h>
@@ -51,6 +52,7 @@ using search::tensor::HnswIndex;
 using search::tensor::HnswNode;
 using search::tensor::NearestNeighborIndex;
 using search::tensor::NearestNeighborIndexFactory;
+using search::tensor::NearestNeighborIndexLoader;
 using search::tensor::NearestNeighborIndexSaver;
 using search::tensor::PrepareResult;
 using search::tensor::TensorAttribute;
@@ -86,6 +88,22 @@ public:
     void save(search::BufferWriter& writer) const override {
         writer.write(&_index_value, sizeof(int));
         writer.flush();
+    }
+};
+
+class MockIndexLoader : public NearestNeighborIndexLoader {
+private:
+    int& _index_value;
+    search::FileReader<int> _reader;
+
+public:
+    MockIndexLoader(int& index_value, FastOS_FileInterface& file)
+        : _index_value(index_value),
+          _reader(file)
+    {}
+    bool load_next() override {
+        _index_value = _reader.readHostOrder();
+        return false;
     }
 };
 
@@ -220,10 +238,8 @@ public:
         }
         return std::unique_ptr<NearestNeighborIndexSaver>();
     }
-    bool load(const search::fileutil::LoadedBuffer& buf) override {
-        ASSERT_EQUAL(sizeof(int), buf.size());
-        _index_value = (reinterpret_cast<const int*>(buf.buffer()))[0];
-        return true;
+    std::unique_ptr<NearestNeighborIndexLoader> make_loader(FastOS_FileInterface& file) override {
+        return std::make_unique<MockIndexLoader>(_index_value, file);
     }
     std::vector<Neighbor> find_top_k(uint32_t k, vespalib::eval::TypedCells vector, uint32_t explore_k,
                                      double distance_threshold) const override

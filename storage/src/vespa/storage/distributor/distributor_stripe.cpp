@@ -43,6 +43,7 @@ DistributorStripe::DistributorStripe(DistributorComponentRegister& compReg,
                                      ChainedMessageSender& messageSender,
                                      StripeHostInfoNotifier& stripe_host_info_notifier,
                                      bool use_legacy_mode,
+                                     bool& done_initializing_ref,
                                      uint32_t stripe_index)
     : DistributorStripeInterface(),
       framework::StatusReporter("distributor", "Distributor"),
@@ -55,7 +56,7 @@ DistributorStripe::DistributorStripe(DistributorComponentRegister& compReg,
       _operationOwner(*this, _component.getClock()),
       _maintenanceOperationOwner(*this, _component.getClock()),
       _operation_sequencer(std::make_unique<OperationSequencer>()),
-      _pendingMessageTracker(compReg),
+      _pendingMessageTracker(compReg, stripe_index),
       _bucketDBUpdater(_component, _component, *this, *this, use_legacy_mode),
       _distributorStatusDelegate(compReg, *this, *this),
       _bucketDBStatusDelegate(compReg, *this, _bucketDBUpdater),
@@ -68,7 +69,7 @@ DistributorStripe::DistributorStripe(DistributorComponentRegister& compReg,
       _external_message_mutex(),
       _threadPool(threadPool),
       _doneInitializeHandler(doneInitHandler),
-      _doneInitializing(false),
+      _done_initializing_ref(done_initializing_ref),
       _bucketPriorityDb(std::make_unique<SimpleBucketPriorityDatabase>()),
       _scanner(std::make_unique<SimpleMaintenanceScanner>(*_bucketPriorityDb, _idealStateManager, *_bucketSpaceRepo)),
       _throttlingStarter(std::make_unique<ThrottlingOperationStarter>(_maintenanceOperationOwner)),
@@ -299,8 +300,8 @@ DistributorStripe::enableClusterStateBundle(const lib::ClusterStateBundle& state
     propagateClusterStates();
 
     const auto& baseline_state = *state.getBaselineClusterState();
-    if (!_doneInitializing && (baseline_state.getNodeState(my_node).getState() == lib::State::UP)) {
-        _doneInitializing = true;
+    if (_use_legacy_mode && !_done_initializing_ref && (baseline_state.getNodeState(my_node).getState() == lib::State::UP)) {
+        _done_initializing_ref = true; // TODO STRIPE remove; responsibility moved to TopLevelDistributor in non-legacy
         _doneInitializeHandler.notifyDoneInitializing();
     }
     enterRecoveryMode();
@@ -320,7 +321,8 @@ DistributorStripe::enableClusterStateBundle(const lib::ClusterStateBundle& state
         }
     }
 
-    if (_bucketDBUpdater.bucketOwnershipHasChanged()) {
+    // TODO STRIPE remove when legacy is gone; the stripe bucket DB updater does not have this info!
+    if (_use_legacy_mode && _bucketDBUpdater.bucketOwnershipHasChanged()) {
         using TimePoint = OwnershipTransferSafeTimePointCalculator::TimePoint;
         // Note: this assumes that std::chrono::system_clock and the framework
         // system clock have the same epoch, which should be a reasonable
@@ -364,9 +366,8 @@ DistributorStripe::leaveRecoveryMode()
     if (isInRecoveryMode()) {
         LOG(debug, "Leaving recovery mode");
         // FIXME don't use shared metric for this
-        _metrics.recoveryModeTime.addValue(
-                _recoveryTimeStarted.getElapsedTimeAsDouble());
-        if (_doneInitializing) {
+        _metrics.recoveryModeTime.addValue(_recoveryTimeStarted.getElapsedTimeAsDouble());
+        if (_done_initializing_ref) {
             _must_send_updated_host_info = true;
         }
     }
@@ -981,10 +982,21 @@ DistributorStripe::clear_pending_cluster_state_bundle()
 }
 
 void
-DistributorStripe::enable_cluster_state_bundle(const lib::ClusterStateBundle& new_state)
+DistributorStripe::enable_cluster_state_bundle(const lib::ClusterStateBundle& new_state,
+                                               bool has_bucket_ownership_change)
 {
+    assert(!_use_legacy_mode);
     // TODO STRIPE replace legacy func
     enableClusterStateBundle(new_state);
+    if (has_bucket_ownership_change) {
+        using TimePoint = OwnershipTransferSafeTimePointCalculator::TimePoint;
+        // Note: this assumes that std::chrono::system_clock and the framework
+        // system clock have the same epoch, which should be a reasonable
+        // assumption.
+        const auto now = TimePoint(std::chrono::milliseconds(_component.getClock().getTimeInMillis().getTime()));
+        _externalOperationHandler.rejectFeedBeforeTimeReached(_ownershipSafeTimeCalc->safeTimePoint(now));
+    }
+    _bucketDBUpdater.handle_activated_cluster_state_bundle(); // Triggers resending of queued requests
 }
 
 void

@@ -1,6 +1,7 @@
 // Copyright 2018 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.athenz.client.zms;
 
+import com.yahoo.io.IOUtils;
 import com.yahoo.vespa.athenz.api.AthenzDomain;
 import com.yahoo.vespa.athenz.api.AthenzGroup;
 import com.yahoo.vespa.athenz.api.AthenzIdentity;
@@ -18,6 +19,7 @@ import com.yahoo.vespa.athenz.client.zms.bindings.DomainListResponseEntity;
 import com.yahoo.vespa.athenz.client.zms.bindings.MembershipEntity;
 import com.yahoo.vespa.athenz.client.zms.bindings.PolicyEntity;
 import com.yahoo.vespa.athenz.client.zms.bindings.ProviderResourceGroupRolesRequestEntity;
+import com.yahoo.vespa.athenz.client.zms.bindings.ResponseListEntity;
 import com.yahoo.vespa.athenz.client.zms.bindings.RoleEntity;
 import com.yahoo.vespa.athenz.client.zms.bindings.ServiceEntity;
 import com.yahoo.vespa.athenz.client.zms.bindings.ServiceListResponseEntity;
@@ -27,13 +29,19 @@ import com.yahoo.vespa.athenz.utils.AthenzIdentities;
 import org.apache.http.Header;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.methods.RequestBuilder;
+import org.apache.http.entity.StringEntity;
 import org.apache.http.message.BasicHeader;
 
 import javax.net.ssl.SSLContext;
+import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -183,6 +191,17 @@ public class DefaultZmsClient extends ClientBase implements ZmsClient {
     }
 
     @Override
+    public void createPolicy(AthenzDomain athenzDomain, String athenzPolicy) {
+        URI uri = zmsUrl.resolve(String.format("domain/%s/policy/%s",
+                                               athenzDomain.getName(), athenzPolicy));
+        StringEntity entity = toJsonStringEntity(Map.of("name", athenzPolicy, "assertions", List.of()));
+        HttpUriRequest request = RequestBuilder.put(uri)
+                .setEntity(entity)
+                .build();
+        execute(request, response -> readEntity(response, Void.class));
+    }
+
+    @Override
     public void addPolicyRule(AthenzDomain athenzDomain, String athenzPolicy, String action, AthenzResourceName resourceName, AthenzRole athenzRole) {
         URI uri = zmsUrl.resolve(String.format("domain/%s/policy/%s/assertion",
                 athenzDomain.getName(), athenzPolicy));
@@ -224,19 +243,19 @@ public class DefaultZmsClient extends ClientBase implements ZmsClient {
     }
 
     @Override
-    public List<AthenzUser> listPendingRoleApprovals(AthenzRole athenzRole) {
+    public Map<AthenzUser, String> listPendingRoleApprovals(AthenzRole athenzRole) {
         URI uri = zmsUrl.resolve(String.format("domain/%s/role/%s?pending=true", athenzRole.domain().getName(), athenzRole.roleName()));
         HttpUriRequest request = RequestBuilder.get()
                 .setUri(uri)
                 .build();
         RoleEntity roleEntity =  execute(request, response -> readEntity(response, RoleEntity.class));
+
         return roleEntity.roleMembers().stream()
                 .filter(RoleEntity.Member::pendingApproval)
-                .map(RoleEntity.Member::memberName)
-                .map(AthenzIdentities::from)
-                .filter(identity -> AthenzIdentities.USER_PRINCIPAL_DOMAIN.equals(identity.getDomain()))
-                .map(AthenzUser.class::cast)
-                .collect(Collectors.toList());
+                .filter(re -> AthenzIdentities.USER_PRINCIPAL_DOMAIN.equals(AthenzIdentities.from(re.memberName()).getDomain()))
+                .collect(Collectors.toUnmodifiableMap(
+                        m -> (AthenzUser) AthenzIdentities.from(m.memberName()),
+                        RoleEntity.Member::auditRef));
     }
 
     @Override
@@ -287,6 +306,33 @@ public class DefaultZmsClient extends ClientBase implements ZmsClient {
     public void deleteService(AthenzService athenzService) {
         URI uri = zmsUrl.resolve(String.format("domain/%s/service/%s", athenzService.getDomainName(), athenzService.getName()));
         execute(RequestBuilder.delete(uri).build(), response -> readEntity(response, Void.class));
+    }
+
+    @Override
+    public void createRole(AthenzRole role, Map<String, Object> attributes) {
+        URI uri = zmsUrl.resolve(String.format("domain/%s/role/%s", role.domain().getName(), role.roleName()));
+        HashMap<String, Object> finalAttributes = new HashMap<>(attributes);
+        finalAttributes.put("name", role.roleName());
+        var request = RequestBuilder.put(uri)
+                .setEntity(toJsonStringEntity(finalAttributes))
+                .build();
+        execute(request, response -> readEntity(response, Void.class));
+    }
+
+    @Override
+    public Set<AthenzRole> listRoles(AthenzDomain domain) {
+        var uri = zmsUrl.resolve(String.format("domain/%s/role", domain.getName()));
+        ResponseListEntity listResponse = execute(RequestBuilder.get(uri).build(), response -> readEntity(response, ResponseListEntity.class));
+        return listResponse.entity.stream()
+                .map(name -> new AthenzRole(domain, name))
+                .collect(Collectors.toSet());
+    }
+
+    @Override
+    public Set<String> listPolicies(AthenzDomain domain) {
+        var uri = zmsUrl.resolve(String.format("domain/%s/policy", domain.getName()));
+        ResponseListEntity listResponse = execute(RequestBuilder.get(uri).build(), response -> readEntity(response, ResponseListEntity.class));
+        return Set.copyOf(listResponse.entity);
     }
 
     private static Header createCookieHeaderWithOktaTokens(OktaIdentityToken identityToken, OktaAccessToken accessToken) {

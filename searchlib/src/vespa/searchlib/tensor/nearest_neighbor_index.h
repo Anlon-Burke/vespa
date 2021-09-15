@@ -10,6 +10,8 @@
 #include <memory>
 #include <vector>
 
+class FastOS_FileInterface;
+
 namespace vespalib::slime { struct Inserter; }
 
 namespace search::fileutil { class LoadedBuffer; }
@@ -22,6 +24,7 @@ class CompactionStrategy;
 
 namespace search::tensor {
 
+class NearestNeighborIndexLoader;
 class NearestNeighborIndexSaver;
 
 /**
@@ -77,7 +80,13 @@ public:
      * and the caller ensures that an attribute read guard is held during the lifetime of the saver.
      */
     virtual std::unique_ptr<NearestNeighborIndexSaver> make_saver() const = 0;
-    virtual bool load(const fileutil::LoadedBuffer& buf) = 0;
+
+    /**
+     * Creates a loader that is used to load the index from the given file.
+     *
+     * This might throw std::runtime_error.
+     */
+    virtual std::unique_ptr<NearestNeighborIndexLoader> make_loader(FastOS_FileInterface& file) = 0;
 
     virtual std::vector<Neighbor> find_top_k(uint32_t k,
                                              vespalib::eval::TypedCells vector,

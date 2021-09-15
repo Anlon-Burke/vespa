@@ -5,10 +5,7 @@
 package cmd
 
 import (
-	"log"
-
 	"github.com/spf13/cobra"
-	"github.com/vespa-engine/vespa/util"
 )
 
 func init() {
@@ -19,55 +16,45 @@ func init() {
 }
 
 var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Verify that a Vespa target is ready to use (query by default)",
-	Args:  cobra.MaximumNArgs(1),
+	Use:               "status",
+	Short:             "Verify that a service is ready to use (query by default)",
+	Example:           `$ vespa status query`,
+	DisableAutoGenTag: true,
+	Args:              cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		status(queryTarget(), "Query API")
+		waitForService("query", 0)
 	},
 }
 
 var statusQueryCmd = &cobra.Command{
-	Use:   "query",
-	Short: "Verify that your Vespa query API container endpoint is ready [Default]",
-	Args:  cobra.ExactArgs(0),
+	Use:               "query",
+	Short:             "Verify that the query service is ready to use (default)",
+	Example:           `$ vespa status query`,
+	DisableAutoGenTag: true,
+	Args:              cobra.ExactArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
-		status(queryTarget(), "Query API")
+		waitForService("query", 0)
 	},
 }
 
 var statusDocumentCmd = &cobra.Command{
-	Use:   "document",
-	Short: "Verify that your Vespa document API container endpoint is ready [Default]",
-	Args:  cobra.ExactArgs(0),
+	Use:               "document",
+	Short:             "Verify that the document service is ready to use",
+	Example:           `$ vespa status document`,
+	DisableAutoGenTag: true,
+	Args:              cobra.ExactArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
-		status(documentTarget(), "Document API")
+		waitForService("document", 0)
 	},
 }
 
 var statusDeployCmd = &cobra.Command{
-	Use:   "deploy",
-	Short: "Verify that your Vespa deploy API config server endpoint is ready",
-	Args:  cobra.ExactArgs(0),
+	Use:               "deploy",
+	Short:             "Verify that the deploy service is ready to use",
+	Example:           `$ vespa status deploy`,
+	DisableAutoGenTag: true,
+	Args:              cobra.ExactArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
-		status(deployTarget(), "Deploy API")
+		waitForService("deploy", 0)
 	},
-}
-
-func status(target string, description string) {
-	path := "/ApplicationStatus"
-	response, err := util.HttpGet(target, path, description)
-	if err != nil {
-		log.Print(description, " at ", color.Cyan(target), " is ", color.Red("not ready"))
-		log.Print(color.Brown(err))
-		return
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != 200 {
-		log.Print(description, " at ", color.Cyan(target), " is ", color.Red("not ready"))
-		log.Print(color.Brown(response.Status))
-	} else {
-		log.Print(description, " at ", color.Cyan(target), " is ", color.Green("ready"))
-	}
 }

@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.flags;
 
 import com.yahoo.component.Vtag;
@@ -78,6 +78,13 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
+    public static final UnboundBooleanFlag ENFORCE_RANK_PROFILE_INHERITANCE = defineFeatureFlag(
+            "enforce-rank-profile-inheritance", false,
+            List.of("baldersheim"), "2021-09-07", "2021-10-01",
+            "Should we enforce verification of rank-profile inheritance.",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
     public static final UnboundBooleanFlag SKIP_MBUS_REQUEST_THREAD = defineFeatureFlag(
             "skip-mbus-request-thread", false,
             List.of("baldersheim"), "2020-12-02", "2022-01-01",
@@ -94,14 +101,14 @@ public class Flags {
 
     public static final UnboundBooleanFlag USE_THREE_PHASE_UPDATES = defineFeatureFlag(
             "use-three-phase-updates", false,
-            List.of("vekterli"), "2020-12-02", "2021-09-01",
+            List.of("vekterli"), "2020-12-02", "2021-11-01",
             "Whether to enable the use of three-phase updates when bucket replicas are out of sync.",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag HIDE_SHARED_ROUTING_ENDPOINT = defineFeatureFlag(
             "hide-shared-routing-endpoint", false,
-            List.of("tokle", "bjormel"), "2020-12-02", "2021-09-01",
+            List.of("tokle", "bjormel"), "2020-12-02", "2021-11-01",
             "Whether the controller should hide shared routing layer endpoint",
             "Takes effect immediately",
             APPLICATION_ID
@@ -121,10 +128,10 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundBooleanFlag ORCHESTRATE_MISSING_PROXIES = defineFeatureFlag(
-            "orchestrate-missing-proxies", true,
-            List.of("hakonhall"), "2021-08-05", "2021-10-05",
-            "Whether the Orchestrator can assume any missing proxy services are down.",
+    public static final UnboundIntFlag NUM_DEPLOY_HELPER_THREADS = defineIntFlag(
+            "num-model-builder-threads", 0,
+            List.of("balder"), "2021-09-09", "2021-10-01",
+            "Number of threads used for speeding up building of models.",
             "Takes effect on first (re)start of config server");
 
     public static final UnboundBooleanFlag GROUP_PERMANENT_SUSPENSION = defineFeatureFlag(
@@ -140,9 +147,21 @@ public class Flags {
             "Allow migrating an unencrypted data partition to being encrypted when (de)provisioned.",
             "Takes effect on next host-admin tick.");
 
+    public static final UnboundBooleanFlag NEW_SPARE_DISKS = defineFeatureFlag(
+            "new-spare-disks", false,
+            List.of("hakonhall"), "2021-09-08", "2021-11-08",
+            "Use a new algorithm to calculate the spare disks of a host.",
+            "Takes effect on first run of DiskTask, typically after host-admin restart/upgrade.");
+
+    public static final UnboundBooleanFlag USE_UNKNOWN_SERVICE_STATUS = defineFeatureFlag(
+            "use-unknown-service-status", false,
+            List.of("hakonhall"), "2021-09-13", "2021-10-13",
+            "Whether to use the UNKNOWN ServiceStatus for services that have not yet been probed by service monitor.",
+            "Takes effect on first (re)start of config server.");
+
     public static final UnboundBooleanFlag ENABLE_FEED_BLOCK_IN_DISTRIBUTOR = defineFeatureFlag(
             "enable-feed-block-in-distributor", true,
-            List.of("geirst"), "2021-01-27", "2021-09-01",
+            List.of("geirst"), "2021-01-27", "2021-11-01",
             "Enables blocking of feed in the distributor if resource usage is above limit on at least one content node",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
@@ -162,7 +181,7 @@ public class Flags {
 
     public static final UnboundIntFlag MAX_ACTIVATION_INHIBITED_OUT_OF_SYNC_GROUPS = defineIntFlag(
             "max-activation-inhibited-out-of-sync-groups", 0,
-            List.of("vekterli"), "2021-02-19", "2021-09-01",
+            List.of("vekterli"), "2021-02-19", "2021-11-01",
             "Allows replicas in up to N content groups to not be activated " +
             "for query visibility if they are out of sync with a majority of other replicas",
             "Takes effect at redeployment",
@@ -170,42 +189,28 @@ public class Flags {
 
     public static final UnboundIntFlag NUM_DISTRIBUTOR_STRIPES = defineIntFlag(
             "num-distributor-stripes", 0,
-            List.of("geirst", "vekterli"), "2021-04-20", "2021-09-01",
+            List.of("geirst", "vekterli"), "2021-04-20", "2021-11-01",
             "Specifies the number of stripes used by the distributor. When 0, legacy single stripe behavior is used.",
             "Takes effect after distributor restart",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundIntFlag MAX_CONCURRENT_MERGES_PER_NODE = defineIntFlag(
-            "max-concurrent-merges-per-node", 16,
-            List.of("balder", "vekterli"), "2021-06-06", "2021-09-01",
+            "max-concurrent-merges-per-node", 128,
+            List.of("balder", "vekterli"), "2021-06-06", "2021-11-01",
             "Specifies max concurrent merges per content node.",
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundIntFlag MAX_MERGE_QUEUE_SIZE = defineIntFlag(
             "max-merge-queue-size", 1024,
-            List.of("balder", "vekterli"), "2021-06-06", "2021-09-01",
+            List.of("balder", "vekterli"), "2021-06-06", "2021-11-01",
             "Specifies max size of merge queue.",
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundBooleanFlag USE_EXTERNAL_RANK_EXPRESSION = defineFeatureFlag(
-            "use-external-rank-expression", false,
-            List.of("baldersheim"), "2021-05-24", "2021-09-01",
-            "Whether to use distributed external rank expression or inline in rankproperties",
-            "Takes effect on next internal redeployment",
-            APPLICATION_ID);
-
-    public static final UnboundBooleanFlag DISTRIBUTE_EXTERNAL_RANK_EXPRESSION = defineFeatureFlag(
-            "distribute-external-rank-expression", false,
-            List.of("baldersheim"), "2021-05-27", "2021-09-01",
-            "Whether to use distributed external rank expression files by filedistribution",
-            "Takes effect on next internal redeployment",
-            APPLICATION_ID);
-
     public static final UnboundIntFlag LARGE_RANK_EXPRESSION_LIMIT = defineIntFlag(
-            "large-rank-expression-limit", 0x10000,
-            List.of("baldersheim"), "2021-06-09", "2021-09-01",
+            "large-rank-expression-limit", 8192,
+            List.of("baldersheim"), "2021-06-09", "2021-10-15",
             "Limit for size of rank expressions distributed by filedistribution",
             "Takes effect on next internal redeployment",
             APPLICATION_ID);
@@ -218,23 +223,16 @@ public class Flags {
 
     public static final UnboundBooleanFlag REQUIRE_CONNECTIVITY_CHECK = defineFeatureFlag(
             "require-connectivity-check", true,
-            List.of("arnej"), "2021-06-03", "2021-09-01",
+            List.of("arnej"), "2021-06-03", "2021-12-01",
             "Require that config-sentinel connectivity check passes with good quality before starting services",
             "Takes effect on next restart",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag THROW_EXCEPTION_IF_RESOURCE_LIMITS_SPECIFIED = defineFeatureFlag(
             "throw-exception-if-resource-limits-specified", false,
-            List.of("hmusum"), "2021-06-07", "2021-09-07",
+            List.of("hmusum"), "2021-06-07", "2021-10-01",
             "Whether to throw an exception in hosted Vespa if the application specifies resource limits in services.xml",
             "Takes effect on next deployment through controller",
-            APPLICATION_ID);
-
-    public static final UnboundBooleanFlag DRY_RUN_ONNX_ON_SETUP = defineFeatureFlag(
-            "dry-run-onnx-on-setup", true,
-            List.of("baldersheim"), "2021-06-23", "2021-09-01",
-            "Whether to dry run onnx models on setup for better error checking",
-            "Takes effect on next internal redeployment",
             APPLICATION_ID);
 
     public static final UnboundListFlag<String> DEFER_APPLICATION_ENCRYPTION = defineListFlag(
@@ -262,6 +260,36 @@ public class Flags {
             "Create separate iam roles for tenant",
             "Takes effect on redeploy",
             TENANT_ID);
+
+    public static final UnboundIntFlag METRICSPROXY_NUM_THREADS = defineIntFlag(
+            "metricsproxy-num-threads", 2,
+            List.of("balder"), "2021-09-01", "2021-10-01",
+            "Number of threads for metrics proxy",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag NEW_LOCATION_BROKER_LOGIC = defineFeatureFlag(
+            "new-location-broker-logic", true,
+            List.of("arnej"), "2021-09-07", "2021-12-31",
+            "Use new implementation of internal logic in service location broker",
+            "Takes effect immediately",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag ENABLED_HORIZON_DASHBOARD = defineFeatureFlag(
+            "enabled-horizon-dashboard", false,
+            List.of("olaa"), "2021-09-13", "2021-12-31",
+            "Enable Horizon dashboard",
+            "Takes effect immediately",
+            TENANT_ID
+    );
+
+    public static final UnboundBooleanFlag ENABLE_ONPREM_TENANT_S3_ARCHIVE = defineFeatureFlag(
+            "enable-onprem-tenant-s3-archive", false,
+            List.of("bjorncs"), "2021-09-14", "2021-12-31",
+            "Enable tenant S3 buckets in cd/main. Must be set on controller cluster only.",
+            "Takes effect immediately",
+            ZONE_ID
+    );
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

@@ -13,6 +13,7 @@ import com.yahoo.vespa.athenz.api.OktaIdentityToken;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -45,11 +46,13 @@ public interface ZmsClient extends AutoCloseable {
 
     boolean hasAccess(AthenzResourceName resource, String action, AthenzIdentity identity);
 
+    void createPolicy(AthenzDomain athenzDomain, String athenzPolicy);
+
     void addPolicyRule(AthenzDomain athenzDomain, String athenzPolicy, String action, AthenzResourceName resourceName, AthenzRole athenzRole);
 
     boolean deletePolicyRule(AthenzDomain athenzDomain, String athenzPolicy, String action, AthenzResourceName resourceName, AthenzRole athenzRole);
 
-    List<AthenzUser> listPendingRoleApprovals(AthenzRole athenzRole);
+    Map<AthenzUser, String> listPendingRoleApprovals(AthenzRole athenzRole);
 
     void approvePendingRoleMembership(AthenzRole athenzRole, AthenzUser athenzUser, Instant expiry);
 
@@ -60,6 +63,12 @@ public interface ZmsClient extends AutoCloseable {
     void createOrUpdateService(AthenzService athenzService);
 
     void deleteService(AthenzService athenzService);
+
+    void createRole(AthenzRole role, Map<String, Object> properties);
+
+    Set<AthenzRole> listRoles(AthenzDomain domain);
+
+    Set<String> listPolicies(AthenzDomain domain);
 
     void close();
 }

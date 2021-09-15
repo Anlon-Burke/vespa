@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/vespa-engine/vespa/util"
+	"github.com/vespa-engine/vespa/client/go/util"
 )
 
 func init() {
@@ -20,18 +20,24 @@ func init() {
 }
 
 var queryCmd = &cobra.Command{
-	Use:   "query",
-	Short: "Issue a query to Vespa",
-	Long:  `TODO, example  \"yql=select from sources * where title contains 'foo'\" hits=5`,
+	Use:     "query query-parameters",
+	Short:   "Issue a query to Vespa",
+	Example: `$ vespa query "yql=select * from sources * where title contains 'foo';" hits=5`,
+	Long: `Issue a query to Vespa.
+
+Any parameter from https://docs.vespa.ai/en/reference/query-api-reference.html
+can be set by the syntax [parameter-name]=[value].`,
 	// TODO: Support referencing a query json file
-	Args: cobra.MinimumNArgs(1),
+	DisableAutoGenTag: true,
+	Args:              cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		query(args)
 	},
 }
 
 func query(arguments []string) {
-	url, _ := url.Parse(queryTarget() + "/search/")
+	service := getService("query", 0)
+	url, _ := url.Parse(service.BaseURL + "/search/")
 	urlQuery := url.Query()
 	for i := 0; i < len(arguments); i++ {
 		key, value := splitArg(arguments[i])
@@ -39,7 +45,7 @@ func query(arguments []string) {
 	}
 	url.RawQuery = urlQuery.Encode()
 
-	response, err := util.HttpDo(&http.Request{URL: url}, time.Second*10, "Container")
+	response, err := service.Do(&http.Request{URL: url}, time.Second*10)
 	if err != nil {
 		log.Print(color.Red("Error: "), "Request failed: ", err)
 		return
@@ -62,6 +68,6 @@ func splitArg(argument string) (string, string) {
 	if equalsIndex < 1 {
 		return "yql", argument
 	} else {
-		return argument[0:equalsIndex], argument[equalsIndex+1 : len(argument)]
+		return argument[0:equalsIndex], argument[equalsIndex+1:]
 	}
 }

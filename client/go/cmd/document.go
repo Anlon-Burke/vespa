@@ -5,122 +5,126 @@
 package cmd
 
 import (
-	"bytes"
-	"encoding/json"
-	"io/ioutil"
 	"log"
-	"net/http"
-	"net/url"
-	"os"
-	"time"
+	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/vespa-engine/vespa/util"
-	"github.com/vespa-engine/vespa/vespa"
+	"github.com/vespa-engine/vespa/client/go/util"
+	"github.com/vespa-engine/vespa/client/go/vespa"
 )
 
 func init() {
 	rootCmd.AddCommand(documentCmd)
-	documentCmd.AddCommand(documentPostCmd)
+	documentCmd.AddCommand(documentPutCmd)
+	documentCmd.AddCommand(documentUpdateCmd)
+	documentCmd.AddCommand(documentRemoveCmd)
 	documentCmd.AddCommand(documentGetCmd)
 }
 
 var documentCmd = &cobra.Command{
-	Use:   "document",
-	Short: "Issue document operations",
-	Example: `$ vespa document src/test/resources/A-Head-Full-of-Dreams.json
-# (short-hand for vespa document post)`,
-	Args: cobra.ExactArgs(1),
+	Use:   "document json-file",
+	Short: "Issue a document operation to Vespa",
+	Long: `Issue a document operation to Vespa.
+
+The operation must be on the format documented in
+https://docs.vespa.ai/en/reference/document-json-format.html#document-operations
+
+When this returns successfully, the document is guaranteed to be visible in any
+subsequent get or query operation.
+
+To feed with high throughput, https://docs.vespa.ai/en/vespa-feed-client.html
+should be used instead of this.`,
+	Example:           `$ vespa document src/test/resources/A-Head-Full-of-Dreams.json`,
+	DisableAutoGenTag: true,
+	Args:              cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		post("", args[0])
+		printResult(vespa.Send(args[0], documentService()), false)
 	},
 }
 
-var documentPostCmd = &cobra.Command{
-	Use:   "post",
-	Short: "Posts the document in the given file",
-	Args:  cobra.RangeArgs(1, 2),
-	Example: `$ vespa document post src/test/resources/A-Head-Full-of-Dreams.json
-$ vespa document post id:mynamespace:music::a-head-full-of-dreams src/test/resources/A-Head-Full-of-Dreams.json`,
+var documentPutCmd = &cobra.Command{
+	Use:   "put [id] json-file",
+	Short: "Writes a document to Vespa",
+	Long: `Writes the document in the given file to Vespa.
+If the document already exists, all its values will be replaced by this document.
+If the document id is specified both as an argument and in the file the argument takes precedence.`,
+	Args: cobra.RangeArgs(1, 2),
+	Example: `$ vespa document put src/test/resources/A-Head-Full-of-Dreams.json
+$ vespa document put id:mynamespace:music::a-head-full-of-dreams src/test/resources/A-Head-Full-of-Dreams.json`,
+	DisableAutoGenTag: true,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 1 {
-			post("", args[0])
+			printResult(vespa.Put("", args[0], documentService()), false)
 		} else {
-			post(args[0], args[1])
+			printResult(vespa.Put(args[0], args[1], documentService()), false)
+		}
+	},
+}
+
+var documentUpdateCmd = &cobra.Command{
+	Use:   "update [id] json-file",
+	Short: "Modifies some fields of an existing document",
+	Long: `Updates the values of the fields given in a json file as specified in the file.
+If the document id is specified both as an argument and in the file the argument takes precedence.`,
+	Args: cobra.RangeArgs(1, 2),
+	Example: `$ vespa document update src/test/resources/A-Head-Full-of-Dreams-Update.json
+$ vespa document update id:mynamespace:music::a-head-full-of-dreams src/test/resources/A-Head-Full-of-Dreams.json`,
+	DisableAutoGenTag: true,
+	Run: func(cmd *cobra.Command, args []string) {
+		if len(args) == 1 {
+			printResult(vespa.Update("", args[0], documentService()), false)
+		} else {
+			printResult(vespa.Update(args[0], args[1], documentService()), false)
+		}
+	},
+}
+
+var documentRemoveCmd = &cobra.Command{
+	Use:   "remove id | json-file",
+	Short: "Removes a document from Vespa",
+	Long: `Removes the document specified either as a document id or given in the json file.
+If the document id is specified both as an argument and in the file the argument takes precedence.`,
+	Args: cobra.ExactArgs(1),
+	Example: `$ vespa document remove src/test/resources/A-Head-Full-of-Dreams-Remove.json
+$ vespa document remove id:mynamespace:music::a-head-full-of-dreams`,
+	DisableAutoGenTag: true,
+	Run: func(cmd *cobra.Command, args []string) {
+		if strings.HasPrefix(args[0], "id:") {
+			printResult(vespa.RemoveId(args[0], documentService()), false)
+		} else {
+			printResult(vespa.RemoveOperation(args[0], documentService()), false)
 		}
 	},
 }
 
 var documentGetCmd = &cobra.Command{
-	Use:   "get",
-	Short: "Gets a document",
-	Args:  cobra.ExactArgs(1),
+	Use:               "get id",
+	Short:             "Gets a document",
+	Args:              cobra.ExactArgs(1),
+	DisableAutoGenTag: true,
+	Example:           `$ vespa document get id:mynamespace:music::a-head-full-of-dreams`,
 	Run: func(cmd *cobra.Command, args []string) {
-		get(args[0])
+		printResult(vespa.Get(args[0], documentService()), true)
 	},
 }
 
-func get(documentId string) {
-	// TODO
-}
+func documentService() *vespa.Service { return getService("document", 0) }
 
-func post(documentId string, jsonFile string) {
-	header := http.Header{}
-	header.Add("Content-Type", "application/json")
-
-	fileReader, fileError := os.Open(jsonFile)
-	if fileError != nil {
-		log.Print(color.Red("Error: "), "Could not open file '", color.Cyan(jsonFile), "'")
-		log.Print(color.Brown(fileError))
-		return
+func printResult(result util.OperationResult, payloadOnlyOnSuccess bool) {
+	if !result.Success {
+		log.Print(color.Red("Error: "), result.Message)
+	} else if !(payloadOnlyOnSuccess && result.Payload != "") {
+		log.Print(color.Green("Success: "), result.Message)
 	}
 
-	documentData := util.ReaderToBytes(fileReader)
+	if result.Detail != "" {
+		log.Print(color.Yellow(result.Detail))
+	}
 
-	if documentId == "" {
-		var doc map[string]interface{}
-		json.Unmarshal(documentData, &doc)
-		if doc["put"] != nil {
-			documentId = doc["put"].(string) // document feeder format
-		} else {
-			log.Print(color.Red("Error: "), "No document id given neither as argument or as a 'put' key in the json file")
-			return
+	if result.Payload != "" {
+		if !payloadOnlyOnSuccess {
+			log.Println("")
 		}
-	}
-
-	documentPath, documentPathError := vespa.IdToURLPath(documentId)
-	if documentPathError != nil {
-		log.Print(color.Red("Error: "), "Invalid document id '", color.Red(documentId), "': ", documentPathError)
-		return
-	}
-
-	url, urlParseError := url.Parse(documentTarget() + "/document/v1/" + documentPath)
-	if urlParseError != nil {
-		log.Print(color.Red("Error: "), "Invalid request path: '", color.Red(documentTarget()+"/document/v1/"+documentPath), "': ", urlParseError)
-		return
-	}
-
-	request := &http.Request{
-		URL:    url,
-		Method: "POST",
-		Header: header,
-		Body:   ioutil.NopCloser(bytes.NewReader(documentData)),
-	}
-	serviceDescription := "Container (document API)"
-	response, err := util.HttpDo(request, time.Second*60, serviceDescription)
-	if response == nil {
-		log.Print(color.Red("Error: "), "Request failed:", err)
-		return
-	}
-
-	defer response.Body.Close()
-	if response.StatusCode == 200 {
-		log.Print(color.Green(documentId))
-	} else if response.StatusCode/100 == 4 {
-		log.Print(color.Red("Error: "), "Invalid document: ", response.Status, "\n\n")
-		log.Print(util.ReaderToJSON(response.Body))
-	} else {
-		log.Print(color.Red("Error: "), serviceDescription, " at ", color.Cyan(request.URL.Host), ": ", response.Status, "\n\n")
-		log.Print(util.ReaderToJSON(response.Body))
+		log.Print(result.Payload)
 	}
 }

@@ -5,11 +5,23 @@
 package cmd
 
 import (
+	"path/filepath"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/vespa-engine/vespa/client/go/vespa"
 )
+
+func TestPrepareZip(t *testing.T) {
+	assertPrepare("testdata/applications/withTarget/target/application.zip",
+		[]string{"prepare", "testdata/applications/withTarget/target/application.zip"}, t)
+}
+
+func TestActivateZip(t *testing.T) {
+	assertActivate("testdata/applications/withTarget/target/application.zip",
+		[]string{"activate", "testdata/applications/withTarget/target/application.zip"}, t)
+}
 
 func TestDeployZip(t *testing.T) {
 	assertDeploy("testdata/applications/withTarget/target/application.zip",
@@ -55,13 +67,13 @@ func TestDeployApplicationDirectoryWithPomAndEmptyTarget(t *testing.T) {
 }
 
 func TestDeployApplicationPackageErrorWithUnexpectedNonJson(t *testing.T) {
-	assertApplicationPackageError(t, 401,
+	assertApplicationPackageError(t, "deploy", 401,
 		"Raw text error",
 		"Raw text error")
 }
 
 func TestDeployApplicationPackageErrorWithUnexpectedJson(t *testing.T) {
-	assertApplicationPackageError(t, 401,
+	assertApplicationPackageError(t, "deploy", 401,
 		`{
     "some-unexpected-json": "Invalid XML, error in services.xml: element \"nosuch\" not allowed here"
 }`,
@@ -69,7 +81,16 @@ func TestDeployApplicationPackageErrorWithUnexpectedJson(t *testing.T) {
 }
 
 func TestDeployApplicationPackageErrorWithExpectedFormat(t *testing.T) {
-	assertApplicationPackageError(t, 400,
+	assertApplicationPackageError(t, "deploy", 400,
+		"Invalid XML, error in services.xml:\nelement \"nosuch\" not allowed here",
+		`{
+         "error-code": "INVALID_APPLICATION_PACKAGE",
+         "message": "Invalid XML, error in services.xml: element \"nosuch\" not allowed here\n"
+     }`)
+}
+
+func TestPrepareApplicationPackageErrorWithExpectedFormat(t *testing.T) {
+	assertApplicationPackageError(t, "prepare", 400,
 		"Invalid XML, error in services.xml:\nelement \"nosuch\" not allowed here",
 		`{
          "error-code": "INVALID_APPLICATION_PACKAGE",
@@ -89,26 +110,64 @@ func assertDeploy(applicationPackage string, arguments []string, t *testing.T) {
 	assertDeployRequestMade("http://127.0.0.1:19071", client, t)
 }
 
-func assertDeployRequestMade(target string, client *mockHttpClient, t *testing.T) {
-	assert.Equal(t, target+"/application/v2/tenant/default/prepareandactivate", client.lastRequest.URL.String())
-	assert.Equal(t, "application/zip", client.lastRequest.Header.Get("Content-Type"))
-	assert.Equal(t, "POST", client.lastRequest.Method)
-	var body = client.lastRequest.Body
+func assertPrepare(applicationPackage string, arguments []string, t *testing.T) {
+	client := &mockHttpClient{}
+	client.NextResponse(200, `{"session-id":"42"}`)
+	assert.Equal(t,
+		"Success: Prepared "+applicationPackage+" with session 42\n",
+		executeCommand(t, client, arguments, []string{}))
+
+	assertPackageUpload(0, "http://127.0.0.1:19071/application/v2/tenant/default/session", client, t)
+	sessionURL := "http://127.0.0.1:19071/application/v2/tenant/default/session/42/prepared"
+	assert.Equal(t, sessionURL, client.requests[1].URL.String())
+	assert.Equal(t, "PUT", client.requests[1].Method)
+}
+
+func assertActivate(applicationPackage string, arguments []string, t *testing.T) {
+	client := &mockHttpClient{}
+	homeDir := t.TempDir()
+	cfg := Config{Home: filepath.Join(homeDir, ".vespa"), createDirs: true}
+	if err := cfg.WriteSessionID(vespa.DefaultApplication, 42); err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t,
+		"Success: Activated "+applicationPackage+" with session 42\n",
+		execute(command{args: arguments, homeDir: homeDir}, t, client))
+	url := "http://127.0.0.1:19071/application/v2/tenant/default/session/42/active"
+	assert.Equal(t, url, client.lastRequest.URL.String())
+	assert.Equal(t, "PUT", client.lastRequest.Method)
+}
+
+func assertPackageUpload(requestNumber int, url string, client *mockHttpClient, t *testing.T) {
+	req := client.lastRequest
+	if requestNumber >= 0 {
+		req = client.requests[requestNumber]
+	}
+	assert.Equal(t, url, req.URL.String())
+	assert.Equal(t, "application/zip", req.Header.Get("Content-Type"))
+	assert.Equal(t, "POST", req.Method)
+	var body = req.Body
 	assert.NotNil(t, body)
 	buf := make([]byte, 7) // Just check the first few bytes
 	body.Read(buf)
 	assert.Equal(t, "PK\x03\x04\x14\x00\b", string(buf))
 }
 
-func assertApplicationPackageError(t *testing.T, status int, expectedMessage string, returnBody string) {
-	client := &mockHttpClient{nextStatus: status, nextBody: returnBody}
+func assertDeployRequestMade(target string, client *mockHttpClient, t *testing.T) {
+	assertPackageUpload(-1, target+"/application/v2/tenant/default/prepareandactivate", client, t)
+}
+
+func assertApplicationPackageError(t *testing.T, command string, status int, expectedMessage string, returnBody string) {
+	client := &mockHttpClient{}
+	client.NextResponse(status, returnBody)
 	assert.Equal(t,
 		"Error: Invalid application package (Status "+strconv.Itoa(status)+")\n\n"+expectedMessage+"\n",
-		executeCommand(t, client, []string{"deploy", "testdata/applications/withTarget/target/application.zip"}, []string{}))
+		executeCommand(t, client, []string{command, "testdata/applications/withTarget/target/application.zip"}, []string{}))
 }
 
 func assertDeployServerError(t *testing.T, status int, errorMessage string) {
-	client := &mockHttpClient{nextStatus: status, nextBody: errorMessage}
+	client := &mockHttpClient{}
+	client.NextResponse(status, errorMessage)
 	assert.Equal(t,
 		"Error: Error from deploy service at 127.0.0.1:19071 (Status "+strconv.Itoa(status)+"):\n"+errorMessage+"\n",
 		executeCommand(t, client, []string{"deploy", "testdata/applications/withTarget/target/application.zip"}, []string{}))

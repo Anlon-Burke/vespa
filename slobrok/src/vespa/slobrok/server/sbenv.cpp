@@ -97,12 +97,15 @@ ConfigTask::PerformTask()
 
 } // namespace slobrok::<unnamed>
 
-SBEnv::SBEnv(const ConfigShim &shim)
+SBEnv::SBEnv(const ConfigShim &shim) : SBEnv(shim, false) {}
+
+SBEnv::SBEnv(const ConfigShim &shim, bool useNewConsensusLogic)
     : _transport(std::make_unique<FNET_Transport>(TransportConfig().drop_empty_buffers(true))),
       _supervisor(std::make_unique<FRT_Supervisor>(_transport.get())),
       _configShim(shim),
       _configurator(shim.factory().create(*this)),
       _shuttingDown(false),
+      _useNewLogic(useNewConsensusLogic),
       _partnerList(),
       _me(createSpec(_configShim.portNumber())),
       _rpcHooks(*this, _rpcsrvmap, _rpcsrvmanager),
@@ -110,7 +113,7 @@ SBEnv::SBEnv(const ConfigShim &shim)
       _health(),
       _metrics(_rpcHooks, *_transport),
       _components(),
-      _localRpcMonitorMap(*_supervisor,
+      _localRpcMonitorMap(getScheduler(),
                           [this] (MappingMonitorOwner &owner) {
                               return std::make_unique<RpcMappingMonitor>(*_supervisor, owner);
                           }),
@@ -118,11 +121,19 @@ SBEnv::SBEnv(const ConfigShim &shim)
       _exchanger(*this, _rpcsrvmap),
       _rpcsrvmap()
 {
+    if (useNewLogic()) {
+        srandom(time(nullptr) ^ getpid());
+        // note: feedback loop between these two:
+        _localMonitorSubscription = MapSubscription::subscribe(_consensusMap, _localRpcMonitorMap);
+        _consensusSubscription = MapSubscription::subscribe(_localRpcMonitorMap.dispatcher(), _consensusMap);
+        _globalHistorySubscription = MapSubscription::subscribe(_consensusMap, _globalVisibleHistory);
+        _rpcHooks.initRPC(getSupervisor());
+        return;
+    }
     srandom(time(nullptr) ^ getpid());
     // note: feedback loop between these two:
     _localMonitorSubscription = MapSubscription::subscribe(_consensusMap, _localRpcMonitorMap);
     _consensusSubscription = MapSubscription::subscribe(_localRpcMonitorMap.dispatcher(), _consensusMap);
-    // TODO: use consensus as source here:
     _globalHistorySubscription = MapSubscription::subscribe(_rpcsrvmap.proxy(), _globalVisibleHistory);
     _rpcHooks.initRPC(getSupervisor());
 }

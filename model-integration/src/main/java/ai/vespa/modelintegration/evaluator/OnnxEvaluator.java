@@ -28,7 +28,12 @@ public class OnnxEvaluator {
     public OnnxEvaluator(String modelPath) {
         try {
             environment = OrtEnvironment.getEnvironment();
-            session = environment.createSession(modelPath, new OrtSession.SessionOptions());
+            OrtSession.SessionOptions options = new OrtSession.SessionOptions();
+            options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+            options.setIntraOpNumThreads(Math.max(1, Runtime.getRuntime().availableProcessors() / 4));
+            options.setInterOpNumThreads(1);
+            options.setExecutionMode(OrtSession.SessionOptions.ExecutionMode.SEQUENTIAL);
+            session = environment.createSession(modelPath, options);
         } catch (OrtException e) {
             throw new RuntimeException("ONNX Runtime exception", e);
         }

@@ -66,6 +66,7 @@ public:
                       ChainedMessageSender& messageSender,
                       StripeHostInfoNotifier& stripe_host_info_notifier,
                       bool use_legacy_mode,
+                      bool& done_initializing_ref, // TODO STRIPE const ref once legacy is gone and stripe can't mutate init state
                       uint32_t stripe_index = 0);
 
     ~DistributorStripe() override;
@@ -147,7 +148,7 @@ public:
     void handleCompletedMerge(const std::shared_ptr<api::MergeBucketReply>& reply) override;
 
     bool initializing() const override {
-        return !_doneInitializing;
+        return !_done_initializing_ref;
     }
 
     const DistributorConfiguration& getConfig() const override {
@@ -195,9 +196,10 @@ public:
 
 private:
     // TODO STRIPE: reduce number of friends. DistributorStripe too popular for its own good.
-    friend class Distributor;
+    friend class TopLevelDistributor;
     friend class DistributorStripeTestUtil;
     friend class DistributorTestUtil;
+    friend class TopLevelDistributorTestUtil;
     friend class LegacyBucketDBUpdaterTest;
     friend class MetricUpdateHook;
     friend class MultiThreadedStripeAccessGuard;
@@ -273,7 +275,8 @@ private:
     void update_total_distributor_config(std::shared_ptr<const DistributorConfiguration> config) override;
     void set_pending_cluster_state_bundle(const lib::ClusterStateBundle& pending_state) override;
     void clear_pending_cluster_state_bundle() override;
-    void enable_cluster_state_bundle(const lib::ClusterStateBundle& new_state) override;
+    void enable_cluster_state_bundle(const lib::ClusterStateBundle& new_state,
+                                     bool has_bucket_ownership_change) override;
     void notify_distribution_change_enabled() override;
     PotentialDataLossReport remove_superfluous_buckets(document::BucketSpace bucket_space,
                                                        const lib::ClusterState& new_state,
@@ -340,8 +343,8 @@ private:
     mutable std::vector<std::shared_ptr<DistributorStatus>> _statusToDo;
     mutable std::vector<std::shared_ptr<DistributorStatus>> _fetchedStatusRequests;
 
-    DoneInitializeHandler& _doneInitializeHandler;
-    bool _doneInitializing;
+    DoneInitializeHandler& _doneInitializeHandler; // TODO STRIPE remove when legacy is gone
+    bool& _done_initializing_ref;
 
     std::unique_ptr<BucketPriorityDatabase> _bucketPriorityDb;
     std::unique_ptr<SimpleMaintenanceScanner> _scanner;

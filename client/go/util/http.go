@@ -5,10 +5,13 @@
 package util
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/vespa-engine/vespa/client/go/build"
 )
 
 // Set this to a mock HttpClient instead to unit test HTTP requests
@@ -16,6 +19,7 @@ var ActiveHttpClient = CreateClient(time.Second * 10)
 
 type HttpClient interface {
 	Do(request *http.Request, timeout time.Duration) (response *http.Response, error error)
+	UseCertificate(certificate tls.Certificate)
 }
 
 type defaultHttpClient struct {
@@ -23,10 +27,16 @@ type defaultHttpClient struct {
 }
 
 func (c *defaultHttpClient) Do(request *http.Request, timeout time.Duration) (response *http.Response, error error) {
-	if c.client.Timeout != timeout { // Create a new client with the right timeout
-		c.client = &http.Client{Timeout: timeout}
+	if c.client.Timeout != timeout { // Set wanted timeout
+		c.client.Timeout = timeout
 	}
 	return c.client.Do(request)
+}
+
+func (c *defaultHttpClient) UseCertificate(certificate tls.Certificate) {
+	c.client.Transport = &http.Transport{TLSClientConfig: &tls.Config{
+		Certificates: []tls.Certificate{certificate},
+	}}
 }
 
 func CreateClient(timeout time.Duration) HttpClient {
@@ -45,6 +55,10 @@ func HttpGet(host string, path string, description string) (*http.Response, erro
 }
 
 func HttpDo(request *http.Request, timeout time.Duration, description string) (*http.Response, error) {
+	if request.Header == nil {
+		request.Header = make(http.Header)
+	}
+	request.Header.Set("User-Agent", fmt.Sprintf("Vespa CLI/%s", build.Version))
 	response, err := ActiveHttpClient.Do(request, timeout)
 	if err != nil {
 		return nil, err
