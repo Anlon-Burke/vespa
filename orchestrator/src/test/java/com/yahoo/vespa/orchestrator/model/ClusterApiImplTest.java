@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.orchestrator.model;
 
 import com.yahoo.config.provision.Zone;
@@ -10,7 +10,6 @@ import com.yahoo.vespa.applicationmodel.ServiceInstance;
 import com.yahoo.vespa.applicationmodel.ServiceStatus;
 import com.yahoo.vespa.applicationmodel.ServiceStatusInfo;
 import com.yahoo.vespa.applicationmodel.ServiceType;
-import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.orchestrator.OrchestratorUtil;
 import com.yahoo.vespa.orchestrator.policy.ClusterParams;
@@ -96,11 +95,11 @@ public class ClusterApiImplTest {
 
         assertEquals("{ clusterId=cluster, serviceType=service-type }", clusterApi.clusterInfo());
         assertFalse(clusterApi.isStorageCluster());
-        assertEquals(" Suspended hosts: [host3, host4]. Services down on resumed hosts: [" +
-                        "ServiceInstance{configId=service-2, hostName=host2, serviceStatus=" +
-                        "ServiceStatusInfo{status=DOWN, since=Optional.empty, lastChecked=Optional.empty}}].",
+        assertEquals(" [host3, host4] are suspended. [ServiceInstance{configId=service-2, hostName=host2, " +
+                     "serviceStatus=ServiceStatusInfo{status=DOWN, since=Optional.empty, lastChecked=Optional.empty}}] " +
+                     "are down.",
                 clusterApi.downDescription());
-        assertEquals(60, clusterApi.percentageOfServicesDown());
+        assertEquals(60, clusterApi.percentageOfServicesDownOutsideGroup());
         assertEquals(80, clusterApi.percentageOfServicesDownIfGroupIsAllowedToBeDown());
     }
 
@@ -182,20 +181,8 @@ public class ClusterApiImplTest {
             fail();
         } catch (HostStateChangeDeniedException e) {
             assertThat(e.getMessage(),
-                    containsString("Changing the state of cfg1 would violate enough-services-up: " +
-                            "Suspension of service with type 'configserver' not allowed: 33% are suspended already. " +
-                            "Services down on resumed hosts: [1 missing config server]."));
-        }
-
-        flagSource.withBooleanFlag(Flags.GROUP_PERMANENT_SUSPENSION.id(), true);
-
-        try {
-            policy.verifyGroupGoingDownIsFine(clusterApi);
-            fail();
-        } catch (HostStateChangeDeniedException e) {
-            assertThat(e.getMessage(),
-                    containsString("Suspension of service with type 'configserver' not allowed: 33% are suspended already. " +
-                            "Services down on resumed hosts: [1 missing config server]."));
+                    containsString("Changing the state of cfg1 would violate enough-services-up: 33% of the config " +
+                                   "servers are down or suspended already: [1 missing config server] are down."));
         }
     }
 
@@ -214,30 +201,25 @@ public class ClusterApiImplTest {
             fail();
         } catch (HostStateChangeDeniedException e) {
             assertThat(e.getMessage(),
-                    containsString("Changing the state of cfg1 would violate enough-services-up: " +
-                            "Suspension of service with type 'hostadmin' not allowed: 33% are suspended already. " +
-                            "Services down on resumed hosts: [1 missing config server host]."));
+                    containsString("Changing the state of cfg1 would violate enough-services-up: 33% of the config " +
+                                   "server hosts are down or suspended already: [1 missing config server host] are down."));
         }
+    }
 
-        flagSource.withBooleanFlag(Flags.GROUP_PERMANENT_SUSPENSION.id(), true);
+    @Test
+    public void testCfg1DoesNotSuspendIfDownWithMissingCfg3() throws HostStateChangeDeniedException {
+        ClusterApiImpl clusterApi = makeCfg1ClusterApi(ServiceStatus.DOWN, ServiceStatus.UP);
+
+        HostedVespaClusterPolicy policy = new HostedVespaClusterPolicy(flagSource, zone);
 
         try {
             policy.verifyGroupGoingDownIsFine(clusterApi);
             fail();
         } catch (HostStateChangeDeniedException e) {
             assertThat(e.getMessage(),
-                    containsString("Suspension of service with type 'hostadmin' not allowed: 33% are suspended already. " +
-                            "Services down on resumed hosts: [1 missing config server host]."));
+                       containsString("Changing the state of cfg1 would violate enough-services-up: 33% of the config " +
+                                      "servers are down or suspended already: [1 missing config server] are down."));
         }
-    }
-
-    @Test
-    public void testCfg1SuspendsIfDownWithMissingCfg3() throws HostStateChangeDeniedException {
-        ClusterApiImpl clusterApi = makeCfg1ClusterApi(ServiceStatus.DOWN, ServiceStatus.UP);
-
-        HostedVespaClusterPolicy policy = new HostedVespaClusterPolicy(flagSource, zone);
-
-        policy.verifyGroupGoingDownIsFine(clusterApi);
     }
 
     @Test
@@ -345,7 +327,7 @@ public class ClusterApiImplTest {
                 clock);
 
         assertEquals(expectedNoServicesInGroupIsUp.map(SuspensionReasons::getMessagesInOrder),
-                     clusterApi.reasonsForNoServicesInGroupIsUp().map(SuspensionReasons::getMessagesInOrder));
+                     clusterApi.allServicesDown().map(SuspensionReasons::getMessagesInOrder));
         assertEquals(expectedNoServicesOutsideGroupIsDown, clusterApi.noServicesOutsideGroupIsDown());
     }
 

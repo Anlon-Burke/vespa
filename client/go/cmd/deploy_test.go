@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // deploy command tests
 // Author: bratseth
 
@@ -61,9 +61,10 @@ func TestDeployApplicationDirectoryWithPomAndTarget(t *testing.T) {
 
 func TestDeployApplicationDirectoryWithPomAndEmptyTarget(t *testing.T) {
 	client := &mockHttpClient{}
+	_, outErr := execute(command{args: []string{"deploy", "testdata/applications/withEmptyTarget"}}, t, client)
 	assert.Equal(t,
 		"Error: pom.xml exists but no target/application.zip. Run mvn package first\n",
-		executeCommand(t, client, []string{"deploy", "testdata/applications/withEmptyTarget"}, []string{}))
+		outErr)
 }
 
 func TestDeployApplicationPackageErrorWithUnexpectedNonJson(t *testing.T) {
@@ -85,7 +86,7 @@ func TestDeployApplicationPackageErrorWithExpectedFormat(t *testing.T) {
 		"Invalid XML, error in services.xml:\nelement \"nosuch\" not allowed here",
 		`{
          "error-code": "INVALID_APPLICATION_PACKAGE",
-         "message": "Invalid XML, error in services.xml: element \"nosuch\" not allowed here\n"
+         "message": "Invalid XML, error in services.xml: element \"nosuch\" not allowed here"
      }`)
 }
 
@@ -94,7 +95,7 @@ func TestPrepareApplicationPackageErrorWithExpectedFormat(t *testing.T) {
 		"Invalid XML, error in services.xml:\nelement \"nosuch\" not allowed here",
 		`{
          "error-code": "INVALID_APPLICATION_PACKAGE",
-         "message": "Invalid XML, error in services.xml: element \"nosuch\" not allowed here\n"
+         "message": "Invalid XML, error in services.xml: element \"nosuch\" not allowed here"
      }`)
 }
 
@@ -130,9 +131,10 @@ func assertActivate(applicationPackage string, arguments []string, t *testing.T)
 	if err := cfg.WriteSessionID(vespa.DefaultApplication, 42); err != nil {
 		t.Fatal(err)
 	}
+	out, _ := execute(command{args: arguments, homeDir: cfg.Home}, t, client)
 	assert.Equal(t,
 		"Success: Activated "+applicationPackage+" with session 42\n",
-		execute(command{args: arguments, homeDir: homeDir}, t, client))
+		out)
 	url := "http://127.0.0.1:19071/application/v2/tenant/default/session/42/active"
 	assert.Equal(t, url, client.lastRequest.URL.String())
 	assert.Equal(t, "PUT", client.lastRequest.Method)
@@ -157,18 +159,20 @@ func assertDeployRequestMade(target string, client *mockHttpClient, t *testing.T
 	assertPackageUpload(-1, target+"/application/v2/tenant/default/prepareandactivate", client, t)
 }
 
-func assertApplicationPackageError(t *testing.T, command string, status int, expectedMessage string, returnBody string) {
+func assertApplicationPackageError(t *testing.T, cmd string, status int, expectedMessage string, returnBody string) {
 	client := &mockHttpClient{}
 	client.NextResponse(status, returnBody)
+	_, outErr := execute(command{args: []string{cmd, "testdata/applications/withTarget/target/application.zip"}}, t, client)
 	assert.Equal(t,
 		"Error: Invalid application package (Status "+strconv.Itoa(status)+")\n\n"+expectedMessage+"\n",
-		executeCommand(t, client, []string{command, "testdata/applications/withTarget/target/application.zip"}, []string{}))
+		outErr)
 }
 
 func assertDeployServerError(t *testing.T, status int, errorMessage string) {
 	client := &mockHttpClient{}
 	client.NextResponse(status, errorMessage)
+	_, outErr := execute(command{args: []string{"deploy", "testdata/applications/withTarget/target/application.zip"}}, t, client)
 	assert.Equal(t,
 		"Error: Error from deploy service at 127.0.0.1:19071 (Status "+strconv.Itoa(status)+"):\n"+errorMessage+"\n",
-		executeCommand(t, client, []string{"deploy", "testdata/applications/withTarget/target/application.zip"}, []string{}))
+		outErr)
 }

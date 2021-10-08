@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 package com.yahoo.vespa.hosted.controller.api.integration.athenz;
 
@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 public class AthenzAccessControlService implements AccessControlService {
@@ -37,7 +38,7 @@ public class AthenzAccessControlService implements AccessControlService {
         }
         Map<AthenzUser, String> users = zmsClient.listPendingRoleApprovals(dataPlaneAccessRole);
         if (users.containsKey(user)) {
-            zmsClient.approvePendingRoleMembership(dataPlaneAccessRole, user, expiry);
+            zmsClient.approvePendingRoleMembership(dataPlaneAccessRole, user, expiry, Optional.empty());
             return true;
         }
         return false;

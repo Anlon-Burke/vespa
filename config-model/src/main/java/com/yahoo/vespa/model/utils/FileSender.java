@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.utils;
 
 import com.yahoo.config.FileReference;
@@ -45,7 +45,7 @@ public class FileSender implements Serializable {
     public static void send(FileReference fileReference, Collection<? extends AbstractService> services) {
         if (services.isEmpty()) {
             throw new IllegalStateException("No service instances. Probably a standalone cluster setting up <nodes> " +
-                    "using 'count' instead of <node> tags.");
+                                            "using 'count' instead of <node> tags.");
         }
 
         for (AbstractService service : services) {
@@ -57,8 +57,7 @@ public class FileSender implements Serializable {
     /**
      * Sends all user configured files for a producer to all given services.
      */
-    public <PRODUCER extends AbstractConfigProducer<?>>
-    void sendUserConfiguredFiles(PRODUCER producer) {
+    public <PRODUCER extends AbstractConfigProducer<?>> void sendUserConfiguredFiles(PRODUCER producer) {
         if (services.isEmpty())
             return;
 
@@ -69,7 +68,7 @@ public class FileSender implements Serializable {
             try {
                 sendUserConfiguredFiles(builder, sentFiles, key);
             } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("Unable to send files for " + key, e);
+                throw new IllegalArgumentException("Unable to send file specified in " + key, e);
             }
         }
     }
@@ -78,7 +77,8 @@ public class FileSender implements Serializable {
         ConfigDefinition configDefinition = builder.getConfigDefinition();
         if (configDefinition == null) {
             // TODO: throw new IllegalArgumentException("Not able to find config definition for " + builder);
-            logger.logApplicationPackage(Level.FINE, "Not able to find config definition for " + key + ". Will not send files for this config");
+            logger.logApplicationPackage(Level.FINE, "Not able to find config definition for " + key +
+                                                     ". Will not send files for this config");
             return;
         }
         // Inspect fields at this level
@@ -133,7 +133,7 @@ public class FileSender implements Serializable {
         for (String name : entries.keySet()) {
             ConfigPayloadBuilder fileEntry = builder.getObject(name);
             if (fileEntry.getValue() == null) {
-                throw new IllegalArgumentException("Unable to send file for field '" + name + "'. Invalid config value " + fileEntry.getValue());
+                throw new IllegalArgumentException("Unable to send file for field '" + name + "': Invalid config value " + fileEntry.getValue());
             }
             sendFileEntry(fileEntry, sentFiles);
         }
@@ -149,6 +149,7 @@ public class FileSender implements Serializable {
         String path = builder.getValue();
         FileReference reference = sentFiles.get(path);
         if (reference == null) {
+
             reference = fileRegistry.addFile(path);
             send(reference, services);
             sentFiles.put(path, reference);

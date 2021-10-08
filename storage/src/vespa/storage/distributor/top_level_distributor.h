@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -101,8 +101,6 @@ public:
 
     void storageDistributionChanged() override;
 
-    bool handleReply(const std::shared_ptr<api::StorageReply>& reply);
-
     // StatusReporter implementation
     vespalib::string getReportContentType(const framework::HttpUrlPath&) const override;
     bool reportStatus(std::ostream&, const framework::HttpUrlPath&) const override;
@@ -134,43 +132,12 @@ public:
 
 private:
     friend class DistributorStripeTestUtil;
-    friend class DistributorTestUtil;
     friend class TopLevelDistributorTestUtil;
-    friend class LegacyBucketDBUpdaterTest;
     friend class MetricUpdateHook;
     friend struct DistributorStripeTest;
-    friend struct LegacyDistributorTest;
     friend struct TopLevelDistributorTest;
 
     void setNodeStateUp();
-    bool handleMessage(const std::shared_ptr<api::StorageMessage>& msg);
-
-    /**
-     * Enables a new cluster state. Used by tests to bypass TopLevelBucketDBUpdater.
-     */
-    void enableClusterStateBundle(const lib::ClusterStateBundle& clusterStateBundle);
-
-    // Accessors used by tests
-    std::string getActiveIdealStateOperations() const;
-    const lib::ClusterStateBundle& getClusterStateBundle() const;
-    const DistributorConfiguration& getConfig() const;
-    bool isInRecoveryMode() const noexcept;
-    PendingMessageTracker& getPendingMessageTracker();
-    const PendingMessageTracker& getPendingMessageTracker() const;
-    DistributorBucketSpaceRepo& getBucketSpaceRepo() noexcept;
-    const DistributorBucketSpaceRepo& getBucketSpaceRepo() const noexcept;
-    DistributorBucketSpaceRepo& getReadOnlyBucketSpaceRepo() noexcept;
-    const DistributorBucketSpaceRepo& getReadyOnlyBucketSpaceRepo() const noexcept;
-    storage::distributor::DistributorStripeComponent& distributor_component() noexcept;
-    std::chrono::steady_clock::duration db_memory_sample_interval() const noexcept;
-
-    StripeBucketDBUpdater& bucket_db_updater();
-    const StripeBucketDBUpdater& bucket_db_updater() const;
-    IdealStateManager& ideal_state_manager();
-    const IdealStateManager& ideal_state_manager() const;
-    ExternalOperationHandler& external_operation_handler();
-    const ExternalOperationHandler& external_operation_handler() const;
-    BucketDBMetricUpdater& bucket_db_metric_updater() const noexcept;
 
     /**
      * Return a copy of the latest min replica data, see MinReplicaProvider.
@@ -185,14 +152,14 @@ private:
      * Takes metric lock.
      */
     void propagateInternalScanMetricsToExternal();
-    void scanAllBuckets();
-    void enableNextConfig();
+    void enable_next_config_if_changed();
     void fetch_status_requests();
     void handle_status_requests();
     void signal_work_was_done();
     [[nodiscard]] bool work_was_done() const noexcept;
     void enableNextDistribution();
     void propagateDefaultDistribution(std::shared_ptr<const lib::Distribution>);
+    void un_inhibit_maintenance_if_safe_time_passed();
 
     void dispatch_to_main_distributor_thread_queue(const std::shared_ptr<api::StorageMessage>& msg);
     void fetch_external_messages();
@@ -205,7 +172,8 @@ private:
     uint32_t stripe_of_bucket_id(const document::BucketId& bucket_id, const api::StorageMessage& msg);
 
     // ClusterStateBundleActivationListener impl:
-    void on_cluster_state_bundle_activated(const lib::ClusterStateBundle&) override;
+    void on_cluster_state_bundle_activated(const lib::ClusterStateBundle& new_bundle,
+                                           bool has_bucket_ownership_transfer) override;
 
     struct StripeScanStats {
         bool wants_to_send_host_info = false;
@@ -217,16 +185,11 @@ private:
     const NodeIdentity                    _node_identity;
     DistributorComponentRegister&         _comp_reg;
     DoneInitializeHandler&                _done_init_handler;
-    const bool                            _use_legacy_mode;
     bool                                  _done_initializing;
-    std::shared_ptr<DistributorMetricSet> _metrics;
     std::shared_ptr<DistributorTotalMetrics> _total_metrics;
-    std::shared_ptr<IdealStateMetricSet>  _ideal_state_metrics;
     std::shared_ptr<IdealStateTotalMetrics> _ideal_state_total_metrics;
     ChainedMessageSender*                 _messageSender;
-    // TODO STRIPE multiple stripes...! This is for proof of concept of wiring.
     uint8_t                               _n_stripe_bits;
-    std::unique_ptr<DistributorStripe>    _stripe;
     DistributorStripePool&                _stripe_pool;
     std::vector<std::unique_ptr<DistributorStripe>> _stripes;
     std::unique_ptr<StripeAccessor>      _stripe_accessor;
@@ -247,6 +210,10 @@ private:
     std::vector<StripeScanStats>         _stripe_scan_stats; // Indices are 1-1 with _stripes entries
     std::chrono::steady_clock::time_point _last_host_info_send_time;
     std::chrono::milliseconds            _host_info_send_delay;
+    // Ideally this would use steady_clock, but for now let's use the same semantics as
+    // feed blocking during safe time periods.
+    std::chrono::system_clock::time_point _maintenance_safe_time_point;
+    std::chrono::seconds                 _maintenance_safe_time_delay;
     framework::ThreadWaitInfo            _tickResult;
     MetricUpdateHook                     _metricUpdateHook;
     DistributorHostInfoReporter          _hostInfoReporter;

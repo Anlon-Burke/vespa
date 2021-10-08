@@ -6,6 +6,8 @@
 #include "bm_feed.h"
 #include "bm_message_bus.h"
 #include "bm_node.h"
+#include "bm_node_stats.h"
+#include "bucket_db_snapshot_vector.h"
 #include "document_api_message_bus_bm_feed_handler.h"
 #include "spi_bm_feed_handler.h"
 #include "storage_api_chain_bm_feed_handler.h"
@@ -147,8 +149,10 @@ BmCluster::BmCluster(const vespalib::string& base_dir, int base_port, const BmCl
       _document_types(std::move(document_types)),
       _repo(std::move(repo)),
       _field_set_repo(std::make_unique<const document::FieldSetRepo>(*_repo)),
-      _distribution(std::make_shared<const BmDistribution>(params.get_num_nodes())),
+      _real_distribution(std::make_shared<BmDistribution>(params.get_groups(), params.get_nodes_per_group(), params.get_redundancy())),
+      _distribution(_real_distribution),
       _nodes(params.get_num_nodes()),
+      _cluster_controller(std::make_shared<BmClusterController>(*this, *_distribution)),
       _feed_handler()
 {
     _message_bus_config->add_builders(*_config_set);
@@ -307,14 +311,7 @@ BmCluster::start_service_layers()
             node->wait_service_layer_slobrok();
         }
     }
-    BmClusterController fake_controller(get_rpc_client(), *_distribution);
-    uint32_t node_idx = 0;
-    for (const auto &node : _nodes) {
-        if (node) {
-            fake_controller.set_cluster_up(node_idx, false);
-        }
-        ++node_idx;
-    }
+    _cluster_controller->propagate_cluster_state(false);
 }
 
 void
@@ -330,14 +327,7 @@ BmCluster::start_distributors()
             node->wait_distributor_slobrok();
         }
     }
-    BmClusterController fake_controller(get_rpc_client(), *_distribution);
-    uint32_t node_idx = 0;
-    for (const auto &node : _nodes) {
-        if (node) {
-            fake_controller.set_cluster_up(node_idx, true);
-        }
-        ++node_idx;
-    }
+    _cluster_controller->propagate_cluster_state(true);
     // Wait for bucket ownership transfer safe time
     std::this_thread::sleep_for(2s);
 }
@@ -435,6 +425,32 @@ IBmFeedHandler*
 BmCluster::get_feed_handler()
 {
     return _feed_handler.get();
+}
+
+std::vector<BmNodeStats>
+BmCluster::get_node_stats()
+{
+    std::vector<BmNodeStats> node_stats(_nodes.size());
+    storage::lib::ClusterState baseline_state(*_distribution->get_cluster_state_bundle().getBaselineClusterState());
+    for (const auto &node : _nodes) {
+        if (node) {
+            node->merge_node_stats(node_stats, baseline_state);
+        }
+    }
+    return node_stats;
+}
+
+void
+BmCluster::propagate_cluster_state()
+{
+    _cluster_controller->propagate_cluster_state();
+}
+
+BucketDbSnapshotVector
+BmCluster::get_bucket_db_snapshots()
+{
+    auto providers = collect_persistence_providers(_nodes);
+    return BucketDbSnapshotVector(providers, _distribution->get_cluster_state_bundle());
 }
 
 }

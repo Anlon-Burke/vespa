@@ -1,4 +1,4 @@
-// Copyright 2018 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "ddbstate.h"
 #include "document_meta_store_read_guards.h"
@@ -304,11 +304,7 @@ DocumentDBMetricsUpdater::updateAttributeResourceUsageMetrics(DocumentDBTaggedMe
 {
     AttributeUsageStats stats = _writeFilter.getAttributeUsageStats();
     bool feedBlocked = !_writeFilter.acceptWriteOperation();
-    double enumStoreUsed = stats.enumStoreUsage().getUsage().usage();
-    double multiValueUsed = stats.multiValueUsage().getUsage().usage();
     double address_space_used = stats.max_address_space_usage().getUsage().usage();
-    metrics.resourceUsage.enumStore.set(enumStoreUsed);
-    metrics.resourceUsage.multiValue.set(multiValueUsed);
     metrics.resourceUsage.address_space.set(address_space_used);
     metrics.resourceUsage.feedingBlocked.set(feedBlocked ? 1 : 0);
 }

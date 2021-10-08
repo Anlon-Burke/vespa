@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // vespa config command
 // author: bratseth
 
@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -33,13 +34,21 @@ func init() {
 }
 
 var configCmd = &cobra.Command{
-	Use:               "config",
-	Short:             "Configure default values for flags",
+	Use:   "config",
+	Short: "Configure persistent values for flags",
+	Long: `Configure persistent values for flags.
+
+This command allows setting a persistent value for a given flag. On future
+invocations the flag can then be omitted as it is read from the config file
+instead.
+
+Configuration is written to $HOME/.vespa by default. This path can be
+overridden by setting the VESPA_CLI_HOME environment variable.`,
 	DisableAutoGenTag: true,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Root command does nothing
 		cmd.Help()
-		os.Exit(1)
+		exitFunc(1)
 	},
 }
 
@@ -79,8 +88,14 @@ var getConfigCmd = &cobra.Command{
 		}
 
 		if len(args) == 0 { // Print all values
-			printOption(cfg, targetFlag)
-			printOption(cfg, applicationFlag)
+			var flags []string
+			for flag := range flagToConfigBindings {
+				flags = append(flags, flag)
+			}
+			sort.Strings(flags)
+			for _, flag := range flags {
+				printOption(cfg, flag)
+			}
 		} else {
 			printOption(cfg, args[0])
 		}
@@ -93,16 +108,8 @@ type Config struct {
 }
 
 func LoadConfig() (*Config, error) {
-	home := os.Getenv("VESPA_CLI_HOME")
-	if home == "" {
-		var err error
-		home, err = os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		home = filepath.Join(home, ".vespa")
-	}
-	if err := os.MkdirAll(home, 0700); err != nil {
+	home, err := vespaCliHome()
+	if err != nil {
 		return nil, err
 	}
 	c := &Config{Home: home, createDirs: true}
@@ -218,6 +225,12 @@ func (c *Config) Set(option, value string) error {
 		}
 		viper.Set(option, value)
 		return nil
+	case colorFlag:
+		switch value {
+		case "auto", "never", "always":
+			viper.Set(option, value)
+			return nil
+		}
 	}
 	return fmt.Errorf("invalid option or value: %q: %q", option, value)
 }

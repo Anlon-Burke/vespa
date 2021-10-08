@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.restapi.horizon;
 
 import com.google.inject.Inject;
@@ -14,8 +14,6 @@ import com.yahoo.vespa.flags.FetchVector;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.hosted.controller.Controller;
-import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingController;
-import com.yahoo.vespa.hosted.controller.api.integration.billing.PlanId;
 import com.yahoo.vespa.hosted.controller.api.integration.horizon.HorizonClient;
 import com.yahoo.vespa.hosted.controller.api.integration.horizon.HorizonResponse;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
@@ -28,7 +26,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.EnumSet;
-import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.logging.Level;
@@ -41,7 +38,6 @@ import java.util.stream.Collectors;
  */
 public class HorizonApiHandler extends LoggingRequestHandler {
 
-    private final BillingController billingController;
     private final SystemName systemName;
     private final HorizonClient client;
     private final BooleanFlag enabledHorizonDashboard;
@@ -52,7 +48,6 @@ public class HorizonApiHandler extends LoggingRequestHandler {
     @Inject
     public HorizonApiHandler(LoggingRequestHandler.Context parentCtx, Controller controller, FlagSource flagSource) {
         super(parentCtx);
-        this.billingController = controller.serviceRegistry().billingController();
         this.systemName = controller.system();
         this.client = controller.serviceRegistry().horizonClient();
         this.enabledHorizonDashboard = Flags.ENABLED_HORIZON_DASHBOARD.bindTo(flagSource);
@@ -87,16 +82,13 @@ public class HorizonApiHandler extends LoggingRequestHandler {
     private HttpResponse get(HttpRequest request) {
         Path path = new Path(request.getUri());
         if (path.matches("/horizon/v1/config/dashboard/topFolders")) return new JsonInputStreamResponse(client.getTopFolders());
-        if (path.matches("/horizon/v1/config/dashboard/file/{id}")) return new JsonInputStreamResponse(client.getDashboard(path.get("id")));
-        if (path.matches("/horizon/v1/config/dashboard/favorite")) return new JsonInputStreamResponse(client.getFavorite(request.getProperty("user")));
-        if (path.matches("/horizon/v1/config/dashboard/recent")) return new JsonInputStreamResponse(client.getRecent(request.getProperty("user")));
+        if (path.matches("/horizon/v1/config/dashboard/file/{id}")) return new JsonInputStreamResponse(client.getDashboard());
         return ErrorResponse.notFoundError("Nothing at " + path);
     }
 
     private HttpResponse post(HttpRequest request, Set<TenantName> authorizedTenants, boolean operator) {
         Path path = new Path(request.getUri());
-        if (path.matches("/horizon/v1/tsdb/api/query/graph")) return tsdbQuery(request, authorizedTenants, operator, true);
-        if (path.matches("/horizon/v1/meta/search/timeseries")) return tsdbQuery(request, authorizedTenants, operator, false);
+        if (path.matches("/horizon/v1/tsdb/api/query/graph")) return tsdbQuery(request, authorizedTenants, operator);
         return ErrorResponse.notFoundError("Nothing at " + path);
     }
 
@@ -106,10 +98,10 @@ public class HorizonApiHandler extends LoggingRequestHandler {
         return ErrorResponse.notFoundError("Nothing at " + path);
     }
 
-    private HttpResponse tsdbQuery(HttpRequest request, Set<TenantName> authorizedTenants, boolean operator, boolean isMetricQuery) {
+    private HttpResponse tsdbQuery(HttpRequest request, Set<TenantName> authorizedTenants, boolean operator) {
         try {
             byte[] data = TsdbQueryRewriter.rewrite(request.getData().readAllBytes(), authorizedTenants, operator, systemName);
-            return new JsonInputStreamResponse(isMetricQuery ? client.getMetrics(data) : client.getMetaData(data));
+            return new JsonInputStreamResponse(client.getMetrics(data));
         } catch (TsdbQueryRewriter.UnauthorizedException e) {
             return ErrorResponse.forbidden("Access denied");
         } catch (IOException e) {
@@ -126,13 +118,11 @@ public class HorizonApiHandler extends LoggingRequestHandler {
     }
 
     private Set<TenantName> getAuthorizedTenants(Set<Role> roles) {
-        var horizonEnabled = roles.stream()
+        return roles.stream()
                 .filter(TenantRole.class::isInstance)
                 .map(role -> ((TenantRole) role).tenant())
                 .filter(tenant -> enabledHorizonDashboard.with(FetchVector.Dimension.TENANT_ID, tenant.value()).value())
-                .collect(Collectors.toList());
-
-        return new HashSet<>(billingController.tenantsWithPlan(horizonEnabled, PlanId.from("pay-as-you-go")));
+                .collect(Collectors.toSet());
     }
 
     private static class JsonInputStreamResponse extends HttpResponse {

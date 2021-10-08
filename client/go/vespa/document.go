@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // vespa document API client
 // Author: bratseth
 
@@ -7,34 +7,36 @@ package vespa
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
 	"time"
 
+	"github.com/vespa-engine/vespa/client/go/curl"
 	"github.com/vespa-engine/vespa/client/go/util"
 )
 
 // Sends the operation given in the file
-func Send(jsonFile string, service *Service) util.OperationResult {
-	return sendOperation("", jsonFile, service, anyOperation)
+func Send(jsonFile string, service *Service, options OperationOptions) util.OperationResult {
+	return sendOperation("", jsonFile, service, anyOperation, options)
 }
 
-func Put(documentId string, jsonFile string, service *Service) util.OperationResult {
-	return sendOperation(documentId, jsonFile, service, putOperation)
+func Put(documentId string, jsonFile string, service *Service, options OperationOptions) util.OperationResult {
+	return sendOperation(documentId, jsonFile, service, putOperation, options)
 }
 
-func Update(documentId string, jsonFile string, service *Service) util.OperationResult {
-	return sendOperation(documentId, jsonFile, service, updateOperation)
+func Update(documentId string, jsonFile string, service *Service, options OperationOptions) util.OperationResult {
+	return sendOperation(documentId, jsonFile, service, updateOperation, options)
 }
 
-func RemoveId(documentId string, service *Service) util.OperationResult {
-	return sendOperation(documentId, "", service, removeOperation)
+func RemoveId(documentId string, service *Service, options OperationOptions) util.OperationResult {
+	return sendOperation(documentId, "", service, removeOperation, options)
 }
 
-func RemoveOperation(jsonFile string, service *Service) util.OperationResult {
-	return sendOperation("", jsonFile, service, removeOperation)
+func RemoveOperation(jsonFile string, service *Service, options OperationOptions) util.OperationResult {
+	return sendOperation("", jsonFile, service, removeOperation, options)
 }
 
 const (
@@ -44,7 +46,12 @@ const (
 	removeOperation string = "remove"
 )
 
-func sendOperation(documentId string, jsonFile string, service *Service, operation string) util.OperationResult {
+type OperationOptions struct {
+	CurlOutput io.Writer
+	Timeout    time.Duration
+}
+
+func sendOperation(documentId string, jsonFile string, service *Service, operation string, options OperationOptions) util.OperationResult {
 	header := http.Header{}
 	header.Add("Content-Type", "application/json")
 
@@ -52,12 +59,15 @@ func sendOperation(documentId string, jsonFile string, service *Service, operati
 	if operation == "remove" && jsonFile == "" {
 		documentData = []byte("{\n    \"remove\": \"" + documentId + "\"\n}\n")
 	} else {
-		fileReader, fileError := os.Open(jsonFile)
-		if fileError != nil {
-			return util.FailureWithDetail("Could not open file '"+jsonFile+"'", fileError.Error())
+		fileReader, err := os.Open(jsonFile)
+		if err != nil {
+			return util.FailureWithDetail("Could not open file '"+jsonFile+"'", err.Error())
 		}
 		defer fileReader.Close()
-		documentData = util.ReaderToBytes(fileReader)
+		documentData, err = ioutil.ReadAll(fileReader)
+		if err != nil {
+			return util.FailureWithDetail("Failed to read '"+jsonFile+"'", err.Error())
+		}
 	}
 
 	var doc map[string]interface{}
@@ -93,7 +103,7 @@ func sendOperation(documentId string, jsonFile string, service *Service, operati
 		Header: header,
 		Body:   ioutil.NopCloser(bytes.NewReader(documentData)),
 	}
-	response, err := service.Do(request, time.Second*60)
+	response, err := serviceDo(service, request, jsonFile, options)
 	if response == nil {
 		return util.Failure("Request failed: " + err.Error())
 	}
@@ -132,7 +142,28 @@ func operationToHTTPMethod(operation string) string {
 	panic("Unexpected document operation ''" + operation + "'")
 }
 
-func Get(documentId string, service *Service) util.OperationResult {
+func serviceDo(service *Service, request *http.Request, filename string, options OperationOptions) (*http.Response, error) {
+	cmd, err := curl.RawArgs(request.URL.String())
+	if err != nil {
+		return nil, err
+	}
+	cmd.Method = request.Method
+	for k, vs := range request.Header {
+		for _, v := range vs {
+			cmd.Header(k, v)
+		}
+	}
+	cmd.BodyFile = filename
+	cmd.Certificate = service.TLSOptions.CertificateFile
+	cmd.PrivateKey = service.TLSOptions.PrivateKeyFile
+	out := cmd.String() + "\n"
+	if _, err := io.WriteString(options.CurlOutput, out); err != nil {
+		return nil, err
+	}
+	return service.Do(request, options.Timeout)
+}
+
+func Get(documentId string, service *Service, options OperationOptions) util.OperationResult {
 	documentPath, documentPathError := IdToURLPath(documentId)
 	if documentPathError != nil {
 		return util.Failure("Invalid document id '" + documentId + "': " + documentPathError.Error())
@@ -147,7 +178,7 @@ func Get(documentId string, service *Service) util.OperationResult {
 		URL:    url,
 		Method: "GET",
 	}
-	response, err := service.Do(request, time.Second*60)
+	response, err := serviceDo(service, request, "", options)
 	if response == nil {
 		return util.Failure("Request failed: " + err.Error())
 	}

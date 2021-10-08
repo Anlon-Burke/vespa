@@ -1,7 +1,6 @@
-// Copyright 2020 Oath Inc. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.metricsproxy.http.application;
 
-import ai.vespa.metricsproxy.metric.model.MetricsPacket;
 import com.github.tomakehurst.wiremock.junit.WireMockRule;
 import org.junit.Before;
 import org.junit.Rule;
@@ -9,11 +8,8 @@ import org.junit.Test;
 
 import java.time.Duration;
 import java.util.Arrays;
-import java.util.List;
-import java.util.concurrent.TimeoutException;
 
 import static ai.vespa.metricsproxy.TestUtil.getFileContents;
-import static ai.vespa.metricsproxy.http.application.ApplicationMetricsRetriever.MAX_THREADS;
 import static ai.vespa.metricsproxy.http.application.ApplicationMetricsRetriever.MAX_TIMEOUT;
 import static ai.vespa.metricsproxy.http.application.ApplicationMetricsRetriever.MIN_TIMEOUT;
 import static ai.vespa.metricsproxy.http.application.ApplicationMetricsRetriever.timeout;
@@ -24,7 +20,6 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options
 import static java.util.stream.Collectors.toList;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 /**
  * @author gjoranv
@@ -58,7 +53,8 @@ public class ApplicationMetricsRetrieverTest {
                                      .willReturn(aResponse().withBody(RESPONSE)));
 
         ApplicationMetricsRetriever retriever = new ApplicationMetricsRetriever(config);
-        retriever.startPollAnwWait();
+        retriever.getMetrics();
+        retriever.startPollAndWait();
         var metricsByNode = retriever.getMetrics();
         assertEquals(1, metricsByNode.size());
         assertEquals(4, metricsByNode.get(node).size());
@@ -76,7 +72,8 @@ public class ApplicationMetricsRetrieverTest {
                                      .willReturn(aResponse().withBody(RESPONSE)));
 
         ApplicationMetricsRetriever retriever = new ApplicationMetricsRetriever(config);
-        retriever.startPollAnwWait();
+        retriever.getMetrics();
+        retriever.startPollAndWait();
         var metricsByNode = retriever.getMetrics();
         assertEquals(2, metricsByNode.size());
         assertEquals(4, metricsByNode.get(node0).size());
@@ -105,7 +102,8 @@ public class ApplicationMetricsRetrieverTest {
                                      .willReturn(aResponse().withBody(RESPONSE)));
 
         ApplicationMetricsRetriever retriever = new ApplicationMetricsRetriever(config);
-        retriever.startPollAnwWait();
+        retriever.getMetrics();
+        retriever.startPollAndWait();
         var metricsByNode = retriever.getMetrics();
         assertEquals(2, metricsByNode.size());
         assertEquals(0, metricsByNode.get(node0).size());
@@ -123,7 +121,7 @@ public class ApplicationMetricsRetrieverTest {
 
         ApplicationMetricsRetriever retriever = new ApplicationMetricsRetriever(config);
         retriever.setTaskTimeout(Duration.ofMillis(1));
-        retriever.startPollAnwWait();
+        retriever.startPollAndWait();
         assertTrue(retriever.getMetrics().get(node).isEmpty());
 
     }
@@ -139,8 +137,9 @@ public class ApplicationMetricsRetrieverTest {
                                                                            .withFixedDelay(10)));
 
         ApplicationMetricsRetriever retriever = new ApplicationMetricsRetriever(config);
+        retriever.getMetrics();
         retriever.setTaskTimeout(Duration.ofMillis(1));
-        retriever.startPollAnwWait();
+        retriever.startPollAndWait();
         assertTrue(retriever.getMetrics().get(node).isEmpty());
         // Verify successful retrieving
         wireMockRule.removeStubMapping(delayedStub);
@@ -149,13 +148,13 @@ public class ApplicationMetricsRetrieverTest {
 
     @Test
     public void test_timeout_calculation() {
-        assertEquals(MIN_TIMEOUT, timeout(1, 1));
-        assertEquals(MIN_TIMEOUT, timeout(MAX_THREADS, MAX_THREADS));
+        assertEquals(MIN_TIMEOUT, timeout(1));
+        assertEquals(MIN_TIMEOUT, timeout(20));
 
         // These values must be updated if the calculation in the timeout method itself is changed.
-        assertEquals(Duration.ofSeconds(100), timeout(100, MAX_THREADS));
-        assertEquals(Duration.ofSeconds(200), timeout(200, MAX_THREADS));
-        assertEquals(MAX_TIMEOUT, timeout(240, MAX_THREADS));
+        assertEquals(Duration.ofSeconds(100), timeout(100));
+        assertEquals(Duration.ofSeconds(200), timeout(200));
+        assertEquals(MAX_TIMEOUT, timeout(240));
     }
 
     private MetricsNodesConfig nodesConfig(String... paths) {

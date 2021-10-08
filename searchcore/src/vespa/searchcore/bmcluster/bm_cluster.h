@@ -25,9 +25,13 @@ namespace storage::rpc { class SharedRpcResources; }
 
 namespace search::bmcluster {
 
+class BmClusterController;
+class BmDistribution;
 class BmFeed;
 class BmMessageBus;
 class BmNode;
+class BmNodeStats;
+class BucketDbSnapshotVector;
 class IBmDistribution;
 class IBmFeedHandler;
 
@@ -53,8 +57,10 @@ class BmCluster {
     std::shared_ptr<DocumenttypesConfig>              _document_types;
     std::shared_ptr<const document::DocumentTypeRepo> _repo;
     std::unique_ptr<const document::FieldSetRepo>     _field_set_repo;
+    std::shared_ptr<BmDistribution>                   _real_distribution;
     std::shared_ptr<const IBmDistribution>            _distribution;
     std::vector<std::unique_ptr<BmNode>>              _nodes;
+    std::shared_ptr<BmClusterController>              _cluster_controller;
     std::unique_ptr<IBmFeedHandler>                   _feed_handler;
 
 public:
@@ -77,12 +83,19 @@ public:
     void initialize_providers();
     void start(BmFeed &feed);
     void stop();
+    const storage::rpc::SharedRpcResources &get_rpc_client() const { return *_rpc_client; }
     storage::rpc::SharedRpcResources &get_rpc_client() { return *_rpc_client; }
     BmMessageBus& get_message_bus() { return *_message_bus; }
     const IBmDistribution& get_distribution() { return *_distribution; }
     void make_node(uint32_t node_idx);
     void make_nodes();
     IBmFeedHandler* get_feed_handler();
+    uint32_t get_num_nodes() const { return _nodes.size(); }
+    BmNode *get_node(uint32_t node_idx) const { return node_idx < _nodes.size() ? _nodes[node_idx].get() : nullptr; }
+    std::vector<BmNodeStats> get_node_stats();
+    BmDistribution& get_real_distribution() { return *_real_distribution; }
+    void propagate_cluster_state();
+    BucketDbSnapshotVector get_bucket_db_snapshots();
 };
 
 }

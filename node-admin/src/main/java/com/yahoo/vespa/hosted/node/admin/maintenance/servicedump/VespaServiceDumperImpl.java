@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.node.admin.maintenance.servicedump;
 
 import com.yahoo.yolean.concurrent.Sleeper;
@@ -109,7 +109,9 @@ public class VespaServiceDumperImpl implements VespaServiceDumper {
             for (String artifactType : artifactTypes) {
                 ArtifactProducer producer = artifactProducers.get(artifactType);
                 if (producer == null) {
-                    handleFailure(context, request, startedAt, "No artifact producer exists for '" + artifactType + "'");
+                    String supportedValues = String.join(",", artifactProducers.keySet());
+                    handleFailure(context, request, startedAt, "No artifact producer exists for '" + artifactType + "'. " +
+                            "Following values are allowed: " + supportedValues);
                     return;
                 }
                 context.log(log, "Producing artifact of type '" + artifactType + "'");
@@ -173,7 +175,8 @@ public class VespaServiceDumperImpl implements VespaServiceDumper {
     }
 
     private static URI serviceDumpDestination(NodeSpec spec, String dumpId) {
-        URI archiveUri = spec.archiveUri().get();
+        URI archiveUri = spec.archiveUri()
+                .orElseThrow(() -> new IllegalStateException("Archive URI is missing for " + spec.hostname()));
         String targetDirectory = "service-dump/" + dumpId + "/";
         return archiveUri.resolve(targetDirectory);
     }

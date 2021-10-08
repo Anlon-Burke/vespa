@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "bucketcopy.h"
@@ -9,7 +9,6 @@ namespace storage {
 
 namespace distributor {
     class DistributorStripeTestUtil;
-    class DistributorTestUtil;
     class TopLevelDistributorTestUtil;
 }
 
@@ -205,7 +204,6 @@ public:
 
 private:
     friend class distributor::DistributorStripeTestUtil;
-    friend class distributor::DistributorTestUtil;
     friend class distributor::TopLevelDistributorTestUtil;
 
     /**

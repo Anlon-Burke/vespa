@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "reconfigurable_stateserver.h"
 #include "sbenv.h"
@@ -97,19 +97,16 @@ ConfigTask::PerformTask()
 
 } // namespace slobrok::<unnamed>
 
-SBEnv::SBEnv(const ConfigShim &shim) : SBEnv(shim, false) {}
-
-SBEnv::SBEnv(const ConfigShim &shim, bool useNewConsensusLogic)
+SBEnv::SBEnv(const ConfigShim &shim)
     : _transport(std::make_unique<FNET_Transport>(TransportConfig().drop_empty_buffers(true))),
       _supervisor(std::make_unique<FRT_Supervisor>(_transport.get())),
       _configShim(shim),
       _configurator(shim.factory().create(*this)),
       _shuttingDown(false),
-      _useNewLogic(useNewConsensusLogic),
       _partnerList(),
       _me(createSpec(_configShim.portNumber())),
-      _rpcHooks(*this, _rpcsrvmap, _rpcsrvmanager),
-      _remotechecktask(std::make_unique<RemoteCheck>(getSupervisor()->GetScheduler(), _rpcsrvmap, _rpcsrvmanager, _exchanger)),
+      _rpcHooks(*this),
+      _remotechecktask(std::make_unique<RemoteCheck>(getSupervisor()->GetScheduler(), _exchanger)),
       _health(),
       _metrics(_rpcHooks, *_transport),
       _components(),
@@ -117,24 +114,13 @@ SBEnv::SBEnv(const ConfigShim &shim, bool useNewConsensusLogic)
                           [this] (MappingMonitorOwner &owner) {
                               return std::make_unique<RpcMappingMonitor>(*_supervisor, owner);
                           }),
-      _rpcsrvmanager(*this),
-      _exchanger(*this, _rpcsrvmap),
-      _rpcsrvmap()
+      _exchanger(*this)
 {
-    if (useNewLogic()) {
-        srandom(time(nullptr) ^ getpid());
-        // note: feedback loop between these two:
-        _localMonitorSubscription = MapSubscription::subscribe(_consensusMap, _localRpcMonitorMap);
-        _consensusSubscription = MapSubscription::subscribe(_localRpcMonitorMap.dispatcher(), _consensusMap);
-        _globalHistorySubscription = MapSubscription::subscribe(_consensusMap, _globalVisibleHistory);
-        _rpcHooks.initRPC(getSupervisor());
-        return;
-    }
     srandom(time(nullptr) ^ getpid());
     // note: feedback loop between these two:
     _localMonitorSubscription = MapSubscription::subscribe(_consensusMap, _localRpcMonitorMap);
     _consensusSubscription = MapSubscription::subscribe(_localRpcMonitorMap.dispatcher(), _consensusMap);
-    _globalHistorySubscription = MapSubscription::subscribe(_rpcsrvmap.proxy(), _globalVisibleHistory);
+    _globalHistorySubscription = MapSubscription::subscribe(_consensusMap, _globalVisibleHistory);
     _rpcHooks.initRPC(getSupervisor());
 }
 
@@ -210,7 +196,6 @@ SBEnv::MainLoop()
     return 0;
 }
 
-
 void
 SBEnv::setup(const std::vector<std::string> &cfg)
 {
@@ -223,7 +208,7 @@ SBEnv::setup(const std::vector<std::string> &cfg)
         std::string slobrok = cfg[i];
         discard(oldList, slobrok);
         if (slobrok != mySpec()) {
-            OkState res = _rpcsrvmanager.addPeer(slobrok, slobrok.c_str());
+            OkState res = _exchanger.addPartner(slobrok);
             if (!res.ok()) {
                 LOG(warning, "could not add peer %s: %s", slobrok.c_str(), res.errorMsg.c_str());
             } else {
@@ -232,12 +217,8 @@ SBEnv::setup(const std::vector<std::string> &cfg)
         }
     }
     for (uint32_t i = 0; i < oldList.size(); ++i) {
-        OkState res = _rpcsrvmanager.removePeer(oldList[i], oldList[i].c_str());
-        if (!res.ok()) {
-            LOG(warning, "could not remove peer %s: %s", oldList[i].c_str(), res.errorMsg.c_str());
-        } else {
-            LOG(config, "removed peer %s", oldList[i].c_str());
-        }
+        _exchanger.removePartner(oldList[i]);
+        LOG(config, "removed peer %s", oldList[i].c_str());
     }
     int64_t curGen = _configurator->getGeneration();
     vespalib::ComponentConfigProducer::Config current("slobroks", curGen, "ok");
@@ -247,6 +228,9 @@ SBEnv::setup(const std::vector<std::string> &cfg)
 OkState
 SBEnv::addPeer(const std::string &name, const std::string &spec)
 {
+    if (name != spec) {
+        return OkState(FRTE_RPC_METHOD_FAILED, "peer location brokers must have name equal to spec");
+    }
     if (spec == mySpec()) {
         return OkState(FRTE_RPC_METHOD_FAILED, "cannot add my own spec as peer");
     }
@@ -261,12 +245,15 @@ SBEnv::addPeer(const std::string &name, const std::string &spec)
                      spec.c_str(), peers.c_str());
         _partnerList.push_back(spec);
     }
-    return _rpcsrvmanager.addPeer(name, spec.c_str());
+    return _exchanger.addPartner(spec);
 }
 
 OkState
 SBEnv::removePeer(const std::string &name, const std::string &spec)
 {
+    if (name != spec) {
+        return OkState(FRTE_RPC_METHOD_FAILED, "peer location brokers must have name equal to spec");
+    }
     if (spec == mySpec()) {
         return OkState(FRTE_RPC_METHOD_FAILED, "cannot remove my own spec as peer");
     }
@@ -275,7 +262,12 @@ SBEnv::removePeer(const std::string &name, const std::string &spec)
             return OkState(FRTE_RPC_METHOD_FAILED, "configured partner list contains peer, cannot remove");
         }
     }
-    return _rpcsrvmanager.removePeer(name, spec.c_str());
+    const RemoteSlobrok *partner = _exchanger.lookupPartner(name);
+    if (partner == nullptr) {
+        return OkState(0, "remote slobrok not a partner");
+    }
+    _exchanger.removePartner(spec);
+    return OkState(0, "done");
 }
 
 } // namespace slobrok

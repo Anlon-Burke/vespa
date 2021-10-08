@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.searchdefinition;
 
 import com.yahoo.document.StructDataType;
@@ -114,11 +114,11 @@ public class AttributeSettingsTestCase extends SchemaTestCase {
     }
 
     @Test
-    public void requireThatSwappableIsDefaultOff() throws ParseException {
+    public void requireThatPagedIsDefaultOff() throws ParseException {
         Attribute attr = getAttributeF(
                 "search test {\n" +
                         "  document test { \n" +
-                        "    field f type int { \n" +
+                        "    field f type tensor(x[2]) { \n" +
                         "      indexing: attribute \n" +
                         "    }\n" +
                         "  }\n" +
@@ -126,11 +126,11 @@ public class AttributeSettingsTestCase extends SchemaTestCase {
         assertFalse(attr.isPaged());
     }
     @Test
-    public void requireThatSwappableCanBeSet() throws ParseException {
+    public void requireThatPagedCanBeSet() throws ParseException {
         Attribute attr = getAttributeF(
                 "search test {\n" +
                         "  document test { \n" +
-                        "    field f type int { \n" +
+                        "    field f type tensor(x[2]) { \n" +
                         "      indexing: attribute \n" +
                         "      attribute: paged \n" +
                         "    }\n" +

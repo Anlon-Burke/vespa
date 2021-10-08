@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "top_level_bucket_db_updater.h"
 #include "bucket_db_prune_elision.h"
@@ -50,54 +50,44 @@ TopLevelBucketDBUpdater::TopLevelBucketDBUpdater(const DistributorNodeContext& n
       _stale_reads_enabled(false)
 {
     // FIXME STRIPE top-level Distributor needs a proper way to track the current cluster state bundle!
-    propagate_active_state_bundle_internally();
+    propagate_active_state_bundle_internally(true); // We're just starting up so assume ownership transfer.
     bootstrap_distribution_config(bootstrap_distribution);
 }
 
 TopLevelBucketDBUpdater::~TopLevelBucketDBUpdater() = default;
 
 void
-TopLevelBucketDBUpdater::propagate_active_state_bundle_internally() {
-    for (auto* repo : {&_op_ctx.bucket_space_repo(), &_op_ctx.read_only_bucket_space_repo()}) {
-        for (auto& iter : *repo) {
-            iter.second->setClusterState(_active_state_bundle.getDerivedClusterState(iter.first));
-        }
+TopLevelBucketDBUpdater::propagate_active_state_bundle_internally(bool has_bucket_ownership_transfer) {
+    for (auto& elem : _op_ctx.bucket_space_states()) {
+        elem.second->set_cluster_state(_active_state_bundle.getDerivedClusterState(elem.first));
     }
     if (_state_activation_listener) {
-        _state_activation_listener->on_cluster_state_bundle_activated(_active_state_bundle);
+        _state_activation_listener->on_cluster_state_bundle_activated(_active_state_bundle, has_bucket_ownership_transfer);
     }
 }
 
 void
 TopLevelBucketDBUpdater::bootstrap_distribution_config(std::shared_ptr<const lib::Distribution> distribution) {
     auto global_distr = GlobalBucketSpaceDistributionConverter::convert_to_global(*distribution);
-    for (auto* repo : {&_op_ctx.bucket_space_repo(), &_op_ctx.read_only_bucket_space_repo()}) {
-        repo->get(document::FixedBucketSpaces::default_space()).setDistribution(distribution);
-        repo->get(document::FixedBucketSpaces::global_space()).setDistribution(global_distr);
-    }
+    _op_ctx.bucket_space_states().get(document::FixedBucketSpaces::default_space()).set_distribution(distribution);
+    _op_ctx.bucket_space_states().get(document::FixedBucketSpaces::global_space()).set_distribution(global_distr);
     // TODO STRIPE do we need to bootstrap the stripes as well here? Or do they do this on their own volition?
     //   ... need to take a guard if so, so can probably not be done at ctor time..?
 }
 
 void
 TopLevelBucketDBUpdater::propagate_distribution_config(const BucketSpaceDistributionConfigs& configs) {
-    for (auto* repo : {&_op_ctx.bucket_space_repo(), &_op_ctx.read_only_bucket_space_repo()}) {
-        if (auto distr = configs.get_or_nullptr(document::FixedBucketSpaces::default_space())) {
-            repo->get(document::FixedBucketSpaces::default_space()).setDistribution(distr);
-        }
-        if (auto distr = configs.get_or_nullptr(document::FixedBucketSpaces::global_space())) {
-            repo->get(document::FixedBucketSpaces::global_space()).setDistribution(distr);
-        }
+    if (auto distr = configs.get_or_nullptr(document::FixedBucketSpaces::default_space())) {
+        _op_ctx.bucket_space_states().get(document::FixedBucketSpaces::default_space()).set_distribution(distr);
+    }
+    if (auto distr = configs.get_or_nullptr(document::FixedBucketSpaces::global_space())) {
+        _op_ctx.bucket_space_states().get(document::FixedBucketSpaces::global_space()).set_distribution(distr);
     }
 }
 
-// FIXME what about bucket DB replica update timestamp allocations?! Replace with u64 counter..?
-//   Must at the very least ensure we use stripe-local TS generation for DB inserts...! i.e. no global TS
-//   Or do we have to touch these at all here? Just defer all this via stripe interface?
 void
 TopLevelBucketDBUpdater::flush()
 {
-    // TODO STRIPE: Consider if this must flush_and_close() all stripes
 }
 
 void
@@ -126,10 +116,8 @@ TopLevelBucketDBUpdater::remove_superfluous_buckets(
         bool is_distribution_config_change)
 {
     const char* up_states = storage_node_up_states();
-    // TODO STRIPE explicit space -> config mapping, don't get via repo
-    //   ... but we need to get the current cluster state per space..!
-    for (auto& elem : _op_ctx.bucket_space_repo()) {
-        const auto& old_cluster_state(elem.second->getClusterState());
+    for (auto& elem : _op_ctx.bucket_space_states()) {
+        const auto& old_cluster_state(elem.second->get_cluster_state());
         const auto& new_cluster_state = new_state.getDerivedClusterState(elem.first);
 
         // Running a full DB sweep is expensive, so if the cluster state transition does
@@ -142,8 +130,6 @@ TopLevelBucketDBUpdater::remove_superfluous_buckets(
                 old_cluster_state.toString().c_str(), new_cluster_state->toString().c_str());
             continue;
         }
-        // TODO STRIPE should we also pass old state and distr config? Must ensure we're in sync with stripe...
-        //   .. but config is set synchronously via the guard upon pending state creation edge
         auto maybe_lost = guard.remove_superfluous_buckets(elem.first, *new_cluster_state, is_distribution_config_change);
         if (maybe_lost.buckets != 0) {
             LOGBM(info, "After cluster state change %s, %zu buckets no longer "
@@ -212,8 +198,8 @@ TopLevelBucketDBUpdater::storage_distribution_changed(const BucketSpaceDistribut
             _node_ctx.clock(),
             std::move(clusterInfo),
             _sender,
-            _op_ctx.bucket_space_repo(), // TODO STRIPE cannot use!
-            _op_ctx.generate_unique_timestamp()); // TODO STRIPE must ensure no stripes can generate < this
+            _op_ctx.bucket_space_states(),
+            _op_ctx.generate_unique_timestamp());
     _outdated_nodes_map = _pending_cluster_state->getOutdatedNodesMap();
 
     guard->set_pending_cluster_state_bundle(_pending_cluster_state->getNewClusterStateBundle());
@@ -269,7 +255,7 @@ TopLevelBucketDBUpdater::onSetSystemState(
             _node_ctx.clock(),
             std::move(clusterInfo),
             _sender,
-            _op_ctx.bucket_space_repo(), // TODO STRIPE remove
+            _op_ctx.bucket_space_states(),
             cmd,
             _outdated_nodes_map,
             _op_ctx.generate_unique_timestamp()); // FIXME STRIPE must be atomic across all threads
@@ -426,7 +412,7 @@ TopLevelBucketDBUpdater::enable_current_cluster_state_bundle_in_distributor_and_
     _active_state_bundle = _pending_cluster_state->getNewClusterStateBundle();
 
     guard.enable_cluster_state_bundle(state, _pending_cluster_state->hasBucketOwnershipTransfer());
-    propagate_active_state_bundle_internally();
+    propagate_active_state_bundle_internally(_pending_cluster_state->hasBucketOwnershipTransfer());
 
     LOG(debug, "TopLevelBucketDBUpdater finished processing state %s",
         state.getBaselineClusterState()->toString().c_str());
@@ -439,7 +425,7 @@ void TopLevelBucketDBUpdater::simulate_cluster_state_bundle_activation(const lib
     guard->enable_cluster_state_bundle(activated_state, has_bucket_ownership_transfer);
 
     _active_state_bundle = activated_state;
-    propagate_active_state_bundle_internally();
+    propagate_active_state_bundle_internally(has_bucket_ownership_transfer);
 }
 
 void

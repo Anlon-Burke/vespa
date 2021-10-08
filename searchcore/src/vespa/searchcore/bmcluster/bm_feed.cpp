@@ -1,6 +1,9 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "bm_feed.h"
+#include "avg_sampler.h"
+#include "bm_feed_operation.h"
+#include "bm_feed_params.h"
 #include "bm_range.h"
 #include "bucket_selector.h"
 #include "pending_tracker.h"
@@ -15,8 +18,11 @@
 #include <vespa/document/test/make_bucket_space.h>
 #include <vespa/document/update/assignvalueupdate.h>
 #include <vespa/document/update/documentupdate.h>
+#include <vespa/vespalib/util/lambdatask.h>
 #include <vespa/vespalib/util/stringfmt.h>
+#include <vespa/vespalib/util/threadstackexecutor.h>
 #include <cassert>
+#include <chrono>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".bmcluster.bm_feed");
@@ -29,6 +35,7 @@ using document::DocumentTypeRepo;
 using document::DocumentUpdate;
 using document::IntFieldValue;
 using document::FieldUpdate;
+using vespalib::makeLambdaTask;
 
 namespace search::bmcluster {
 
@@ -78,6 +85,7 @@ BmFeed::make_put_feed(BmRange range, BucketSelector bucket_selector)
     LOG(debug, "make_put_feed([%u..%u))", range.get_start(), range.get_end());
     for (unsigned int i = range.get_start(); i < range.get_end(); ++i) {
         auto n = bucket_selector(i);
+        serialized_feed << static_cast<uint8_t>(BmFeedOperation::PUT_OPERATION);
         serialized_feed << make_bucket_id(n);
         auto document = make_document(n, i);
         document->serialize(serialized_feed);
@@ -92,6 +100,7 @@ BmFeed::make_update_feed(BmRange range, BucketSelector bucket_selector)
     LOG(debug, "make_update_feed([%u..%u))", range.get_start(), range.get_end());
     for (unsigned int i = range.get_start(); i < range.get_end(); ++i) {
         auto n = bucket_selector(i);
+        serialized_feed << static_cast<uint8_t>(BmFeedOperation::UPDATE_OPERATION);
         serialized_feed << make_bucket_id(n);
         auto document_update = make_document_update(n, i);
         document_update->serializeHEAD(serialized_feed);
@@ -100,12 +109,18 @@ BmFeed::make_update_feed(BmRange range, BucketSelector bucket_selector)
 }
 
 vespalib::nbostream
-BmFeed::make_remove_feed(BmRange range, BucketSelector bucket_selector)
+BmFeed::make_get_or_remove_feed(BmRange range, BucketSelector bucket_selector, bool make_removes)
 {
     vespalib::nbostream serialized_feed;
-    LOG(debug, "make_remove_feed([%u..%u))", range.get_start(), range.get_end());
+    BmFeedOperation operation(make_removes ? BmFeedOperation::REMOVE_OPERATION : BmFeedOperation::GET_OPERATION);
+    if (make_removes) {
+        LOG(debug, "make_remove_feed([%u..%u))", range.get_start(), range.get_end());
+    } else {
+        LOG(debug, "make_get_feed([%u..%u))", range.get_start(), range.get_end());
+    }
     for (unsigned int i = range.get_start(); i < range.get_end(); ++i) {
         auto n = bucket_selector(i);
+        serialized_feed << static_cast<uint8_t>(operation);
         serialized_feed << make_bucket_id(n);
         auto document_id = make_document_id(n, i);
         vespalib::string raw_id = document_id.toString();
@@ -114,82 +129,36 @@ BmFeed::make_remove_feed(BmRange range, BucketSelector bucket_selector)
     return serialized_feed;
 }
 
-
-void
-BmFeed::put_async_task(IBmFeedHandler& feed_handler, uint32_t max_pending, BmRange range, const vespalib::nbostream &serialized_feed, int64_t time_bias)
+vespalib::nbostream
+BmFeed::make_get_feed(BmRange range, BucketSelector bucket_selector)
 {
-    LOG(debug, "put_async_task([%u..%u))", range.get_start(), range.get_end());
-    PendingTracker pending_tracker(max_pending);
-    feed_handler.attach_bucket_info_queue(pending_tracker);
-    auto &repo = *_repo;
-    vespalib::nbostream is(serialized_feed.data(), serialized_feed.size());
-    document::BucketId bucket_id;
-    bool use_timestamp = !feed_handler.manages_timestamp();
-    for (unsigned int i = range.get_start(); i < range.get_end(); ++i) {
-        is >> bucket_id;
-        document::Bucket bucket(_bucket_space, bucket_id);
-        auto document = std::make_unique<Document>(repo, is);
-        feed_handler.put(bucket, std::move(document), (use_timestamp ? (time_bias + i) : 0), pending_tracker);
-    }
-    assert(is.empty());
-    pending_tracker.drain();
+    return make_get_or_remove_feed(range, bucket_selector, false);
 }
 
-void
-BmFeed::update_async_task(IBmFeedHandler& feed_handler, uint32_t max_pending, BmRange range, const vespalib::nbostream &serialized_feed, int64_t time_bias)
+vespalib::nbostream
+BmFeed::make_remove_feed(BmRange range, BucketSelector bucket_selector)
 {
-    LOG(debug, "update_async_task([%u..%u))", range.get_start(), range.get_end());
-    PendingTracker pending_tracker(max_pending);
-    feed_handler.attach_bucket_info_queue(pending_tracker);
-    auto &repo = *_repo;
-    vespalib::nbostream is(serialized_feed.data(), serialized_feed.size());
-    document::BucketId bucket_id;
-    bool use_timestamp = !feed_handler.manages_timestamp();
-    for (unsigned int i = range.get_start(); i < range.get_end(); ++i) {
-        is >> bucket_id;
-        document::Bucket bucket(_bucket_space, bucket_id);
-        auto document_update = DocumentUpdate::createHEAD(repo, is);
-        feed_handler.update(bucket, std::move(document_update), (use_timestamp ? (time_bias + i) : 0), pending_tracker);
-    }
-    assert(is.empty());
-    pending_tracker.drain();
+    return make_get_or_remove_feed(range, bucket_selector, true);
 }
 
-void
-BmFeed::get_async_task(IBmFeedHandler& feed_handler, uint32_t max_pending, BmRange range, const vespalib::nbostream &serialized_feed)
+std::vector<vespalib::nbostream>
+BmFeed::make_feed(vespalib::ThreadStackExecutor& executor, const BmFeedParams& params, std::function<vespalib::nbostream(BmRange,BucketSelector)> func, uint32_t num_buckets, const vespalib::string &label)
 {
-    LOG(debug, "get_async_task([%u..%u))", range.get_start(), range.get_end());
-    search::bmcluster::PendingTracker pending_tracker(max_pending);
-    vespalib::nbostream is(serialized_feed.data(), serialized_feed.size());
-    document::BucketId bucket_id;
-    vespalib::string all_fields(document::AllFields::NAME);
-    for (unsigned int i = range.get_start(); i < range.get_end(); ++i) {
-        is >> bucket_id;
-        document::Bucket bucket(_bucket_space, bucket_id);
-        DocumentId document_id(is);
-        feed_handler.get(bucket, all_fields, document_id, pending_tracker);
+    LOG(info, "make_feed %s %u small documents", label.c_str(), params.get_documents());
+    std::vector<vespalib::nbostream> serialized_feed_v;
+    auto start_time = std::chrono::steady_clock::now();
+    serialized_feed_v.resize(params.get_client_threads());
+    for (uint32_t i = 0; i < params.get_client_threads(); ++i) {
+        auto range = params.get_range(i);
+        BucketSelector bucket_selector(i, params.get_client_threads(), num_buckets);
+        executor.execute(makeLambdaTask([&serialized_feed_v, i, range, &func, bucket_selector]()
+                                        { serialized_feed_v[i] = func(range, bucket_selector); }));
     }
-    assert(is.empty());
-    pending_tracker.drain();
-}
-
-void
-BmFeed::remove_async_task(IBmFeedHandler& feed_handler, uint32_t max_pending, BmRange range, const vespalib::nbostream &serialized_feed, int64_t time_bias)
-{
-    LOG(debug, "remove_async_task([%u..%u))", range.get_start(), range.get_end());
-    search::bmcluster::PendingTracker pending_tracker(max_pending);
-    feed_handler.attach_bucket_info_queue(pending_tracker);
-    vespalib::nbostream is(serialized_feed.data(), serialized_feed.size());
-    document::BucketId bucket_id;
-    bool use_timestamp = !feed_handler.manages_timestamp();
-    for (unsigned int i = range.get_start(); i < range.get_end(); ++i) {
-        is >> bucket_id;
-        document::Bucket bucket(_bucket_space, bucket_id);
-        DocumentId document_id(is);
-        feed_handler.remove(bucket, document_id, (use_timestamp ? (time_bias + i) : 0), pending_tracker);
-    }
-    assert(is.empty());
-    pending_tracker.drain();
+    executor.sync();
+    auto end_time = std::chrono::steady_clock::now();
+    std::chrono::duration<double> elapsed = end_time - start_time;
+    LOG(info, "%8.2f %s data elements/s", params.get_documents() / elapsed.count(), label.c_str());
+    return serialized_feed_v;
 }
 
 }

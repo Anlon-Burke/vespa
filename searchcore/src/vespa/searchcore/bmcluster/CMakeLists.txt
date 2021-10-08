@@ -1,17 +1,26 @@
 # Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 vespa_add_library(searchcore_bmcluster STATIC
     SOURCES
+    bm_buckets_stats.cpp
     bm_cluster.cpp
     bm_cluster_controller.cpp
     bm_cluster_params.cpp
     bm_distribution.cpp
+    bm_document_db_stats.cpp
     bm_feed.cpp
+    bm_feeder.cpp
+    bm_feed_params.cpp
+    bm_merge_stats.cpp
     bm_message_bus.cpp
     bm_message_bus_routes.cpp
     bm_node.cpp
+    bm_node_stats.cpp
+    bm_node_stats_reporter.cpp
     bm_storage_chain_builder.cpp
     bm_storage_link.cpp
     bm_storage_message_addresses.cpp
+    bucket_db_snapshot.cpp
+    bucket_db_snapshot_vector.cpp
     bucket_info_queue.cpp
     document_api_message_bus_bm_feed_handler.cpp
     pending_tracker.cpp

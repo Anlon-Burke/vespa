@@ -77,7 +77,6 @@ import com.yahoo.vespa.hosted.controller.api.role.Role;
 import com.yahoo.vespa.hosted.controller.api.role.RoleDefinition;
 import com.yahoo.vespa.hosted.controller.api.role.SecurityContext;
 import com.yahoo.vespa.hosted.controller.application.ActivateResult;
-import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
 import com.yahoo.vespa.hosted.controller.application.AssignedRotation;
 import com.yahoo.vespa.hosted.controller.application.Change;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
@@ -87,6 +86,7 @@ import com.yahoo.vespa.hosted.controller.application.EndpointList;
 import com.yahoo.vespa.hosted.controller.application.QuotaUsage;
 import com.yahoo.vespa.hosted.controller.application.SystemApplication;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
+import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
 import com.yahoo.vespa.hosted.controller.auditlog.AuditLoggingRequestHandler;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentStatus;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentSteps;
@@ -108,6 +108,7 @@ import com.yahoo.vespa.hosted.controller.security.Credentials;
 import com.yahoo.vespa.hosted.controller.support.access.SupportAccess;
 import com.yahoo.vespa.hosted.controller.tenant.AthenzTenant;
 import com.yahoo.vespa.hosted.controller.tenant.CloudTenant;
+import com.yahoo.vespa.hosted.controller.tenant.DeletedTenant;
 import com.yahoo.vespa.hosted.controller.tenant.LastLoginInfo;
 import com.yahoo.vespa.hosted.controller.tenant.Tenant;
 import com.yahoo.vespa.hosted.controller.tenant.TenantInfo;
@@ -371,7 +372,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         Slime slime = new Slime();
         Cursor tenantArray = slime.setArray();
         List<Application> applications = controller.applications().asList();
-        for (Tenant tenant : controller.tenants().asList())
+        for (Tenant tenant : controller.tenants().asList(includeDeleted(request)))
             toSlime(tenantArray.addObject(),
                     tenant,
                     applications.stream().filter(app -> app.id().tenant().equals(tenant.name())).collect(toList()),
@@ -388,13 +389,13 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     private HttpResponse tenants(HttpRequest request) {
         Slime slime = new Slime();
         Cursor response = slime.setArray();
-        for (Tenant tenant : controller.tenants().asList())
+        for (Tenant tenant : controller.tenants().asList(includeDeleted(request)))
             tenantInTenantsListToSlime(tenant, request.getUri(), response.addObject());
         return new SlimeJsonResponse(slime);
     }
 
     private HttpResponse tenant(String tenantName, HttpRequest request) {
-        return controller.tenants().get(TenantName.from(tenantName))
+        return controller.tenants().get(TenantName.from(tenantName), includeDeleted(request))
                          .map(tenant -> tenant(tenant, request))
                          .orElseGet(() -> ErrorResponse.notFoundError("Tenant '" + tenantName + "' does not exist"));
     }
@@ -556,8 +557,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private HttpResponse applications(String tenantName, Optional<String> applicationName, HttpRequest request) {
         TenantName tenant = TenantName.from(tenantName);
-        if (controller.tenants().get(tenantName).isEmpty())
-            return ErrorResponse.notFoundError("Tenant '" + tenantName + "' does not exist");
+        getTenantOrThrow(tenantName);
 
         List<Application> applications = applicationName.isEmpty() ?
                 controller.applications().asList(tenant) :
@@ -1967,7 +1967,15 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                                             .flatMap(options -> optional("vespaVersion", options))
                                             .map(Version::fromString);
 
-        controller.jobController().deploy(id, type, version, applicationPackage);
+        ensureApplicationExists(TenantAndApplicationId.from(id), request);
+
+        boolean dryRun = Optional.ofNullable(dataParts.get("deployOptions"))
+                                 .map(json -> SlimeUtils.jsonToSlime(json).get())
+                                 .flatMap(options -> optional("dryRun", options))
+                                 .map(Boolean::valueOf)
+                                 .orElse(false);
+
+        controller.jobController().deploy(id, type, version, applicationPackage, dryRun);
         RunId runId = controller.jobController().last(id, type).get().id();
         Slime slime = new Slime();
         Cursor rootObject = slime.setObject();
@@ -2015,17 +2023,17 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private HttpResponse deleteTenant(String tenantName, HttpRequest request) {
-        Optional<Tenant> tenant = controller.tenants().get(tenantName);
-        if (tenant.isEmpty())
-            return ErrorResponse.notFoundError("Could not delete tenant '" + tenantName + "': Tenant not found");
+        boolean forget = request.getBooleanProperty("forget");
+        if (forget && !isOperator(request))
+            return ErrorResponse.forbidden("Only operators can forget a tenant");
 
-        controller.tenants().delete(tenant.get().name(),
-                                    accessControlRequests.credentials(tenant.get().name(),
+        controller.tenants().delete(TenantName.from(tenantName),
+                                    () -> accessControlRequests.credentials(TenantName.from(tenantName),
                                                                       toSlime(request.getData()).get(),
-                                                                      request.getJDiscRequest()));
+                                                                      request.getJDiscRequest()),
+                                    forget);
 
-        // TODO: Change to a message response saying the tenant was deleted
-        return tenant(tenant.get(), request);
+        return new MessageResponse("Deleted tenant " + tenantName);
     }
 
     private HttpResponse deleteApplication(String tenantName, String applicationName, HttpRequest request) {
@@ -2086,7 +2094,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (report != null) {
             Cursor cursor = report.get();
             // Note: same behaviour for both value '0' and missing value.
-            if (cursor.field("failedAt").asLong() == 0 && cursor.field("completedAt").asLong() == 0) {
+            boolean force = request.getBooleanProperty("force");
+            if (!force && cursor.field("failedAt").asLong() == 0 && cursor.field("completedAt").asLong() == 0) {
                 throw new IllegalArgumentException("Service dump already in progress for " + cursor.field("configId").asString());
             }
         }
@@ -2119,9 +2128,15 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (expiresAt > 0) {
             dumpRequestCursor.setLong("expiresAt", expiresAt);
         }
+        Cursor dumpOptionsCursor = requestPayloadCursor.field("dumpOptions");
+        if (dumpOptionsCursor.children() > 0) {
+            SlimeUtils.copyObject(dumpOptionsCursor, dumpRequestCursor.setObject("dumpOptions"));
+        }
         var reportsUpdate = Map.of("serviceDump", new String(uncheck(() -> SlimeUtils.toJsonBytes(dumpRequest))));
         nodeRepository.updateReports(zone, hostname, reportsUpdate);
-        return new MessageResponse("Request created");
+        boolean wait = request.getBooleanProperty("wait");
+        if (!wait) return new MessageResponse("Request created");
+        return waitForServiceDumpResult(nodeRepository, zone, tenant, application, instance, hostname);
     }
 
     private HttpResponse getServiceDump(String tenant, String application, String instance, String environment,
@@ -2130,6 +2145,24 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         ZoneId zone = requireZone(environment, region);
         Slime report = getReport(nodeRepository, zone, tenant, application, instance, hostname)
             .orElseThrow(() -> new NotExistsException("No service dump for node " + hostname));
+        return new SlimeJsonResponse(report);
+    }
+
+    private HttpResponse waitForServiceDumpResult(NodeRepository nodeRepository, ZoneId zone, String tenant,
+                                                  String application, String instance, String hostname) {
+        int pollInterval = 2;
+        Slime report;
+        while (true) {
+            report = getReport(nodeRepository, zone, tenant, application, instance, hostname).get();
+            Cursor cursor = report.get();
+            if (cursor.field("completedAt").asLong() > 0 || cursor.field("failedAt").asLong() > 0) {
+                break;
+            }
+            final Slime copyForLambda = report;
+            log.fine(() -> uncheck(() -> new String(SlimeUtils.toJsonBytes(copyForLambda))));
+            log.fine("Sleeping " + pollInterval + " seconds before checking report status again");
+            controller.sleeper().sleep(Duration.ofSeconds(pollInterval));
+        }
         return new SlimeJsonResponse(report);
     }
 
@@ -2220,6 +2253,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
                 break;
             }
+            case deleted: break;
             default: throw new IllegalArgumentException("Unexpected tenant type '" + tenant.type() + "'.");
         }
         // TODO jonmv: This should list applications, not instances.
@@ -2309,6 +2343,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                 metaData.setString("property", athenzTenant.property().id());
                 break;
             case cloud: break;
+            case deleted: break;
             default: throw new IllegalArgumentException("Unexpected tenant type '" + tenant.type() + "'.");
         }
         object.setString("url", withPath("/application/v4/tenant/" + tenant.name().value(), requestURI).toString());
@@ -2332,6 +2367,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                                                        .flatMap(app -> app.latestVersion().flatMap(ApplicationVersion::buildTime).stream())
                                                        .max(Comparator.naturalOrder());
         object.setLong("createdAtMillis", tenant.createdAt().toEpochMilli());
+        if (tenant.type() == Tenant.Type.deleted)
+            object.setLong("deletedAtMillis", ((DeletedTenant) tenant).deletedAt().toEpochMilli());
         lastDev.ifPresent(instant -> object.setLong("lastDeploymentToDevMillis", instant.toEpochMilli()));
         lastSubmission.ifPresent(instant -> object.setLong("lastSubmissionToProdMillis", instant.toEpochMilli()));
 
@@ -2536,10 +2573,15 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         return "true".equals(request.getProperty("activeInstances"));
     }
 
+    private static boolean includeDeleted(HttpRequest request) {
+        return "true".equals(request.getProperty("includeDeleted"));
+    }
+
     private static String tenantType(Tenant tenant) {
         switch (tenant.type()) {
             case athenz: return "ATHENS";
             case cloud: return "CLOUD";
+            case deleted: return "DELETED";
             default: throw new IllegalArgumentException("Unknown tenant type: " + tenant.getClass().getSimpleName());
         }
     }
@@ -2582,6 +2624,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                                                                          Optional.empty(),
                                                                          applicationPackage,
                                                                          Optional.of(requireUserPrincipal(request)));
+
+        ensureApplicationExists(TenantAndApplicationId.from(tenant, application), request);
 
         return JobControllerApiHandlerHelper.submitResponse(controller.jobController(),
                                                             tenant,
@@ -2682,6 +2726,14 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         return securityContext.roles().stream()
                               .map(Role::definition)
                               .anyMatch(definition -> definition == RoleDefinition.hostedOperator);
+    }
+
+    private void ensureApplicationExists(TenantAndApplicationId id, HttpRequest request) {
+        if (controller.applications().getApplication(id).isEmpty()) {
+            log.fine("Application does not exist in public, creating: " + id);
+            var credentials = accessControlRequests.credentials(id.tenant(), null /* not used on public */ , request.getJDiscRequest());
+            controller.applications().createApplication(id, credentials);
+        }
     }
 
 }

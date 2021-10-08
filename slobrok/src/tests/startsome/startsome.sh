@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+# Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 set -e
 
 SBCMD=../../apps/sbcmd/vespa-slobrok-cmd
@@ -33,7 +33,7 @@ sleep 1
 [ "${VALGRIND}" ] && sleep 9
 
 ./slobrok_rpc_info_app \
-	tcp/localhost:18481 verbose > rpc-method-list
+        tcp/localhost:18481 verbose > rpc-method-list
 
 echo port 18481:
 ${SBCMD} 18481 slobrok.callback.listNamesServed

@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.content;
 
 import com.yahoo.config.model.api.ModelContext;
@@ -553,15 +553,15 @@ public class ContentClusterTest extends ContentBaseTest {
 
         {
             StorServerConfig.Builder builder = new StorServerConfig.Builder();
-            cluster.getStorageNodes().getConfig(builder);
-            cluster.getStorageNodes().getChildren().get("0").getConfig(builder);
+            cluster.getStorageCluster().getConfig(builder);
+            cluster.getStorageCluster().getChildren().get("0").getConfig(builder);
             StorServerConfig config = new StorServerConfig(builder);
         }
 
         {
             StorServerConfig.Builder builder = new StorServerConfig.Builder();
-            cluster.getStorageNodes().getConfig(builder);
-            cluster.getStorageNodes().getChildren().get("1").getConfig(builder);
+            cluster.getStorageCluster().getConfig(builder);
+            cluster.getStorageCluster().getChildren().get("1").getConfig(builder);
             StorServerConfig config = new StorServerConfig(builder);
         }
     }
@@ -635,8 +635,8 @@ public class ContentClusterTest extends ContentBaseTest {
 
         {
             StorServerConfig.Builder builder = new StorServerConfig.Builder();
-            cluster.getStorageNodes().getConfig(builder);
-            cluster.getStorageNodes().getChildren().get("0").getConfig(builder);
+            cluster.getStorageCluster().getConfig(builder);
+            cluster.getStorageCluster().getChildren().get("0").getConfig(builder);
 
             StorServerConfig config = new StorServerConfig(builder);
 
@@ -696,7 +696,7 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals("partofsum", config.consumer(5).removedtags(1));
         assertEquals(0, config.consumer(5).tags().size());
 
-        cluster.getStorageNodes().getConfig(builder);
+        cluster.getStorageCluster().getConfig(builder);
         config = new MetricsmanagerConfig(builder);
         assertEquals(6, config.consumer().size());
 
@@ -1057,30 +1057,22 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(2, resolveMaxInhibitedGroupsConfigWithFeatureFlag(2));
     }
 
-    private int resolveNumDistributorStripesConfigWithFeatureFlag(TestProperties props, Optional<Flavor> flavor) throws Exception {
-        var cc = createOneNodeCluster(props, flavor);
+    private int resolveNumDistributorStripesConfig(Optional<Flavor> flavor) throws Exception {
+        var cc = createOneNodeCluster(new TestProperties(), flavor);
         var builder = new StorDistributormanagerConfig.Builder();
         cc.getDistributorNodes().getChildren().get("0").getConfig(builder);
         return (new StorDistributormanagerConfig(builder)).num_distributor_stripes();
     }
 
-    private int resolveNumDistributorStripesConfigWithFeatureFlag(int numStripes) throws Exception {
-        return resolveNumDistributorStripesConfigWithFeatureFlag(new TestProperties().setNumDistributorStripes(numStripes), Optional.empty());
-    }
-
     private int resolveTunedNumDistributorStripesConfig(int numCpuCores) throws Exception {
         var flavor = new Flavor(new FlavorsConfig.Flavor(new FlavorsConfig.Flavor.Builder().name("test").minCpuCores(numCpuCores)));
-        return resolveNumDistributorStripesConfigWithFeatureFlag(new TestProperties().setNumDistributorStripes(-1),
-                Optional.of(flavor));
+        return resolveNumDistributorStripesConfig(Optional.of(flavor));
     }
 
     @Test
-    public void num_distributor_stripes_config_controlled_by_properties() throws Exception {
-        assertEquals(0, resolveNumDistributorStripesConfigWithFeatureFlag(new TestProperties(), Optional.empty()));
-        assertEquals(0, resolveNumDistributorStripesConfigWithFeatureFlag(0));
-        assertEquals(1, resolveNumDistributorStripesConfigWithFeatureFlag(1));
-        assertEquals(1, resolveNumDistributorStripesConfigWithFeatureFlag(-1));
-        assertEquals(4, resolveNumDistributorStripesConfigWithFeatureFlag(4));
+    public void num_distributor_stripes_config_defaults_to_zero() throws Exception {
+        // This triggers tuning when starting the distributor process, based on CPU core sampling on the node.
+        assertEquals(0, resolveNumDistributorStripesConfig(Optional.empty()));
     }
 
     @Test
@@ -1090,6 +1082,23 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(2, resolveTunedNumDistributorStripesConfig(17));
         assertEquals(2, resolveTunedNumDistributorStripesConfig(64));
         assertEquals(4, resolveTunedNumDistributorStripesConfig(65));
+    }
+
+    @Test
+    public void distributor_merge_busy_wait_controlled_by_properties() throws Exception {
+        assertEquals(10, resolveDistributorMergeBusyWaitConfig(Optional.empty()));
+        assertEquals(1, resolveDistributorMergeBusyWaitConfig(Optional.of(1)));
+    }
+
+    private int resolveDistributorMergeBusyWaitConfig(Optional<Integer> mergeBusyWait) throws Exception {
+        var props = new TestProperties();
+        if (mergeBusyWait.isPresent()) {
+            props.setDistributorMergeBusyWait(mergeBusyWait.get());
+        }
+        var cluster = createOneNodeCluster(props);
+        var builder = new StorDistributormanagerConfig.Builder();
+        cluster.getDistributorNodes().getConfig(builder);
+        return (new StorDistributormanagerConfig(builder)).inhibit_merge_sending_on_busy_node_duration_sec();
     }
 
     @Test

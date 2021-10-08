@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include "top_level_distributor_test_util.h"
 #include <vespa/config-stor-distribution.h>
 #include <vespa/document/test/make_bucket_space.h>
@@ -265,16 +265,16 @@ TopLevelDistributorTestUtil::get_bucket(const document::BucketId& bId) const
     return stripe_bucket_database(stripe_index_of_bucket(bId)).get(bId);
 }
 
-DistributorBucketSpaceRepo&
-TopLevelDistributorTestUtil::top_level_bucket_space_repo() noexcept
+BucketSpaceStateMap&
+TopLevelDistributorTestUtil::bucket_space_states() noexcept
 {
-    return _distributor->_component.bucket_space_repo();
+    return _distributor->_component.bucket_space_states();
 }
 
-const DistributorBucketSpaceRepo&
-TopLevelDistributorTestUtil::top_level_bucket_space_repo() const noexcept
+const BucketSpaceStateMap&
+TopLevelDistributorTestUtil::bucket_space_states() const noexcept
 {
-    return _distributor->_component.bucket_space_repo();
+    return _distributor->_component.bucket_space_states();
 }
 
 std::unique_ptr<StripeAccessGuard>
@@ -301,11 +301,6 @@ TopLevelDistributorTestUtil::total_distributor_metrics() const
 {
     assert(_distributor->_total_metrics);
     return *_distributor->_total_metrics;
-}
-
-const storage::distributor::DistributorNodeContext&
-TopLevelDistributorTestUtil::node_context() const {
-    return _distributor->distributor_component();
 }
 
 DistributorBucketSpace&

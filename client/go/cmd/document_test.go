@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // document command tests
 // Author: bratseth
 
@@ -16,6 +16,11 @@ import (
 
 func TestDocumentSendPut(t *testing.T) {
 	assertDocumentSend([]string{"document", "testdata/A-Head-Full-of-Dreams-Put.json"},
+		"put", "POST", "id:mynamespace:music::a-head-full-of-dreams", "testdata/A-Head-Full-of-Dreams-Put.json", t)
+}
+
+func TestDocumentSendPutVerbose(t *testing.T) {
+	assertDocumentSend([]string{"document", "-v", "testdata/A-Head-Full-of-Dreams-Put.json"},
 		"put", "POST", "id:mynamespace:music::a-head-full-of-dreams", "testdata/A-Head-Full-of-Dreams-Put.json", t)
 }
 
@@ -62,19 +67,19 @@ func TestDocumentRemoveWithoutIdArg(t *testing.T) {
 func TestDocumentSendMissingId(t *testing.T) {
 	arguments := []string{"document", "put", "testdata/A-Head-Full-of-Dreams-Without-Operation.json"}
 	client := &mockHttpClient{}
-	convergeServices(client)
+	_, outErr := execute(command{args: arguments}, t, client)
 	assert.Equal(t,
 		"Error: No document id given neither as argument or as a 'put' key in the json file\n",
-		executeCommand(t, client, arguments, []string{}))
+		outErr)
 }
 
 func TestDocumentSendWithDisagreeingOperations(t *testing.T) {
 	arguments := []string{"document", "update", "testdata/A-Head-Full-of-Dreams-Put.json"}
 	client := &mockHttpClient{}
-	convergeServices(client)
+	_, outErr := execute(command{args: arguments}, t, client)
 	assert.Equal(t,
 		"Error: Wanted document operation is update but the JSON file specifies put\n",
-		executeCommand(t, client, arguments, []string{}))
+		outErr)
 }
 
 func TestDocumentPutDocumentError(t *testing.T) {
@@ -93,11 +98,22 @@ func TestDocumentGet(t *testing.T) {
 func assertDocumentSend(arguments []string, expectedOperation string, expectedMethod string, expectedDocumentId string, expectedPayloadFile string, t *testing.T) {
 	client := &mockHttpClient{}
 	documentURL := documentServiceURL(client)
-	assert.Equal(t,
-		"Success: "+expectedOperation+" "+expectedDocumentId+"\n",
-		executeCommand(t, client, arguments, []string{}))
 	expectedPath, _ := vespa.IdToURLPath(expectedDocumentId)
-	assert.Equal(t, documentURL+"/document/v1/"+expectedPath, client.lastRequest.URL.String())
+	expectedURL := documentURL + "/document/v1/" + expectedPath
+	out, errOut := execute(command{args: arguments}, t, client)
+
+	verbose := false
+	for _, a := range arguments {
+		if a == "-v" {
+			verbose = true
+		}
+	}
+	if verbose {
+		expectedCurl := "curl -X " + expectedMethod + " -H 'Content-Type: application/json' --data-binary @" + expectedPayloadFile + " " + expectedURL + "\n"
+		assert.Equal(t, expectedCurl, errOut)
+	}
+	assert.Equal(t, "Success: "+expectedOperation+" "+expectedDocumentId+"\n", out)
+	assert.Equal(t, expectedURL, client.lastRequest.URL.String())
 	assert.Equal(t, "application/json", client.lastRequest.Header.Get("Content-Type"))
 	assert.Equal(t, expectedMethod, client.lastRequest.Method)
 
@@ -124,27 +140,26 @@ func assertDocumentGet(arguments []string, documentId string, t *testing.T) {
 
 func assertDocumentError(t *testing.T, status int, errorMessage string) {
 	client := &mockHttpClient{}
-	convergeServices(client)
 	client.NextResponse(status, errorMessage)
+	_, outErr := execute(command{args: []string{"document", "put",
+		"id:mynamespace:music::a-head-full-of-dreams",
+		"testdata/A-Head-Full-of-Dreams-Put.json"}}, t, client)
 	assert.Equal(t,
 		"Error: Invalid document operation: Status "+strconv.Itoa(status)+"\n\n"+errorMessage+"\n",
-		executeCommand(t, client, []string{"document", "put",
-			"id:mynamespace:music::a-head-full-of-dreams",
-			"testdata/A-Head-Full-of-Dreams-Put.json"}, []string{}))
+		outErr)
 }
 
 func assertDocumentServerError(t *testing.T, status int, errorMessage string) {
 	client := &mockHttpClient{}
-	convergeServices(client)
 	client.NextResponse(status, errorMessage)
+	_, outErr := execute(command{args: []string{"document", "put",
+		"id:mynamespace:music::a-head-full-of-dreams",
+		"testdata/A-Head-Full-of-Dreams-Put.json"}}, t, client)
 	assert.Equal(t,
 		"Error: Container (document API) at 127.0.0.1:8080: Status "+strconv.Itoa(status)+"\n\n"+errorMessage+"\n",
-		executeCommand(t, client, []string{"document", "put",
-			"id:mynamespace:music::a-head-full-of-dreams",
-			"testdata/A-Head-Full-of-Dreams-Put.json"}, []string{}))
+		outErr)
 }
 
 func documentServiceURL(client *mockHttpClient) string {
-	convergeServices(client)
 	return getService("document", 0).BaseURL
 }

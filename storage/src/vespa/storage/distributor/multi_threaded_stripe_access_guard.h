@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "stripe_access_guard.h"
@@ -60,10 +60,6 @@ public:
     void report_delayed_single_bucket_requests(vespalib::xml::XmlOutputStream& xos) const override;
 
 private:
-    // TODO STRIPE remove once multi threaded stripe support is implemented
-    TickableStripe& first_stripe() noexcept;
-    const TickableStripe& first_stripe() const noexcept;
-
     template <typename Func>
     void for_each_stripe(Func&& f);
 

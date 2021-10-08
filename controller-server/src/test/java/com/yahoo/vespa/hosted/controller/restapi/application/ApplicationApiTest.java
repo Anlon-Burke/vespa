@@ -1,4 +1,4 @@
-// Copyright 2020 Oath Inc. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.restapi.application;
 
 import ai.vespa.hosted.api.MultiPartStreamer;
@@ -250,7 +250,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         var app1 = deploymentTester.newDeploymentContext(id);
 
         // POST (deploy) an application to start a manual deployment in prod is not allowed
-        MultiPartStreamer entity = createApplicationDeployData(applicationPackageInstance1, true);
+        MultiPartStreamer entity = createApplicationDeployData(applicationPackageInstance1);
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploy/production-us-east-3/", POST)
                                       .data(entity)
                                       .userIdentity(USER_ID),
@@ -271,6 +271,12 @@ public class ApplicationApiTest extends ControllerContainerTest {
                               "{\"message\":\"Deployment started in run 1 of dev-us-east-1 for tenant1.application1.instance1. This may take about 15 minutes the first time.\",\"run\":1}");
         app1.runJob(JobType.devUsEast1);
 
+        // POST (deploy) a job to restart a manual deployment to dev
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/job/dev-us-east-1", POST)
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Triggered dev-us-east-1 for tenant1.application1.instance1\"}");
+        app1.runJob(JobType.devUsEast1);
+
         // GET dev application package
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/job/dev-us-east-1/package", GET)
                                       .userIdentity(USER_ID),
@@ -283,7 +289,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // POST an application package is not generally allowed under user instance
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/otheruser/deploy/dev-us-east-1", POST)
                                       .userIdentity(OTHER_USER_ID)
-                                      .data(createApplicationDeployData(applicationPackageInstance1, false)),
+                                      .data(createApplicationDeployData(applicationPackageInstance1)),
                               accessDenied,
                               403);
 
@@ -297,7 +303,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // POST an application package is not allowed under user instance for tenant admins
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/myuser/deploy/dev-us-east-1", POST)
                                       .userIdentity(USER_ID)
-                                      .data(createApplicationDeployData(applicationPackageInstance1, false)),
+                                      .data(createApplicationDeployData(applicationPackageInstance1)),
                               new File("deployment-job-accepted-2.json"));
 
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/myuser/job/dev-us-east-1/diff/1", GET).userIdentity(HOSTED_VESPA_OPERATOR),
@@ -621,14 +627,14 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // POST to request a service dump
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/node/host-tenant1:application1:instance1-prod.us-central-1/service-dump", POST)
                         .userIdentity(HOSTED_VESPA_OPERATOR)
-                        .data("{\"configId\":\"default/container.1\",\"artifacts\":[\"jvm-dump\"]}"),
+                        .data("{\"configId\":\"default/container.1\",\"artifacts\":[\"jvm-dump\"],\"dumpOptions\":{\"duration\":30}}"),
                 "{\"message\":\"Request created\"}");
 
         // GET to get status of service dump
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/node/host-tenant1:application1:instance1-prod.us-central-1/service-dump", GET)
                         .userIdentity(HOSTED_VESPA_OPERATOR),
                 "{\"createdMillis\":" + tester.controller().clock().millis() + ",\"configId\":\"default/container.1\"" +
-                        ",\"artifacts\":[\"jvm-dump\"]}");
+                        ",\"artifacts\":[\"jvm-dump\"],\"dumpOptions\":{\"duration\":30}}");
 
         // POST a 'restart application' command
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/environment/prod/region/us-central-1/instance/instance1/restart", POST)
@@ -863,7 +869,32 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // DELETE an empty tenant
         tester.assertResponse(request("/application/v4/tenant/tenant1", DELETE).userIdentity(USER_ID)
                                       .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
-                              new File("tenant-without-applications.json"));
+                              "{\"message\":\"Deleted tenant tenant1\"}");
+
+        // The tenant is not found
+        tester.assertResponse(request("/application/v4/tenant/tenant1", GET).userIdentity(USER_ID)
+                        .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
+                "{\"error-code\":\"NOT_FOUND\",\"message\":\"Tenant 'tenant1' does not exist\"}", 404);
+
+        // ... unless we specify to show deleted tenants
+        tester.assertResponse(request("/application/v4/tenant/tenant1", GET).properties(Map.of("includeDeleted", "true"))
+                        .userIdentity(HOSTED_VESPA_OPERATOR),
+                new File("tenant1-deleted.json"));
+
+        // Tenant cannot be recreated
+        tester.assertResponse(request("/application/v4/tenant/tenant1", POST).userIdentity(USER_ID)
+                        .data("{\"athensDomain\":\"domain1\", \"property\":\"property1\"}")
+                        .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
+                "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Tenant 'tenant1' already exists\"}", 400);
+
+
+        // Forget a deleted tenant
+        tester.assertResponse(request("/application/v4/tenant/tenant1", DELETE).properties(Map.of("forget", "true"))
+                        .userIdentity(HOSTED_VESPA_OPERATOR),
+                "{\"message\":\"Deleted tenant tenant1\"}");
+        tester.assertResponse(request("/application/v4/tenant/tenant1", GET).properties(Map.of("includeDeleted", "true"))
+                        .userIdentity(HOSTED_VESPA_OPERATOR),
+                "{\"error-code\":\"NOT_FOUND\",\"message\":\"Tenant 'tenant1' does not exist\"}", 404);
     }
 
     private void addIssues(DeploymentTester tester, TenantAndApplicationId id) {
@@ -995,38 +1026,24 @@ public class ApplicationApiTest extends ControllerContainerTest {
     }
 
     @Test
-    public void testDeployDirectly() {
+    public void testDeployWithApplicationPackage() {
         // Setup
-        createAthenzDomainWithAdmin(ATHENZ_TENANT_DOMAIN, USER_ID);
         addUserToHostedOperatorRole(HostedAthenzIdentities.from(HOSTED_VESPA_OPERATOR));
 
-        // Create tenant
-        tester.assertResponse(request("/application/v4/tenant/tenant1", POST).userIdentity(USER_ID)
-                                      .data("{\"athensDomain\":\"domain1\", \"property\":\"property1\"}")
-                                      .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
-                              new File("tenant-without-applications.json"));
-
-        // Create application
-        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1", POST)
-                                      .userIdentity(USER_ID)
-                                      .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
-                              new File("instance-reference.json"));
-
-        // Add build service to operator role
-        addUserToHostedOperatorRole(HostedAthenzIdentities.from(SCREWDRIVER_ID));
-
         // POST (deploy) a system application with an application package
-        MultiPartStreamer noAppEntity = createApplicationDeployData(Optional.empty(), true);
+        MultiPartStreamer noAppEntity = createApplicationDeployData(Optional.empty());
         tester.assertResponse(request("/application/v4/tenant/hosted-vespa/application/routing/environment/prod/region/us-central-1/instance/default/deploy", POST)
                                       .data(noAppEntity)
                                       .userIdentity(HOSTED_VESPA_OPERATOR),
                               "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Deployment of system applications during a system upgrade is not allowed\"}",
                               400);
-        deploymentTester.controllerTester().upgradeSystem(deploymentTester.controller().readVersionStatus().controllerVersion().get().versionNumber());
+        deploymentTester.controllerTester()
+                        .upgradeSystem(deploymentTester.controller().readVersionStatus().controllerVersion().get()
+                                                       .versionNumber());
         tester.assertResponse(request("/application/v4/tenant/hosted-vespa/application/routing/environment/prod/region/us-central-1/instance/default/deploy", POST)
-                        .data(noAppEntity)
-                        .userIdentity(HOSTED_VESPA_OPERATOR),
-                new File("deploy-result.json"));
+                                      .data(noAppEntity)
+                                      .userIdentity(HOSTED_VESPA_OPERATOR),
+                              new File("deploy-result.json"));
     }
 
     @Test
@@ -1082,7 +1099,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
     }
 
     @Test
-    public void testErrorResponses() throws Exception {
+    public void testErrorResponses() {
         createAthenzDomainWithAdmin(ATHENZ_TENANT_DOMAIN, USER_ID);
 
         // PUT (update) non-existing tenant returns 403 as tenant access cannot be determined when the tenant does not exist
@@ -1192,7 +1209,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
                               400);
         
         // POST (deploy) an application to legacy deploy path
-        MultiPartStreamer entity = createApplicationDeployData(applicationPackageInstance1, true);
+        MultiPartStreamer entity = createApplicationDeployData(applicationPackageInstance1);
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/environment/dev/region/us-east-1/instance/instance1/deploy", POST)
                                       .data(entity)
                                       .userIdentity(USER_ID),
@@ -1217,11 +1234,18 @@ public class ApplicationApiTest extends ControllerContainerTest {
                               "{\"error-code\":\"NOT_FOUND\",\"message\":\"Could not delete instance 'tenant1.application1.instance1': Instance not found\"}",
                               404);
 
+        // DELETE and forget an application as non-operator
+        tester.assertResponse(request("/application/v4/tenant/tenant1", DELETE).properties(Map.of("forget", "true"))
+                                      .userIdentity(USER_ID)
+                                      .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
+                              "{\"error-code\":\"FORBIDDEN\",\"message\":\"Only operators can forget a tenant\"}",
+                              403);
+
         // DELETE tenant
         tester.assertResponse(request("/application/v4/tenant/tenant1", DELETE)
                                       .userIdentity(USER_ID)
                                       .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
-                              new File("tenant-without-applications.json"));
+                              "{\"message\":\"Deleted tenant tenant1\"}");
         // DELETE tenant again returns 403 as tenant access cannot be determined when the tenant does not exist
         tester.assertResponse(request("/application/v4/tenant/tenant1", DELETE)
                                       .userIdentity(USER_ID),
@@ -1292,7 +1316,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
                               200);
 
         // Deploy to an authorized zone by a user tenant is disallowed
-        MultiPartStreamer entity = createApplicationDeployData(applicationPackageDefault, true);
+        MultiPartStreamer entity = createApplicationDeployData(applicationPackageDefault);
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/environment/prod/region/us-west-1/instance/default/deploy", POST)
                                       .data(entity)
                                       .userIdentity(USER_ID),
@@ -1399,7 +1423,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
                 .build();
 
         createTenantAndApplication();
-        MultiPartStreamer entity = createApplicationDeployData(applicationPackage, true);
+        MultiPartStreamer entity = createApplicationDeployData(applicationPackage);
         // POST (deploy) an application to dev through a deployment job, with user instance and a proper tenant
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/new-user/deploy/dev-us-east-1", POST)
                                       .data(entity)
@@ -1446,7 +1470,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
                 .build();
 
         // deploy the application to a dev zone. Should fail since the developer is not authorized to launch the service
-        MultiPartStreamer entity = createApplicationDeployData(applicationPackage, true);
+        MultiPartStreamer entity = createApplicationDeployData(applicationPackage);
         tester.assertResponse(request("/application/v4/tenant/sandbox/application/myapp/instance/default/deploy/dev-us-east-1", POST)
                         .data(entity)
                         .userIdentity(developer),
@@ -1455,7 +1479,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
 
         // Allow developer launch privilege to domain1.service. Deployment now completes.
         AthenzDbMock.Domain domainMock = tester.athenzClientFactory().getSetup().getOrCreateDomain(ATHENZ_TENANT_DOMAIN);
-        domainMock.withPolicy("user." + developer.id(), "launch", "service.service");
+        domainMock.withPolicy("launch-" +developer.id(), "user." + developer.id(), "launch", "service.service");
 
 
         tester.assertResponse(request("/application/v4/tenant/sandbox/application/myapp/instance/default/deploy/dev-us-east-1", POST)
@@ -1608,7 +1632,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
     }
 
     @Test
-    public void testServiceView() throws Exception {
+    public void testServiceView() {
         createAthenzDomainWithAdmin(ATHENZ_TENANT_DOMAIN, USER_ID);
         String serviceApi="/application/v4/tenant/tenant1/application/application1/environment/prod/region/us-central-1/instance/instance1/service";
         // Not allowed to request apis not listed in feature flag allowed-service-view-apis. e.g /document/v1
@@ -1633,6 +1657,36 @@ public class ApplicationApiTest extends ControllerContainerTest {
                               403);
     }
 
+    @Test
+    public void create_application_on_deploy() {
+        // Setup
+        createAthenzDomainWithAdmin(ATHENZ_TENANT_DOMAIN, USER_ID);
+        addUserToHostedOperatorRole(HostedAthenzIdentities.from(HOSTED_VESPA_OPERATOR));
+
+        // Create tenant
+        tester.assertResponse(request("/application/v4/tenant/tenant1", POST).userIdentity(USER_ID)
+                        .data("{\"athensDomain\":\"domain1\", \"property\":\"property1\"}")
+                        .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT),
+                new File("tenant-without-applications.json"));
+
+        // Deploy application
+        var id = ApplicationId.from("tenant1", "application1", "instance1");
+        var appId = TenantAndApplicationId.from(id);
+        var entity = createApplicationDeployData(applicationPackageInstance1);
+
+        assertTrue(tester.controller().applications().getApplication(appId).isEmpty());
+
+        // POST (deploy) an application to start a manual deployment to dev
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploy/dev-us-east-1/", POST)
+                        .data(entity)
+                        .oktaIdentityToken(OKTA_IT)
+                        .oktaAccessToken(OKTA_AT)
+                        .userIdentity(USER_ID),
+                "{\"message\":\"Deployment started in run 1 of dev-us-east-1 for tenant1.application1.instance1. This may take about 15 minutes the first time.\",\"run\":1}");
+
+        assertTrue(tester.controller().applications().getApplication(appId).isPresent());
+    }
+
     private static String serializeInstant(Instant i) {
         return DateTimeFormatter.ISO_INSTANT.format(i.truncatedTo(ChronoUnit.SECONDS));
     }
@@ -1645,18 +1699,18 @@ public class ApplicationApiTest extends ControllerContainerTest {
                 .build();
     }
 
-    private MultiPartStreamer createApplicationDeployData(ApplicationPackage applicationPackage, boolean deployDirectly) {
-        return createApplicationDeployData(Optional.of(applicationPackage), deployDirectly);
+    private MultiPartStreamer createApplicationDeployData(ApplicationPackage applicationPackage) {
+        return createApplicationDeployData(Optional.of(applicationPackage));
     }
 
-    private MultiPartStreamer createApplicationDeployData(Optional<ApplicationPackage> applicationPackage, boolean deployDirectly) {
-        return createApplicationDeployData(applicationPackage, Optional.empty(), deployDirectly);
+    private MultiPartStreamer createApplicationDeployData(Optional<ApplicationPackage> applicationPackage) {
+        return createApplicationDeployData(applicationPackage, Optional.empty());
     }
 
     private MultiPartStreamer createApplicationDeployData(Optional<ApplicationPackage> applicationPackage,
-                                                          Optional<ApplicationVersion> applicationVersion, boolean deployDirectly) {
+                                                          Optional<ApplicationVersion> applicationVersion) {
         MultiPartStreamer streamer = new MultiPartStreamer();
-        streamer.addJson("deployOptions", deployOptions(deployDirectly, applicationVersion));
+        streamer.addJson("deployOptions", deployOptions(applicationVersion));
         applicationPackage.ifPresent(ap -> streamer.addBytes("applicationZip", ap.zippedContent()));
         return streamer;
     }
@@ -1668,10 +1722,9 @@ public class ApplicationApiTest extends ControllerContainerTest {
                                       .addBytes(EnvironmentResource.APPLICATION_TEST_ZIP, "content".getBytes());
     }
 
-    private String deployOptions(boolean deployDirectly, Optional<ApplicationVersion> applicationVersion) {
+    private String deployOptions(Optional<ApplicationVersion> applicationVersion) {
             return "{\"vespaVersion\":null," +
-                    "\"ignoreValidationErrors\":false," +
-                    "\"deployDirectly\":" + deployDirectly +
+                    "\"ignoreValidationErrors\":false" +
                    applicationVersion.map(version ->
                            "," +
                            "\"buildNumber\":" + version.buildNumber().getAsLong() + "," +
@@ -1704,7 +1757,8 @@ public class ApplicationApiTest extends ControllerContainerTest {
      */
     private void allowLaunchOfService(com.yahoo.vespa.athenz.api.AthenzService service) {
         AthenzDbMock.Domain domainMock = tester.athenzClientFactory().getSetup().getOrCreateDomain(service.getDomain());
-        domainMock.withPolicy(tester.controller().zoneRegistry().accessControlDomain().value()+".provider.*","launch", "service." + service.getName());
+        String principalRegex = tester.controller().zoneRegistry().accessControlDomain().value() + ".provider.*";
+        domainMock.withPolicy("provider-launch", principalRegex,"launch", "service." + service.getName());
     }
 
     /**

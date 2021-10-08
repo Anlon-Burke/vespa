@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <tests/distributor/distributor_stripe_test_util.h>
 #include <vespa/document/fieldset/fieldsets.h>
@@ -230,7 +230,56 @@ TEST_F(DistributorStripeTest, operations_generated_and_started_without_duplicate
     ASSERT_EQ(6, _sender.commands().size());
 }
 
-// TODO STRIPE also need to impl/test cross-stripe cluster state changes
+TEST_F(DistributorStripeTest, maintenance_scheduling_inhibited_if_cluster_state_is_pending)
+{
+    setup_stripe(Redundancy(2), NodeCount(4), "storage:3 distributor:1");
+    simulate_set_pending_cluster_state("storage:4 distributor:1");
+
+    _sender.commands().clear(); // Remove pending bucket info requests
+
+    tickDistributorNTimes(1);
+    EXPECT_FALSE(stripe_is_in_recovery_mode());
+
+    for (uint32_t i = 0; i < 6; ++i) {
+        addNodesToBucketDB(document::BucketId(16, i), "0=2"); // Needs activation, merging
+    }
+    tickDistributorNTimes(10);
+
+    // No ops should have been actually generated
+    ASSERT_EQ(0, _sender.commands().size());
+}
+
+TEST_F(DistributorStripeTest, non_activation_maintenance_inhibited_if_explicitly_toggled)
+{
+    setup_stripe(Redundancy(2), NodeCount(4), "storage:3 distributor:1");
+    tickDistributorNTimes(1);
+    ASSERT_FALSE(stripe_is_in_recovery_mode());
+
+    for (uint32_t i = 0; i < 3; ++i) {
+        addNodesToBucketDB(document::BucketId(16, i), "0=2/3/4/t/a"); // Needs merging, but not activation (already active)
+    }
+    _stripe->inhibit_non_activation_maintenance_operations(true);
+    tickDistributorNTimes(10);
+
+    // No ops should have been actually generated
+    ASSERT_EQ("", _sender.getCommands());
+}
+
+TEST_F(DistributorStripeTest, activation_maintenance_not_inhibited_even_if_explicitly_toggled)
+{
+    setup_stripe(Redundancy(2), NodeCount(4), "storage:3 distributor:1");
+    tickDistributorNTimes(1);
+    ASSERT_FALSE(stripe_is_in_recovery_mode());
+
+    for (uint32_t i = 0; i < 3; ++i) {
+        addNodesToBucketDB(document::BucketId(16, i), "0=2/3/4"); // Needs activation and merging
+    }
+    _stripe->inhibit_non_activation_maintenance_operations(true);
+    tickDistributorNTimes(10);
+
+    ASSERT_EQ("SetBucketState,SetBucketState,SetBucketState", _sender.getCommands());
+}
+
 TEST_F(DistributorStripeTest, recovery_mode_on_cluster_state_change)
 {
     setup_stripe(Redundancy(1), NodeCount(2),
@@ -333,7 +382,6 @@ TEST_F(DistributorStripeTest, update_bucket_database)
               updateBucketDB("0:456", "2:333", ResetTrusted(true)));
 }
 
-// TODO STRIPE need to impl/test cross-stripe config propagation
 TEST_F(DistributorStripeTest, priority_config_is_propagated_to_distributor_configuration)
 {
     using namespace vespa::config::content::core;
@@ -427,7 +475,7 @@ TEST_F(DistributorStripeTest, merge_stats_are_accumulated_during_database_iterat
     // added to existing.
     tickDistributorNTimes(50);
 
-    const auto& stats = stripe_maintenance_stats();
+    const auto stats = stripe_maintenance_stats();
     {
         NodeMaintenanceStats wanted;
         wanted.syncing = 1;
@@ -453,6 +501,11 @@ TEST_F(DistributorStripeTest, merge_stats_are_accumulated_during_database_iterat
     assertBucketSpaceStats(1, 3, 0, "default", bucketStats);
     assertBucketSpaceStats(0, 1, 1, "default", bucketStats);
     assertBucketSpaceStats(3, 1, 2, "default", bucketStats);
+
+    EXPECT_EQ(stats.perNodeStats.total_replica_stats().movingOut, 1);
+    EXPECT_EQ(stats.perNodeStats.total_replica_stats().copyingOut, 2);
+    EXPECT_EQ(stats.perNodeStats.total_replica_stats().copyingIn, 2);
+    EXPECT_EQ(stats.perNodeStats.total_replica_stats().syncing, 2);
 }
 
 void
@@ -486,7 +539,7 @@ TEST_F(DistributorStripeTest, stats_generated_for_preempted_operations)
     // by activation, we'll see no merge stats at all.
     addNodesToBucketDB(document::BucketId(16, 1), "0=1/1/1,1=2/2/2");
     tickDistributorNTimes(50);
-    const auto& stats = stripe_maintenance_stats();
+    const auto stats = stripe_maintenance_stats();
     {
         NodeMaintenanceStats wanted;
         wanted.syncing = 1;
@@ -734,8 +787,6 @@ void assert_invalid_stats_for_all_spaces(
 
 }
 
-// TODO STRIPE must impl/test cross-stripe bucket space stats
-// TODO STRIPE cross-stripe recovery mode handling how?
 TEST_F(DistributorStripeTest, entering_recovery_mode_resets_bucket_space_stats)
 {
     // Set up a cluster state + DB contents which implies merge maintenance ops

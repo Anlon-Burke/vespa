@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "address_space_components.h"
 #include "address_space_usage.h"
@@ -10,15 +10,6 @@ using vespalib::AddressSpace;
 AddressSpaceUsage::AddressSpaceUsage()
     : _map()
 {
-}
-
-AddressSpaceUsage::AddressSpaceUsage(const AddressSpace& enum_store_usage,
-                                     const AddressSpace& multi_value_usage)
-    : _map()
-{
-    // TODO: Remove this constructor and instead add usage for each relevant component explicit.
-    set(AddressSpaceComponents::enum_store, enum_store_usage);
-    set(AddressSpaceComponents::multi_value, multi_value_usage);
 }
 
 void

@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.searchdefinition.derived;
 
 import ai.vespa.rankingexpression.importer.configmodelview.ImportedMlModels;
@@ -20,6 +20,7 @@ import com.yahoo.vespa.model.AbstractService;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -72,6 +73,12 @@ public class RankProfileList extends Derived implements RankProfilesConfig.Produ
         deriveRankProfiles(rankProfileRegistry, queryProfiles, importedModels, search, attributeFields, deployProperties, executor);
     }
 
+    private boolean areDependenciesReady(RankProfile rank, RankProfileRegistry registry) {
+        return (rank.getInheritedName() == null) ||
+                rankProfiles.containsKey(rank.getInheritedName()) ||
+                (rank.getSearch() != null && registry.resolve(rank.getSearch().getDocument(), rank.getInheritedName()) != null);
+    }
+
     private void deriveRankProfiles(RankProfileRegistry rankProfileRegistry,
                                     QueryProfileRegistry queryProfiles,
                                     ImportedMlModels importedModels,
@@ -79,29 +86,52 @@ public class RankProfileList extends Derived implements RankProfilesConfig.Produ
                                     AttributeFields attributeFields,
                                     ModelContext.Properties deployProperties,
                                     ExecutorService executor) {
-        List<Future<RawRankProfile>> futureRawRankProfiles = new ArrayList<>();
         if (search != null) { // profiles belonging to a search have a default profile
-            futureRawRankProfiles.add(executor.submit(() -> new RawRankProfile(rankProfileRegistry.get(search, "default"),
-                    largeRankExpressions, queryProfiles, importedModels, attributeFields, deployProperties)));
+            RawRankProfile rawRank = new RawRankProfile(rankProfileRegistry.get(search, "default"),
+                    largeRankExpressions, queryProfiles, importedModels, attributeFields, deployProperties);
+            rankProfiles.put(rawRank.getName(), rawRank);
         }
 
-        for (RankProfile rank : rankProfileRegistry.rankProfilesOf(search)) {
-            if (search != null && "default".equals(rank.getName())) continue;
+        Map<String, RankProfile> remaining = new LinkedHashMap<>();
+        rankProfileRegistry.rankProfilesOf(search).forEach(rank -> remaining.put(rank.getName(), rank));
+        remaining.remove("default");
+        while (!remaining.isEmpty()) {
+            List<RankProfile> ready = new ArrayList<>();
+            remaining.forEach((name, rank) -> {
+                if (areDependenciesReady(rank, rankProfileRegistry)) ready.add(rank);
+            });
+            processRankProfiles(ready, queryProfiles, importedModels, search, attributeFields, deployProperties, executor);
+            ready.forEach(rank -> remaining.remove(rank.getName()));
+        }
+    }
+    private void processRankProfiles(List<RankProfile> ready,
+                                     QueryProfileRegistry queryProfiles,
+                                     ImportedMlModels importedModels,
+                                     Search search,
+                                     AttributeFields attributeFields,
+                                     ModelContext.Properties deployProperties,
+                                     ExecutorService executor) {
+        Map<String, Future<RawRankProfile>> futureRawRankProfiles = new LinkedHashMap<>();
+        for (RankProfile rank : ready) {
             if (search == null) {
-                this.onnxModels.add(rank.onnxModels());
+                onnxModels.add(rank.onnxModels());
             }
 
-            futureRawRankProfiles.add(executor.submit(() -> new RawRankProfile(rank, largeRankExpressions, queryProfiles, importedModels,
+            futureRawRankProfiles.put(rank.getName(), executor.submit(() -> new RawRankProfile(rank, largeRankExpressions, queryProfiles, importedModels,
                     attributeFields, deployProperties)));
         }
         try {
-            for (Future<RawRankProfile> rawFuture : futureRawRankProfiles) {
+            for (Future<RawRankProfile> rawFuture : futureRawRankProfiles.values()) {
                 RawRankProfile rawRank = rawFuture.get();
                 rankProfiles.put(rawRank.getName(), rawRank);
             }
         } catch (InterruptedException | ExecutionException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    public OnnxModels getOnnxModels() {
+        return onnxModels;
     }
 
     public Map<String, RawRankProfile> getRankProfiles() {
@@ -156,6 +186,13 @@ public class RankProfileList extends Derived implements RankProfilesConfig.Produ
                 modelBuilder.fileref(model.getFileReference());
                 model.getInputMap().forEach((name, source) -> modelBuilder.input(new OnnxModelsConfig.Model.Input.Builder().name(name).source(source)));
                 model.getOutputMap().forEach((name, as) -> modelBuilder.output(new OnnxModelsConfig.Model.Output.Builder().name(name).as(as)));
+                if (model.getStatelessExecutionMode().isPresent())
+                    modelBuilder.stateless_execution_mode(model.getStatelessExecutionMode().get());
+                if (model.getStatelessInterOpThreads().isPresent())
+                    modelBuilder.stateless_interop_threads(model.getStatelessInterOpThreads().get());
+                if (model.getStatelessIntraOpThreads().isPresent())
+                    modelBuilder.stateless_intraop_threads(model.getStatelessIntraOpThreads().get());
+
                 builder.model(modelBuilder);
             }
         }

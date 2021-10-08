@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "distributor_message_sender_stub.h"
@@ -17,7 +17,7 @@ namespace framework { struct TickingThreadPool; }
 
 namespace distributor {
 
-class TopLevelDistributor;
+class BucketSpaceStateMap;
 class DistributorBucketSpace;
 class DistributorBucketSpaceRepo;
 class DistributorMetricSet;
@@ -26,10 +26,11 @@ class DistributorStripe;
 class DistributorStripeComponent;
 class DistributorStripeOperationContext;
 class DistributorStripePool;
-class StripeAccessGuard;
 class IdealStateMetricSet;
 class Operation;
+class StripeAccessGuard;
 class TopLevelBucketDBUpdater;
+class TopLevelDistributor;
 
 class TopLevelDistributorTestUtil : private DoneInitializeHandler
 {
@@ -60,16 +61,14 @@ public:
     // As the above, but always inserts into default bucket space
     void add_nodes_to_stripe_bucket_db(const document::BucketId& id, const std::string& nodeStr);
 
-    // TODO STRIPE replace with BucketSpaceStateMap once legacy is gone
-    DistributorBucketSpaceRepo& top_level_bucket_space_repo() noexcept;
-    const DistributorBucketSpaceRepo& top_level_bucket_space_repo() const noexcept;
+    BucketSpaceStateMap& bucket_space_states() noexcept;
+    const BucketSpaceStateMap& bucket_space_states() const noexcept;
 
     std::unique_ptr<StripeAccessGuard> acquire_stripe_guard();
 
     TopLevelBucketDBUpdater& bucket_db_updater();
     const IdealStateMetricSet& total_ideal_state_metrics() const;
     const DistributorMetricSet& total_distributor_metrics() const;
-    const storage::distributor::DistributorNodeContext& node_context() const;
 
     DistributorBucketSpace& distributor_bucket_space(const document::BucketId& id);
     const DistributorBucketSpace& distributor_bucket_space(const document::BucketId& id) const;

@@ -1,16 +1,24 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // vespa document command
 // author: bratseth
 
 package cmd
 
 import (
-	"log"
+	"fmt"
+	"io"
+	"io/ioutil"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/vespa-engine/vespa/client/go/util"
 	"github.com/vespa-engine/vespa/client/go/vespa"
+)
+
+var (
+	printCurl      bool
+	docTimeoutSecs int
 )
 
 func init() {
@@ -19,6 +27,8 @@ func init() {
 	documentCmd.AddCommand(documentUpdateCmd)
 	documentCmd.AddCommand(documentRemoveCmd)
 	documentCmd.AddCommand(documentGetCmd)
+	documentCmd.PersistentFlags().BoolVarP(&printCurl, "verbose", "v", false, "Print the equivalent curl command for the document operation")
+	documentCmd.PersistentFlags().IntVarP(&docTimeoutSecs, "timeout", "T", 60, "Timeout for the document request in seconds")
 }
 
 var documentCmd = &cobra.Command{
@@ -38,7 +48,7 @@ should be used instead of this.`,
 	DisableAutoGenTag: true,
 	Args:              cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		printResult(vespa.Send(args[0], documentService()), false)
+		printResult(vespa.Send(args[0], documentService(), operationOptions()), false)
 	},
 }
 
@@ -54,9 +64,9 @@ $ vespa document put id:mynamespace:music::a-head-full-of-dreams src/test/resour
 	DisableAutoGenTag: true,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 1 {
-			printResult(vespa.Put("", args[0], documentService()), false)
+			printResult(vespa.Put("", args[0], documentService(), operationOptions()), false)
 		} else {
-			printResult(vespa.Put(args[0], args[1], documentService()), false)
+			printResult(vespa.Put(args[0], args[1], documentService(), operationOptions()), false)
 		}
 	},
 }
@@ -72,9 +82,9 @@ $ vespa document update id:mynamespace:music::a-head-full-of-dreams src/test/res
 	DisableAutoGenTag: true,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 1 {
-			printResult(vespa.Update("", args[0], documentService()), false)
+			printResult(vespa.Update("", args[0], documentService(), operationOptions()), false)
 		} else {
-			printResult(vespa.Update(args[0], args[1], documentService()), false)
+			printResult(vespa.Update(args[0], args[1], documentService(), operationOptions()), false)
 		}
 	},
 }
@@ -90,9 +100,9 @@ $ vespa document remove id:mynamespace:music::a-head-full-of-dreams`,
 	DisableAutoGenTag: true,
 	Run: func(cmd *cobra.Command, args []string) {
 		if strings.HasPrefix(args[0], "id:") {
-			printResult(vespa.RemoveId(args[0], documentService()), false)
+			printResult(vespa.RemoveId(args[0], documentService(), operationOptions()), false)
 		} else {
-			printResult(vespa.RemoveOperation(args[0], documentService()), false)
+			printResult(vespa.RemoveOperation(args[0], documentService(), operationOptions()), false)
 		}
 	},
 }
@@ -104,27 +114,50 @@ var documentGetCmd = &cobra.Command{
 	DisableAutoGenTag: true,
 	Example:           `$ vespa document get id:mynamespace:music::a-head-full-of-dreams`,
 	Run: func(cmd *cobra.Command, args []string) {
-		printResult(vespa.Get(args[0], documentService()), true)
+		printResult(vespa.Get(args[0], documentService(), operationOptions()), true)
 	},
 }
 
 func documentService() *vespa.Service { return getService("document", 0) }
 
+func operationOptions() vespa.OperationOptions {
+	return vespa.OperationOptions{
+		CurlOutput: curlOutput(),
+		Timeout:    time.Second * time.Duration(docTimeoutSecs),
+	}
+}
+
+func curlOutput() io.Writer {
+	if printCurl {
+		return stderr
+	}
+	return ioutil.Discard
+}
+
 func printResult(result util.OperationResult, payloadOnlyOnSuccess bool) {
+	out := stdout
 	if !result.Success {
-		log.Print(color.Red("Error: "), result.Message)
+		out = stderr
+	}
+
+	if !result.Success {
+		fmt.Fprintln(out, color.Red("Error:"), result.Message)
 	} else if !(payloadOnlyOnSuccess && result.Payload != "") {
-		log.Print(color.Green("Success: "), result.Message)
+		fmt.Fprintln(out, color.Green("Success:"), result.Message)
 	}
 
 	if result.Detail != "" {
-		log.Print(color.Yellow(result.Detail))
+		fmt.Fprintln(out, color.Yellow(result.Detail))
 	}
 
 	if result.Payload != "" {
 		if !payloadOnlyOnSuccess {
-			log.Println("")
+			fmt.Fprintln(out)
 		}
-		log.Print(result.Payload)
+		fmt.Fprintln(out, result.Payload)
+	}
+
+	if !result.Success {
+		exitFunc(1)
 	}
 }

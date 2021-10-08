@@ -34,7 +34,6 @@ import com.yahoo.vespa.model.container.component.Handler;
 import com.yahoo.vespa.model.container.component.Servlet;
 import com.yahoo.vespa.model.container.component.SystemBindingPattern;
 import com.yahoo.vespa.model.container.configserver.ConfigserverCluster;
-import com.yahoo.vespa.model.container.xml.PlatformBundles;
 import com.yahoo.vespa.model.utils.FileSender;
 
 import java.util.ArrayList;
@@ -100,7 +99,8 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
                                    .map(HostSpec::hostname)
                                    .collect(Collectors.toUnmodifiableSet());
 
-        addSimpleComponent(DEFAULT_LINGUISTICS_PROVIDER);
+        addSimpleComponent("com.yahoo.language.provider.DefaultLinguisticsProvider");
+        addSimpleComponent("com.yahoo.language.provider.DefaultEmbedderProvider");
         addSimpleComponent("com.yahoo.container.jdisc.SecretStoreProvider");
         addSimpleComponent("com.yahoo.container.jdisc.DeprecatedSecretStoreProvider");
         addSimpleComponent("com.yahoo.container.jdisc.CertificateStoreProvider");

@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.restapi;
 
 import com.yahoo.application.container.handler.Request;
@@ -1021,6 +1021,26 @@ public class NodesV2ApiTest {
 
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/archive/tenant3", new byte[0], Request.Method.DELETE), "{\"message\":\"Removed archive URI for tenant3\"}");
         tester.assertPartialResponse(new Request("http://localhost:8080/nodes/v2/node/host4.yahoo.com"), "archiveUri", false);
+    }
+
+    @Test
+    public void trusted_certificates_patch()  throws IOException {
+        String url = "http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com";
+        tester.assertPartialResponse(new Request(url), "\"trustStore\":[]", false); // initially empty list
+
+        String trustStore = "\"trustStore\":[" +
+                            "{" +
+                            "\"fingerprint\":\"foo\"," +
+                            "\"expiry\":1632302251000" +
+                            "}," +
+                            "{" +
+                            "\"fingerprint\":\"bar\"," +
+                            "\"expiry\":1758532706000" +
+                            "}" +
+                            "]";
+        assertResponse(new Request(url, Utf8.toBytes("{"+trustStore+"}"), Request.Method.PATCH),
+                       "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
+        tester.assertPartialResponse(new Request(url), trustStore, true);
     }
 
     private static String asDockerNodeJson(String hostname, String parentHostname, String... ipAddress) {

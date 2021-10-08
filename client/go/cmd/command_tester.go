@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // A helper for testing commands
 // Author: bratseth
 
@@ -7,8 +7,8 @@ package cmd
 import (
 	"bytes"
 	"crypto/tls"
+	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,62 +16,76 @@ import (
 	"testing"
 	"time"
 
-	"github.com/logrusorgru/aurora"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"github.com/stretchr/testify/assert"
 	"github.com/vespa-engine/vespa/client/go/util"
 )
 
 type command struct {
 	homeDir  string
+	cacheDir string
+	stdin    io.ReadWriter
 	args     []string
 	moreArgs []string
 }
 
-func execute(cmd command, t *testing.T, client *mockHttpClient) string {
+func resetFlag(f *pflag.Flag) {
+	switch v := f.Value.(type) {
+	case pflag.SliceValue:
+		_ = v.Replace([]string{})
+	default:
+		switch v.Type() {
+		case "bool", "string", "int":
+			_ = v.Set(f.DefValue)
+		}
+	}
+}
+
+func execute(cmd command, t *testing.T, client *mockHttpClient) (string, string) {
 	if client != nil {
 		util.ActiveHttpClient = client
 	}
 
-	// Never print colors in tests
-	color = aurora.NewAurora(false)
-
-	// Set config dir. Use a separate one per test if none is specified
+	// Set Vespa CLI directories. Use a separate one per test if none is specified
 	if cmd.homeDir == "" {
-		cmd.homeDir = t.TempDir()
+		cmd.homeDir = filepath.Join(t.TempDir(), ".vespa")
 		viper.Reset()
 	}
-	os.Setenv("VESPA_CLI_HOME", filepath.Join(cmd.homeDir, ".vespa"))
+	if cmd.cacheDir == "" {
+		cmd.cacheDir = filepath.Join(t.TempDir(), ".cache", "vespa")
+	}
+	os.Setenv("VESPA_CLI_HOME", cmd.homeDir)
+	os.Setenv("VESPA_CLI_CACHE_DIR", cmd.cacheDir)
 
 	// Reset flags to their default value - persistent flags in Cobra persists over tests
-	rootCmd.Flags().VisitAll(func(f *pflag.Flag) {
-		switch v := f.Value.(type) {
-		case pflag.SliceValue:
-			_ = v.Replace([]string{})
-		default:
-			switch v.Type() {
-			case "bool", "string", "int":
-				_ = v.Set(f.DefValue)
-			}
-		}
-	})
+	// TODO: Due to the bad design of viper, the only proper fix is to get rid of global state by moving each command to
+	// their own sub-package
+	rootCmd.Flags().VisitAll(resetFlag)
+	documentCmd.Flags().VisitAll(resetFlag)
 
 	// Do not exit in tests
 	exitFunc = func(code int) {}
 
 	// Capture stdout and execute command
-	var b bytes.Buffer
-	log.SetOutput(&b)
+	var capturedOut bytes.Buffer
+	var capturedErr bytes.Buffer
+	stdout = &capturedOut
+	stderr = &capturedErr
+	if cmd.stdin != nil {
+		stdin = cmd.stdin
+	} else {
+		stdin = os.Stdin
+	}
+
+	// Execute command and return output
 	rootCmd.SetArgs(append(cmd.args, cmd.moreArgs...))
 	rootCmd.Execute()
-	out, err := ioutil.ReadAll(&b)
-	assert.Nil(t, err, "No error")
-	return string(out)
+	return capturedOut.String(), capturedErr.String()
 }
 
 func executeCommand(t *testing.T, client *mockHttpClient, args []string, moreArgs []string) string {
-	return execute(command{args: args, moreArgs: moreArgs}, t, client)
+	out, _ := execute(command{args: args, moreArgs: moreArgs}, t, client)
+	return out
 }
 
 type mockHttpClient struct {
@@ -114,5 +128,3 @@ func (c *mockHttpClient) Do(request *http.Request, timeout time.Duration) (*http
 }
 
 func (c *mockHttpClient) UseCertificate(certificate tls.Certificate) {}
-
-func convergeServices(client *mockHttpClient) { client.NextResponse(200, `{"converged":true}`) }

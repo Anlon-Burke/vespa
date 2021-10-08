@@ -5,8 +5,8 @@ import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.text.Text;
+import com.yahoo.vespa.flags.BooleanFlag;
 import com.yahoo.vespa.flags.FetchVector;
-import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.api.integration.archive.ArchiveBucket;
@@ -33,8 +33,6 @@ public class CuratorArchiveBucketDb {
      * Policy size limit is 20kb, about 550 bytes for non-tenant related policies. Each tenant
      * needs about 500 + len(role_arn) bytes, we limit role_arn to 100 characters, so we can
      * fit about (20k - 550) / 600 ~ 32 tenants per bucket.
-     *
-     * This limit is only enforced for public systems as non-public systems does not use tenant specific policies.
      */
     private final static int TENANTS_PER_BUCKET = 30;
 
@@ -46,28 +44,30 @@ public class CuratorArchiveBucketDb {
 
     private final ArchiveService archiveService;
     private final CuratorDb curatorDb;
-    private final FlagSource flagSource;
+    private final BooleanFlag enableFlag;
     private final SystemName system;
 
     public CuratorArchiveBucketDb(Controller controller) {
         this.archiveService = controller.serviceRegistry().archiveService();
         this.curatorDb = controller.curator();
-        this.flagSource = controller.flagSource();
+        this.enableFlag = Flags.ENABLE_ONPREM_TENANT_S3_ARCHIVE.bindTo(controller.flagSource());
         this.system = controller.zoneRegistry().system();
     }
 
     public Optional<URI> archiveUriFor(ZoneId zoneId, TenantName tenant) {
-        if (enabled(zoneId)) {
+        if (enabled(zoneId, tenant)) {
             return Optional.of(URI.create(Text.format("s3://%s/%s/", findOrAssignBucket(zoneId, tenant), tenant.value())));
         } else {
             return Optional.empty();
         }
     }
 
-    private boolean enabled(ZoneId zone) {
-        return system.isPublic() || Flags.ENABLE_ONPREM_TENANT_S3_ARCHIVE.bindTo(flagSource)
-                .with(FetchVector.Dimension.ZONE_ID, zone.value())
-                .value();
+    private boolean enabled(ZoneId zone, TenantName tenant) {
+        return system.isPublic() ||
+                enableFlag
+                        .with(FetchVector.Dimension.ZONE_ID, zone.value())
+                        .with(FetchVector.Dimension.TENANT_ID, tenant.value())
+                        .value();
     }
 
     private String findOrAssignBucket(ZoneId zoneId, TenantName tenant) {
@@ -84,7 +84,7 @@ public class CuratorArchiveBucketDb {
                     .orElseGet(() -> {
                         // If not, find an existing bucket with space
                         Optional<ArchiveBucket> unfilledBucket = zoneBuckets.stream()
-                                .filter(bucket -> !system.isPublic() || bucket.tenants().size() < TENANTS_PER_BUCKET)
+                                .filter(bucket -> bucket.tenants().size() < TENANTS_PER_BUCKET)
                                 .findAny();
 
                         // And place the tenant in that bucket.

@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/slobrok/server/local_rpc_monitor_map.h>
@@ -104,7 +104,7 @@ struct LocalRpcMonitorMapTest : public ::testing::Test {
     ServiceMapping mapping_conflict;
     LocalRpcMonitorMapTest()
       : time(duration::zero()),
-        scheduler(&time, &time), monitor_log(), map_log(),
+        scheduler(&time), monitor_log(), map_log(),
         map(&scheduler, [this](auto &owner)
             {
                 EXPECT_EQ(&owner, &map);

@@ -1,4 +1,4 @@
-// Copyright Verizon Media. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.restapi;
 
 import com.yahoo.config.provision.ApplicationId;
@@ -16,6 +16,7 @@ import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.node.Address;
 import com.yahoo.vespa.hosted.provision.node.History;
+import com.yahoo.vespa.hosted.provision.node.TrustStoreItem;
 import com.yahoo.vespa.orchestrator.Orchestrator;
 import com.yahoo.vespa.orchestrator.status.HostInfo;
 import com.yahoo.vespa.orchestrator.status.HostStatus;
@@ -152,8 +153,6 @@ class NodesResponse extends SlimeJsonResponse {
             allocation.networkPorts().ifPresent(ports -> NetworkPortsSerializer.toSlime(ports, object.setArray("networkPorts")));
             orchestrator.apply(new HostName(node.hostname()))
                         .ifPresent(info -> {
-                            object.setBool("allowedToBeDown", info.status().isSuspended());
-                            // TODO: Remove allowedToBeDown as a special-case of orchestratorStatus
                             if (info.status() != HostStatus.NO_REMARKS) {
                                 object.setString("orchestratorStatus", info.status().asString());
                             }
@@ -182,6 +181,7 @@ class NodesResponse extends SlimeJsonResponse {
         node.modelName().ifPresent(modelName -> object.setString("modelName", modelName));
         node.switchHostname().ifPresent(switchHostname -> object.setString("switchHostname", switchHostname));
         nodeRepository.archiveUris().archiveUriFor(node).ifPresent(uri -> object.setString("archiveUri", uri));
+        trustedCertsToSlime(node.trustedCertificates(), object);
     }
 
     private void toSlime(ApplicationId id, Cursor object) {
@@ -226,6 +226,12 @@ class NodesResponse extends SlimeJsonResponse {
         // When/if Address becomes richer: add another field (e.g. "addresses") and expand to array of objects
         Cursor addressesArray = object.setArray("additionalHostnames");
         addresses.forEach(address -> addressesArray.addString(address.hostname()));
+    }
+
+    private void trustedCertsToSlime(List<TrustStoreItem> trustStoreItems, Cursor object) {
+        if (trustStoreItems.isEmpty()) return;
+        Cursor array = object.setArray("trustStore");
+        trustStoreItems.forEach(cert -> cert.toSlime(array));
     }
 
     private String lastElement(String path) {

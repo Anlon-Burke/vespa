@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/searchcore/proton/attribute/attribute_usage_filter.h>
 #include <vespa/searchcore/proton/attribute/i_attribute_usage_listener.h>
@@ -12,6 +12,7 @@ LOG_SETUP("attribute_usage_filter_test");
 using proton::AttributeUsageFilter;
 using proton::AttributeUsageStats;
 using proton::IAttributeUsageListener;
+using search::AddressSpaceComponents;
 using search::AddressSpaceUsage;
 using vespalib::AddressSpace;
 
@@ -27,17 +28,15 @@ class MyAttributeStats : public AttributeUsageStats
 {
 public:
     void triggerEnumStoreLimit() {
-        merge({ enumStoreOverLoad,
-                search::AddressSpaceComponents::default_multi_value_usage() },
-              "enumeratedName",
-              "ready");
+        AddressSpaceUsage usage;
+        usage.set(AddressSpaceComponents::enum_store, enumStoreOverLoad);
+        merge(usage, "enumeratedName", "ready");
     }
 
     void triggerMultiValueLimit() {
-        merge({ search::AddressSpaceComponents::default_enum_store_usage(),
-                multiValueOverLoad },
-              "multiValueName",
-              "ready");
+        AddressSpaceUsage usage;
+        usage.set(AddressSpaceComponents::multi_value, multiValueOverLoad);
+        merge(usage, "multiValueName", "ready");
     }
 };
 
@@ -130,7 +129,8 @@ TEST_F("Check that multivalue limit can be reached", Fixture)
 TEST_F("listener is updated when attribute stats change", Fixture)
 {
    AttributeUsageStats stats;
-   AddressSpaceUsage usage(AddressSpace(12, 10, 15), AddressSpace(22, 20, 25));
+   AddressSpaceUsage usage;
+   usage.set("my_comp", AddressSpace(12, 10, 15));
    stats.merge(usage, "my_attr", "my_subdb");
    f.setAttributeStats(stats);
    EXPECT_EQUAL(stats, f.listener->stats);

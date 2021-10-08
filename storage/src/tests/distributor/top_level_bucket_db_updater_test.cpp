@@ -364,7 +364,7 @@ public:
             OutdatedNodesMap outdated_nodes_map;
             state = PendingClusterState::createForClusterStateChange(
                     clock, cluster_info, sender,
-                    owner.top_level_bucket_space_repo(),
+                    owner.bucket_space_states(),
                     cmd, outdated_nodes_map, api::Timestamp(1));
         }
 
@@ -374,7 +374,7 @@ public:
         {
             auto cluster_info = owner.create_cluster_info(old_cluster_state);
             state = PendingClusterState::createForDistributionChange(
-                    clock, cluster_info, sender, owner.top_level_bucket_space_repo(), api::Timestamp(1));
+                    clock, cluster_info, sender, owner.bucket_space_states(), api::Timestamp(1));
         }
     };
 
@@ -630,7 +630,7 @@ TopLevelBucketDBUpdaterTest::trigger_completed_but_not_yet_activated_transition(
 }
 
 TEST_F(TopLevelBucketDBUpdaterTest, normal_usage) {
-    set_cluster_state(lib::ClusterState("distributor:2 .0.s:i .1.s:i storage:3"));
+    set_cluster_state(lib::ClusterState("distributor:2 .0.s:i .1.s:i storage:3")); // FIXME init mode why?
 
     ASSERT_EQ(message_count(3), _sender.commands().size());
 
@@ -638,21 +638,21 @@ TEST_F(TopLevelBucketDBUpdaterTest, normal_usage) {
     ASSERT_EQ(_component->getDistribution()->getNodeGraph().getDistributionConfigHash(),
               dynamic_cast<const RequestBucketInfoCommand&>(*_sender.command(0)).getDistributionHash());
 
-    ASSERT_NO_FATAL_FAILURE(fake_bucket_reply(lib::ClusterState("distributor:2 .0.s:i .1.s:i storage:3"),
+    ASSERT_NO_FATAL_FAILURE(fake_bucket_reply(lib::ClusterState("distributor:2 .0.s:i .1.s:i storage:3"), // FIXME init mode why?
                                               *_sender.command(0), 10));
 
     _sender.clear();
 
     // Optimization for not refetching unneeded data after cluster state
     // change is only implemented after completion of previous cluster state
-    set_cluster_state("distributor:2 .0.s:i storage:3");
+    set_cluster_state("distributor:2 .0.s:i storage:3"); // FIXME init mode why?
 
     ASSERT_EQ(message_count(3), _sender.commands().size());
     // Expect reply of first set SystemState request.
     ASSERT_EQ(size_t(1), _sender.replies().size());
 
     ASSERT_NO_FATAL_FAILURE(complete_bucket_info_gathering(
-            lib::ClusterState("distributor:2 .0.s:i .1.s:i storage:3"),
+            lib::ClusterState("distributor:2 .0.s:i .1.s:i storage:3"), // FIXME init mode why?
             message_count(3), 10));
     ASSERT_NO_FATAL_FAILURE(assert_correct_buckets(10, "distributor:2 storage:3"));
 }
@@ -661,9 +661,9 @@ TEST_F(TopLevelBucketDBUpdaterTest, distributor_change) {
     int num_buckets = 100;
 
     // First sends request
-    set_cluster_state("distributor:2 .0.s:i .1.s:i storage:3");
+    set_cluster_state("distributor:2 .0.s:i .1.s:i storage:3"); // FIXME init mode why?
     ASSERT_EQ(message_count(3), _sender.commands().size());
-    ASSERT_NO_FATAL_FAILURE(complete_bucket_info_gathering(lib::ClusterState("distributor:2 .0.s:i .1.s:i storage:3"),
+    ASSERT_NO_FATAL_FAILURE(complete_bucket_info_gathering(lib::ClusterState("distributor:2 .0.s:i .1.s:i storage:3"), // FIXME init mode why?
                                                            message_count(3), num_buckets));
     _sender.clear();
 
@@ -718,14 +718,14 @@ TEST_F(TopLevelBucketDBUpdaterTest, distributor_change_with_grouping) {
 }
 
 TEST_F(TopLevelBucketDBUpdaterTest, normal_usage_initializing) {
-    set_cluster_state("distributor:1 .0.s:i storage:1 .0.s:i");
+    set_cluster_state("distributor:1 .0.s:i storage:1 .0.s:i"); // FIXME init mode why?
 
     ASSERT_EQ(_bucket_spaces.size(), _sender.commands().size());
 
     // Not yet passing on system state.
     ASSERT_EQ(size_t(0), _sender_down.commands().size());
 
-    ASSERT_NO_FATAL_FAILURE(complete_bucket_info_gathering(lib::ClusterState("distributor:1 .0.s:i storage:1"),
+    ASSERT_NO_FATAL_FAILURE(complete_bucket_info_gathering(lib::ClusterState("distributor:1 .0.s:i storage:1"), // FIXME init mode why?
                                                            _bucket_spaces.size(), 10, 10));
 
     ASSERT_NO_FATAL_FAILURE(assert_correct_buckets(10, "distributor:1 storage:1"));
@@ -740,12 +740,12 @@ TEST_F(TopLevelBucketDBUpdaterTest, normal_usage_initializing) {
     _sender.clear();
     _sender_down.clear();
 
-    set_cluster_state("distributor:1 .0.s:i storage:1");
+    set_cluster_state("distributor:1 .0.s:i storage:1"); // FIXME init mode why?
 
     // Send a new request bucket info up.
     ASSERT_EQ(_bucket_spaces.size(), _sender.commands().size());
 
-    ASSERT_NO_FATAL_FAILURE(complete_bucket_info_gathering(lib::ClusterState("distributor:1 .0.s:i storage:1"),
+    ASSERT_NO_FATAL_FAILURE(complete_bucket_info_gathering(lib::ClusterState("distributor:1 .0.s:i storage:1"), // FIXME init mode why?
                                                            _bucket_spaces.size(), 20));
 
     // Pass on cluster state and recheck buckets now.
@@ -755,7 +755,7 @@ TEST_F(TopLevelBucketDBUpdaterTest, normal_usage_initializing) {
 }
 
 TEST_F(TopLevelBucketDBUpdaterTest, failed_request_bucket_info) {
-    set_cluster_state("distributor:1 .0.s:i storage:1");
+    set_cluster_state("distributor:1 .0.s:i storage:1"); // FIXME init mode why?
 
     // 2 messages sent up: 1 to the nodes, and one reply to the setsystemstate.
     ASSERT_EQ(_bucket_spaces.size(), _sender.commands().size());
@@ -781,7 +781,7 @@ TEST_F(TopLevelBucketDBUpdaterTest, failed_request_bucket_info) {
     ASSERT_EQ(size_t(0), _sender_down.commands().size());
 
     for (uint32_t i = 0; i < _bucket_spaces.size(); ++i) {
-        ASSERT_NO_FATAL_FAILURE(fake_bucket_reply(lib::ClusterState("distributor:1 .0.s:i storage:1"),
+        ASSERT_NO_FATAL_FAILURE(fake_bucket_reply(lib::ClusterState("distributor:1 .0.s:i storage:1"), // FIXME init mode why?
                                                   *_sender.command(_bucket_spaces.size() + i), 10));
     }
 
@@ -1389,7 +1389,7 @@ TopLevelBucketDBUpdaterTest::get_sent_nodes_distribution_changed(const std::stri
     auto cluster_info = create_cluster_info(old_cluster_state);
     std::unique_ptr<PendingClusterState> state(
             PendingClusterState::createForDistributionChange(
-                    clock, cluster_info, sender, top_level_bucket_space_repo(), api::Timestamp(1)));
+                    clock, cluster_info, sender, bucket_space_states(), api::Timestamp(1)));
 
     sort_sent_messages_by_index(sender);
 
@@ -1514,7 +1514,7 @@ TEST_F(TopLevelBucketDBUpdaterTest, pending_cluster_state_receive) {
     OutdatedNodesMap outdated_nodes_map;
     std::unique_ptr<PendingClusterState> state(
             PendingClusterState::createForClusterStateChange(
-                    clock, cluster_info, sender, top_level_bucket_space_repo(),
+                    clock, cluster_info, sender, bucket_space_states(),
                     cmd, outdated_nodes_map, api::Timestamp(1)));
 
     ASSERT_EQ(message_count(3), sender.commands().size());
@@ -1670,7 +1670,7 @@ TopLevelBucketDBUpdaterTest::merge_bucket_lists(
         auto cluster_info = create_cluster_info("cluster:d");
 
         auto state = PendingClusterState::createForClusterStateChange(
-                clock, cluster_info, sender, top_level_bucket_space_repo(),
+                clock, cluster_info, sender, bucket_space_states(),
                 cmd, outdated_nodes_map, before_time);
 
         parse_input_data(existing_data, before_time, *state, include_bucket_info);
@@ -1690,7 +1690,7 @@ TopLevelBucketDBUpdaterTest::merge_bucket_lists(
         auto cluster_info = create_cluster_info(old_state.toString());
 
         auto state = PendingClusterState::createForClusterStateChange(
-                        clock, cluster_info, sender, top_level_bucket_space_repo(),
+                        clock, cluster_info, sender, bucket_space_states(),
                         cmd, outdated_nodes_map, after_time);
 
         parse_input_data(new_data, after_time, *state, include_bucket_info);

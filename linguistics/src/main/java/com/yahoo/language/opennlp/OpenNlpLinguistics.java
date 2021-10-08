@@ -1,4 +1,4 @@
-// Copyright 2018 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.language.opennlp;
 
 import com.google.inject.Inject;
@@ -49,4 +49,5 @@ public class OpenNlpLinguistics extends SimpleLinguistics {
 
     @Override
     public boolean equals(Linguistics other) { return (other instanceof OpenNlpLinguistics); }
+
 }

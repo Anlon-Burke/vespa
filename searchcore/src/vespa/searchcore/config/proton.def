@@ -1,4 +1,4 @@
-# Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+# Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 namespace=vespa.config.search.core
 
 ## Base directory. The default is ignored as it is assigned by the model
@@ -434,18 +434,6 @@ initialize.threads int default = 0
 ## Portion of max address space used in components in attribute vectors
 ## before put and update operations in feed is blocked.
 writefilter.attribute.address_space_limit double default = 0.9
-
-## Portion of enumstore address space that can be used before put and update
-## portion of feed is blocked.
-## Deprecated -> Use address_space_limit
-## TODO: remove this when enum store is removed from AttributeUsageStats
-writefilter.attribute.enumstorelimit double default = 0.9
-
-## Portion of attribute multivalue mapping address space that can be used
-## before put and update portion of feed is blocked.
-## Deprecated -> Use address_space_limit
-## TODO: remove this when multi value is removed from AttributeUsageStats
-writefilter.attribute.multivaluelimit double default = 0.9
 
 ## Portion of physical memory that can be resident memory in anonymous mapping
 ## by the proton process before put and update portion of feed is blocked.
