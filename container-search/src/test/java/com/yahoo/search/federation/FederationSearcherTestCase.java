@@ -1,5 +1,5 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
-package com.yahoo.search.federation.test;
+package com.yahoo.search.federation;
 
 import com.yahoo.component.ComponentId;
 import com.yahoo.component.chain.Chain;
@@ -7,13 +7,8 @@ import com.yahoo.component.provider.ComponentRegistry;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
 import com.yahoo.search.Searcher;
-import com.yahoo.search.federation.FederationConfig;
-import com.yahoo.search.federation.FederationSearcher;
-import com.yahoo.search.federation.StrictContractsConfig;
-import com.yahoo.search.federation.selection.TargetSelector;
 import com.yahoo.search.federation.sourceref.SearchChainResolver;
 import com.yahoo.search.query.profile.QueryProfile;
-import com.yahoo.search.query.profile.QueryProfileRegistry;
 import com.yahoo.search.result.ErrorMessage;
 import com.yahoo.search.result.Hit;
 import com.yahoo.search.result.HitGroup;
@@ -29,10 +24,15 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Collections;
+import java.util.List;
 
-import static org.junit.Assert.*;
 import static com.yahoo.search.federation.StrictContractsConfig.PropagateSourceProperties;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Test for federation searcher. The searcher is also tested in
@@ -40,7 +40,6 @@ import static com.yahoo.search.federation.StrictContractsConfig.PropagateSourceP
  *
  * @author Arne Bergene Fossaa
  */
-@SuppressWarnings("deprecation")
 public class FederationSearcherTestCase {
 
     static final String SOURCE1 = "source1";
@@ -121,7 +120,7 @@ public class FederationSearcherTestCase {
         defaultProfile.freeze();
         Query q = new Query(QueryTestCase.httpEncode("?query=test"), defaultProfile.compile(null));
 
-        Result result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry, null)).search(q);
+        Result result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry)).search(q);
         assertNull(result.hits().getError());
         assertEquals("source:mySource1", result.hits().get(0).getId().stringValue());
         assertEquals("source:mySource2", result.hits().get(1).getId().stringValue());
@@ -133,7 +132,7 @@ public class FederationSearcherTestCase {
 
         Query q = new Query(com.yahoo.search.test.QueryTestCase.httpEncode("?query=test&traceLevel=1"));
 
-        Execution execution = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry, null));
+        Execution execution = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry));
         Result result = execution.search(q);
         assertNull(result.hits().getError());
         TwoSourceChecker lookForTraces = new TwoSourceChecker();
@@ -161,12 +160,11 @@ public class FederationSearcherTestCase {
 
         }, SOURCE2);
 
-        Chain<Searcher> mainChain = new Chain<>("default",
+        return new Chain<>("default",
                 new FederationSearcher(new FederationConfig(builder),
                         new StrictContractsConfig(
                                 new StrictContractsConfig.Builder().searchchains(strictContracts)),
                         new ComponentRegistry<>()));
-        return mainChain;
     }
 
     @Test
@@ -175,7 +173,7 @@ public class FederationSearcherTestCase {
 
         Query q = new Query(com.yahoo.search.test.QueryTestCase.httpEncode("?query=test&traceLevel=1&sources=source1"));
 
-        Execution execution = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry, null));
+        Execution execution = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry));
         Result result = execution.search(q);
         assertNull(result.hits().getError());
         TwoSourceChecker lookForTraces = new TwoSourceChecker();
@@ -190,7 +188,7 @@ public class FederationSearcherTestCase {
 
         Query q = new Query(com.yahoo.search.test.QueryTestCase.httpEncode("?query=test&traceLevel=1&sources=source1"));
 
-        Execution execution = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry, null));
+        Execution execution = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry));
         Result result = execution.search(q);
         assertNull(result.hits().getError());
         TwoSourceChecker lookForTraces = new TwoSourceChecker();
@@ -208,7 +206,7 @@ public class FederationSearcherTestCase {
         assertEquals("source:mySource2", result.hits().get(1).getId().stringValue());
         assertEquals("nalle", result.hits().get(0).getQuery().getPresentation().getSummary());
         assertNull(result.hits().get(1).getQuery().getPresentation().getSummary());
-        assertEquals(null, result.hits().get(0).getQuery().properties().get("custom"));
+        assertNull(result.hits().get(0).getQuery().properties().get("custom"));
     }
 
     @Test
@@ -219,8 +217,8 @@ public class FederationSearcherTestCase {
         assertEquals("source:mySource2", result.hits().get(1).getId().stringValue());
         assertEquals("nalle", result.hits().get(0).getQuery().getPresentation().getSummary());
         assertEquals("foo", result.hits().get(0).getQuery().properties().get("customSourceProperty"));
-        assertEquals(null,  result.hits().get(1).getQuery().properties().get("customSourceProperty"));
-        assertEquals(null,  result.hits().get(0).getQuery().properties().get("custom.source.property"));
+        assertNull(result.hits().get(1).getQuery().properties().get("customSourceProperty"));
+        assertNull(result.hits().get(0).getQuery().properties().get("custom.source.property"));
         assertEquals("bar", result.hits().get(1).getQuery().properties().get("custom.source.property"));
         assertEquals(13, result.hits().get(0).getQuery().properties().get("hits"));
         assertEquals(1, result.hits().get(0).getQuery().properties().get("offset"));
@@ -237,7 +235,7 @@ public class FederationSearcherTestCase {
 
         Query q = new Query(QueryTestCase.httpEncode("?query=test&source.mySource1.presentation.summary=nalle&source.mySource1.customSourceProperty=foo&source.mySource2.custom.source.property=bar&source.mySource1.hits=13&source.mySource1.offset=1"));
 
-        Result result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry, null)).search(q);
+        Result result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry)).search(q);
         assertNull(result.hits().getError());
         return result;
     }
@@ -256,19 +254,19 @@ public class FederationSearcherTestCase {
         addChained(new QueryCheckSearcher(query), sourceName);
         addChained(new MockSearcher(), "mySource1");
         Chain<Searcher> mainChain = new Chain<>("default", createStrictFederationSearcher());
-        Result result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry, null)).search(query);
+        Result result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry)).search(query);
         HitGroup h = (HitGroup) result.hits().get(0);
         assertNull(h.getErrorHit());
         assertSame(QueryCheckSearcher.OK, h.get(0).getField(QueryCheckSearcher.STATUS));
 
         mainChain = new Chain<>("default", createFederationSearcher());
-        result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry, null)).search(query);
+        result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry)).search(query);
         h = (HitGroup) result.hits().get(0);
         assertSame(QueryCheckSearcher.FEDERATION_SEARCHER_HAS_CLONED_THE_QUERY, h.getError().getDetailedMessage());
 
         query = new Query(QueryTestCase.httpEncode("?query=test&sources=" + sourceName + ",mySource1"));
         addChained(new QueryCheckSearcher(query), sourceName);
-        result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry, null)).search(query);
+        result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry)).search(query);
         h = (HitGroup) result.hits().get(0);
         assertEquals("source:" + sourceName, h.getId().stringValue());
         assertSame(QueryCheckSearcher.FEDERATION_SEARCHER_HAS_CLONED_THE_QUERY, h.getError().getDetailedMessage());
@@ -283,7 +281,7 @@ public class FederationSearcherTestCase {
 
         Query q = new Query("?query=test");
 
-        Result result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry, null)).search(q);
+        Result result = new Execution(mainChain, Execution.Context.createContextStub(chainRegistry)).search(q);
         assertNull(result.hits().getError());
         assertEquals("source:mySource1", result.hits().get(0).getId().stringValue());
         assertEquals("source:mySource2", result.hits().get(1).getId().stringValue());
@@ -335,7 +333,7 @@ public class FederationSearcherTestCase {
         QueryProfile profile = new QueryProfile("test");
         profile.set("source.news.provider", providerName, null);
         Query query = new Query(QueryTestCase.httpEncode("?query=test&model.sources=news"), profile.compile(null));
-        Result result = new Execution(registry.getComponent("default"), Execution.Context.createContextStub(registry, null)).search(query);
+        Result result = new Execution(registry.getComponent("default"), Execution.Context.createContextStub(registry)).search(query);
         assertEquals(1, result.hits().size());
         assertNotNull(result.hits().get(providerName + ":1"));
     }
@@ -347,10 +345,10 @@ public class FederationSearcherTestCase {
         ComponentId provider1 = new ComponentId("provider1");
         ComponentId provider2 = new ComponentId("provider2");
         ComponentId news = new ComponentId("news");
-        builder.addSearchChain(provider1, options, Collections.<String> emptyList());
-        builder.addSearchChain(provider2, options, Collections.<String> emptyList());
-        builder.addSourceForProvider(news, provider1, provider1, true, options, Collections.<String> emptyList());
-        builder.addSourceForProvider(news, provider2, provider2, false, options, Collections.<String> emptyList());
+        builder.addSearchChain(provider1, options, List.of());
+        builder.addSearchChain(provider2, options, List.of());
+        builder.addSourceForProvider(news, provider1, provider1, true, options, List.of());
+        builder.addSourceForProvider(news, provider2, provider2, false, options, List.of());
 
         return new FederationSearcher(new ComponentId("federation"), builder.build());
     }

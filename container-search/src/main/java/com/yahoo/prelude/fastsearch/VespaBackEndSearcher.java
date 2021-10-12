@@ -30,7 +30,6 @@ import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-
 /**
  * Superclass for backend searchers.
  *
@@ -233,11 +232,7 @@ public abstract class VespaBackEndSearcher extends PingableSearcher {
     }
 
     private void mergeErrorsInto(Result destination, Result source) {
-        ErrorHit eh = source.hits().getErrorHit();
-        if (eh != null) {
-            for (ErrorMessage error : eh.errors())
-                destination.hits().addError(error);
-        }
+        destination.hits().addErrorsFrom(source.hits());
     }
 
     void traceQuery(String sourceName, String type, Query query, int offset, int hits, int level, Optional<String> quotedSummaryClass) {

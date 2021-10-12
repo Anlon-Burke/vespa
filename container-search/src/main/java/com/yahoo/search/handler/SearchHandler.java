@@ -215,13 +215,13 @@ public class SearchHandler extends LoggingRequestHandler {
     }
 
     private SearchHandler(Statistics statistics,
-                         Metric metric,
-                         Executor executor,
-                         CompiledQueryProfileRegistry queryProfileRegistry,
-                         Embedder embedder,
-                         ExecutionFactory executionFactory,
-                         long numQueriesToTraceOnDebugAfterStartup,
-                         Optional<String> hostResponseHeaderKey) {
+                          Metric metric,
+                          Executor executor,
+                          CompiledQueryProfileRegistry queryProfileRegistry,
+                          Embedder embedder,
+                          ExecutionFactory executionFactory,
+                          long numQueriesToTraceOnDebugAfterStartup,
+                          Optional<String> hostResponseHeaderKey) {
         super(executor, metric, true);
         log.log(Level.FINE, () -> "SearchHandler.init " + System.identityHashCode(this));
         this.queryProfileRegistry = queryProfileRegistry;
@@ -261,7 +261,7 @@ public class SearchHandler extends LoggingRequestHandler {
              accessLog,
              queryProfileConfig,
              containerHttpConfig,
-             new ExecutionFactory(chainsConfig, indexInfo, clusters, searchers, specialtokens, linguistics, renderers));
+             new ExecutionFactory(chainsConfig, indexInfo, clusters, searchers, specialtokens, linguistics, renderers, executor));
     }
 
     Metric metric() { return metric; }
@@ -293,7 +293,7 @@ public class SearchHandler extends LoggingRequestHandler {
     @Override
     public Optional<Request.RequestType> getRequestType() { return Optional.of(Request.RequestType.READ); }
 
-    private int getHttpResponseStatus(com.yahoo.container.jdisc.HttpRequest httpRequest, Result result) {
+    static int getHttpResponseStatus(com.yahoo.container.jdisc.HttpRequest httpRequest, Result result) {
         boolean benchmarkOutput = VespaHeaders.benchmarkOutput(httpRequest);
         if (benchmarkOutput) {
             return VespaHeaders.getEagerErrorStatus(result.hits().getError(),
