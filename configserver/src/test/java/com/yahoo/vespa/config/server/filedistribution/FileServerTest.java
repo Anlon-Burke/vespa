@@ -7,7 +7,6 @@ import com.yahoo.io.IOUtils;
 import com.yahoo.jrt.Supervisor;
 import com.yahoo.jrt.Transport;
 import com.yahoo.net.HostName;
-import com.yahoo.vespa.filedistribution.Downloads;
 import com.yahoo.vespa.filedistribution.FileDownloader;
 import com.yahoo.vespa.filedistribution.FileReferenceData;
 import com.yahoo.vespa.filedistribution.FileReferenceDownload;
@@ -57,7 +56,7 @@ public class FileServerTest {
     public void requireThatNonExistingFileWillBeDownloaded() throws IOException {
         String dir = "123";
         assertFalse(fileServer.hasFile(dir));
-        FileReferenceDownload foo = new FileReferenceDownload(new FileReference(dir), true, "foo");
+        FileReferenceDownload foo = new FileReferenceDownload(new FileReference(dir));
         assertFalse(fileServer.hasFileDownloadIfNeeded(foo));
         writeFile(dir);
         assertTrue(fileServer.hasFileDownloadIfNeeded(foo));
@@ -142,7 +141,6 @@ public class FileServerTest {
             super(FileDownloader.emptyConnectionPool(),
                   new Supervisor(new Transport("mock")).setDropEmptyBuffers(true),
                   downloadDirectory,
-                  new Downloads(),
                   Duration.ofMillis(100),
                   Duration.ofMillis(100));
         }

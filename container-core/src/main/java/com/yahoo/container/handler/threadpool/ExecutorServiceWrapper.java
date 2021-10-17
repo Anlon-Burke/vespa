@@ -26,44 +26,69 @@ class ExecutorServiceWrapper extends ForwardingExecutorService {
     private final long maxThreadExecutionTimeMillis;
     private final int queueCapacity;
     private final Thread metricReporter;
+    private final boolean threadPoolIsOnlyQ;
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
     ExecutorServiceWrapper(WorkerCompletionTimingThreadPoolExecutor wrapped,
                            ThreadPoolMetric metric,
                            ProcessTerminator processTerminator,
                            long maxThreadExecutionTimeMillis,
-                           String name,
-                           int queueCapacity) {
+                           String name) {
         this.wrapped = wrapped;
         this.metric = metric;
         this.processTerminator = processTerminator;
         this.maxThreadExecutionTimeMillis = maxThreadExecutionTimeMillis;
-        this.queueCapacity = queueCapacity;
+        int maxQueueCapacity = wrapped.getQueue().remainingCapacity() + wrapped.getQueue().size();
+        this.threadPoolIsOnlyQ = (maxQueueCapacity == 0);
+        this.queueCapacity = threadPoolIsOnlyQ
+                ? wrapped.getMaximumPoolSize()
+                : maxQueueCapacity;
 
         metric.reportThreadPoolSize(wrapped.getPoolSize());
         metric.reportActiveThreads(wrapped.getActiveCount());
-        metricReporter = new Thread(this::reportMetrics);
+        reportMetrics();
+        metricReporter = new Thread(this::reportMetricsRegularly);
         metricReporter.setName(name + "-threadpool-metric-reporter");
-        metricReporter.setDaemon(true);
         metricReporter.start();
     }
 
     private void reportMetrics() {
-        try {
-            while (!closed.get()) {
-                metric.reportThreadPoolSize(wrapped.getPoolSize());
-                metric.reportActiveThreads(wrapped.getActiveCount());
-                metric.reportWorkQueueSize(wrapped.getQueue().size());
-                metric.reportWorkQueueCapacity(queueCapacity);
-                Thread.sleep(100);
+        int activeThreads = wrapped.getActiveCount();
+        metric.reportThreadPoolSize(wrapped.getPoolSize());
+        metric.reportActiveThreads(activeThreads);
+        int queueSize = threadPoolIsOnlyQ ? activeThreads : wrapped.getQueue().size();
+        metric.reportWorkQueueSize(queueSize);
+        metric.reportWorkQueueCapacity(queueCapacity);
+    }
+
+    private void reportMetricsRegularly() {
+        while (timeToReportMetricsAgain(100)) {
+            reportMetrics();
+        }
+    }
+    private boolean timeToReportMetricsAgain(int timeoutMS) {
+        synchronized (closed) {
+            if (!closed.get()) {
+                try {
+                    closed.wait(timeoutMS);
+                } catch (InterruptedException e) {
+                    return false;
+                }
             }
-        } catch (InterruptedException e) { }
+        }
+        return !closed.get();
     }
 
     @Override
     public void shutdown() {
         super.shutdown();
-        closed.set(true);
+        synchronized (closed) {
+            closed.set(true);
+            closed.notify();
+        }
+        try {
+            metricReporter.join();
+        } catch (InterruptedException e) {}
     }
 
     /**

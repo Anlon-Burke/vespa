@@ -167,6 +167,7 @@ public class ModelContextImpl implements ModelContext {
         private final double defaultTermwiseLimit;
         private final boolean useThreePhaseUpdates;
         private final String feedSequencer;
+        private final int feedTaskLimit;
         private final String responseSequencer;
         private final int numResponseThreads;
         private final boolean skipCommunicationManagerThread;
@@ -194,11 +195,13 @@ public class ModelContextImpl implements ModelContext {
         private final int distributorMergeBusyWait;
         private final int docstoreCompressionLevel;
         private final double diskBloatFactor;
+        private final boolean distributorEnhancedMaintenanceScheduling;
 
         public FeatureFlags(FlagSource source, ApplicationId appId) {
             this.defaultTermwiseLimit = flagValue(source, appId, Flags.DEFAULT_TERM_WISE_LIMIT);
             this.useThreePhaseUpdates = flagValue(source, appId, Flags.USE_THREE_PHASE_UPDATES);
             this.feedSequencer = flagValue(source, appId, Flags.FEED_SEQUENCER_TYPE);
+            this.feedTaskLimit = flagValue(source, appId, Flags.FEED_TASK_LIMIT);
             this.responseSequencer = flagValue(source, appId, Flags.RESPONSE_SEQUENCER_TYPE);
             this.numResponseThreads = flagValue(source, appId, Flags.RESPONSE_NUM_THREADS);
             this.skipCommunicationManagerThread = flagValue(source, appId, Flags.SKIP_COMMUNICATIONMANAGER_THREAD);
@@ -226,11 +229,13 @@ public class ModelContextImpl implements ModelContext {
             this.distributorMergeBusyWait = flagValue(source, appId, Flags.DISTRIBUTOR_MERGE_BUSY_WAIT);
             this.docstoreCompressionLevel = flagValue(source, appId, Flags.DOCSTORE_COMPRESSION_LEVEL);
             this.diskBloatFactor = flagValue(source, appId, Flags.DISK_BLOAT_FACTOR);
+            this.distributorEnhancedMaintenanceScheduling = flagValue(source, appId, Flags.DISTRIBUTOR_ENHANCED_MAINTENANCE_SCHEDULING);
         }
 
         @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
         @Override public boolean useThreePhaseUpdates() { return useThreePhaseUpdates; }
         @Override public String feedSequencerType() { return feedSequencer; }
+        @Override public int feedTaskLimit() { return feedTaskLimit; }
         @Override public String responseSequencerType() { return responseSequencer; }
         @Override public int defaultNumResponseThreads() { return numResponseThreads; }
         @Override public boolean skipCommunicationManagerThread() { return skipCommunicationManagerThread; }
@@ -260,6 +265,7 @@ public class ModelContextImpl implements ModelContext {
         @Override public int distributorMergeBusyWait() { return distributorMergeBusyWait; }
         @Override public double diskBloatFactor() { return diskBloatFactor; }
         @Override public int docstoreCompressionLevel() { return docstoreCompressionLevel; }
+        @Override public boolean distributorEnhancedMaintenanceScheduling() { return distributorEnhancedMaintenanceScheduling; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)

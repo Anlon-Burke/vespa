@@ -3,6 +3,9 @@
 #include "searchview.h"
 #include <vespa/searchcore/proton/docsummary/docsumcontext.h>
 #include <vespa/searchlib/engine/searchreply.h>
+#include <vespa/vespalib/data/slime/slime.h>
+#include <vespa/vespalib/util/issue.h>
+
 #include <vespa/log/log.h>
 LOG_SETUP(".proton.server.searchview");
 
@@ -16,6 +19,7 @@ using search::engine::DocsumReply;
 using search::engine::DocsumRequest;
 using search::engine::SearchReply;
 using vespalib::ThreadBundle;
+using vespalib::Issue;
 
 namespace proton {
 
@@ -75,32 +79,12 @@ hasAnyLidsMoved(const DocsumRequest & request,
 }
 
 /**
- * Maps the lids in the reply to gids using the original request.
- **/
-void
-convertLidsToGids(DocsumReply &reply, const DocsumRequest &request)
-{
-    LOG_ASSERT(reply.docsums.size() == request.hits.size());
-    for (size_t i = 0; i < reply.docsums.size(); ++i) {
-        const DocsumRequest::Hit & h = request.hits[i];
-        DocsumReply::Docsum & d = reply.docsums[i];
-        d.gid = h.gid;
-        LOG(spam, "convertLidToGid(DocsumReply): docsum[%zu]: lid(%u) -> gid(%s)", i, h.docid, d.gid.toString().c_str());
-    }
-}
-
-/**
  * Create empty docsum reply
  **/
 DocsumReply::UP
-createEmptyReply(const DocsumRequest & request)
+createEmptyReply(const DocsumRequest &)
 {
-    auto reply = std::make_unique<DocsumReply>();
-    for (size_t i = 0; i < request.hits.size(); ++i) {
-        reply->docsums.push_back(DocsumReply::Docsum());
-        reply->docsums.back().gid = request.hits[i].gid;
-    }
-    return reply;
+    return std::make_unique<DocsumReply>();
 }
 
 }
@@ -122,7 +106,7 @@ SearchView::getDocsums(const DocsumRequest & req)
 {
     LOG(spam, "getDocsums(): resultClass(%s), numHits(%zu)", req.resultClassName.c_str(), req.hits.size());
     if (_summarySetup->getResultConfig().  LookupResultClassId(req.resultClassName.c_str()) == ResultConfig::NoClassID()) {
-        LOG(warning, "There is no summary class with name '%s' in the summary config. Returning empty document summary for %zu hit(s)",
+        Issue::report("There is no summary class with name '%s' in the summary config. Returning empty document summary for %zu hit(s)",
                      req.resultClassName.c_str(), req.hits.size());
         return createEmptyReply(req);
     }
@@ -130,9 +114,6 @@ SearchView::getDocsums(const DocsumRequest & req)
     while ( ! reply.second ) {
         LOG(debug, "Must refetch docsums since the lids have moved.");
         reply = getDocsumsInternal(req);
-    }
-    if ( ! req.useRootSlime()) {
-        convertLidsToGids(*reply.first, req);
     }
     return std::move(reply.first);
 }

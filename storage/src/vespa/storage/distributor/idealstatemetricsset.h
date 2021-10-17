@@ -16,6 +16,8 @@ public:
     metrics::LongValueMetric pending;
     metrics::LongCountMetric ok;
     metrics::LongCountMetric failed;
+    metrics::LongCountMetric blocked;
+    metrics::LongCountMetric throttled;
 
     OperationMetricSet(const std::string& name, metrics::Metric::Tags tags, const std::string& description, MetricSet* owner);
     ~OperationMetricSet() override;
@@ -27,6 +29,16 @@ struct GcMetricSet : OperationMetricSet {
     GcMetricSet(const std::string& name, metrics::Metric::Tags tags,
                 const std::string& description, MetricSet* owner);
     ~GcMetricSet() override;
+};
+
+class MergeBucketMetricSet : public OperationMetricSet
+{
+public:
+    metrics::LongCountMetric source_only_copy_changed;
+    metrics::LongCountMetric source_only_copy_delete_blocked;
+    metrics::LongCountMetric source_only_copy_delete_failed;
+    MergeBucketMetricSet(const std::string& name, metrics::Metric::Tags tags, const std::string& description, MetricSet* owner);
+    ~MergeBucketMetricSet() override;
 };
 
 class IdealStateMetricSet : public metrics::MetricSet
@@ -43,6 +55,7 @@ public:
     metrics::LongValueMetric buckets_replicas_copying_in;
     metrics::LongValueMetric buckets_replicas_copying_out;
     metrics::LongValueMetric buckets_replicas_syncing;
+    metrics::LongValueMetric max_observed_time_since_last_gc_sec;
     metrics::DoubleAverageMetric nodesPerMerge;
 
     void createOperationMetrics();

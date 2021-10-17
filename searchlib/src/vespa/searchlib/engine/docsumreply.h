@@ -8,39 +8,51 @@
 #include <vespa/searchlib/common/unique_issues.h>
 #include <memory>
 #include <vespa/searchlib/engine/docsumrequest.h>
+#include <cassert>
 
 namespace vespalib { class Slime; }
+namespace vespalib::slime { struct Inspector; }
 namespace search::engine {
 
-struct DocsumReply
-{
+class DocsumReply {
+private:
+    std::unique_ptr<vespalib::Slime> _slime;
+    DocsumRequest::UP _request;
+    UniqueIssues::UP _issues;
+public:
     using UP = std::unique_ptr<DocsumReply>;
 
-    using Blob = vespalib::MallocPtr;
+    DocsumReply(std::unique_ptr<vespalib::Slime> root,
+                DocsumRequest::UP request,
+                UniqueIssues::UP issues);
 
-    struct Docsum {
-        document::GlobalId gid;
-        Blob     data;
+    DocsumReply(std::unique_ptr<vespalib::Slime> root,
+                DocsumRequest::UP request);
 
-        Docsum() noexcept : gid(), data(0) {}
-        Docsum(document::GlobalId gid_) noexcept : gid(gid_), data(0) { }
-        Docsum(document::GlobalId gid_, const char *buf, uint32_t len) noexcept : gid(gid_), data(len) {
-            memcpy(data.str(), buf, len);
-        }
-        Docsum & setData(const char *buf, uint32_t len) {
-            data.resize(len);
-            memcpy(data.str(), buf, len);
-            return *this;
-        }
-    };
-    std::vector<Docsum> docsums;
-
-    mutable DocsumRequest::UP request;
-    std::unique_ptr<vespalib::Slime> _root;
-    UniqueIssues::UP my_issues;
+    DocsumReply(std::unique_ptr<vespalib::Slime> root);
 
     DocsumReply();
-    DocsumReply(std::unique_ptr<vespalib::Slime> root);
+
+    bool hasResult() const;
+    bool hasRequest() const { return (_request.get() != nullptr); }
+    bool hasIssues() const { return _issues && (_issues->size() > 0); }
+
+    const vespalib::Slime & slime() const { assert(_slime.get()); return *_slime; }
+    const DocsumRequest& request() const { assert(_request.get()); return *_request; }
+    const UniqueIssues & issues() const { assert(_issues.get()); return *_issues; }
+
+    void setRequest(DocsumRequest::UP request) {
+        _request = std::move(request);
+    }
+
+    void setIssues(UniqueIssues::UP issues) {
+        _issues = std::move(issues);
+    }
+
+    std::unique_ptr<vespalib::Slime> releaseSlime();
+
+    vespalib::slime::Inspector & root() const;
+
     ~DocsumReply();
 };
 

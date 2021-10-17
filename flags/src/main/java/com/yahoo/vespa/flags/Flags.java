@@ -60,7 +60,14 @@ public class Flags {
     public static final UnboundStringFlag FEED_SEQUENCER_TYPE = defineStringFlag(
             "feed-sequencer-type", "LATENCY",
             List.of("baldersheim"), "2020-12-02", "2022-01-01",
-            "Selects type of sequenced executor used for feeding, valid values are LATENCY, ADAPTIVE, THROUGHPUT",
+            "Selects type of sequenced executor used for feeding in proton, valid values are LATENCY, ADAPTIVE, THROUGHPUT",
+            "Takes effect at redeployment (requires restart)",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundIntFlag FEED_TASK_LIMIT = defineIntFlag(
+            "feed-task-limit", 1000,
+            List.of("geirst, baldersheim"), "2021-10-14", "2022-01-01",
+            "The task limit used by the executors handling feed in proton",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
@@ -136,7 +143,7 @@ public class Flags {
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundIntFlag DOCSTORE_COMPRESSION_LEVEL = defineIntFlag(
-            "docstore-compression-level", 9,
+            "docstore-compression-level", 3,
             List.of("baldersheim"), "2021-10-08", "2022-01-01",
             "Default compression level used for document store",
             "Takes effect at redeployment",
@@ -296,6 +303,13 @@ public class Flags {
             APPLICATION_ID
     );
 
+    public static final UnboundBooleanFlag DELETE_UNMAINTAINED_CERTIFICATES = defineFeatureFlag(
+            "delete-unmaintained-certificates", false,
+            List.of("andreer"), "2021-09-23", "2021-11-11",
+            "Whether to delete certificates that are known by provider but not by controller",
+            "Takes effect on next run of EndpointCertificateMaintainer"
+    );
+
     public static final UnboundBooleanFlag ENABLE_TENANT_DEVELOPER_ROLE = defineFeatureFlag(
             "enable-tenant-developer-role", false,
             List.of("bjorncs"), "2021-09-23", "2021-12-31",
@@ -332,6 +346,13 @@ public class Flags {
             List.of("geirst", "vekterli"), "2021-10-04", "2021-12-31",
             "Number of seconds that scheduling of new merge operations in the distributor should be inhibited " +
                     "towards a content node that has indicated merge busy",
+            "Takes effect at redeploy",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag DISTRIBUTOR_ENHANCED_MAINTENANCE_SCHEDULING = defineFeatureFlag(
+            "distributor-enhanced-maintenance-scheduling", false,
+            List.of("vekterli", "geirst"), "2021-10-14", "2022-01-31",
+            "Enable enhanced maintenance operation scheduling semantics on the distributor",
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
 

@@ -138,7 +138,7 @@ struct DocsumRequestDecoder : DocsumRequest::Source::Decoder {
             return std::unique_ptr<DocsumRequest>(nullptr);
         }
         stats.requested_documents = msg.global_ids_size();
-        auto req = std::make_unique<DocsumRequest>(std::move(relative_time), true);
+        auto req = std::make_unique<DocsumRequest>(std::move(relative_time));
         ProtoConverter::docsum_request_from_proto(msg, *req);
         return req;
     }
@@ -160,8 +160,8 @@ struct GetDocsumsCompletionHandler : DocsumClient {
         ProtoConverter::docsum_reply_to_proto(*reply, msg);
         encode_message(msg, *req.GetReturn());
         stats.reply_size = (*req.GetReturn())[2]._data._len;
-        if (reply->request) {
-            stats.latency = vespalib::to_s(reply->request->getTimeUsed());
+        if (reply->hasRequest()) {
+            stats.latency = vespalib::to_s(reply->request().getTimeUsed());
             metrics.update_docsum_metrics(stats);
         }
         req.Return();

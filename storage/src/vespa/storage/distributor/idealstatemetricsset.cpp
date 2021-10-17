@@ -15,7 +15,13 @@ OperationMetricSet::OperationMetricSet(const std::string& name, metrics::Metric:
          "The number of operations successfully performed", this),
       failed("done_failed",
              {{"logdefault"},{"yamasdefault"}},
-             "The number of operations that failed", this)
+             "The number of operations that failed", this),
+      blocked("blocked",
+              {{"logdefault"},{"yamasdefault"}},
+              "The number of operations blocked by blocking operation starter", this),
+      throttled("throttled",
+                {{"logdefault"},{"yamasdefault"}},
+                "The number of operations throttled by throttling operation starter", this)
 {}
 
 OperationMetricSet::~OperationMetricSet() = default;
@@ -29,6 +35,22 @@ GcMetricSet::GcMetricSet(const std::string& name, metrics::Metric::Tags tags, co
 
 GcMetricSet::~GcMetricSet() = default;
 
+MergeBucketMetricSet::MergeBucketMetricSet(const std::string& name, metrics::Metric::Tags tags, const std::string& description, MetricSet* owner)
+    : OperationMetricSet(name, std::move(tags), description, owner),
+      source_only_copy_changed("source_only_copy_changed",
+                               {{"logdefault"},{"yamasdefault"}},
+                               "The number of merge operations where source-only copy changed"),
+      source_only_copy_delete_blocked("source_only_copy_delete_blocked",
+                                      {{"logdefault"},{"yamasdefault"}},
+                                      "The number of merge operations where delete of unchanged source-only copies was blocked"),
+      source_only_copy_delete_failed("source_only_copy_delete_failed",
+                                      {{"logdefault"},{"yamasdefault"}},
+                                      "The number of merge operations where delete of unchanged source-only copies failed")
+{
+}
+
+MergeBucketMetricSet::~MergeBucketMetricSet() = default;
+
 void
 IdealStateMetricSet::createOperationMetrics() {
     typedef IdealStateOperation ISO;
@@ -39,10 +61,10 @@ IdealStateMetricSet::createOperationMetrics() {
             new OperationMetricSet("delete_bucket",
                                    {{"logdefault"},{"yamasdefault"}},
                                    "Operations to delete excess buckets on storage nodes", this));
-    operations[ISO::MERGE_BUCKET] = std::shared_ptr<OperationMetricSet>(
-            new OperationMetricSet("merge_bucket",
-                                   {{"logdefault"},{"yamasdefault"}},
-                                   "Operations to merge buckets that are out of sync", this));
+    operations[ISO::MERGE_BUCKET] = std::make_shared<MergeBucketMetricSet>
+                                    ("merge_bucket",
+                                     metrics::Metric::Tags{{"logdefault"},{"yamasdefault"}},
+                                     "Operations to merge buckets that are out of sync", this);
     operations[ISO::SPLIT_BUCKET] = std::shared_ptr<OperationMetricSet>(
             new OperationMetricSet("split_bucket",
                                    {{"logdefault"},{"yamasdefault"}},
@@ -101,6 +123,10 @@ IdealStateMetricSet::IdealStateMetricSet()
       buckets_replicas_syncing("bucket_replicas_syncing",
             {{"logdefault"},{"yamasdefault"}},
             "Bucket replicas that need syncing due to mismatching metadata", this),
+      max_observed_time_since_last_gc_sec("max_observed_time_since_last_gc_sec",
+            {{"logdefault"},{"yamasdefault"}},
+            "Maximum time (in seconds) since GC was last successfully run for a bucket. "
+            "Aggregated max value across all buckets on the distributor.", this),
       nodesPerMerge("nodes_per_merge", {}, "The number of nodes involved in a single merge operation.", this)
 {
     createOperationMetrics();

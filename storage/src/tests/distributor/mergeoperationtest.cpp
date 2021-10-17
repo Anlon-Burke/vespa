@@ -35,9 +35,26 @@ struct MergeOperationTest : Test, DistributorStripeTestUtil {
     void TearDown() override {
         close();
     }
+
+    std::shared_ptr<MergeOperation> setup_minimal_merge_op();
+    std::shared_ptr<MergeOperation> setup_simple_merge_op();
+    void assert_simple_merge_bucket_command();
+    void assert_simple_delete_bucket_command();
+    MergeBucketMetricSet& get_merge_metrics();
 };
 
-TEST_F(MergeOperationTest, simple) {
+std::shared_ptr<MergeOperation> 
+MergeOperationTest::setup_minimal_merge_op()
+{
+    document::BucketId bucket_id(16, 1);
+    auto op = std::make_shared<MergeOperation>(BucketAndNodes(makeDocumentBucket(bucket_id), toVector<uint16_t>(0, 1, 2)));
+    op->setIdealStateManager(&getIdealStateManager());
+    return op;
+}
+
+std::shared_ptr<MergeOperation> 
+MergeOperationTest::setup_simple_merge_op()
+{
     getClock().setAbsoluteTimeInSeconds(10);
 
     addNodesToBucketDB(document::BucketId(16, 1),
@@ -47,44 +64,48 @@ TEST_F(MergeOperationTest, simple) {
 
     enable_cluster_state("distributor:1 storage:3");
 
-    MergeOperation op(BucketAndNodes(makeDocumentBucket(document::BucketId(16, 1)),
-                                     toVector<uint16_t>(0, 1, 2)));
-    op.setIdealStateManager(&getIdealStateManager());
-    op.start(_sender, framework::MilliSecTime(0));
+    auto op = std::make_shared<MergeOperation>(BucketAndNodes(makeDocumentBucket(document::BucketId(16, 1)), toVector<uint16_t>(0, 1, 2)));
+    op->setIdealStateManager(&getIdealStateManager());
+    op->start(_sender, framework::MilliSecTime(0));
+    return op;
+}
 
+void
+MergeOperationTest::assert_simple_merge_bucket_command()
+{
     ASSERT_EQ("MergeBucketCommand(BucketId(0x4000000000000001), to time 10000000, "
               "cluster state version: 0, nodes: [0, 2, 1 (source only)], chain: [], "
               "reasons to start: ) => 0",
               _sender.getLastCommand(true));
+}
 
-    sendReply(op);
-
+void
+MergeOperationTest::assert_simple_delete_bucket_command()
+{
     ASSERT_EQ("DeleteBucketCommand(BucketId(0x4000000000000001)) "
               "Reasons to start:  => 1",
               _sender.getLastCommand(true));
+}
 
+MergeBucketMetricSet&
+MergeOperationTest::get_merge_metrics()
+{
+    return dynamic_cast<MergeBucketMetricSet&>(*getIdealStateManager().getMetrics().operations[IdealStateOperation::MERGE_BUCKET]);
+}
+
+TEST_F(MergeOperationTest, simple) {
+    auto op = setup_simple_merge_op();
+    ASSERT_NO_FATAL_FAILURE(assert_simple_merge_bucket_command());
+    sendReply(*op);
+    ASSERT_NO_FATAL_FAILURE(assert_simple_delete_bucket_command());
+    EXPECT_EQ(0, get_merge_metrics().ok.getValue());
+    sendReply(*op);
+    EXPECT_EQ(1, get_merge_metrics().ok.getValue());
 }
 
 TEST_F(MergeOperationTest, fail_if_source_only_copies_changed) {
-    getClock().setAbsoluteTimeInSeconds(10);
-
-    addNodesToBucketDB(document::BucketId(16, 1),
-                       "0=10/1/1/t,"
-                       "1=20/1/1,"
-                       "2=10/1/1/t");
-
-    enable_cluster_state("distributor:1 storage:3");
-
-    MergeOperation op(BucketAndNodes(makeDocumentBucket(document::BucketId(16, 1)),
-                                     toVector<uint16_t>(0, 1, 2)));
-    op.setIdealStateManager(&getIdealStateManager());
-    op.start(_sender, framework::MilliSecTime(0));
-
-    std::string merge("MergeBucketCommand(BucketId(0x4000000000000001), to time 10000000, "
-                      "cluster state version: 0, nodes: [0, 2, 1 (source only)], chain: [], "
-                      "reasons to start: ) => 0");
-
-    ASSERT_EQ(merge, _sender.getLastCommand(true));
+    auto op = setup_simple_merge_op();
+    ASSERT_NO_FATAL_FAILURE(assert_simple_merge_bucket_command());
     {
         auto& cmd = dynamic_cast<api::MergeBucketCommand&>(*_sender.command(0));
         EXPECT_EQ(0, cmd.getSourceIndex());
@@ -95,10 +116,22 @@ TEST_F(MergeOperationTest, fail_if_source_only_copies_changed) {
                        "0=10/1/1/t,"
                        "1=40/1/1,"
                        "2=10/1/1/t");
-    sendReply(op);
+    sendReply(*op);
     // Should not be a remove here!
-    ASSERT_EQ(merge, _sender.getLastCommand(true));
-    EXPECT_FALSE(op.ok());
+    ASSERT_NO_FATAL_FAILURE(assert_simple_merge_bucket_command());
+    EXPECT_FALSE(op->ok());
+    EXPECT_EQ(1, get_merge_metrics().failed.getValue());
+    EXPECT_EQ(1, get_merge_metrics().source_only_copy_changed.getValue());
+}
+
+TEST_F(MergeOperationTest, fail_if_delete_bucket_fails) {
+    auto op = setup_simple_merge_op();
+    ASSERT_NO_FATAL_FAILURE(assert_simple_merge_bucket_command());
+    sendReply(*op);
+    ASSERT_NO_FATAL_FAILURE(assert_simple_delete_bucket_command());
+    sendReply(*op, -1, api::ReturnCode::ABORTED);
+    EXPECT_EQ(1, get_merge_metrics().failed.getValue());
+    EXPECT_EQ(1, get_merge_metrics().source_only_copy_delete_failed.getValue());
 }
 
 namespace {
@@ -265,6 +298,8 @@ TEST_F(MergeOperationTest, do_not_remove_copies_with_pending_messages) {
     // Should not be a remove here!
     ASSERT_EQ(merge, _sender.getLastCommand(true));
     EXPECT_FALSE(op.ok());
+    EXPECT_EQ(1, get_merge_metrics().failed.getValue());
+    EXPECT_EQ(1, get_merge_metrics().source_only_copy_delete_blocked.getValue());
 }
 
 /*
@@ -498,6 +533,24 @@ TEST_F(MergeOperationTest, merge_operation_is_not_blocked_by_request_bucket_info
 
     // Not blocked; bucket info request is for another bucket
     EXPECT_FALSE(op.isBlocked(operation_context(), _operation_sequencer));
+}
+
+TEST_F(MergeOperationTest, on_blocked_updates_metrics)
+{
+    auto op = setup_minimal_merge_op();
+    auto metrics = getIdealStateManager().getMetrics().operations[IdealStateOperation::MERGE_BUCKET];
+    EXPECT_EQ(0, metrics->blocked.getValue());
+    op->on_blocked();
+    EXPECT_EQ(1, metrics->blocked.getValue());
+}
+
+TEST_F(MergeOperationTest, on_throttled_updates_metrics)
+{
+    auto op = setup_minimal_merge_op();
+    auto metrics = getIdealStateManager().getMetrics().operations[IdealStateOperation::MERGE_BUCKET];
+    EXPECT_EQ(0, metrics->throttled.getValue());
+    op->on_throttled();
+    EXPECT_EQ(1, metrics->throttled.getValue());
 }
 
 } // storage::distributor

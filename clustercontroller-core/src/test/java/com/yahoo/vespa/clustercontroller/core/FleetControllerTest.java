@@ -126,7 +126,11 @@ public abstract class FleetControllerTest implements Waiter {
     }
 
     static protected FleetControllerOptions defaultOptions(String clusterName) {
-        return defaultOptions(clusterName, IntStream.range(0, DEFAULT_NODE_COUNT)
+        return defaultOptions(clusterName, DEFAULT_NODE_COUNT);
+    }
+
+    static protected FleetControllerOptions defaultOptions(String clusterName, int nodeCount) {
+        return defaultOptions(clusterName, IntStream.range(0, nodeCount)
                                                     .mapToObj(i -> new ConfiguredNode(i, false))
                                                     .collect(Collectors.toSet()));
     }
@@ -173,6 +177,12 @@ public abstract class FleetControllerTest implements Waiter {
         lookUp.setSlobrokConnectionSpecs(new String[0]);
         RpcServer rpcServer = new RpcServer(timer, timer, options.clusterName, options.fleetControllerIndex, options.slobrokBackOffPolicy);
         DatabaseHandler database = new DatabaseHandler(new ZooKeeperDatabaseFactory(), timer, options.zooKeeperServerAddress, options.fleetControllerIndex, timer);
+
+        // Setting this <1000 ms causes ECONNREFUSED on socket trying to connect to ZK server, in ZooKeeper,
+        // after creating a new ZooKeeper (session).  This causes ~10s extra time to connect after connection loss.
+        // Reasons unknown.  Larger values like the default 10_000 causes that much additional running time for some tests.
+        database.setMinimumWaitBetweenFailedConnectionAttempts(2_000);
+
         StateChangeHandler stateGenerator = new StateChangeHandler(timer, log);
         SystemStateBroadcaster stateBroadcaster = new SystemStateBroadcaster(timer, timer);
         MasterElectionHandler masterElectionHandler = new MasterElectionHandler(options.fleetControllerIndex, options.fleetControllerCount, timer, timer);

@@ -41,6 +41,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private double defaultTermwiseLimit = 1.0;
     private String jvmGCOptions = null;
     private String sequencerType = "LATENCY";
+    private int feedTaskLimit = 1000;
     private boolean firstTimeDeployment = false;
     private String responseSequencerType = "ADAPTIVE";
     private int responseNumThreads = 2;
@@ -67,6 +68,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private int distributorMergeBusyWait = 10;
     private int docstoreCompressionLevel = 9;
     private double diskBloatFactor = 0.2;
+    private boolean distributorEnhancedMaintenanceScheduling = false;
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
     @Override public boolean multitenant() { return multitenant; }
@@ -80,6 +82,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public Set<ContainerEndpoint> endpoints() { return endpoints; }
     @Override public String jvmGCOptions(Optional<ClusterSpec.Type> clusterType) { return jvmGCOptions; }
     @Override public String feedSequencerType() { return sequencerType; }
+    @Override public int feedTaskLimit() { return feedTaskLimit; }
     @Override public boolean isBootstrap() { return false; }
     @Override public boolean isFirstTimeDeployment() { return firstTimeDeployment; }
     @Override public boolean useDedicatedNodeForLogserver() { return useDedicatedNodeForLogserver; }
@@ -114,6 +117,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public int distributorMergeBusyWait() { return distributorMergeBusyWait; }
     @Override public double diskBloatFactor() { return diskBloatFactor; }
     @Override public int docstoreCompressionLevel() { return docstoreCompressionLevel; }
+    @Override public boolean distributorEnhancedMaintenanceScheduling() { return distributorEnhancedMaintenanceScheduling; }
 
     public TestProperties docstoreCompressionLevel(int docstoreCompressionLevel) {
         this.docstoreCompressionLevel = docstoreCompressionLevel;
@@ -153,6 +157,10 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     }
     public TestProperties setFeedSequencerType(String type) {
         sequencerType = type;
+        return this;
+    }
+    public TestProperties setFeedTaskLimit(int value) {
+        feedTaskLimit = value;
         return this;
     }
     public TestProperties setResponseSequencerType(String type) {
@@ -284,6 +292,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setDistributorMergeBusyWait(int value) {
         distributorMergeBusyWait = value;
+        return this;
+    }
+
+    public TestProperties distributorEnhancedMaintenanceScheduling(boolean enhancedScheduling) {
+        distributorEnhancedMaintenanceScheduling = enhancedScheduling;
         return this;
     }
 

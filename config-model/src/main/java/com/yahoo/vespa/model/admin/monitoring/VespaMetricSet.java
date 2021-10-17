@@ -718,12 +718,18 @@ public class VespaMetricSet {
         metrics.add(new Metric("vds.idealstate.bucket_replicas_copying_out.average"));
         metrics.add(new Metric("vds.idealstate.bucket_replicas_copying_in.average"));
         metrics.add(new Metric("vds.idealstate.bucket_replicas_syncing.average"));
+        metrics.add(new Metric("vds.idealstate.max_observed_time_since_last_gc_sec.average"));
         metrics.add(new Metric("vds.idealstate.delete_bucket.done_ok.rate"));
         metrics.add(new Metric("vds.idealstate.delete_bucket.done_failed.rate"));
         metrics.add(new Metric("vds.idealstate.delete_bucket.pending.average"));
         metrics.add(new Metric("vds.idealstate.merge_bucket.done_ok.rate"));
         metrics.add(new Metric("vds.idealstate.merge_bucket.done_failed.rate"));
         metrics.add(new Metric("vds.idealstate.merge_bucket.pending.average"));
+        metrics.add(new Metric("vds.idealstate.merge_bucket.blocked.rate"));
+        metrics.add(new Metric("vds.idealstate.merge_bucket.throttled.rate"));
+        metrics.add(new Metric("vds.idealstate.merge_bucket.source_only_copy_changed.rate"));
+        metrics.add(new Metric("vds.idealstate.merge_bucket.source_only_copy_delete_blocked.rate"));
+        metrics.add(new Metric("vds.idealstate.merge_bucket.source_only_copy_delete_failed.rate"));
         metrics.add(new Metric("vds.idealstate.split_bucket.done_ok.rate"));
         metrics.add(new Metric("vds.idealstate.split_bucket.done_failed.rate"));
         metrics.add(new Metric("vds.idealstate.split_bucket.pending.average"));
