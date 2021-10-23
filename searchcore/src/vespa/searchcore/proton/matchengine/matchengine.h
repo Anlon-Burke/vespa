@@ -21,6 +21,7 @@ private:
     const uint32_t                     _distributionKey;
     bool                               _async;
     bool                               _closed;
+    std::atomic<bool>                  _forward_issues;
     HandlerMap<ISearchHandler>         _handlers;
     vespalib::ThreadStackExecutor      _executor;
     vespalib::SimpleThreadBundle::Pool _threadBundlePool;
@@ -62,7 +63,7 @@ public:
      *
      * @return executor stats
      **/
-    vespalib::ThreadStackExecutor::Stats getExecutorStats() { return _executor.getStats(); }
+    vespalib::ExecutorStats getExecutorStats() { return _executor.getStats(); }
 
     /**
      * Returns the underlying executor. Only used for state explorers.
@@ -137,6 +138,8 @@ public:
             search::engine::SearchClient &client) override;
 
     void get_state(const vespalib::slime::Inserter &inserter, bool full) const override;
+
+    void set_issue_forwarding(bool enable) { _forward_issues = enable; }
 };
 
 } // namespace proton

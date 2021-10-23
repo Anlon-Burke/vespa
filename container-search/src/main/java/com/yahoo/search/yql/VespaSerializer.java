@@ -69,6 +69,7 @@ import com.yahoo.prelude.query.AndSegmentItem;
 import com.yahoo.prelude.query.BoolItem;
 import com.yahoo.prelude.query.DotProductItem;
 import com.yahoo.prelude.query.EquivItem;
+import com.yahoo.prelude.query.FalseItem;
 import com.yahoo.prelude.query.ExactStringItem;
 import com.yahoo.prelude.query.IndexedItem;
 import com.yahoo.prelude.query.IntItem;
@@ -96,6 +97,7 @@ import com.yahoo.prelude.query.SuffixItem;
 import com.yahoo.prelude.query.TaggableItem;
 import com.yahoo.prelude.query.ToolBox;
 import com.yahoo.prelude.query.ToolBox.QueryVisitor;
+import com.yahoo.prelude.query.TrueItem;
 import com.yahoo.prelude.query.UriItem;
 import com.yahoo.prelude.query.WandItem;
 import com.yahoo.prelude.query.WeakAndItem;
@@ -481,6 +483,26 @@ public class VespaSerializer {
             return false;
         }
 
+    }
+
+    private static class TrueSerializer extends Serializer<TrueItem> {
+        @Override
+        void onExit(StringBuilder destination, TrueItem item) { }
+        @Override
+        boolean serialize(StringBuilder destination, TrueItem item) {
+            destination.append("true");
+            return false;
+        }
+    }
+
+    private static class FalseSerializer extends Serializer<FalseItem> {
+        @Override
+        void onExit(StringBuilder destination, FalseItem item) { }
+        @Override
+        boolean serialize(StringBuilder destination, FalseItem item) {
+            destination.append("false");
+            return false;
+        }
     }
 
     private static class RegExpSerializer extends Serializer<RegExpItem> {
@@ -1194,6 +1216,8 @@ public class VespaSerializer {
         dispatchBuilder.put(IntItem.class, new NumberSerializer());
         dispatchBuilder.put(GeoLocationItem.class, new GeoLocationSerializer());
         dispatchBuilder.put(BoolItem.class, new BoolSerializer());
+        dispatchBuilder.put(TrueItem.class, new TrueSerializer());
+        dispatchBuilder.put(FalseItem.class, new FalseSerializer());
         dispatchBuilder.put(MarkerWordItem.class, new WordSerializer()); // gotcha
         dispatchBuilder.put(NearItem.class, new NearSerializer());
         dispatchBuilder.put(NearestNeighborItem.class, new NearestNeighborSerializer());

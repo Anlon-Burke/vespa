@@ -3,7 +3,7 @@
 #pragma once
 
 #include <vespa/searchcore/proton/persistenceengine/ipersistencehandler.h>
-#include <vespa/searchcore/proton/common/monitored_refcount.h>
+#include <vespa/vespalib/util/retain_guard.h>
 
 namespace proton {
 
@@ -18,7 +18,7 @@ private:
     FeedHandler                 &_feedHandler;
     BucketHandler               &_bucketHandler;
     ClusterStateHandler         &_clusterStateHandler;
-    RetainGuard                  _retainGuard;
+    vespalib::RetainGuard        _retainGuard;
 public:
     explicit PersistenceHandlerProxy(std::shared_ptr<DocumentDB> documentDB);
 
@@ -40,7 +40,7 @@ public:
     void handleSetClusterState(const storage::spi::ClusterState &calc, IGenericResultHandler &resultHandler) override;
 
     void handleSetActiveState(const storage::spi::Bucket &bucket, storage::spi::BucketInfo::ActiveState newState,
-                              IGenericResultHandler &resultHandler) override;
+                              std::shared_ptr<IGenericResultHandler>  resultHandler) override;
 
     void handleGetBucketInfo(const storage::spi::Bucket &bucket, IBucketInfoResultHandler &resultHandler) override;
     void handleCreateBucket(FeedToken token, const storage::spi::Bucket &bucket) override;

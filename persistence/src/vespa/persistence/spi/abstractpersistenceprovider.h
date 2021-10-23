@@ -14,39 +14,11 @@ namespace storage::spi {
 class AbstractPersistenceProvider : public PersistenceProvider
 {
 public:
-    /**
-     * Default impl is empty.
-     */
     Result initialize() override { return Result(); };
-
-    /**
-     * Default impl empty.
-     */
     Result createBucket(const Bucket&, Context&) override { return Result(); }
-
-    /**
-     * Default impl is empty.
-     */
     Result removeEntry(const Bucket&, Timestamp, Context&) override { return Result(); }
-
-    /**
-     * Default impl is remove().
-     */
-    RemoveResult removeIfFound(const Bucket&, Timestamp, const DocumentId&, Context&) override;
     void removeIfFoundAsync(const Bucket&, Timestamp, const DocumentId&, Context&, OperationComplete::UP) override;
-
-    /**
-     * Default impl empty.
-     */
     Result setClusterState(BucketSpace, const ClusterState&) override { return Result(); }
-
-    /**
-     * Default impl empty.
-     */
-    Result setActiveState(const Bucket&, BucketInfo::ActiveState) override { return Result(); } 
-    /**
-     * Default impl empty.
-     */
     BucketIdListResult getModifiedBuckets(BucketSpace bucketSpace) const override;
 };
 

@@ -22,6 +22,15 @@
         } \
     }
 
+#define CHECK_ERROR_ASYNC(className, failType, onError) \
+    { \
+        Guard guard(_lock); \
+        if (_result.getErrorCode() != spi::Result::ErrorType::NONE && (_failureMask & (failType))) { \
+            onError->onComplete(std::make_unique<className>(_result.getErrorCode(), _result.getErrorMessage())); \
+            return; \
+        } \
+    }
+
 namespace storage {
 
 namespace {
@@ -87,46 +96,40 @@ PersistenceProviderWrapper::getBucketInfo(const spi::Bucket& bucket) const
     return _spi.getBucketInfo(bucket);
 }
 
-spi::Result
-PersistenceProviderWrapper::put(const spi::Bucket& bucket, spi::Timestamp timestamp,
-                                document::Document::SP doc, spi::Context& context)
+void
+PersistenceProviderWrapper::putAsync(const spi::Bucket& bucket, spi::Timestamp timestamp, document::Document::SP doc,
+                                     spi::Context& context, spi::OperationComplete::UP onComplete)
 {
     LOG_SPI("put(" << bucket << ", " << timestamp << ", " << doc->getId() << ")");
-    CHECK_ERROR(spi::Result, FAIL_PUT);
-    return _spi.put(bucket, timestamp, std::move(doc), context);
+    CHECK_ERROR_ASYNC(spi::Result, FAIL_PUT, onComplete);
+    _spi.putAsync(bucket, timestamp, std::move(doc), context, std::move(onComplete));
 }
 
-spi::RemoveResult
-PersistenceProviderWrapper::remove(const spi::Bucket& bucket,
-                                   spi::Timestamp timestamp,
-                                   const spi::DocumentId& id,
-                                   spi::Context& context)
+void
+PersistenceProviderWrapper::removeAsync(const spi::Bucket& bucket, spi::Timestamp timestamp, const spi::DocumentId& id,
+                                        spi::Context& context, spi::OperationComplete::UP onComplete)
 {
     LOG_SPI("remove(" << bucket << ", " << timestamp << ", " << id << ")");
-    CHECK_ERROR(spi::RemoveResult, FAIL_REMOVE);
-    return _spi.remove(bucket, timestamp, id, context);
+    CHECK_ERROR_ASYNC(spi::RemoveResult, FAIL_REMOVE, onComplete);
+    _spi.removeAsync(bucket, timestamp, id, context, std::move(onComplete));
 }
 
-spi::RemoveResult
-PersistenceProviderWrapper::removeIfFound(const spi::Bucket& bucket,
-                                          spi::Timestamp timestamp,
-                                          const spi::DocumentId& id,
-                                          spi::Context& context)
+void
+PersistenceProviderWrapper::removeIfFoundAsync(const spi::Bucket& bucket, spi::Timestamp timestamp, const spi::DocumentId& id,
+                                               spi::Context& context, spi::OperationComplete::UP onComplete)
 {
     LOG_SPI("removeIfFound(" << bucket << ", " << timestamp << ", " << id << ")");
-    CHECK_ERROR(spi::RemoveResult, FAIL_REMOVE_IF_FOUND);
-    return _spi.removeIfFound(bucket, timestamp, id, context);
+    CHECK_ERROR_ASYNC(spi::RemoveResult, FAIL_REMOVE_IF_FOUND, onComplete);
+    _spi.removeIfFoundAsync(bucket, timestamp, id, context, std::move(onComplete));
 }
 
-spi::UpdateResult
-PersistenceProviderWrapper::update(const spi::Bucket& bucket,
-                                   spi::Timestamp timestamp,
-                                   document::DocumentUpdate::SP upd,
-                                   spi::Context& context)
+void
+PersistenceProviderWrapper::updateAsync(const spi::Bucket& bucket, spi::Timestamp timestamp, document::DocumentUpdate::SP upd,
+                                        spi::Context& context, spi::OperationComplete::UP onComplete)
 {
     LOG_SPI("update(" << bucket << ", " << timestamp << ", " << upd->getId() << ")");
-    CHECK_ERROR(spi::UpdateResult, FAIL_UPDATE);
-    return _spi.update(bucket, timestamp, std::move(upd), context);
+    CHECK_ERROR_ASYNC(spi::UpdateResult, FAIL_UPDATE, onComplete);
+    _spi.updateAsync(bucket, timestamp, std::move(upd), context, std::move(onComplete));
 }
 
 spi::GetResult
@@ -172,13 +175,13 @@ PersistenceProviderWrapper::destroyIterator(spi::IteratorId iterId,
     return _spi.destroyIterator(iterId, context);
 }
 
-spi::Result
-PersistenceProviderWrapper::deleteBucket(const spi::Bucket& bucket,
-                                         spi::Context& context)
+void
+PersistenceProviderWrapper::deleteBucketAsync(const spi::Bucket& bucket, spi::Context& context,
+                                              spi::OperationComplete::UP operationComplete)
 {
     LOG_SPI("deleteBucket(" << bucket << ")");
-    CHECK_ERROR(spi::Result, FAIL_DELETE_BUCKET);
-    return _spi.deleteBucket(bucket, context);
+    CHECK_ERROR_ASYNC(spi::Result, FAIL_DELETE_BUCKET, operationComplete);
+    _spi.deleteBucketAsync(bucket, context, std::move(operationComplete));
 }
 
 spi::Result
@@ -223,6 +226,28 @@ PersistenceProviderWrapper::removeEntry(const spi::Bucket& bucket,
     LOG_SPI("revert(" << bucket << ", " << timestamp << ")");
     CHECK_ERROR(spi::Result, FAIL_REVERT);
     return _spi.removeEntry(bucket, timestamp, context);
+}
+
+spi::Result
+PersistenceProviderWrapper::initialize() {
+    return _spi.initialize();
+}
+
+spi::BucketIdListResult
+PersistenceProviderWrapper::getModifiedBuckets(spi::PersistenceProvider::BucketSpace bucketSpace) const {
+    return _spi.getModifiedBuckets(bucketSpace);
+}
+
+spi::Result
+PersistenceProviderWrapper::setClusterState(spi::PersistenceProvider::BucketSpace bucketSpace, const spi::ClusterState &state) {
+    return _spi.setClusterState(bucketSpace, state);
+}
+
+void
+PersistenceProviderWrapper::setActiveStateAsync(const spi::Bucket &bucket, spi::BucketInfo::ActiveState state,
+                                                spi::OperationComplete::UP onComplete)
+{
+    _spi.setActiveStateAsync(bucket, state, std::move(onComplete));
 }
 
 }

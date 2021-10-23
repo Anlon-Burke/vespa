@@ -736,6 +736,8 @@
       "public static final enum com.yahoo.prelude.query.Item$ItemType WORD_ALTERNATIVES",
       "public static final enum com.yahoo.prelude.query.Item$ItemType NEAREST_NEIGHBOR",
       "public static final enum com.yahoo.prelude.query.Item$ItemType GEO_LOCATION_TERM",
+      "public static final enum com.yahoo.prelude.query.Item$ItemType TRUE",
+      "public static final enum com.yahoo.prelude.query.Item$ItemType FALSE",
       "public final int code"
     ]
   },
@@ -1600,6 +1602,24 @@
     "methods": [
       "public void <init>()",
       "public static void visit(com.yahoo.prelude.query.ToolBox$QueryVisitor, com.yahoo.prelude.query.Item)"
+    ],
+    "fields": []
+  },
+  "com.yahoo.prelude.query.TrueItem": {
+    "superClass": "com.yahoo.prelude.query.Item",
+    "interfaces": [],
+    "attributes": [
+      "public"
+    ],
+    "methods": [
+      "public void <init>()",
+      "public void setIndexName(java.lang.String)",
+      "public com.yahoo.prelude.query.Item$ItemType getItemType()",
+      "public java.lang.String getName()",
+      "protected void appendHeadingString(java.lang.StringBuilder)",
+      "public int encode(java.nio.ByteBuffer)",
+      "public int getTermCount()",
+      "protected void appendBodyString(java.lang.StringBuilder)"
     ],
     "fields": []
   },

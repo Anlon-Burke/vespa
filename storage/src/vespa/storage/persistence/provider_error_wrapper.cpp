@@ -60,42 +60,17 @@ ProviderErrorWrapper::setClusterState(BucketSpace bucketSpace, const spi::Cluste
     return checkResult(_impl.setClusterState(bucketSpace, state));
 }
 
-spi::Result
-ProviderErrorWrapper::setActiveState(const spi::Bucket& bucket, spi::BucketInfo::ActiveState newState)
+void
+ProviderErrorWrapper::setActiveStateAsync(const spi::Bucket& bucket, spi::BucketInfo::ActiveState newState, spi::OperationComplete::UP onComplete)
 {
-    return checkResult(_impl.setActiveState(bucket, newState));
+    onComplete->addResultHandler(this);
+    _impl.setActiveStateAsync(bucket, newState, std::move(onComplete));
 }
 
 spi::BucketInfoResult
 ProviderErrorWrapper::getBucketInfo(const spi::Bucket& bucket) const
 {
     return checkResult(_impl.getBucketInfo(bucket));
-}
-
-spi::Result
-ProviderErrorWrapper::put(const spi::Bucket& bucket, spi::Timestamp ts, spi::DocumentSP doc, spi::Context& context)
-{
-    return checkResult(_impl.put(bucket, ts, std::move(doc), context));
-}
-
-spi::RemoveResult
-ProviderErrorWrapper::remove(const spi::Bucket& bucket, spi::Timestamp ts, const document::DocumentId& docId, spi::Context& context)
-{
-    return checkResult(_impl.remove(bucket, ts, docId, context));
-}
-
-spi::RemoveResult
-ProviderErrorWrapper::removeIfFound(const spi::Bucket& bucket, spi::Timestamp ts,
-                                    const document::DocumentId& docId, spi::Context& context)
-{
-    return checkResult(_impl.removeIfFound(bucket, ts, docId, context));
-}
-
-spi::UpdateResult
-ProviderErrorWrapper::update(const spi::Bucket& bucket, spi::Timestamp ts,
-                             spi::DocumentUpdateSP docUpdate, spi::Context& context)
-{
-    return checkResult(_impl.update(bucket, ts, std::move(docUpdate), context));
 }
 
 spi::GetResult
@@ -130,10 +105,11 @@ ProviderErrorWrapper::createBucket(const spi::Bucket& bucket, spi::Context& cont
     return checkResult(_impl.createBucket(bucket, context));
 }
 
-spi::Result
-ProviderErrorWrapper::deleteBucket(const spi::Bucket& bucket, spi::Context& context)
+void
+ProviderErrorWrapper::deleteBucketAsync(const spi::Bucket& bucket, spi::Context& context, spi::OperationComplete::UP onComplete)
 {
-    return checkResult(_impl.deleteBucket(bucket, context));
+    onComplete->addResultHandler(this);
+    _impl.deleteBucketAsync(bucket, context, std::move(onComplete));
 }
 
 spi::BucketIdListResult

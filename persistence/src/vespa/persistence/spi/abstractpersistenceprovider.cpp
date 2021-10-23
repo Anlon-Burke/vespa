@@ -9,13 +9,6 @@
 
 namespace storage::spi {
 
-RemoveResult
-AbstractPersistenceProvider::removeIfFound(const Bucket& b, Timestamp timestamp,
-                                           const DocumentId& id, Context& context)
-{
-    return remove(b, timestamp, id, context);
-}
-
 void
 AbstractPersistenceProvider::removeIfFoundAsync(const Bucket& b, Timestamp timestamp,
                                                 const DocumentId& id, Context& context, OperationComplete::UP onComplete)

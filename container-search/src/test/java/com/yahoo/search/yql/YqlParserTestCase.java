@@ -592,6 +592,14 @@ public class YqlParserTestCase {
     }
 
     @Test
+    public void testTrueAndFalse() {
+        assertParse("select foo from bar where true;", "TRUE");
+        assertParse("select foo from bar where false;", "FALSE");
+        assertParse("select foo from bar where ((title contains \"foo\") AND true) AND !((title contains \"bar\") or false);",
+                    "+(AND title:foo TRUE) -(OR title:bar FALSE)");
+    }
+
+    @Test
     public void testPredicate() {
         assertParse("select foo from bar where predicate(predicate_field, " +
                 "{\"gender\":\"male\", \"hobby\":[\"music\", \"hiking\"]}, {\"age\":23L});",

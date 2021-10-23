@@ -60,7 +60,7 @@
     <dependency>
       <!-- Needed for Vespa TLS configuration. Standard jar artifact -->
       <groupId>com.yahoo.vespa</groupId>
-      <artifactId>vespajlib</artifactId>
+      <artifactId>http-utils</artifactId>
       <version>${project.version}</version>
       <scope>compile</scope>
       <exclusions>
@@ -100,8 +100,9 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>uk.co.datumedge</groupId>
-      <artifactId>hamcrest-json</artifactId>
+      <groupId>com.yahoo.vespa</groupId>
+      <artifactId>testutil</artifactId>
+      <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>

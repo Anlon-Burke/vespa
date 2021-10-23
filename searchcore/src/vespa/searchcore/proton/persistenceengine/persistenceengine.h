@@ -103,7 +103,7 @@ public:
     Result initialize() override;
     BucketIdListResult listBuckets(BucketSpace bucketSpace) const override;
     Result setClusterState(BucketSpace bucketSpace, const ClusterState& calc) override;
-    Result setActiveState(const Bucket& bucket, BucketInfo::ActiveState newState) override;
+    void setActiveStateAsync(const Bucket&, BucketInfo::ActiveState, OperationComplete::UP) override;
     BucketInfoResult getBucketInfo(const Bucket&) const override;
     void putAsync(const Bucket &, Timestamp, storage::spi::DocumentSP, Context &context, OperationComplete::UP) override;
     void removeAsync(const Bucket&, Timestamp, const document::DocumentId&, Context&, OperationComplete::UP) override;
@@ -115,7 +115,7 @@ public:
     Result destroyIterator(IteratorId, Context&) override;
 
     Result createBucket(const Bucket &bucketId, Context &) override ;
-    Result deleteBucket(const Bucket&, Context&) override;
+    void deleteBucketAsync(const Bucket&, Context&, OperationComplete::UP) override;
     BucketIdListResult getModifiedBuckets(BucketSpace bucketSpace) const override;
     Result split(const Bucket& source, const Bucket& target1, const Bucket& target2, Context&) override;
     Result join(const Bucket& source1, const Bucket& source2, const Bucket& target, Context&) override;

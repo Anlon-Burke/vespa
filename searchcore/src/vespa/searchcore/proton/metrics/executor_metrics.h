@@ -5,18 +5,20 @@
 #include <vespa/metrics/metricset.h>
 #include <vespa/metrics/countmetric.h>
 #include <vespa/metrics/valuemetric.h>
-#include <vespa/vespalib/util/threadstackexecutorbase.h>
+#include <vespa/vespalib/util/executor_stats.h>
 
 namespace proton {
 
 struct ExecutorMetrics : metrics::MetricSet
 {
-    metrics::LongValueMetric maxPending; // TODO Remove on Vespa 8 or sooner if possible.
-    metrics::LongCountMetric accepted;
-    metrics::LongCountMetric rejected;
+    metrics::LongValueMetric   maxPending; // TODO Remove on Vespa 8 or sooner if possible.
+    metrics::LongCountMetric   accepted;
+    metrics::LongCountMetric   rejected;
+    metrics::LongCountMetric   wakeupCount;
+    metrics::DoubleValueMetric util;
     metrics::LongAverageMetric queueSize;
 
-    void update(const vespalib::ThreadStackExecutorBase::Stats &stats);
+    void update(const vespalib::ExecutorStats &stats);
     ExecutorMetrics(const std::string &name, metrics::MetricSet *parent);
     ~ExecutorMetrics();
 };

@@ -6,7 +6,7 @@ import com.yahoo.document.ArrayDataType;
 import com.yahoo.document.DataType;
 import com.yahoo.document.PositionDataType;
 import com.yahoo.searchdefinition.RankProfileRegistry;
-import com.yahoo.searchdefinition.Search;
+import com.yahoo.searchdefinition.Schema;
 import com.yahoo.searchdefinition.document.Attribute;
 import com.yahoo.searchdefinition.document.ImmutableSDField;
 import com.yahoo.vespa.documentmodel.DocumentSummary;
@@ -21,38 +21,38 @@ import com.yahoo.vespa.model.container.search.QueryProfiles;
  */
 public class AdjustPositionSummaryFields extends Processor {
 
-    public AdjustPositionSummaryFields(Search search, DeployLogger deployLogger, RankProfileRegistry rankProfileRegistry, QueryProfiles queryProfiles) {
-        super(search, deployLogger, rankProfileRegistry, queryProfiles);
+    public AdjustPositionSummaryFields(Schema schema, DeployLogger deployLogger, RankProfileRegistry rankProfileRegistry, QueryProfiles queryProfiles) {
+        super(schema, deployLogger, rankProfileRegistry, queryProfiles);
     }
 
     @Override
     public void process(boolean validate, boolean documentsOnly) {
-        for (DocumentSummary summary : search.getSummaries().values()) {
+        for (DocumentSummary summary : schema.getSummaries().values()) {
             scanSummary(summary);
         }
     }
 
     private void scanSummary(DocumentSummary summary) {
-        for (SummaryField summaryField : summary.getSummaryFields()) {
-            if (isPositionDataType(summaryField.getDataType())) {
-                String originalSource = summaryField.getSingleSource();
-                if (originalSource.indexOf('.') == -1) { // Eliminate summary fields with pos.x or pos.y as source
-                    ImmutableSDField sourceField = search.getField(originalSource);
-                    if (sourceField != null) {
-                        String zCurve = null;
-                        if (sourceField.getDataType().equals(summaryField.getDataType())) {
-                            zCurve = PositionDataType.getZCurveFieldName(originalSource);
-                        } else if (sourceField.getDataType().equals(makeZCurveDataType(summaryField.getDataType())) &&
-                            hasZCurveSuffix(originalSource)) {
-                            zCurve = originalSource;
-                        }
-                        if (zCurve != null) {
-                            if (hasPositionAttribute(zCurve)) {
-                                Source source = new Source(zCurve);
-                                adjustPositionField(summary, summaryField, source);
-                            } else if (sourceField.isImportedField() || !summaryField.getName().equals(originalSource)) {
-                                fail(summaryField, "No position attribute '" + zCurve + "'");
-                            }
+        for (SummaryField summaryField : summary.getSummaryFields().values()) {
+            if ( ! isPositionDataType(summaryField.getDataType())) continue;
+
+            String originalSource = summaryField.getSingleSource();
+            if (originalSource.indexOf('.') == -1) { // Eliminate summary fields with pos.x or pos.y as source
+                ImmutableSDField sourceField = schema.getField(originalSource);
+                if (sourceField != null) {
+                    String zCurve = null;
+                    if (sourceField.getDataType().equals(summaryField.getDataType())) {
+                        zCurve = PositionDataType.getZCurveFieldName(originalSource);
+                    } else if (sourceField.getDataType().equals(makeZCurveDataType(summaryField.getDataType())) &&
+                               hasZCurveSuffix(originalSource)) {
+                        zCurve = originalSource;
+                    }
+                    if (zCurve != null) {
+                        if (hasPositionAttribute(zCurve)) {
+                            Source source = new Source(zCurve);
+                            adjustPositionField(summary, summaryField, source);
+                        } else if (sourceField.isImportedField() || !summaryField.getName().equals(originalSource)) {
+                            fail(summaryField, "No position attribute '" + zCurve + "'");
                         }
                     }
                 }
@@ -77,7 +77,7 @@ public class AdjustPositionSummaryFields extends Processor {
     }
 
     private void ensureSummaryField(DocumentSummary summary, String fieldName, DataType dataType, Source source, SummaryTransform transform) {
-        SummaryField oldField = search.getSummaryField(fieldName);
+        SummaryField oldField = schema.getSummaryField(fieldName);
         if (oldField == null) {
             SummaryField newField = new SummaryField(fieldName, dataType, transform);
             newField.addSource(source);
@@ -97,9 +97,9 @@ public class AdjustPositionSummaryFields extends Processor {
     }
 
     private boolean hasPositionAttribute(String name) {
-        Attribute attribute = search.getAttribute(name);
+        Attribute attribute = schema.getAttribute(name);
         if (attribute == null) {
-            ImmutableSDField field = search.getField(name);
+            ImmutableSDField field = schema.getField(name);
             if (field != null && field.isImportedField()) {
                 attribute = field.getAttribute();
             }
@@ -121,7 +121,7 @@ public class AdjustPositionSummaryFields extends Processor {
     }
 
     private void fail(SummaryField summaryField, String msg) {
-        throw newProcessException(search.getName(), summaryField.getName(), msg);
+        throw newProcessException(schema.getName(), summaryField.getName(), msg);
     }
 
 }

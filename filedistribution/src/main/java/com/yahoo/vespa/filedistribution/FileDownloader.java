@@ -11,7 +11,6 @@ import com.yahoo.yolean.Exceptions;
 import java.io.File;
 import java.time.Duration;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -37,6 +36,7 @@ public class FileDownloader implements AutoCloseable {
     private final Supervisor supervisor;
     private final File downloadDirectory;
     private final Duration timeout;
+    private final Duration sleepBetweenRetries;
     private final FileReferenceDownloader fileReferenceDownloader;
     private final Downloads downloads = new Downloads();
 
@@ -61,9 +61,14 @@ public class FileDownloader implements AutoCloseable {
         this.supervisor = supervisor;
         this.downloadDirectory = downloadDirectory;
         this.timeout = timeout;
-        // Needed to receive RPC receiveFile* calls from server after asking for files
+        this.sleepBetweenRetries = sleepBetweenRetries;
+        // Needed to receive RPC receiveFile* calls from server after starting download of file reference
         new FileReceiver(supervisor, downloads, downloadDirectory);
-        this.fileReferenceDownloader = new FileReferenceDownloader(connectionPool, downloads, timeout, sleepBetweenRetries);
+        this.fileReferenceDownloader = new FileReferenceDownloader(connectionPool,
+                                                                   downloads,
+                                                                   timeout,
+                                                                   sleepBetweenRetries,
+                                                                   downloadDirectory);
     }
 
     public Optional<File> getFile(FileReference fileReference) {
@@ -83,12 +88,14 @@ public class FileDownloader implements AutoCloseable {
 
     Future<Optional<File>> getFutureFile(FileReferenceDownload fileReferenceDownload) {
         FileReference fileReference = fileReferenceDownload.fileReference();
-        Objects.requireNonNull(fileReference, "file reference cannot be null");
 
         Optional<File> file = getFileFromFileSystem(fileReference);
-        return (file.isPresent())
-                ? CompletableFuture.completedFuture(file)
-                : download(fileReferenceDownload);
+        if (file.isPresent()) {
+            downloads.setDownloadStatus(fileReference, 1.0);
+            return CompletableFuture.completedFuture(file);
+        } else {
+            return startDownload(fileReferenceDownload);
+        }
     }
 
     public Map<FileReference, Double> downloadStatus() { return downloads.downloadStatus(); }
@@ -102,6 +109,10 @@ public class FileDownloader implements AutoCloseable {
     }
 
     private Optional<File> getFileFromFileSystem(FileReference fileReference) {
+        return getFileFromFileSystem(fileReference, downloadDirectory);
+    }
+
+    private static Optional<File> getFileFromFileSystem(FileReference fileReference, File downloadDirectory) {
         File[] files = new File(downloadDirectory, fileReference.value()).listFiles();
         if (files == null) return Optional.empty();
         if (files.length == 0) return Optional.empty();
@@ -114,23 +125,28 @@ public class FileDownloader implements AutoCloseable {
             throw new RuntimeException("File reference '" + fileReference.value() + "' exists, but unable to read it");
         } else {
             log.log(Level.FINE, () -> "File reference '" + fileReference.value() + "' found: " + file.getAbsolutePath());
-            downloads.setDownloadStatus(fileReference, 1.0);
             return Optional.of(file);
         }
+    }
+
+    static boolean fileReferenceExists(FileReference fileReference, File downloadDirectory) {
+        return getFileFromFileSystem(fileReference, downloadDirectory).isPresent();
     }
 
     boolean isDownloading(FileReference fileReference) {
         return downloads.get(fileReference).isPresent();
     }
 
-    /** Start a download, don't wait for result */
+    /** Start a download if needed, don't wait for result */
     public void downloadIfNeeded(FileReferenceDownload fileReferenceDownload) {
-        getFutureFile(fileReferenceDownload);
+        if (fileReferenceExists(fileReferenceDownload.fileReference(), downloadDirectory)) return;
+
+        startDownload(fileReferenceDownload);
     }
 
-    /** Download, the future returned will be complete()d by receiving method in {@link FileReceiver} */
-    private synchronized Future<Optional<File>> download(FileReferenceDownload fileReferenceDownload) {
-        return fileReferenceDownloader.download(fileReferenceDownload);
+    /** Start downloading, the future returned will be complete()d by receiving method in {@link FileReceiver} */
+    private synchronized Future<Optional<File>> startDownload(FileReferenceDownload fileReferenceDownload) {
+        return fileReferenceDownloader.startDownload(fileReferenceDownload);
     }
 
     public void close() {

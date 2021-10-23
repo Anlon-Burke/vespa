@@ -155,12 +155,12 @@ public:
     BucketIdListResult getModifiedBuckets(BucketSpace bucketSpace) const override;
 
     Result setClusterState(BucketSpace bucketSpace, const ClusterState& newState) override;
-    Result setActiveState(const Bucket& bucket, BucketInfo::ActiveState newState) override;
+    void setActiveStateAsync(const Bucket&, BucketInfo::ActiveState, OperationComplete::UP) override;
     BucketInfoResult getBucketInfo(const Bucket&) const override;
-    Result put(const Bucket&, Timestamp, DocumentSP, Context&) override;
     GetResult get(const Bucket&, const document::FieldSet&, const DocumentId&, Context&) const override;
-    RemoveResult remove(const Bucket& b, Timestamp t, const DocumentId& did, Context&) override;
-    UpdateResult update(const Bucket&, Timestamp, DocumentUpdateSP, Context&) override;
+    void putAsync(const Bucket&, Timestamp, DocumentSP, Context&, OperationComplete::UP) override;
+    void removeAsync(const Bucket& b, Timestamp t, const DocumentId& did, Context&, OperationComplete::UP) override;
+    void updateAsync(const Bucket&, Timestamp, DocumentUpdateSP, Context&, OperationComplete::UP) override;
 
     CreateIteratorResult
     createIterator(const Bucket &bucket, FieldSetSP fs, const Selection &, IncludedVersions, Context &context) override;
@@ -169,7 +169,7 @@ public:
     Result destroyIterator(IteratorId, Context&) override;
 
     Result createBucket(const Bucket&, Context&) override;
-    Result deleteBucket(const Bucket&, Context&) override;
+    void deleteBucketAsync(const Bucket&, Context&, OperationComplete::UP) override;
 
     Result split(const Bucket& source, const Bucket& target1, const Bucket& target2, Context&) override;
 

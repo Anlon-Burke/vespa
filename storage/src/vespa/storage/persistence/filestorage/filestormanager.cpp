@@ -10,7 +10,6 @@
 #include <vespa/vdslib/state/clusterstate.h>
 #include <vespa/storage/common/hostreporter/hostinfo.h>
 #include <vespa/storage/common/messagebucket.h>
-#include <vespa/storage/config/config-stor-server.h>
 #include <vespa/storage/persistence/bucketownershipnotifier.h>
 #include <vespa/storage/persistence/persistencethread.h>
 #include <vespa/storage/persistence/persistencehandler.h>
@@ -210,6 +209,11 @@ FileStorManager::configure(std::unique_ptr<vespa::config::content::StorFilestorC
                                                                    *_filestorHandler, i % numStripes, _component));
         }
         _bucketExecutorRegistration = _provider->register_executor(std::make_shared<BucketExecutorWrapper>(*this));
+    } else {
+        std::lock_guard guard(_lock);        
+        for (auto& handler : _persistenceHandlers) {
+            handler->configure(*config);
+        }
     }
 }
 

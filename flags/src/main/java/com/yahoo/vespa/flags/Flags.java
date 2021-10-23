@@ -15,6 +15,7 @@ import java.util.TreeMap;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.CONSOLE_USER_EMAIL;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.HOSTNAME;
+import static com.yahoo.vespa.flags.FetchVector.Dimension.NODE_TYPE;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.TENANT_ID;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.VESPA_VERSION;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.ZONE_ID;
@@ -50,6 +51,19 @@ public class Flags {
             "Enable new conditions for when to encrypt disk.",
             "Takes effect on next host admin tick.");
 
+    public static final UnboundBooleanFlag MAP_USER_NAMESPACE = defineFeatureFlag(
+            "map-user-namespace", false,
+            List.of("freva"), "2021-10-18", "2021-12-01",
+            "Whether host-admin should start containers with mapped UID/GID, will also chown all files under container storage.",
+            "Takes effect on next container restart.",
+            APPLICATION_ID, NODE_TYPE, HOSTNAME);
+
+    public static final UnboundBooleanFlag FAIL_ON_UNKNOWN_IDS = defineFeatureFlag(
+            "fail-on-unknown-ids", true,
+            List.of("freva"), "2021-10-18", "2021-12-01",
+            "Whether host-admin should fail if it finds UID/GIDs outside of the mapped range inside the container storage.",
+            "Takes effect on next container restart.");
+
     public static final UnboundDoubleFlag DEFAULT_TERM_WISE_LIMIT = defineDoubleFlag(
             "default-term-wise-limit", 1.0,
             List.of("baldersheim"), "2020-12-02", "2022-01-01",
@@ -68,6 +82,13 @@ public class Flags {
             "feed-task-limit", 1000,
             List.of("geirst, baldersheim"), "2021-10-14", "2022-01-01",
             "The task limit used by the executors handling feed in proton",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundIntFlag MAX_UNCOMMITTED_MEMORY = defineIntFlag(
+            "max-uncommitted-memory", 130000,
+            List.of("geirst, baldersheim"), "2021-10-21", "2022-01-01",
+            "Max amount of memory holding updates to an attribute before we do a commit.",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
@@ -295,14 +316,6 @@ public class Flags {
             ZONE_ID, TENANT_ID
     );
 
-    public static final UnboundBooleanFlag USE_APPLICATION_LOCK_IN_MAINTENANCE_DEPLOYMENT = defineFeatureFlag(
-            "use-application-lock-in-maintenance-deployment", true,
-            List.of("hmusum"), "2021-09-16", "2021-10-16",
-            "Whether to use application node repository lock when doing maintenance deployment.",
-            "Takes effect immediately",
-            APPLICATION_ID
-    );
-
     public static final UnboundBooleanFlag DELETE_UNMAINTAINED_CERTIFICATES = defineFeatureFlag(
             "delete-unmaintained-certificates", false,
             List.of("andreer"), "2021-09-23", "2021-11-11",
@@ -353,6 +366,13 @@ public class Flags {
             "distributor-enhanced-maintenance-scheduling", false,
             List.of("vekterli", "geirst"), "2021-10-14", "2022-01-31",
             "Enable enhanced maintenance operation scheduling semantics on the distributor",
+            "Takes effect at redeploy",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag ASYNC_APPLY_BUCKET_DIFF = defineFeatureFlag(
+            "async-apply-bucket-diff", false,
+            List.of("geirst", "vekterli"), "2021-10-22", "2022-01-31",
+            "Whether portions of apply bucket diff handling will be performed asynchronously",
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
 

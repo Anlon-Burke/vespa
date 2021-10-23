@@ -6,13 +6,13 @@ import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.zone.ZoneApi;
 import com.yahoo.vespa.athenz.api.AthenzIdentity;
-import com.yahoo.vespa.hosted.node.admin.container.ContainerName;
 import com.yahoo.vespa.hosted.node.admin.component.TaskContext;
 import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.Acl;
 import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.NodeSpec;
+import com.yahoo.vespa.hosted.node.admin.container.ContainerName;
 import com.yahoo.vespa.hosted.node.admin.container.ContainerNetworkMode;
+import com.yahoo.vespa.hosted.node.admin.task.util.fs.ContainerPath;
 
-import java.nio.file.FileSystem;
 import java.nio.file.Path;
 import java.util.Optional;
 
@@ -42,6 +42,9 @@ public interface NodeAgentContext extends TaskContext {
 
     ZoneApi zone();
 
+    /** @return information about the Vespa user inside the container */
+    VespaUser vespaUser();
+
     UserNamespace userNamespace();
 
     default boolean isDisabled(NodeAgentTask task) {
@@ -58,42 +61,11 @@ public interface NodeAgentContext extends TaskContext {
      */
     double vcpuOnThisHost();
 
-    /** The file system used by the NodeAgentContext. All paths must have the same provider. */
-    FileSystem fileSystem();
+    ContainerPath containerPath(String pathInNode);
 
-    /**
-     * This method is the inverse of {@link #pathInNodeFromPathOnHost(Path)}}
-     *
-     * @param pathInNode absolute path in the container
-     * @return the absolute path on host pointing at the same inode
-     */
-    Path pathOnHostFromPathInNode(Path pathInNode);
+    ContainerPath containerPathUnderVespaHome(String relativePath);
 
-    default Path pathOnHostFromPathInNode(String pathInNode) {
-        return pathOnHostFromPathInNode(fileSystem().getPath(pathInNode));
-    }
-
-    /**
-     * This method is the inverse of {@link #pathOnHostFromPathInNode(Path)}
-     *
-     * @param pathOnHost absolute path on host
-     * @return the absolute path in the container pointing at the same inode
-     */
-    Path pathInNodeFromPathOnHost(Path pathOnHost);
-
-    default Path pathInNodeFromPathOnHost(String pathOnHost) {
-        return pathInNodeFromPathOnHost(fileSystem().getPath(pathOnHost));
-    }
-
-    /**
-     * @param relativePath relative path under Vespa home in container
-     * @return the absolute path under Vespa home in the container
-     */
-    Path pathInNodeUnderVespaHome(Path relativePath);
-
-    default Path pathInNodeUnderVespaHome(String relativePath) {
-        return pathInNodeUnderVespaHome(fileSystem().getPath(relativePath));
-    }
+    ContainerPath containerPathFromPathOnHost(Path pathOnHost);
 
     Optional<ApplicationId> hostExclusiveTo();
 }

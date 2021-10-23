@@ -2,12 +2,16 @@
 package com.yahoo.vespa.documentmodel;
 
 import com.yahoo.config.application.api.DeployLogger;
-import com.yahoo.searchdefinition.Search;
+import com.yahoo.searchdefinition.Schema;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.logging.Level;
 
 /**
@@ -19,12 +23,12 @@ public class DocumentSummary extends FieldView {
 
     private boolean fromDisk = false;
     private boolean omitSummaryFeatures = false;
-    private String inherited;
+    private Optional<String> inherited = Optional.empty();
 
-    private final Search owner;
+    private final Schema owner;
 
     /** Creates a DocumentSummary with the given name. */
-    public DocumentSummary(String name, Search owner) {
+    public DocumentSummary(String name, Schema owner) {
         super(name);
         this.owner = owner;
     }
@@ -55,22 +59,17 @@ public class DocumentSummary extends FieldView {
     }
 
     public SummaryField getSummaryField(String name) {
-        var parent = getInherited();
-        if (parent != null) {
-            return parent.getSummaryField(name);
-        }
-        return (SummaryField) get(name);
+        var field = (SummaryField)get(name);
+        if (field != null) return field;
+        if (inherited().isEmpty()) return null;
+        return inherited().get().getSummaryField(name);
     }
 
-    public Collection<SummaryField> getSummaryFields() {
-        var fields = new ArrayList<SummaryField>(getFields().size());
-        var parent = getInherited();
-        if (parent != null) {
-            fields.addAll(parent.getSummaryFields());
-        }
-        for (var field : getFields()) {
-            fields.add((SummaryField) field);
-        }
+    public Map<String, SummaryField> getSummaryFields() {
+        var fields = new LinkedHashMap<String, SummaryField>(getFields().size());
+        inherited().ifPresent(inherited -> fields.putAll(inherited.getSummaryFields()));
+        for (var field : getFields())
+            fields.put(field.getName(), (SummaryField) field);
         return fields;
     }
 
@@ -83,7 +82,7 @@ public class DocumentSummary extends FieldView {
      */
     public void purgeImplicits() {
         List<SummaryField> falseImplicits = new ArrayList<>();
-        for (SummaryField summaryField : getSummaryFields() ) {
+        for (SummaryField summaryField : getSummaryFields().values()) {
             if (summaryField.isImplicit()) continue;
             for (Iterator<SummaryField.Source> j = summaryField.sourceIterator(); j.hasNext(); ) {
                 String sourceName = j.next().getName();
@@ -101,17 +100,12 @@ public class DocumentSummary extends FieldView {
 
     /** Sets the parent of this. Both summaries must be present in the same search definition */
     public void setInherited(String inherited) {
-        this.inherited = inherited;
+        this.inherited = Optional.of(inherited);
     }
 
-    /** Returns the parent of this, or null if none is inherited */
-    public DocumentSummary getInherited() {
-        return owner.getSummary(inherited);
-    }
-
-    /** Returns the name of the summary this was declared to inherit, or null if not sett to inherit anything */
-    public String getInheritedName() {
-        return inherited;
+    /** Returns the parent of this, if any */
+    public Optional<DocumentSummary> inherited() {
+        return inherited.map(name -> owner.getSummary(name));
     }
 
     @Override
@@ -120,14 +114,14 @@ public class DocumentSummary extends FieldView {
     }
 
     public void validate(DeployLogger logger) {
-        if (inherited != null) {
-            if ( ! owner.getSummaries().containsKey(inherited)) {
+        if (inherited.isPresent()) {
+            if ( ! owner.getSummaries().containsKey(inherited.get())) {
                 logger.log(Level.WARNING,
-                           this + " inherits " + inherited + " but this" + " is not present in " + owner);
+                           this + " inherits " + inherited.get() + " but this" + " is not present in " + owner);
                 logger.logApplicationPackage(Level.WARNING,
-                                             this + " inherits " + inherited + " but this" + " is not present in " + owner);
+                                             this + " inherits " + inherited.get() + " but this" + " is not present in " + owner);
                 // TODO: When safe, replace the above by
-                // throw new IllegalArgumentException(this + " inherits " + inherited + " but this" +
+                // throw new IllegalArgumentException(this + " inherits " + inherited.get() + " but this" +
                 //                                   " is not present in " + owner);
                 // ... and update SummaryTestCase.testValidationOfInheritedSummary
             }

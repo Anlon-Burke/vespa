@@ -1,54 +1,73 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.node.admin.nodeagent;
 
+import java.util.Objects;
+
 /**
  * @author valerijf
  */
 public class UserNamespace {
 
-    /** Total number of UID/GID that are mapped for each container */
-    private static final int ID_RANGE = 1 << 16;
+    /**
+     * IDs outside the ID range are translated to the overflow ID before being written to disk:
+     * https://github.com/torvalds/linux/blob/5bfc75d92efd494db37f5c4c173d3639d4772966/Documentation/admin-guide/sysctl/fs.rst#overflowgid--overflowuid
+     * Real value in /proc/sys/fs/overflowuid or overflowgid, hardcode default value*/
+    private static final int OVERFLOW_ID = 65_534;
 
-    private final int uidOffset;
-    private final int gidOffset;
-    private final String vespaUser;
-    private final String vespaGroup;
-    private final int vespaUserId;
-    private final int vespaGroupId;
+    private volatile int uidOffset;
+    private volatile int gidOffset;
+    private final int idRangeSize;
 
-    public UserNamespace(int uidOffset, int gidOffset, String vespaUser, String vespaGroup, int vespaUserId, int vespaGroupId) {
+    public UserNamespace(int uidOffset, int gidOffset, int idRangeSize) {
         this.uidOffset = uidOffset;
         this.gidOffset = gidOffset;
-        this.vespaUser = vespaUser;
-        this.vespaGroup = vespaGroup;
-        this.vespaUserId = vespaUserId;
-        this.vespaGroupId = vespaGroupId;
+        this.idRangeSize = idRangeSize;
     }
 
-    public int userIdOnHost(int userIdInContainer) {
-        assertValidId("User", userIdInContainer);
-        return uidOffset + userIdInContainer;
+    public int userIdOnHost(int containerUid) { return toHostId(containerUid, uidOffset, idRangeSize); }
+    public int groupIdOnHost(int containerGid) { return toHostId(containerGid, gidOffset, idRangeSize); }
+    public int userIdInContainer(int hostUid) { return toContainerId(hostUid, uidOffset, idRangeSize); }
+    public int groupIdInContainer(int hostGid) { return toContainerId(hostGid, gidOffset, idRangeSize); }
+
+    public int idRangeSize() { return idRangeSize; }
+    public int overflowId() { return OVERFLOW_ID; }
+
+    // Remove after migration to mapped namespaces is complete, make fields final
+    public void setOffsets(int idOffset) {
+        this.uidOffset = idOffset;
+        this.gidOffset = idOffset;
     }
 
-    public int groupIdOnHost(int groupIdInContainer) {
-        assertValidId("Group", groupIdInContainer);
-        return gidOffset + groupIdInContainer;
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        UserNamespace that = (UserNamespace) o;
+        return uidOffset == that.uidOffset && gidOffset == that.gidOffset && idRangeSize == that.idRangeSize;
     }
 
-    int rootUserId() { return 0; }
-    int rootGroupId() { return 0; }
-    int rootUserIdOnHost() { return userIdOnHost(rootUserId()); }
-    int rootGroupIdOnHost() { return groupIdOnHost(rootGroupId()); }
+    @Override
+    public int hashCode() {
+        return Objects.hash(uidOffset, gidOffset, idRangeSize);
+    }
 
-    public String vespaUser() { return vespaUser; }
-    public String vespaGroup() { return vespaGroup; }
-    public int vespaUserId() { return vespaUserId; }
-    public int vespaGroupId() { return vespaGroupId; }
-    public int vespaUserIdOnHost() { return userIdOnHost(vespaUserId()); }
-    public int vespaGroupIdOnHost() { return groupIdOnHost(vespaGroupId()); }
+    @Override
+    public String toString() {
+        return "UserNamespace{" +
+                "uidOffset=" + uidOffset +
+                ", gidOffset=" + gidOffset +
+                ", idRangeSize=" + idRangeSize +
+                '}';
+    }
 
-    private static void assertValidId(String type, int id) {
-        if (id < 0) throw new IllegalArgumentException(type + " ID cannot be negative, was " + id);
-        if (id >= ID_RANGE) throw new IllegalArgumentException(type + " ID must be less than " + ID_RANGE + ", was " + id);
+    private static int toHostId(int containerId, int idOffset, int idRangeSize) {
+        if (containerId < 0 || containerId > idRangeSize)
+            throw new IllegalArgumentException("Invalid container id: " + containerId);
+        return idOffset + containerId;
+    }
+
+    private static int toContainerId(int hostId, int idOffset, int idRangeSize) {
+        hostId = hostId - idOffset;
+        return hostId < 0 || hostId >= idRangeSize ? OVERFLOW_ID : hostId;
     }
 }

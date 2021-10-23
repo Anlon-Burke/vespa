@@ -143,6 +143,12 @@ public class VespaSerializerTestCase {
     }
 
     @Test
+    public void testTrueAndFalse() {
+        parseAndConfirm("true");
+        parseAndConfirm("false");
+    }
+
+    @Test
     public void testNumbers() {
         parseAndConfirm("title = 500");
         parseAndConfirm("title > 500");

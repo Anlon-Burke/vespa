@@ -19,8 +19,9 @@ PersistenceHandler::PersistenceHandler(vespalib::ISequencedTaskExecutor & sequen
       _processAllHandler(_env, provider),
       _mergeHandler(_env, provider, component.cluster_context(), _clock,
                     cfg.bucketMergeChunkSize,
-                    cfg.commonMergeChainOptimalizationMinimumSize),
-      _asyncHandler(_env, provider, sequencedExecutor, component.getBucketIdFactory()),
+                    cfg.commonMergeChainOptimalizationMinimumSize,
+                    cfg.asyncApplyBucketDiff),
+      _asyncHandler(_env, provider, bucketOwnershipNotifier, sequencedExecutor, component.getBucketIdFactory()),
       _splitJoinHandler(_env, provider, bucketOwnershipNotifier, cfg.enableMultibitSplitOptimalization),
       _simpleHandler(_env, provider)
 {
@@ -45,7 +46,7 @@ PersistenceHandler::handleCommandSplitByType(api::StorageCommand& msg, MessageTr
     case api::MessageType::CREATEBUCKET_ID:
         return _simpleHandler.handleCreateBucket(static_cast<api::CreateBucketCommand&>(msg), std::move(tracker));
     case api::MessageType::DELETEBUCKET_ID:
-        return _simpleHandler.handleDeleteBucket(static_cast<api::DeleteBucketCommand&>(msg), std::move(tracker));
+        return _asyncHandler.handleDeleteBucket(static_cast<api::DeleteBucketCommand&>(msg), std::move(tracker));
     case api::MessageType::JOINBUCKETS_ID:
         return _splitJoinHandler.handleJoinBuckets(static_cast<api::JoinBucketsCommand&>(msg), std::move(tracker));
     case api::MessageType::SPLITBUCKET_ID:
@@ -62,7 +63,7 @@ PersistenceHandler::handleCommandSplitByType(api::StorageCommand& msg, MessageTr
     case api::MessageType::APPLYBUCKETDIFF_ID:
         return _mergeHandler.handleApplyBucketDiff(static_cast<api::ApplyBucketDiffCommand&>(msg), std::move(tracker));
     case api::MessageType::SETBUCKETSTATE_ID:
-        return _splitJoinHandler.handleSetBucketState(static_cast<api::SetBucketStateCommand&>(msg), std::move(tracker));
+        return _asyncHandler.handleSetBucketState(static_cast<api::SetBucketStateCommand&>(msg), std::move(tracker));
     case api::MessageType::INTERNAL_ID:
         switch(static_cast<api::InternalCommand&>(msg).getType()) {
         case GetIterCommand::ID:
@@ -87,19 +88,20 @@ PersistenceHandler::handleCommandSplitByType(api::StorageCommand& msg, MessageTr
     return MessageTracker::UP();
 }
 
-void
-PersistenceHandler::handleReply(api::StorageReply& reply) const
+MessageTracker::UP
+PersistenceHandler::handleReply(api::StorageReply& reply, MessageTracker::UP tracker) const
 {
     switch (reply.getType().getId()) {
     case api::MessageType::GETBUCKETDIFF_REPLY_ID:
         _mergeHandler.handleGetBucketDiffReply(static_cast<api::GetBucketDiffReply&>(reply), _env._fileStorHandler);
         break;
     case api::MessageType::APPLYBUCKETDIFF_REPLY_ID:
-        _mergeHandler.handleApplyBucketDiffReply(static_cast<api::ApplyBucketDiffReply&>(reply), _env._fileStorHandler);
+        _mergeHandler.handleApplyBucketDiffReply(static_cast<api::ApplyBucketDiffReply&>(reply), _env._fileStorHandler, std::move(tracker));
         break;
     default:
         break;
     }
+    return tracker;
 }
 
 MessageTracker::UP
@@ -112,7 +114,7 @@ PersistenceHandler::processMessage(api::StorageMessage& msg, MessageTracker::UP 
         try{
             LOG(debug, "Handling reply: %s", msg.toString().c_str());
             LOG(spam, "Message content: %s", msg.toString(true).c_str());
-            handleReply(static_cast<api::StorageReply&>(msg));
+            return handleReply(static_cast<api::StorageReply&>(msg), std::move(tracker));
         } catch (std::exception& e) {
             // It's a reply, so nothing we can do.
             LOG(debug, "Caught exception for %s: %s", msg.toString().c_str(), e.what());
@@ -146,6 +148,12 @@ PersistenceHandler::processLockedMessage(FileStorHandler::LockedMessage lock) co
     if (tracker) {
         tracker->sendReply();
     }
+}
+
+void
+PersistenceHandler::configure(vespa::config::content::StorFilestorConfig& config) noexcept
+{
+    _mergeHandler.configure(config.asyncApplyBucketDiff);
 }
 
 }

@@ -57,6 +57,14 @@ struct PersistenceProvider
 
     virtual ~PersistenceProvider();
 
+    // TODO Move to utility class for use in tests only
+    Result deleteBucket(const Bucket&, Context&);
+    Result put(const Bucket&, Timestamp, DocumentSP, Context&);
+    Result setActiveState(const Bucket&, BucketInfo::ActiveState);
+    RemoveResult remove(const Bucket&, Timestamp timestamp, const DocumentId& id, Context&);
+    RemoveResult removeIfFound(const Bucket&, Timestamp timestamp, const DocumentId& id, Context&);
+    UpdateResult update(const Bucket&, Timestamp timestamp, DocumentUpdateSP update, Context&);
+
     /**
      * Initializes the persistence provider. This function is called exactly
      * once when the persistence provider starts. If any error is returned
@@ -86,7 +94,7 @@ struct PersistenceProvider
      * other buckets may be deactivated, so the node must be able to serve
      * the data from its secondary index or get reduced coverage.
      */
-    virtual Result setActiveState(const Bucket&, BucketInfo::ActiveState) = 0;
+    virtual void setActiveStateAsync(const Bucket &, BucketInfo::ActiveState, OperationComplete::UP ) = 0;
 
     /**
      * Retrieve metadata for a bucket, previously returned in listBuckets(),
@@ -97,11 +105,8 @@ struct PersistenceProvider
 
     /**
      * Store the given document at the given microsecond time.
-     * An implementation must always implement atleast put or putAsync.
-     * If not an eternal recursion will occur.
      */
-    virtual Result put(const Bucket&, Timestamp, DocumentSP, Context&);
-    virtual void putAsync(const Bucket &, Timestamp , DocumentSP , Context &, OperationComplete::UP );
+    virtual void putAsync(const Bucket &, Timestamp , DocumentSP , Context &, OperationComplete::UP ) = 0;
 
     /**
      * This remove function assumes that there exist something to be removed.
@@ -162,8 +167,7 @@ struct PersistenceProvider
      * @param timestamp The timestamp for the new bucket entry.
      * @param id The ID to remove
      */
-    virtual RemoveResult remove(const Bucket&, Timestamp timestamp, const DocumentId& id, Context&);
-    virtual void removeAsync(const Bucket&, Timestamp timestamp, const DocumentId& id, Context&, OperationComplete::UP);
+    virtual void removeAsync(const Bucket&, Timestamp timestamp, const DocumentId& id, Context&, OperationComplete::UP) = 0;
 
     /**
      * @see remove()
@@ -181,8 +185,7 @@ struct PersistenceProvider
      * @param timestamp The timestamp for the new bucket entry.
      * @param id The ID to remove
      */
-    virtual RemoveResult removeIfFound(const Bucket&, Timestamp timestamp, const DocumentId& id, Context&);
-    virtual void removeIfFoundAsync(const Bucket&, Timestamp timestamp, const DocumentId& id, Context&, OperationComplete::UP);
+    virtual void removeIfFoundAsync(const Bucket&, Timestamp timestamp, const DocumentId& id, Context&, OperationComplete::UP) = 0;
 
     /**
      * Remove any trace of the entry with the given timestamp. (Be it a document
@@ -201,8 +204,7 @@ struct PersistenceProvider
      * @param timestamp The timestamp to use for the new update entry.
      * @param update The document update to apply to the stored document.
      */
-    virtual UpdateResult update(const Bucket&, Timestamp timestamp, DocumentUpdateSP update, Context&);
-    virtual void updateAsync(const Bucket&, Timestamp timestamp, DocumentUpdateSP update, Context&, OperationComplete::UP);
+    virtual void updateAsync(const Bucket&, Timestamp timestamp, DocumentUpdateSP update, Context&, OperationComplete::UP) = 0;
 
     /**
      * Retrieves the latest version of the document specified by the
@@ -341,7 +343,7 @@ struct PersistenceProvider
      * After this operation has succeeded, a restart of the provider should
      * not yield the bucket in getBucketList().
      */
-    virtual Result deleteBucket(const Bucket&, Context&) = 0;
+    virtual void deleteBucketAsync(const Bucket&, Context&, OperationComplete::UP) = 0;
 
     /**
      * This function is called continuously by the service layer. It allows the
