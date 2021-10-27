@@ -58,11 +58,12 @@ public class Flags {
             "Takes effect on next container restart.",
             APPLICATION_ID, NODE_TYPE, HOSTNAME);
 
-    public static final UnboundBooleanFlag FAIL_ON_UNKNOWN_IDS = defineFeatureFlag(
-            "fail-on-unknown-ids", true,
-            List.of("freva"), "2021-10-18", "2021-12-01",
-            "Whether host-admin should fail if it finds UID/GIDs outside of the mapped range inside the container storage.",
-            "Takes effect on next container restart.");
+    public static final UnboundBooleanFlag USE_CGROUPS_V2 = defineFeatureFlag(
+            "use-cgroups-v2", true,
+            List.of("freva"), "2021-10-27", "2021-12-01",
+            "Whether a host should use CGroups v2",
+            "Will attempt to switch on next host admin tick (requires reboot).",
+            NODE_TYPE, HOSTNAME);
 
     public static final UnboundDoubleFlag DEFAULT_TERM_WISE_LIMIT = defineDoubleFlag(
             "default-term-wise-limit", 1.0,
@@ -375,6 +376,20 @@ public class Flags {
             "Whether portions of apply bucket diff handling will be performed asynchronously",
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundStringFlag JDK_VERSION = defineStringFlag(
+            "jdk-version", "11",
+            List.of("hmusum"), "2021-10-25", "2021-11-25",
+            "JDK version to use inside containers",
+            "Takes effect on restart of Docker container",
+            APPLICATION_ID);
+
+    public static final UnboundBooleanFlag LEGACY_ENDPOINT_IN_CERTIFICATE = defineFeatureFlag(
+            "legacy-endpoint-in-certificate", false,
+            List.of("mpolden"), "2021-10-26", "2021-12-01",
+            "Whether to include legacy endpoint names in issued certificates",
+            "Takes effect on deployment through controller",
+            APPLICATION_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

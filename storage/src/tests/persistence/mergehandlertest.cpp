@@ -167,11 +167,11 @@ struct MergeHandlerTest : SingleDiskPersistenceTestUtils,
 
     MergeHandler createHandler(size_t maxChunkSize = 0x400000) {
         return MergeHandler(getEnv(), getPersistenceProvider(),
-                            getEnv()._component.cluster_context(), getEnv()._component.getClock(), maxChunkSize, 64, GetParam());
+                            getEnv()._component.cluster_context(), getEnv()._component.getClock(), *_sequenceTaskExecutor, maxChunkSize, 64, GetParam());
     }
     MergeHandler createHandler(spi::PersistenceProvider & spi) {
         return MergeHandler(getEnv(), spi,
-                            getEnv()._component.cluster_context(), getEnv()._component.getClock(), 4190208, 64, GetParam());
+                            getEnv()._component.cluster_context(), getEnv()._component.getClock(), *_sequenceTaskExecutor, 4190208, 64, GetParam());
     }
 
     std::shared_ptr<api::StorageMessage> get_queued_reply() {
@@ -872,7 +872,6 @@ TEST_P(MergeHandlerTest, merge_bucket_spi_failures) {
     setUpChain(MIDDLE);
 
     ExpectedExceptionSpec exceptions[] = {
-        { PersistenceProviderWrapper::FAIL_CREATE_BUCKET, "create bucket" },
         { PersistenceProviderWrapper::FAIL_BUCKET_INFO, "get bucket info" },
         { PersistenceProviderWrapper::FAIL_CREATE_ITERATOR, "create iterator" },
         { PersistenceProviderWrapper::FAIL_ITERATE, "iterate" },
@@ -903,7 +902,6 @@ TEST_P(MergeHandlerTest, get_bucket_diff_spi_failures) {
     setUpChain(MIDDLE);
 
     ExpectedExceptionSpec exceptions[] = {
-        { PersistenceProviderWrapper::FAIL_CREATE_BUCKET, "create bucket" },
         { PersistenceProviderWrapper::FAIL_BUCKET_INFO, "get bucket info" },
         { PersistenceProviderWrapper::FAIL_CREATE_ITERATOR, "create iterator" },
         { PersistenceProviderWrapper::FAIL_ITERATE, "iterate" },
@@ -1439,6 +1437,9 @@ TEST_P(MergeHandlerTest, partially_filled_apply_bucket_diff_reply)
         diff[0]._entry._hasMask |= 2u;
         handler.handleApplyBucketDiffReply(*reply, messageKeeper(), createTracker(reply, _bucket));
         LOG(debug, "handled fourth ApplyBucketDiffReply");
+    }
+    if (GetParam()) {
+        handler.drain_async_writes();
     }
     ASSERT_EQ(6u, messageKeeper()._msgs.size());
     ASSERT_EQ(api::MessageType::MERGEBUCKET_REPLY, messageKeeper()._msgs[5]->getType());
