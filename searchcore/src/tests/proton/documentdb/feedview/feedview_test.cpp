@@ -23,7 +23,6 @@
 #include <vespa/searchlib/attribute/attributefactory.h>
 #include <vespa/document/update/documentupdate.h>
 #include <vespa/searchlib/index/docbuilder.h>
-#include <vespa/vespalib/util/time.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("feedview_test");
@@ -149,10 +148,12 @@ struct MyIndexWriter : public test::MockIndexWriter
         (void) doc;
         _tracer.tracePut(indexAdapterTypeName, serialNum, lid);
     }
-    void remove(SerialNum serialNum, const search::DocumentIdT lid) override {
-        LOG(info, "MyIndexAdapter::remove(): serialNum(%" PRIu64 "), docId(%u)", serialNum, lid);
-        _removes.push_back(lid);
-        _tracer.traceRemove(indexAdapterTypeName, serialNum, lid);
+    void removeDocs(SerialNum serialNum,  LidVector lids) override {
+        for (search::DocumentIdT lid : lids) {
+            LOG(info, "MyIndexAdapter::remove(): serialNum(%" PRIu64 "), docId(%u)", serialNum, lid);
+            _removes.push_back(lid);
+            _tracer.traceRemove(indexAdapterTypeName, serialNum, lid);
+        }
     }
     void commit(SerialNum serialNum, OnWriteDoneType) override {
         ++_commitCount;
@@ -187,11 +188,13 @@ public:
         ++_changes;
     }
 
-    void notifyRemove(IDestructorCallbackSP, document::GlobalId gid, SerialNum) override {
-        _changeGid = gid;
-        _changeLid = 0;
-        _gidToLid[gid] = 0;
-        ++_changes;
+    void notifyRemoves(IDestructorCallbackSP, const std::vector<document::GlobalId> & gids, SerialNum) override {
+        for (const auto & gid : gids) {
+            _changeGid = gid;
+            _changeLid = 0;
+            _gidToLid[gid] = 0;
+            ++_changes;
+        }
     }
 
     void assertChanges(document::GlobalId expGid, uint32_t expLid, uint32_t expChanges) {

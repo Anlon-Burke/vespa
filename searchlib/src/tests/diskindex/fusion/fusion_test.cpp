@@ -10,6 +10,7 @@
 #include <vespa/searchlib/index/docbuilder.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
 #include <vespa/searchlib/memoryindex/document_inverter.h>
+#include <vespa/searchlib/memoryindex/document_inverter_context.h>
 #include <vespa/searchlib/memoryindex/field_index_collection.h>
 #include <vespa/searchlib/memoryindex/posting_iterator.h>
 #include <vespa/searchlib/test/index/mock_field_length_inspector.h>
@@ -32,6 +33,7 @@ using fef::FieldPositionsIterator;
 using fef::TermFieldMatchData;
 using fef::TermFieldMatchDataArray;
 using memoryindex::DocumentInverter;
+using memoryindex::DocumentInverterContext;
 using memoryindex::FieldIndexCollection;
 using queryeval::SearchIterator;
 using search::common::FileHeaderContext;
@@ -321,14 +323,15 @@ FusionTest::requireThatFusionIsWorking(const vespalib::string &prefix, bool dire
     DocBuilder b(schema);
     auto invertThreads = SequencedTaskExecutor::create(invert_executor, 2);
     auto pushThreads = SequencedTaskExecutor::create(push_executor, 2);
-    DocumentInverter inv(schema, *invertThreads, *pushThreads, fic);
+    DocumentInverterContext inv_context(schema, *invertThreads, *pushThreads, fic);
+    DocumentInverter inv(inv_context);
     Document::UP doc;
 
     doc = make_doc10(b);
     inv.invertDocument(10, *doc);
-    invertThreads->sync();
+    invertThreads->sync_all();
     myPushDocument(inv);
-    pushThreads->sync();
+    pushThreads->sync_all();
 
     b.startDocument("id:ns:searchdocument::11").
         startIndexField("f3").
@@ -336,9 +339,9 @@ FusionTest::requireThatFusionIsWorking(const vespalib::string &prefix, bool dire
         endField();
     doc = b.endDocument();
     inv.invertDocument(11, *doc);
-    invertThreads->sync();
+    invertThreads->sync_all();
     myPushDocument(inv);
-    pushThreads->sync();
+    pushThreads->sync_all();
 
     b.startDocument("id:ns:searchdocument::12").
         startIndexField("f3").
@@ -346,9 +349,9 @@ FusionTest::requireThatFusionIsWorking(const vespalib::string &prefix, bool dire
         endField();
     doc = b.endDocument();
     inv.invertDocument(12, *doc);
-    invertThreads->sync();
+    invertThreads->sync_all();
     myPushDocument(inv);
-    pushThreads->sync();
+    pushThreads->sync_all();
 
     IndexBuilder ib(schema);
     vespalib::string dump2dir = prefix + "dump2";
@@ -462,12 +465,13 @@ FusionTest::make_simple_index(const vespalib::string &dump_dir, const IFieldLeng
     DocBuilder b(_schema);
     auto invertThreads = SequencedTaskExecutor::create(invert_executor, 2);
     auto pushThreads = SequencedTaskExecutor::create(push_executor, 2);
-    DocumentInverter inv(_schema, *invertThreads, *pushThreads, fic);
+    DocumentInverterContext inv_context(_schema, *invertThreads, *pushThreads, fic);
+    DocumentInverter inv(inv_context);
 
     inv.invertDocument(10, *make_doc10(b));
-    invertThreads->sync();
+    invertThreads->sync_all();
     myPushDocument(inv);
-    pushThreads->sync();
+    pushThreads->sync_all();
 
     IndexBuilder ib(_schema);
     TuneFileIndexing tuneFileIndexing;

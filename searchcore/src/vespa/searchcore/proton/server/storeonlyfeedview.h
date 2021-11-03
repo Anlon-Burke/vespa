@@ -156,10 +156,11 @@ private:
     searchcorespi::index::IThreadService & summaryExecutor() {
         return _writeService.summary();
     }
-    void putSummary(SerialNum serialNum,  Lid lid, FutureStream doc, OnOperationDoneType onDone);
+    void putSummary(SerialNum serialNum, Lid lid, FutureStream doc, OnOperationDoneType onDone);
     void putSummaryNoop(FutureStream doc, OnOperationDoneType onDone);
-    void putSummary(SerialNum serialNum,  Lid lid, DocumentSP doc, OnOperationDoneType onDone);
-    void removeSummary(SerialNum serialNum,  Lid lid, OnWriteDoneType onDone);
+    void putSummary(SerialNum serialNum, Lid lid, DocumentSP doc, OnOperationDoneType onDone);
+    void removeSummary(SerialNum serialNum, Lid lid, OnWriteDoneType onDone);
+    void removeSummaries(SerialNum serialNum, const LidVector & lids, OnWriteDoneType onDone);
     void heartBeatSummary(SerialNum serialNum);
 
     bool useDocumentStore(SerialNum replaySerialNum) const {
@@ -235,7 +236,6 @@ public:
     void prepareMove(MoveOperation &putOp) override;
     void handleMove(const MoveOperation &putOp, std::shared_ptr<vespalib::IDestructorCallback> doneCtx) override;
     void heartBeat(search::SerialNum serialNum) override;
-    void sync() override;
     void forceCommit(const CommitParam & param, DoneCallback onDone) override;
 
     /**

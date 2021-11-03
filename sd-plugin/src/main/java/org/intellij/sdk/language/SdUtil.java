@@ -6,11 +6,11 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiManager;
+import com.intellij.psi.PsiNamedElement;
 import com.intellij.psi.PsiReference;
 import com.intellij.psi.search.FileTypeIndex;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.util.indexing.FileBasedIndex;
 import org.intellij.sdk.language.psi.SdAnnotationFieldDefinition;
 import org.intellij.sdk.language.psi.SdArgumentDefinition;
 import org.intellij.sdk.language.psi.SdDeclaration;
@@ -39,7 +39,7 @@ import java.util.List;
 
 /**
  * This is the util class for the plugin's code.
- * @author shahariel
+ * @author Shahar Ariel
  */
 public class SdUtil {
     
@@ -74,8 +74,8 @@ public class SdUtil {
             }
         }
         SdIdentifier ancestorIdentifier = (SdIdentifier) ancestorAST.getPsi();
-        return ancestorIdentifier.getReference().resolve();
-        
+        PsiReference ref = ancestorIdentifier.getReference();
+        return ref != null ? ref.resolve() : null;
     }
     
     public static String createFunctionDescription(SdFunctionDefinition macro) {
@@ -123,16 +123,13 @@ public class SdUtil {
             PsiElement docField = docFieldRef != null ? docFieldRef.resolve() : null;
             SdFieldTypeName fieldType = docField != null ? PsiTreeUtil.findChildOfType(docField, SdFieldTypeName.class) : null;
             SdIdentifier docIdentifier = fieldType != null ? PsiTreeUtil.findChildOfType(fieldType, SdIdentifier.class) : null;
-            String docName = docIdentifier != null ? docIdentifier.getName() : null;
+            String docName = docIdentifier != null ? ((PsiNamedElement) docIdentifier).getName() : null;
             if (docName == null) {
                 return result;
             }
-            
-            Collection<VirtualFile> virtualFiles = FileBasedIndex.getInstance().getContainingFiles(
-                FileTypeIndex.NAME,
-                SdFileType.INSTANCE,
-                GlobalSearchScope.allScope(project)
-            );
+    
+            Collection<VirtualFile> virtualFiles = FileTypeIndex.getFiles(SdFileType.INSTANCE, GlobalSearchScope.allScope(project));
+
             for (VirtualFile vfile : virtualFiles) {
                 SdFile sdFile = (SdFile) PsiManager.getInstance(project).findFile(vfile);
                 if (sdFile != null && !sdFile.getName().equals(docName + ".sd")) {
@@ -161,11 +158,11 @@ public class SdUtil {
         }
         
         // If element is a macro's name, return the most specific declaration of the macro
-        if (((SdIdentifier) element).isFunctionName(file)) {
+        if (((SdIdentifier) element).isFunctionName(file, name)) {
             PsiElement curRankProfile = PsiTreeUtil.getParentOfType(element, SdRankProfileDefinition.class);
             while (curRankProfile != null) {
                 for (SdFunctionDefinition macro : PsiTreeUtil.collectElementsOfType(curRankProfile, SdFunctionDefinition.class)) {
-                    if (macro.getName().equals(name)) {
+                    if (macro.getName() != null && macro.getName().equals(name)) {
                         result.add(macro);
                         return result;
                     }

@@ -1,9 +1,10 @@
-// Copyright 2019 Oath Inc. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -76,6 +77,21 @@ public class UriItem extends PhraseItem {
         if (hasEndAnchor())
             items.remove(items.size() - 1);
         return items.stream().map(item -> ((WordItem)item).getWord()).collect(Collectors.joining(" "));
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if ( ! super.equals(o)) return false;
+        var other = (UriItem)o;
+        if ( this.startAnchorDefault != other.startAnchorDefault) return false;
+        if ( this.endAnchorDefault != other.endAnchorDefault) return false;
+        if ( ! Objects.equals(this.sourceString, other.sourceString)) return false;
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), startAnchorDefault, endAnchorDefault, sourceString);
     }
 
 }

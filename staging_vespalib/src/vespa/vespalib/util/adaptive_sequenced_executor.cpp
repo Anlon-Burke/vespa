@@ -1,4 +1,4 @@
-// Copyright 2020 Oath Inc. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "adaptive_sequenced_executor.h"
 
@@ -246,7 +246,7 @@ AdaptiveSequencedExecutor::AdaptiveSequencedExecutor(size_t num_strands, size_t 
 
 AdaptiveSequencedExecutor::~AdaptiveSequencedExecutor()
 {
-    sync();
+    sync_all();
     {
         auto guard = std::unique_lock(_mutex);
         assert(_self.state == Self::State::OPEN);
@@ -305,7 +305,7 @@ AdaptiveSequencedExecutor::executeTask(ExecutorId id, Task::UP task)
 }
 
 void
-AdaptiveSequencedExecutor::sync()
+AdaptiveSequencedExecutor::sync_all()
 {
     BarrierCompletion barrierCompletion;
     {

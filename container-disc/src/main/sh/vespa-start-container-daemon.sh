@@ -59,6 +59,63 @@ getconfig() {
     eval "$cmds"
 }
 
+# Print the value of the cgroups v2 interface filename $1 for current process,
+# returning 0 on success. $1 is e.g. memory.max.
+vespa_cg2get() {
+    local filename="$1"
+
+    # Verify cgroups v2
+    if ! [ -e /sys/fs/cgroup/cgroup.controllers ]; then
+        return 1
+    fi
+
+    local cgroup_content
+    if ! cgroup_content=$(< /proc/self/cgroup); then
+        echo "No such file: /proc/self/cgroup" >& 2
+        return 1
+    fi
+
+    local slice
+    while read -r; do
+        if [ -n "$slice" ]; then
+            echo "More than one line in /proc/self/cgroup" >&2
+            return 1
+        fi
+        # Ignore prefix of line up to and including the right-most ':'.
+        # Example line: "0::/user.slice/user-1002.slice/session-29.scope"
+        slice="${REPLY##*:}"
+    done <<< "$cgroup_content"
+
+    local root_dir=/sys/fs/cgroup
+    local leaf_dir="$root_dir$slice"
+    local current_dir="$leaf_dir"
+
+    local min_value=
+    while (( ${#current_dir} >= ${#root_dir} )); do
+        local path="$current_dir"/"$filename"
+        if [ -r "$path" ]; then
+            local value=$(< "$path")
+            if [ -z "$min_value" ]; then
+                min_value="$value"
+            elif [ "$min_value" == max ]; then
+                min_value="$value"
+            elif [ "$value" != max ] && (( value < min_value )); then
+                min_value="$value"
+            fi
+        fi
+
+        current_dir="${current_dir%/*}"
+    done
+
+    if [ -z "$min_value" ]; then
+        echo "No such filename was found at $leaf_dir: $filename" >&2
+        return 1
+    fi
+
+    echo "$min_value"
+    return 0
+}
+
 configure_memory() {
     consider_fallback jvm_minHeapsize 1536
     consider_fallback jvm_heapsize 1536
@@ -71,7 +128,15 @@ configure_memory() {
     if ((jvm_heapSizeAsPercentageOfPhysicalMemory > 0)); then
         available=`free -m | grep Mem | tr -s ' ' | cut -f2 -d' '`
         if hash cgget 2>/dev/null; then
+            # TODO: Create vespa_cgget for this and remove dependency on libcgroup-tools
             available_cgroup_bytes=$(cgget -nv -r memory.limit_in_bytes /)
+            if [ $? -ne 0 ]; then
+                available_cgroup_bytes=$(vespa_cg2get memory.max)
+                # If command failed or returned value is 'max' assign a big value (default in CGroup v1)
+                if ! [[ "$available_cgroup_bytes" =~ ^[0-9]+$ ]]; then
+                   available_cgroup_bytes=$(((1 << 63) -1))
+                fi
+            fi
             available_cgroup=$((available_cgroup_bytes >> 20))
             available=$((available > available_cgroup ? available_cgroup : available))
         fi

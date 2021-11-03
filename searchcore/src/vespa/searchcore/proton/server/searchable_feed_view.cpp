@@ -40,24 +40,6 @@ SearchableFeedView::SearchableFeedView(StoreOnlyFeedView::Context storeOnlyCtx, 
 SearchableFeedView::~SearchableFeedView() = default;
 
 void
-SearchableFeedView::performSync()
-{
-    // Called by index write thread, delays when sync() method on it completes.
-    assert(_writeService.index().isCurrentThread());
-    _writeService.indexFieldInverter().sync();
-    _writeService.indexFieldWriter().sync();
-}
-
-void
-SearchableFeedView::sync()
-{
-    assert(_writeService.master().isCurrentThread());
-    Parent::sync();
-    _writeService.index().execute(makeLambdaTask([this]() { performSync(); }));
-    _writeService.index().sync();
-}
-
-void
 SearchableFeedView::putIndexedFields(SerialNum serialNum, search::DocumentIdT lid, const DocumentSP &newDoc,
                                      OnOperationDoneType onWriteDone)
 {
@@ -153,9 +135,9 @@ SearchableFeedView::performIndexRemove(SerialNum serialNum, const LidVector &lid
         VLOG(getDebugLevel(lid, nullptr),
              "database(%s): performIndexRemove: serialNum(%" PRIu64 "), lid(%d)",
              _params._docTypeName.toString().c_str(), serialNum, lid);
-
-        _indexWriter->remove(serialNum, lid);
     }
+
+    _indexWriter->removeDocs(serialNum, lidsToRemove);
 }
 
 void
@@ -188,11 +170,13 @@ void
 SearchableFeedView::handleCompactLidSpace(const CompactLidSpaceOperation &op)
 {
     Parent::handleCompactLidSpace(op);
+    vespalib::Gate gate;
     _writeService.index().execute(
-            makeLambdaTask([this, &op]() {
+            makeLambdaTask([this, &op, &gate]() {
                 _indexWriter->compactLidSpace(op.getSerialNum(), op.getLidLimit());
+                gate.countDown();
             }));
-    _writeService.index().sync();
+    gate.await();
 }
 
 void

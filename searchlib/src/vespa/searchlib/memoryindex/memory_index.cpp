@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "document_inverter.h"
+#include "document_inverter_context.h"
 #include "field_index_collection.h"
 #include "memory_index.h"
 #include <vespa/document/fieldvalue/arrayfieldvalue.h>
@@ -57,8 +58,9 @@ MemoryIndex::MemoryIndex(const Schema& schema,
       _invertThreads(invertThreads),
       _pushThreads(pushThreads),
       _fieldIndexes(std::make_unique<FieldIndexCollection>(_schema, inspector)),
-      _inverter0(std::make_unique<DocumentInverter>(_schema, _invertThreads, _pushThreads, *_fieldIndexes)),
-      _inverter1(std::make_unique<DocumentInverter>(_schema, _invertThreads, _pushThreads, *_fieldIndexes)),
+      _inverter_context(std::make_unique<DocumentInverterContext>(_schema, _invertThreads, _pushThreads, *_fieldIndexes)),
+      _inverter0(std::make_unique<DocumentInverter>(*_inverter_context)),
+      _inverter1(std::make_unique<DocumentInverter>(*_inverter_context)),
       _inverter(_inverter0.get()),
       _frozen(false),
       _maxDocId(0), // docId 0 is reserved
@@ -73,8 +75,8 @@ MemoryIndex::MemoryIndex(const Schema& schema,
 
 MemoryIndex::~MemoryIndex()
 {
-    _invertThreads.sync();
-    _pushThreads.sync();
+    _invertThreads.sync_all();
+    _pushThreads.sync_all();
 }
 
 void
@@ -93,24 +95,27 @@ MemoryIndex::insertDocument(uint32_t docId, const document::Document &doc)
 }
 
 void
-MemoryIndex::removeDocument(uint32_t docId)
+MemoryIndex::removeDocuments(LidVector lids)
 {
     if (_frozen) {
-        LOG(warning, "Memory index frozen: ignoring remove of document (%u)", docId);
+        LOG(warning, "Memory index frozen: ignoring remove of %lu documents", lids.size());
         return;
     }
-    _inverter->removeDocument(docId);
-    if (_indexedDocs.find(docId) != _indexedDocs.end()) {
-        _indexedDocs.erase(docId);
-        decNumDocs();
+    for (uint32_t lid : lids) {
+
+        if (_indexedDocs.find(lid) != _indexedDocs.end()) {
+            _indexedDocs.erase(lid);
+            decNumDocs();
+        }
     }
+    _inverter->removeDocuments(std::move(lids));
 }
 
 void
 MemoryIndex::commit(const std::shared_ptr<vespalib::IDestructorCallback> &onWriteDone)
 {
-    _invertThreads.sync(); // drain inverting into this inverter
-    _pushThreads.sync(); // drain use of other inverter
+    _invertThreads.sync_all(); // drain inverting into this inverter
+    _pushThreads.sync_all(); // drain use of other inverter
     _inverter->pushDocuments(onWriteDone);
     flipInverter();
 }

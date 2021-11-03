@@ -1,12 +1,16 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
+import com.yahoo.prelude.query.textualrepresentation.Discloser;
+
 import java.nio.ByteBuffer;
+import java.util.Objects;
 
 /**
+ * A word item which only consists of a value and weight.
+ *
  * @author baldersheim
  */
-// TODO: Fix javadoc
 public class PureWeightedString extends PureWeightedItem  {
 
     private final String value;
@@ -14,6 +18,7 @@ public class PureWeightedString extends PureWeightedItem  {
     public PureWeightedString(String value) {
         this(value, 100);
     }
+
     public PureWeightedString(String value, int weight) {
         super(weight);
         this.value = value;
@@ -44,4 +49,22 @@ public class PureWeightedString extends PureWeightedItem  {
     public String getString() {
         return value;
     }
+
+    @Override
+    public boolean equals(Object other) {
+        if ( ! super.equals(other)) return false;
+        return Objects.equals(value, ((PureWeightedString)other).value);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), value);
+    }
+
+    @Override
+    public void disclose(Discloser discloser) {
+        super.disclose(discloser);
+        discloser.setValue(value);
+    }
+
 }

@@ -363,16 +363,11 @@ public class RoutingPoliciesTest {
                              ClusterSpec.Id.from("default"), 0,
                              Map.of(zone1, 1L, zone2, 1L), true);
         assertEquals("Registers expected DNS names",
-                     Set.of("app1.tenant1.aws-eu-west-1-w.public.vespa.oath.cloud",
-                            "app1.tenant1.aws-eu-west-1.w.vespa-app.cloud",
-                            "app1.tenant1.aws-eu-west-1a.public.vespa.oath.cloud",
+                     Set.of("app1.tenant1.aws-eu-west-1.w.vespa-app.cloud",
                             "app1.tenant1.aws-eu-west-1a.z.vespa-app.cloud",
-                            "app1.tenant1.aws-us-east-1-w.public.vespa.oath.cloud",
                             "app1.tenant1.aws-us-east-1.w.vespa-app.cloud",
-                            "app1.tenant1.aws-us-east-1c.public.vespa.oath.cloud",
                             "app1.tenant1.aws-us-east-1c.z.vespa-app.cloud",
-                            "app1.tenant1.g.vespa-app.cloud",
-                            "app1.tenant1.global.public.vespa.oath.cloud"),
+                            "app1.tenant1.g.vespa-app.cloud"),
                      tester.recordNames());
     }
 
@@ -699,7 +694,7 @@ public class RoutingPoliciesTest {
 
         tester.provisionLoadBalancers(1, app, zone1);
         tester.routingPolicies().refresh(app, DeploymentSpec.empty, zone1);
-        new NameServiceDispatcher(tester.tester.controller(), Duration.ofDays(1), Integer.MAX_VALUE).run();
+        new NameServiceDispatcher(tester.tester.controller(), Duration.ofSeconds(Integer.MAX_VALUE)).run();
 
         List<Record> records = tester.controllerTester().nameService().findRecords(Record.Type.CNAME, name);
         assertEquals(1, records.size());
@@ -837,7 +832,7 @@ public class RoutingPoliciesTest {
                 DeploymentId deployment = new DeploymentId(application, zone);
                 EndpointList regionEndpoints = tester.controller().routing().endpointsOf(deployment)
                                                     .cluster(cluster)
-                                                    .scope(Endpoint.Scope.regionSplit);
+                                                    .scope(Endpoint.Scope.region);
                 if (!legacy) {
                     regionEndpoints = regionEndpoints.not().legacy();
                 }

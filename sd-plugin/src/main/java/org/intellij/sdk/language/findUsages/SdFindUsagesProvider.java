@@ -7,18 +7,18 @@ import com.intellij.lang.findUsages.FindUsagesProvider;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiNamedElement;
 import com.intellij.psi.tree.TokenSet;
-import org.intellij.sdk.language.SdLexerAdapter;
+import org.intellij.sdk.language.lexer.SdLexerAdapter;
 import org.intellij.sdk.language.psi.SdDeclaration;
-import org.intellij.sdk.language.psi.SdIdentifier;
 import org.intellij.sdk.language.psi.SdIdentifierVal;
 import org.intellij.sdk.language.psi.SdIdentifierWithDashVal;
 import org.intellij.sdk.language.psi.SdTypes;
+import org.intellij.sdk.language.psi.impl.SdNamedElementImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
  * This class is used for the extension (in plugin.xml), to enable "find Usages" window using the plugin code.
- * @author shahariel
+ * @author Shahar Ariel
  */
 public class SdFindUsagesProvider implements FindUsagesProvider {
     @Nullable
@@ -46,7 +46,7 @@ public class SdFindUsagesProvider implements FindUsagesProvider {
     @Override
     public String getType(@NotNull PsiElement element) {
         if (element instanceof SdDeclaration) {
-            return ((SdDeclaration) element).getTypeName();
+            return ((SdNamedElementImpl) element).getTypeName();
         } else {
             return "";
         }
@@ -62,7 +62,8 @@ public class SdFindUsagesProvider implements FindUsagesProvider {
     @Override
     public String getNodeText(@NotNull PsiElement element, boolean useFullName) {
         if (element instanceof SdIdentifierVal || element instanceof SdIdentifierWithDashVal) {
-            return ((SdIdentifier) element).getName();
+            String name = ((PsiNamedElement) element).getName();
+            return name != null ? name : "";
         } else if (element instanceof SdDeclaration) {
             String fullText = element.getNode().getText();
             return fullText.substring(0, fullText.indexOf('{'));

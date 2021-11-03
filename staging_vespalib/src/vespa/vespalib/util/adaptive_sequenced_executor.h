@@ -1,4 +1,4 @@
-// Copyright 2020 Oath Inc. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -147,7 +147,7 @@ public:
     ~AdaptiveSequencedExecutor() override;
     ExecutorId getExecutorId(uint64_t component) const override;
     void executeTask(ExecutorId id, Task::UP task) override;
-    void sync() override;
+    void sync_all() override;
     void setTaskLimit(uint32_t task_limit) override;
     ExecutorStats getStats() override;
     Config get_config() const;

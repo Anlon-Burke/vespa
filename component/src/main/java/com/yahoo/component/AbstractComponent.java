@@ -60,7 +60,7 @@ public class AbstractComponent implements Component, Deconstructable {
         return id;
     }
 
-    //This should only happen in tests, so thread safety should not be an issue.
+    // This should only happen in tests, so thread safety should not be an issue.
     private void setTestId() {
         id = ComponentId.createAnonymousComponentId("test_" + getClass().getName());
     }
@@ -103,7 +103,7 @@ public class AbstractComponent implements Component, Deconstructable {
     public AbstractComponent clone() {
         try {
             AbstractComponent clone=(AbstractComponent)super.clone();
-            clone.id=null;
+            clone.id = null;
             return clone;
         }
         catch (CloneNotSupportedException e) {

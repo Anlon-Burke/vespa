@@ -1183,15 +1183,17 @@ IndexMaintainer::putDocument(uint32_t lid, const Document &doc, SerialNum serial
 }
 
 void
-IndexMaintainer::removeDocument(uint32_t lid, SerialNum serialNum)
+IndexMaintainer::removeDocuments(LidVector lids, SerialNum serialNum)
 {
     assert(_ctx.getThreadingService().index().isCurrentThread());
     LockGuard lock(_index_update_lock);
-    _current_index->removeDocument(lid);
-    _selector->setSource(lid, _current_index_id);
-    _source_list->setSource(lid);
-    ++_source_selector_changes;
+    for (uint32_t lid : lids) {
+        _selector->setSource(lid, _current_index_id);
+        _source_list->setSource(lid);
+    }
+    _source_selector_changes += lids.size();
     _current_serial_num = serialNum;
+    _current_index->removeDocuments(std::move(lids));
 }
 
 void

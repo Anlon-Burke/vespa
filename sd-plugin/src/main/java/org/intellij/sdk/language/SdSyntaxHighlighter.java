@@ -10,6 +10,7 @@ import com.intellij.openapi.editor.colors.TextAttributesKey;
 import com.intellij.openapi.fileTypes.SyntaxHighlighterBase;
 import com.intellij.psi.TokenType;
 import com.intellij.psi.tree.IElementType;
+import org.intellij.sdk.language.lexer.SdLexerAdapter;
 import org.intellij.sdk.language.psi.SdTypes;
 import org.jetbrains.annotations.NotNull;
 
@@ -17,7 +18,7 @@ import java.util.HashSet;
 
 /**
  * This class defines the syntax highlighting of an SD file.
- * @author shahariel
+ * @author Shahar Ariel
  */
 public class SdSyntaxHighlighter extends SyntaxHighlighterBase {
     

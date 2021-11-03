@@ -14,6 +14,7 @@
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
 #include <vespa/searchlib/memoryindex/compact_words_store.h>
 #include <vespa/searchlib/memoryindex/document_inverter.h>
+#include <vespa/searchlib/memoryindex/document_inverter_context.h>
 #include <vespa/searchlib/memoryindex/field_index_collection.h>
 #include <vespa/searchlib/memoryindex/field_inverter.h>
 #include <vespa/searchlib/queryeval/isourceselector.h>
@@ -142,10 +143,9 @@ struct IndexManagerTest : public ::testing::Test {
     void resetIndexManager();
     void removeDocument(uint32_t docId, SerialNum serialNum) {
         runAsIndex([&]() { _index_manager->removeDocument(docId, serialNum);
-                              _index_manager->commit(serialNum,
-                                                     emptyDestructorCallback);
+                              _index_manager->commit(serialNum, emptyDestructorCallback);
                           });
-        _writeService.indexFieldWriter().sync();
+        _writeService.indexFieldWriter().sync_all();
     }
     void removeDocument(uint32_t docId) {
         SerialNum serialNum = ++_serial_num;
@@ -185,7 +185,7 @@ IndexManagerTest::addDocument(uint32_t id)
     runAsIndex([&]() { _index_manager->putDocument(id, *doc, serialNum);
                           _index_manager->commit(serialNum,
                                                  emptyDestructorCallback); });
-    _writeService.indexFieldWriter().sync();
+    _writeService.indexFieldWriter().sync_all();
     return doc;
 }
 
@@ -393,7 +393,8 @@ TEST_F(IndexManagerTest, require_that_flush_stats_are_calculated)
     FieldIndexCollection fic(schema, MockFieldLengthInspector());
     auto invertThreads = SequencedTaskExecutor::create(invert_executor, 2);
     auto pushThreads = SequencedTaskExecutor::create(push_executor, 2);
-    search::memoryindex::DocumentInverter inverter(schema, *invertThreads, *pushThreads, fic);
+    search::memoryindex::DocumentInverterContext inverter_context(schema, *invertThreads, *pushThreads, fic);
+    search::memoryindex::DocumentInverter inverter(inverter_context);
 
     uint64_t fixed_index_size = fic.getMemoryUsage().allocatedBytes();
     uint64_t index_size = fic.getMemoryUsage().allocatedBytes() - fixed_index_size;
@@ -406,9 +407,9 @@ TEST_F(IndexManagerTest, require_that_flush_stats_are_calculated)
 
     Document::UP doc = addDocument(docid);
     inverter.invertDocument(docid, *doc);
-    invertThreads->sync();
+    invertThreads->sync_all();
     inverter.pushDocuments(std::shared_ptr<vespalib::IDestructorCallback>());
-    pushThreads->sync();
+    pushThreads->sync_all();
     index_size = fic.getMemoryUsage().allocatedBytes() - fixed_index_size;
 
     /// Must account for both docid 0 being reserved and the extra after.
@@ -425,9 +426,9 @@ TEST_F(IndexManagerTest, require_that_flush_stats_are_calculated)
     inverter.invertDocument(docid + 10, *doc);
     doc = addDocument(docid + 100);
     inverter.invertDocument(docid + 100, *doc);
-    invertThreads->sync();
+    invertThreads->sync_all();
     inverter.pushDocuments(std::shared_ptr<vespalib::IDestructorCallback>());
-    pushThreads->sync();
+    pushThreads->sync_all();
     index_size = fic.getMemoryUsage().allocatedBytes() - fixed_index_size;
     /// Must account for both docid 0 being reserved and the extra after.
     selector_size = (docid + 100 + 1) * sizeof(Source);

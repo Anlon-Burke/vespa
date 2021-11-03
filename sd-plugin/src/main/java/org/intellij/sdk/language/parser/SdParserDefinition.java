@@ -13,15 +13,14 @@ import com.intellij.psi.TokenType;
 import com.intellij.psi.tree.IFileElementType;
 import com.intellij.psi.tree.TokenSet;
 import org.intellij.sdk.language.SdLanguage;
-import org.intellij.sdk.language.SdLexerAdapter;
-import org.intellij.sdk.language.parser.SdParser;
+import org.intellij.sdk.language.lexer.SdLexerAdapter;
 import org.intellij.sdk.language.psi.SdFile;
 import org.intellij.sdk.language.psi.SdTypes;
 import org.jetbrains.annotations.NotNull;
 
 /**
  * This class is used for the extension (in plugin.xml), to make the parsing process use the plugin code.
- * @author shahariel
+ * @author Shahar Ariel
  */
 public class SdParserDefinition implements ParserDefinition {
     public static final TokenSet WHITE_SPACES = TokenSet.create(TokenType.WHITE_SPACE);

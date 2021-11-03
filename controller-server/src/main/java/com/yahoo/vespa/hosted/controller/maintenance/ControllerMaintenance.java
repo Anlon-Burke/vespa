@@ -1,4 +1,4 @@
-// Copyright 2019 Oath Inc. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.maintenance;
 
 import com.google.inject.Inject;
@@ -152,7 +152,7 @@ public class ControllerMaintenance extends AbstractComponent {
             this.resourceMeterMaintainer = duration(3, MINUTES);
             this.cloudEventReporter = duration(30, MINUTES);
             this.resourceTagMaintainer = duration(30, MINUTES);
-            this.systemRoutingPolicyMaintainer = duration(10, MINUTES);
+            this.systemRoutingPolicyMaintainer = duration(15, MINUTES);
             this.applicationMetaDataGarbageCollector = duration(12, HOURS);
             this.containerImageExpirer = duration(12, HOURS);
             this.hostInfoUpdater = duration(12, HOURS);

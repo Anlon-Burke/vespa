@@ -2,8 +2,9 @@
 
 #pragma once
 
-#include "i_field_index_remove_listener.h"
-#include <vespa/searchlib/index/schema_index_fields.h>
+#include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace document {
     class DataType;
@@ -15,11 +16,11 @@ namespace document {
 
 namespace vespalib {
     class IDestructorCallback;
-    class ISequencedTaskExecutor;
 }
 
 namespace search::memoryindex {
 
+class DocumentInverterContext;
 class FieldInverter;
 class UrlFieldInverter;
 class IFieldIndexCollection;
@@ -31,41 +32,23 @@ class IFieldIndexCollection;
  */
 class DocumentInverter {
 private:
-    using ISequencedTaskExecutor = vespalib::ISequencedTaskExecutor;
     DocumentInverter(const DocumentInverter &) = delete;
     DocumentInverter &operator=(const DocumentInverter &) = delete;
 
-    const index::Schema &_schema;
+    DocumentInverterContext& _context;
 
-    void addFieldPath(const document::DocumentType &docType, uint32_t fieldId);
-    void buildFieldPath(const document::DocumentType & docType, const document::DataType *dataType);
-
-    using FieldPath = document::Field;
-    using IndexedFieldPaths = std::vector<std::unique_ptr<FieldPath>>;
-    IndexedFieldPaths          _indexedFieldPaths;
-    const document::DataType * _dataType;
-    index::SchemaIndexFields   _schemaIndexFields;
+    using LidVector = std::vector<uint32_t>;
 
     std::vector<std::unique_ptr<FieldInverter>> _inverters;
     std::vector<std::unique_ptr<UrlFieldInverter>> _urlInverters;
-    ISequencedTaskExecutor &_invertThreads;
-    ISequencedTaskExecutor &_pushThreads;
-
-    const index::Schema &getSchema() const { return _schema; }
 
 public:
     /**
      * Create a new document inverter based on the given schema.
      *
-     * @param schema        the schema with which text and uri fields to consider.
-     * @param invertThreads the executor with threads for doing document inverting.
-     * @param pushThreads   the executor with threads for doing pushing of inverted documents
-     *                      to corresponding field indexes.
+     * @param context       A document inverter context shared between related document inverters.
      */
-    DocumentInverter(const index::Schema &schema,
-                     ISequencedTaskExecutor &invertThreads,
-                     ISequencedTaskExecutor &pushThreads,
-                     IFieldIndexCollection &fieldIndexes);
+    DocumentInverter(DocumentInverterContext& context);
 
     ~DocumentInverter();
 
@@ -100,6 +83,7 @@ public:
      * (using a field inverter) is added to the 'invert threads' executor', then this function returns.
      */
     void removeDocument(uint32_t docId);
+    void removeDocuments(LidVector lids);
 
     FieldInverter *getInverter(uint32_t fieldId) const {
         return _inverters[fieldId].get();

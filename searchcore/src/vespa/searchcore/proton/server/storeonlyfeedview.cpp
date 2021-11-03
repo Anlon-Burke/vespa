@@ -173,12 +173,6 @@ StoreOnlyFeedView::Context::Context(Context &&) noexcept = default;
 StoreOnlyFeedView::Context::~Context() = default;
 
 void
-StoreOnlyFeedView::sync()
-{
-    _writeService.summary().sync();
-}
-
-void
 StoreOnlyFeedView::forceCommit(const CommitParam & param, DoneCallback onDone)
 {
     internalForceCommit(param, std::make_shared<ForceCommitContext>(_writeService.master(), _metaStore,
@@ -352,6 +346,22 @@ StoreOnlyFeedView::removeSummary(SerialNum serialNum, Lid lid, OnWriteDoneType o
                 (void) onDone;
                 (void) trackerToken;
                 _summaryAdapter->remove(serialNum, lid);
+            }));
+}
+void
+StoreOnlyFeedView::removeSummaries(SerialNum serialNum, const LidVector & lids, OnWriteDoneType onDone) {
+    std::vector<IPendingLidTracker::Token> trackerTokens;
+    trackerTokens.reserve(lids.size());
+    std::for_each(lids.begin(), lids.end(), [this, &trackerTokens](Lid lid) {
+        trackerTokens.emplace_back(_pendingLidsForDocStore.produce(lid));
+    });
+    summaryExecutor().execute(
+            makeLambdaTask([serialNum, lids = std::move(lids), onDone, trackerTokens = std::move(trackerTokens), this] {
+                (void) onDone;
+                (void) trackerTokens;
+                std::for_each(lids.begin(), lids.end(), [this, serialNum](Lid lid) {
+                    _summaryAdapter->remove(serialNum, lid);
+                });
             }));
 }
 
@@ -618,16 +628,10 @@ StoreOnlyFeedView::removeDocuments(const RemoveDocumentsOperation &op, bool remo
     const LidVector &lidsToRemove(ctx->getLidVector());
     bool useDMS = useDocumentMetaStore(serialNum);
     bool explicitReuseLids = false;
-    std::vector<document::GlobalId> gidsToRemove;
     if (useDMS) {
         vespalib::Gate gate;
-        gidsToRemove = getGidsToRemove(_metaStore, lidsToRemove);
-        {
-            IGidToLidChangeHandler::IDestructorCallbackSP context = std::make_shared<vespalib::GateCallback>(gate);
-            for (const auto &gid : gidsToRemove) {
-                _gidToLidChangeHandler.notifyRemove(context, gid, serialNum);
-            }
-        }
+        std::vector<document::GlobalId> gidsToRemove = getGidsToRemove(_metaStore, lidsToRemove);
+        _gidToLidChangeHandler.notifyRemoves(std::make_shared<vespalib::GateCallback>(gate), gidsToRemove, serialNum);
         gate.await();
         _metaStore.removeBatch(lidsToRemove, ctx->getDocIdLimit());
         _metaStore.commit(CommitParam(serialNum));
@@ -646,9 +650,7 @@ StoreOnlyFeedView::removeDocuments(const RemoveDocumentsOperation &op, bool remo
         removeAttributes(serialNum, lidsToRemove, onWriteDone);
     }
     if (useDocumentStore(serialNum + 1)) {
-        for (const auto &lid : lidsToRemove) {
-            removeSummary(serialNum, lid, onWriteDone);
-        }
+        removeSummaries(serialNum, lidsToRemove, onWriteDone);
     }
     return lidsToRemove.size();
 }
@@ -767,10 +769,12 @@ StoreOnlyFeedView::handleCompactLidSpace(const CompactLidSpaceOperation &op)
         internalForceCommit(CommitParam(serialNum), commitContext);
     }
     if (useDocumentStore(serialNum)) {
-        _writeService.summary().execute(makeLambdaTask([this, &op]() {
+        vespalib::Gate gate;
+        _writeService.summary().execute(makeLambdaTask([this, &op, &gate]() {
             _summaryAdapter->compactLidSpace(op.getLidLimit());
+            gate.countDown();
         }));
-        _writeService.summary().sync();
+        gate.await();
     }
 }
 

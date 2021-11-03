@@ -13,6 +13,7 @@ import com.intellij.psi.PsiFile;
 import org.intellij.sdk.language.SdIcons;
 import org.intellij.sdk.language.SdUtil;
 import org.intellij.sdk.language.psi.SdFirstPhaseDefinition;
+import org.intellij.sdk.language.psi.impl.SdFirstPhaseDefinitionMixin;
 import org.intellij.sdk.language.psi.SdFunctionDefinition;
 
 import org.jetbrains.annotations.NotNull;
@@ -21,7 +22,7 @@ import javax.swing.Icon;
 
 /**
  * This class represents a node descriptor to a node in a tree in the "Call Hierarchy" window.
- * @author shahariel
+ * @author Shahar Ariel
  */
 public class SdCallHierarchyNodeDescriptor extends HierarchyNodeDescriptor {
 
@@ -31,7 +32,7 @@ public class SdCallHierarchyNodeDescriptor extends HierarchyNodeDescriptor {
         if (element instanceof SdFunctionDefinition) {
             beginning.addText(SdUtil.createFunctionDescription((SdFunctionDefinition) element));
         } else if (element instanceof SdFirstPhaseDefinition) {
-            beginning.addText(((SdFirstPhaseDefinition) element).getName());
+            beginning.addText(((SdFirstPhaseDefinitionMixin) element).getName());
         } else {
             beginning.addText(element.getText());
         }

@@ -4,15 +4,14 @@ package org.intellij.sdk.language.psi;
 import com.intellij.psi.ElementDescriptionLocation;
 import com.intellij.psi.ElementDescriptionProvider;
 import com.intellij.psi.PsiElement;
-import com.intellij.psi.PsiNamedElement;
-import org.intellij.sdk.language.psi.SdDeclaration;
+import org.intellij.sdk.language.psi.impl.SdNamedElementImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
  * This class is used for the extension (in plugin.xml), to enable "find Usages" window take the element description from 
  * here. Used only for the "target" element.
- * @author shahariel
+ * @author Shahar Ariel
  */
 public class SdElementDescriptionProvider implements ElementDescriptionProvider {
     
@@ -25,7 +24,7 @@ public class SdElementDescriptionProvider implements ElementDescriptionProvider 
     @Override
     public String getElementDescription(@NotNull PsiElement psiElement, @NotNull ElementDescriptionLocation elementDescriptionLocation) {
         if (psiElement instanceof SdDeclaration) {
-            return ((SdDeclaration) psiElement).getTypeName();
+            return ((SdNamedElementImpl) psiElement).getTypeName();
         } else {
             return "";
         }

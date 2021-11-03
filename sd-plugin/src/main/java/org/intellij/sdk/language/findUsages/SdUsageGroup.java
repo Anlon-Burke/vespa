@@ -3,13 +3,13 @@ package org.intellij.sdk.language.findUsages;
 
 import com.intellij.navigation.ItemPresentation;
 import com.intellij.navigation.NavigationItemFileStatus;
-import com.intellij.openapi.util.NlsSafe;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.FileStatus;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.SmartPointerManager;
 import com.intellij.psi.SmartPsiElementPointer;
 import com.intellij.usages.UsageGroup;
+import com.intellij.usages.UsageView;
 import org.intellij.sdk.language.psi.SdDeclaration;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -18,7 +18,7 @@ import javax.swing.*;
 
 /**
  * This class represent a group of elements in the "Find Usages" window.
- * @author shahariel
+ * @author Shahar Ariel
  */
 public class SdUsageGroup implements UsageGroup {
     private final VirtualFile myFile;
@@ -60,7 +60,8 @@ public class SdUsageGroup implements UsageGroup {
 
     @Override
     public int compareTo(@NotNull UsageGroup usageGroup) {
-        return getPresentableGroupText().compareToIgnoreCase(usageGroup.getPresentableGroupText());
+//        return getPresentableGroupText().compareToIgnoreCase(usageGroup.getPresentableGroupText());
+        return getText(null).compareTo(usageGroup.getText(null));
     }
     
     @Override
@@ -91,4 +92,19 @@ public class SdUsageGroup implements UsageGroup {
     public @Nullable Icon getIcon() {
         return myIcon;
     }
+    
+    // here because JetBrains asked:
+    
+    @SuppressWarnings("deprecation")
+    public Icon getIcon(boolean isOpen) {
+        return myIcon;
+    }
+    
+    @SuppressWarnings("deprecation")
+    public String getText(UsageView view) {
+        return myText;
+    }
+    
+    @Override
+    public void update() {} 
 }
