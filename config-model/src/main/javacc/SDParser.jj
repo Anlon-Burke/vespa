@@ -29,6 +29,7 @@ import com.yahoo.documentmodel.*;
 import com.yahoo.compress.Compressor;
 import com.yahoo.compress.CompressionType;
 import com.yahoo.searchdefinition.Application;
+import com.yahoo.searchdefinition.DistributableResource;
 import com.yahoo.searchdefinition.document.*;
 import com.yahoo.searchdefinition.document.annotation.SDAnnotationType;
 import com.yahoo.searchdefinition.document.annotation.TemporaryAnnotationReferenceDataType;
@@ -355,6 +356,9 @@ TOKEN :
 | < DISTANCEMETRIC: "distance-metric" >
 | < NEIGHBORSTOEXPLOREATINSERT: "neighbors-to-explore-at-insert" >
 | < MULTITHREADEDINDEXING: "multi-threaded-indexing" >
+| < MATCHFEATURES_SL: "match-features" (" ")* ":" (~["}","\n"])* ("\n")? >
+| < MATCHFEATURES_ML: "match-features" (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
+| < MATCHFEATURES_ML_INHERITS: "match-features inherits " (<IDENTIFIER>) (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
 | < SUMMARYFEATURES_SL: "summary-features" (" ")* ":" (~["}","\n"])* ("\n")? >
 | < SUMMARYFEATURES_ML: "summary-features" (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
 | < SUMMARYFEATURES_ML_INHERITS: "summary-features inherits " (<IDENTIFIER>) (<SEARCHLIB_SKIP>)? "{" (~["}"])* "}" >
@@ -1943,8 +1947,8 @@ Object onnxModelItem(OnnxModel onnxModel) :
 }
 {
     (
-        (<FILE> <COLON> path = filePath() { } (<NL>)*) { onnxModel.setFileName(path); } |
-        (<URI> <COLON> path = uriPath() { } (<NL>)*) { onnxModel.setUri(path); } |
+        (path = fileItem()) { onnxModel.setFileName(path); } |
+        (path = uriItem()) { onnxModel.setUri(path); } |
         (<ONNX_INPUT_SL>) {
             String name = token.image.substring(5, token.image.lastIndexOf(":")).trim();
             if (name.startsWith("\"")) { name = name.substring(1, name.length() - 1); }
@@ -1971,56 +1975,42 @@ Object onnxModelItem(OnnxModel onnxModel) :
 void rankingConstant(Schema schema) :
 {
     String name;
-    RankingConstant constant;
-}
-{
-    ( <CONSTANT> name = identifier()
-        {
-            constant = new RankingConstant(name);
-        }
-      lbrace() (rankingConstantItem(constant) (<NL>)*)+ <RBRACE> )
-    {
-        if (documentsOnly) return;
-        schema.rankingConstants().add(constant);
-    }
-}
-
-/**
- * This rule consumes a constant block.
- *
- * @param constant The constant to modify.
- * @return Null.
- */
-Object rankingConstantItem(RankingConstant constant) :
-{
     String path = null;
+    DistributableResource.PathType pathType = DistributableResource.PathType.FILE;
     TensorType type = null;
 }
 {
-    ( (<FILE> <COLON> path = filePath() { } (<NL>)*) { constant.setFileName(path); }
-      | (<URI> <COLON> path = uriPath() { } (<NL>)*) { constant.setUri(path); }
-      | type = tensorTypeWithPrefix(rankingConstantErrorMessage(constant.getName())) (<NL>)* { constant.setType(type); }
+    ( <CONSTANT> name = identifier() lbrace()
+      (path = fileItem() { pathType = DistributableResource.PathType.FILE; }
+       | path = uriItem() { pathType = DistributableResource.PathType.URI; }
+       | type = tensorTypeWithPrefix(rankingConstantErrorMessage(name)) (<NL>)*
+      )+
+      <RBRACE>
     )
     {
-        return null;
+        if (documentsOnly) return;
+        schema.rankingConstants().add(new RankingConstant(name, type, path, pathType));
     }
+}
+
+String fileItem() :
+{
+   String path;
+}
+{
+  (<FILE> <COLON> ( <FILE_PATH> | <STRING> | <IDENTIFIER>) { path = token.image; } { } (<NL>)*) { return path; }
+}
+String uriItem() :
+{
+   String path;
+}
+{
+  (<URI> <COLON> ( <URI_PATH> ) { path = token.image; } (<NL>)*) { return path; }
 }
 
 String rankingConstantErrorMessage(String name) : {}
 {
     { return "For ranking constant ' " + name + "'"; }
-}
-
-String filePath() : { }
-{
-    ( <FILE_PATH> | <STRING> | <IDENTIFIER>)
-    { return token.image; }
-}
-
-String uriPath() : { }
-{
-    ( <URI_PATH> )
-    { return token.image; }
 }
 
 /**
@@ -2078,6 +2068,7 @@ Object rankProfileItem(RankProfile profile) : { }
       | secondPhase(profile)
       | rankDegradation(profile)
       | constants(profile)
+      | matchFeatures(profile)
       | summaryFeatures(profile) )
     { return null; }
 }
@@ -2315,6 +2306,33 @@ Object summaryFeatures(RankProfile profile) :
     )
     {
         profile.addSummaryFeatures(getFeatureList(features));
+        return null;
+    }
+}
+
+/**
+ * This rule consumes a match-features block of a rank profile.
+ *
+ * @param profile The rank profile to modify.
+ * @return Null.
+ */
+Object matchFeatures(RankProfile profile) :
+{
+    String features;
+}
+{
+    ( <MATCHFEATURES_SL> { features = token.image.substring(token.image.indexOf(":") + 1).trim(); } |
+      <MATCHFEATURES_ML> { features = token.image.substring(token.image.indexOf("{") + 1,
+                                                              token.image.lastIndexOf("}")).trim(); } |
+      <MATCHFEATURES_ML_INHERITS> {
+          int inheritsIndex = token.image.indexOf("inherits ");
+          String rest = token.image.substring(inheritsIndex + "inherits ".length());
+          profile.setInheritedMatchFeatures(rest.substring(0, rest.indexOf(" ")).trim());
+          features = token.image.substring(token.image.indexOf("{") + 1, token.image.lastIndexOf("}")).trim();
+      }
+    )
+    {
+        profile.addMatchFeatures(getFeatureList(features));
         return null;
     }
 }
