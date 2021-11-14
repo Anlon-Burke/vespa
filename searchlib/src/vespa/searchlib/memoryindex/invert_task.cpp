@@ -8,25 +8,31 @@
 
 namespace search::memoryindex {
 
-InvertTask::InvertTask(const DocumentInverterContext& inv_context, const InvertContext& context, const std::vector<std::unique_ptr<FieldInverter>>& inverters,  const std::vector<std::unique_ptr<UrlFieldInverter>>& uri_inverters, uint32_t lid, const document::Document& doc)
+using document::Document;
+using document::Field;
+
+namespace {
+
+std::unique_ptr<document::FieldValue>
+get_field_value(const Document& doc, const std::unique_ptr<const Field>& field)
+{
+    if (field) {
+        return doc.getValue(*field);
+    }
+    return {};
+}
+
+}
+
+InvertTask::InvertTask(const DocumentInverterContext& inv_context, const InvertContext& context, const std::vector<std::unique_ptr<FieldInverter>>& inverters,  const std::vector<std::unique_ptr<UrlFieldInverter>>& uri_inverters, uint32_t lid, const document::Document& doc, OnWriteDoneType on_write_done)
     : _inv_context(inv_context),
       _context(context),
       _inverters(inverters),
       _uri_inverters(uri_inverters),
-      _field_values(),
-      _uri_field_values(),
-      _lid(lid)
+      _doc(doc),
+      _lid(lid),
+      _on_write_done(on_write_done)
 {
-    _field_values.reserve(_context.get_fields().size());
-    _uri_field_values.reserve(_context.get_uri_fields().size());
-    for (uint32_t field_id : _context.get_fields()) {
-        _field_values.emplace_back(_inv_context.get_field_value(doc, field_id));
-    }
-    const auto& schema_index_fields = _inv_context.get_schema_index_fields();
-    for (uint32_t uri_field_id : _context.get_uri_fields()) {
-        uint32_t field_id = schema_index_fields._uriFields[uri_field_id]._all;
-        _uri_field_values.emplace_back(_inv_context.get_field_value(doc, field_id));
-    }
 }
 
 InvertTask::~InvertTask() = default;
@@ -34,17 +40,16 @@ InvertTask::~InvertTask() = default;
 void
 InvertTask::run()
 {
-    assert(_field_values.size() == _context.get_fields().size());
-    assert(_uri_field_values.size() == _context.get_uri_fields().size());
-    auto fv_itr = _field_values.begin();
+    _context.set_data_type(_inv_context, _doc);
+    auto document_field_itr = _context.get_document_fields().begin();
     for (auto field_id : _context.get_fields()) {
-        _inverters[field_id]->invertField(_lid, *fv_itr);
-        ++fv_itr;
+        _inverters[field_id]->invertField(_lid, get_field_value(_doc, *document_field_itr));
+        ++document_field_itr;
     }
-    auto uri_fv_itr = _uri_field_values.begin();
+    auto document_uri_field_itr = _context.get_document_uri_fields().begin();
     for (auto uri_field_id : _context.get_uri_fields()) {
-        _uri_inverters[uri_field_id]->invertField(_lid, *uri_fv_itr);
-        ++uri_fv_itr;
+        _uri_inverters[uri_field_id]->invertField(_lid, get_field_value(_doc, *document_uri_field_itr));
+        ++document_uri_field_itr;
     }
 }
 

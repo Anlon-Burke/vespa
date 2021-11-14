@@ -72,14 +72,10 @@ MemoryIndex::MemoryIndex(const Schema& schema,
 {
 }
 
-MemoryIndex::~MemoryIndex()
-{
-    _invertThreads.sync_all();
-    _pushThreads.sync_all();
-}
+MemoryIndex::~MemoryIndex() = default;
 
 void
-MemoryIndex::insertDocument(uint32_t docId, const document::Document &doc)
+MemoryIndex::insertDocument(uint32_t docId, const document::Document &doc, OnWriteDoneType on_write_done)
 {
     if (_frozen) {
         LOG(warning, "Memory index frozen: ignoring insert of document '%s'(%u): '%s'",
@@ -88,7 +84,7 @@ MemoryIndex::insertDocument(uint32_t docId, const document::Document &doc)
     }
     updateMaxDocId(docId);
     auto& inverter = _inverters->get_active_inverter();
-    inverter.invertDocument(docId, doc);
+    inverter.invertDocument(docId, doc, on_write_done);
     if (_indexedDocs.insert(docId).second) {
         incNumDocs();
     }
@@ -113,10 +109,10 @@ MemoryIndex::removeDocuments(LidVector lids)
 }
 
 void
-MemoryIndex::commit(const std::shared_ptr<vespalib::IDestructorCallback> &onWriteDone)
+MemoryIndex::commit(OnWriteDoneType on_write_done)
 {
     auto& inverter = _inverters->get_active_inverter();
-    inverter.pushDocuments(onWriteDone);
+    inverter.pushDocuments(on_write_done);
     _inverters->switch_active_inverter();
 }
 

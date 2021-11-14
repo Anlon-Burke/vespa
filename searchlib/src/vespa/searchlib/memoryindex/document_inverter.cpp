@@ -54,19 +54,17 @@ DocumentInverter::DocumentInverter(DocumentInverterContext& context)
 
 DocumentInverter::~DocumentInverter()
 {
-    _context.get_invert_threads().sync_all();
-    _context.get_push_threads().sync_all();
+    wait_for_zero_ref_count();
 }
 
 void
-DocumentInverter::invertDocument(uint32_t docId, const Document &doc)
+DocumentInverter::invertDocument(uint32_t docId, const Document &doc, OnWriteDoneType on_write_done)
 {
-    _context.set_data_type(doc);
     auto& invert_threads = _context.get_invert_threads();
     auto& invert_contexts = _context.get_invert_contexts();
     for (auto& invert_context : invert_contexts) {
         auto id = invert_context.get_id();
-        auto task = std::make_unique<InvertTask>(_context, invert_context, _inverters, _urlInverters, docId, doc);
+        auto task = std::make_unique<InvertTask>(_context, invert_context, _inverters, _urlInverters, docId, doc, on_write_done);
         invert_threads.executeTask(id, std::move(task));
     }
 }
@@ -90,7 +88,7 @@ DocumentInverter::removeDocuments(LidVector lids)
 }
 
 void
-DocumentInverter::pushDocuments(const std::shared_ptr<vespalib::IDestructorCallback> &onWriteDone)
+DocumentInverter::pushDocuments(OnWriteDoneType on_write_done)
 {
     auto retain = std::make_shared<RetainGuard>(_ref_count);
     using PushTasks = std::vector<std::shared_ptr<ScheduleSequencedTaskCallback>>;
@@ -98,7 +96,7 @@ DocumentInverter::pushDocuments(const std::shared_ptr<vespalib::IDestructorCallb
     auto& push_threads = _context.get_push_threads();
     auto& push_contexts = _context.get_push_contexts();
     for (auto& push_context : push_contexts) {
-        auto task = std::make_unique<PushTask>(push_context, _inverters, _urlInverters, onWriteDone, retain);
+        auto task = std::make_unique<PushTask>(push_context, _inverters, _urlInverters, on_write_done, retain);
         all_push_tasks.emplace_back(std::make_shared<ScheduleSequencedTaskCallback>(push_threads, push_context.get_id(), std::move(task)));
     }
     auto& invert_threads = _context.get_invert_threads();
