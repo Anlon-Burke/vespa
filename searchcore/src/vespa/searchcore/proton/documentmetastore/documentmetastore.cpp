@@ -207,6 +207,8 @@ void
 DocumentMetaStore::onCommit()
 {
     if (consider_compact_gid_to_lid_map()) {
+        incGeneration();
+        _changesSinceCommit = 0;
         _gidToLidMap.compact_worst();
         _gid_to_lid_map_write_itr_prepare_serial_num = 0u;
         _gid_to_lid_map_write_itr.begin(_gidToLidMap.getRoot());
@@ -444,7 +446,6 @@ DocumentMetaStore::~DocumentMetaStore()
 DocumentMetaStore::Result
 DocumentMetaStore::inspectExisting(const GlobalId &gid, uint64_t prepare_serial_num)
 {
-    assert(_lidAlloc.isFreeListConstructed());
     Result res;
     KeyComp comp(gid, _metaDataStore);
     auto find_key = GidToLidMapKey::make_find_key(gid);
@@ -604,11 +605,9 @@ DocumentMetaStore::remove(DocId lid, uint64_t prepare_serial_num)
 }
 
 void
-DocumentMetaStore::removeComplete(DocId lid)
+DocumentMetaStore::removes_complete(const std::vector<DocId>& lids)
 {
-    assert(lid != 0);
-    assert(lid < _metaDataStore.size());
-    _lidAlloc.holdLid(lid, _metaDataStore.size(), getCurrentGeneration());
+    _lidAlloc.holdLids(lids, _metaDataStore.size(), getCurrentGeneration());
     incGeneration();
 }
 
@@ -693,17 +692,10 @@ DocumentMetaStore::removeBatch(const std::vector<DocId> &lidsToRemove, const uin
         bucketdb::Guard bucketGuard = _bucketDB->takeGuard();
         bucketGuard->remove_batch(bdb_removed, _subDbType);
     }
-    incGeneration();
+    ++_changesSinceCommit;
     if (_op_listener) {
         _op_listener->notify_remove_batch();
     }
-}
-
-void
-DocumentMetaStore::removeBatchComplete(const std::vector<DocId> &lidsToRemove)
-{
-    _lidAlloc.holdLids(lidsToRemove, _metaDataStore.size(), getCurrentGeneration());
-    incGeneration();
 }
 
 bool

@@ -4,6 +4,7 @@ package com.yahoo.config.model.api;
 
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ClusterSpec;
+import com.yahoo.config.provision.SystemName;
 
 import java.util.List;
 import java.util.Objects;
@@ -17,22 +18,36 @@ import java.util.stream.Stream;
  * @author mortent
  */
 public class ApplicationClusterEndpoint {
+    @Override
+    public String toString() {
+        return "ApplicationClusterEndpoint{" +
+               "dnsName=" + dnsName +
+               ", scope=" + scope +
+               ", routingMethod=" + routingMethod +
+               ", weight=" + weight +
+               ", hostNames=" + hostNames +
+               ", clusterId='" + clusterId + '\'' +
+               '}';
+    }
+
     public enum Scope {application, global, zone}
 
-    public enum RoutingMethod {shared, sharedLayer4}
+    public enum RoutingMethod {shared, sharedLayer4, exclusive}
 
     private final DnsName dnsName;
     private final Scope scope;
     private final RoutingMethod routingMethod;
     private final int weight;
     private final List<String> hostNames;
+    private final String clusterId;
 
-    public ApplicationClusterEndpoint(DnsName dnsName, Scope scope, RoutingMethod routingMethod, int weight, List<String> hostNames) {
+    private ApplicationClusterEndpoint(DnsName dnsName, Scope scope, RoutingMethod routingMethod, int weight, List<String> hostNames, String clusterId) {
         this.dnsName = dnsName;
         this.scope = scope;
         this.routingMethod = routingMethod;
         this.weight = weight;
         this.hostNames = List.copyOf(hostNames);
+        this.clusterId = clusterId;
     }
 
     public DnsName dnsName() {
@@ -55,6 +70,10 @@ public class ApplicationClusterEndpoint {
         return hostNames;
     }
 
+    public String clusterId() {
+        return clusterId;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -64,8 +83,9 @@ public class ApplicationClusterEndpoint {
         private DnsName dnsName;
         private Scope scope;
         private RoutingMethod routingMethod;
-        private int weigth = 0;
+        private int weigth = 1;
         private List<String> hosts;
+        private String clusterId;
 
         public Builder dnsName(DnsName name) {
             this.dnsName = name;
@@ -92,6 +112,11 @@ public class ApplicationClusterEndpoint {
             return this;
         }
 
+        public Builder routingMethod(RoutingMethod routingMethod) {
+            this.routingMethod = routingMethod;
+            return this;
+        }
+
         public Builder weight(int weigth) {
             this.weigth = weigth;
             return this;
@@ -102,8 +127,13 @@ public class ApplicationClusterEndpoint {
             return this;
         }
 
+        public Builder clusterId(String clusterId) {
+            this.clusterId = clusterId;
+            return this;
+        }
+
         public ApplicationClusterEndpoint build() {
-            return new ApplicationClusterEndpoint(dnsName, scope, routingMethod, weigth, hosts);
+            return new ApplicationClusterEndpoint(dnsName, scope, routingMethod, weigth, hosts, clusterId);
         }
     }
 
@@ -120,16 +150,25 @@ public class ApplicationClusterEndpoint {
             return name;
         }
 
-        // TODO: remove
+        // TODO: remove when 7.508 is latest version
         public static DnsName sharedNameFrom(ClusterSpec.Id cluster, ApplicationId applicationId, String suffix) {
-            String name = dnsParts(cluster, applicationId)
+            return sharedNameFrom(SystemName.main, cluster, applicationId, suffix);
+        }
+
+        public static DnsName sharedNameFrom(SystemName systemName, ClusterSpec.Id cluster, ApplicationId applicationId, String suffix) {
+            String name = dnsParts(systemName, cluster, applicationId)
                     .filter(Objects::nonNull)             // remove null values that were "default"
                     .collect(Collectors.joining("--"));
             return new DnsName(sanitize(name) + suffix); // Need to sanitize name since it is considered one label
         }
 
+        // TODO remove this method when 7.508 is latest version
         public static DnsName sharedL4NameFrom(ClusterSpec.Id cluster, ApplicationId applicationId, String suffix) {
-            String name = dnsParts(cluster, applicationId)
+            return sharedL4NameFrom(SystemName.main, cluster, applicationId, suffix);
+        }
+
+        public static DnsName sharedL4NameFrom(SystemName systemName, ClusterSpec.Id cluster, ApplicationId applicationId, String suffix) {
+            String name = dnsParts(systemName, cluster, applicationId)
                     .filter(Objects::nonNull) // remove null values that were "default"
                     .map(DnsName::sanitize)
                     .collect(Collectors.joining("."));
@@ -140,9 +179,10 @@ public class ApplicationClusterEndpoint {
             return new DnsName(name);
         }
 
-        private static Stream<String> dnsParts(ClusterSpec.Id cluster, ApplicationId applicationId) {
+        private static Stream<String> dnsParts(SystemName systemName, ClusterSpec.Id cluster, ApplicationId applicationId) {
             return Stream.of(
                     nullIfDefault(cluster.value()),
+                    systemPart(systemName),
                     nullIfDefault(applicationId.instance().value()),
                     applicationId.application().value(),
                     applicationId.tenant().value()
@@ -167,6 +207,17 @@ public class ApplicationClusterEndpoint {
 
         private static String nullIfDefault(String string) {
             return Optional.of(string).filter(s -> !s.equals("default")).orElse(null);
+        }
+
+        private static String systemPart(SystemName systemName) {
+            return "cd".equals(systemName.value()) ? systemName.value() : null;
+        }
+
+        @Override
+        public String toString() {
+            return "DnsName{" +
+                   "name='" + name + '\'' +
+                   '}';
         }
     }
 }

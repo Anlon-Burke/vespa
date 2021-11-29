@@ -82,9 +82,15 @@ LidAllocator::unregisterLid(DocId lid)
 void
 LidAllocator::unregister_lids(const std::vector<DocId>& lids)
 {
-    for (auto lid : lids) {
-        unregisterLid(lid);
+    if (lids.empty()) {
+        return;
     }
+    auto high = isFreeListConstructed() ? _pendingHoldLids.set_bits(lids) : _pendingHoldLids.assert_not_set_bits(lids);
+    assert(high < _usedLids.size());
+    _usedLids.clear_bits(lids);
+    assert(high < _activeLids.size());
+    _activeLids.consider_clear_bits(lids);
+    _numActiveLids = _activeLids.count();
 }
 
 void
@@ -113,21 +119,6 @@ LidAllocator::moveLidEnd(DocId fromLid, DocId toLid)
         _activeLids.setBit(toLid);
         _activeLids.clearBit(fromLid);
     }
-}
-
-void
-LidAllocator::holdLid(DocId lid,
-                      DocId lidLimit,
-                      generation_t currentGeneration)
-{
-    (void) lidLimit;
-    assert(holdLidOK(lid, lidLimit));
-    assert(isFreeListConstructed());
-    assert(lid < _usedLids.size());
-    assert(lid < _pendingHoldLids.size());
-    assert(_pendingHoldLids.testBit(lid));
-    _pendingHoldLids.clearBit(lid);
-    _holdLids.add(lid, currentGeneration);
 }
 
 void

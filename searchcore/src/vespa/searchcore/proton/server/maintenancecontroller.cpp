@@ -31,15 +31,15 @@ public:
 };
 
 bool
-isRunningOrRunnable(const MaintenanceJobRunner & job, const Executor * master) {
+isRunnable(const MaintenanceJobRunner & job, const Executor * master) {
     return (&job.getExecutor() == master)
-           ? job.isRunning()
+           ? false
            : job.isRunnable();
 }
 
 }
 
-MaintenanceController::MaintenanceController(IThreadService &masterThread,
+MaintenanceController::MaintenanceController(ISyncableThreadService &masterThread,
                                              vespalib::Executor & defaultExecutor,
                                              MonitoredRefCount & refCount,
                                              const DocTypeName &docTypeName)
@@ -99,14 +99,14 @@ MaintenanceController::killJobs()
         job->stop(); // Make sure no more tasks are added to the executor
     }
     for (auto &job : _jobs) {
-        while (isRunningOrRunnable(*job, &_masterThread)) {
+        while (isRunnable(*job, &_masterThread)) {
             std::this_thread::sleep_for(1ms);
         }
     }
-    JobList tmpJobs = _jobs;
+    JobList tmpJobs;
     {
         Guard guard(_jobsLock);
-        _jobs.clear();
+        tmpJobs.swap(_jobs);
     }
     // Hold jobs until existing tasks have been drained
     _masterThread.execute(makeLambdaTask([this, jobs=std::move(tmpJobs)]() {
@@ -138,6 +138,11 @@ MaintenanceController::stop()
     _masterThread.execute(makeLambdaTask([this]() { _state = State::STOPPING; killJobs(); }));
     _masterThread.sync();  // Wait for killJobs()
     _masterThread.sync();  // Wait for already scheduled maintenance jobs and performHoldJobs
+}
+
+searchcorespi::index::IThreadService &
+MaintenanceController::masterThread() {
+    return _masterThread;
 }
 
 void

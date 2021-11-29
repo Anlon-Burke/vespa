@@ -168,6 +168,7 @@ public class ModelContextImpl implements ModelContext {
         private final boolean useThreePhaseUpdates;
         private final String feedSequencer;
         private final int feedTaskLimit;
+        private final int feedMasterTaskLimit;
         private final String sharedFieldWriterExecutor;
         private final String responseSequencer;
         private final int numResponseThreads;
@@ -190,7 +191,6 @@ public class ModelContextImpl implements ModelContext {
         private final int metricsproxyNumThreads;
         private final boolean containerDumpHeapOnShutdownTimeout;
         private final double containerShutdownTimeout;
-        private final int maxConnectionLifeInHosted;
         private final int distributorMergeBusyWait;
         private final int docstoreCompressionLevel;
         private final double diskBloatFactor;
@@ -198,12 +198,16 @@ public class ModelContextImpl implements ModelContext {
         private final int maxUnCommittedMemory;
         private final boolean forwardIssuesAsErrors;
         private final boolean asyncApplyBucketDiff;
+        private final boolean ignoreThreadStackSizes;
+        private final boolean unorderedMergeChaining;
+        private final boolean useV8GeoPositions;
 
         public FeatureFlags(FlagSource source, ApplicationId appId) {
             this.defaultTermwiseLimit = flagValue(source, appId, Flags.DEFAULT_TERM_WISE_LIMIT);
             this.useThreePhaseUpdates = flagValue(source, appId, Flags.USE_THREE_PHASE_UPDATES);
             this.feedSequencer = flagValue(source, appId, Flags.FEED_SEQUENCER_TYPE);
             this.feedTaskLimit = flagValue(source, appId, Flags.FEED_TASK_LIMIT);
+            this.feedMasterTaskLimit = flagValue(source, appId, Flags.FEED_MASTER_TASK_LIMIT);
             this.sharedFieldWriterExecutor = flagValue(source, appId, Flags.SHARED_FIELD_WRITER_EXECUTOR);
             this.responseSequencer = flagValue(source, appId, Flags.RESPONSE_SEQUENCER_TYPE);
             this.numResponseThreads = flagValue(source, appId, Flags.RESPONSE_NUM_THREADS);
@@ -226,7 +230,6 @@ public class ModelContextImpl implements ModelContext {
             this.metricsproxyNumThreads = flagValue(source, appId, Flags.METRICSPROXY_NUM_THREADS);
             this.containerDumpHeapOnShutdownTimeout = flagValue(source, appId, Flags.CONTAINER_DUMP_HEAP_ON_SHUTDOWN_TIMEOUT);
             this.containerShutdownTimeout = flagValue(source, appId,Flags.CONTAINER_SHUTDOWN_TIMEOUT);
-            this.maxConnectionLifeInHosted = flagValue(source, appId, Flags.MAX_CONNECTION_LIFE_IN_HOSTED);
             this.distributorMergeBusyWait = flagValue(source, appId, Flags.DISTRIBUTOR_MERGE_BUSY_WAIT);
             this.docstoreCompressionLevel = flagValue(source, appId, Flags.DOCSTORE_COMPRESSION_LEVEL);
             this.diskBloatFactor = flagValue(source, appId, Flags.DISK_BLOAT_FACTOR);
@@ -234,12 +237,17 @@ public class ModelContextImpl implements ModelContext {
             this.maxUnCommittedMemory = flagValue(source, appId, Flags.MAX_UNCOMMITTED_MEMORY);;
             this.forwardIssuesAsErrors = flagValue(source, appId, PermanentFlags.FORWARD_ISSUES_AS_ERRORS);
             this.asyncApplyBucketDiff = flagValue(source, appId, Flags.ASYNC_APPLY_BUCKET_DIFF);
+            this.ignoreThreadStackSizes = flagValue(source, appId, Flags.IGNORE_THREAD_STACK_SIZES);
+            this.unorderedMergeChaining = flagValue(source, appId, Flags.UNORDERED_MERGE_CHAINING);
+            this.useV8GeoPositions = flagValue(source, appId, Flags.USE_V8_GEO_POSITIONS);
+
         }
 
         @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
         @Override public boolean useThreePhaseUpdates() { return useThreePhaseUpdates; }
         @Override public String feedSequencerType() { return feedSequencer; }
         @Override public int feedTaskLimit() { return feedTaskLimit; }
+        @Override public int feedMasterTaskLimit() { return feedMasterTaskLimit; }
         @Override public String sharedFieldWriterExecutor() { return sharedFieldWriterExecutor; }
         @Override public String responseSequencerType() { return responseSequencer; }
         @Override public int defaultNumResponseThreads() { return numResponseThreads; }
@@ -264,7 +272,6 @@ public class ModelContextImpl implements ModelContext {
         @Override public int metricsproxyNumThreads() { return metricsproxyNumThreads; }
         @Override public double containerShutdownTimeout() { return containerShutdownTimeout; }
         @Override public boolean containerDumpHeapOnShutdownTimeout() { return containerDumpHeapOnShutdownTimeout; }
-        @Override public int maxConnectionLifeInHosted() { return maxConnectionLifeInHosted; }
         @Override public int distributorMergeBusyWait() { return distributorMergeBusyWait; }
         @Override public double diskBloatFactor() { return diskBloatFactor; }
         @Override public int docstoreCompressionLevel() { return docstoreCompressionLevel; }
@@ -272,6 +279,9 @@ public class ModelContextImpl implements ModelContext {
         @Override public int maxUnCommittedMemory() { return maxUnCommittedMemory; }
         @Override public boolean forwardIssuesAsErrors() { return forwardIssuesAsErrors; }
         @Override public boolean asyncApplyBucketDiff() { return asyncApplyBucketDiff; }
+        @Override public boolean ignoreThreadStackSizes() { return ignoreThreadStackSizes; }
+        @Override public boolean unorderedMergeChaining() { return unorderedMergeChaining; }
+        @Override public boolean useV8GeoPositions() { return useV8GeoPositions; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)

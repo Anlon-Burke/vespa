@@ -16,11 +16,14 @@ import com.yahoo.vespa.config.JRTConnectionPool;
 import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.filedistribution.CompressedFileReference;
 import com.yahoo.vespa.filedistribution.EmptyFileReferenceData;
+import com.yahoo.vespa.filedistribution.FileDistributionConnectionPool;
 import com.yahoo.vespa.filedistribution.FileDownloader;
 import com.yahoo.vespa.filedistribution.FileReferenceData;
 import com.yahoo.vespa.filedistribution.FileReferenceDownload;
 import com.yahoo.vespa.filedistribution.LazyFileReferenceData;
 import com.yahoo.vespa.filedistribution.LazyTemporaryStorageFileReferenceData;
+import com.yahoo.vespa.flags.FlagSource;
+import com.yahoo.vespa.flags.Flags;
 import com.yahoo.yolean.Exceptions;
 
 import java.io.File;
@@ -30,6 +33,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -73,14 +77,15 @@ public class FileServer {
 
     @SuppressWarnings("WeakerAccess") // Created by dependency injection
     @Inject
-    public FileServer(ConfigserverConfig configserverConfig) {
+    public FileServer(ConfigserverConfig configserverConfig, FlagSource flagSource) {
         this(new File(Defaults.getDefaults().underVespaHome(configserverConfig.fileReferencesDir())),
-             createFileDownloader(getOtherConfigServersInCluster(configserverConfig)));
+             createFileDownloader(getOtherConfigServersInCluster(configserverConfig),
+             Flags.USE_FILE_DISTRIBUTION_CONNECTION_POOL.bindTo(flagSource).value()));
     }
 
     // For testing only
     public FileServer(File rootDir) {
-        this(rootDir, createFileDownloader(List.of()));
+        this(rootDir, createFileDownloader(List.of(), true));
     }
 
     public FileServer(File rootDir, FileDownloader fileDownloader) {
@@ -94,18 +99,16 @@ public class FileServer {
         return hasFile(new FileReference(fileReference));
     }
 
-    FileDirectory getRootDir() {
-        return root;
-    }
-
     private boolean hasFile(FileReference reference) {
         try {
             return root.getFile(reference).exists();
         } catch (IllegalArgumentException e) {
-            log.log(Level.FINE, () -> "Failed locating file reference '" + reference + "' with error " + e.toString());
+            log.log(Level.FINE, () -> "Failed locating " + reference + ": " + e.getMessage());
         }
         return false;
     }
+
+    FileDirectory getRootDir() { return root; }
 
     void startFileServing(String fileName, Receiver target) {
         FileReference reference = new FileReference(fileName);
@@ -118,7 +121,7 @@ public class FileServer {
 
     private void serveFile(FileReference reference, Receiver target) {
         File file = root.getFile(reference);
-        log.log(Level.FINE, () -> "Start serving reference '" + reference.value() + "' with file '" + file.getAbsolutePath() + "'");
+        log.log(Level.FINE, () -> "Start serving " + reference + " with file '" + file.getAbsolutePath() + "'");
         boolean success = false;
         String errorDescription = "OK";
         FileReferenceData fileData = EmptyFileReferenceData.empty(reference, file.getName());
@@ -126,15 +129,15 @@ public class FileServer {
             fileData = readFileReferenceData(reference);
             success = true;
         } catch (IOException e) {
-            errorDescription = "For file reference '" + reference.value() + "': failed reading file '" + file.getAbsolutePath() + "'";
+            errorDescription = "For" + reference.value() + ": failed reading file '" + file.getAbsolutePath() + "'";
             log.warning(errorDescription + " for sending to '" + target.toString() + "'. " + e.toString());
         }
 
         try {
             target.receive(fileData, new ReplayStatus(success ? 0 : 1, success ? "OK" : errorDescription));
-            log.log(Level.FINE, () -> "Done serving file reference '" + reference.value() + "' with file '" + file.getAbsolutePath() + "'");
+            log.log(Level.FINE, () -> "Done serving " + reference.value() + " with file '" + file.getAbsolutePath() + "'");
         } catch (Exception e) {
-            log.log(Level.WARNING, "Failed serving file reference '" + reference.value() + "': " + Exceptions.toMessageString(e));
+            log.log(Level.WARNING, "Failed serving " + reference + ": " + Exceptions.toMessageString(e));
         } finally {
             fileData.close();
         }
@@ -153,11 +156,13 @@ public class FileServer {
     }
 
     public void serveFile(String fileReference, boolean downloadFromOtherSourceIfNotFound, Request request, Receiver receiver) {
+        if (executor instanceof ThreadPoolExecutor)
+            log.log(Level.FINE, () -> "Active threads: " + ((ThreadPoolExecutor) executor).getActiveCount());
         executor.execute(() -> serveFileInternal(fileReference, downloadFromOtherSourceIfNotFound, request, receiver));
     }
 
     private void serveFileInternal(String fileReference, boolean downloadFromOtherSourceIfNotFound, Request request, Receiver receiver) {
-        log.log(Level.FINE, () -> "Received request for reference '" + fileReference + "' from " + request.target());
+        log.log(Level.FINE, () -> "Received request for file reference '" + fileReference + "' from " + request.target());
 
         boolean fileExists;
         try {
@@ -191,32 +196,34 @@ public class FileServer {
             FileReferenceDownload newDownload = new FileReferenceDownload(fileReference, false, fileReferenceDownload.client());
             return downloader.getFile(newDownload).isPresent();
         } else {
-            log.log(Level.FINE, "File not found, will not download from another source since request came from another config server");
+            log.log(Level.FINE, "File not found, will not download from another source, since request came from another config server");
             return false;
         }
     }
 
-    public FileDownloader downloader() {
-        return downloader;
-    }
+    public FileDownloader downloader() { return downloader; }
 
     public void close() {
         downloader.close();
         executor.shutdown();
     }
 
-    private static FileDownloader createFileDownloader(List<String> configServers) {
+    private static FileDownloader createFileDownloader(List<String> configServers, boolean useFileDistributionConnectionPool) {
         Supervisor supervisor = new Supervisor(new Transport("filedistribution-pool")).setDropEmptyBuffers(true);
         return new FileDownloader(configServers.isEmpty()
                                           ? FileDownloader.emptyConnectionPool()
-                                          : getConnectionPool(configServers, supervisor),
+                                          : createConnectionPool(configServers, supervisor, useFileDistributionConnectionPool),
                                   supervisor);
     }
 
-    private static ConnectionPool getConnectionPool(List<String> configServers, Supervisor supervisor) {
-        return configServers.size() > 0
-                ? new JRTConnectionPool(new ConfigSourceSet(configServers), supervisor)
-                : FileDownloader.emptyConnectionPool();
+    private static ConnectionPool createConnectionPool(List<String> configServers, Supervisor supervisor, boolean useFileDistributionConnectionPool) {
+        ConfigSourceSet configSourceSet = new ConfigSourceSet(configServers);
+
+        if (configServers.size() == 0) return FileDownloader.emptyConnectionPool();
+
+        return useFileDistributionConnectionPool
+                ? new FileDistributionConnectionPool(configSourceSet, supervisor)
+                : new JRTConnectionPool(configSourceSet, supervisor);
     }
 
 }

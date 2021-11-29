@@ -1,0 +1,15 @@
+{
+    "steps": [
+        {
+            "response": {
+                "body": {
+                    "root": {
+                        "fields": {
+                            "totalCount" : 2
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}

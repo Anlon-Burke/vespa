@@ -1,4 +1,5 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+
 package vespa
 
 import (
@@ -6,7 +7,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/vespa-engine/vespa/client/go/cli"
 	"io"
 	"io/ioutil"
 	"math"
@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vespa-engine/vespa/client/go/auth0"
 	"github.com/vespa-engine/vespa/client/go/util"
 )
 
@@ -38,7 +39,6 @@ type Service struct {
 	BaseURL    string
 	Name       string
 	TLSOptions TLSOptions
-	Target     *Target
 }
 
 // Target represents a Vespa platform, running named Vespa services.
@@ -47,7 +47,7 @@ type Target interface {
 	Type() string
 
 	// Service returns the service for given name. If timeout is non-zero, wait for the service to converge.
-	Service(name string, timeout time.Duration, sessionOrRunID int64) (*Service, error)
+	Service(name string, timeout time.Duration, sessionOrRunID int64, cluster string) (*Service, error)
 
 	// PrintLog writes the logs of this deployment using given options to control output.
 	PrintLog(options LogOptions) error
@@ -90,7 +90,7 @@ func (t *customTarget) PrepareApiRequest(req *http.Request, sigKeyId string) err
 // Do sends request to this service. Any required authentication happens automatically.
 func (s *Service) Do(request *http.Request, timeout time.Duration) (*http.Response, error) {
 	if s.TLSOptions.KeyPair.Certificate != nil {
-		util.ActiveHttpClient.UseCertificate(s.TLSOptions.KeyPair)
+		util.ActiveHttpClient.UseCertificate([]tls.Certificate{s.TLSOptions.KeyPair})
 	}
 	return util.HttpDo(request, timeout, s.Description())
 }
@@ -128,7 +128,7 @@ func (s *Service) Description() string {
 
 func (t *customTarget) Type() string { return t.targetType }
 
-func (t *customTarget) Service(name string, timeout time.Duration, sessionID int64) (*Service, error) {
+func (t *customTarget) Service(name string, timeout time.Duration, sessionOrRunID int64, cluster string) (*Service, error) {
 	if timeout > 0 && name != deployService {
 		if err := t.waitForConvergence(timeout); err != nil {
 			return nil, err
@@ -170,7 +170,7 @@ func (t *customTarget) urlWithPort(serviceName string) (string, error) {
 }
 
 func (t *customTarget) waitForConvergence(timeout time.Duration) error {
-	deployer, err := t.Service(deployService, 0, 0)
+	deployer, err := t.Service(deployService, 0, 0, "")
 	if err != nil {
 		return err
 	}
@@ -208,15 +208,40 @@ type cloudTarget struct {
 	tlsOptions TLSOptions
 	logOptions LogOptions
 
-	queryURL       string
-	documentURL    string
+	urlsByCluster  map[string]string
 	authConfigPath string
+	systemName     string
+	cloudAuth      string
+}
+
+func (t *cloudTarget) resolveEndpoint(cluster string) (string, error) {
+	if cluster == "" {
+		for _, u := range t.urlsByCluster {
+			if len(t.urlsByCluster) == 1 {
+				return u, nil
+			} else {
+				return "", fmt.Errorf("multiple clusters, none chosen: %v", t.urlsByCluster)
+			}
+		}
+	} else {
+		u := t.urlsByCluster[cluster]
+		if u == "" {
+			clusters := make([]string, len(t.urlsByCluster))
+			for c := range t.urlsByCluster {
+				clusters = append(clusters, c)
+			}
+			return "", fmt.Errorf("unknown cluster '%s': must be one of %v", cluster, clusters)
+		}
+		return u, nil
+	}
+
+	return "", fmt.Errorf("no endpoints")
 }
 
 func (t *cloudTarget) Type() string { return t.targetType }
 
-func (t *cloudTarget) Service(name string, timeout time.Duration, runID int64) (*Service, error) {
-	if name != deployService {
+func (t *cloudTarget) Service(name string, timeout time.Duration, runID int64, cluster string) (*Service, error) {
+	if name != deployService && t.urlsByCluster == nil {
 		if err := t.waitForEndpoints(timeout, runID); err != nil {
 			return nil, err
 		}
@@ -225,25 +250,37 @@ func (t *cloudTarget) Service(name string, timeout time.Duration, runID int64) (
 	case deployService:
 		return &Service{Name: name, BaseURL: t.apiURL}, nil
 	case queryService:
-		if t.queryURL == "" {
-			return nil, fmt.Errorf("service %s is not discovered", name)
+		queryURL, err := t.resolveEndpoint(cluster)
+		if err != nil {
+			return nil, err
 		}
-		return &Service{Name: name, BaseURL: t.queryURL, TLSOptions: t.tlsOptions}, nil
+		return &Service{Name: name, BaseURL: queryURL, TLSOptions: t.tlsOptions}, nil
 	case documentService:
-		if t.documentURL == "" {
-			return nil, fmt.Errorf("service %s is not discovered", name)
+		documentURL, err := t.resolveEndpoint(cluster)
+		if err != nil {
+			return nil, err
 		}
-		return &Service{Name: name, BaseURL: t.documentURL, TLSOptions: t.tlsOptions}, nil
+		return &Service{Name: name, BaseURL: documentURL, TLSOptions: t.tlsOptions}, nil
 	}
 	return nil, fmt.Errorf("unknown service: %s", name)
 }
 
 func (t *cloudTarget) PrepareApiRequest(req *http.Request, sigKeyId string) error {
 	if Auth0AccessTokenEnabled() {
-		if err := t.addAuth0AccessToken(req); err != nil {
-			return err
+		if t.cloudAuth == "access-token" {
+			if err := t.addAuth0AccessToken(req); err != nil {
+				return err
+			}
+		} else {
+			if t.apiKey == nil {
+				return fmt.Errorf("Deployment to cloud requires an API key. Try 'vespa api-key'")
+			}
+			signer := NewRequestSigner(sigKeyId, t.apiKey)
+			if err := signer.SignRequest(req); err != nil {
+				return err
+			}
 		}
-	} else if t.apiKey != nil {
+	} else {
 		signer := NewRequestSigner(sigKeyId, t.apiKey)
 		if err := signer.SignRequest(req); err != nil {
 			return err
@@ -253,12 +290,12 @@ func (t *cloudTarget) PrepareApiRequest(req *http.Request, sigKeyId string) erro
 }
 
 func (t *cloudTarget) addAuth0AccessToken(request *http.Request) error {
-	c, err := cli.GetCli(t.authConfigPath)
-	tenant, err := c.PrepareTenant(cli.ContextWithCancel())
+	a, err := auth0.GetAuth0(t.authConfigPath, t.systemName, t.apiURL)
+	system, err := a.PrepareSystem(auth0.ContextWithCancel())
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+tenant.AccessToken)
+	request.Header.Set("Authorization", "Bearer "+system.AccessToken)
 	return nil
 }
 
@@ -402,7 +439,7 @@ func (t *cloudTarget) discoverEndpoints(timeout time.Duration) error {
 	if err := t.PrepareApiRequest(req, t.deployment.Application.SerializedForm()); err != nil {
 		return err
 	}
-	var endpointURL string
+	urlsByCluster := make(map[string]string)
 	endpointFunc := func(status int, response []byte) (bool, error) {
 		if ok, err := isOK(status); !ok {
 			return ok, err
@@ -414,17 +451,21 @@ func (t *cloudTarget) discoverEndpoints(timeout time.Duration) error {
 		if len(resp.Endpoints) == 0 {
 			return false, nil
 		}
-		endpointURL = resp.Endpoints[0].URL
+		for _, endpoint := range resp.Endpoints {
+			if endpoint.Scope != "zone" {
+				continue
+			}
+			urlsByCluster[endpoint.Cluster] = endpoint.URL
+		}
 		return true, nil
 	}
 	if _, err = wait(endpointFunc, func() *http.Request { return req }, &t.tlsOptions.KeyPair, timeout); err != nil {
 		return err
 	}
-	if endpointURL == "" {
-		return fmt.Errorf("no endpoint discovered")
+	if len(urlsByCluster) == 0 {
+		return fmt.Errorf("no endpoints discovered")
 	}
-	t.queryURL = endpointURL
-	t.documentURL = endpointURL
+	t.urlsByCluster = urlsByCluster
 	return nil
 }
 
@@ -447,7 +488,7 @@ func CustomTarget(baseURL string) Target {
 
 // CloudTarget creates a Target for the Vespa Cloud platform.
 func CloudTarget(apiURL string, deployment Deployment, apiKey []byte, tlsOptions TLSOptions, logOptions LogOptions,
-	authConfigPath string) Target {
+	authConfigPath string, systemName string, cloudAuth string, urlsByCluster map[string]string) Target {
 	return &cloudTarget{
 		apiURL:         apiURL,
 		targetType:     cloudTargetType,
@@ -456,11 +497,16 @@ func CloudTarget(apiURL string, deployment Deployment, apiKey []byte, tlsOptions
 		tlsOptions:     tlsOptions,
 		logOptions:     logOptions,
 		authConfigPath: authConfigPath,
+		systemName:     systemName,
+		cloudAuth:      cloudAuth,
+		urlsByCluster:  urlsByCluster,
 	}
 }
 
 type deploymentEndpoint struct {
-	URL string `json:"url"`
+	Cluster string `json:"cluster"`
+	URL     string `json:"url"`
+	Scope   string `json:"scope"`
 }
 
 type deploymentResponse struct {
@@ -490,7 +536,7 @@ type requestFunc func() *http.Request
 
 func wait(fn responseFunc, reqFn requestFunc, certificate *tls.Certificate, timeout time.Duration) (int, error) {
 	if certificate != nil {
-		util.ActiveHttpClient.UseCertificate(*certificate)
+		util.ActiveHttpClient.UseCertificate([]tls.Certificate{*certificate})
 	}
 	var (
 		httpErr    error

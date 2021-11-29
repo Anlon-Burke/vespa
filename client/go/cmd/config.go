@@ -133,10 +133,16 @@ func (c *Config) Write() error {
 }
 
 func (c *Config) CertificatePath(app vespa.ApplicationID) (string, error) {
+	if override, ok := os.LookupEnv("VESPA_CLI_DATA_PLANE_CERT_FILE"); ok {
+		return override, nil
+	}
 	return c.applicationFilePath(app, "data-plane-public-cert.pem")
 }
 
 func (c *Config) PrivateKeyPath(app vespa.ApplicationID) (string, error) {
+	if override, ok := os.LookupEnv("VESPA_CLI_DATA_PLANE_KEY_FILE"); ok {
+		return override, nil
+	}
 	return c.applicationFilePath(app, "data-plane-private-key.pem")
 }
 
@@ -149,7 +155,7 @@ func (c *Config) ReadAPIKey(tenantName string) ([]byte, error) {
 }
 
 func (c *Config) AuthConfigPath() string {
-	return filepath.Join(c.Home, "auth", "config.json")
+	return filepath.Join(c.Home, "auth.json")
 }
 
 func (c *Config) ReadSessionID(app vespa.ApplicationID) (int64, error) {
@@ -232,6 +238,12 @@ func (c *Config) Set(option, value string) error {
 	case colorFlag:
 		switch value {
 		case "auto", "never", "always":
+			viper.Set(option, value)
+			return nil
+		}
+	case cloudAuthFlag:
+		switch value {
+		case "access-token", "api-key":
 			viper.Set(option, value)
 			return nil
 		}

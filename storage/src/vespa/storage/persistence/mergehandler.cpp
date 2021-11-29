@@ -104,6 +104,29 @@ void check_apply_diff_sync(std::shared_ptr<ApplyBucketDiffState> async_results) 
     }
 }
 
+FileStorThreadMetrics::Op *get_op_metrics(FileStorThreadMetrics& metrics, const api::StorageReply &reply) {
+    switch (reply.getType().getId()) {
+    case api::MessageType::MERGEBUCKET_REPLY_ID:
+        return &metrics.mergeBuckets;
+    case api::MessageType::APPLYBUCKETDIFF_REPLY_ID:
+        return &metrics.applyBucketDiff;
+    default:
+        ;
+    }
+    return nullptr;
+}
+
+void update_op_metrics(FileStorThreadMetrics& metrics, const api::StorageReply &reply, const framework::MilliSecTimer& start_time) {
+    auto op_metrics = get_op_metrics(metrics, reply);
+    if (op_metrics) {
+        if (reply.getResult().success()) {
+            op_metrics->latency.addValue(start_time.getElapsedTimeAsDouble());
+        } else {
+            op_metrics->failed.inc();
+        }
+    }
+}
+
 } // anonymous namespace
 
 void
@@ -506,9 +529,10 @@ MergeHandler::applyDiffEntry(std::shared_ptr<ApplyBucketDiffState> async_results
         auto complete = std::make_unique<ApplyBucketDiffEntryComplete>(std::move(async_results), std::move(docId), "put", _clock, _env._metrics.merge_handler_metrics.put_latency);
         _spi.putAsync(bucket, timestamp, std::move(doc), context, std::move(complete));
     } else {
-        DocumentId docId(e._docName);
-        auto complete = std::make_unique<ApplyBucketDiffEntryComplete>(std::move(async_results), docId, "remove", _clock, _env._metrics.merge_handler_metrics.remove_latency);
-        _spi.removeAsync(bucket, timestamp, docId, context, std::move(complete));
+        std::vector<spi::PersistenceProvider::TimeStampAndDocumentId> ids;
+        ids.emplace_back(timestamp, e._docName);
+        auto complete = std::make_unique<ApplyBucketDiffEntryComplete>(std::move(async_results), ids[0].second, "remove", _clock, _env._metrics.merge_handler_metrics.remove_latency);
+        _spi.removeAsync(bucket, std::move(ids), context, std::move(complete));
     }
 }
 
@@ -1222,6 +1246,7 @@ MergeHandler::handleGetBucketDiffReply(api::GetBucketDiffReply& reply, MessageSe
     }
     if (replyToSend.get()) {
         replyToSend->setResult(reply.getResult());
+        update_op_metrics(_env._metrics, *replyToSend, s->startTime);
         sender.sendReply(replyToSend);
     }
 }
@@ -1254,14 +1279,11 @@ MergeHandler::handleApplyBucketDiff(api::ApplyBucketDiffCommand& cmd, MessageTra
             _env._nodeIndex, index);
     }
     if (applyDiffHasLocallyNeededData(cmd.getDiff(), index)) {
-       framework::MilliSecTimer startTime(_clock);
-       async_results = ApplyBucketDiffState::create(*this, bucket, RetainGuard(*_monitored_ref_count));
+       async_results = ApplyBucketDiffState::create(*this, _env._metrics.merge_handler_metrics, _clock, bucket, RetainGuard(*_monitored_ref_count));
        applyDiffLocally(bucket, cmd.getDiff(), index, tracker->context(), async_results);
        if (!_async_apply_bucket_diff.load(std::memory_order_relaxed)) {
             check_apply_diff_sync(std::move(async_results));
         }
-        _env._metrics.merge_handler_metrics.mergeDataWriteLatency.addValue(
-                startTime.getElapsedTimeAsDouble());
     } else {
         LOG(spam, "Merge(%s): Didn't need fetched data on node %u (%u).",
             bucket.toString().c_str(), _env._nodeIndex, index);
@@ -1364,13 +1386,11 @@ MergeHandler::handleApplyBucketDiffReply(api::ApplyBucketDiffReply& reply, Messa
                 _env._metrics.merge_handler_metrics.mergeDataReadLatency.addValue(startTime.getElapsedTimeAsDouble());
             }
             if (applyDiffHasLocallyNeededData(diff, index)) {
-                framework::MilliSecTimer startTime(_clock);
-                async_results = ApplyBucketDiffState::create(*this, bucket, RetainGuard(*_monitored_ref_count));
+                async_results = ApplyBucketDiffState::create(*this, _env._metrics.merge_handler_metrics, _clock, bucket, RetainGuard(*_monitored_ref_count));
                 applyDiffLocally(bucket, diff, index, s->context, async_results);
                 if (!_async_apply_bucket_diff.load(std::memory_order_relaxed)) {
                     check_apply_diff_sync(std::move(async_results));
                 }
-                _env._metrics.merge_handler_metrics.mergeDataWriteLatency.addValue(startTime.getElapsedTimeAsDouble());
             } else {
                 LOG(spam, "Merge(%s): Didn't need fetched data on node %u (%u)",
                     bucket.toString().c_str(),
@@ -1415,7 +1435,11 @@ MergeHandler::handleApplyBucketDiffReply(api::ApplyBucketDiffReply& reply, Messa
                     // We have sent something on and shouldn't reply now.
                     clearState = false;
                 } else {
-                    _env._metrics.merge_handler_metrics.mergeLatencyTotal.addValue(s->startTime.getElapsedTimeAsDouble());
+                    if (async_results) {
+                        async_results->set_merge_start_time(s->startTime);
+                    } else {
+                        _env._metrics.merge_handler_metrics.mergeLatencyTotal.addValue(s->startTime.getElapsedTimeAsDouble());
+                    }
                 }
             }
         } else {
@@ -1433,7 +1457,8 @@ MergeHandler::handleApplyBucketDiffReply(api::ApplyBucketDiffReply& reply, Messa
 
     if (async_results && replyToSend) {
         replyToSend->setResult(returnCode);
-        async_results->set_delayed_reply(std::move(tracker), sender, std::move(replyToSend));
+        auto op_metrics = get_op_metrics(_env._metrics, *replyToSend);
+        async_results->set_delayed_reply(std::move(tracker), sender, op_metrics, s->startTime, std::move(replyToSend));
     }
     if (clearState) {
         _env._fileStorHandler.clearMergeStatus(bucket.getBucket());
@@ -1441,6 +1466,7 @@ MergeHandler::handleApplyBucketDiffReply(api::ApplyBucketDiffReply& reply, Messa
     if (replyToSend.get()) {
         // Send on
         replyToSend->setResult(returnCode);
+        update_op_metrics(_env._metrics, *replyToSend, s->startTime);
         sender.sendReply(replyToSend);
     }
 }

@@ -12,10 +12,10 @@ class ThreadingServiceObserver : public searchcorespi::index::IThreadingService
 {
 private:
     searchcorespi::index::IThreadingService &_service;
-    ThreadServiceObserver _master;
-    ThreadServiceObserver _index;
-    ThreadServiceObserver _summary;
-    vespalib::ThreadExecutor & _shared;
+    SyncableThreadServiceObserver  _master;
+    ThreadServiceObserver          _index;
+    ThreadExecutorObserver         _summary;
+    vespalib::ThreadExecutor     & _shared;
     vespalib::SequencedTaskExecutorObserver _indexFieldInverter;
     vespalib::SequencedTaskExecutorObserver _indexFieldWriter;
     vespalib::SequencedTaskExecutorObserver _attributeFieldWriter;
@@ -23,37 +23,27 @@ private:
 public:
     ThreadingServiceObserver(searchcorespi::index::IThreadingService &service);
     ~ThreadingServiceObserver() override;
-    const ThreadServiceObserver &masterObserver() const {
+    const SyncableThreadServiceObserver &masterObserver() const {
         return _master;
     }
     const ThreadServiceObserver &indexObserver() const {
         return _index;
     }
-    const ThreadServiceObserver &summaryObserver() const {
+    const ThreadExecutorObserver &summaryObserver() const {
         return _summary;
     }
-    const vespalib::SequencedTaskExecutorObserver &indexFieldInverterObserver() const {
-        return _indexFieldInverter;
-    }
-    const vespalib::SequencedTaskExecutorObserver &indexFieldWriterObserver() const {
-        return _indexFieldWriter;
+
+    void blocking_master_execute(vespalib::Executor::Task::UP task) override {
+        _service.blocking_master_execute(std::move(task));
     }
 
-    const vespalib::SequencedTaskExecutorObserver &attributeFieldWriterObserver() const {
-        return _attributeFieldWriter;
-    }
-
-    vespalib::Syncable &sync() override {
-        return _service.sync();
-    }
-
-    searchcorespi::index::IThreadService &master() override {
+    searchcorespi::index::ISyncableThreadService &master() override {
         return _master;
     }
     searchcorespi::index::IThreadService &index() override {
         return _index;
     }
-    searchcorespi::index::IThreadService &summary() override {
+    vespalib::ThreadExecutor &summary() override {
         return _summary;
     }
     vespalib::ThreadExecutor &shared() override {

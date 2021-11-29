@@ -6,6 +6,7 @@
 #include "searchable_feed_view.h"
 #include "searchview.h"
 #include "summaryadapter.h"
+#include "igetserialnum.h"
 #include <vespa/eval/eval/value_cache/constant_tensor_loader.h>
 #include <vespa/eval/eval/value_cache/constant_value_cache.h>
 #include <vespa/searchcore/proton/attribute/attributemanager.h>
@@ -39,26 +40,17 @@ SearchableDocSubDB : public FastAccessDocSubDB,
 
 {
 public:
-    struct Config {
-        const FastAccessDocSubDB::Config _fastUpdCfg;
-        const size_t _numSearcherThreads;
-
-        Config(const FastAccessDocSubDB::Config &fastUpdCfg, size_t numSearcherThreads)
-            : _fastUpdCfg(fastUpdCfg),
-              _numSearcherThreads(numSearcherThreads)
-        { }
-    };
 
     struct Context {
         const FastAccessDocSubDB::Context  _fastUpdCtx;
         matching::QueryLimiter            &_queryLimiter;
         const vespalib::Clock             &_clock;
-        vespalib::SyncableThreadExecutor  &_warmupExecutor;
+        vespalib::Executor                &_warmupExecutor;
 
         Context(const FastAccessDocSubDB::Context &fastUpdCtx,
                 matching::QueryLimiter &queryLimiter,
                 const vespalib::Clock &clock,
-                vespalib::SyncableThreadExecutor &warmupExecutor)
+                vespalib:: Executor &warmupExecutor)
             : _fastUpdCtx(fastUpdCtx),
               _queryLimiter(queryLimiter),
               _clock(clock),
@@ -78,7 +70,7 @@ private:
     vespalib::eval::ConstantValueCache          _constantValueCache;
     matching::ConstantValueRepo                 _constantValueRepo;
     SearchableDocSubDBConfigurer                _configurer;
-    vespalib::SyncableThreadExecutor           &_warmupExecutor;
+    vespalib::Executor                         &_warmupExecutor;
     std::shared_ptr<GidToLidChangeHandler>      _realGidToLidChangeHandler;
     DocumentDBFlushConfig                       _flushConfig;
 
@@ -113,7 +105,7 @@ public:
     IReprocessingTask::List
     applyConfig(const DocumentDBConfig &newConfigSnapshot, const DocumentDBConfig &oldConfigSnapshot,
                 SerialNum serialNum, const ReconfigParams &params, IDocumentDBReferenceResolver &resolver) override;
-    void setBucketStateCalculator(const std::shared_ptr<IBucketStateCalculator> &calc) override;
+    void setBucketStateCalculator(const std::shared_ptr<IBucketStateCalculator> &calc, OnDone onDone) override;
 
     void clearViews() override;
 

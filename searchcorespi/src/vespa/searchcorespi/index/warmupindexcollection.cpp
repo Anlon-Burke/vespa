@@ -5,6 +5,7 @@
 #include <vespa/searchlib/query/tree/termnodes.h>
 #include <vespa/vespalib/stllike/hash_map.hpp>
 #include <vespa/vespalib/stllike/hash_set.h>
+#include <thread>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".searchcorespi.index.warmupindexcollection");
@@ -29,7 +30,7 @@ WarmupIndexCollection::WarmupIndexCollection(const WarmupConfig & warmupConfig,
                                              ISearchableIndexCollection::SP prev,
                                              ISearchableIndexCollection::SP next,
                                              IndexSearchable & warmup,
-                                             vespalib::SyncableThreadExecutor & executor,
+                                             vespalib::Executor & executor,
                                              IWarmupDone & warmupDone) :
     _warmupConfig(warmupConfig),
     _prev(std::move(prev)),
@@ -38,7 +39,8 @@ WarmupIndexCollection::WarmupIndexCollection(const WarmupConfig & warmupConfig,
     _executor(executor),
     _warmupDone(warmupDone),
     _warmupEndTime(vespalib::steady_clock::now() + warmupConfig.getDuration()),
-    _handledTerms(std::make_unique<FieldTermMap>())
+    _handledTerms(std::make_unique<FieldTermMap>()),
+    _pendingTasks()
 {
     if (_next->valid()) {
         setCurrentIndex(_next->getCurrentIndex());
@@ -79,7 +81,7 @@ WarmupIndexCollection::~WarmupIndexCollection()
     if (_warmupEndTime != vespalib::steady_time()) {
         LOG(info, "Warmup aborted due to new state change or application shutdown");
     }
-   _executor.sync();
+    assert(_pendingTasks.has_zero_ref_count());
 }
 
 const ISourceSelector &
@@ -164,7 +166,7 @@ WarmupIndexCollection::createBlueprint(const IRequestContext & requestContext,
         needWarmUp = needWarmUp || ! handledBefore(fs.getFieldId(), term);
     }
     if (needWarmUp) {
-        auto task = std::make_unique<WarmupTask>(mdl.createMatchData(), *this);
+        auto task = std::make_unique<WarmupTask>(mdl.createMatchData(), shared_from_this());
         task->createBlueprint(fsl, term);
         fireWarmup(std::move(task));
     }
@@ -216,25 +218,32 @@ WarmupIndexCollection::getSearchableSP(uint32_t i) const
     return _next->getSearchableSP(i);
 }
 
-WarmupIndexCollection::WarmupTask::WarmupTask(std::unique_ptr<MatchData> md, WarmupIndexCollection & warmup)
-    : _warmup(warmup),
+void
+WarmupIndexCollection::drainPending() {
+    _pendingTasks.waitForZeroRefCount();
+}
+
+WarmupIndexCollection::WarmupTask::WarmupTask(std::unique_ptr<MatchData> md, std::shared_ptr<WarmupIndexCollection> warmup)
+    : _warmup(std::move(warmup)),
+      _retainGuard(_warmup->_pendingTasks),
       _matchData(std::move(md)),
       _bluePrint(),
       _requestContext()
-{ }
+{
+}
 
 WarmupIndexCollection::WarmupTask::~WarmupTask() = default;
 
 void
 WarmupIndexCollection::WarmupTask::run()
 {
-    if (_warmup._warmupEndTime != vespalib::steady_time()) {
+    if (_warmup->_warmupEndTime != vespalib::steady_time()) {
         LOG(debug, "Warming up %s", _bluePrint->asString().c_str());
         _bluePrint->fetchPostings(search::queryeval::ExecuteInfo::TRUE);
         SearchIterator::UP it(_bluePrint->createSearch(*_matchData, true));
         it->initFullRange();
         for (uint32_t docId = it->seekFirst(1); !it->isAtEnd(); docId = it->seekNext(docId+1)) {
-            if (_warmup.doUnpack()) {
+            if (_warmup->doUnpack()) {
                 it->unpack(docId);
             }
         }

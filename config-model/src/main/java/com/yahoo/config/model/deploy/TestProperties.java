@@ -42,6 +42,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private String jvmGCOptions = null;
     private String sequencerType = "LATENCY";
     private int feedTaskLimit = 1000;
+    private int feedMasterTaskLimit = 0;
     private String sharedFieldWriterExecutor = "NONE";
     private boolean firstTimeDeployment = false;
     private String responseSequencerType = "ADAPTIVE";
@@ -72,6 +73,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private double diskBloatFactor = 0.2;
     private boolean distributorEnhancedMaintenanceScheduling = false;
     private boolean asyncApplyBucketDiff = false;
+    private boolean unorderedMergeChaining = false;
     private List<String> zoneDnsSuffixes = List.of();
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
@@ -87,6 +89,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public String jvmGCOptions(Optional<ClusterSpec.Type> clusterType) { return jvmGCOptions; }
     @Override public String feedSequencerType() { return sequencerType; }
     @Override public int feedTaskLimit() { return feedTaskLimit; }
+    @Override public int feedMasterTaskLimit() { return feedMasterTaskLimit; }
     @Override public String sharedFieldWriterExecutor() { return sharedFieldWriterExecutor; }
     @Override public boolean isBootstrap() { return false; }
     @Override public boolean isFirstTimeDeployment() { return firstTimeDeployment; }
@@ -125,6 +128,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public boolean distributorEnhancedMaintenanceScheduling() { return distributorEnhancedMaintenanceScheduling; }
     @Override public int maxUnCommittedMemory() { return maxUnCommittedMemory; }
     @Override public boolean asyncApplyBucketDiff() { return asyncApplyBucketDiff; }
+    @Override public boolean unorderedMergeChaining() { return unorderedMergeChaining; }
     @Override public List<String> zoneDnsSuffixes() { return zoneDnsSuffixes; }
 
     public TestProperties maxUnCommittedMemory(int maxUnCommittedMemory) {
@@ -174,6 +178,10 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     }
     public TestProperties setFeedTaskLimit(int value) {
         feedTaskLimit = value;
+        return this;
+    }
+    public TestProperties setFeedMasterTaskLimit(int value) {
+        feedMasterTaskLimit = value;
         return this;
     }
     public TestProperties setSharedFieldWriterExecutor(String value) {
@@ -319,6 +327,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setAsyncApplyBucketDiff(boolean value) {
         asyncApplyBucketDiff = value;
+        return this;
+    }
+
+    public TestProperties setUnorderedMergeChaining(boolean unordered) {
+        unorderedMergeChaining = unordered;
         return this;
     }
 

@@ -4,7 +4,9 @@ package com.yahoo.vespa.config.proxy.filedistribution;
 import com.yahoo.concurrent.DaemonThreadFactory;
 import com.yahoo.config.subscription.ConfigSourceSet;
 import com.yahoo.jrt.Supervisor;
+import com.yahoo.vespa.config.ConnectionPool;
 import com.yahoo.vespa.config.JRTConnectionPool;
+import com.yahoo.vespa.filedistribution.FileDistributionConnectionPool;
 import com.yahoo.vespa.filedistribution.FileDownloader;
 
 import java.time.Duration;
@@ -20,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 public class FileDistributionAndUrlDownload {
 
     private static final Duration delay = Duration.ofMinutes(1);
+
     private final FileDistributionRpcServer fileDistributionRpcServer;
     private final UrlDownloadRpcServer urlDownloadRpcServer;
     private final ScheduledExecutorService cleanupExecutor =
@@ -28,7 +31,7 @@ public class FileDistributionAndUrlDownload {
     public FileDistributionAndUrlDownload(Supervisor supervisor, ConfigSourceSet source) {
         fileDistributionRpcServer =
                 new FileDistributionRpcServer(supervisor,
-                                              new FileDownloader(new JRTConnectionPool(source, supervisor), supervisor, Duration.ofMinutes(5)));
+                                              new FileDownloader(createConnectionPool(supervisor, source), supervisor, Duration.ofMinutes(5)));
         urlDownloadRpcServer = new UrlDownloadRpcServer(supervisor);
         cleanupExecutor.scheduleAtFixedRate(new CachedFilesMaintainer(), delay.toSeconds(), delay.toSeconds(), TimeUnit.SECONDS);
     }
@@ -43,6 +46,14 @@ public class FileDistributionAndUrlDownload {
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private static ConnectionPool createConnectionPool(Supervisor supervisor, ConfigSourceSet source) {
+        String useFileDistributionConnectionPool = System.getenv("VESPA_CONFIG_PROXY_USE_FILE_DISTRIBUTION_CONNECTION_POOL");
+        if (useFileDistributionConnectionPool != null && useFileDistributionConnectionPool.equalsIgnoreCase("true"))
+            return new FileDistributionConnectionPool(source, supervisor);
+        else
+            return new JRTConnectionPool(source, supervisor);
     }
 
 }

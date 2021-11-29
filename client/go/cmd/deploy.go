@@ -18,8 +18,9 @@ const (
 )
 
 var (
-	zoneArg     string
-	logLevelArg string
+	zoneArg        string
+	logLevelArg    string
+	sessionOrRunID int64
 )
 
 func init() {
@@ -63,7 +64,9 @@ $ vespa deploy -t cloud -z perf.aws-us-east-1c`,
 		}
 		target := getTarget()
 		opts := getDeploymentOpts(cfg, pkg, target)
+
 		if sessionOrRunID, err := vespa.Deploy(opts); err == nil {
+			fmt.Print("\n")
 			if opts.IsCloud() {
 				printSuccess("Triggered deployment of ", color.Cyan(pkg.Path), " with run ID ", color.Cyan(sessionOrRunID))
 			} else {

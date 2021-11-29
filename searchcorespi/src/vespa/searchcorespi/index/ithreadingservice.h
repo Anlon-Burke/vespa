@@ -2,7 +2,6 @@
 #pragma once
 
 #include "i_thread_service.h"
-#include <vespa/vespalib/util/syncable.h>
 
 namespace vespalib { class ISequencedTaskExecutor; }
 namespace searchcorespi::index {
@@ -57,16 +56,22 @@ namespace searchcorespi::index {
  * TODO: * indexFieldInverter and indexFieldWriter can be collapsed to one. Both need sequencing,
  *         but they sequence on different things so efficiency will be the same and just depends on #threads
  */
-struct IThreadingService : public vespalib::Syncable
+struct IThreadingService
 {
     IThreadingService(const IThreadingService &) = delete;
     IThreadingService & operator = (const IThreadingService &) = delete;
     IThreadingService() = default;
     virtual ~IThreadingService() = default;
 
-    virtual IThreadService &master() = 0;
+    /**
+     * Block the calling thread until the master thread has capacity to handle more tasks,
+     * and then execute the given task in the master thread.
+     */
+    virtual void blocking_master_execute(vespalib::Executor::Task::UP task) = 0;
+
+    virtual ISyncableThreadService &master() = 0;
     virtual IThreadService &index() = 0;
-    virtual IThreadService &summary() = 0;
+    virtual vespalib::ThreadExecutor &summary() = 0;
     virtual vespalib::ThreadExecutor &shared() = 0;
     virtual vespalib::ISequencedTaskExecutor &indexFieldInverter() = 0;
     virtual vespalib::ISequencedTaskExecutor &indexFieldWriter() = 0;

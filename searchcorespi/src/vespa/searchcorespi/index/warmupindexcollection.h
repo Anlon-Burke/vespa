@@ -5,16 +5,19 @@
 #include "isearchableindexcollection.h"
 #include "warmupconfig.h"
 #include <vespa/vespalib/util/threadexecutor.h>
+#include <vespa/vespalib/util/monitored_refcount.h>
+#include <vespa/vespalib/util/retain_guard.h>
 #include <vespa/searchlib/queryeval/fake_requestcontext.h>
 
 namespace searchcorespi {
 
 class FieldTermMap;
+class WarmupIndexCollection;
 
 class IWarmupDone {
 public:
     virtual ~IWarmupDone() { }
-    virtual void warmupDone(ISearchableIndexCollection::SP current) = 0;
+    virtual void warmupDone(std::shared_ptr<WarmupIndexCollection> current) = 0;
 };
 /**
  * Index collection that holds a reference to the active one and a new one that
@@ -30,7 +33,7 @@ public:
                           ISearchableIndexCollection::SP prev,
                           ISearchableIndexCollection::SP next,
                           IndexSearchable & warmup,
-                          vespalib::SyncableThreadExecutor & executor,
+                          vespalib::Executor & executor,
                           IWarmupDone & warmupDone);
     ~WarmupIndexCollection() override;
     // Implements IIndexCollection
@@ -64,28 +67,30 @@ public:
     const ISearchableIndexCollection::SP & getNextIndexCollection() const { return _next; }
     vespalib::string toString() const override;
     bool doUnpack() const { return _warmupConfig.getUnpack(); }
+    void drainPending();
 private:
     typedef search::fef::MatchData MatchData;
     typedef search::queryeval::FakeRequestContext FakeRequestContext;
     typedef vespalib::Executor::Task Task;
     class WarmupTask : public Task {
     public:
-        WarmupTask(std::unique_ptr<MatchData> md, WarmupIndexCollection & warmup);
+        WarmupTask(std::unique_ptr<MatchData> md, std::shared_ptr<WarmupIndexCollection> warmup);
         ~WarmupTask() override;
         WarmupTask &createBlueprint(const FieldSpec &field, const Node &term) {
-            _bluePrint = _warmup.createBlueprint(_requestContext, field, term);
+            _bluePrint = _warmup->createBlueprint(_requestContext, field, term);
             return *this;
         }
         WarmupTask &createBlueprint(const FieldSpecList &fields, const Node &term) {
-            _bluePrint = _warmup.createBlueprint(_requestContext, fields, term);
+            _bluePrint = _warmup->createBlueprint(_requestContext, fields, term);
             return *this;
         }
     private:
         void run() override;
-        WarmupIndexCollection      & _warmup;
-        std::unique_ptr<MatchData>   _matchData;
-        Blueprint::UP                _bluePrint;
-        FakeRequestContext           _requestContext;
+        std::shared_ptr<WarmupIndexCollection>  _warmup;
+        vespalib::RetainGuard                   _retainGuard;
+        std::unique_ptr<MatchData>              _matchData;
+        Blueprint::UP                           _bluePrint;
+        FakeRequestContext                      _requestContext;
     };
 
     void fireWarmup(Task::UP task);
@@ -95,11 +100,12 @@ private:
     ISearchableIndexCollection::SP     _prev;
     ISearchableIndexCollection::SP     _next;
     IndexSearchable                  & _warmup;
-    vespalib::SyncableThreadExecutor & _executor;
+    vespalib::Executor               & _executor;
     IWarmupDone                      & _warmupDone;
     vespalib::steady_time              _warmupEndTime;
     std::mutex                         _lock;
     std::unique_ptr<FieldTermMap>      _handledTerms;
+    vespalib::MonitoredRefCount        _pendingTasks;
 };
 
 }  // namespace searchcorespi

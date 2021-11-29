@@ -16,15 +16,24 @@ import (
 var overwriteKey bool
 
 func init() {
-	rootCmd.AddCommand(apiKeyCmd)
 	apiKeyCmd.Flags().BoolVarP(&overwriteKey, "force", "f", false, "Force overwrite of existing API key")
 	apiKeyCmd.MarkPersistentFlagRequired(applicationFlag)
+}
+
+var example string
+
+func apiKeyExample() string {
+	if vespa.Auth0AccessTokenEnabled() {
+		return "$ vespa auth api-key -a my-tenant.my-app.my-instance"
+	} else {
+		return "$ vespa api-key -a my-tenant.my-app.my-instance"
+	}
 }
 
 var apiKeyCmd = &cobra.Command{
 	Use:               "api-key",
 	Short:             "Create a new user API key for authentication with Vespa Cloud",
-	Example:           "$ vespa api-key -a my-tenant.my-app.my-instance",
+	Example:           apiKeyExample(),
 	DisableAutoGenTag: true,
 	Args:              cobra.ExactArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -48,6 +57,16 @@ var apiKeyCmd = &cobra.Command{
 		if err := ioutil.WriteFile(apiKeyFile, apiKey, 0600); err == nil {
 			printSuccess("API private key written to ", apiKeyFile)
 			printPublicKey(apiKeyFile, app.Tenant)
+			if vespa.Auth0AccessTokenEnabled() {
+				if err == nil {
+					if err := cfg.Set(cloudAuthFlag, "api-key"); err != nil {
+						fatalErr(err, "Could not write config")
+					}
+					if err := cfg.Write(); err != nil {
+						fatalErr(err)
+					}
+				}
+			}
 		} else {
 			fatalErr(err, "Failed to write ", apiKeyFile)
 		}

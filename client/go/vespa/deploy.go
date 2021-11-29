@@ -73,7 +73,7 @@ func (d DeploymentOpts) String() string {
 func (d *DeploymentOpts) IsCloud() bool { return d.Target.Type() == cloudTargetType }
 
 func (d *DeploymentOpts) url(path string) (*url.URL, error) {
-	service, err := d.Target.Service(deployService, 0, 0)
+	service, err := d.Target.Service(deployService, 0, 0, "")
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (ap *ApplicationPackage) zipReader(test bool) (io.ReadCloser, error) {
 			tempZip.Close()
 			os.Remove(tempZip.Name())
 		}()
-		if err := zipDir(ap.Path, tempZip.Name()); err != nil {
+		if err := zipDir(zipFile, tempZip.Name()); err != nil {
 			return nil, err
 		}
 		zipFile = tempZip.Name()
@@ -167,6 +167,10 @@ func FindApplicationPackage(zipOrDir string, requirePackaging bool) (Application
 		}
 	}
 	if util.PathExists(filepath.Join(zipOrDir, "src", "main", "application")) {
+		if util.PathExists(filepath.Join(zipOrDir, "src", "test", "application")) {
+			return ApplicationPackage{Path: filepath.Join(zipOrDir, "src", "main", "application"),
+				TestPath: filepath.Join(zipOrDir, "src", "test", "application")}, nil
+		}
 		return ApplicationPackage{Path: filepath.Join(zipOrDir, "src", "main", "application")}, nil
 	}
 	if util.PathExists(filepath.Join(zipOrDir, "services.xml")) {
@@ -344,8 +348,10 @@ func checkDeploymentOpts(opts DeploymentOpts) error {
 	if !opts.ApplicationPackage.HasCertificate() {
 		return fmt.Errorf("%s: missing certificate in package", opts)
 	}
-	if !Auth0AccessTokenEnabled() && opts.APIKey == nil {
-		return fmt.Errorf("%s: missing api key", opts.String())
+	if !Auth0AccessTokenEnabled() {
+		if opts.APIKey == nil {
+			return fmt.Errorf("%s: missing api key", opts.String())
+		}
 	}
 	return nil
 }
@@ -368,7 +374,12 @@ func uploadApplicationPackage(url *url.URL, opts DeploymentOpts) (int64, error) 
 	if err := opts.Target.PrepareApiRequest(request, sigKeyId); err != nil {
 		return 0, err
 	}
-	response, err := util.HttpDo(request, time.Minute*10, serviceDescription)
+
+	var response *http.Response
+	err = util.Spinner("Uploading application package ...", func() error {
+		response, err = util.HttpDo(request, time.Minute*10, serviceDescription)
+		return err
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -438,7 +449,10 @@ func zipDir(dir string, destination string) error {
 		}
 		defer file.Close()
 
-		zippath := strings.TrimPrefix(path, dir)
+		zippath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
 		zipfile, err := w.Create(zippath)
 		if err != nil {
 			return err

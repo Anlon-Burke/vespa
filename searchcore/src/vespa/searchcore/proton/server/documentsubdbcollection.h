@@ -7,11 +7,12 @@
 #include <vespa/searchcore/proton/persistenceengine/i_document_retriever.h>
 #include <vespa/searchlib/common/serialnum.h>
 #include <vespa/vespalib/util/varholder.h>
+#include <vespa/vespalib/util/idestructorcallback.h>
 #include <mutex>
 
 namespace vespalib {
     class Clock;
-    class SyncableThreadExecutor;
+    class Executor;
     class ThreadStackExecutorBase;
 }
 
@@ -58,13 +59,7 @@ public:
     using SubDBVector = std::vector<IDocumentSubDB *>;
     using const_iterator = SubDBVector::const_iterator;
     using SerialNum = search::SerialNum;
-    class Config {
-    public:
-        Config(size_t numSearchThreads);
-        size_t getNumSearchThreads() const noexcept { return _numSearchThreads; }
-    private:
-        const size_t       _numSearchThreads;
-    };
+    using OnDone = std::shared_ptr<vespalib::IDestructorCallback>;
 
 private:
     using IFeedViewSP = std::shared_ptr<IFeedView>;
@@ -91,7 +86,7 @@ public:
             const IGetSerialNum &getSerialNum,
             const DocTypeName &docTypeName,
             searchcorespi::index::IThreadingService &writeService,
-            vespalib::SyncableThreadExecutor &warmupExecutor,
+            vespalib::Executor &warmupExecutor,
             const search::common::FileHeaderContext &fileHeaderContext,
             MetricsWireService &metricsWireService,
             DocumentDBTaggedMetrics &metrics,
@@ -99,11 +94,10 @@ public:
             const vespalib::Clock &clock,
             std::mutex &configMutex,
             const vespalib::string &baseDir,
-            const Config & cfg,
             const HwInfo &hwInfo);
     ~DocumentSubDBCollection();
 
-    void setBucketStateCalculator(const IBucketStateCalculatorSP &calc);
+    void setBucketStateCalculator(const IBucketStateCalculatorSP &calc, OnDone onDone);
 
     void createRetrievers();
     void maintenanceSync(MaintenanceController &mc);

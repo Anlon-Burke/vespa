@@ -4,23 +4,21 @@ package com.yahoo.vespa.config.proxy.filedistribution;
 import com.yahoo.concurrent.DaemonThreadFactory;
 import com.yahoo.config.FileReference;
 import com.yahoo.jrt.DoubleArray;
-import com.yahoo.jrt.Int32Value;
 import com.yahoo.jrt.Method;
 import com.yahoo.jrt.Request;
 import com.yahoo.jrt.StringArray;
 import com.yahoo.jrt.StringValue;
 import com.yahoo.jrt.Supervisor;
-import java.util.logging.Level;
+import com.yahoo.net.HostName;
 import com.yahoo.vespa.filedistribution.FileDownloader;
-import com.yahoo.vespa.filedistribution.FileReferenceDownload;
 
 import java.io.File;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -67,10 +65,6 @@ class FileDistributionRpcServer {
                                      .methodDesc("download status for file references")
                                      .returnDesc(0, "file references", "array of file references")
                                      .returnDesc(1, "download status", "percentage downloaded of each file reference in above array"));
-        supervisor.addMethod(new Method("filedistribution.setFileReferencesToDownload", "S", "i", this::setFileReferencesToDownload)
-                                     .methodDesc("set which file references to download")
-                                     .paramDesc(0, "file references", "file reference to download")
-                                     .returnDesc(0, "ret", "0 if success, 1 otherwise"));
     }
 
 
@@ -105,18 +99,10 @@ class FileDistributionRpcServer {
         req.returnValues().add(new DoubleArray(downloadStatusArray));
     }
 
-    private void setFileReferencesToDownload(Request req) {
-        log.log(Level.FINE, () -> "Received method call '" + req.methodName() + "' with parameters : " + req.parameters());
-        Arrays.stream(req.parameters().get(0).asStringArray())
-                .map(FileReference::new)
-                .forEach(fileReference -> downloader.downloadIfNeeded(new FileReferenceDownload(fileReference)));
-        req.returnValues().add(new Int32Value(0));
-    }
-
     private void downloadFile(Request req) {
         FileReference fileReference = new FileReference(req.parameters().get(0).asString());
         log.log(Level.FINE, () -> "getFile() called for file reference '" + fileReference.value() + "'");
-        Optional<File> file = downloader.getFile(fileReference);
+        Optional<File> file = downloader.getFile(fileReference, HostName.getLocalhost());
         if (file.isPresent()) {
             new RequestTracker().trackRequest(file.get().getParentFile());
             req.returnValues().add(new StringValue(file.get().getAbsolutePath()));

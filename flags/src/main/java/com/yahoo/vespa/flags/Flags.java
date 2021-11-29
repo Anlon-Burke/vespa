@@ -86,6 +86,13 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
+    public static final UnboundIntFlag FEED_MASTER_TASK_LIMIT = defineIntFlag(
+            "feed-master-task-limit", 0,
+            List.of("geirst, baldersheim"), "2021-11-18", "2022-02-01",
+            "The task limit used by the master thread in each document db in proton. Ignored when set to 0.",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
     public static final UnboundStringFlag SHARED_FIELD_WRITER_EXECUTOR = defineStringFlag(
             "shared-field-writer-executor", "NONE",
             List.of("geirst, baldersheim"), "2021-11-05", "2022-02-01",
@@ -308,13 +315,6 @@ public class Flags {
             TENANT_ID
     );
 
-    public static final UnboundIntFlag MAX_CONNECTION_LIFE_IN_HOSTED = defineIntFlag(
-            "max-connection-life-in-hosted", 45,
-            List.of("bjorncs"), "2021-09-30", "2021-12-31",
-            "Max connection life for connections to jdisc endpoints in hosted",
-            "Takes effect at redeployment",
-            APPLICATION_ID);
-
     public static final UnboundBooleanFlag ENABLE_ROUTING_REUSE_PORT = defineFeatureFlag(
             "enable-routing-reuse-port", false,
             List.of("mortent"), "2021-09-29", "2021-12-31",
@@ -353,15 +353,57 @@ public class Flags {
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
 
+    public static final UnboundBooleanFlag UNORDERED_MERGE_CHAINING = defineFeatureFlag(
+            "unordered-merge-chaining", false,
+            List.of("vekterli", "geirst"), "2021-11-15", "2022-03-01",
+            "Enables the use of unordered merge chains for data merge operations",
+            "Takes effect at redeploy",
+            ZONE_ID, APPLICATION_ID);
+
     public static final UnboundStringFlag JDK_VERSION = defineStringFlag(
             "jdk-version", "11",
-            List.of("hmusum"), "2021-10-25", "2021-11-25",
+            List.of("hmusum"), "2021-10-25", "2022-01-10",
             "JDK version to use on host and inside containers. Note application-id dimension only applies for container, " +
                     "while hostname and node type applies for host.",
             "Takes effect on restart for Docker container and on next host-admin tick for host",
             APPLICATION_ID,
             HOSTNAME,
             NODE_TYPE);
+
+    public static final UnboundBooleanFlag IGNORE_THREAD_STACK_SIZES = defineFeatureFlag(
+            "ignore-thread-stack-sizes", false,
+            List.of("arnej"), "2021-11-12", "2022-01-31",
+            "Whether C++ thread creation should ignore any requested stack size",
+            "Triggers restart, takes effect immediately",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag USE_FILE_DISTRIBUTION_CONNECTION_POOL = defineFeatureFlag(
+            "use-file-distribution-connection-pool", false,
+            List.of("hmusum"), "2021-11-16", "2021-12-16",
+            "Whether to use FileDistributionConnectionPool instead of JRTConnectionPool for file downloads",
+            "Takes effect on config server restart",
+            ZONE_ID);
+
+    public static final UnboundBooleanFlag CONFIG_PROXY_USE_FILE_DISTRIBUTION_CONNECTION_POOL = defineFeatureFlag(
+            "config-proxy-use-file-distribution-connection-pool", false,
+            List.of("hmusum"), "2021-11-25", "2021-12-25",
+            "Whether to use FileDistributionConnectionPool instead of JRTConnectionPool for file downloads in config proxy",
+            "Takes effect on container reboot",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag USE_V8_GEO_POSITIONS = defineFeatureFlag(
+            "use-v8-geo-positions", false,
+            List.of("arnej"), "2021-11-15", "2022-12-31",
+            "Use Vespa 8 types and formats for geographical positions",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag USE_LEGACY_LB_SERVICES = defineFeatureFlag(
+            "use-legacy-lb-services", true,
+            List.of("tokle"), "2021-11-22", "2021-12-31",
+            "Whether to generate routing table based on legacy lb-services config",
+            "Takes effect on container reboot",
+            ZONE_ID, HOSTNAME);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

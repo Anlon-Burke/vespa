@@ -29,14 +29,13 @@ public class FileDownloader implements AutoCloseable {
 
     private static final Logger log = Logger.getLogger(FileDownloader.class.getName());
     private static final Duration defaultTimeout = Duration.ofMinutes(3);
-    private static final Duration defaultSleepBetweenRetries = Duration.ofSeconds(10);
+    private static final Duration defaultSleepBetweenRetries = Duration.ofSeconds(5);
     public static final File defaultDownloadDirectory = new File(Defaults.getDefaults().underVespaHome("var/db/vespa/filedistribution"));
 
     private final ConnectionPool connectionPool;
     private final Supervisor supervisor;
     private final File downloadDirectory;
     private final Duration timeout;
-    private final Duration sleepBetweenRetries;
     private final FileReferenceDownloader fileReferenceDownloader;
     private final Downloads downloads = new Downloads();
 
@@ -48,8 +47,8 @@ public class FileDownloader implements AutoCloseable {
         this(connectionPool, supervisor, defaultDownloadDirectory, timeout, defaultSleepBetweenRetries);
     }
 
-    public FileDownloader(ConnectionPool connectionPool, Supervisor supervisor, File downloadDirectory) {
-        this(connectionPool, supervisor, downloadDirectory, defaultTimeout, defaultSleepBetweenRetries);
+    public FileDownloader(ConnectionPool connectionPool, Supervisor supervisor, File downloadDirectory, Duration timeout) {
+        this(connectionPool, supervisor, downloadDirectory, timeout, defaultSleepBetweenRetries);
     }
 
     public FileDownloader(ConnectionPool connectionPool,
@@ -61,7 +60,6 @@ public class FileDownloader implements AutoCloseable {
         this.supervisor = supervisor;
         this.downloadDirectory = downloadDirectory;
         this.timeout = timeout;
-        this.sleepBetweenRetries = sleepBetweenRetries;
         // Needed to receive RPC receiveFile* calls from server after starting download of file reference
         new FileReceiver(supervisor, downloads, downloadDirectory);
         this.fileReferenceDownloader = new FileReferenceDownloader(connectionPool,
@@ -71,8 +69,8 @@ public class FileDownloader implements AutoCloseable {
                                                                    downloadDirectory);
     }
 
-    public Optional<File> getFile(FileReference fileReference) {
-        return getFile(new FileReferenceDownload(fileReference));
+    public Optional<File> getFile(FileReference fileReference, String client) {
+        return getFile(new FileReferenceDownload(fileReference, client));
     }
 
     public Optional<File> getFile(FileReferenceDownload fileReferenceDownload) {

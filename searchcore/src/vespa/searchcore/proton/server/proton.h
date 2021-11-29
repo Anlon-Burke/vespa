@@ -12,6 +12,8 @@
 #include "proton_config_fetcher.h"
 #include "proton_configurer.h"
 #include "rpc_hooks.h"
+#include "shared_threading_service.h"
+#include <vespa/eval/eval/llvm/compile_cache.h>
 #include <vespa/searchcore/proton/matching/querylimiter.h>
 #include <vespa/searchcore/proton/metrics/metrics_engine.h>
 #include <vespa/searchcore/proton/persistenceengine/i_resource_write_filter.h>
@@ -24,7 +26,6 @@
 #include <vespa/vespalib/net/json_handler_repo.h>
 #include <vespa/vespalib/net/state_explorer.h>
 #include <vespa/vespalib/util/varholder.h>
-#include <vespa/eval/eval/llvm/compile_cache.h>
 #include <mutex>
 #include <shared_mutex>
 
@@ -58,8 +59,7 @@ private:
     using MonitorReply = search::engine::MonitorReply;
     using MonitorClient = search::engine::MonitorClient;
     using DocumentDBMap = std::map<DocTypeName, DocumentDB::SP>;
-    using ProtonConfigSP = BootstrapConfig::ProtonConfigSP;
-    using InitializeThreads = std::shared_ptr<vespalib::SyncableThreadExecutor>;
+    using InitializeThreads = std::shared_ptr<vespalib::ThreadExecutor>;
     using BucketSpace = document::BucketSpace;
 
     class ProtonFileHeaderContext : public search::common::FileHeaderContext
@@ -101,8 +101,7 @@ private:
     std::unique_ptr<IProtonDiskLayout>     _protonDiskLayout;
     ProtonConfigurer                       _protonConfigurer;
     ProtonConfigFetcher                    _protonConfigFetcher;
-    std::unique_ptr<vespalib::ThreadStackExecutorBase> _warmupExecutor;
-    std::shared_ptr<vespalib::ThreadStackExecutorBase> _sharedExecutor;
+    std::unique_ptr<SharedThreadingService> _shared_service;
     vespalib::eval::CompileCache::ExecutorBinding::UP _compile_cache_executor_binding;
     matching::QueryLimiter          _queryLimiter;
     vespalib::Clock                 _clock;
@@ -133,6 +132,7 @@ private:
     uint32_t getDistributionKey() const override { return _distributionKey; }
     BootstrapConfig::SP getActiveConfigSnapshot() const;
     std::shared_ptr<IDocumentDBReferenceRegistry> getDocumentDBReferenceRegistry() const override;
+    // Returns true if the node is up in _any_ bucket space
     bool updateNodeUp(BucketSpace bucketSpace, bool nodeUpInBucketSpace);
     void closeDocumentDBs(vespalib::ThreadStackExecutorBase & executor);
 public:

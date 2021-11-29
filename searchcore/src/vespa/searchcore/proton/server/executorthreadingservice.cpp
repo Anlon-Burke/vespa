@@ -42,16 +42,18 @@ ExecutorThreadingService::ExecutorThreadingService(vespalib::ThreadExecutor &sha
     : ExecutorThreadingService(sharedExecutor, ThreadingServiceConfig::make(num_treads))
 {}
 
-ExecutorThreadingService::ExecutorThreadingService(vespalib::ThreadExecutor & sharedExecutor,
-                                                   const ThreadingServiceConfig & cfg,  uint32_t stackSize)
+ExecutorThreadingService::ExecutorThreadingService(vespalib::ThreadExecutor& sharedExecutor,
+                                                   const ThreadingServiceConfig& cfg,
+                                                   uint32_t stackSize)
 
     : _sharedExecutor(sharedExecutor),
       _masterExecutor(1, stackSize, master_executor),
+      _shared_field_writer(cfg.shared_field_writer()),
+      _master_task_limit(cfg.master_task_limit()),
       _indexExecutor(createExecutorWithOneThread(stackSize, cfg.defaultTaskLimit(), cfg.optimize(), index_executor)),
       _summaryExecutor(createExecutorWithOneThread(stackSize, cfg.defaultTaskLimit(), cfg.optimize(), summary_executor)),
       _masterService(_masterExecutor),
       _indexService(*_indexExecutor),
-      _summaryService(*_summaryExecutor),
       _indexFieldInverter(),
       _indexFieldWriter(),
       _attributeFieldWriter(),
@@ -60,7 +62,7 @@ ExecutorThreadingService::ExecutorThreadingService(vespalib::ThreadExecutor & sh
       _index_field_writer_ptr(),
       _attribute_field_writer_ptr()
 {
-    if (cfg.shared_field_writer() == SharedFieldWriterExecutor::INDEX) {
+    if (_shared_field_writer == SharedFieldWriterExecutor::INDEX) {
         _field_writer = SequencedTaskExecutor::create(field_writer_executor, cfg.indexingThreads() * 2, cfg.defaultTaskLimit());
         _attributeFieldWriter = SequencedTaskExecutor::create(attribute_field_writer_executor, cfg.indexingThreads(), cfg.defaultTaskLimit(),
                                                               cfg.optimize(), cfg.kindOfwatermark(), cfg.reactionTime());
@@ -68,7 +70,7 @@ ExecutorThreadingService::ExecutorThreadingService(vespalib::ThreadExecutor & sh
         _index_field_writer_ptr = _field_writer.get();
         _attribute_field_writer_ptr = _attributeFieldWriter.get();
 
-    } else if (cfg.shared_field_writer() == SharedFieldWriterExecutor::INDEX_AND_ATTRIBUTE) {
+    } else if (_shared_field_writer == SharedFieldWriterExecutor::INDEX_AND_ATTRIBUTE) {
         _field_writer = SequencedTaskExecutor::create(field_writer_executor, cfg.indexingThreads() * 3, cfg.defaultTaskLimit(),
                                                       cfg.optimize(), cfg.kindOfwatermark(), cfg.reactionTime());
         _index_field_inverter_ptr = _field_writer.get();
@@ -88,13 +90,22 @@ ExecutorThreadingService::ExecutorThreadingService(vespalib::ThreadExecutor & sh
 
 ExecutorThreadingService::~ExecutorThreadingService() = default;
 
-vespalib::Syncable &
-ExecutorThreadingService::sync() {
+void
+ExecutorThreadingService::sync_all_executors() {
     // We have multiple patterns where task A posts to B which post back to A
     for (size_t i = 0; i < 2; i++) {
         syncOnce();
     }
-    return *this;
+}
+
+void
+ExecutorThreadingService::blocking_master_execute(vespalib::Executor::Task::UP task)
+{
+    uint32_t limit = master_task_limit();
+    if (limit > 0) {
+        _masterExecutor.wait_for_task_count(limit);
+    }
+    _masterExecutor.execute(std::move(task));
 }
 
 void
@@ -116,37 +127,51 @@ ExecutorThreadingService::syncOnce() {
 void
 ExecutorThreadingService::shutdown()
 {
-    _masterExecutor.shutdown();
-    _masterExecutor.sync();
+    _masterExecutor.shutdown().sync();
     _attribute_field_writer_ptr->sync_all();
-    _summaryExecutor->shutdown();
-    _summaryExecutor->sync();
-    _indexExecutor->shutdown();
-    _indexExecutor->sync();
+    _summaryExecutor->shutdown().sync();
+    _indexExecutor->shutdown().sync();
     _index_field_inverter_ptr->sync_all();
     _index_field_writer_ptr->sync_all();
 }
 
 void
-ExecutorThreadingService::setTaskLimit(uint32_t taskLimit, uint32_t summaryTaskLimit)
+ExecutorThreadingService::set_task_limits(uint32_t master_task_limit,
+                                          uint32_t field_task_limit,
+                                          uint32_t summary_task_limit)
 {
-    _indexExecutor->setTaskLimit(taskLimit);
-    _summaryExecutor->setTaskLimit(summaryTaskLimit);
-    _index_field_inverter_ptr->setTaskLimit(taskLimit);
-    _index_field_writer_ptr->setTaskLimit(taskLimit);
-    _attribute_field_writer_ptr->setTaskLimit(taskLimit);
+    _master_task_limit.store(master_task_limit, std::memory_order_release);
+    _indexExecutor->setTaskLimit(field_task_limit);
+    _summaryExecutor->setTaskLimit(summary_task_limit);
+    _index_field_inverter_ptr->setTaskLimit(field_task_limit);
+    _index_field_writer_ptr->setTaskLimit(field_task_limit);
+    _attribute_field_writer_ptr->setTaskLimit(field_task_limit);
 }
 
 ExecutorThreadingServiceStats
 ExecutorThreadingService::getStats()
 {
-    return ExecutorThreadingServiceStats(_masterExecutor.getStats(),
-                                         _indexExecutor->getStats(),
-                                         _summaryExecutor->getStats(),
-                                         _sharedExecutor.getStats(),
-                                         _index_field_inverter_ptr->getStats(),
-                                         _index_field_writer_ptr->getStats(),
-                                         _attribute_field_writer_ptr->getStats());
+    auto master_stats = _masterExecutor.getStats();
+    auto index_stats = _indexExecutor->getStats();
+    auto summary_stats = _summaryExecutor->getStats();
+    if (_shared_field_writer == SharedFieldWriterExecutor::INDEX) {
+        auto field_writer_stats = _field_writer->getStats();
+        return ExecutorThreadingServiceStats(master_stats, index_stats, summary_stats,
+                                             field_writer_stats,
+                                             field_writer_stats,
+                                             _attribute_field_writer_ptr->getStats());
+    } else if (_shared_field_writer == SharedFieldWriterExecutor::INDEX_AND_ATTRIBUTE) {
+        auto field_writer_stats = _field_writer->getStats();
+        return ExecutorThreadingServiceStats(master_stats, index_stats, summary_stats,
+                                             field_writer_stats,
+                                             field_writer_stats,
+                                             field_writer_stats);
+    } else {
+        return ExecutorThreadingServiceStats(master_stats, index_stats, summary_stats,
+                                             _index_field_inverter_ptr->getStats(),
+                                             _index_field_writer_ptr->getStats(),
+                                             _attribute_field_writer_ptr->getStats());
+    }
 }
 
 vespalib::ISequencedTaskExecutor &

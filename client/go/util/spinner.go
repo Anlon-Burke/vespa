@@ -11,20 +11,22 @@ import (
 )
 
 const (
-	spinnerTextEllipsis = "..."
-	spinnerTextDone     = "done"
-	spinnerTextFailed   = "failed"
-	spinnerColor        = "blue"
+	spinnerTextDone   = "done"
+	spinnerTextFailed = "failed"
+	spinnerColor      = "blue"
 )
 
 var messages = os.Stderr
 
 func Spinner(text string, fn func() error) error {
-	initialMsg := text + spinnerTextEllipsis + " "
-	doneMsg := initialMsg + spinnerTextDone + "\n"
-	failMsg := initialMsg + spinnerTextFailed + "\n"
-
+	initialMsg := text + " "
+	doneMsg := "\r" + initialMsg + spinnerTextDone + "\n"
+	failMsg := "\r" + initialMsg + spinnerTextFailed + "\n"
 	return loading(initialMsg, doneMsg, failMsg, fn)
+}
+
+func Waiting(fn func() error) error {
+	return loading("", "", "", fn)
 }
 
 func loading(initialMsg, doneMsg, failMsg string, fn func() error) error {
@@ -39,7 +41,7 @@ func loading(initialMsg, doneMsg, failMsg string, fn func() error) error {
 		s.HideCursor = true
 		s.Writer = messages
 
-		if err := s.Color(spinnerColor); err != nil {
+		if err := s.Color(spinnerColor, "bold"); err != nil {
 			panic(Error(err, "failed setting spinner color"))
 		}
 
@@ -55,6 +57,7 @@ func loading(initialMsg, doneMsg, failMsg string, fn func() error) error {
 	err := fn()
 	errc <- err
 	<-done
+
 	return err
 }
 

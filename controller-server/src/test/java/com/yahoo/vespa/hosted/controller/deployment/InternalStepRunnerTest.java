@@ -210,7 +210,7 @@ public class InternalStepRunnerTest {
         assertEquals(unfinished, tester.jobs().last(app.instanceId(), JobType.systemTest).get().stepStatuses().get(Step.installReal));
         assertEquals(failed, tester.jobs().last(app.instanceId(), JobType.stagingTest).get().stepStatuses().get(Step.installInitialReal));
 
-        tester.clock().advance(InternalStepRunner.Timeouts.of(system()).nodesDown().minus(Duration.ofSeconds(3)));
+        tester.clock().advance(InternalStepRunner.Timeouts.of(system()).statelessNodesDown().minus(Duration.ofSeconds(3)));
         tester.runner().run();
         assertEquals(unfinished, tester.jobs().last(app.instanceId(), JobType.systemTest).get().stepStatuses().get(Step.installReal));
 
@@ -521,22 +521,16 @@ public class InternalStepRunnerTest {
     }
 
     @Test
-    public void generates_correct_services_xml_using_osgi_based_runtime() {
-        generates_correct_services_xml("test_runner_services.xml-cd-osgi", true);
+    public void generates_correct_services_xml() {
+        generates_correct_services_xml("test_runner_services.xml-cd");
     }
 
-    @Test
-    public void generates_correct_services_xml_using_legacy_runtime() {
-        generates_correct_services_xml("test_runner_services.xml-cd-legacy", false);
-    }
-
-    private void generates_correct_services_xml(String filenameExpectedOutput, boolean useOsgiBasedRuntime) {
+    private void generates_correct_services_xml(String filenameExpectedOutput) {
         ControllerConfig.Steprunner.Testerapp config = new ControllerConfig.Steprunner.Testerapp.Builder().build();
         assertFile(filenameExpectedOutput,
                 new String(InternalStepRunner.servicesXml(
                         true,
                         false,
-                        useOsgiBasedRuntime,
                         new NodeResources(2, 12, 75, 1, NodeResources.DiskSpeed.fast, NodeResources.StorageType.local),
                         config)));
     }

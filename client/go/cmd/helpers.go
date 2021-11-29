@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -129,20 +130,29 @@ func getTargetType() string {
 	return target
 }
 
-func getService(service string, sessionOrRunID int64) *vespa.Service {
+func getService(service string, sessionOrRunID int64, cluster string) *vespa.Service {
 	t := getTarget()
 	timeout := time.Duration(waitSecsArg) * time.Second
 	if timeout > 0 {
 		log.Printf("Waiting up to %d %s for service to become available ...", color.Cyan(waitSecsArg), color.Cyan("seconds"))
 	}
-	s, err := t.Service(service, timeout, sessionOrRunID)
+	s, err := t.Service(service, timeout, sessionOrRunID, cluster)
 	if err != nil {
 		fatalErr(err, "Invalid service: ", service)
 	}
 	return s
 }
 
+func getEndpointsOverride() string { return os.Getenv("VESPA_CLI_ENDPOINTS") }
+
 func getSystem() string { return os.Getenv("VESPA_CLI_CLOUD_SYSTEM") }
+
+func getSystemName() string {
+	if getSystem() == "publiccd" {
+		return "publiccd"
+	}
+	return "public"
+}
 
 func getConsoleURL() string {
 	if getSystem() == "publiccd" {
@@ -153,17 +163,10 @@ func getConsoleURL() string {
 }
 
 func getApiURL() string {
-	if vespa.Auth0AccessTokenEnabled() {
-		if getSystem() == "publiccd" {
-			return "https://api.vespa-external-cd.aws.oath.cloud:443"
-		}
-		return "https://api.vespa-external.aws.oath.cloud:443"
-	} else {
-		if getSystem() == "publiccd" {
-			return "https://api.vespa-external-cd.aws.oath.cloud:4443"
-		}
-		return "https://api.vespa-external.aws.oath.cloud:4443"
+	if getSystem() == "publiccd" {
+		return "https://api.vespa-external-cd.aws.oath.cloud:4443"
 	}
+	return "https://api.vespa-external.aws.oath.cloud:4443"
 }
 
 func getTarget() vespa.Target {
@@ -175,15 +178,17 @@ func getTarget() vespa.Target {
 	case "local":
 		return vespa.LocalTarget()
 	case "cloud":
-		deployment := deploymentFromArgs()
 		cfg, err := LoadConfig()
 		if err != nil {
 			fatalErr(err, "Could not load config")
 			return nil
 		}
+		deployment := deploymentFromArgs()
+		endpoints := getEndpointsFromEnv()
+
 		var apiKey []byte = nil
-		if !vespa.Auth0AccessTokenEnabled() {
-			apiKey, err = ioutil.ReadFile(cfg.APIKeyPath(deployment.Application.Tenant))
+		apiKey, err = ioutil.ReadFile(cfg.APIKeyPath(deployment.Application.Tenant))
+		if !vespa.Auth0AccessTokenEnabled() && endpoints == nil {
 			if err != nil {
 				fatalErrHint(err, "Deployment to cloud requires an API key. Try 'vespa api-key'")
 			}
@@ -200,8 +205,28 @@ func getTarget() vespa.Target {
 		}
 		kp, err := tls.LoadX509KeyPair(certificateFile, privateKeyFile)
 		if err != nil {
-			fatalErrHint(err, "Deployment to cloud requires a certificate. Try 'vespa cert'")
+			var msg string
+			if vespa.Auth0AccessTokenEnabled() {
+				msg = "Deployment to cloud requires a certificate. Try 'vespa auth cert'"
+			} else {
+				msg = "Deployment to cloud requires a certificate. Try 'vespa cert'"
+			}
+			fatalErrHint(err, msg)
 		}
+		var cloudAuth string
+		if vespa.Auth0AccessTokenEnabled() {
+			cloudAuth, err = cfg.Get(cloudAuthFlag)
+			if err != nil {
+				if apiKey != nil {
+					cloudAuth = "api-key"
+				} else {
+					cloudAuth = "access-token"
+				}
+			}
+		} else {
+			cloudAuth = ""
+		}
+
 		return vespa.CloudTarget(getApiURL(), deployment, apiKey,
 			vespa.TLSOptions{
 				KeyPair:         kp,
@@ -212,14 +237,17 @@ func getTarget() vespa.Target {
 				Writer: stdout,
 				Level:  vespa.LogLevel(logLevelArg),
 			},
-			cfg.AuthConfigPath())
+			cfg.AuthConfigPath(),
+			getSystemName(),
+			cloudAuth,
+			endpoints)
 	}
 	fatalErrHint(fmt.Errorf("Invalid target: %s", targetType), "Valid targets are 'local', 'cloud' or an URL")
 	return nil
 }
 
 func waitForService(service string, sessionOrRunID int64) {
-	s := getService(service, sessionOrRunID)
+	s := getService(service, sessionOrRunID, "")
 	timeout := time.Duration(waitSecsArg) * time.Second
 	if timeout > 0 {
 		log.Printf("Waiting up to %d %s for service to become ready ...", color.Cyan(waitSecsArg), color.Cyan("seconds"))
@@ -240,12 +268,18 @@ func getDeploymentOpts(cfg *Config, pkg vespa.ApplicationPackage, target vespa.T
 	if opts.IsCloud() {
 		deployment := deploymentFromArgs()
 		if !opts.ApplicationPackage.HasCertificate() {
-			fatalErrHint(fmt.Errorf("Missing certificate in application package"), "Applications in Vespa Cloud require a certificate", "Try 'vespa cert'")
+			var msg string
+			if vespa.Auth0AccessTokenEnabled() {
+				msg = "Try 'vespa auth cert'"
+			} else {
+				msg = "Try 'vespa cert'"
+			}
+			fatalErrHint(fmt.Errorf("Missing certificate in application package"), "Applications in Vespa Cloud require a certificate", msg)
 			return opts
 		}
+		var err error
+		opts.APIKey, err = cfg.ReadAPIKey(deployment.Application.Tenant)
 		if !vespa.Auth0AccessTokenEnabled() {
-			var err error
-			opts.APIKey, err = cfg.ReadAPIKey(deployment.Application.Tenant)
 			if err != nil {
 				fatalErrHint(err, "Deployment to cloud requires an API key. Try 'vespa api-key'")
 				return opts
@@ -254,4 +288,33 @@ func getDeploymentOpts(cfg *Config, pkg vespa.ApplicationPackage, target vespa.T
 		opts.Deployment = deployment
 	}
 	return opts
+}
+
+func getEndpointsFromEnv() map[string]string {
+	endpointsString := getEndpointsOverride()
+	if endpointsString == "" {
+		return nil
+	}
+
+	var endpoints endpoints
+	urlsByCluster := make(map[string]string)
+	if err := json.Unmarshal([]byte(endpointsString), &endpoints); err != nil {
+		fatalErrHint(err, "Endpoints must be valid JSON")
+	}
+	if len(endpoints.Endpoints) == 0 {
+		fatalErr(fmt.Errorf("endpoints must be non-empty"))
+	}
+	for _, endpoint := range endpoints.Endpoints {
+		urlsByCluster[endpoint.Cluster] = endpoint.URL
+	}
+	return urlsByCluster
+}
+
+type endpoints struct {
+	Endpoints []endpoint `json:"endpoints"`
+}
+
+type endpoint struct {
+	Cluster string `json:"cluster"`
+	URL     string `json:"url"`
 }

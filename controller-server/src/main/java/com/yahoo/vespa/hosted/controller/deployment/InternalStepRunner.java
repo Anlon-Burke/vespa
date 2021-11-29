@@ -41,15 +41,16 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.TesterId;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.DeploymentFailureMails;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.Mail;
 import com.yahoo.vespa.hosted.controller.application.ActivateResult;
-import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.Endpoint;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
+import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
 import com.yahoo.vespa.hosted.controller.config.ControllerConfig;
 import com.yahoo.vespa.hosted.controller.maintenance.JobRunner;
 import com.yahoo.vespa.hosted.controller.notification.Notification;
 import com.yahoo.vespa.hosted.controller.notification.NotificationSource;
-import com.yahoo.vespa.hosted.controller.routing.RoutingPolicyId;
+import com.yahoo.vespa.hosted.controller.routing.RoutingPolicy;
+import com.yahoo.vespa.hosted.controller.routing.context.DeploymentRoutingContext;
 import com.yahoo.yolean.Exceptions;
 
 import javax.security.auth.x500.X500Principal;
@@ -69,6 +70,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -347,9 +349,15 @@ public class InternalStepRunner implements StepRunner {
 
         String failureReason = null;
 
-        NodeList suspendedTooLong = nodeList.suspendedSince(controller.clock().instant().minus(timeouts.nodesDown()));
+        NodeList suspendedTooLong = nodeList
+                .isStateful()
+                .suspendedSince(controller.clock().instant().minus(timeouts.statefulNodesDown()))
+                .and(nodeList
+                        .not().isStateful()
+                        .suspendedSince(controller.clock().instant().minus(timeouts.statelessNodesDown()))
+                );
         if ( ! suspendedTooLong.isEmpty()) {
-            failureReason = "Some nodes have been suspended for more than " + timeouts.nodesDown().toMinutes() + " minutes:\n" +
+            failureReason = "Some nodes have been suspended for more than the allowed threshold:\n" +
                             suspendedTooLong.asList().stream().map(node -> node.node().hostname().value()).collect(joining("\n"));
         }
 
@@ -477,12 +485,12 @@ public class InternalStepRunner implements StepRunner {
     }
 
     private boolean endpointsAvailable(ApplicationId id, ZoneId zone, DualLogger logger) {
-        var endpoints = controller.routing().readZoneEndpointsOf(Set.of(new DeploymentId(id, zone)));
+        DeploymentId deployment = new DeploymentId(id, zone);
+        Map<ZoneId, List<Endpoint>> endpoints = controller.routing().readZoneEndpointsOf(Set.of(deployment));
         if ( ! endpoints.containsKey(zone)) {
             logger.log("Endpoints not yet ready.");
             return false;
         }
-        var policies = controller.routing().policies().get(new DeploymentId(id, zone));
         for (var endpoint : endpoints.get(zone)) {
             HostName endpointName = HostName.from(endpoint.dnsName());
             var ipAddress = controller.jobController().cloud().resolveHostName(endpointName);
@@ -490,10 +498,10 @@ public class InternalStepRunner implements StepRunner {
                 logger.log(INFO, "DNS lookup yielded no IP address for '" + endpointName + "'.");
                 return false;
             }
-            if (endpoint.routingMethod() == RoutingMethod.exclusive)  {
-                var policy = policies.get(new RoutingPolicyId(id, ClusterSpec.Id.from(endpoint.name()), zone));
-                if (policy == null)
-                    throw new IllegalStateException(endpoint + " has no matching policy in " + policies);
+            DeploymentRoutingContext context = controller.routing().of(deployment);
+            if (context.routingMethod() == RoutingMethod.exclusive)  {
+                RoutingPolicy policy = context.routingPolicy(ClusterSpec.Id.from(endpoint.name()))
+                                              .orElseThrow(() -> new IllegalStateException(endpoint + " has no matching policy"));
 
                 var cNameValue = controller.jobController().cloud().resolveCname(endpointName);
                 if ( ! cNameValue.map(policy.canonicalName()::equals).orElse(false)) {
@@ -640,6 +648,7 @@ public class InternalStepRunner implements StepRunner {
                 return Optional.of(testFailure);
             case ERROR:
                 logger.log(INFO, "Tester failed running its tests!");
+                controller.jobController().updateTestReport(id);
                 return Optional.of(error);
             case SUCCESS:
                 logger.log("Tests completed successfully.");
@@ -847,11 +856,9 @@ public class InternalStepRunner implements StepRunner {
 
         ZoneId zone = id.type().zone(controller.system());
         boolean useTesterCertificate = useTesterCertificate(id);
-        boolean useOsgiBasedTestRuntime = testerPlatformVersion(id).isAfter(new Version(7, 247, 11));
 
         byte[] servicesXml = servicesXml( ! controller.system().isPublic(),
                                          useTesterCertificate,
-                                         useOsgiBasedTestRuntime,
                                          testerResourcesFor(zone, spec.requireInstance(id.application().instance())),
                                          controller.controllerConfig().steprunner().testerapp());
         byte[] testPackage = controller.applications().applicationStore().getTester(id.application().tenant(), id.application().application(), version);
@@ -859,8 +866,12 @@ public class InternalStepRunner implements StepRunner {
                                              spec.athenzDomain(),
                                              spec.requireInstance(id.application().instance()).athenzService(zone.environment(), zone.region()));
 
-        try (ZipBuilder zipBuilder = new ZipBuilder(testPackage.length + servicesXml.length + 1000)) {
+        try (ZipBuilder zipBuilder = new ZipBuilder(testPackage.length + servicesXml.length + deploymentXml.length + 1000)) {
+            // Copy contents of submitted application-test.zip, and ensure required directories exist within the zip.
             zipBuilder.add(testPackage);
+            zipBuilder.add("artifacts/.ignore-" + UUID.randomUUID(), new byte[0]);
+            zipBuilder.add("tests/.ignore-" + UUID.randomUUID(), new byte[0]);
+
             zipBuilder.add("services.xml", servicesXml);
             zipBuilder.add("deployment.xml", deploymentXml);
             if (useTesterCertificate)
@@ -903,9 +914,8 @@ public class InternalStepRunner implements StepRunner {
     }
 
     /** Returns the generated services.xml content for the tester application. */
-    static byte[] servicesXml(
-            boolean systemUsesAthenz, boolean useTesterCertificate, boolean useOsgiBasedTestRuntime,
-            NodeResources resources, ControllerConfig.Steprunner.Testerapp config) {
+    static byte[] servicesXml(boolean systemUsesAthenz, boolean useTesterCertificate,
+                              NodeResources resources, ControllerConfig.Steprunner.Testerapp config) {
         int jdiscMemoryGb = 2; // 2Gb memory for tester application (excessive?).
         int jdiscMemoryPct = (int) Math.ceil(100 * jdiscMemoryGb / resources.memoryGb());
 
@@ -918,25 +928,6 @@ public class InternalStepRunner implements StepRunner {
 
         String runtimeProviderClass = config.runtimeProviderClass();
         String tenantCdBundle = config.tenantCdBundle();
-
-        String handlerAndExtraComponents = useOsgiBasedTestRuntime
-                ?
-                "        <component id=\"" + runtimeProviderClass + "\" bundle=\"" + tenantCdBundle + "\" />\n" +
-                        "\n" +
-                        "        <component id=\"com.yahoo.vespa.testrunner.JunitRunner\" bundle=\"vespa-osgi-testrunner\">\n" +
-                        "            <config name=\"com.yahoo.vespa.testrunner.junit-test-runner\">\n" +
-                        "                <artifactsPath>artifacts</artifactsPath>\n" +
-                        "                <useAthenzCredentials>" + systemUsesAthenz + "</useAthenzCredentials>\n" +
-                        "            </config>\n" +
-                        "        </component>\n" +
-                        "\n" +
-                        "        <handler id=\"com.yahoo.vespa.testrunner.TestRunnerHandler\" bundle=\"vespa-osgi-testrunner\">\n" +
-                        "            <binding>http://*/tester/v1/*</binding>\n" +
-                        "        </handler>\n"
-                :
-                "        <handler id=\"com.yahoo.vespa.hosted.testrunner.TestRunnerHandler\" bundle=\"vespa-testrunner-components\">\n" +
-                        "            <binding>http://*/tester/v1/*</binding>\n" +
-                        "        </handler>\n";
 
         String servicesXml =
                 "<?xml version='1.0' encoding='UTF-8'?>\n" +
@@ -952,7 +943,26 @@ public class InternalStepRunner implements StepRunner {
                 "            </config>\n" +
                 "        </component>\n" +
                 "\n" +
-                handlerAndExtraComponents +
+                "        <handler id=\"com.yahoo.vespa.testrunner.TestRunnerHandler\" bundle=\"vespa-osgi-testrunner\">\n" +
+                "            <binding>http://*/tester/v1/*</binding>\n" +
+                "        </handler>\n" +
+                "\n" +
+                "        <component id=\"" + runtimeProviderClass + "\" bundle=\"" + tenantCdBundle + "\" />\n" +
+                "\n" +
+                "        <component id=\"com.yahoo.vespa.testrunner.JunitRunner\" bundle=\"vespa-osgi-testrunner\">\n" +
+                "            <config name=\"com.yahoo.vespa.testrunner.junit-test-runner\">\n" +
+                "                <artifactsPath>artifacts</artifactsPath>\n" +
+                "                <useAthenzCredentials>" + systemUsesAthenz + "</useAthenzCredentials>\n" +
+                "            </config>\n" +
+                "        </component>\n" +
+                "\n" +
+                "        <component id=\"com.yahoo.vespa.testrunner.VespaCliTestRunner\" bundle=\"vespa-osgi-testrunner\">\n" +
+                "            <config name=\"com.yahoo.vespa.testrunner.vespa-cli-test-runner\">\n" +
+                "                <artifactsPath>artifacts</artifactsPath>\n" +
+                "                <testsPath>tests</testsPath>\n" +
+                "                <useAthenzCredentials>" + systemUsesAthenz + "</useAthenzCredentials>\n" +
+                "            </config>\n" +
+                "        </component>\n" +
                 "\n" +
                 "        <nodes count=\"1\" allocated-memory=\"" + jdiscMemoryPct + "%\">\n" +
                 "            " + resourceString + "\n" +
@@ -1038,7 +1048,8 @@ public class InternalStepRunner implements StepRunner {
         Duration endpoint() { return Duration.ofMinutes(15); }
         Duration endpointCertificate() { return Duration.ofMinutes(20); }
         Duration tester() { return Duration.ofMinutes(30); }
-        Duration nodesDown() { return Duration.ofMinutes(system.isCd() ? 30 : 60); }
+        Duration statelessNodesDown() { return Duration.ofMinutes(system.isCd() ? 30 : 60); }
+        Duration statefulNodesDown() { return Duration.ofMinutes(system.isCd() ? 30 : 720); }
         Duration noNodesDown() { return Duration.ofMinutes(system.isCd() ? 30 : 240); }
         Duration testerCertificate() { return Duration.ofMinutes(300); }
 

@@ -1,0 +1,13 @@
+{
+    "steps": [
+        {
+            "response": {
+                "body": {
+                    "root": {
+                        "children": []
+                    }
+                }
+            }
+        }
+    ]
+}

@@ -13,13 +13,11 @@ import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.HostName;
-import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.zone.RoutingMethod;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.path.Path;
-import com.yahoo.vespa.hosted.controller.api.application.v4.model.EndpointStatus;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateMetadata;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ContainerEndpoint;
@@ -38,8 +36,10 @@ import com.yahoo.vespa.hosted.controller.deployment.DeploymentContext;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentTester;
 import com.yahoo.vespa.hosted.controller.integration.ZoneApiMock;
 import com.yahoo.vespa.hosted.controller.persistence.MockCuratorDb;
-import com.yahoo.vespa.hosted.controller.rotation.RotationId;
-import com.yahoo.vespa.hosted.controller.rotation.RotationLock;
+import com.yahoo.vespa.hosted.controller.routing.RoutingStatus;
+import com.yahoo.vespa.hosted.controller.routing.context.DeploymentRoutingContext;
+import com.yahoo.vespa.hosted.controller.routing.rotation.RotationId;
+import com.yahoo.vespa.hosted.controller.routing.rotation.RotationLock;
 import com.yahoo.vespa.hosted.rotation.config.RotationsConfig;
 import org.junit.Test;
 
@@ -49,6 +49,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -214,44 +215,59 @@ public class ControllerTest {
 
         // Check initial rotation status
         var deployment1 = context.deploymentIdIn(zone1);
-        var status1 = tester.controller().routing().globalRotationStatus(deployment1);
-        assertEquals(1, status1.size());
-        assertTrue("All upstreams are in", status1.values().stream().allMatch(es -> es.getStatus() == EndpointStatus.Status.in));
+        DeploymentRoutingContext routingContext = tester.controller().routing().of(deployment1);
+        RoutingStatus status1 = routingContext.routingStatus();
+        assertEquals(RoutingStatus.Value.in, status1.value());
 
         // Set the deployment out of service in the global rotation
-        var newStatus = new EndpointStatus(EndpointStatus.Status.out, "unit-test", ControllerTest.class.getSimpleName(), tester.clock().instant().getEpochSecond());
-        tester.controller().routing().setGlobalRotationStatus(deployment1, newStatus);
-        status1 = tester.controller().routing().globalRotationStatus(deployment1);
-        assertEquals(1, status1.size());
-        assertTrue("All upstreams are out", status1.values().stream().allMatch(es -> es.getStatus() == EndpointStatus.Status.out));
-        assertTrue("Reason is set", status1.values().stream().allMatch(es -> es.getReason().equals("unit-test")));
+        routingContext.setRoutingStatus(RoutingStatus.Value.out, RoutingStatus.Agent.operator);
+        RoutingStatus status2 = routingContext.routingStatus();
+        assertEquals(RoutingStatus.Value.out, status2.value());
 
         // Other deployment remains in
-        var status2 = tester.controller().routing().globalRotationStatus(context.deploymentIdIn(zone2));
-        assertEquals(1, status2.size());
-        assertTrue("All upstreams are in", status2.values().stream().allMatch(es -> es.getStatus() == EndpointStatus.Status.in));
+        RoutingStatus status3 = tester.controller().routing().of(context.deploymentIdIn(zone2)).routingStatus();
+        assertEquals(RoutingStatus.Value.in, status3.value());
     }
 
     @Test
     public void testDnsUpdatesForGlobalEndpoint() {
         var betaContext = tester.newDeploymentContext("tenant1", "app1", "beta");
         var defaultContext = tester.newDeploymentContext("tenant1", "app1", "default");
+
+        ZoneId usWest = ZoneId.from("prod.us-west-1");
+        ZoneId usCentral = ZoneId.from("prod.us-central-1");
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
+                .athenzIdentity(AthenzDomain.from("domain"), AthenzService.from("service"))
                 .instances("beta,default")
                 .endpoint("default", "foo")
-                .region("us-west-1")
-                .region("us-central-1") // Two deployments should result in each DNS alias being registered once
+                .region(usWest.region())
+                .region(usCentral.region()) // Two deployments should result in each DNS alias being registered once
                 .build();
+        tester.controllerTester().zoneRegistry().setRoutingMethod(List.of(ZoneApiMock.from(usWest), ZoneApiMock.from(usCentral)),
+                                                                  RoutingMethod.shared,
+                                                                  RoutingMethod.sharedLayer4);
         betaContext.submit(applicationPackage).deploy();
 
         { // Expected rotation names are passed to beta instance deployments
             Collection<Deployment> betaDeployments = betaContext.instance().deployments().values();
             assertFalse(betaDeployments.isEmpty());
+            Set<ContainerEndpoint> containerEndpoints = Set.of(new ContainerEndpoint("foo",
+                                                                                     "global",
+                                                                                     List.of("beta--app1--tenant1.global.vespa.oath.cloud",
+                                                                                             "rotation-id-01"),
+                                                                                     OptionalInt.empty(),
+                                                                                     RoutingMethod.shared),
+                                                               new ContainerEndpoint("foo",
+                                                                                     "global",
+                                                                                     List.of("beta.app1.tenant1.global.vespa.oath.cloud",
+                                                                                             "rotation-id-01"),
+                                                                                     OptionalInt.empty(),
+                                                                                     RoutingMethod.sharedLayer4));
+
             for (Deployment deployment : betaDeployments) {
-                assertEquals("Rotation names are passed to config server in " + deployment.zone(),
-                             Set.of("rotation-id-01",
-                                    "beta--app1--tenant1.global.vespa.oath.cloud"),
-                             tester.configServer().containerEndpointNames(betaContext.deploymentIdIn(deployment.zone())));
+                assertEquals(containerEndpoints,
+                             tester.configServer().containerEndpoints()
+                                   .get(betaContext.deploymentIdIn(deployment.zone())));
             }
             betaContext.flushDnsUpdates();
         }
@@ -259,11 +275,21 @@ public class ControllerTest {
         { // Expected rotation names are passed to default instance deployments
             Collection<Deployment> defaultDeployments = defaultContext.instance().deployments().values();
             assertFalse(defaultDeployments.isEmpty());
+            Set<ContainerEndpoint> containerEndpoints = Set.of(new ContainerEndpoint("foo",
+                                                                                     "global",
+                                                                                     List.of("app1--tenant1.global.vespa.oath.cloud",
+                                                                                             "rotation-id-02"),
+                                                                                     OptionalInt.empty(),
+                                                                                     RoutingMethod.shared),
+                                                               new ContainerEndpoint("foo",
+                                                                                     "global",
+                                                                                     List.of("app1.tenant1.global.vespa.oath.cloud",
+                                                                                             "rotation-id-02"),
+                                                                                     OptionalInt.empty(),
+                                                                                     RoutingMethod.sharedLayer4));
             for (Deployment deployment : defaultDeployments) {
-                assertEquals("Rotation names are passed to config server in " + deployment.zone(),
-                             Set.of("rotation-id-02",
-                                    "app1--tenant1.global.vespa.oath.cloud"),
-                             tester.configServer().containerEndpointNames(defaultContext.deploymentIdIn(deployment.zone())));
+                assertEquals(containerEndpoints,
+                             tester.configServer().containerEndpoints().get(defaultContext.deploymentIdIn(deployment.zone())));
             }
             defaultContext.flushDnsUpdates();
         }
@@ -277,13 +303,17 @@ public class ControllerTest {
             assertEquals(data, record.get().data().asString());
         });
 
-        Map<ApplicationId, List<String>> globalDnsNamesByInstance = Map.of(betaContext.instanceId(), List.of("beta--app1--tenant1.global.vespa.oath.cloud"),
-                                                                           defaultContext.instanceId(), List.of("app1--tenant1.global.vespa.oath.cloud"));
+        Map<ApplicationId, Set<String>> globalDnsNamesByInstance = Map.of(betaContext.instanceId(), Set.of("beta--app1--tenant1.global.vespa.oath.cloud",
+                                                                                                           "beta.app1.tenant1.global.vespa.oath.cloud"),
+                                                                          defaultContext.instanceId(), Set.of("app1--tenant1.global.vespa.oath.cloud",
+                                                                                                              "app1.tenant1.global.vespa.oath.cloud"));
 
         globalDnsNamesByInstance.forEach((instance, dnsNames) -> {
-            List<String> actualDnsNames = tester.controller().routing().readDeclaredEndpointsOf(instance)
-                                                .scope(Endpoint.Scope.global)
-                                                .mapToList(Endpoint::dnsName);
+            Set<String> actualDnsNames = tester.controller().routing().readDeclaredEndpointsOf(instance)
+                                               .scope(Endpoint.Scope.global)
+                                               .asList().stream()
+                                               .map(Endpoint::dnsName)
+                                               .collect(Collectors.toSet());
             assertEquals("Global DNS names for " + instance, dnsNames, actualDnsNames);
         });
     }
@@ -620,54 +650,67 @@ public class ControllerTest {
 
     @Test
     public void testDnsUpdatesForApplicationEndpoint() {
-        var context = tester.newDeploymentContext("tenant1", "app1", "beta");
+        ApplicationId beta = ApplicationId.from("tenant1", "app1", "beta");
+        ApplicationId main = ApplicationId.from("tenant1", "app1", "main");
+        var context = tester.newDeploymentContext(beta);
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
                 .instances("beta,main")
                 .region("us-west-1")
                 .region("us-east-3")
-                .applicationEndpoint("a", "qrs", "us-west-1",
-                                     Map.of(InstanceName.from("beta"), 2,
-                                            InstanceName.from("main"), 8))
-                .applicationEndpoint("b", "qrs", "us-west-1",
-                                     Map.of(InstanceName.from("beta"), 1,
-                                            InstanceName.from("main"), 1))
-                .applicationEndpoint("c", "qrs", "us-east-3",
-                                     Map.of(InstanceName.from("beta"), 4,
-                                            InstanceName.from("main"), 6))
+                .applicationEndpoint("a", "default", "us-west-1",
+                                     Map.of(beta.instance(), 2,
+                                            main.instance(), 8))
+                .applicationEndpoint("b", "default", "us-west-1",
+                                     Map.of(beta.instance(), 1,
+                                            main.instance(), 1))
+                .applicationEndpoint("c", "default", "us-east-3",
+                                     Map.of(beta.instance(), 4,
+                                            main.instance(), 6))
                 .build();
         context.submit(applicationPackage).deploy();
 
-        // Endpoint names are passed to each deployment
-        DeploymentId usWest = context.deploymentIdIn(ZoneId.from("prod", "us-west-1"));
-        DeploymentId usEast = context.deploymentIdIn(ZoneId.from("prod", "us-east-3"));
-        Map<DeploymentId, List<String>> deploymentEndpoints = Map.of(usWest, List.of("a--app1--tenant1.us-west-1-r.vespa.oath.cloud", "b--app1--tenant1.us-west-1-r.vespa.oath.cloud"),
-                                                                     usEast, List.of("c--app1--tenant1.us-east-3-r.vespa.oath.cloud"));
-        deploymentEndpoints.forEach((zone, endpointNames) -> {
-            assertEquals("Endpoint names are passed to config server in " + zone,
-                         Set.of(new ContainerEndpoint("qrs", "application",
-                                                      endpointNames)),
-                         tester.configServer().containerEndpoints().get(zone));
+        ZoneId usWest = ZoneId.from("prod", "us-west-1");
+        ZoneId usEast = ZoneId.from("prod", "us-east-3");
+        // Expected container endpoints are passed to each deployment
+        Map<DeploymentId, Map<String, Integer>> deploymentEndpoints = Map.of(
+                new DeploymentId(beta, usWest), Map.of("a.app1.tenant1.us-west-1-r.vespa.oath.cloud", 2,
+                                                       "b.app1.tenant1.us-west-1-r.vespa.oath.cloud", 1),
+                new DeploymentId(main, usWest), Map.of("a.app1.tenant1.us-west-1-r.vespa.oath.cloud", 8,
+                                                       "b.app1.tenant1.us-west-1-r.vespa.oath.cloud", 1),
+                new DeploymentId(beta, usEast), Map.of("c.app1.tenant1.us-east-3-r.vespa.oath.cloud", 4),
+                new DeploymentId(main, usEast), Map.of("c.app1.tenant1.us-east-3-r.vespa.oath.cloud", 6)
+        );
+        deploymentEndpoints.forEach((deployment, endpoints) -> {
+            Set<ContainerEndpoint> expected = endpoints.entrySet().stream()
+                                                       .map(kv -> new ContainerEndpoint("default", "application",
+                                                                                        List.of(kv.getKey()),
+                                                                                        OptionalInt.of(kv.getValue()),
+                                                                                        RoutingMethod.sharedLayer4))
+                                                       .collect(Collectors.toSet());
+            assertEquals("Endpoint names for " + deployment + " are passed to config server",
+                         expected,
+                         tester.configServer().containerEndpoints().get(deployment));
         });
         context.flushDnsUpdates();
 
         // DNS records are created for each endpoint
         Set<Record> records = tester.controllerTester().nameService().records();
         assertEquals(Set.of(new Record(Record.Type.CNAME,
-                                       RecordName.from("a--app1--tenant1.us-west-1-r.vespa.oath.cloud"),
+                                       RecordName.from("a.app1.tenant1.us-west-1-r.vespa.oath.cloud"),
                                        RecordData.from("vip.prod.us-west-1.")),
                             new Record(Record.Type.CNAME,
-                                       RecordName.from("b--app1--tenant1.us-west-1-r.vespa.oath.cloud"),
+                                       RecordName.from("b.app1.tenant1.us-west-1-r.vespa.oath.cloud"),
                                        RecordData.from("vip.prod.us-west-1.")),
                             new Record(Record.Type.CNAME,
-                                       RecordName.from("c--app1--tenant1.us-east-3-r.vespa.oath.cloud"),
+                                       RecordName.from("c.app1.tenant1.us-east-3-r.vespa.oath.cloud"),
                                        RecordData.from("vip.prod.us-east-3."))),
                      records);
         List<String> endpointDnsNames = tester.controller().routing().declaredEndpointsOf(context.application())
                                               .scope(Endpoint.Scope.application)
                                               .mapToList(Endpoint::dnsName);
-        assertEquals(List.of("a--app1--tenant1.us-west-1-r.vespa.oath.cloud",
-                             "b--app1--tenant1.us-west-1-r.vespa.oath.cloud",
-                             "c--app1--tenant1.us-east-3-r.vespa.oath.cloud"),
+        assertEquals(List.of("a.app1.tenant1.us-west-1-r.vespa.oath.cloud",
+                             "b.app1.tenant1.us-west-1-r.vespa.oath.cloud",
+                             "c.app1.tenant1.us-east-3-r.vespa.oath.cloud"),
                      endpointDnsNames);
     }
 

@@ -56,6 +56,7 @@ import com.yahoo.search.yql.yqlplusParser.TimeoutContext;
 import com.yahoo.search.yql.yqlplusParser.UnaryExpressionContext;
 import com.yahoo.search.yql.yqlplusParser.WhereContext;
 
+import org.antlr.v4.runtime.ANTLRInputStream;
 import org.antlr.v4.runtime.BaseErrorListener;
 import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CommonTokenStream;
@@ -65,13 +66,10 @@ import org.antlr.v4.runtime.Recognizer;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.TokenStream;
 import org.antlr.v4.runtime.atn.PredictionMode;
-import org.antlr.v4.runtime.misc.NotNull;
-import org.antlr.v4.runtime.misc.Nullable;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.RuleNode;
 import org.antlr.v4.runtime.tree.TerminalNode;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Iterator;
@@ -85,50 +83,39 @@ import java.util.Set;
 final class ProgramParser {
 
     public yqlplusParser prepareParser(String programName, InputStream input) throws IOException {
-        return prepareParser(programName, new CaseInsensitiveInputStream(input));
+        //TODO ANTLRInputStream goes away on 4.7, so must use CharStreams.fromXXX() when upgrading
+        return prepareParser(programName, new CaseInsensitiveCharStream(new ANTLRInputStream(input)));
     }
 
     public yqlplusParser prepareParser(String programName, String input) throws IOException {
-        return prepareParser(programName, new CaseInsensitiveInputStream(input));
+        //TODO ANTLRInputStream goes away on 4.7, so must use CharStreams.fromXXX() when upgrading
+        return prepareParser(programName, new CaseInsensitiveCharStream(new ANTLRInputStream(input)));
     }
 
-    public yqlplusParser prepareParser(File file) throws IOException {
-        return prepareParser(file.getAbsoluteFile().toString(), new CaseInsensitiveFileStream(file.getAbsolutePath()));
+    private static class ErrorListener extends BaseErrorListener {
+        private final String programName;
+        ErrorListener(String programName) { this.programName = programName; }
+        @Override
+        public void syntaxError(Recognizer<?, ?> recognizer,
+                                Object offendingSymbol,
+                                int line,
+                                int charPositionInLine,
+                                String msg,
+                                RecognitionException e) {
+            throw new ProgramCompileException(new Location(programName, line, charPositionInLine), "%s", msg);
+        }
     }
 
     private yqlplusParser prepareParser(String programName, CharStream input) {
+        ErrorListener errorListener = new ErrorListener(programName);
         yqlplusLexer lexer = new yqlplusLexer(input);
         lexer.removeErrorListeners();
-        lexer.addErrorListener(new BaseErrorListener() {
-
-          @Override
-          public void syntaxError(@NotNull Recognizer<?, ?> recognizer,
-                                  @Nullable Object offendingSymbol,
-                                  int line,
-                                  int charPositionInLine,
-                                  @NotNull String msg,
-                                  @Nullable RecognitionException e) {
-            throw new ProgramCompileException(new Location(programName, line, charPositionInLine), "%s", msg);
-          }
-
-        });
+        lexer.addErrorListener(errorListener);
         TokenStream tokens = new CommonTokenStream(lexer);
 
         yqlplusParser parser = new yqlplusParser(tokens);
         parser.removeErrorListeners();
-        parser.addErrorListener(new BaseErrorListener() {
-
-          @Override
-          public void syntaxError(@NotNull Recognizer<?, ?> recognizer,
-                                  @Nullable Object offendingSymbol,
-                                  int line,
-                                  int charPositionInLine,
-                                  @NotNull String msg,
-                                  @Nullable RecognitionException e) {
-            throw new ProgramCompileException(new Location(programName, line, charPositionInLine), "%s", msg);
-          }
-
-        });
+        parser.addErrorListener(errorListener);
         parser.getInterpreter().setPredictionMode(PredictionMode.SLL);
         return parser;
     }
@@ -195,7 +182,6 @@ final class ProgramParser {
         final Scope parent;
         Set<String> cursors = ImmutableSet.of();
         Set<String> variables = ImmutableSet.of();
-        Set<String> views = Sets.newHashSet();
         Map<String, Binding> bindings = Maps.newHashMap();
         final yqlplusParser parser;
         final String programName;
@@ -247,13 +233,6 @@ final class ProgramParser {
             return variables.contains(name) || (parent != null && parent.isVariable(name));
         }
 
-        public void bindModule(Location loc, List<String> binding, String symbolName) {
-            if (isBound(symbolName)) {
-                throw new ProgramCompileException(loc, "Name '%s' is already used.", symbolName);
-            }
-            root.bindings.put(symbolName, new Binding(binding));
-        }
-
         public void defineDataSource(Location loc, String name) {
             if (isCursor(name)) {
                 throw new ProgramCompileException(loc, "Alias '%s' is already used.", name);
@@ -273,16 +252,6 @@ final class ProgramParser {
             }
             variables.add(name);
 
-        }
-
-        public void defineView(Location loc, String text) {
-            if (this != root) {
-                throw new IllegalStateException("Views MUST be defined in 'root' scope only");
-            }
-            if (views.contains(text)) {
-                throw new ProgramCompileException(loc, "View '%s' already defined", text);
-            }
-            views.add(text);
         }
 
         Scope child() {
@@ -351,8 +320,8 @@ final class ProgramParser {
                     List<Orderby_fieldContext> orderFieds = ((OrderbyContext) child)
                             .orderby_fields().orderby_field();
                     orderby = Lists.newArrayListWithExpectedSize(orderFieds.size());
-                    for (int j = 0; j < orderFieds.size(); ++j) {
-                        orderby.add(convertSortKey(orderFieds.get(j), scope));
+                    for (var field: orderFieds) {
+                        orderby.add(convertSortKey(field, scope));
                     }
                     break;
                 case yqlplusParser.RULE_limit:
@@ -926,8 +895,8 @@ final class ProgramParser {
                 List<String> path = readName((Namespaced_nameContext) parseTree.getChild(0));
                 Location loc = toLocation(scope, parseTree.getChild(0));
                 String alias = path.get(0);
-                OperatorNode<ExpressionOperator> result = null;
-                int start = 0;
+                OperatorNode<ExpressionOperator> result;
+                int start;
                 if (scope.isCursor(alias)) {
                     if (path.size() > 1) {
                         result = OperatorNode.create(loc, ExpressionOperator.READ_FIELD, alias, path.get(1));

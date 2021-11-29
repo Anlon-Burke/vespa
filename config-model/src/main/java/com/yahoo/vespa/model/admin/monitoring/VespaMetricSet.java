@@ -165,6 +165,7 @@ public class VespaMetricSet {
         metrics.add(new Metric("httpapi_succeeded.rate"));
         metrics.add(new Metric("httpapi_failed.rate"));
         metrics.add(new Metric("httpapi_parse_error.rate"));
+        addMetric(metrics, "httpapi_condition_not_met", List.of("rate"));
 
         metrics.add(new Metric("mem.heap.total.average"));
         metrics.add(new Metric("mem.heap.free.average"));
@@ -194,8 +195,8 @@ public class VespaMetricSet {
         metrics.add(new Metric("http.status.3xx.rate"));
         metrics.add(new Metric("http.status.4xx.rate"));
         metrics.add(new Metric("http.status.5xx.rate"));
-        metrics.add(new Metric("http.status.401.rate"));
-        metrics.add(new Metric("http.status.403.rate"));
+        metrics.add(new Metric("http.status.401.rate")); // TODO: Remove in Vespa 8
+        metrics.add(new Metric("http.status.403.rate")); // TODO: Remove in Vespa 8
 
         metrics.add(new Metric("jdisc.http.request.uri_length.max"));
         metrics.add(new Metric("jdisc.http.request.uri_length.sum"));

@@ -7,7 +7,6 @@ import com.yahoo.config.application.api.ValidationId;
 import com.yahoo.config.application.api.ValidationOverrides;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.DockerImage;
-import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.zone.ZoneId;
@@ -44,14 +43,14 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.TesterId;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartFilter;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
 import com.yahoo.vespa.hosted.controller.application.ActivateResult;
-import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
-import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackageValidator;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.DeploymentMetrics;
 import com.yahoo.vespa.hosted.controller.application.DeploymentQuotaCalculator;
 import com.yahoo.vespa.hosted.controller.application.QuotaUsage;
 import com.yahoo.vespa.hosted.controller.application.SystemApplication;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
+import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
+import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackageValidator;
 import com.yahoo.vespa.hosted.controller.athenz.impl.AthenzFacade;
 import com.yahoo.vespa.hosted.controller.certificate.EndpointCertificates;
 import com.yahoo.vespa.hosted.controller.concurrent.Once;
@@ -352,6 +351,7 @@ public class ApplicationController {
 
         TenantAndApplicationId applicationId = TenantAndApplicationId.from(job.application());
         ZoneId zone = job.type().zone(controller.system());
+        DeploymentId deployment = new DeploymentId(job.application(), zone);
 
         try (Lock deploymentLock = lockForDeployment(job.application(), zone)) {
             Set<ContainerEndpoint> containerEndpoints;
@@ -365,7 +365,7 @@ public class ApplicationController {
 
             Version platform = run.versions().sourcePlatform().filter(__ -> deploySourceVersions).orElse(run.versions().targetPlatform());
             ApplicationVersion revision = run.versions().sourceApplication().filter(__ -> deploySourceVersions).orElse(run.versions().targetApplication());
-            ApplicationPackage applicationPackage = new ApplicationPackage(applicationStore.get(new DeploymentId(job.application(), zone), revision));
+            ApplicationPackage applicationPackage = new ApplicationPackage(applicationStore.get(deployment, revision));
 
             try (Lock lock = lock(applicationId)) {
                 LockedApplication application = new LockedApplication(requireApplication(applicationId), lock);
@@ -376,9 +376,8 @@ public class ApplicationController {
                     &&   run.testerCertificate().isPresent())
                     applicationPackage = applicationPackage.withTrustedCertificate(run.testerCertificate().get());
 
-                endpointCertificateMetadata = endpointCertificates.getMetadata(instance, zone, applicationPackage.deploymentSpec().instance(instance.name()));
-
-                containerEndpoints = controller.routing().containerEndpointsOf(application.get(), job.application().instance(), zone);
+                endpointCertificateMetadata = endpointCertificates.getMetadata(instance, zone, applicationPackage.deploymentSpec());
+                containerEndpoints = controller.routing().of(deployment).prepare(application);
 
             } // Release application lock while doing the deployment, which is a lengthy task.
 
@@ -392,7 +391,7 @@ public class ApplicationController {
             // For direct deployments use the full deployment ID, but otherwise use just the tenant and application as
             // the source since it's the same application, so it should have the same warnings
             NotificationSource source = zone.environment().isManuallyDeployed() ?
-                    NotificationSource.from(new DeploymentId(job.application(), zone)) : NotificationSource.from(applicationId);
+                    NotificationSource.from(deployment) : NotificationSource.from(applicationId);
             List<String> warnings = Optional.ofNullable(result.prepareResponse().log)
                     .map(logs -> logs.stream()
                             .filter(log -> log.applicationPackage)
@@ -433,10 +432,6 @@ public class ApplicationController {
         for (InstanceName name : existingInstances) {
             application = withoutDeletedDeployments(application, name);
         }
-
-        for (InstanceName instance : declaredInstances)
-            if (applicationPackage.deploymentSpec().requireInstance(instance).concerns(Environment.prod))
-                application = controller.routing().assignRotations(application, instance);
 
         // Validate new deployment spec thoroughly before storing it.
         controller.jobController().deploymentStatus(application.get());
@@ -481,6 +476,7 @@ public class ApplicationController {
                                   ZoneId zone, Version platform, Set<ContainerEndpoint> endpoints,
                                   Optional<EndpointCertificateMetadata> endpointCertificateMetadata,
                                   boolean dryRun) {
+        DeploymentId deployment = new DeploymentId(application, zone);
         try {
             Optional<DockerImage> dockerImageRepo = Optional.ofNullable(
                     dockerImageRepoFlag
@@ -495,7 +491,7 @@ public class ApplicationController {
                     .map(tenant -> ((AthenzTenant)tenant).domain());
 
             if (zone.environment().isManuallyDeployed())
-                controller.applications().applicationStore().putMeta(new DeploymentId(application, zone),
+                controller.applications().applicationStore().putMeta(deployment,
                                                                      clock.instant(),
                                                                      applicationPackage.metaDataZip());
 
@@ -507,9 +503,9 @@ public class ApplicationController {
                     .filter(tenant-> tenant instanceof CloudTenant)
                     .map(tenant -> ((CloudTenant) tenant).tenantSecretStores())
                     .orElse(List.of());
-            List<X509Certificate> operatorCertificates = controller.supportAccess().activeGrantsFor(new DeploymentId(application, zone)).stream()
-                    .map(SupportAccessGrant::certificate)
-                    .collect(toList());
+            List<X509Certificate> operatorCertificates = controller.supportAccess().activeGrantsFor(deployment).stream()
+                                                                   .map(SupportAccessGrant::certificate)
+                                                                   .collect(toList());
 
             ConfigServer.PreparedApplication preparedApplication =
                     configServer.deploy(new DeploymentData(application, zone, applicationPackage.zippedContent(), platform,
@@ -520,9 +516,10 @@ public class ApplicationController {
             return new ActivateResult(new RevisionId(applicationPackage.hash()), preparedApplication.prepareResponse(),
                                       applicationPackage.zippedContent().length);
         } finally {
-            // Even if prepare fails, a load balancer may have been provisioned. Always refresh routing policies so that
-            // any DNS updates can be propagated as early as possible.
-            controller.routing().policies().refresh(application, applicationPackage.deploymentSpec(), zone);
+            // Even if prepare fails, routing configuration may need to be updated
+            if ( ! application.instance().isTester()) {
+                controller.routing().of(deployment).configure(applicationPackage.deploymentSpec());
+            }
         }
     }
 
@@ -706,7 +703,7 @@ public class ApplicationController {
         try {
             configServer.deactivate(id);
         } finally {
-            controller.routing().policies().refresh(application.get().id().instance(instanceName), application.get().deploymentSpec(), zone);
+            controller.routing().of(id).configure(application.get().deploymentSpec());
             if (zone.environment().isManuallyDeployed())
                 applicationStore.putMetaTombstone(id, clock.instant());
             if (!zone.environment().isTest())

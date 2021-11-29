@@ -5,8 +5,7 @@ import com.yahoo.config.provision.ApplicationId;
 
 import java.net.URI;
 import java.nio.file.Path;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -19,16 +18,16 @@ public class SyncFileInfo {
     private final Path source;
     private final URI destination;
     private final Compression uploadCompression;
-    private final Instant expiry;
     private final Map<String, String> tags;
+    private final Optional<Duration> minDurationBetweenSync;
 
-    private SyncFileInfo(Path source, URI destination, Compression uploadCompression, Instant expiry,
-                         Map<String, String> tags) {
+    private SyncFileInfo(Path source, URI destination, Compression uploadCompression,
+                         Map<String, String> tags, Duration minDurationBetweenSyncOrNull) {
         this.source = source;
         this.destination = destination;
         this.uploadCompression = uploadCompression;
-        this.expiry = expiry;
         this.tags = Map.copyOf(tags);
+        this.minDurationBetweenSync = Optional.ofNullable(minDurationBetweenSyncOrNull);
     }
 
     /** Source path of the file to sync */
@@ -46,19 +45,20 @@ public class SyncFileInfo {
         return uploadCompression;
     }
 
-    /** File expiry */
-    public Optional<Instant> expiry() { return Optional.ofNullable(expiry); }
-
     public Map<String, String> tags() { return tags; }
+
+    public Optional<Duration> minDurationBetweenSync() { return minDurationBetweenSync; }
 
     public static Optional<SyncFileInfo> forLogFile(URI uri, Path logFile, boolean rotatedOnly, ApplicationId owner) {
         String filename = logFile.getFileName().toString();
         Compression compression;
         String dir = null;
+        Duration minDurationBetweenSync = null;
 
-        if ((!rotatedOnly && filename.equals("vespa.log")) || filename.startsWith("vespa.log-")) {
+        if (filename.startsWith("vespa.log")) {
             dir = "logs/vespa/";
             compression = Compression.ZSTD;
+            minDurationBetweenSync = filename.length() == 9 ? rotatedOnly ? Duration.ofHours(1) : Duration.ZERO : null;
         } else {
             compression = filename.endsWith(".zst") ? Compression.NONE : Compression.ZSTD;
             if (rotatedOnly && compression != Compression.NONE)
@@ -70,12 +70,12 @@ public class SyncFileInfo {
         }
 
         if (dir == null) return Optional.empty();
-        Instant expiry = Instant.now().plus(30, ChronoUnit.DAYS);
         return Optional.of(new SyncFileInfo(
-                logFile, uri.resolve(dir + logFile.getFileName() + compression.extension), compression, expiry, defaultTags(owner)));
+                logFile, uri.resolve(dir + logFile.getFileName() + compression.extension), compression, defaultTags(owner),
+                minDurationBetweenSync));
     }
 
-    public static SyncFileInfo forServiceDump(URI destinationDir, Path file, Instant expiry, Compression compression,
+    public static SyncFileInfo forServiceDump(URI destinationDir, Path file, Compression compression,
                                               ApplicationId owner, String assetClassification) {
         String filename = file.getFileName().toString();
         URI location = destinationDir.resolve(filename + compression.extension);
@@ -83,7 +83,7 @@ public class SyncFileInfo {
         if (assetClassification != null) {
             tags.put("vespa:AssetClassification", assetClassification);
         }
-        return new SyncFileInfo(file, location, compression, expiry, tags);
+        return new SyncFileInfo(file, location, compression, tags, null);
     }
 
     private static Map<String, String> defaultTags(ApplicationId owner) {

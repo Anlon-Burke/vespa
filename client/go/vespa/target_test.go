@@ -25,7 +25,7 @@ func (v *mockVespaApi) mockVespaHandler(w http.ResponseWriter, req *http.Request
 	case "/application/v4/tenant/t1/application/a1/instance/i1/environment/dev/region/us-north-1":
 		response := "{}"
 		if v.deploymentConverged {
-			response = fmt.Sprintf(`{"endpoints": [{"url": "%s"}]}`, v.serverURL)
+			response = fmt.Sprintf(`{"endpoints": [{"url": "%s","scope": "zone","cluster": "cluster1"}]}`, v.serverURL)
 		}
 		w.Write([]byte(response))
 	case "/application/v4/tenant/t1/application/a1/instance/i1/job/dev-us-north-1/run/42":
@@ -82,11 +82,11 @@ func TestCustomTargetWait(t *testing.T) {
 	defer srv.Close()
 	target := CustomTarget(srv.URL)
 
-	_, err := target.Service("query", time.Millisecond, 42)
+	_, err := target.Service("query", time.Millisecond, 42, "")
 	assert.NotNil(t, err)
 
 	vc.deploymentConverged = true
-	_, err = target.Service("query", time.Millisecond, 42)
+	_, err = target.Service("query", time.Millisecond, 42, "")
 	assert.Nil(t, err)
 
 	assertServiceWait(t, 200, target, "deploy")
@@ -104,11 +104,11 @@ func TestCloudTargetWait(t *testing.T) {
 	target := createCloudTarget(t, srv.URL, &logWriter)
 	assertServiceWait(t, 200, target, "deploy")
 
-	_, err := target.Service("query", time.Millisecond, 42)
+	_, err := target.Service("query", time.Millisecond, 42, "")
 	assert.NotNil(t, err)
 
 	vc.deploymentConverged = true
-	_, err = target.Service("query", time.Millisecond, 42)
+	_, err = target.Service("query", time.Millisecond, 42, "")
 	assert.Nil(t, err)
 
 	assertServiceWait(t, 500, target, "query")
@@ -149,15 +149,10 @@ func createCloudTarget(t *testing.T, url string, logWriter io.Writer) Target {
 	}
 	assert.Nil(t, err)
 
-	target := CloudTarget(
-		"https://example.com",
-		Deployment{
-			Application: ApplicationID{Tenant: "t1", Application: "a1", Instance: "i1"},
-			Zone:        ZoneID{Environment: "dev", Region: "us-north-1"},
-		},
-		apiKey,
-		TLSOptions{KeyPair: x509KeyPair},
-		LogOptions{Writer: logWriter}, "")
+	target := CloudTarget("https://example.com", Deployment{
+		Application: ApplicationID{Tenant: "t1", Application: "a1", Instance: "i1"},
+		Zone:        ZoneID{Environment: "dev", Region: "us-north-1"},
+	}, apiKey, TLSOptions{KeyPair: x509KeyPair}, LogOptions{Writer: logWriter}, "", "", "", nil)
 	if ct, ok := target.(*cloudTarget); ok {
 		ct.apiURL = url
 	} else {
@@ -167,13 +162,13 @@ func createCloudTarget(t *testing.T, url string, logWriter io.Writer) Target {
 }
 
 func assertServiceURL(t *testing.T, url string, target Target, service string) {
-	s, err := target.Service(service, 0, 42)
+	s, err := target.Service(service, 0, 42, "")
 	assert.Nil(t, err)
 	assert.Equal(t, url, s.BaseURL)
 }
 
 func assertServiceWait(t *testing.T, expectedStatus int, target Target, service string) {
-	s, err := target.Service(service, 0, 42)
+	s, err := target.Service(service, 0, 42, "")
 	assert.Nil(t, err)
 
 	status, err := s.Wait(0)

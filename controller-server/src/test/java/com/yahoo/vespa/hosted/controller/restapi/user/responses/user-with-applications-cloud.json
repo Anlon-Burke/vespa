@@ -10,17 +10,20 @@
   },
   "tenants": {
     "sandbox": {
+      "supported": false,
       "roles": [
         "developer",
         "reader"
       ]
     },
     "tenant1": {
+      "supported": false,
       "roles": [
         "administrator"
       ]
     },
     "tenant2": {
+      "supported": false,
       "roles": [
         "developer"
       ]

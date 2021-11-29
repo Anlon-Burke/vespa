@@ -47,6 +47,7 @@ vespa_add_library(searchcore_server STATIC
     feedhandler.cpp
     feedstate.cpp
     feedstates.cpp
+    feed_handler_stats.cpp
     fileconfigmanager.cpp
     flushhandlerproxy.cpp
     forcecommitcontext.cpp
@@ -54,6 +55,7 @@ vespa_add_library(searchcore_server STATIC
     health_adapter.cpp
     heart_beat_job.cpp
     idocumentdbowner.cpp
+    ifeedview.cpp
     ireplayconfig.cpp
     job_tracked_maintenance_job.cpp
     lid_space_compaction_handler.cpp
@@ -85,7 +87,6 @@ vespa_add_library(searchcore_server STATIC
     reconfig_params.cpp
     remove_operations_rate_tracker.cpp
     removedonecontext.cpp
-    removedonetask.cpp
     replaypacketdispatcher.cpp
     resource_usage_explorer.cpp
     rpc_hooks.cpp
@@ -97,6 +98,8 @@ vespa_add_library(searchcore_server STATIC
     searchhandlerproxy.cpp
     searchview.cpp
     simpleflush.cpp
+    shared_threading_service.cpp
+    shared_threading_service_config.cpp
     storeonlydocsubdb.cpp
     storeonlyfeedview.cpp
     summaryadapter.cpp

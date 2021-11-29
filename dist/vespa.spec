@@ -59,6 +59,7 @@ BuildRequires: python3-devel
 %if 0%{?el8}
 BuildRequires: gcc-toolset-10-gcc-c++
 BuildRequires: gcc-toolset-10-binutils
+BuildRequires: gcc-toolset-10-libatomic-devel
 %define _devtoolset_enable /opt/rh/gcc-toolset-10/enable
 BuildRequires: maven
 BuildRequires: pybind11-devel
@@ -100,7 +101,7 @@ BuildRequires: libarchive
 %if 0%{?_centos_stream}
 BuildRequires: (llvm-devel >= 12.0.0 and llvm-devel < 13)
 %else
-BuildRequires: (llvm-devel >= 11.0.0 and llvm-devel < 12)
+BuildRequires: (llvm-devel >= 12.0.0 and llvm-devel < 13)
 %endif
 %else
 BuildRequires: (llvm-devel >= 10.0.1 and llvm-devel < 11)
@@ -186,7 +187,13 @@ BuildRequires: java-11-openjdk-devel
 %endif
 BuildRequires: rpm-build
 BuildRequires: make
+%if 0%{?el7} && ! 0%{?amzn2}
+BuildRequires: rh-git227
+%define _rhgit227_enable /opt/rh/rh-git227/enable
+%else
 BuildRequires: git
+%endif
+BuildRequires: golang
 BuildRequires: systemd
 BuildRequires: flex >= 2.5.0
 BuildRequires: bison >= 3.0.0
@@ -245,7 +252,7 @@ Requires: vespa-gtest = 1.11.0
 %if 0%{?_centos_stream}
 %define _vespa_llvm_version 12
 %else
-%define _vespa_llvm_version 11
+%define _vespa_llvm_version 12
 %endif
 %else
 %define _vespa_llvm_version 10
@@ -274,18 +281,13 @@ Requires: gtest
 %define _extra_link_directory %{_vespa_deps_prefix}/lib64
 %define _extra_include_directory %{_vespa_deps_prefix}/include;/usr/include/openblas
 %endif
-%ifnarch x86_64
-%define _skip_vespamalloc 1
-%endif
 Requires: %{name}-base = %{version}-%{release}
 Requires: %{name}-base-libs = %{version}-%{release}
 Requires: %{name}-libs = %{version}-%{release}
 Requires: %{name}-clients = %{version}-%{release}
 Requires: %{name}-config-model-fat = %{version}-%{release}
 Requires: %{name}-jars = %{version}-%{release}
-%if ! 0%{?_skip_vespamalloc:1}
 Requires: %{name}-malloc = %{version}-%{release}
-%endif
 Requires: %{name}-tools = %{version}-%{release}
 
 # Ugly workaround because vespamalloc/src/vespamalloc/malloc/mmap.cpp uses the private
@@ -374,7 +376,7 @@ Requires: openssl-libs
 %if 0%{?_centos_stream}
 Requires: (llvm-libs >= 12.0.0 and llvm-libs < 13)
 %else
-Requires: (llvm-libs >= 11.0.0 and llvm-libs < 12)
+Requires: (llvm-libs >= 12.0.0 and llvm-libs < 13)
 %endif
 %else
 Requires: (llvm-libs >= 10.0.1 and llvm-libs < 11)
@@ -440,7 +442,6 @@ Summary: Vespa - The open big data serving engine - shared java jar files
 
 Vespa - The open big data serving engine - shared java jar files
 
-%if ! 0%{?_skip_vespamalloc:1}
 %package malloc
 
 Summary: Vespa - The open big data serving engine - malloc library
@@ -448,7 +449,6 @@ Summary: Vespa - The open big data serving engine - malloc library
 %description malloc
 
 Vespa - The open big data serving engine - malloc library
-%endif
 
 %package tools
 
@@ -508,6 +508,9 @@ source %{_devtoolset_enable} || true
 %if 0%{?_rhmaven35_enable:1}
 source %{_rhmaven35_enable} || true
 %endif
+%if 0%{?_rhgit227_enable:1}
+source %{_rhgit227_enable} || true
+%endif
 
 %if 0%{?_java_home:1}
 export JAVA_HOME=%{?_java_home}
@@ -534,6 +537,7 @@ mvn --batch-mode -e -N io.takari:maven:wrapper -Dmaven=3.6.3
        .
 
 make %{_smp_mflags}
+env GOTMPDIR=$(pwd)/client/go make -C client/go
 %endif
 
 %install
@@ -543,6 +547,8 @@ rm -rf %{buildroot}
 cp -r %{installdir} %{buildroot}
 %else
 make install DESTDIR=%{buildroot}
+# TODO: Include the vespa program
+#cp client/go/bin/vespa %{buildroot}%{_prefix}/bin/vespa
 %endif
 
 %if %{_create_vespa_service}
@@ -641,9 +647,7 @@ fi
 %dir %{_prefix}/etc
 %{_prefix}/etc/systemd
 %{_prefix}/etc/vespa
-%if ! 0%{?_skip_vespamalloc:1}
 %exclude %{_prefix}/etc/vespamalloc.conf
-%endif
 %{_prefix}/include
 %dir %{_prefix}/lib
 %dir %{_prefix}/lib/jars
@@ -750,19 +754,20 @@ fi
 %exclude %{_prefix}/lib64/libvespadefaults.so
 %exclude %{_prefix}/lib64/libvespalib.so
 %exclude %{_prefix}/lib64/libvespalog.so
-%if ! 0%{?_skip_vespamalloc:1}
 %exclude %{_prefix}/lib64/vespa
-%endif
 
 %files clients
 %if %{_defattr_is_vespa_vespa}
 %defattr(-,%{_vespa_user},%{_vespa_group},-)
 %endif
 %dir %{_prefix}
+%dir %{_prefix}/bin
 %dir %{_prefix}/conf
 %dir %{_prefix}/conf/vespa-feed-client
 %dir %{_prefix}/lib
 %dir %{_prefix}/lib/jars
+# TODO: Include the vespa program
+#%{_prefix}/bin/vespa
 %{_prefix}/bin/vespa-feed-client
 %{_prefix}/conf/vespa-feed-client/logging.properties
 %{_prefix}/lib/jars/vespa-http-client-jar-with-dependencies.jar
@@ -847,7 +852,6 @@ fi
 %dir %{_prefix}/libexec/vespa
 %{_prefix}/libexec/vespa/standalone-container.sh
 
-%if ! 0%{?_skip_vespamalloc:1}
 %files malloc
 %if %{_defattr_is_vespa_vespa}
 %defattr(-,%{_vespa_user},%{_vespa_group},-)
@@ -857,7 +861,6 @@ fi
 %config(noreplace) %{_prefix}/etc/vespamalloc.conf
 %dir %{_prefix}/lib64
 %{_prefix}/lib64/vespa
-%endif
 
 %files tools
 %if %{_defattr_is_vespa_vespa}

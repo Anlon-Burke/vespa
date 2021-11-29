@@ -336,20 +336,22 @@ TEST(DocumentMetaStore, gids_can_be_cleared)
     assertLid(1, gid1, dms);
     EXPECT_EQ(1u, dms.getNumUsedLids());
     EXPECT_TRUE(dms.remove(1, 0u));
-    dms.removeComplete(1);
+    dms.commit();
     EXPECT_EQ(0u, dms.getNumUsedLids());
     EXPECT_TRUE(!dms.getGid(1, gid));
     EXPECT_TRUE(!dms.getLid(gid1, lid));
+    dms.removes_complete({ 1 });
     // reuse lid
     addGid(dms, gid2, bucketId2, time2);
     assertGid(gid2, 1, dms);
     assertLid(1, gid2, dms);
     EXPECT_EQ(1u, dms.getNumUsedLids());
     EXPECT_TRUE(dms.remove(1, 0u));
-    dms.removeComplete(1);
+    dms.commit();
     EXPECT_EQ(0u, dms.getNumUsedLids());
     EXPECT_TRUE(!dms.getGid(1, gid));
     EXPECT_TRUE(!dms.getLid(gid2, lid));
+    dms.removes_complete({ 1 });
     EXPECT_TRUE(!dms.remove(1, 0u)); // not used
     EXPECT_TRUE(!dms.remove(2, 0u)); // outside range
 }
@@ -374,125 +376,8 @@ TEST(DocumentMetaStore, generation_handling_is_working)
     }
     EXPECT_EQ(0u, gh.getGenerationRefCount());
     dms->remove(1, 0u);
-    dms->removeComplete(1);
+    dms->removes_complete({ 1 });
     EXPECT_EQ(3u, gh.getCurrentGeneration());
-}
-
-TEST(DocumentMetaStoreTest, basic_free_list_is_working)
-{
-    GenerationHolder genHold;
-    LidStateVector freeLids(100, 100, genHold, true, false);
-    LidHoldList list;
-    EXPECT_TRUE(freeLids.empty());
-    EXPECT_EQ(0u, freeLids.count());
-    EXPECT_EQ(0u, list.size());
-
-    list.add(10, 10);
-    EXPECT_TRUE(freeLids.empty());
-    EXPECT_EQ(0u, freeLids.count());
-    EXPECT_EQ(1u, list.size());
-
-    list.add(20, 20);
-    list.add(30, 30);
-    EXPECT_TRUE(freeLids.empty());
-    EXPECT_EQ(0u, freeLids.count());
-    EXPECT_EQ(3u, list.size());
-
-    list.trimHoldLists(20, freeLids);
-    EXPECT_FALSE(freeLids.empty());
-    EXPECT_EQ(1u, freeLids.count());
-
-    EXPECT_EQ(10u, freeLids.getLowest());
-    freeLids.clearBit(10);
-    EXPECT_TRUE(freeLids.empty());
-    EXPECT_EQ(0u, freeLids.count());
-    EXPECT_EQ(2u, list.size());
-
-    list.trimHoldLists(31, freeLids);
-    EXPECT_FALSE(freeLids.empty());
-    EXPECT_EQ(2u, freeLids.count());
-
-    EXPECT_EQ(20u, freeLids.getLowest());
-    freeLids.clearBit(20);
-    EXPECT_FALSE(freeLids.empty());
-    EXPECT_EQ(1u, freeLids.count());
-    EXPECT_EQ(0u, list.size());
-
-    EXPECT_EQ(30u, freeLids.getLowest());
-    freeLids.clearBit(30);
-    EXPECT_TRUE(freeLids.empty());
-    EXPECT_EQ(0u, list.size());
-    EXPECT_EQ(0u, freeLids.count());
-}
-
-void
-assertLidStateVector(const std::vector<uint32_t> &expLids, uint32_t lowest, uint32_t highest,
-                     const LidStateVector &actLids)
-{
-    if (!expLids.empty()) {
-        EXPECT_EQ(expLids.size(), actLids.count());
-        uint32_t trueBit = 0;
-        for (auto i : expLids) {
-            EXPECT_TRUE(actLids.testBit(i));
-            trueBit = actLids.getNextTrueBit(trueBit);
-            EXPECT_EQ(i, trueBit);
-            ++trueBit;
-        }
-        trueBit = actLids.getNextTrueBit(trueBit);
-        EXPECT_EQ(actLids.size(), trueBit);
-        EXPECT_EQ(lowest, actLids.getLowest());
-        EXPECT_EQ(highest, actLids.getHighest());
-    } else {
-        EXPECT_TRUE(actLids.empty());
-    }
-}
-
-TEST(DocumentMetaStoreTest, lid_state_vector_resizing_is_working)
-{
-    GenerationHolder genHold;
-    LidStateVector lids(1000, 1000, genHold, true, true);
-    lids.setBit(3);
-    lids.setBit(150);
-    lids.setBit(270);
-    lids.setBit(310);
-    lids.setBit(440);
-    lids.setBit(780);
-    lids.setBit(930);
-    assertLidStateVector({3,150,270,310,440,780,930}, 3, 930, lids);
-
-    lids.resizeVector(1500, 1500);
-    assertLidStateVector({3,150,270,310,440,780,930}, 3, 930, lids);
-    lids.clearBit(3);
-    assertLidStateVector({150,270,310,440,780,930}, 150, 930, lids);
-    lids.clearBit(150);
-    assertLidStateVector({270,310,440,780,930}, 270, 930, lids);
-    lids.setBit(170);
-    assertLidStateVector({170,270,310,440,780,930}, 170, 930, lids);
-    lids.setBit(1490);
-    assertLidStateVector({170,270,310,440,780,930,1490}, 170, 1490, lids);
-
-    lids.resizeVector(2000, 2000);
-    assertLidStateVector({170,270,310,440,780,930,1490}, 170, 1490, lids);
-    lids.clearBit(170);
-    assertLidStateVector({270,310,440,780,930,1490}, 270, 1490, lids);
-    lids.clearBit(270);
-    assertLidStateVector({310,440,780,930,1490}, 310, 1490, lids);
-    lids.setBit(1990);
-    assertLidStateVector({310,440,780,930,1490,1990}, 310, 1990, lids);
-    lids.clearBit(310);
-    assertLidStateVector({440,780,930,1490,1990}, 440, 1990, lids);
-    lids.clearBit(440);
-    assertLidStateVector({780,930,1490,1990}, 780, 1990, lids);
-    lids.clearBit(780);
-    assertLidStateVector({930,1490,1990}, 930, 1990, lids);
-    lids.clearBit(930);
-    assertLidStateVector({1490,1990}, 1490, 1990, lids);
-    lids.clearBit(1490);
-    assertLidStateVector({1990}, 1990, 1990, lids);
-    lids.clearBit(1990);
-    assertLidStateVector({}, 0, 0, lids);
-
-    genHold.clearHoldLists();
 }
 
 TEST(DocumentMetaStoreTest, lid_and_gid_space_is_reused)
@@ -508,7 +393,7 @@ TEST(DocumentMetaStoreTest, lid_and_gid_space_is_reused)
     EXPECT_EQ(3u, dms->getNumDocs());
     EXPECT_EQ(2u, dms->getNumUsedLids());
     dms->remove(2, 0u); // -> gen 3
-    dms->removeComplete(2); // -> gen 4
+    dms->removes_complete({ 2 }); // -> gen 4
     EXPECT_EQ(3u, dms->getNumDocs());
     EXPECT_EQ(1u, dms->getNumUsedLids());
     // -> gen 5 (reuse of lid 2)
@@ -519,7 +404,7 @@ TEST(DocumentMetaStoreTest, lid_and_gid_space_is_reused)
     {
         AttributeGuard g1(dms); // guard on gen 5
         dms->remove(2, 0u);
-        dms->removeComplete(2);
+        dms->removes_complete({ 2 });
         EXPECT_EQ(3u, dms->getNumDocs());
         EXPECT_EQ(1u, dms->getNumUsedLids()); // lid 2 free but guarded
         assertPut(bucketId4, time4, 3, gid4, *dms);
@@ -593,7 +478,7 @@ TEST(DocumentMetaStoreTest, gids_can_be_saved_and_loaded)
     }
     for (size_t i = 0; i < removeLids.size(); ++i) {
         dms1.remove(removeLids[i], 0u);
-        dms1.removeComplete(removeLids[i]);
+        dms1.removes_complete({ removeLids[i] });
     }
     uint64_t expSaveBytesSize = DocumentMetaStore::minHeaderLen +
                                 (1000 - 4) * DocumentMetaStore::entrySize;
@@ -636,6 +521,7 @@ TEST(DocumentMetaStoreTest, gids_can_be_saved_and_loaded)
         EXPECT_EQ(numLids + 1, dms2.getNumDocs());
         EXPECT_EQ(numLids - (3 - i), dms2.getNumUsedLids());
     }
+    vespalib::unlink("documentmetastore2.dat");
 }
 
 TEST(DocumentMetaStoreTest, bucket_used_bits_are_lbounded_at_load_time)
@@ -661,6 +547,7 @@ TEST(DocumentMetaStoreTest, bucket_used_bits_are_lbounded_at_load_time)
 
     BucketId expected_bucket(storage::spi::BucketLimits::MinUsedBits, gid.convertToBucketId().getRawId());
     assertGid(gid, lid, dms2, expected_bucket, Timestamp(1000));
+    vespalib::unlink("documentmetastore2.dat");
 }
 
 TEST(DocumentMetaStore, stats_are_updated)
@@ -777,7 +664,7 @@ requireThatBasicBucketInfoWorks()
         GlobalId gid = createGid(lid);
         BucketId bucketId(minNumBits, gid.convertToBucketId().getRawId());
         EXPECT_TRUE(dms.remove(lid, 0u));
-        dms.removeComplete(lid);
+        dms.removes_complete({ lid });
         m.erase(std::make_pair(bucketId, gid));
     }
     assert(!m.empty());
@@ -857,7 +744,7 @@ TEST(DocumentMetaStoreTest, can_retrieve_list_of_lids_from_bucket_id)
         const LidVector &expLids = itr->second;
         for (size_t i = 0; i < expLids.size(); ++i) {
             EXPECT_TRUE(dms.remove(expLids[i], 0u));
-            dms.removeComplete(expLids[i]);
+            dms.removes_complete({ expLids[i] });
         }
         LOG(info, "Verify that bucket id '%s' has 0 lids", bucketId.toString().c_str());
         LidVector actLids;
@@ -1017,14 +904,14 @@ TEST(DocumentMetaStoreTest, removed_lids_are_cleared_as_active)
     assertActiveLids(BoolVector().T().T(), f.dms.getActiveLids());
     EXPECT_EQ(2u, f.dms.getNumActiveLids());
     f.dms.remove(2, 0u);
-    f.dms.removeComplete(2);
+    f.dms.removes_complete({ 2 });
     assertActiveLids(BoolVector().T().F(), f.dms.getActiveLids());
     EXPECT_EQ(1u, f.dms.getNumActiveLids());
     f.addGlobalId(f.gids[2], 2); // from bid2
     assertActiveLids(BoolVector().T().F(), f.dms.getActiveLids());
     EXPECT_EQ(1u, f.dms.getNumActiveLids());
     f.dms.remove(2, 0u);
-    f.dms.removeComplete(2);
+    f.dms.removes_complete({ 2 });
     f.addGlobalId(f.gids[3], 2); // from bid1
     assertActiveLids(BoolVector().T().T(), f.dms.getActiveLids());
     EXPECT_EQ(2u, f.dms.getNumActiveLids());
@@ -1059,7 +946,7 @@ TEST(DocumentMetaStoreTest, document_and_meta_entry_count_is_updated)
     EXPECT_EQ(3u, f.dms.getBucketDB().takeGuard()->get(f.bid2).getDocumentCount());
     EXPECT_EQ(3u, f.dms.getBucketDB().takeGuard()->get(f.bid2).getEntryCount());
     f.dms.remove(3, 0u); // from bid2
-    f.dms.removeComplete(3);
+    f.dms.removes_complete({ 3 });
     EXPECT_EQ(4u, f.dms.getBucketDB().takeGuard()->get(f.bid1).getDocumentCount());
     EXPECT_EQ(4u, f.dms.getBucketDB().takeGuard()->get(f.bid1).getEntryCount());
     EXPECT_EQ(2u, f.dms.getBucketDB().takeGuard()->get(f.bid2).getDocumentCount());
@@ -1076,18 +963,18 @@ TEST(DocumentMetaStoreTest, empty_buckets_are_removed)
     EXPECT_TRUE(f.dms.getBucketDB().takeGuard()->hasBucket(f.bid1));
     EXPECT_TRUE(f.dms.getBucketDB().takeGuard()->hasBucket(f.bid2));
     f.dms.remove(3, 0u); // from bid2
-    f.dms.removeComplete(3);
+    f.dms.removes_complete({ 3 });
     EXPECT_TRUE(f.dms.getBucketDB().takeGuard()->hasBucket(f.bid1));
     EXPECT_TRUE(f.dms.getBucketDB().takeGuard()->hasBucket(f.bid2));
     EXPECT_EQ(0u, f.dms.getBucketDB().takeGuard()->get(f.bid2).getEntryCount());
     f._bucketDBHandler.handleDeleteBucket(f.bid2);
     EXPECT_FALSE(f.dms.getBucketDB().takeGuard()->hasBucket(f.bid2));
     f.dms.remove(1, 0u); // from bid1
-    f.dms.removeComplete(1);
+    f.dms.removes_complete({ 1 });
     EXPECT_TRUE(f.dms.getBucketDB().takeGuard()->hasBucket(f.bid1));
     EXPECT_FALSE(f.dms.getBucketDB().takeGuard()->hasBucket(f.bid2));
     f.dms.remove(2, 0u); // from bid1
-    f.dms.removeComplete(2);
+    f.dms.removes_complete({ 2 });
     EXPECT_TRUE(f.dms.getBucketDB().takeGuard()->hasBucket(f.bid1));
     EXPECT_EQ(0u, f.dms.getBucketDB().takeGuard()->get(f.bid1).getEntryCount());
     f._bucketDBHandler.handleDeleteBucket(f.bid1);
@@ -1695,7 +1582,7 @@ TEST(DocumentMetaStoreTest, remove_changed_bucket_works)
     uint32_t addLid2 = addGid(f.dms, g.gid, g.bid2, Timestamp(0));
     EXPECT_TRUE(1u == addLid2);
     EXPECT_TRUE(f.dms.remove(1u, 0u));
-    f.dms.removeComplete(1u);
+    f.dms.removes_complete({ 1u });
 }
 
 TEST(DocumentMetaStoreTest, get_lid_usage_stats_works)
@@ -1735,7 +1622,7 @@ TEST(DocumentMetaStoreTest, get_lid_usage_stats_works)
     EXPECT_EQ(3u, s.getHighestUsedLid());
 
     dms.remove(1, 0u);
-    dms.removeComplete(1);
+    dms.removes_complete({ 1 });
     
     s = dms.getLidUsageStats();
     EXPECT_EQ(4u, s.getLidLimit());
@@ -1744,7 +1631,7 @@ TEST(DocumentMetaStoreTest, get_lid_usage_stats_works)
     EXPECT_EQ(3u, s.getHighestUsedLid());
 
     dms.remove(3, 0u);
-    dms.removeComplete(3);
+    dms.removes_complete({ 3 });
     
     s = dms.getLidUsageStats();
     EXPECT_EQ(4u, s.getLidLimit());
@@ -1753,7 +1640,7 @@ TEST(DocumentMetaStoreTest, get_lid_usage_stats_works)
     EXPECT_EQ(2u, s.getHighestUsedLid());
 
     dms.remove(2, 0u);
-    dms.removeComplete(2);
+    dms.removes_complete({ 2 });
     
     s = dms.getLidUsageStats();
     EXPECT_EQ(4u, s.getLidLimit());
@@ -1800,7 +1687,7 @@ TEST(DocumentMetaStoreTest, move_works)
     EXPECT_FALSE(dms.getGid(1u, gid));
     EXPECT_FALSE(dms.getGidEvenIfMoved(1u, gid));
     EXPECT_TRUE(dms.getGid(2u, gid));
-    dms.removeComplete(1u);
+    dms.removes_complete({ 1u });
     EXPECT_FALSE(dms.getGid(1u, gid));
     EXPECT_FALSE(dms.getGidEvenIfMoved(1u, gid));
     EXPECT_TRUE(dms.getGid(2u, gid));
@@ -1810,7 +1697,7 @@ TEST(DocumentMetaStoreTest, move_works)
     EXPECT_TRUE(dms.getGid(1u, gid));
     EXPECT_FALSE(dms.getGid(2u, gid));
     EXPECT_TRUE(dms.getGidEvenIfMoved(2u, gid));
-    dms.removeComplete(2u);
+    dms.removes_complete({ 2u });
     EXPECT_TRUE(dms.getGid(1u, gid));
     EXPECT_FALSE(dms.getGid(2u, gid));
     EXPECT_TRUE(dms.getGidEvenIfMoved(2u, gid));
@@ -1849,7 +1736,8 @@ remove(uint32_t startLid, uint32_t shrinkTarget, DocumentMetaStore &dms)
 {
     for (uint32_t lid = startLid; lid >= shrinkTarget; --lid) {
         dms.remove(lid, 0u);
-        dms.removeComplete(lid);
+        dms.commit();
+        dms.removes_complete({ lid });
     }
 }
 
@@ -1882,8 +1770,6 @@ TEST(DocumentMetaStoreTest, shrink_via_flush_target_works)
     DummyFileHeaderContext fileHeaderContext;
     DummyTlsSyncer dummyTlsSyncer;
     HwInfo hwInfo;
-    vespalib::rmdir("dmsflush", true);
-    vespalib::mkdir("dmsflush");
     using Type = IFlushTarget::Type;
     using Component = IFlushTarget::Component;
     IFlushTarget::SP ft(std::make_shared<ShrinkLidSpaceFlushTarget>
@@ -1947,7 +1833,7 @@ void
 removeLid(DocumentMetaStore &dms, uint32_t lid)
 {
     dms.remove(lid, 0u);
-    dms.removeComplete(lid);
+    dms.removes_complete({ lid });
 }
 
 void
@@ -2020,6 +1906,8 @@ TEST(DocumentMetaStoreTest, document_sizes_are_saved)
     assertSize(dms4, 1, 1);
     assertSize(dms4, 2, 1);
     assertSize(dms4, 3, 1);
+    vespalib::unlink("documentmetastore3.dat");
+    vespalib::unlink("documentmetastore4.dat");
 }
 
 namespace {
@@ -2061,12 +1949,12 @@ TEST(DocumentMetaStoreTest, multiple_lids_can_be_removed_with_removeBatch)
     assertLidGidFound(4, dms);
 
     dms.removeBatch({1, 3}, 5);
-    dms.removeBatchComplete({1, 3});
-
+    dms.commit();
     assertLidGidNotFound(1, dms);
     assertLidGidFound(2, dms);
     assertLidGidNotFound(3, dms);
     assertLidGidFound(4, dms);
+    dms.removes_complete({1, 3});
 }
 
 class MockOperationListener : public documentmetastore::OperationListener {

@@ -8,6 +8,7 @@ readonly NUM_THREADS=$(( $(nproc) + 2 ))
 
 source /etc/profile.d/enable-devtoolset-10.sh
 source /etc/profile.d/enable-rh-maven35.sh
+source /etc/profile.d/enable-rh-git227.sh
 
 export MALLOC_ARENA_MAX=1
 export MAVEN_OPTS="-Xss1m -Xms128m -Xmx2g"
@@ -39,10 +40,10 @@ case $SHOULD_BUILD in
     mvn -V $VESPA_MAVEN_EXTRA_OPTS install
     ;;
   go)
-    make -C client/go -j ${NUM_THREADS}
+    make -C client/go
     ;;
   *)
-    make -C client/go -j ${NUM_THREADS}
+    make -C client/go
     ./bootstrap.sh java
     time mvn -V $VESPA_MAVEN_EXTRA_OPTS install
     cmake3 -DVESPA_UNPRIVILEGED=no .

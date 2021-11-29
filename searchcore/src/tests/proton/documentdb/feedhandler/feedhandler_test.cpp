@@ -185,13 +185,13 @@ struct MyFeedView : public test::DummyFeedView {
     int remove_count;
     int move_count;
     int prune_removed_count;
+    
     int update_count;
     SerialNum update_serial;
     const DocumentType *documentType;
     MyFeedView(const std::shared_ptr<const DocumentTypeRepo> &dtr,
                const DocTypeName &docTypeName);
     ~MyFeedView() override;
-    void resetPutLatch(uint32_t count) { putLatch = std::make_unique<vespalib::CountDownLatch>(count); }
     void preparePut(PutOperation &op) override {
         prepareDocumentOperation(op, op.getDocument()->getId().getGlobalId());
     }
@@ -389,16 +389,6 @@ FeedTokenContext::FeedTokenContext()
 
 FeedTokenContext::~FeedTokenContext() = default;
 
-struct PutContext {
-    FeedTokenContext tokenCtx;
-    DocumentContext  docCtx;
-    typedef std::shared_ptr<PutContext> SP;
-    PutContext(const vespalib::string &docId, DocBuilder &builder) :
-        tokenCtx(),
-        docCtx(docId, builder)
-    {}
-};
-
 struct MyTlsWriter : TlsWriter {
     int store_count;
     int erase_count;
@@ -455,39 +445,17 @@ struct FeedHandlerFixture
     }
 
     ~FeedHandlerFixture() {
-        writeService.sync();
+        writeService.shutdown();
     }
     template <class FunctionType>
     inline void runAsMaster(FunctionType &&function) {
         writeService.master().execute(makeLambdaTask(std::move(function)));
-        writeService.master().sync();
+        syncMaster();
     }
     void syncMaster() {
         writeService.master().sync();
     }
 };
-
-
-struct MyConfigStore : ConfigStore {
-    SerialNum getBestSerialNum() const override { return 1; }
-    SerialNum getOldestSerialNum() const override { return 1; }
-    void saveConfig(const DocumentDBConfig &, SerialNum) override {}
-    void loadConfig(const DocumentDBConfig &, SerialNum, DocumentDBConfig::SP &) override {}
-    void removeInvalid() override {}
-    void prune(SerialNum) override {}
-    bool hasValidSerial(SerialNum) const override { return true; }
-    SerialNum getPrevValidSerial(SerialNum) const override { return 1; }
-    void serializeConfig(SerialNum, vespalib::nbostream &) override {}
-    void deserializeConfig(SerialNum, vespalib::nbostream &) override {}
-    void setProtonConfig(const ProtonConfigSP &) override { }
-};
-
-
-struct ReplayTransactionLogContext {
-    MyConfigStore config_store;
-    DocumentDBConfig::SP cfgSnap;
-};
-
 
 TEST_F("require that heartBeat calls FeedView's heartBeat",
        FeedHandlerFixture)
@@ -777,6 +745,20 @@ TEST_F("require that put with different document type repo is ok", FeedHandlerFi
     f.handler.performOperation(std::move(token_context.token), std::move(op));
     EXPECT_EQUAL(1, f.feedView.put_count);
     EXPECT_EQUAL(1, f.tls_writer.store_count);
+}
+
+TEST_F("require that feed stats are updated", FeedHandlerFixture)
+{
+    DocumentContext doc_context("id:ns:searchdocument::foo", *f.schema.builder);
+    auto op =std::make_unique<PutOperation>(doc_context.bucketId, Timestamp(10), std::move(doc_context.doc));
+    FeedTokenContext token_context;
+    f.handler.performOperation(std::move(token_context.token), std::move(op));
+    f.syncMaster(); // wait for initateCommit
+    f.syncMaster(); // wait for onCommitDone
+    auto stats = f.handler.get_stats(false);
+    EXPECT_EQUAL(1u, stats.get_commits());
+    EXPECT_EQUAL(1u, stats.get_operations());
+    EXPECT_LESS(0.0, stats.get_total_latency());
 }
 
 using namespace document;

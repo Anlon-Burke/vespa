@@ -36,7 +36,7 @@
         <target_jdk_version>11</target_jdk_version>
         <maven-compiler-plugin.version>3.8.1</maven-compiler-plugin.version>
         <maven-surefire-plugin.version>2.22.0</maven-surefire-plugin.version>
-        <junit.version>5.7.0</junit.version> <!-- NOTE: this must be in sync with junit version specified in 'tenant-cd-api' -->
+        <junit.version>5.8.1</junit.version> <!-- NOTE: this must be in sync with junit version specified in 'tenant-cd-api' -->
         <test.categories>!integration</test.categories>
 
         <!-- To allow specialized base pom to include additional "test provided" dependencies -->
@@ -265,9 +265,19 @@
                                 </goals>
                                 <configuration>
                                     <tasks>
-                                        <!-- Creating a dummy file to support running tests with old test runner. Remove when it is no longer in use -->
-                                        <mkdir dir="target/application-test/artifacts" />
-                                        <touch file="target/application-test/artifacts/.ignore" />
+                                        <!-- Workaround to copy src/test/application/tests only when its parents exists:
+                                             Copy in two steps, eliminating the parents in the helper step-->
+
+                                        <mkdir dir="target/application-test/src/test/application" />
+                                        <copy todir="target/application-test/">
+                                            <fileset dir="." includes="src/test/application/tests/**" />
+                                        </copy>
+
+                                        <copy todir="target/application-test/">
+                                            <fileset dir="target/application-test/src/test/application" includes="tests/**" />
+                                        </copy>
+                                        <delete dir="target/application-test/src" />
+
                                         <copy file="target/${project.artifactId}-tests.jar" todir="target/application-test/components/" />
                                         <zip destfile="target/application-test.zip" basedir="target/application-test/" />
                                     </tasks>

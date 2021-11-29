@@ -29,7 +29,7 @@ using storage::spi::Result;
 using storage::spi::OperationComplete;
 using vespalib::IllegalStateException;
 using vespalib::Sequence;
-using vespalib::make_string;
+using vespalib::make_string_short::fmt;
 using std::make_unique;
 
 using namespace std::chrono_literals;
@@ -347,8 +347,7 @@ PersistenceEngine::putAsync(const Bucket &bucket, Timestamp ts, storage::spi::Do
         IResourceWriteFilter::State state = _writeFilter.getAcceptState();
         if (!state.acceptWriteOperation()) {
             return onComplete->onComplete(std::make_unique<Result>(Result::ErrorType::RESOURCE_EXHAUSTED,
-                          make_string("Put operation rejected for document '%s': '%s'",
-                                      doc->getId().toString().c_str(), state.message().c_str())));
+                    fmt("Put operation rejected for document '%s': '%s'", doc->getId().toString().c_str(), state.message().c_str())));
         }
     }
     ReadGuard rguard(_rwMutex);
@@ -357,35 +356,73 @@ PersistenceEngine::putAsync(const Bucket &bucket, Timestamp ts, storage::spi::Do
         docType.toString().c_str(), doc->getId().toString().c_str());
     if (!doc->getId().hasDocType()) {
         return onComplete->onComplete(std::make_unique<Result>(Result::ErrorType::PERMANENT_ERROR,
-                      make_string("Old id scheme not supported in elastic mode (%s)", doc->getId().toString().c_str())));
+                    fmt("Old id scheme not supported in elastic mode (%s)", doc->getId().toString().c_str())));
     }
     IPersistenceHandler * handler = getHandler(rguard, bucket.getBucketSpace(), docType);
     if (!handler) {
         return onComplete->onComplete(std::make_unique<Result>(Result::ErrorType::PERMANENT_ERROR,
-                      make_string("No handler for document type '%s'", docType.toString().c_str())));
+                    fmt("No handler for document type '%s'", docType.toString().c_str())));
     }
     auto transportContext = std::make_shared<AsyncTransportContext>(1, std::move(onComplete));
     handler->handlePut(feedtoken::make(std::move(transportContext)), bucket, ts, std::move(doc));
 }
 
 void
-PersistenceEngine::removeAsync(const Bucket& b, Timestamp t, const DocumentId& did, Context&, OperationComplete::UP onComplete)
+PersistenceEngine::removeAsync(const Bucket& b, std::vector<TimeStampAndDocumentId> ids, Context&, OperationComplete::UP onComplete)
+{
+    if (ids.size() == 1) {
+        removeAsyncSingle(b, ids[0].first, ids[0].second, std::move(onComplete));
+    } else {
+        removeAsyncMulti(b, std::move(ids), std::move(onComplete));
+    }
+}
+
+void
+PersistenceEngine::removeAsyncMulti(const Bucket& b, std::vector<TimeStampAndDocumentId> ids, OperationComplete::UP onComplete) {
+    ReadGuard rguard(_rwMutex);
+    //TODO Group per document type/handler and handle in one go.
+    for (const TimeStampAndDocumentId & stampedId : ids) {
+        const document::DocumentId & id = stampedId.second;
+        if (!id.hasDocType()) {
+            return onComplete->onComplete(
+                    std::make_unique<RemoveResult>(Result::ErrorType::PERMANENT_ERROR,
+                                                   fmt("Old id scheme not supported in elastic mode (%s)", id.toString().c_str())));
+        }
+        DocTypeName docType(id.getDocType());
+        IPersistenceHandler *handler = getHandler(rguard, b.getBucketSpace(), docType);
+        if (!handler) {
+            return onComplete->onComplete(std::make_unique<RemoveResult>(Result::ErrorType::PERMANENT_ERROR,
+                                                                         fmt("No handler for document type '%s'",
+                                                                             docType.toString().c_str())));
+        }
+    }
+    auto transportContext = std::make_shared<AsyncRemoveTransportContext>(ids.size(), std::move(onComplete));
+    for (const TimeStampAndDocumentId & stampedId : ids) {
+        const document::DocumentId & id = stampedId.second;
+        DocTypeName docType(id.getDocType());
+        IPersistenceHandler *handler = getHandler(rguard, b.getBucketSpace(), docType);
+        handler->handleRemove(feedtoken::make(transportContext), b, stampedId.first, id);
+    }
+}
+
+void
+PersistenceEngine::removeAsyncSingle(const Bucket& b, Timestamp t, const DocumentId& id, OperationComplete::UP onComplete)
 {
     ReadGuard rguard(_rwMutex);
     LOG(spam, "remove(%s, %" PRIu64 ", \"%s\")", b.toString().c_str(),
-        static_cast<uint64_t>(t.getValue()), did.toString().c_str());
-    if (!did.hasDocType()) {
+        static_cast<uint64_t>(t.getValue()), id.toString().c_str());
+    if (!id.hasDocType()) {
         return onComplete->onComplete(std::make_unique<RemoveResult>(Result::ErrorType::PERMANENT_ERROR,
-                            make_string("Old id scheme not supported in elastic mode (%s)", did.toString().c_str())));
+                    fmt("Old id scheme not supported in elastic mode (%s)", id.toString().c_str())));
     }
-    DocTypeName docType(did.getDocType());
+    DocTypeName docType(id.getDocType());
     IPersistenceHandler * handler = getHandler(rguard, b.getBucketSpace(), docType);
     if (!handler) {
         return onComplete->onComplete(std::make_unique<RemoveResult>(Result::ErrorType::PERMANENT_ERROR,
-                            make_string("No handler for document type '%s'", docType.toString().c_str())));
+                    fmt("No handler for document type '%s'", docType.toString().c_str())));
     }
     auto transportContext = std::make_shared<AsyncTransportContext>(1, std::move(onComplete));
-    handler->handleRemove(feedtoken::make(std::move(transportContext)), b, t, did);
+    handler->handleRemove(feedtoken::make(std::move(transportContext)), b, t, id);
 }
 
 
@@ -396,27 +433,24 @@ PersistenceEngine::updateAsync(const Bucket& b, Timestamp t, DocumentUpdate::SP 
         IResourceWriteFilter::State state = _writeFilter.getAcceptState();
         if (!state.acceptWriteOperation() && document::FeedRejectHelper::mustReject(*upd)) {
             return onComplete->onComplete(std::make_unique<UpdateResult>(Result::ErrorType::RESOURCE_EXHAUSTED,
-                                make_string("Update operation rejected for document '%s': '%s'",
-                                            upd->getId().toString().c_str(), state.message().c_str())));
+                    fmt("Update operation rejected for document '%s': '%s'", upd->getId().toString().c_str(), state.message().c_str())));
         }
     }
     try {
         upd->eagerDeserialize();
     } catch (document::FieldNotFoundException & e) {
         return onComplete->onComplete(std::make_unique<UpdateResult>(Result::ErrorType::TRANSIENT_ERROR,
-                            make_string("Update operation rejected for document '%s' of type '%s': 'Field not found'",
-                                        upd->getId().toString().c_str(), upd->getType().getName().c_str())));
+                    fmt("Update operation rejected for document '%s' of type '%s': 'Field not found'",
+                        upd->getId().toString().c_str(), upd->getType().getName().c_str())));
     } catch (document::DocumentTypeNotFoundException & e) {
         return onComplete->onComplete(std::make_unique<UpdateResult>(Result::ErrorType::TRANSIENT_ERROR,
-                            make_string("Update operation rejected for document '%s' of type '%s'.",
-                                        upd->getId().toString().c_str(), e.getDocumentTypeName().c_str())));
+                    fmt("Update operation rejected for document '%s' of type '%s'.",
+                        upd->getId().toString().c_str(), e.getDocumentTypeName().c_str())));
 
     } catch (document::WrongTensorTypeException &e) {
         return onComplete->onComplete(std::make_unique<UpdateResult>(Result::ErrorType::TRANSIENT_ERROR,
-                            make_string("Update operation rejected for document '%s' of type '%s': 'Wrong tensor type: %s'",
-                                        upd->getId().toString().c_str(),
-                                        upd->getType().getName().c_str(),
-                                        e.getMessage().c_str())));
+                    fmt("Update operation rejected for document '%s' of type '%s': 'Wrong tensor type: %s'",
+                        upd->getId().toString().c_str(), upd->getType().getName().c_str(), e.getMessage().c_str())));
     }
     ReadGuard rguard(_rwMutex);
     DocTypeName docType(upd->getType());
@@ -425,16 +459,17 @@ PersistenceEngine::updateAsync(const Bucket& b, Timestamp t, DocumentUpdate::SP 
         upd->getId().toString().c_str(), (upd->getCreateIfNonExistent() ? "true" : "false"));
     if (!upd->getId().hasDocType()) {
         return onComplete->onComplete(std::make_unique<UpdateResult>(Result::ErrorType::PERMANENT_ERROR,
-                            make_string("Old id scheme not supported in elastic mode (%s)", upd->getId().toString().c_str())));
+                    fmt("Old id scheme not supported in elastic mode (%s)", upd->getId().toString().c_str())));
     }
     if (upd->getId().getDocType() != docType.getName()) {
         return onComplete->onComplete(std::make_unique<UpdateResult>(Result::ErrorType::PERMANENT_ERROR,
-                            make_string("Update operation rejected due to bad id (%s, %s)", upd->getId().toString().c_str(), docType.getName().c_str())));
+                    fmt("Update operation rejected due to bad id (%s, %s)", upd->getId().toString().c_str(), docType.getName().c_str())));
     }
     IPersistenceHandler * handler = getHandler(rguard, b.getBucketSpace(), docType);
 
     if (handler == nullptr) {
-        return onComplete->onComplete(std::make_unique<UpdateResult>(Result::ErrorType::PERMANENT_ERROR, make_string("No handler for document type '%s'", docType.toString().c_str())));
+        return onComplete->onComplete(std::make_unique<UpdateResult>(Result::ErrorType::PERMANENT_ERROR,
+                    fmt("No handler for document type '%s'", docType.toString().c_str())));
     }
     auto transportContext = std::make_shared<AsyncTransportContext>(1, std::move(onComplete));
     handler->handleUpdate(feedtoken::make(std::move(transportContext)), b, t, std::move(upd));
@@ -505,11 +540,11 @@ PersistenceEngine::iterate(IteratorId id, uint64_t maxByteSize, Context&) const
         std::lock_guard<std::mutex> guard(_iterators_lock);
         auto it = _iterators.find(id);
         if (it == _iterators.end()) {
-            return IterateResult(Result::ErrorType::PERMANENT_ERROR, make_string("Unknown iterator with id %" PRIu64, id.getValue()));
+            return IterateResult(Result::ErrorType::PERMANENT_ERROR, fmt("Unknown iterator with id %" PRIu64, id.getValue()));
         }
         iteratorEntry = it->second;
         if (iteratorEntry->in_use) {
-            return IterateResult(Result::ErrorType::TRANSIENT_ERROR, make_string("Iterator with id %" PRIu64 " is already in use", id.getValue()));
+            return IterateResult(Result::ErrorType::TRANSIENT_ERROR, fmt("Iterator with id %" PRIu64 " is already in use", id.getValue()));
         }
         iteratorEntry->in_use = true;
     }
@@ -521,7 +556,7 @@ PersistenceEngine::iterate(IteratorId id, uint64_t maxByteSize, Context&) const
         iteratorEntry->in_use = false;
         return result;
     } catch (const std::exception & e) {
-        IterateResult result(Result::ErrorType::PERMANENT_ERROR, make_string("Caught exception during visitor iterator.iterate() = '%s'", e.what()));
+        IterateResult result(Result::ErrorType::PERMANENT_ERROR, fmt("Caught exception during visitor iterator.iterate() = '%s'", e.what()));
         LOG(warning, "Caught exception during visitor iterator.iterate() = '%s'", e.what());
         std::lock_guard<std::mutex> guard(_iterators_lock);
         iteratorEntry->in_use = false;
@@ -540,7 +575,7 @@ PersistenceEngine::destroyIterator(IteratorId id, Context&)
         return Result();
     }
     if (it->second->in_use) {
-        return Result(Result::ErrorType::TRANSIENT_ERROR, make_string("Iterator with id %" PRIu64 " is currently in use", id.getValue()));
+        return Result(Result::ErrorType::TRANSIENT_ERROR, fmt("Iterator with id %" PRIu64 " is currently in use", id.getValue()));
     }
     delete it->second;
     _iterators.erase(it);
