@@ -1,6 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.searchdefinition.derived;
-import com.yahoo.document.DocumenttypesConfig;
+import com.yahoo.document.config.DocumenttypesConfig;
 import com.yahoo.document.config.DocumentmanagerConfig;
 import com.yahoo.searchdefinition.SchemaBuilder;
 import com.yahoo.searchdefinition.parser.ParseException;
@@ -36,6 +36,12 @@ public class Deriver {
 
     public static DocumentmanagerConfig.Builder getDocumentManagerConfig(List<String> sds) {
         return new DocumentManager().produce(getSearchBuilder(sds).getModel(), new DocumentmanagerConfig.Builder());
+    }
+
+    public static DocumentmanagerConfig.Builder getDocumentManagerConfig(List<String> sds, boolean useV8DocManagerCfg) {
+        return new DocumentManager()
+            .useV8DocManagerCfg(useV8DocManagerCfg)
+            .produce(getSearchBuilder(sds).getModel(), new DocumentmanagerConfig.Builder());
     }
 
     public static DocumenttypesConfig.Builder getDocumentTypesConfig(String sd) {

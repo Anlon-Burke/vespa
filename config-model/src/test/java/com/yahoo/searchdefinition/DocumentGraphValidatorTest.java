@@ -25,6 +25,7 @@ import static org.junit.Assert.fail;
  */
 public class DocumentGraphValidatorTest {
 
+    @SuppressWarnings("deprecation")
     @Rule
     public final ExpectedException exceptionRule = ExpectedException.none();
 
@@ -152,6 +153,7 @@ public class DocumentGraphValidatorTest {
         return campaignSchema;
     }
 
+    @SuppressWarnings("deprecation")
     private static void createDocumentReference(Schema from, Schema to, String refFieldName) {
         SDField refField = new TemporarySDField(refFieldName, ReferenceDataType.createWithInferredId(TemporaryStructuredDataType.create(to.getName())));
         SDDocumentType fromDocument = from.getDocument();

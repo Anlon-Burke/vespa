@@ -23,7 +23,6 @@ import com.yahoo.container.handler.metrics.MetricsV2Handler;
 import com.yahoo.container.handler.metrics.PrometheusV1Handler;
 import com.yahoo.container.jdisc.ContainerMbusConfig;
 import com.yahoo.container.jdisc.messagebus.MbusServerProvider;
-import com.yahoo.jdisc.http.ServletPathsConfig;
 import com.yahoo.osgi.provider.model.ComponentModel;
 import com.yahoo.search.config.QrStartConfig;
 import com.yahoo.vespa.config.search.RankProfilesConfig;
@@ -34,9 +33,7 @@ import com.yahoo.vespa.model.AbstractService;
 import com.yahoo.vespa.model.admin.metricsproxy.MetricsProxyContainer;
 import com.yahoo.vespa.model.container.component.BindingPattern;
 import com.yahoo.vespa.model.container.component.Component;
-import com.yahoo.vespa.model.container.component.ConfigProducerGroup;
 import com.yahoo.vespa.model.container.component.Handler;
-import com.yahoo.vespa.model.container.component.Servlet;
 import com.yahoo.vespa.model.container.component.SystemBindingPattern;
 import com.yahoo.vespa.model.container.configserver.ConfigserverCluster;
 import com.yahoo.vespa.model.utils.FileSender;
@@ -45,11 +42,9 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static com.yahoo.config.model.api.ApplicationClusterEndpoint.RoutingMethod.shared;
 import static com.yahoo.config.model.api.ApplicationClusterEndpoint.RoutingMethod.sharedLayer4;
@@ -66,7 +61,6 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
         RankingConstantsConfig.Producer,
         OnnxModelsConfig.Producer,
         RankingExpressionsConfig.Producer,
-        ServletPathsConfig.Producer,
         ContainerMbusConfig.Producer,
         MetricsProxyApiConfig.Producer,
         ZookeeperServerConfig.Producer,
@@ -86,7 +80,6 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
 
     private final Set<FileReference> applicationBundles = new LinkedHashSet<>();
 
-    private final ConfigProducerGroup<Servlet> servletGroup;
     private final Set<String> previousHosts;
 
     private ContainerModelEvaluation modelEvaluation;
@@ -103,7 +96,6 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
     public ApplicationContainerCluster(AbstractConfigProducer<?> parent, String configSubId, String clusterId, DeployState deployState) {
         super(parent, configSubId, clusterId, deployState, true);
         this.tlsClientAuthority = deployState.tlsClientAuthority();
-        servletGroup = new ConfigProducerGroup<>(this, "servlet");
         previousHosts = deployState.getPreviousModel().stream()
                                    .map(Model::allocatedHosts)
                                    .map(AllocatedHosts::getHosts)
@@ -172,30 +164,20 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
         this.modelEvaluation = modelEvaluation;
     }
 
-    public Map<ComponentId, Servlet> getServletMap() {
-        return servletGroup.getComponentMap();
-    }
-
-    public void addServlet(Servlet servlet) {
-        servletGroup.addComponent(servlet.getGlobalComponentId(), servlet);
-    }
-
-    public Collection<Servlet> getAllServlets() {
-        return allServlets().collect(Collectors.toCollection(ArrayList::new));
-    }
-
-    private Stream<Servlet> allServlets() {
-        return servletGroup.getComponents().stream();
-    }
-
     public void setMemoryPercentage(Integer memoryPercentage) { this.memoryPercentage = memoryPercentage;
     }
 
-    /**
-     * Returns the percentage of host physical memory this application has specified for nodes in this cluster,
-     * or empty if this is not specified by the application.
-     */
-    public Optional<Integer> getMemoryPercentage() { return Optional.ofNullable(memoryPercentage); }
+    @Override
+    public Optional<Integer> getMemoryPercentage() {
+        if (memoryPercentage != null) {
+            return Optional.of(memoryPercentage);
+        } else if (isHostedVespa()) {
+            return getHostClusterId().isPresent() ?
+                    Optional.of(heapSizePercentageOfTotalNodeMemoryWhenCombinedCluster) :
+                    Optional.of(heapSizePercentageOfTotalNodeMemory);
+        }
+        return Optional.empty();
+    }
 
     /*
       Create list of endpoints, these will be consumed later by the LBservicesProducer
@@ -266,14 +248,6 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
     }
 
     @Override
-    public void getConfig(ServletPathsConfig.Builder builder) {
-        allServlets().forEach(servlet ->
-                                      builder.servlets(servlet.getComponentId().stringValue(),
-                                                       servlet.toConfigBuilder())
-        );
-    }
-
-    @Override
     public void getConfig(RankProfilesConfig.Builder builder) {
         if (modelEvaluation != null) modelEvaluation.getConfig(builder);
     }
@@ -323,10 +297,6 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
                 .heapsize(1536);
         if (getMemoryPercentage().isPresent()) {
             builder.jvm.heapSizeAsPercentageOfPhysicalMemory(getMemoryPercentage().get());
-        } else if (isHostedVespa()) {
-            builder.jvm.heapSizeAsPercentageOfPhysicalMemory(getHostClusterId().isPresent() ?
-                                                             heapSizePercentageOfTotalNodeMemoryWhenCombinedCluster :
-                                                             heapSizePercentageOfTotalNodeMemory);
         }
     }
 

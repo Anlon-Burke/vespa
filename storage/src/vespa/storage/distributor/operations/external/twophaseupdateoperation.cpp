@@ -138,15 +138,16 @@ TwoPhaseUpdateOperation::transitionTo(SendState newState)
 void
 TwoPhaseUpdateOperation::ensureUpdateReplyCreated()
 {
-    if (!_updateReply.get()) {
-        _updateReply = _updateCmd->makeReply();
+    if (!_updateReply) {
+        _updateReply = std::dynamic_pointer_cast<api::UpdateReply>(std::shared_ptr<api::StorageReply>(_updateCmd->makeReply()));
+        assert(_updateReply);
     }
 }
 
 void
 TwoPhaseUpdateOperation::sendReply(
         DistributorStripeMessageSender& sender,
-        std::shared_ptr<api::StorageReply>& reply)
+        std::shared_ptr<api::UpdateReply> reply)
 {
     assert(!_replySent);
     reply->getTrace().addChild(std::move(_trace));
@@ -154,12 +155,20 @@ TwoPhaseUpdateOperation::sendReply(
     _replySent = true;
 }
 
+// This particular method is called when we synthesize our own UpdateReply,
+// not when we take over an already produced one from an UpdateOperation.
+// The latter will already increment _updateMetric fields implicitly.
 void
 TwoPhaseUpdateOperation::sendReplyWithResult(
         DistributorStripeMessageSender& sender,
         const api::ReturnCode& result)
 {
     ensureUpdateReplyCreated();
+    // Don't bump metrics if document not found but otherwise OK.
+    // Already counted in metrics prior to calling this method.
+    if (!(result.success() && (_updateReply->getOldTimestamp() == 0))) {
+        _updateMetric.updateFromResult(result);
+    } // else: `notfound` metric already incremented.
     _updateReply->setResult(result);
     sendReply(sender, _updateReply);
 }
@@ -195,7 +204,7 @@ TwoPhaseUpdateOperation::startFastPathUpdate(DistributorStripeMessageSender& sen
     transitionTo(SendState::UPDATES_SENT);
 
     if (intermediate._reply.get()) {
-        sendReply(sender, intermediate._reply);
+        sendReply(sender, std::dynamic_pointer_cast<api::UpdateReply>(intermediate._reply));
     }
 }
 
@@ -367,18 +376,26 @@ TwoPhaseUpdateOperation::handleFastPathReceive(DistributorStripeMessageSender& s
         if (intermediate._reply.get()) {
             assert(_sendState == SendState::UPDATES_SENT);
             addTraceFromReply(*intermediate._reply);
-            UpdateOperation& cb = static_cast<UpdateOperation&> (callbackOp);
+            auto& cb = dynamic_cast<UpdateOperation&>(callbackOp);
 
             std::pair<document::BucketId, uint16_t> bestNode = cb.getNewestTimestampLocation();
+            auto intermediate_update_reply = std::dynamic_pointer_cast<api::UpdateReply>(intermediate._reply);
+            assert(intermediate_update_reply);
 
-            if (!intermediate._reply->getResult().success() ||
-                bestNode.first == document::BucketId(0)) {
+            if (!intermediate_update_reply->getResult().success() ||
+                bestNode.first == document::BucketId(0))
+            {
+                if (intermediate_update_reply->getResult().success() &&
+                    (intermediate_update_reply->getOldTimestamp() == 0))
+                {
+                    _updateMetric.failures.notfound.inc();
+                }
                 // Failed or was consistent
-                sendReply(sender, intermediate._reply);
+                sendReply(sender, std::move(intermediate_update_reply));
             } else {
                 LOG(debug, "Update(%s) fast path: was inconsistent!", update_doc_id().c_str());
 
-                _updateReply = intermediate._reply;
+                _updateReply = std::move(intermediate_update_reply);
                 _fast_path_repair_source_node = bestNode.second;
                 document::Bucket bucket(_updateCmd->getBucket().getBucketSpace(), bestNode.first);
                 auto cmd = std::make_shared<api::GetCommand>(bucket, _updateCmd->getDocumentId(), document::AllFields::NAME);
@@ -535,9 +552,10 @@ TwoPhaseUpdateOperation::handleSafePathReceivedGet(DistributorStripeMessageSende
     document::Document::SP docToUpdate;
     api::Timestamp putTimestamp = _op_ctx.generate_unique_timestamp();
 
-    if (reply.getDocument().get()) {
+    if (reply.getDocument()) {
         api::Timestamp receivedTimestamp = reply.getLastModifiedTimestamp();
         if (!satisfiesUpdateTimestampConstraint(receivedTimestamp)) {
+            _updateMetric.failures.notfound.inc();
             sendReplyWithResult(sender, api::ReturnCode(api::ReturnCode::OK,
                                                         "No document with requested timestamp found"));
             return;
@@ -556,6 +574,7 @@ TwoPhaseUpdateOperation::handleSafePathReceivedGet(DistributorStripeMessageSende
         docToUpdate = createBlankDocument();
         setUpdatedForTimestamp(putTimestamp);
     } else {
+        _updateMetric.failures.notfound.inc();
         sendReplyWithResult(sender, reply.getResult());
         return;
     }
@@ -644,7 +663,7 @@ void
 TwoPhaseUpdateOperation::setUpdatedForTimestamp(api::Timestamp ts)
 {
     ensureUpdateReplyCreated();
-    static_cast<api::UpdateReply&>(*_updateReply).setOldTimestamp(ts);
+    _updateReply->setOldTimestamp(ts);
 }
 
 std::shared_ptr<document::Document>
@@ -700,7 +719,7 @@ TwoPhaseUpdateOperation::onClose(DistributorStripeMessageSender& sender) {
             auto candidateReply = std::move(intermediate._reply);
             if (candidateReply && candidateReply->getType() == api::MessageType::UPDATE_REPLY) {
                 assert(_mode == Mode::FAST_PATH);
-                sendReply(sender, candidateReply); // Sets _replySent
+                sendReply(sender, std::dynamic_pointer_cast<api::UpdateReply>(candidateReply)); // Sets _replySent
             }
         } else {
             break;

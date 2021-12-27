@@ -1565,6 +1565,20 @@
       "protected final java.util.Random randomizer"
     ]
   },
+  "com.yahoo.documentapi.messagebus.protocol.ContentPolicy$InstabilityChecker": {
+    "superClass": "java.lang.Object",
+    "interfaces": [],
+    "attributes": [
+      "public",
+      "interface",
+      "abstract"
+    ],
+    "methods": [
+      "public abstract boolean tooManyFailures(int)",
+      "public abstract void addFailure(java.lang.Integer)"
+    ],
+    "fields": []
+  },
   "com.yahoo.documentapi.messagebus.protocol.ContentPolicy$Parameters": {
     "superClass": "java.lang.Object",
     "interfaces": [],
@@ -1576,7 +1590,8 @@
       "public java.lang.String getClusterName()",
       "public com.yahoo.documentapi.messagebus.protocol.ContentPolicy$SlobrokHostPatternGenerator createPatternGenerator()",
       "public com.yahoo.documentapi.messagebus.protocol.ContentPolicy$HostFetcher createHostFetcher(com.yahoo.documentapi.messagebus.protocol.SlobrokPolicy, int)",
-      "public com.yahoo.vdslib.distribution.Distribution createDistribution(com.yahoo.documentapi.messagebus.protocol.SlobrokPolicy)"
+      "public com.yahoo.vdslib.distribution.Distribution createDistribution(com.yahoo.documentapi.messagebus.protocol.SlobrokPolicy)",
+      "public com.yahoo.documentapi.messagebus.protocol.ContentPolicy$InstabilityChecker createInstabilityChecker()"
     ],
     "fields": [
       "protected final java.lang.String clusterName",
@@ -1584,6 +1599,21 @@
       "protected final com.yahoo.vespa.config.content.DistributionConfig distributionConfig",
       "protected final com.yahoo.documentapi.messagebus.protocol.ContentPolicy$SlobrokHostPatternGenerator slobrokHostPatternGenerator"
     ]
+  },
+  "com.yahoo.documentapi.messagebus.protocol.ContentPolicy$PerNodeCountingInstabilityChecker": {
+    "superClass": "java.lang.Object",
+    "interfaces": [
+      "com.yahoo.documentapi.messagebus.protocol.ContentPolicy$InstabilityChecker"
+    ],
+    "attributes": [
+      "public"
+    ],
+    "methods": [
+      "public void <init>(int)",
+      "public boolean tooManyFailures(int)",
+      "public void addFailure(java.lang.Integer)"
+    ],
+    "fields": []
   },
   "com.yahoo.documentapi.messagebus.protocol.ContentPolicy$SlobrokHostFetcher": {
     "superClass": "com.yahoo.documentapi.messagebus.protocol.ContentPolicy$HostFetcher",
@@ -1912,6 +1942,7 @@
       "public void <init>(com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig)",
       "public com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Builder cluster(java.lang.String, com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Cluster$Builder)",
       "public com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Builder cluster(java.util.Map)",
+      "public com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Builder cluster(java.lang.String, java.util.function.Consumer)",
       "public final boolean dispatchGetConfig(com.yahoo.config.ConfigInstance$Producer)",
       "public final java.lang.String getDefMd5()",
       "public final java.lang.String getDefName()",
@@ -1937,6 +1968,7 @@
       "public void <init>(com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Cluster)",
       "public com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Cluster$Builder defaultRoute(java.lang.String)",
       "public com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Cluster$Builder route(com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Cluster$Route$Builder)",
+      "public com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Cluster$Builder route(java.util.function.Consumer)",
       "public com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Cluster$Builder route(java.util.List)",
       "public com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Cluster$Builder selector(java.lang.String)",
       "public com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig$Cluster build()"
@@ -2133,6 +2165,7 @@
       "public void <init>()",
       "public void <init>(com.yahoo.documentapi.messagebus.protocol.DocumentrouteselectorpolicyConfig)",
       "public com.yahoo.documentapi.messagebus.protocol.DocumentrouteselectorpolicyConfig$Builder route(com.yahoo.documentapi.messagebus.protocol.DocumentrouteselectorpolicyConfig$Route$Builder)",
+      "public com.yahoo.documentapi.messagebus.protocol.DocumentrouteselectorpolicyConfig$Builder route(java.util.function.Consumer)",
       "public com.yahoo.documentapi.messagebus.protocol.DocumentrouteselectorpolicyConfig$Builder route(java.util.List)",
       "public final boolean dispatchGetConfig(com.yahoo.config.ConfigInstance$Producer)",
       "public final java.lang.String getDefMd5()",

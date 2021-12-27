@@ -7,10 +7,10 @@
 #include <future>
 
 using search::AttributeVector;
-using search::CompactionStrategy;
 using search::GrowStrategy;
 using search::SerialNum;
 using vespa::config::search::AttributesConfig;
+using vespalib::datastore::CompactionStrategy;
 
 namespace proton {
 
@@ -164,6 +164,8 @@ AttributeManagerInitializer::AttributeManagerInitializer(SerialNum configSerialN
     AttributeCollectionSpec::UP attrSpec = createAttributeSpec();
     _attrMgr = std::make_shared<AttributeManager>(*baseAttrMgr, *attrSpec, tasksBuilder);
 }
+
+AttributeManagerInitializer::~AttributeManagerInitializer() = default;
 
 void
 AttributeManagerInitializer::run()

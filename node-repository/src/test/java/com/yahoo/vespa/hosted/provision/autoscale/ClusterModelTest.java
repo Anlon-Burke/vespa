@@ -2,12 +2,12 @@
 package com.yahoo.vespa.hosted.provision.autoscale;
 
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.test.ManualClock;
 import com.yahoo.vespa.hosted.provision.applications.Application;
-import com.yahoo.vespa.hosted.provision.applications.AutoscalingStatus;
 import com.yahoo.vespa.hosted.provision.applications.Cluster;
 import com.yahoo.vespa.hosted.provision.applications.Status;
 import org.junit.Test;
@@ -15,7 +15,6 @@ import org.junit.Test;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.function.IntFunction;
 
 import static org.junit.Assert.assertEquals;
@@ -31,19 +30,20 @@ public class ClusterModelTest {
     public void test_traffic_headroom() {
         ManualClock clock = new ManualClock();
         Application application = Application.empty(ApplicationId.from("t1", "a1", "i1"));
+        ClusterSpec clusterSpec = clusterSpec();
         Cluster cluster = cluster(new NodeResources(1, 10, 100, 1));
         application = application.with(cluster);
 
         // No current traffic share: Ideal load is low but capped
         var model1 = new ClusterModel(application.with(new Status(0.0, 1.0)),
-                                      cluster, clock, Duration.ofMinutes(10),
+                                      clusterSpec, cluster, clock, Duration.ofMinutes(10),
                                       timeseries(cluster,100, t -> t == 0 ? 10000.0 : 0.0, t -> 0.0, clock),
                                       ClusterNodesTimeseries.empty());
         assertEquals(0.131, model1.idealLoad().cpu(), delta);
 
         // Almost no current traffic share: Ideal load is low but capped
         var model2 = new ClusterModel(application.with(new Status(0.0001, 1.0)),
-                                      cluster, clock, Duration.ofMinutes(10),
+                                      clusterSpec, cluster, clock, Duration.ofMinutes(10),
                                       timeseries(cluster,100, t -> t == 0 ? 10000.0 : 0.0, t -> 0.0, clock),
                                       ClusterNodesTimeseries.empty());
         assertEquals(0.131, model2.idealLoad().cpu(), delta);
@@ -54,33 +54,36 @@ public class ClusterModelTest {
         ManualClock clock = new ManualClock();
 
         Application application = Application.empty(ApplicationId.from("t1", "a1", "i1"));
+        ClusterSpec clusterSpec = clusterSpec();
         Cluster cluster = cluster(new NodeResources(1, 10, 100, 1));
         application = application.with(cluster);
 
         // No current traffic: Ideal load is low but capped
         var model1 = new ClusterModel(application,
-                                      cluster, clock, Duration.ofMinutes(10),
+                                      clusterSpec, cluster, clock, Duration.ofMinutes(10),
                                       timeseries(cluster,100, t -> t == 0 ? 10000.0 : 0.0, t -> 0.0, clock),
                                       ClusterNodesTimeseries.empty());
         assertEquals(0.275, model1.idealLoad().cpu(), delta);
 
         // Almost no current traffic: Ideal load is low but capped
         var model2 = new ClusterModel(application.with(new Status(0.0001, 1.0)),
-                                      cluster, clock, Duration.ofMinutes(10),
+                                      clusterSpec, cluster, clock, Duration.ofMinutes(10),
                                       timeseries(cluster,100, t -> t == 0 ? 10000.0 : 0.0001, t -> 0.0, clock),
                                       ClusterNodesTimeseries.empty());
         assertEquals(0.040, model2.idealLoad().cpu(), delta);
     }
 
+    private ClusterSpec clusterSpec() {
+        return ClusterSpec.specification(ClusterSpec.Type.content, ClusterSpec.Id.from("test"))
+                          .group(ClusterSpec.Group.from(0))
+                          .vespaVersion("7.1.1")
+                          .build();
+    }
+
     private Cluster cluster(NodeResources resources) {
-        return new Cluster(ClusterSpec.Id.from("test"),
-                          false,
-                           new ClusterResources(5, 1, resources),
-                           new ClusterResources(5, 1, resources),
-                           Optional.empty(),
-                           Optional.empty(),
-                           List.of(),
-                           AutoscalingStatus.empty());
+        return Cluster.create(ClusterSpec.Id.from("test"),
+                              false,
+                              Capacity.from(new ClusterResources(5, 1, resources)));
     }
 
     /** Creates the given number of measurements, spaced 5 minutes between, using the given function */

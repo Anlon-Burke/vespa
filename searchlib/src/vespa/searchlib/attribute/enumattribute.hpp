@@ -81,7 +81,16 @@ void
 EnumAttribute<B>::populate_address_space_usage(AddressSpaceUsage& usage) const
 {
     B::populate_address_space_usage(usage);
-    usage.set(AddressSpaceComponents::enum_store, _enumStore.get_address_space_usage());
+    usage.set(AddressSpaceComponents::enum_store, _enumStore.get_values_address_space_usage());
+}
+
+template <typename B>
+void
+EnumAttribute<B>::cache_change_data_entry_ref(const Change& c) const
+{
+    EnumIndex new_idx;
+    _enumStore.find_index(c._data.raw(), new_idx);
+    c.set_entry_ref(new_idx.ref());
 }
 
 } // namespace search

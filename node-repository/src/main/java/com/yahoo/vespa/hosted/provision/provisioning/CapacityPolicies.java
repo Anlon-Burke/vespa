@@ -3,6 +3,7 @@ package com.yahoo.vespa.hosted.provision.provisioning;
 
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.Capacity;
+import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.NodeResources;
@@ -29,11 +30,22 @@ public class CapacityPolicies {
         this.sharedHosts = type -> PermanentFlags.SHARED_HOST.bindTo(nodeRepository.flagSource()).value().isEnabled(type.name());
     }
 
-    public int decideSize(int requested, Capacity capacity, ClusterSpec cluster, ApplicationId application) {
-        if (application.instance().isTester()) return 1;
+    public Capacity applyOn(Capacity capacity, ApplicationId application) {
+        return capacity.withLimits(applyOn(capacity.minResources(), capacity, application),
+                                   applyOn(capacity.maxResources(), capacity, application));
+    }
 
-        ensureRedundancy(requested, cluster, capacity.canFail());
-        if (capacity.isRequired()) return requested;
+    private ClusterResources applyOn(ClusterResources resources, Capacity capacity, ApplicationId application) {
+        int nodes = decideSize(resources.nodes(), capacity.isRequired(), application.instance().isTester());
+        int groups = Math.min(resources.groups(), nodes); // cannot have more groups than nodes
+        var nodeResources = decideNodeResources(resources.nodeResources(), capacity.isRequired());
+        return new ClusterResources(nodes, groups, nodeResources);
+    }
+
+    private int decideSize(int requested, boolean required, boolean isTester) {
+        if (isTester) return 1;
+
+        if (required) return requested;
         switch(zone.environment()) {
             case dev : case test : return 1;
             case perf : return Math.min(requested, 3);
@@ -43,11 +55,9 @@ public class CapacityPolicies {
         }
     }
 
-    public NodeResources decideNodeResources(NodeResources target, Capacity capacity, ClusterSpec cluster) {
-        if (target.isUnspecified())
-            target = defaultNodeResources(cluster.type());
-
-        if (capacity.isRequired()) return target;
+    private NodeResources decideNodeResources(NodeResources target, boolean required) {
+        if (required) return target;
+        if (target.isUnspecified()) return target; // Cannot be modified
 
         // Dev does not cap the cpu or network of containers since usage is spotty: Allocate just a small amount exclusively
         if (zone.environment() == Environment.dev && !zone.getCloud().dynamicProvisioning())
@@ -77,28 +87,11 @@ public class CapacityPolicies {
     }
 
     /**
-     * Whether or not the nodes requested can share physical host with other applications.
+     * Returns whether the nodes requested can share physical host with other applications.
      * A security feature which only makes sense for prod.
      */
     public boolean decideExclusivity(Capacity capacity, boolean requestedExclusivity) {
         return requestedExclusivity && (capacity.isRequired() || zone.environment() == Environment.prod);
-    }
-
-    /**
-     * Throw if the node count is 1 for container and content clusters and we're in a production zone
-     *
-     * @throws IllegalArgumentException if only one node is requested and we can fail
-     */
-    private void ensureRedundancy(int nodeCount, ClusterSpec cluster, boolean canFail) {
-        if (canFail &&
-            nodeCount == 1 &&
-            requiresRedundancy(cluster.type()) &&
-            zone.environment().isProduction())
-            throw new IllegalArgumentException("Deployments to prod require at least 2 nodes per cluster for redundancy. Not fulfilled for " + cluster);
-    }
-
-    private static boolean requiresRedundancy(ClusterSpec.Type clusterType) {
-        return clusterType.isContent() || clusterType.isContainer();
     }
 
 }

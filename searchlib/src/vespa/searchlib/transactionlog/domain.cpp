@@ -7,10 +7,12 @@
 #include <vespa/vespalib/io/fileutil.h>
 #include <vespa/vespalib/util/lambdatask.h>
 #include <vespa/vespalib/util/size_literals.h>
+#include <vespa/vespalib/util/retain_guard.h>
 #include <vespa/fastos/file.h>
 #include <algorithm>
 #include <thread>
 #include <cassert>
+#include <future>
 
 #include <vespa/log/log.h>
 #include <vespa/vespalib/util/threadstackexecutor.h>
@@ -55,44 +57,44 @@ Domain::Domain(const string &domainName, const string & baseDir, Executor & exec
       _fileHeaderContext(fileHeaderContext),
       _markedDeleted(false)
 {
-    int retval(0);
-    if ((retval = makeDirectory(_baseDir.c_str())) != 0) {
+    assert(_config.getEncoding().getCompression() != Encoding::Compression::none);
+    int retval = makeDirectory(_baseDir.c_str());
+    if (retval != 0) {
         throw runtime_error(fmt("Failed creating basedirectory %s r(%d), e(%d)", _baseDir.c_str(), retval, errno));
     }
-    if ((retval = makeDirectory(dir().c_str())) != 0) {
+    retval = makeDirectory(dir().c_str());
+    if (retval != 0) {
         throw runtime_error(fmt("Failed creating domaindir %s r(%d), e(%d)", dir().c_str(), retval, errno));
     }
     SerialNumList partIdVector = scanDir();
     const SerialNum lastPart = partIdVector.empty() ? 0 : partIdVector.back();
+    vespalib::MonitoredRefCount pending;
     for (const SerialNum partId : partIdVector) {
         if ( partId != std::numeric_limits<SerialNum>::max()) {
-            _executor.execute(makeLambdaTask([this, partId, lastPart]() { addPart(partId, partId == lastPart); }));
+            _executor.execute(makeLambdaTask([this, partId, lastPart, refGuard=vespalib::RetainGuard(pending)]() {
+                (void) refGuard;
+                addPart(partId, partId == lastPart);
+            }));
         }
     }
-    _executor.sync();
+    pending.waitForZeroRefCount();
     if (_parts.empty() || _parts.crbegin()->second->isClosed()) {
-        _parts[lastPart] = std::make_shared<DomainPart>(_name, dir(), lastPart, _config.getEncoding(),
-                                                        _config.getCompressionlevel(), _fileHeaderContext, false);
+        _parts[lastPart] = std::make_shared<DomainPart>(_name, dir(), lastPart, _fileHeaderContext, false);
         vespalib::File::sync(dir());
     }
     _lastSerial = end();
 }
 
-vespalib::Executor::Task::UP
-Domain::execute(vespalib::Executor::Task::UP task) {
-    return _executor.execute(std::move(task));
-}
-
 Domain &
 Domain::setConfig(const DomainConfig & cfg) {
     _config = cfg;
+    assert(_config.getEncoding().getCompression() != Encoding::Compression::none);
     return *this;
 }
 
 void
 Domain::addPart(SerialNum partId, bool isLastPart) {
-    auto dp = std::make_shared<DomainPart>(_name, dir(), partId, _config.getEncoding(),
-                                           _config.getCompressionlevel(), _fileHeaderContext, isLastPart);
+    auto dp = std::make_shared<DomainPart>(_name, dir(), partId, _fileHeaderContext, isLastPart);
     if (dp->size() == 0) {
         // Only last domain part is allowed to be truncated down to
         // empty size.
@@ -331,8 +333,7 @@ Domain::optionallyRotateFile(SerialNum serialNum) {
         triggerSyncNow({});
         waitPendingSync(_syncMonitor, _syncCond, _pendingSync);
         dp->close();
-        dp = std::make_shared<DomainPart>(_name, dir(), serialNum, _config.getEncoding(),
-                                          _config.getCompressionlevel(), _fileHeaderContext, false);
+        dp = std::make_shared<DomainPart>(_name, dir(), serialNum, _fileHeaderContext, false);
         {
             std::lock_guard guard(_lock);
             _parts[serialNum] = dp;
@@ -394,27 +395,32 @@ Domain::grabCurrentChunk(const UniqueLock & guard) {
 void
 Domain::commitChunk(std::unique_ptr<CommitChunk> chunk, const UniqueLock & chunkOrderGuard) {
     assert(chunkOrderGuard.mutex() == &_currentChunkMonitor && chunkOrderGuard.owns_lock());
-    _singleCommitter->execute( makeLambdaTask([this, chunk = std::move(chunk)]() mutable {
-        doCommit(std::move(chunk));
+    if (chunk->getPacket().empty()) return;
+    std::promise<SerializedChunk> promise;
+    std::future<SerializedChunk> future = promise.get_future();
+    _executor.execute(makeLambdaTask([promise=std::move(promise), chunk = std::move(chunk),
+                                      encoding=_config.getEncoding(), compressionLevel=_config.getCompressionlevel()]() mutable {
+        promise.set_value(SerializedChunk(std::move(chunk), encoding, compressionLevel));
+    }));
+    _singleCommitter->execute( makeLambdaTask([this, future = std::move(future)]() mutable {
+        doCommit(future.get());
     }));
 }
 
+
+
 void
-Domain::doCommit(std::unique_ptr<CommitChunk> chunk) {
-    const Packet & packet = chunk->getPacket();
-    if (packet.empty()) return;
-    
-    vespalib::nbostream_longlivedbuf is(packet.getHandle().data(), packet.getHandle().size());
-    Packet::Entry entry;
-    entry.deserialize(is);
-    DomainPart::SP dp = optionallyRotateFile(entry.serial());
-    dp->commit(entry.serial(), packet);
+Domain::doCommit(const SerializedChunk & serialized) {
+
+    SerialNumRange range = serialized.range();
+    DomainPart::SP dp = optionallyRotateFile(range.from());
+    dp->commit(serialized);
     if (_config.getFSyncOnCommit()) {
         dp->sync();
     }
     cleanSessions();
     LOG(debug, "Releasing %zu acks and %zu entries and %zu bytes.",
-        chunk->getNumCallBacks(), chunk->getPacket().size(), chunk->sizeBytes());
+        serialized.commitChunk().getNumCallBacks(), serialized.getNumEntries(), serialized.getData().size());
 }
 
 bool
@@ -457,8 +463,8 @@ Domain::startSession(int sessionId)
     std::lock_guard guard(_sessionLock);
     SessionList::iterator found = _sessions.find(sessionId);
     if (found != _sessions.end()) {
-        found->second->setStartTime(std::chrono::steady_clock::now());
-        if ( execute(Session::createTask(found->second)).get() == nullptr ) {
+        found->second->setStartTime(vespalib::steady_clock::now());
+        if ( _executor.execute(Session::createTask(found->second)).get() == nullptr ) {
             retval = 0;
         } else {
             _sessions.erase(sessionId);
@@ -470,14 +476,13 @@ Domain::startSession(int sessionId)
 int
 Domain::closeSession(int sessionId)
 {
-    _executor.sync();
     int retval(-1);
     DurationSeconds sessionRunTime(0);
     {
         std::lock_guard guard(_sessionLock);
         SessionList::iterator found = _sessions.find(sessionId);
         if (found != _sessions.end()) {
-            sessionRunTime = (std::chrono::steady_clock::now() - found->second->getStartTime());
+            sessionRunTime = (vespalib::steady_clock::now() - found->second->getStartTime());
             retval = 1;
         }
     }
@@ -523,7 +528,7 @@ Domain::scanDir()
         if (ename[wantPrefixLen] != '-')
             continue;
         const char *p = ename + wantPrefixLen + 1;
-        uint64_t num = strtoull(p, NULL, 10);
+        uint64_t num = strtoull(p, nullptr, 10);
         string checkName = fmt("%s-%016" PRIu64, _name.c_str(), num);
         if (strcmp(checkName.c_str(), ename) != 0)
             continue;

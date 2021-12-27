@@ -187,10 +187,10 @@ CombiningFeedView::prepareDeleteBucket(DeleteBucketOperation &delOp)
 }
 
 void
-CombiningFeedView::handleDeleteBucket(const DeleteBucketOperation &delOp)
+CombiningFeedView::handleDeleteBucket(const DeleteBucketOperation &delOp, DoneCallback onDone)
 {
     for (const auto &view : _views) {
-        view->handleDeleteBucket(delOp);
+        view->handleDeleteBucket(delOp, onDone);
     }
 }
 
@@ -203,7 +203,7 @@ CombiningFeedView::prepareMove(MoveOperation &moveOp)
 }
 
 void
-CombiningFeedView::handleMove(const MoveOperation &moveOp, IDestructorCallback::SP moveDoneCtx)
+CombiningFeedView::handleMove(const MoveOperation &moveOp, DoneCallback moveDoneCtx)
 {
     assert(moveOp.getValidDbdId());
     uint32_t subDbId = moveOp.getSubDbId();
@@ -218,10 +218,10 @@ CombiningFeedView::handleMove(const MoveOperation &moveOp, IDestructorCallback::
 }
 
 void
-CombiningFeedView::heartBeat(search::SerialNum serialNum)
+CombiningFeedView::heartBeat(search::SerialNum serialNum, DoneCallback onDone)
 {
     for (const auto &view : _views) {
-        view->heartBeat(serialNum);
+        view->heartBeat(serialNum, onDone);
     }
 }
 
@@ -235,17 +235,17 @@ CombiningFeedView::forceCommit(const CommitParam & param, DoneCallback onDone)
 
 void
 CombiningFeedView::
-handlePruneRemovedDocuments(const PruneRemovedDocumentsOperation &pruneOp)
+handlePruneRemovedDocuments(const PruneRemovedDocumentsOperation &pruneOp, DoneCallback onDone)
 {
-    getRemFeedView()->handlePruneRemovedDocuments(pruneOp);
+    getRemFeedView()->handlePruneRemovedDocuments(pruneOp, onDone);
 }
 
 void
-CombiningFeedView::handleCompactLidSpace(const CompactLidSpaceOperation &op)
+CombiningFeedView::handleCompactLidSpace(const CompactLidSpaceOperation &op, DoneCallback onDone)
 {
     uint32_t subDbId = op.getSubDbId();
     assert(subDbId < _views.size());
-    _views[subDbId]->handleCompactLidSpace(op);
+    _views[subDbId]->handleCompactLidSpace(op, onDone);
 }
 
 void

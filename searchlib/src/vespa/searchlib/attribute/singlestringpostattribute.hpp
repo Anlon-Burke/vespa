@@ -34,7 +34,8 @@ template <typename B>
 void
 SingleValueStringPostingAttributeT<B>::mergeMemoryStats(vespalib::MemoryUsage & total)
 {
-    total.merge(this->_postingList.update_stat());
+    auto& compaction_strategy = this->getConfig().getCompactionStrategy();
+    total.merge(this->_postingList.update_stat(compaction_strategy));
 }
 
 template <typename B>
@@ -44,8 +45,8 @@ SingleValueStringPostingAttributeT<B>::applyUpdateValueChange(const Change & c,
                                                               std::map<DocId, EnumIndex> &currEnumIndices)
 {
     EnumIndex newIdx;
-    if (c.isEnumValid()) {
-        newIdx = EnumIndex(vespalib::datastore::EntryRef(c.getEnum()));
+    if (c.has_entry_ref()) {
+        newIdx = EnumIndex(vespalib::datastore::EntryRef(c.get_entry_ref()));
     } else {
         enumStore.find_index(c._data.raw(), newIdx);
     }
@@ -89,6 +90,8 @@ SingleValueStringPostingAttributeT<B>::applyValueChanges(EnumStoreBatchUpdater& 
     // used to make sure several arithmetic operations on the same document in a single commit works
     std::map<DocId, EnumIndex> currEnumIndices;
 
+    // This avoids searching for the defaultValue in the enum store for each CLEARDOC in the change vector.
+    this->cache_change_data_entry_ref(this->_defaultValue);
     for (const auto& change : this->_changes.getInsertOrder()) {
         auto enumIter = currEnumIndices.find(change._doc);
         EnumIndex oldIdx;
@@ -104,6 +107,8 @@ SingleValueStringPostingAttributeT<B>::applyValueChanges(EnumStoreBatchUpdater& 
             applyUpdateValueChange(this->_defaultValue, enumStore, currEnumIndices);
         }
     }
+    // We must clear the cached entry ref as the defaultValue might be located in another data buffer on later invocations.
+    this->_defaultValue.clear_entry_ref();
 
     makePostingChange(enumStore.get_folded_comparator(), dictionary, currEnumIndices, changePost);
 

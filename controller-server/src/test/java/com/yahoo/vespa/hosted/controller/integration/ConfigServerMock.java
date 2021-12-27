@@ -80,7 +80,7 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
 
     private final Map<DeploymentId, Application> applications = new LinkedHashMap<>();
     private final Set<ZoneId> inactiveZones = new HashSet<>();
-    private final Map<String, EndpointStatus> endpoints = new HashMap<>();
+    private final Map<DeploymentId, EndpointStatus> endpoints = new HashMap<>();
     private final NodeRepositoryMock nodeRepository = new NodeRepositoryMock();
     private final Map<DeploymentId, ServiceConvergence> serviceStatus = new HashMap<>();
     private final Set<ApplicationId> disallowConvergenceCheckApplications = new HashSet<>();
@@ -438,7 +438,7 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
     }
 
     @Override
-    public void reindex(DeploymentId deployment, List<String> clusterNames, List<String> documentTypes, boolean indexedOnly) { }
+    public void reindex(DeploymentId deployment, List<String> clusterNames, List<String> documentTypes, boolean indexedOnly, Double speed) { }
 
     @Override
     public ApplicationReindexing getReindexing(DeploymentId deployment) {
@@ -450,7 +450,8 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
                                                                                                             Instant.ofEpochMilli(567),
                                                                                                             ApplicationReindexing.State.FAILED,
                                                                                                             "(＃｀д´)ﾉ",
-                                                                                                            0.1)))));
+                                                                                                            0.1,
+                                                                                                            1.0)))));
     }
 
     @Override
@@ -536,8 +537,8 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
     }
 
     @Override
-    public void setGlobalRotationStatus(DeploymentId deployment, String upstreamName, EndpointStatus status) {
-        endpoints.put(upstreamName, status);
+    public void setGlobalRotationStatus(DeploymentId deployment, List<String> upstreamNames, EndpointStatus status) {
+        endpoints.put(deployment, status);
     }
 
     @Override
@@ -550,9 +551,9 @@ public class ConfigServerMock extends AbstractComponent implements ConfigServer 
     }
 
     @Override
-    public EndpointStatus getGlobalRotationStatus(DeploymentId deployment, String endpoint) {
-        EndpointStatus result = new EndpointStatus(EndpointStatus.Status.in, "", "", 1497618757L);
-        return endpoints.getOrDefault(endpoint, result);
+    public EndpointStatus getGlobalRotationStatus(DeploymentId deployment, String upstreamName) {
+        EndpointStatus status = new EndpointStatus(EndpointStatus.Status.in, "", Instant.ofEpochSecond(1497618757L));
+        return endpoints.getOrDefault(deployment, status);
     }
 
     @Override

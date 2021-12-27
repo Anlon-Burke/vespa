@@ -56,6 +56,7 @@ public class SystemFlagsDataArchiveTest {
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
+    @SuppressWarnings("deprecation")
     @Rule
     public final ExpectedException expectedException = ExpectedException.none();
 
@@ -127,6 +128,15 @@ public class SystemFlagsDataArchiveTest {
         expectedException.expect(IllegalArgumentException.class);
         expectedException.expectMessage("Unknown flag file: flags/my-test-flag/main.prod.unknown-region.json");
         archive.validateAllFilesAreForTargets(SystemName.main, Set.of(mainControllerTarget, prodUsWestCfgTarget));
+    }
+
+    @Test
+    public void throws_exception_on_unknown_region() {
+        Path directory = Paths.get("src/test/resources/system-flags-with-unknown-file-name/");
+        expectedException.expect(IllegalArgumentException.class);
+        expectedException.expectMessage(
+                "Environment or zone in filename 'main.prod.unknown-region.json' is does not exist");
+        SystemFlagsDataArchive.fromDirectoryAndSystem(directory, createZoneRegistryMock());
     }
 
     @Test

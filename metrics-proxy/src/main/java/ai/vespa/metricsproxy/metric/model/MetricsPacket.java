@@ -4,7 +4,6 @@ package ai.vespa.metricsproxy.metric.model;
 import ai.vespa.metricsproxy.metric.Metric;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -15,7 +14,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 
-import static java.util.Collections.unmodifiableList;
 import static java.util.Collections.unmodifiableMap;
 import static java.util.stream.Collectors.joining;
 
@@ -36,7 +34,7 @@ public class MetricsPacket {
     public final ServiceId service;
     private final Map<MetricId, Number> metrics;
     private final Map<DimensionId, String> dimensions;
-    private final List<ConsumerId> consumers;
+    private final Set<ConsumerId> consumers;
 
     private MetricsPacket(int statusCode, String statusMessage, long timestamp, ServiceId service,
                           Map<MetricId, Number> metrics, Map<DimensionId, String> dimensions, Set<ConsumerId> consumers ) {
@@ -46,20 +44,12 @@ public class MetricsPacket {
         this.service = service;
         this.metrics = metrics;
         this.dimensions = dimensions;
-        this.consumers = new ArrayList<>(consumers);
+        this.consumers = Set.copyOf(consumers);
     }
 
-    public Map<MetricId, Number> metrics() {
-        return unmodifiableMap(metrics);
-    }
-
-    public Map<DimensionId, String> dimensions() {
-        return unmodifiableMap(dimensions);
-    }
-
-    public List<ConsumerId> consumers() {
-        return unmodifiableList(consumers);
-    }
+    public Map<MetricId, Number> metrics() { return unmodifiableMap(metrics); }
+    public Map<DimensionId, String> dimensions() { return unmodifiableMap(dimensions); }
+    public Set<ConsumerId> consumers() { return consumers;}
 
     @Override
     public String toString() {
@@ -120,7 +110,7 @@ public class MetricsPacket {
 
         public Builder putMetrics(Collection<Metric> extraMetrics) {
             if (extraMetrics != null)
-                extraMetrics.forEach(metric -> metrics.put(metric.getName(), metric.getValue().doubleValue()));
+                extraMetrics.forEach(metric -> metrics.put(metric.getName(), metric.getValue()));
             return this;
         }
 

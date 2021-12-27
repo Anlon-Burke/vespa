@@ -10,7 +10,6 @@ import com.yahoo.net.HostName;
 import com.yahoo.vespa.filedistribution.FileDownloader;
 import com.yahoo.vespa.filedistribution.FileReferenceData;
 import com.yahoo.vespa.filedistribution.FileReferenceDownload;
-import com.yahoo.vespa.flags.InMemoryFlagSource;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -57,7 +56,7 @@ public class FileServerTest {
     public void requireThatNonExistingFileWillBeDownloaded() throws IOException {
         String dir = "123";
         assertFalse(fileServer.hasFile(dir));
-        FileReferenceDownload foo = new FileReferenceDownload(new FileReference(dir));
+        FileReferenceDownload foo = new FileReferenceDownload(new FileReference(dir), "test");
         assertFalse(fileServer.hasFileDownloadIfNeeded(foo));
         writeFile(dir);
         assertTrue(fileServer.hasFileDownloadIfNeeded(foo));
@@ -118,7 +117,7 @@ public class FileServerTest {
     private FileServer createFileServer(ConfigserverConfig.Builder configBuilder) throws IOException {
         File fileReferencesDir = temporaryFolder.newFolder();
         configBuilder.fileReferencesDir(fileReferencesDir.getAbsolutePath());
-        return new FileServer(new ConfigserverConfig(configBuilder), new InMemoryFlagSource());
+        return new FileServer(new ConfigserverConfig(configBuilder));
     }
 
     private static class FileReceiver implements FileServer.Receiver {

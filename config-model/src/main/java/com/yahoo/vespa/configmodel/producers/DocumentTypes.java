@@ -2,6 +2,7 @@
 package com.yahoo.vespa.configmodel.producers;
 
 import com.yahoo.document.*;
+import com.yahoo.document.config.DocumenttypesConfig;
 import com.yahoo.document.annotation.AnnotationReferenceDataType;
 import com.yahoo.document.annotation.AnnotationType;
 import com.yahoo.documentmodel.DataTypeCollection;
@@ -15,8 +16,15 @@ import java.util.*;
  * @author baldersheim
  */
 public class DocumentTypes {
+    private boolean useV8GeoPositions = false;
+
+    public DocumentTypes useV8GeoPositions(boolean value) {
+        this.useV8GeoPositions = value;
+        return this;
+    }
 
     public DocumenttypesConfig.Builder produce(DocumentModel model, DocumenttypesConfig.Builder builder) {
+        builder.usev8geopositions(this.useV8GeoPositions);
         Map<NewDocumentType.Name, NewDocumentType> produced = new HashMap<>();
         for (NewDocumentType documentType : model.getDocumentManager().getTypes()) {
             produceInheritOrder(documentType, builder, produced);
@@ -61,7 +69,7 @@ public class DocumentTypes {
         builder.documenttype(db);
     }
 
-    private void buildConfig(Set<FieldSet> fieldSets, com.yahoo.document.DocumenttypesConfig.Documenttype.Builder db) {
+    private void buildConfig(Set<FieldSet> fieldSets, DocumenttypesConfig.Documenttype.Builder db) {
         for (FieldSet fs : fieldSets) {
             buildConfig(fs, db);
         }

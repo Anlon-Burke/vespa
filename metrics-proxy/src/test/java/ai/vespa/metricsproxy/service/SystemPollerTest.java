@@ -4,18 +4,20 @@ package ai.vespa.metricsproxy.service;
 import ai.vespa.metricsproxy.metric.Metric;
 import ai.vespa.metricsproxy.metric.Metrics;
 import ai.vespa.metricsproxy.metric.model.MetricId;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.StringReader;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertFalse;
 
 /**
  * @author Unknown
@@ -71,18 +73,84 @@ public class SystemPollerTest {
         List<VespaService> services = new ArrayList<>();
         services.add(s);
 
-        assertThat(s.isAlive(), is(false));
+        assertFalse(s.isAlive());
 
         long n = SystemPoller.getPidJiffies(s);
-        assertThat(n, is(0L));
+        assertEquals(0L, n);
         long[] memusage = SystemPoller.getMemoryUsage(s);
-        assertThat(memusage[0], is(0L));
-        assertThat(memusage[1], is(0L));
+        assertEquals(0L, memusage[0]);
+        assertEquals(0L, memusage[1]);
+    }
+
+    private static final String smaps =
+            "00400000-004de000 r-xp 00000000 fe:01 670312                             /usr/bin/bash\n" +
+            "Size:                888 kB\n" +
+            "KernelPageSize:        4 kB\n" +
+            "MMUPageSize:           4 kB\n" +
+            "Rss:                 824 kB\n" +
+            "Pss:                 150 kB\n" +
+            "Shared_Clean:        824 kB\n" +
+            "Shared_Dirty:          0 kB\n" +
+            "Private_Clean:         0 kB\n" +
+            "Private_Dirty:         0 kB\n" +
+            "Referenced:          824 kB\n" +
+            "Anonymous:             0 kB\n" +
+            "LazyFree:              0 kB\n" +
+            "AnonHugePages:         0 kB\n" +
+            "ShmemPmdMapped:        0 kB\n" +
+            "FilePmdMapped:         0 kB\n" +
+            "Shared_Hugetlb:        0 kB\n" +
+            "Private_Hugetlb:       0 kB\n" +
+            "Swap:                  0 kB\n" +
+            "SwapPss:               0 kB\n" +
+            "Locked:                0 kB\n" +
+            "THPeligible:    0\n" +
+            "VmFlags: rd ex mr mw me dw \n" +
+            "006dd000-006de000 r--p 000dd000 fe:01 670312                             /usr/bin/bash\n" +
+            "Size:                  4 kB\n" +
+            "KernelPageSize:        4 kB\n" +
+            "MMUPageSize:           4 kB\n" +
+            "Rss:                   4 kB\n" +
+            "Pss:                   4 kB\n" +
+            "Shared_Clean:          0 kB\n" +
+            "Shared_Dirty:          0 kB\n" +
+            "Private_Clean:         4 kB\n" +
+            "Private_Dirty:         0 kB\n" +
+            "Referenced:            4 kB\n" +
+            "Anonymous:             4 kB\n" +
+            "LazyFree:              0 kB\n" +
+            "AnonHugePages:         0 kB\n" +
+            "ShmemPmdMapped:        0 kB\n" +
+            "FilePmdMapped:         0 kB\n" +
+            "Shared_Hugetlb:        0 kB\n" +
+            "Private_Hugetlb:       0 kB\n" +
+            "Swap:                  0 kB\n" +
+            "SwapPss:               0 kB\n" +
+            "Locked:                0 kB\n" +
+            "THPeligible:    0\n" +
+            "VmFlags: rd mr mw me dw ac \n";
+
+    @Test
+    public void testSmapsParsing() throws IOException {
+        BufferedReader br = new BufferedReader(new StringReader(smaps));
+        long[] memusage = SystemPoller.getMemoryUsage(br);
+        assertEquals(913408L, memusage[0]);
+        assertEquals(847872L, memusage[1]);
+    }
+
+    @Ignore
+    @Test
+    public void benchmarkSmapsParsing() throws IOException {
+        for (int i=0; i < 100000; i++) {
+            BufferedReader br = new BufferedReader(new StringReader(smaps));
+            long[] memusage = SystemPoller.getMemoryUsage(br);
+            assertEquals(913408L, memusage[0]);
+            assertEquals(847872L, memusage[1]);
+        }
     }
 
     @Test
-    public
-    void testPerProcessJiffies() {
+    public void testPerProcessJiffies() {
         assertEquals(PER_PROC_JIFFIES[0], SystemPoller.getPidJiffies(new BufferedReader(new StringReader(perProcStats[0]))));
         assertEquals(PER_PROC_JIFFIES[1], SystemPoller.getPidJiffies(new BufferedReader(new StringReader(perProcStats[1]))));
     }
@@ -109,8 +177,8 @@ public class SystemPollerTest {
     public void testCPUJiffies() {
         String line = "cpu1  102180864 789 56766899 12800020140 1654757 0 0";
         CpuJiffies n = new CpuJiffies(line);
-        assertThat(n.getCpuId(), is(1));
-        assertThat(n.getTotalJiffies(), is(12960623449L));
+        assertEquals(1, n.getCpuId());
+        assertEquals(12960623449L, n.getTotalJiffies());
     }
 
     @Test
@@ -121,7 +189,7 @@ public class SystemPollerTest {
         List<VespaService> services = List.of(s1);
         lastCpuJiffiesMetrics.put(s1, SystemPoller.getPidJiffies(new BufferedReader(new StringReader(perProcStats[0]))));
 
-        SystemPoller.JiffiesAndCpus next = SystemPoller.updateMetrics(prev, 1,
+        SystemPoller.JiffiesAndCpus next = SystemPoller.updateMetrics(prev, Instant.ofEpochSecond(1),
                 new SystemPoller.GetJiffies() {
                     @Override
                     public SystemPoller.JiffiesAndCpus getTotalSystemJiffies() {
@@ -142,7 +210,7 @@ public class SystemPollerTest {
         SystemPoller.JiffiesAndCpus diff = next.diff(prev);
 
         Metrics m = s1.getSystemMetrics();
-        List<Metric> metricList = m.getMetrics();
+        List<Metric> metricList = m.list();
         assertEquals(4, metricList.size());
         assertEquals(new Metric(MetricId.toMetricId("memory_virt"), 0L, 1), metricList.get(0));
         assertEquals(new Metric(MetricId.toMetricId("memory_rss"), 0L, 1), metricList.get(1));

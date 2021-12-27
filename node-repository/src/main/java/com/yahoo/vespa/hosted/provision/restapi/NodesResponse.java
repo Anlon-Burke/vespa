@@ -121,14 +121,13 @@ class NodesResponse extends SlimeJsonResponse {
 
         object.setString("url", nodeParentUrl + node.hostname());
         if ( ! allFields) return;
-        object.setString("id", node.hostname());
+        object.setString("id", node.id());
         object.setString("state", NodeSerializer.toString(node.state()));
         object.setString("type", NodeSerializer.toString(node.type()));
         object.setString("hostname", node.hostname());
         if (node.parentHostname().isPresent()) {
             object.setString("parentHostname", node.parentHostname().get());
         }
-        object.setString("openStackId", node.id());
         object.setString("flavor", node.flavor().name());
         node.reservedTo().ifPresent(reservedTo -> object.setString("reservedTo", reservedTo.value()));
         node.exclusiveToApplicationId().ifPresent(applicationId -> object.setString("exclusiveTo", applicationId.serializedForm()));

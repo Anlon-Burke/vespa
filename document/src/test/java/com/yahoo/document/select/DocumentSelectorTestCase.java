@@ -28,9 +28,7 @@ import com.yahoo.document.select.parser.ParseException;
 import com.yahoo.document.select.parser.TokenMgrException;
 import com.yahoo.yolean.Exceptions;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -49,15 +47,16 @@ import static org.junit.Assert.fail;
  */
 public class DocumentSelectorTestCase {
 
-    @Rule
-    public final ExpectedException exceptionRule = ExpectedException.none();
-
     private static final DocumentTypeManager manager = new DocumentTypeManager();
 
     @Before
     public void setUp() {
+        DocumentType parent = new DocumentType("parent");
+        parent.addField("parentField", DataType.STRING);
+
         var importedFields = new HashSet<>(List.of("my_imported_field"));
         DocumentType type = new DocumentType("test", importedFields);
+        type.inherit(parent);
         type.addField("hint", DataType.INT);
         type.addField("hfloat", DataType.FLOAT);
         type.addField("hstring", DataType.STRING);
@@ -79,6 +78,7 @@ public class DocumentSelectorTestCase {
         ArrayDataType intarray = new ArrayDataType(DataType.INT);
         type.addField("intarray", intarray);
 
+        manager.registerDocumentType(parent);
         manager.registerDocumentType(type);
 
         // Create strange doctypes using identifiers within them, which we
@@ -740,6 +740,19 @@ public class DocumentSelectorTestCase {
     }
 
     @Test
+    public void testInheritance() throws ParseException {
+        var s=new DocumentSelector("parent.parentField = \"parentValue\"");
+        List<DocumentPut> documents = createDocs();
+        assertEquals(Result.TRUE, evaluate("test", documents.get(0)));
+        // TODO Vespa 8: Change the following assert (only) to expect Result.FALSE
+        assertEquals("Matching on type is [on Vespa 7, not] exact",
+                     Result.TRUE, evaluate("parent", documents.get(0)));
+        assertEquals(Result.TRUE, evaluate("test.parentField = \"parentValue\"", documents.get(0)));
+        assertEquals("Fields may be accessed by parent type",
+                     Result.TRUE, evaluate("parent.parentField = \"parentValue\"", documents.get(0)));
+    }
+
+    @Test
     public void using_non_commutative_comparison_operator_with_field_value_is_well_defined() throws ParseException {
         var documents = createDocs();
         // Doc 0 contains 24 in `hint` field.
@@ -768,13 +781,15 @@ public class DocumentSelectorTestCase {
 
     @Test
     public void imported_fields_only_supported_for_simple_expressions() throws ParseException {
-        exceptionRule.expect(IllegalArgumentException.class);
         // TODO we should probably handle this case specially and give a better exception message
-        exceptionRule.expectMessage("Field 'my_imported_field' not found in type datatype test");
-
         var documents = createDocs();
-        // Nested field access is NOT considered a simple expression.
-        evaluate("test.my_imported_field.foo", documents.get(0));
+        try {
+            // Nested field access is NOT considered a simple expression.
+            evaluate("test.my_imported_field.foo", documents.get(0));
+            fail();
+        } catch (IllegalArgumentException e) {
+            assertTrue(e.getMessage().startsWith("Field 'my_imported_field' not found in type datatype test"));
+        }
     }
 
     @Test
@@ -871,6 +886,7 @@ public class DocumentSelectorTestCase {
         if (hString != null)
             doc.setFieldValue("hstring", new StringFieldValue(hString));
         doc.setFieldValue("content", new StringFieldValue(content));
+        doc.setFieldValue("parentField", new StringFieldValue("parentValue"));
         return new DocumentPut(doc);
     }
 

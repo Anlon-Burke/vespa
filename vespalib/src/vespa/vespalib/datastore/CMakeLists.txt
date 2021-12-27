@@ -5,9 +5,12 @@ vespa_add_library(vespalib_vespalib_datastore OBJECT
     array_store_config.cpp
     buffer_type.cpp
     bufferstate.cpp
+    compaction_strategy.cpp
+    compact_buffer_candidates.cpp
     datastore.cpp
     datastorebase.cpp
     entryref.cpp
+    entry_ref_filter.cpp
     fixed_size_hash_map.cpp
     sharded_hash_map.cpp
     unique_store.cpp

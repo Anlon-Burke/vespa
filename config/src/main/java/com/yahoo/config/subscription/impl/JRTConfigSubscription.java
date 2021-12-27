@@ -4,9 +4,6 @@ package com.yahoo.config.subscription.impl;
 import com.yahoo.config.ConfigInstance;
 import com.yahoo.config.ConfigurationRuntimeException;
 import com.yahoo.config.subscription.ConfigInterruptedException;
-import com.yahoo.config.subscription.ConfigSource;
-import com.yahoo.config.subscription.ConfigSourceSet;
-import com.yahoo.config.subscription.ConfigSubscriber;
 import com.yahoo.vespa.config.ConfigKey;
 import com.yahoo.vespa.config.ConfigPayload;
 import com.yahoo.vespa.config.TimingValues;
@@ -25,14 +22,14 @@ import static java.util.logging.Level.FINE;
 import static java.util.logging.Level.INFO;
 
 /**
- * A config subscription for a config instance, gets config using Vespa RPC from a config source
+ * A config subscription for a config instance, gets config using RPC from a config source
  * (config proxy or config server).
  *
  * @author vegardh
  */
 public class JRTConfigSubscription<T extends ConfigInstance> extends ConfigSubscription<T> {
 
-    private JRTConfigRequester requester;
+    private final JRTConfigRequester requester;
     private final TimingValues timingValues;
 
     // Last time we got an OK JRT callback
@@ -43,14 +40,11 @@ public class JRTConfigSubscription<T extends ConfigInstance> extends ConfigSubsc
      * but has not yet been handled.
      */
     private BlockingQueue<JRTClientConfigRequest> reqQueue = new LinkedBlockingQueue<>();
-    private ConfigSourceSet sources;
 
-    public JRTConfigSubscription(ConfigKey<T> key, ConfigSubscriber subscriber, ConfigSource source, TimingValues timingValues) {
-        super(key, subscriber);
+    public JRTConfigSubscription(ConfigKey<T> key, JRTConfigRequester requester, TimingValues timingValues) {
+        super(key);
         this.timingValues = timingValues;
-        if (source instanceof ConfigSourceSet) {
-            this.sources = (ConfigSourceSet) source;
-        }
+        this.requester = requester;
     }
 
     @Override
@@ -149,7 +143,6 @@ public class JRTConfigSubscription<T extends ConfigInstance> extends ConfigSubsc
     @Override
     public boolean subscribe(long timeout) {
         lastOK = Instant.now();
-        requester = getRequester();
         requester.request(this);
         JRTClientConfigRequest req = reqQueue.peek();
         while (req == null && (Instant.now().isBefore(lastOK.plus(Duration.ofMillis(timeout))))) {
@@ -161,15 +154,6 @@ public class JRTConfigSubscription<T extends ConfigInstance> extends ConfigSubsc
             req = reqQueue.peek();
         }
         return req != null;
-    }
-
-    private JRTConfigRequester getRequester() {
-        JRTConfigRequester requester = subscriber.requesters().get(sources);
-        if (requester == null) {
-            requester = JRTConfigRequester.create(sources, timingValues);
-            subscriber.requesters().put(sources, requester);
-        }
-        return requester;
     }
 
     @Override

@@ -96,7 +96,7 @@ SummarySetup(const vespalib::string & baseDir, const DocTypeName & docTypeName, 
     auto resultConfig = std::make_unique<ResultConfig>();
     if (!resultConfig->ReadConfig(summaryCfg, make_string("SummaryManager(%s)", baseDir.c_str()).c_str())) {
         std::ostringstream oss;
-        config::OstreamConfigWriter writer(oss);
+        ::config::OstreamConfigWriter writer(oss);
         writer.write(summaryCfg);
         throw IllegalArgumentException
             (make_string("Could not initialize summary result config for directory '%s' based on summary config '%s'",
@@ -200,7 +200,8 @@ SummaryManager::getFlushTargets(vespalib::Executor & summaryService)
     IFlushTarget::List ret;
     ret.push_back(std::make_shared<SummaryFlushTarget>(getBackingStore(), summaryService));
     if (dynamic_cast<LogDocumentStore *>(_docStore.get()) != nullptr) {
-        ret.push_back(std::make_shared<SummaryCompactTarget>(summaryService, getBackingStore()));
+        ret.push_back(std::make_shared<SummaryCompactBloatTarget>(summaryService, getBackingStore()));
+        ret.push_back(std::make_shared<SummaryCompactSpreadTarget>(summaryService, getBackingStore()));
     }
     ret.push_back(createShrinkLidSpaceFlushTarget(summaryService, _docStore));
     return ret;

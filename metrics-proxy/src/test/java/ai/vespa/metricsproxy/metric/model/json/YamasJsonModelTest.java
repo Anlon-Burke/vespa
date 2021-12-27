@@ -1,21 +1,24 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.metricsproxy.metric.model.json;
 
+import ai.vespa.metricsproxy.http.yamas.YamasResponse;
 import ai.vespa.metricsproxy.metric.model.MetricsPacket;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.Test;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.Collections;
+import java.util.List;
 
 import static ai.vespa.metricsproxy.metric.model.ConsumerId.toConsumerId;
 import static ai.vespa.metricsproxy.metric.model.MetricId.toMetricId;
 import static ai.vespa.metricsproxy.metric.model.ServiceId.toServiceId;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Tests for YamasJsonModel and YamasArrayJsonModel
@@ -31,10 +34,11 @@ public class YamasJsonModelTest {
     public void array_definition_creates_correct_json() throws IOException {
         YamasJsonModel jsonModel = getYamasJsonModel("yamas-array.json");
 
-        YamasArrayJsonModel yamasData = new YamasArrayJsonModel();
-        yamasData.add(jsonModel);
-
-        assertEquals(EXPECTED_JSON, yamasData.serialize());
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            YamasResponse response = new YamasResponse(200, List.of(YamasJsonUtil.toMetricsPacketBuilder(jsonModel).build()));
+            response.render(outputStream);
+            assertEquals(EXPECTED_JSON, outputStream.toString());
+        }
     }
 
     @Test
@@ -43,14 +47,15 @@ public class YamasJsonModelTest {
 
         // Do some sanity checking
         assertEquals("vespa.searchnode", jsonModel.application);
-        assertEquals("Vespa", jsonModel.routing.get("yamas").namespaces.get(0));
+        assertTrue(jsonModel.routing.get("yamas").namespaces.contains("Vespa"));
         assertEquals(5.555555555E9, jsonModel.metrics.get("memory_rss"), 0.1d); //Not using custom double renderer
 
         // Serialize and verify
-        YamasArrayJsonModel yamasArray = new YamasArrayJsonModel();
-        yamasArray.add(jsonModel);
-        String string = yamasArray.serialize();
-        assertEquals(EXPECTED_JSON, string);
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            YamasResponse response = new YamasResponse(200, List.of(YamasJsonUtil.toMetricsPacketBuilder(jsonModel).build()));
+            response.render(outputStream);
+            assertEquals(EXPECTED_JSON, outputStream.toString());
+        }
     }
 
     @Test
@@ -60,12 +65,11 @@ public class YamasJsonModelTest {
 
         // Do some sanity checking
         assertEquals(toServiceId("vespa.searchnode"), metricsPacket.service);
-        assertEquals(toConsumerId("Vespa"), metricsPacket.consumers().get(0));
+        assertTrue(metricsPacket.consumers().contains(toConsumerId("Vespa")));
         assertEquals(5.555555555E9, metricsPacket.metrics().get(toMetricId("memory_rss")).doubleValue(), 0.1d); //Not using custom double rendrer
 
         // Serialize and verify
-        YamasArrayJsonModel yamasArray = YamasJsonUtil.toYamasArray(Collections.singleton(metricsPacket), true);
-        String string = yamasArray.serialize();
+        String string = YamasJsonUtil.toJson(List.of(metricsPacket), true);
         assertEquals(EXPECTED_JSON, string);
     }
 

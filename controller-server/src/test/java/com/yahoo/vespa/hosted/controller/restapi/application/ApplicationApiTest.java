@@ -52,7 +52,6 @@ import com.yahoo.vespa.hosted.controller.api.integration.resource.MeteringData;
 import com.yahoo.vespa.hosted.controller.api.integration.resource.ResourceAllocation;
 import com.yahoo.vespa.hosted.controller.api.integration.resource.ResourceSnapshot;
 import com.yahoo.vespa.hosted.controller.api.integration.stubs.MockMeteringClient;
-import com.yahoo.vespa.hosted.controller.application.Change;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.DeploymentMetrics;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
@@ -358,9 +357,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
                                        ATHENZ_TENANT_DOMAIN_2,
                                        id2.application());
 
-        // Trigger upgrade and then application change
-        deploymentTester.applications().deploymentTrigger().triggerChange(id2, Change.of(Version.fromString("7.0")));
-
         // POST an application package and a test jar, submitting a new application for production deployment.
         tester.assertResponse(request("/application/v4/tenant/tenant2/application/application2/submit", POST)
                                       .screwdriverIdentity(SCREWDRIVER_ID)
@@ -386,11 +382,6 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant2/application/application2/instance/instance1/environment/prod/region/us-west-1", DELETE)
                                       .userIdentity(HOSTED_VESPA_OPERATOR),
                               "{\"message\":\"Deactivated tenant2.application2.instance1 in prod.us-west-1\"}");
-
-        // GET application having both change and outstanding change
-        tester.assertResponse(request("/application/v4/tenant/tenant2/application/application2", GET)
-                                      .userIdentity(USER_ID),
-                              new File("application2.json"));
 
         // GET application having both change and outstanding change
         tester.assertResponse(request("/application/v4/tenant/tenant2/application/application2", GET)
@@ -525,6 +516,17 @@ public class ApplicationApiTest extends ControllerContainerTest {
                         .userIdentity(USER_ID),
                                 new File("proton-metrics.json"));
 
+        // POST a roll-out of the latest application
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/application", POST)
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Triggered application change to 1.0.1-commit1 for tenant1.application1.instance1\"}");
+
+        // POST a roll-out of a given revision
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/application", POST)
+                                      .data("{ \"build\": 1 }")
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Triggered application change to 1.0.1-commit1 for tenant1.application1.instance1\"}");
+
         // DELETE (cancel) ongoing change
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying", DELETE)
                                       .userIdentity(HOSTED_VESPA_OPERATOR),
@@ -595,8 +597,10 @@ public class ApplicationApiTest extends ControllerContainerTest {
 
         // POST a 'reindex application' command
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/reindex", POST)
+                                      .properties(Map.of("indexedOnly", "true",
+                                                         "speed", "10"))
                                       .userIdentity(USER_ID),
-                              "{\"message\":\"Requested reindexing of tenant1.application1.instance1 in prod.us-central-1\"}");
+                              "{\"message\":\"Requested reindexing of tenant1.application1.instance1 in prod.us-central-1, for indexed types, with speed 10.0\"}");
 
         // POST a 'reindex application' command with cluster filter
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/reindex", POST)
@@ -624,7 +628,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // GET to get reindexing status
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/reindexing", GET)
                                       .userIdentity(USER_ID),
-                              "{\"enabled\":true,\"clusters\":[{\"name\":\"cluster\",\"pending\":[{\"type\":\"type\",\"requiredGeneration\":100}],\"ready\":[{\"type\":\"type\",\"readyAtMillis\":345,\"startedAtMillis\":456,\"endedAtMillis\":567,\"state\":\"failed\",\"message\":\"(＃｀д´)ﾉ\",\"progress\":0.1}]}]}");
+                              "{\"enabled\":true,\"clusters\":[{\"name\":\"cluster\",\"pending\":[{\"type\":\"type\",\"requiredGeneration\":100}],\"ready\":[{\"type\":\"type\",\"readyAtMillis\":345,\"startedAtMillis\":456,\"endedAtMillis\":567,\"state\":\"failed\",\"message\":\"(＃｀д´)ﾉ\",\"progress\":0.1,\"speed\":1.0}]}]}");
 
         // POST to request a service dump
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/node/host-tenant1:application1:instance1-prod.us-central-1/service-dump", POST)
@@ -892,6 +896,8 @@ public class ApplicationApiTest extends ControllerContainerTest {
 
         // Forget a deleted tenant
         tester.assertResponse(request("/application/v4/tenant/tenant1", DELETE).properties(Map.of("forget", "true"))
+                        .data("{\"athensDomain\":\"domain1\"}")
+                        .oktaAccessToken(OKTA_AT).oktaIdentityToken(OKTA_IT)
                         .userIdentity(HOSTED_VESPA_OPERATOR),
                 "{\"message\":\"Deleted tenant tenant1\"}");
         tester.assertResponse(request("/application/v4/tenant/tenant1", GET).properties(Map.of("includeDeleted", "true"))
@@ -1874,7 +1880,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         RoutingStatus status = context.routingStatus();
         assertEquals(value, status.value());
         assertEquals(agent, status.agent());
-        assertEquals(changedAt.truncatedTo(ChronoUnit.SECONDS), status.changedAt());
+        assertEquals(changedAt, status.changedAt());
     }
 
     private static class RequestBuilder implements Supplier<Request> {

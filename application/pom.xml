@@ -74,11 +74,6 @@
       </exclusions>
     </dependency>
     <dependency>
-       <groupId>org.hamcrest</groupId>
-       <artifactId>hamcrest-all</artifactId>
-       <scope>test</scope>
-     </dependency>
-    <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
       <scope>test</scope>
@@ -95,17 +90,6 @@
       <groupId>io.airlift</groupId>
       <artifactId>aircompressor</artifactId>
       <scope>compile</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.optimaize.languagedetector</groupId>
-      <artifactId>language-detector</artifactId>
-      <exclusions>
-        <exclusion>
-          <!-- We want to get this via jdisc-core -->
-          <groupId>org.slf4j</groupId>
-          <artifactId>slf4j-api</artifactId>
-        </exclusion>
-      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.antlr</groupId>

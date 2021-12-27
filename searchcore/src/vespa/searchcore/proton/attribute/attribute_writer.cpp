@@ -549,7 +549,6 @@ public:
                 for (auto lidToRemove : _lidsToRemove) {
                     applyRemoveToAttribute(_serialNum, lidToRemove, attr, _onWriteDone);
                 }
-                attr.commit(false);
             }
         }
     }
@@ -801,12 +800,13 @@ AttributeWriter::update(SerialNum serialNum, const DocumentUpdate &upd, Document
 }
 
 void
-AttributeWriter::heartBeat(SerialNum serialNum)
+AttributeWriter::heartBeat(SerialNum serialNum, OnWriteDoneType onDone)
 {
     for (auto entry : _attrMap) {
-        _attributeFieldWriter.execute(entry.second.executor_id,
-                                      [serialNum, attr=entry.second.attribute]()
-                                      { applyHeartBeat(serialNum, *attr); });
+        _attributeFieldWriter.execute(entry.second.executor_id,[serialNum, attr=entry.second.attribute, onDone]() {
+            (void) onDone;
+            applyHeartBeat(serialNum, *attr);
+        });
     }
 }
 

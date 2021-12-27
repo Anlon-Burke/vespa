@@ -23,18 +23,10 @@ using namespace proton;
 
 typedef std::vector<IFeedView::SP> FeedViewVector;
 
-struct MyStreamHandler : public NewConfigOperation::IStreamHandler
-{
-    void serializeConfig(SerialNum, vespalib::nbostream &) override {}
-    void deserializeConfig(SerialNum, vespalib::nbostream &) override {}
-};
-
-
 struct MyFeedView : public test::DummyFeedView
 {
     typedef std::shared_ptr<MyFeedView> SP;
     DocumentMetaStore    _metaStore;
-    MyStreamHandler      _streamHandler;
     uint32_t             _preparePut;
     uint32_t             _handlePut;
     uint32_t             _prepareRemove;
@@ -56,7 +48,6 @@ struct MyFeedView : public test::DummyFeedView
                    DocumentMetaStore::getFixedName(),
                    search::GrowStrategy(),
                    subDbType),
-        _streamHandler(),
         _preparePut(0),
         _handlePut(0),
         _prepareRemove(0),
@@ -82,12 +73,12 @@ struct MyFeedView : public test::DummyFeedView
     void prepareRemove(RemoveOperation &) override { ++_prepareRemove; }
     void handleRemove(FeedToken, const RemoveOperation &) override { ++_handleRemove; }
     void prepareDeleteBucket(DeleteBucketOperation &) override { ++_prepareDeleteBucket; }
-    void handleDeleteBucket(const DeleteBucketOperation &) override { ++_handleDeleteBucket; }
+    void handleDeleteBucket(const DeleteBucketOperation &, DoneCallback) override { ++_handleDeleteBucket; }
     void prepareMove(MoveOperation &) override { ++_prepareMove; }
-    void handleMove(const MoveOperation &, IDestructorCallback::SP) override { ++_handleMove; }
-    void heartBeat(SerialNum) override { ++_heartBeat; }
-    void handlePruneRemovedDocuments(const PruneRemovedDocumentsOperation &) override { ++_handlePrune; }
-    void handleCompactLidSpace(const CompactLidSpaceOperation &op) override {
+    void handleMove(const MoveOperation &, DoneCallback) override { ++_handleMove; }
+    void heartBeat(SerialNum, DoneCallback) override { ++_heartBeat; }
+    void handlePruneRemovedDocuments(const PruneRemovedDocumentsOperation &, DoneCallback) override { ++_handlePrune; }
+    void handleCompactLidSpace(const CompactLidSpaceOperation &op, DoneCallback) override {
         _wantedLidLimit = op.getLidLimit();
     }
 };
@@ -362,7 +353,7 @@ TEST_F("require that delete bucket is sent to all feed views", Fixture)
     EXPECT_EQUAL(1u, f._ready._view->_prepareDeleteBucket);
     EXPECT_EQUAL(1u, f._removed._view->_prepareDeleteBucket);
     EXPECT_EQUAL(1u, f._notReady._view->_prepareDeleteBucket);
-    f._view.handleDeleteBucket(op);
+    f._view.handleDeleteBucket(op, IDestructorCallback::SP());
     EXPECT_EQUAL(1u, f._ready._view->_handleDeleteBucket);
     EXPECT_EQUAL(1u, f._removed._view->_handleDeleteBucket);
     EXPECT_EQUAL(1u, f._notReady._view->_handleDeleteBucket);
@@ -371,7 +362,7 @@ TEST_F("require that delete bucket is sent to all feed views", Fixture)
 
 TEST_F("require that heart beat is sent to all feed views", Fixture)
 {
-    f._view.heartBeat(5);
+    f._view.heartBeat(5, IDestructorCallback::SP());
     EXPECT_EQUAL(1u, f._ready._view->_heartBeat);
     EXPECT_EQUAL(1u, f._removed._view->_heartBeat);
     EXPECT_EQUAL(1u, f._notReady._view->_heartBeat);
@@ -381,7 +372,7 @@ TEST_F("require that heart beat is sent to all feed views", Fixture)
 TEST_F("require that prune removed documents is sent to removed view", Fixture)
 {
     PruneRemovedDocumentsOperation op;
-    f._view.handlePruneRemovedDocuments(op);
+    f._view.handlePruneRemovedDocuments(op, IDestructorCallback::SP());
     EXPECT_EQUAL(0u, f._ready._view->_handlePrune);
     EXPECT_EQUAL(1u, f._removed._view->_handlePrune);
     EXPECT_EQUAL(0u, f._notReady._view->_handlePrune);
@@ -429,7 +420,7 @@ TEST_F("require that calculator can be updated", Fixture)
 
 TEST_F("require that compactLidSpace() is sent to correct feed view", Fixture)
 {
-    f._view.handleCompactLidSpace(CompactLidSpaceOperation(1, 99));
+    f._view.handleCompactLidSpace(CompactLidSpaceOperation(1, 99), IDestructorCallback::SP());
     EXPECT_EQUAL(0u, f._ready._view->_wantedLidLimit);
     EXPECT_EQUAL(99u, f._removed._view->_wantedLidLimit);
     EXPECT_EQUAL(0u, f._notReady._view->_wantedLidLimit);

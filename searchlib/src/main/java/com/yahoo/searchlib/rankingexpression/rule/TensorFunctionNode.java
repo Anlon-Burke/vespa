@@ -1,7 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.searchlib.rankingexpression.rule;
 
-import com.google.common.annotations.Beta;
+import com.yahoo.api.annotations.Beta;
 import com.google.common.collect.ImmutableMap;
 import com.yahoo.searchlib.rankingexpression.ExpressionFunction;
 import com.yahoo.searchlib.rankingexpression.Reference;
@@ -328,7 +328,14 @@ public class TensorFunctionNode extends CompositeNode {
         /** Returns a function or null if it isn't defined in this context */
         public ExpressionFunction getFunction(String name) { return wrappedSerializationContext.getFunction(name); }
 
-        protected ImmutableMap<String, ExpressionFunction> functions() { return wrappedSerializationContext.functions(); }
+        /** @deprecated Use {@link #getFunctions()} instead */
+        @SuppressWarnings("removal")
+        @Deprecated(forRemoval = true, since = "7")
+        protected ImmutableMap<String, ExpressionFunction> functions() {
+            return ImmutableMap.copyOf(wrappedSerializationContext.getFunctions());
+        }
+
+        @Override protected Map<String, ExpressionFunction> getFunctions() { return wrappedSerializationContext.getFunctions(); }
 
         public ToStringContext parent() { return wrappedToStringContext; }
 
@@ -344,14 +351,14 @@ public class TensorFunctionNode extends CompositeNode {
         /** Returns a new context with the bindings replaced by the given bindings */
         @Override
         public ExpressionToStringContext withBindings(Map<String, String> bindings) {
-            SerializationContext serializationContext = new SerializationContext(functions(), bindings, serializedFunctions());
+            SerializationContext serializationContext = new SerializationContext(getFunctions(), bindings, serializedFunctions());
             return new ExpressionToStringContext(serializationContext, wrappedToStringContext, path, parent);
         }
 
         /** Returns a fresh context without bindings */
         @Override
         public SerializationContext withoutBindings() {
-            SerializationContext serializationContext = new SerializationContext(functions(), null, serializedFunctions());
+            SerializationContext serializationContext = new SerializationContext(getFunctions(), null, serializedFunctions());
             return new ExpressionToStringContext(serializationContext, null, path, parent);
         }
     }

@@ -65,9 +65,22 @@ public class DocumentTypeManager {
         annotationTypeRegistry = other.annotationTypeRegistry;
     }
 
+    /**
+     * For testing, use fromFile factory method instead
+     * @deprecated //TODO Will be package-private or removed on Vespa 8
+     */
+    @Deprecated
     public DocumentTypeManager configure(String configId) {
         subscriber = DocumentTypeManagerConfigurer.configure(this, configId);
         return this;
+    }
+
+    /** Only for unit tests */
+    public static DocumentTypeManager fromFile(String fileName) {
+        var manager = new DocumentTypeManager();
+        var sub = DocumentTypeManagerConfigurer.configure(manager, "file:" + fileName);
+        sub.close();
+        return manager;
     }
 
     private void registerDefaultDataTypes() {
@@ -104,6 +117,10 @@ public class DocumentTypeManager {
         return false;
     }
 
+    /**
+     * @deprecated //TODO Will be package-private or removed on Vespa 8
+     */
+    @Deprecated
     public boolean hasDataType(int code) {
         if (code == DataType.tensorDataTypeCode) return true; // built-in dynamic: Always present
         return dataTypes.containsKey(code);
@@ -140,6 +157,10 @@ public class DocumentTypeManager {
         return foundTypes.get(0);
     }
 
+    /**
+     * @deprecated //TODO Will be package-private or removed on Vespa 8
+     */
+    @Deprecated
     public DataType getDataType(int code) { return getDataType(code, ""); }
 
     /**
@@ -148,7 +169,10 @@ public class DocumentTypeManager {
      * @param code the code of the data type to return, which must be either built in or present in this manager
      * @param detailedType detailed type information, or the empty string if none
      * @return the appropriate DataType instance
+     *
+     * @deprecated //TODO Will be package-private or removed on Vespa 8
      */
+    @Deprecated
     public DataType getDataType(int code, String detailedType) {
         if (code == DataType.tensorDataTypeCode) // built-in dynamic
             return new TensorDataType(TensorType.fromSpec(detailedType));
@@ -165,6 +189,11 @@ public class DocumentTypeManager {
         }
     }
 
+    /**
+     * @deprecated //TODO Will be package-private or removed on Vespa 8
+     */
+    @SuppressWarnings("deprecation")
+    @Deprecated
     DataType getDataTypeAndReturnTemporary(int code, String detailedType) {
         if (hasDataType(code)) {
             return getDataType(code, detailedType);
@@ -186,8 +215,15 @@ public class DocumentTypeManager {
      *
      * @param type The datatype to register
      */
+    @SuppressWarnings("deprecation")
     void registerSingleType(DataType type) {
         if (type instanceof TensorDataType) return; // built-in dynamic: Created on the fly
+        if (type instanceof TemporaryDataType) {
+            throw new IllegalArgumentException("TemporaryDataType no longer supported: " + type);
+        }
+        if (type instanceof TemporaryStructuredDataType) {
+            throw new IllegalArgumentException("TemporaryStructuredDataType no longer supported: " + type);
+        }
         if (dataTypes.containsKey(type.getId())) {
             DataType existingType = dataTypes.get(type.getId());
             if (((type instanceof TemporaryDataType) || (type instanceof TemporaryStructuredDataType))
@@ -269,6 +305,7 @@ public class DocumentTypeManager {
         DocumentDeserializer data = DocumentDeserializerFactory.create6(this, buf);
         return new Document(data);
     }
+
     public Document createDocument(DocumentDeserializer data) {
         return new Document(data);
     }
@@ -297,7 +334,10 @@ public class DocumentTypeManager {
     /**
      * Clears the DocumentTypeManager. After this operation,
      * only the default document type and data types are available.
+     *
+     * @deprecated //TODO Will be package-private or removed on Vespa 8
      */
+    @Deprecated
     public void clear() {
         documentTypes.clear();
         dataTypes.clear();
@@ -308,91 +348,10 @@ public class DocumentTypeManager {
         return annotationTypeRegistry;
     }
 
-    void replaceTemporaryTypes() {
-        for (DataType type : dataTypes.values()) {
-            List<DataType> seenStructs = new LinkedList<>();
-            replaceTemporaryTypes(type, seenStructs);
-        }
-    }
-
-    private void replaceTemporaryTypes(DataType type, List<DataType> seenStructs) {
-        if (type instanceof WeightedSetDataType) {
-            replaceTemporaryTypesInWeightedSet((WeightedSetDataType) type, seenStructs);
-        } else if (type instanceof MapDataType) {
-            replaceTemporaryTypesInMap((MapDataType) type, seenStructs);
-        } else if (type instanceof CollectionDataType) {
-            replaceTemporaryTypesInCollection((CollectionDataType) type, seenStructs);
-        } else if (type instanceof StructDataType) {
-            replaceTemporaryTypesInStruct((StructDataType) type, seenStructs);
-        } else if (type instanceof PrimitiveDataType) {
-            //OK because these types are always present
-        } else if (type instanceof AnnotationReferenceDataType) {
-            //OK because this type is always present
-        } else if (type instanceof DocumentType) {
-            //OK because this type is always present
-        } else if (type instanceof TensorDataType) {
-            //OK because this type is always present
-        } else if (type instanceof ReferenceDataType) {
-            replaceTemporaryTypeInReference((ReferenceDataType) type);
-        } else if (type instanceof TemporaryDataType) {
-            throw new IllegalStateException("TemporaryDataType registered in DocumentTypeManager, BUG!!");
-        } else {
-            log.warning("Don't know how to replace temporary data types in " + type);
-        }
-    }
-
-    @SuppressWarnings("deprecation")
-    private void replaceTemporaryTypesInStruct(StructDataType structDataType, List<DataType> seenStructs) {
-        seenStructs.add(structDataType);
-        for (Field field : structDataType.getFieldsThisTypeOnly()) {
-            DataType fieldType = field.getDataType();
-            if (fieldType instanceof TemporaryDataType) {
-                field.setDataType(getDataType(fieldType.getCode(), ((TemporaryDataType)fieldType).getDetailedType()));
-            } else {
-                if (!seenStructs.contains(fieldType)) {
-                    replaceTemporaryTypes(fieldType, seenStructs);
-                }
-            }
-        }
-    }
-
-    private void replaceTemporaryTypeInReference(ReferenceDataType referenceDataType) {
-        if (referenceDataType.getTargetType() instanceof TemporaryStructuredDataType) {
-            referenceDataType.setTargetType((DocumentType) getDataType(referenceDataType.getTargetType().getId()));
-        }
-        // TODO should we recursively invoke replaceTemporaryTypes for the target type? It should only ever be a doc type
-    }
-
-    private void replaceTemporaryTypesInCollection(CollectionDataType collectionDataType, List<DataType> seenStructs) {
-        if (collectionDataType.getNestedType() instanceof TemporaryDataType) {
-            collectionDataType.setNestedType(getDataType(collectionDataType.getNestedType().getCode(), ""));
-        } else {
-            replaceTemporaryTypes(collectionDataType.getNestedType(), seenStructs);
-        }
-    }
-
-    private void replaceTemporaryTypesInMap(MapDataType mapDataType, List<DataType> seenStructs) {
-        if (mapDataType.getValueType() instanceof TemporaryDataType) {
-            mapDataType.setValueType(getDataType(mapDataType.getValueType().getCode(), ""));
-        } else {
-            replaceTemporaryTypes(mapDataType.getValueType(), seenStructs);
-        }
-
-        if (mapDataType.getKeyType() instanceof TemporaryDataType) {
-            mapDataType.setKeyType(getDataType(mapDataType.getKeyType().getCode(), ""));
-        } else {
-            replaceTemporaryTypes(mapDataType.getKeyType(), seenStructs);
-        }
-    }
-
-    private void replaceTemporaryTypesInWeightedSet(WeightedSetDataType weightedSetDataType, List<DataType> seenStructs) {
-        if (weightedSetDataType.getNestedType() instanceof TemporaryDataType) {
-            weightedSetDataType.setNestedType(getDataType(weightedSetDataType.getNestedType().getCode(), ""));
-        } else {
-            replaceTemporaryTypes(weightedSetDataType.getNestedType(), seenStructs);
-        }
-    }
-
+    /**
+     * @deprecated //TODO Will be package-private or removed on Vespa 8
+     */
+    @Deprecated
     public void shutdown() {
         if (subscriber!=null) subscriber.close();
     }

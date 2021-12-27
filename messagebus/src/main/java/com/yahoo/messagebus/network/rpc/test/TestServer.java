@@ -6,7 +6,6 @@ import com.yahoo.component.Vtag;
 import com.yahoo.jrt.Spec;
 import com.yahoo.jrt.slobrok.api.Mirror;
 import com.yahoo.jrt.slobrok.server.Slobrok;
-import java.util.logging.Level;
 import com.yahoo.messagebus.MessageBus;
 import com.yahoo.messagebus.MessageBusParams;
 import com.yahoo.messagebus.Protocol;
@@ -21,6 +20,7 @@ import com.yahoo.messagebus.test.SimpleProtocol;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
+import java.util.logging.Level;
 
 /**
  * A simple test server implementation.
@@ -28,6 +28,8 @@ import java.util.logging.Logger;
  * @author havardpe
  */
 public class TestServer {
+
+    private static Logger log = Logger.getLogger(TestServer.class.getName());
 
     private final AtomicBoolean destroyed = new AtomicBoolean(false);
     public final VersionedRPCNetwork net;
@@ -45,6 +47,7 @@ public class TestServer {
         this(new MessageBusParams().addProtocol(new SimpleProtocol()),
              new RPCNetworkParams()
                      .setIdentity(new Identity(name))
+                     .setNumNetworkThreads(1)
                      .setSlobrokConfigId(getSlobrokConfig(slobrok)));
         if (protocol != null) {
             mb.putProtocol(protocol);
@@ -52,6 +55,16 @@ public class TestServer {
         if (table != null) {
             setupRouting(table);
         }
+        log.log(Level.INFO, "Running testServer '"+name+"' at "+net.getConnectionSpec()+", location broker at "+slobrok.port());
+    }
+
+    /** Creates a new test server. */
+    public TestServer(MessageBusParams mbusParams, Slobrok slobrok) {
+        this(mbusParams,
+             new RPCNetworkParams()
+             .setNumNetworkThreads(1)
+             .setSlobrokConfigId(getSlobrokConfig(slobrok)));
+        log.log(Level.INFO, "Running testServer <unnamed> at "+net.getConnectionSpec()+", location broker at "+slobrok.port());
     }
 
     /** Creates a new test server. */
@@ -64,6 +77,7 @@ public class TestServer {
     public TestServer(MessageBusParams mbusParams) {
         mb = new MessageBus(new LocalNetwork(), mbusParams);
         net = null;
+        log.log(Level.INFO, "Running testServer without network");
     }
 
     /**
@@ -74,6 +88,11 @@ public class TestServer {
      */
     public boolean destroy() {
         if (!destroyed.getAndSet(true)) {
+            if (net != null) {
+                log.log(Level.INFO, "Destroy testServer '"+net.getIdentity().getServicePrefix()+"' at "+net.getConnectionSpec());
+            } else {
+                log.log(Level.INFO, "Destroy testServer without network");
+            }
             mb.destroy();
             if (net != null)
                 net.destroy();
@@ -121,7 +140,8 @@ public class TestServer {
      * @return whether or not the required state was reached
      */
     public boolean waitState(SlobrokState slobrokState) {
-        for (int i = 0; i < 6000 && !Thread.currentThread().isInterrupted(); ++i) {
+        int millis = 120 * 1000;
+        for (int i = 0; i < millis && !Thread.currentThread().isInterrupted(); ++i) {
             boolean done = true;
             for (String pattern : slobrokState.getPatterns()) {
                 List<Mirror.Entry> res = net.getMirror().lookup(pattern);
@@ -130,10 +150,16 @@ public class TestServer {
                 }
             }
             if (done) {
+                if (i > 50) log.log(Level.INFO, "waitState OK after "+i+" ms");
                 return true;
             }
+            if ((i % 1000) == 50) {
+                log.log(Level.INFO, "waitState still waiting, "+i+" ms");
+                var m = (Mirror) net.getMirror();
+                m.dumpState();
+            }
             try {
-                Thread.sleep(10);
+                Thread.sleep(1);
             }
             catch (InterruptedException e) {
                 // ignore

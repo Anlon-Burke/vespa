@@ -5,20 +5,21 @@ import ai.vespa.metricsproxy.metric.model.ConsumerId;
 import ai.vespa.metricsproxy.metric.model.MetricsPacket;
 import ai.vespa.metricsproxy.metric.model.ServiceId;
 import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.StreamWriteFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.ImmutableMap;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import static ai.vespa.metricsproxy.http.ValuesFetcher.defaultMetricsConsumerId;
-import static com.yahoo.stream.CustomCollectors.toLinkedMap;
 import static java.util.Collections.emptyList;
 import static java.util.logging.Level.WARNING;
 
@@ -27,6 +28,9 @@ import static java.util.logging.Level.WARNING;
  */
 public class YamasJsonUtil {
     private static final Logger log = Logger.getLogger(YamasJsonUtil.class.getName());
+    private static final JsonFactory factory = JsonFactory.builder()
+            .enable(StreamWriteFeature.WRITE_BIGDECIMAL_AS_PLAIN)
+            .build();
 
     static final String YAMAS_ROUTING = "yamas";
 
@@ -41,21 +45,6 @@ public class YamasJsonUtil {
                 .putMetrics(jsonModel.getMetricsList())
                 .putDimensions(jsonModel.getDimensionsById())
                 .addConsumers(jsonModel.getYamasConsumers());
-    }
-
-    public static YamasArrayJsonModel toYamasArray(Collection<MetricsPacket> metricsPackets) {
-        YamasArrayJsonModel yamasArray = toYamasArray(metricsPackets, false);
-
-        // Add a single status object at the end
-        yamasArray.metrics.stream().findFirst().map(YamasJsonModel::getYamasConsumers)
-                .ifPresent(consumers -> yamasArray.add(getStatusYamasModel("Data collected successfully", 0, consumers)));
-        return yamasArray;
-    }
-
-    public static YamasArrayJsonModel toYamasArray(Collection<MetricsPacket> metricsPackets, boolean addStatus) {
-        YamasArrayJsonModel yamasArray = new YamasArrayJsonModel();
-        metricsPackets.forEach(packet -> yamasArray.add(toYamasModel(packet, addStatus)));
-        return yamasArray;
     }
 
     /**
@@ -79,58 +68,91 @@ public class YamasJsonUtil {
         }
     }
 
-    private static YamasJsonModel getStatusYamasModel(String statusMessage, int statusCode, Collection<ConsumerId> consumers) {
-        YamasJsonModel model = new YamasJsonModel();
-        model.status_code = statusCode;
-        model.status_msg = statusMessage;
-        model.application = "yms_check_vespa";
-        model.routing = ImmutableMap.of(YAMAS_ROUTING, toYamasJsonNamespaces(consumers));
-        return model;
+    public static List<MetricsPacket> appendOptionalStatusPacket(List<MetricsPacket> packets) {
+        if (packets.isEmpty()) return packets;
+
+        Set<ConsumerId> consumers = extractSetForRouting(packets.get(0).consumers());
+        if (consumers.isEmpty()) return packets;
+        List<MetricsPacket> withStatus = new ArrayList<>(packets);
+        withStatus.add(new MetricsPacket.Builder(ServiceId.toServiceId("yms_check_vespa"))
+                .statusCode(0)
+                .statusMessage("Data collected successfully")
+                .addConsumers(consumers).build());
+        return withStatus;
     }
 
-    private static YamasJsonModel toYamasModel(MetricsPacket packet, boolean addStatus) {
-        YamasJsonModel model = new YamasJsonModel();
-
-        if (addStatus) {
-            model.status_code = packet.statusCode;
-            model.status_msg = packet.statusMessage;
+    public static String toJson(List<MetricsPacket> metrics, boolean addStatus) {
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            toJson(metrics, output, addStatus);
+            output.flush();
+            return output.toString();
+        } catch (IOException e) {
+            return "{}";
         }
-
-        model.application = packet.service.id;
-        model.timestamp = (packet.timestamp == 0L) ? null : packet.timestamp;
-
-        if (packet.metrics().isEmpty()) model.metrics = null;
-        else {
-            model.metrics = packet.metrics().entrySet().stream().collect(
-                    toLinkedMap(id2metric -> id2metric.getKey().id,
-                                id2metric -> id2metric.getValue().doubleValue()));
-        }
-
-        if (packet.dimensions().isEmpty()) model.dimensions = null;
-        else {
-            model.dimensions = packet.dimensions().entrySet()
-                    .stream()
-                    .filter(entry -> entry.getKey() != null && entry.getValue() != null)
-                    .collect(toLinkedMap(
-                            id2dim -> id2dim.getKey().id,
-                            Map.Entry::getValue)
-                    );
-        }
-
-        YamasJsonModel.YamasJsonNamespace namespaces = toYamasJsonNamespaces(packet.consumers());
-        if (namespaces.namespaces.isEmpty()) model.routing = null;
-        else model.routing = ImmutableMap.of(YAMAS_ROUTING, namespaces);
-
-        return model;
     }
-
-    private static YamasJsonModel.YamasJsonNamespace toYamasJsonNamespaces(Collection<ConsumerId> consumers) {
-        YamasJsonModel.YamasJsonNamespace namespaces =  new YamasJsonModel.YamasJsonNamespace();
-        namespaces.namespaces = consumers.stream()
+    private static Set<ConsumerId> extractSetForRouting(Set<ConsumerId> consumers) {
+        return consumers.stream()
                 .filter(consumerId -> consumerId != defaultMetricsConsumerId)
-                .map(consumer -> consumer.id)
-                .collect(Collectors.toList());
-        return namespaces;
+                .collect(Collectors.toSet());
+    }
+    public static void toJson(List<MetricsPacket> metrics, OutputStream outputStream, boolean addStatus) throws IOException {
+        JsonGenerator generator = factory.createGenerator(outputStream);
+        generator.writeStartObject();
+        if (metrics.isEmpty()) {
+            generator.writeEndObject();
+            return;
+        }
+        generator.writeArrayFieldStart("metrics");
+        for (int i = 0; i < metrics.size() - 1; i++) {
+            toJson(metrics.get(i), generator, addStatus);
+        }
+        toJson(metrics.get(metrics.size() - 1), generator, true);
+        generator.writeEndArray();
+        generator.writeEndObject();
+        generator.close();
     }
 
+    private static void toJson(MetricsPacket metric, JsonGenerator generator, boolean addStatus) throws IOException {
+        generator.writeStartObject();
+        if (addStatus) {
+            generator.writeNumberField("status_code", metric.statusCode);
+        }
+        if (metric.timestamp != 0) {
+            generator.writeNumberField("timestamp", metric.timestamp);
+        }
+        generator.writeStringField("application", metric.service.id);
+
+        if ( ! metric.metrics().isEmpty()) {
+            generator.writeObjectFieldStart("metrics");
+            for (var m : metric.metrics().entrySet()) {
+                generator.writeFieldName(m.getKey().id);
+                JacksonUtil.writeDouble(generator, m.getValue().doubleValue());
+            }
+            generator.writeEndObject();
+        }
+
+        if ( ! metric.dimensions().isEmpty()) {
+            generator.writeObjectFieldStart("dimensions");
+            for (var m : metric.dimensions().entrySet()) {
+                generator.writeStringField(m.getKey().id, m.getValue());
+            }
+            generator.writeEndObject();
+        }
+        Set<ConsumerId> routing = extractSetForRouting(metric.consumers());
+        if (!routing.isEmpty()) {
+            generator.writeObjectFieldStart("routing");
+            generator.writeObjectFieldStart(YAMAS_ROUTING);
+            generator.writeArrayFieldStart("namespaces");
+            for (ConsumerId consumer : routing) {
+                generator.writeString(consumer.id);
+            }
+            generator.writeEndArray();
+            generator.writeEndObject();
+            generator.writeEndObject();
+        }
+        if (addStatus) {
+            generator.writeStringField("status_msg", metric.statusMessage);
+        }
+        generator.writeEndObject();
+    }
 }

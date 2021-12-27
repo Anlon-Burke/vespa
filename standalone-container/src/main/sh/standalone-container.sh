@@ -97,6 +97,11 @@ Fail() {
 
 FixDataDirectory() {
     if ! [ -d "$1" ]; then
+        if [ -e "$1" ]; then
+            # TODO: Remove this if-branch once >=7.511 has rolled out everywhere
+            echo "Removing file '$1'"
+            rm "$1"
+        fi
         echo "Creating data directory '$1'"
         mkdir -p "$1" || exit 1
     fi
@@ -156,6 +161,7 @@ StartCommand() {
     FixDataDirectory "$(dirname "$cfpfile")"
     printenv > "$cfpfile"
     FixDataDirectory "$bundlecachedir"
+    FixDataDirectory "$VESPA_HOME/var/crash"
 
     java \
         -Xms128m -Xmx2048m \
@@ -169,7 +175,6 @@ StartCommand() {
         --add-opens=java.base/java.nio=ALL-UNNAMED \
         --add-opens=java.base/jdk.internal.loader=ALL-UNNAMED \
         --add-opens=java.base/sun.security.ssl=ALL-UNNAMED  \
-        --add-opens=java.base/sun.security.util=ALL-UNNAMED  \
         -Djava.library.path="$VESPA_HOME/lib64" \
         -Djava.awt.headless=true \
         -Dsun.rmi.dgc.client.gcInterval=3600000 \

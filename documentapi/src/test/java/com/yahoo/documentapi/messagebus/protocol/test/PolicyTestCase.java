@@ -140,13 +140,17 @@ public class PolicyTestCase {
         assertTrue(new DocumentProtocol(manager).createPolicy("Extern", spec) instanceof ErrorPolicy);
         assertTrue(new DocumentProtocol(manager).createPolicy("Extern", spec + ";") instanceof ErrorPolicy);
         assertTrue(new DocumentProtocol(manager).createPolicy("Extern", spec + ";bar") instanceof ErrorPolicy);
+        slobrok.stop();
     }
 
     @Test
     public void requireThatExternPolicyWithUnknownPatternSelectsNone() throws Exception {
+        var slobrok = new Slobrok();
         PolicyTestFrame frame = newPutDocumentFrame("id:ns:testdoc::");
-        setupExternPolicy(frame, new Slobrok(), "foo/bar");
+        setupExternPolicy(frame, slobrok, "foo/bar");
         frame.assertSelect(null);
+        slobrok.stop();
+        frame.destroy();
     }
 
     @Test
@@ -175,6 +179,7 @@ public class PolicyTestCase {
             server.destroy();
         }
         frame.destroy();
+        slobrok.stop();
     }
 
     @Test
@@ -188,6 +193,7 @@ public class PolicyTestCase {
         frame.assertMergeOneReply(server.net.getConnectionSpec() + "/chain.default");
         server.destroy();
         frame.destroy();
+        slobrok.stop();
     }
 
     @Test
@@ -362,6 +368,9 @@ public class PolicyTestCase {
 
         assertNotNull(barFrame.getReceptor().getReply(TIMEOUT));
         assertNotNull(fooFrame.getReceptor().getReply(TIMEOUT));
+
+        fooFrame.destroy();
+        barFrame.destroy();
     }
 
     @Test
@@ -386,6 +395,7 @@ public class PolicyTestCase {
         assertNotNull(reply);
         assertEquals(DocumentProtocol.REPLY_GETDOCUMENT, reply.getType());
         assertEquals(123456L, ((GetDocumentReply)reply).getLastModified());
+        frame.destroy();
     }
 
     private String getDocumentRouteSelectorRawConfig() {
@@ -408,6 +418,7 @@ public class PolicyTestCase {
 
         frame.setMessage(createRemove("id:ns:other::1"));
         frame.assertSelect(Arrays.asList("other-route"));
+        frame.destroy();
     }
 
     @Test
@@ -419,6 +430,7 @@ public class PolicyTestCase {
 
         frame.setMessage(createGet("id:ns:other::1"));
         frame.assertSelect(Arrays.asList("other-route"));
+        frame.destroy();
     }
 
     private PolicyTestFrame createFrameWithTwoRoutes() {
@@ -538,6 +550,8 @@ public class PolicyTestCase {
 
         assertNotNull(barFrame.getReceptor().getReply(TIMEOUT));
         assertNotNull(fooFrame.getReceptor().getReply(TIMEOUT));
+        fooFrame.destroy();
+        barFrame.destroy();
     }
 
     @Test
@@ -654,6 +668,7 @@ public class PolicyTestCase {
         frame.setHop(new HopSpec("test", "[LoadBalancer:cluster=docproc/cluster.default;session=chain.default]"));
 
         assertSelect(frame, 1, Arrays.asList(frame.getNetwork().getConnectionSpec() + "/chain.default"));
+        frame.destroy();
     }
 
     @Test
@@ -722,6 +737,8 @@ public class PolicyTestCase {
 
         assertNotNull(barFrame.getReceptor().getReply(TIMEOUT));
         assertNotNull(fooFrame.getReceptor().getReply(TIMEOUT));
+        fooFrame.destroy();
+        barFrame.destroy();
     }
 
     /**
@@ -773,6 +790,9 @@ public class PolicyTestCase {
                 return;
             }
             Thread.sleep(10);
+            if (i == 42) {
+                ((Mirror) slobrok).dumpState();
+            }
         }
         throw new TimeoutException();
     }

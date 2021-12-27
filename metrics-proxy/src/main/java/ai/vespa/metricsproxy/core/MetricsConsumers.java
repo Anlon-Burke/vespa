@@ -4,9 +4,11 @@ package ai.vespa.metricsproxy.core;
 
 import ai.vespa.metricsproxy.core.ConsumersConfig.Consumer;
 import ai.vespa.metricsproxy.metric.model.ConsumerId;
+import ai.vespa.metricsproxy.metric.model.MetricId;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,6 +16,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collector;
+import java.util.stream.Collectors;
 
 import static com.yahoo.stream.CustomCollectors.toLinkedMap;
 import static java.util.Collections.unmodifiableSet;
@@ -29,15 +32,29 @@ public class MetricsConsumers {
 
     // All metrics for each consumer.
     private final Map<ConsumerId, List<ConfiguredMetric>> consumerMetrics;
+    private final Map<ConsumerId, Map<MetricId, ConfiguredMetric>> configuredMetricByMetricByConsumer;
 
     // All consumers for each metric (more useful than the opposite map).
     private final Map<ConfiguredMetric, Set<ConsumerId>> consumersByMetric;
+
+    // All consumers for each metric, by metric id
+    private final Map<MetricId, Map<ConfiguredMetric, Set<ConsumerId>>> consumersByMetricByMetricId;
 
     public MetricsConsumers(ConsumersConfig config) {
         consumerMetrics = config.consumer().stream().collect(
                 toUnmodifiableLinkedMap(consumer -> ConsumerId.toConsumerId(consumer.name()), consumer -> convert(consumer.metric())));
 
+        configuredMetricByMetricByConsumer = new HashMap<>();
+        consumerMetrics.forEach((consumer, configuredList) ->
+            configuredMetricByMetricByConsumer.put(consumer,
+                    configuredList.stream().collect(Collectors.toMap(ConfiguredMetric::id, Function.identity()))));
         consumersByMetric = createConsumersByMetric(consumerMetrics);
+        consumersByMetricByMetricId = new HashMap<>();
+        consumersByMetric.forEach((configuredMetric, consumers) -> {
+            var consumersByMetric = consumersByMetricByMetricId.computeIfAbsent(configuredMetric.id(), id -> new HashMap<>());
+            var consumerSet = consumersByMetric.computeIfAbsent(configuredMetric, id -> new HashSet<>());
+            consumerSet.addAll(consumers);
+        });
     }
 
     /**
@@ -50,6 +67,14 @@ public class MetricsConsumers {
 
     public Map<ConfiguredMetric, Set<ConsumerId>> getConsumersByMetric() {
         return consumersByMetric;
+    }
+
+    public Map<ConfiguredMetric, Set<ConsumerId>> getConsumersByMetric(MetricId id) {
+        return consumersByMetricByMetricId.get(id);
+    }
+
+    public Map<MetricId, ConfiguredMetric> getMetricsForConsumer(ConsumerId consumerId) {
+        return configuredMetricByMetricByConsumer.get(consumerId);
     }
 
     public Set<ConsumerId> getAllConsumers() {

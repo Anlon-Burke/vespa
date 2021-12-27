@@ -11,10 +11,11 @@ import com.yahoo.cloud.config.SlobroksConfig;
 import com.yahoo.cloud.config.ZookeepersConfig;
 import com.yahoo.cloud.config.log.LogdConfig;
 import com.yahoo.component.Version;
+import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.AbstractConfigProducer;
 import com.yahoo.config.provision.ApplicationId;
-import com.yahoo.document.DocumenttypesConfig;
+import com.yahoo.document.config.DocumenttypesConfig;
 import com.yahoo.document.config.DocumentmanagerConfig;
 import com.yahoo.documentapi.messagebus.protocol.DocumentrouteselectorpolicyConfig;
 import com.yahoo.documentapi.messagebus.protocol.DocumentProtocolPoliciesConfig;
@@ -74,6 +75,14 @@ public class ApplicationConfigProducerRoot extends AbstractConfigProducer<Abstra
         this.documentModel = documentModel;
         this.vespaVersion = vespaVersion;
         this.applicationId = applicationId;
+    }
+
+    private boolean useV8GeoPositions = false;
+    private boolean useV8DocManagerCfg = false;
+
+    public void useFeatureFlags(ModelContext.FeatureFlags featureFlags) {
+        this.useV8GeoPositions = featureFlags.useV8GeoPositions();
+        this.useV8DocManagerCfg = featureFlags.useV8DocManagerCfg();
     }
 
     /**
@@ -151,12 +160,17 @@ public class ApplicationConfigProducerRoot extends AbstractConfigProducer<Abstra
 
     @Override
     public void getConfig(DocumentmanagerConfig.Builder builder) {
-        new DocumentManager().produce(documentModel, builder);
+        new DocumentManager()
+            .useV8GeoPositions(this.useV8GeoPositions)
+            .useV8DocManagerCfg(this.useV8DocManagerCfg)
+            .produce(documentModel, builder);
     }
 
     @Override
     public void getConfig(DocumenttypesConfig.Builder builder) {
-        new DocumentTypes().produce(documentModel, builder);
+        new DocumentTypes()
+            .useV8GeoPositions(this.useV8GeoPositions)
+            .produce(documentModel, builder);
     }
 
     @Override

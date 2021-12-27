@@ -11,12 +11,12 @@ import org.junit.rules.ExpectedException;
 import java.io.IOException;
 import java.time.Duration;
 
-import static org.hamcrest.Matchers.equalTo;
-import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.mock;
 
 public class ZooKeeperDatabaseTest {
 
+    @SuppressWarnings("deprecation")
     @Rule
     public ExpectedException expectedException = ExpectedException.none();
 
@@ -35,8 +35,10 @@ public class ZooKeeperDatabaseTest {
 
         void createDatabase() throws Exception {
             closeDatabaseIfOpen();
-            zkDatabase = new ZooKeeperDatabase(clusterFixture.cluster(), nodeIndex, zkServer.getAddress(),
-                    (int)sessionTimeout.toMillis(), mockListener);
+            var id = new FleetControllerId(clusterFixture.cluster.getName(), nodeIndex);
+            var context = new TestFleetControllerContext(id);
+            zkDatabase = new ZooKeeperDatabase(context, clusterFixture.cluster(), nodeIndex, zkServer.getAddress(),
+                                               (int)sessionTimeout.toMillis(), mockListener);
         }
 
         ZooKeeperDatabase db() { return zkDatabase; }
@@ -64,7 +66,7 @@ public class ZooKeeperDatabaseTest {
             f.db().storeLastPublishedStateBundle(bundleToStore);
 
             ClusterStateBundle bundleReceived = f.db().retrieveLastPublishedStateBundle();
-            assertThat(bundleReceived, equalTo(bundleToStore));
+            assertEquals(bundleToStore, bundleReceived);
         }
     }
 
@@ -100,7 +102,7 @@ public class ZooKeeperDatabaseTest {
             f.createDatabase();
             ClusterStateBundle bundleReceived = f.db().retrieveLastPublishedStateBundle();
 
-            assertThat(bundleReceived, equalTo(ClusterStateBundle.empty()));
+            assertEquals(ClusterStateBundle.empty(), bundleReceived);
         }
     }
 

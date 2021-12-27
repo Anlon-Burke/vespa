@@ -38,15 +38,15 @@ import com.yahoo.vespa.model.routing.DocumentProtocol;
 import com.yahoo.vespa.model.routing.Routing;
 import com.yahoo.vespa.model.test.utils.ApplicationPackageUtils;
 import com.yahoo.vespa.model.test.utils.VespaModelCreatorWithMockPkg;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -59,9 +59,6 @@ import static org.junit.Assert.fail;
 public class ContentClusterTest extends ContentBaseTest {
 
     private final static String HOSTS = "<admin version='2.0'><adminserver hostalias='mockhost' /></admin>";
-
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
 
     ContentCluster parse(String xml) {
         xml = HOSTS + xml;
@@ -866,9 +863,6 @@ public class ContentClusterTest extends ContentBaseTest {
 
     @Test
     public void reserved_document_name_throws_exception() {
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("The following document types conflict with reserved keyword names: 'true'.");
-
         String xml = "<content version=\"1.0\" id=\"storage\">" +
               "  <redundancy>1</redundancy>" +
               "  <documents>" +
@@ -880,7 +874,12 @@ public class ContentClusterTest extends ContentBaseTest {
               "</content>";
 
         List<String> sds = ApplicationPackageUtils.generateSchemas("true");
-        new VespaModelCreatorWithMockPkg(null, xml, sds).create();
+        try {
+            new VespaModelCreatorWithMockPkg(null, xml, sds).create();
+            fail();
+        } catch (IllegalArgumentException e) {
+            assertTrue(e.getMessage().startsWith("The following document types conflict with reserved keyword names: 'true'."));
+        }
     }
 
     private void assertClusterHasBucketSpaceMappings(AllClustersBucketSpacesConfig config, String clusterId,
@@ -1024,6 +1023,48 @@ public class ContentClusterTest extends ContentBaseTest {
     public void default_distributor_three_phase_update_config_controlled_by_properties() {
         assertFalse(resolveThreePhaseUpdateConfigWithFeatureFlag(false));
         assertTrue(resolveThreePhaseUpdateConfigWithFeatureFlag(true));
+    }
+
+    private int resolveMaxCompactBuffers(OptionalInt maxCompactBuffers) {
+        TestProperties testProperties = new TestProperties();
+        if (maxCompactBuffers.isPresent()) {
+            testProperties.maxCompactBuffers(maxCompactBuffers.getAsInt());
+        }
+        VespaModel model = createEnd2EndOneNode(testProperties);
+        ContentCluster cc = model.getContentClusters().get("storage");
+        ProtonConfig.Builder protonBuilder = new ProtonConfig.Builder();
+        cc.getSearch().getConfig(protonBuilder);
+        ProtonConfig protonConfig = new ProtonConfig(protonBuilder);
+        assertEquals(1, protonConfig.documentdb().size());
+        return protonConfig.documentdb(0).allocation().max_compact_buffers();
+    }
+
+    @Test
+    public void default_max_compact_buffers_config_controlled_by_properties() {
+        assertEquals(1, resolveMaxCompactBuffers(OptionalInt.empty()));
+        assertEquals(2, resolveMaxCompactBuffers(OptionalInt.of(2)));
+        assertEquals(7, resolveMaxCompactBuffers(OptionalInt.of(7)));
+    }
+
+    private long resolveMaxTLSSize(OptionalDouble tlsSizeFraction, Optional<Flavor> flavor) throws Exception {
+        TestProperties testProperties = new TestProperties();
+        if (tlsSizeFraction.isPresent()) {
+            testProperties.tlsSizeFraction(tlsSizeFraction.getAsDouble());
+        }
+        ContentCluster cc = createOneNodeCluster(testProperties, flavor);
+        ProtonConfig.Builder protonBuilder = new ProtonConfig.Builder();
+        cc.getSearch().getSearchNodes().get(0).getConfig(protonBuilder);
+        ProtonConfig protonConfig = new ProtonConfig(protonBuilder);
+        return protonConfig.flush().memory().maxtlssize();
+    }
+    @Test
+    public void default_max_tls_size_controlled_by_properties() throws Exception {
+        var flavor = new Flavor(new FlavorsConfig.Flavor(new FlavorsConfig.Flavor.Builder().name("test").minDiskAvailableGb(100)));
+        assertEquals(21474836480L, resolveMaxTLSSize(OptionalDouble.empty(), Optional.empty()));
+        assertEquals(21474836480L, resolveMaxTLSSize(OptionalDouble.of(0.02), Optional.empty()));
+        assertEquals(7516192768L, resolveMaxTLSSize(OptionalDouble.empty(), Optional.of(flavor)));
+        assertEquals(2147483648L, resolveMaxTLSSize(OptionalDouble.of(0.02), Optional.of(flavor)));
+        assertEquals(3221225472L, resolveMaxTLSSize(OptionalDouble.of(0.03), Optional.of(flavor)));
     }
 
     void assertZookeeperServerImplementation(String expectedClassName,

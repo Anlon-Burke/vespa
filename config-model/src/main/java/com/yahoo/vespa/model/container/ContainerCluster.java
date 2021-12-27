@@ -25,7 +25,6 @@ import com.yahoo.container.jdisc.state.StateHandler;
 import com.yahoo.container.logging.AccessLog;
 import com.yahoo.container.usability.BindingsOverviewHandler;
 import com.yahoo.document.config.DocumentmanagerConfig;
-import com.yahoo.jdisc.http.filter.SecurityFilterInvoker;
 import com.yahoo.metrics.simple.runtime.MetricProperties;
 import com.yahoo.osgi.provider.model.ComponentModel;
 import com.yahoo.prelude.semantics.SemanticRulesConfig;
@@ -172,15 +171,17 @@ public abstract class ContainerCluster<CONTAINER extends Container>
 
         addCommonVespaBundles();
 
+        // TODO Vespa 8: remove LoggingRequestHandler.Context (replaced by ThreadedHttpRequestHandler.Context)
+        addSimpleComponent(com.yahoo.container.jdisc.LoggingRequestHandler.Context.class);
+
         addComponent(new StatisticsComponent());
         addSimpleComponent(AccessLog.class);
         addComponent(new DefaultThreadpoolProvider(this, deployState.featureFlags().metricsproxyNumThreads()));
         addSimpleComponent(com.yahoo.concurrent.classlock.ClassLocking.class);
-        addSimpleComponent(SecurityFilterInvoker.class);
         addSimpleComponent("com.yahoo.container.jdisc.metric.MetricConsumerProviderProvider");
         addSimpleComponent("com.yahoo.container.jdisc.metric.MetricProvider");
         addSimpleComponent("com.yahoo.container.jdisc.metric.MetricUpdater");
-        addSimpleComponent(com.yahoo.container.jdisc.LoggingRequestHandler.Context.class);
+        addSimpleComponent(com.yahoo.container.jdisc.ThreadedHttpRequestHandler.Context.class);
         addSimpleComponent(com.yahoo.metrics.simple.MetricManager.class.getName(), null, MetricProperties.BUNDLE_SYMBOLIC_NAME);
         addSimpleComponent(com.yahoo.metrics.simple.jdisc.JdiscMetricsFactory.class.getName(), null, MetricProperties.BUNDLE_SYMBOLIC_NAME);
         addSimpleComponent("com.yahoo.container.jdisc.state.StateMonitor");
@@ -652,4 +653,9 @@ public abstract class ContainerCluster<CONTAINER extends Container>
 
     public boolean getDeferChangesUntilRestart() { return deferChangesUntilRestart; }
 
+    /**
+     * Returns the percentage of host physical memory this application has specified for nodes in this cluster,
+     * or empty if this is not specified by the application.
+     */
+    public Optional<Integer> getMemoryPercentage() { return Optional.empty(); }
 }

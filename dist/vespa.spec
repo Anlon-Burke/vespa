@@ -6,6 +6,11 @@
 # Only strip debug info
 %global _find_debuginfo_opts -g
 
+# Go binaries' build-ids are not recognized by RPMs yet, see
+# https://github.com/rpm-software-management/rpm/issues/367 and
+# https://github.com/tpokorra/lbs-mono-fedora/issues/3#issuecomment-219857688.
+%undefine _missing_build_ids_terminate_build
+
 # Force special prefix for Vespa
 %define _prefix /opt/vespa
 %define _vespa_deps_prefix /opt/vespa-deps
@@ -57,14 +62,30 @@ BuildRequires: vespa-pybind11-devel
 BuildRequires: python3-devel
 %endif
 %if 0%{?el8}
+%global _centos_stream %(grep -qs '^NAME="CentOS Stream"' /etc/os-release && echo 1 || echo 0)
+%if 0%{?_centos_stream}
+BuildRequires: gcc-toolset-11-gcc-c++
+BuildRequires: gcc-toolset-11-binutils
+BuildRequires: gcc-toolset-11-libatomic-devel
+%define _devtoolset_enable /opt/rh/gcc-toolset-11/enable
+%else
 BuildRequires: gcc-toolset-10-gcc-c++
 BuildRequires: gcc-toolset-10-binutils
 BuildRequires: gcc-toolset-10-libatomic-devel
 %define _devtoolset_enable /opt/rh/gcc-toolset-10/enable
+%endif
 BuildRequires: maven
 BuildRequires: pybind11-devel
 BuildRequires: python3-pytest
 BuildRequires: python36-devel
+BuildRequires: glibc-langpack-en
+%endif
+%if 0%{?el9}
+BuildRequires: gcc-c++
+BuildRequires: libatomic
+BuildRequires: vespa-pybind11-devel
+BuildRequires: python3-pytest
+BuildRequires: python3-devel
 BuildRequires: glibc-langpack-en
 %endif
 %if 0%{?fedora}
@@ -97,9 +118,8 @@ BuildRequires: cmake >= 3.11.4-3
 BuildRequires: libarchive
 %endif
 %define _command_cmake cmake
-%global _centos_stream %(grep -qs '^NAME="CentOS Stream"' /etc/os-release && echo 1 || echo 0)
 %if 0%{?_centos_stream}
-BuildRequires: (llvm-devel >= 12.0.0 and llvm-devel < 13)
+BuildRequires: (llvm-devel >= 13.0.0 and llvm-devel < 14)
 %else
 BuildRequires: (llvm-devel >= 12.0.0 and llvm-devel < 13)
 %endif
@@ -115,6 +135,19 @@ BuildRequires: vespa-lz4-devel >= 1.9.2-2
 BuildRequires: vespa-onnxruntime-devel = 1.7.1
 BuildRequires: vespa-protobuf-devel = 3.19.1
 BuildRequires: vespa-libzstd-devel >= 1.4.5-2
+%endif
+%if 0%{?el9}
+BuildRequires: cmake >= 3.20.2
+BuildRequires: maven
+BuildRequires: openssl-devel
+BuildRequires: vespa-lz4-devel >= 1.9.2-2
+BuildRequires: vespa-onnxruntime-devel = 1.7.1
+BuildRequires: vespa-libzstd-devel >= 1.4.5-2
+BuildRequires: protobuf-devel
+BuildRequires: (llvm-devel >= 13.0.0 and llvm-devel < 14)
+BuildRequires: boost-devel >= 1.75
+BuildRequires: gtest-devel
+BuildRequires: gmock-devel
 %endif
 %if 0%{?fedora}
 BuildRequires: cmake >= 3.9.1
@@ -167,14 +200,24 @@ BuildRequires: vespa-openblas-devel = 0.3.18
 BuildRequires: vespa-re2-devel = 20210801
 %define _use_vespa_re2 1
 %else
+%if 0%{?el9}
+BuildRequires: vespa-xxhash-devel = 0.8.0
+%define _use_vespa_xxhash 1
+%else
 BuildRequires: xxhash-devel >= 0.8.0
+%endif
 %if 0%{?el7} || 0%{?el8}
 BuildRequires: vespa-openblas-devel = 0.3.18
 %define _use_vespa_openblas 1
 %else
 BuildRequires: openblas-devel
 %endif
+%if 0%{?el9}
+BuildRequires: vespa-re2-devel = 20210801
+%define _use_vespa_re2 1
+%else
 BuildRequires: re2-devel
+%endif
 %endif
 BuildRequires: zlib-devel
 %if ! 0%{?el7}
@@ -201,7 +244,9 @@ BuildRequires: libedit-devel
 Requires: libedit
 Requires: which
 Requires: initscripts
+%if ! 0%{?el9}
 Requires: libcgroup-tools
+%endif
 Requires: numactl
 Requires: perl
 Requires: perl-Carp
@@ -216,13 +261,15 @@ Requires: perl-IO-Socket-IP
 Requires: perl-JSON
 Requires: perl-libwww-perl
 Requires: perl-LWP-Protocol-https
+%if ! 0%{?el9}
 Requires: perl-Net-INET6Glue
+%endif
 Requires: perl-Pod-Usage
 Requires: perl-URI
 %if ! 0%{?el7}
 Requires: valgrind
 %endif
-%if 0%{?el7} && 0%{?amzn2}
+%if (0%{?el7} && 0%{?amzn2}) || 0%{?el9}
 Requires: vespa-xxhash = 0.8.0
 %else
 Requires: xxhash
@@ -250,7 +297,7 @@ Requires: vespa-gtest = 1.11.0
 %if 0%{?el8}
 %if 0%{?centos} || 0%{?rocky}
 %if 0%{?_centos_stream}
-%define _vespa_llvm_version 12
+%define _vespa_llvm_version 13
 %else
 %define _vespa_llvm_version 12
 %endif
@@ -260,6 +307,12 @@ Requires: vespa-gtest = 1.11.0
 Requires: vespa-gtest = 1.11.0
 %define _extra_link_directory %{_vespa_deps_prefix}/lib64
 %define _extra_include_directory %{_vespa_deps_prefix}/include
+%endif
+%if 0%{?el9}
+%define _vespa_llvm_version 13
+Requires: gtest
+%define _extra_link_directory %{_vespa_deps_prefix}/lib64
+%define _extra_include_directory %{_vespa_deps_prefix}/include;/usr/include/openblas
 %endif
 %if 0%{?fedora}
 Requires: gtest
@@ -324,7 +377,7 @@ Summary: Vespa - The open big data serving engine - base C++ libraries
 %if 0%{?centos} || 0%{?rocky}
 Requires: epel-release
 %endif
-%if 0%{?amzn2}
+%if 0%{?amzn2} || 0%{?el9}
 Requires: vespa-xxhash = 0.8.0
 %else
 Requires: xxhash-libs >= 0.8.0
@@ -341,12 +394,12 @@ Requires: vespa-openblas = 0.3.18
 %else
 Requires: openblas-serial
 %endif
-%if 0%{?amzn2}
+%if 0%{?amzn2} ||  0%{?el9}
 Requires: vespa-re2 = 20210801
 %else
 Requires: re2
 %endif
-%if 0%{?fedora} || 0%{?el8}
+%if 0%{?fedora} || 0%{?el8} || 0%{?el9}
 Requires: glibc-langpack-en
 %endif
 
@@ -374,7 +427,7 @@ Requires: openssl-libs
 %if 0%{?el8}
 %if 0%{?centos} || 0%{?rocky}
 %if 0%{?_centos_stream}
-Requires: (llvm-libs >= 12.0.0 and llvm-libs < 13)
+Requires: (llvm-libs >= 13.0.0 and llvm-libs < 14)
 %else
 Requires: (llvm-libs >= 12.0.0 and llvm-libs < 13)
 %endif
@@ -382,6 +435,10 @@ Requires: (llvm-libs >= 12.0.0 and llvm-libs < 13)
 Requires: (llvm-libs >= 10.0.1 and llvm-libs < 11)
 %endif
 Requires: vespa-protobuf = 3.19.1
+%endif
+%if 0%{?el9}
+Requires: (llvm-libs >= 13.0.0 and llvm-libs < 14)
+Requires: protobuf
 %endif
 %if 0%{?fedora}
 Requires: protobuf
@@ -473,6 +530,9 @@ Requires: python3
 %if 0%{?el8}
 Requires: python36
 %endif
+%if 0%{?el9}
+Requires: python3
+%endif
 %if 0%{?fedora}
 Requires: python3
 %endif
@@ -537,7 +597,7 @@ mvn --batch-mode -e -N io.takari:maven:wrapper -Dmaven=3.6.3
        .
 
 make %{_smp_mflags}
-env GOTMPDIR=$(pwd)/client/go make -C client/go
+VERSION=%{version} make -C client/go install-all
 %endif
 
 %install
@@ -547,8 +607,14 @@ rm -rf %{buildroot}
 cp -r %{installdir} %{buildroot}
 %else
 make install DESTDIR=%{buildroot}
-# TODO: Include the vespa program
-#cp client/go/bin/vespa %{buildroot}%{_prefix}/bin/vespa
+cp client/go/bin/vespa %{buildroot}%{_prefix}/bin/vespa
+mkdir -p %{buildroot}/usr/share
+cp -a client/go/share/* %{buildroot}/usr/share
+%endif
+# Otherwise installation may fail for find-debuginfo.sh/dwz:
+# dwz: dwz.c:9899: read_dwarf: Assertion `data != ((void *)0) && data->d_buf != ((void *)0)' failed.
+%if 0%{?el7}
+strip %{buildroot}%{_prefix}/bin/vespa
 %endif
 
 %if %{_create_vespa_service}
@@ -766,12 +832,13 @@ fi
 %dir %{_prefix}/conf/vespa-feed-client
 %dir %{_prefix}/lib
 %dir %{_prefix}/lib/jars
-# TODO: Include the vespa program
-#%{_prefix}/bin/vespa
+%{_prefix}/bin/vespa
 %{_prefix}/bin/vespa-feed-client
 %{_prefix}/conf/vespa-feed-client/logging.properties
 %{_prefix}/lib/jars/vespa-http-client-jar-with-dependencies.jar
 %{_prefix}/lib/jars/vespa-feed-client-cli-jar-with-dependencies.jar
+%docdir /usr/share/man
+/usr/share/man
 
 %files config-model-fat
 %if %{_defattr_is_vespa_vespa}

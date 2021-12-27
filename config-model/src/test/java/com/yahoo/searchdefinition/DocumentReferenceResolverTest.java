@@ -25,6 +25,7 @@ public class DocumentReferenceResolverTest {
 
     private static final String BAR = "bar";
     private static final String FOO = "foo";
+    @SuppressWarnings("deprecation")
     @Rule
     public final ExpectedException exceptionRule = ExpectedException.none();
 
@@ -56,6 +57,7 @@ public class DocumentReferenceResolverTest {
         assertSame(fooRefToBarField, fooReferenceMap.get("bar_ref").referenceField());
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void throws_user_friendly_exception_if_referenced_document_does_not_exist() {
         // Create foo document with document reference to non-existing document bar

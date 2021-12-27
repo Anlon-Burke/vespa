@@ -18,7 +18,7 @@ import java.util.logging.Logger;
  * @author hmusum
  */
 public class JRTConnection implements Connection {
-    private final static Logger logger = Logger.getLogger(JRTConnection.class.getPackage().getName());
+    private final static Logger logger = Logger.getLogger(JRTConnection.class.getName());
 
     private final String address;
     private final Supervisor supervisor;
@@ -53,7 +53,6 @@ public class JRTConnection implements Connection {
         if (target == null || !target.isValid()) {
             logger.log(Level.INFO, "Connecting to " + address);
             target = supervisor.connect(new Spec(address));
-            logger.log(Level.FINE, "Connected to " + address);
         }
         return target;
     }

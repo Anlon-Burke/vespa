@@ -2,6 +2,8 @@
 package com.yahoo.vespa.http.server;
 
 import com.yahoo.documentapi.messagebus.protocol.DocumentProtocol;
+import com.yahoo.documentapi.messagebus.protocol.UpdateDocumentMessage;
+import com.yahoo.documentapi.messagebus.protocol.UpdateDocumentReply;
 import com.yahoo.documentapi.metrics.DocumentApiMetrics;
 import com.yahoo.documentapi.metrics.DocumentOperationStatus;
 import com.yahoo.documentapi.metrics.DocumentOperationType;
@@ -13,8 +15,12 @@ import com.yahoo.vespa.http.client.core.ErrorCode;
 import com.yahoo.vespa.http.client.core.OperationStatus;
 
 import java.util.Map;
+import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import static java.util.function.Predicate.not;
 
 /**
  * Catch message bus replies and make the available to a given session.
@@ -54,14 +60,24 @@ public class FeedReplyReader implements ReplyHandler {
         } else {
             metricsHelper.reportSuccessful(type, latencyInSeconds);
             metric.add(MetricNames.SUCCEEDED, 1, null);
-            if (!conditionMet)
+            if ( ! conditionMet)
                 metric.add(MetricNames.CONDITION_NOT_MET, 1, testAndSetMetricCtx);
+            if ( ! updateNotFound(reply))
+                metric.add(MetricNames.NOT_FOUND, 1, null);
             enqueue(context, "Document processed.", ErrorCode.OK, !conditionMet, reply.getTrace());
         }
     }
 
     private static boolean conditionMet(Reply reply) {
-        return !reply.hasErrors() || reply.getError(0).getCode() != DocumentProtocol.ERROR_TEST_AND_SET_CONDITION_FAILED;
+        return ! reply.hasErrors() || reply.getError(0).getCode() != DocumentProtocol.ERROR_TEST_AND_SET_CONDITION_FAILED;
+    }
+
+    private static boolean updateNotFound(Reply reply) {
+        return       reply instanceof UpdateDocumentReply
+                && ! ((UpdateDocumentReply) reply).wasFound()
+                &&   reply.getMessage() instanceof UpdateDocumentMessage
+                &&   ((UpdateDocumentMessage) reply.getMessage()).getDocumentUpdate() != null
+                && ! ((UpdateDocumentMessage) reply.getMessage()).getDocumentUpdate().getCreateIfNonExistent();
     }
 
     private void enqueue(ReplyContext context, String message, ErrorCode status, boolean isConditionNotMet, Trace trace) {

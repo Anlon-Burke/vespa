@@ -3,7 +3,6 @@ package com.yahoo.config.model.api;
 
 import com.yahoo.config.FileReference;
 
-import java.io.File;
 import java.util.Set;
 
 /**
@@ -21,7 +20,5 @@ public interface FileDistribution {
      * @param fileReferences set of file references to start downloading
      */
     void startDownload(String hostName, int port, Set<FileReference> fileReferences);
-
-    File getFileReferencesDir();
 
 }

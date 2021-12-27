@@ -139,6 +139,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Scanner;
@@ -1555,7 +1556,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (primaryEndpoint.isPresent()) {
             DeploymentRoutingContext context = controller.routing().of(deploymentId);
             RoutingStatus status = context.routingStatus();
-            array.addString(primaryEndpoint.get().upstreamIdOf(deploymentId));
+            array.addString(primaryEndpoint.get().upstreamName(deploymentId));
             Cursor statusObject = array.addObject();
             statusObject.setString("status", status.value().name());
             statusObject.setString("reason", "");
@@ -1776,13 +1777,35 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     /** Trigger deployment to the last known application package for the given application. */
     private HttpResponse deployApplication(String tenantName, String applicationName, String instanceName, HttpRequest request) {
         ApplicationId id = ApplicationId.from(tenantName, applicationName, instanceName);
+        Inspector buildField = toSlime(request.getData()).get().field("build");
+        long build = buildField.valid() ? buildField.asLong() : -1;
+
         StringBuilder response = new StringBuilder();
         controller.applications().lockApplicationOrThrow(TenantAndApplicationId.from(id), application -> {
-            Change change = Change.of(application.get().latestVersion().get());
+            ApplicationVersion version = build == -1 ? application.get().latestVersion().get()
+                                                     : getApplicationVersion(application.get(), build);
+            Change change = Change.of(version);
             controller.applications().deploymentTrigger().forceChange(id, change);
             response.append("Triggered ").append(change).append(" for ").append(id);
         });
         return new MessageResponse(response.toString());
+    }
+
+    private ApplicationVersion getApplicationVersion(Application application, Long build) {
+        // Check whether this is the latest version, and possibly return that.
+        // Otherwise, look through historic runs for a proper ApplicationVersion.
+        return application.latestVersion()
+                          .filter(version -> version.buildNumber().stream().anyMatch(build::equals))
+                          .or(() -> controller.jobController().deploymentStatus(application).jobs()
+                                            .asList().stream()
+                                            .flatMap(job -> job.runs().values().stream())
+                                            .map(run -> run.versions().targetApplication())
+                                            .filter(version -> version.buildNumber().stream().anyMatch(build::equals))
+                                            .findAny())
+                          .filter(version -> controller.applications().applicationStore().hasBuild(application.id().tenant(),
+                                                                                                   application.id().application(),
+                                                                                                   build))
+                          .orElseThrow(() -> new IllegalArgumentException("Build number '" + build + "' was not found"));
     }
 
     /** Cancel ongoing change for given application, e.g., everything with {"cancel":"all"} */
@@ -1817,10 +1840,14 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                                              .filter(type -> ! type.isBlank())
                                              .collect(toUnmodifiableList());
 
-        controller.applications().reindex(id, zone, clusterNames, documentTypes, request.getBooleanProperty("indexedOnly"));
+        Double speed = request.hasProperty("speed") ? Double.parseDouble(request.getProperty("speed")) : null;
+        boolean indexedOnly = request.getBooleanProperty("indexedOnly");
+        controller.applications().reindex(id, zone, clusterNames, documentTypes, indexedOnly, speed);
         return new MessageResponse("Requested reindexing of " + id + " in " + zone +
-                                   (clusterNames.isEmpty() ? "" : ", on clusters " + String.join(", ", clusterNames) +
-                                                                  (documentTypes.isEmpty() ? "" : ", for types " + String.join(", ", documentTypes))));
+                                   (clusterNames.isEmpty() ? "" : ", on clusters " + String.join(", ", clusterNames)) +
+                                   (documentTypes.isEmpty() ? "" : ", for types " + String.join(", ", documentTypes)) +
+                                   (indexedOnly ? ", for indexed types" : "") +
+                                   (speed != null ? ", with speed " + speed : ""));
     }
 
     /** Gets reindexing status of an application in a zone. */
@@ -1866,6 +1893,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         status.state().map(ApplicationApiHandler::toString).ifPresent(state -> statusObject.setString("state", state));
         status.message().ifPresent(message -> statusObject.setString("message", message));
         status.progress().ifPresent(progress -> statusObject.setDouble("progress", progress));
+        status.speed().ifPresent(speed -> statusObject.setDouble("speed", speed));
     }
 
     private static String toString(ApplicationReindexing.State state) {
@@ -1996,9 +2024,9 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             return ErrorResponse.forbidden("Only operators can forget a tenant");
 
         controller.tenants().delete(TenantName.from(tenantName),
-                                    () -> accessControlRequests.credentials(TenantName.from(tenantName),
+                                    Optional.of(accessControlRequests.credentials(TenantName.from(tenantName),
                                                                       toSlime(request.getData()).get(),
-                                                                      request.getJDiscRequest()),
+                                                                      request.getJDiscRequest())),
                                     forget);
 
         return new MessageResponse("Deleted tenant " + tenantName);

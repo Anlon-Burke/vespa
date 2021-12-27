@@ -11,6 +11,7 @@ import com.yahoo.vespa.config.ConnectionPool;
 
 import java.io.File;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -53,26 +54,38 @@ public class FileReferenceDownloader {
     }
 
     private void waitUntilDownloadStarted(FileReferenceDownload fileReferenceDownload) {
+        Instant end = Instant.now().plus(downloadTimeout);
         FileReference fileReference = fileReferenceDownload.fileReference();
         int retryCount = 0;
         Connection connection = connectionPool.getCurrent();
         do {
+            backoff(retryCount);
+
             if (FileDownloader.fileReferenceExists(fileReference, downloadDirectory))
                 return;
             if (startDownloadRpc(fileReferenceDownload, retryCount, connection))
                 return;
 
-            try { Thread.sleep(sleepBetweenRetries.toMillis()); } catch (InterruptedException e) { /* ignored */}
             retryCount++;
-
-            // There is no one connection that will always work for each file reference (each file reference might
-            // exist on just one config server, and which one could be different for each file reference), so we
-            // should get a new connection for every retry
+            // There might not be one connection that works for all file references (each file reference might
+            // exist on just one config server, and which one could be different for each file reference), so
+            // switch to a new connection for every retry
             connection = connectionPool.switchConnection(connection);
-        } while (retryCount < 5);
+        } while (retryCount < 5 || Instant.now().isAfter(end));
 
         fileReferenceDownload.future().completeExceptionally(new RuntimeException("Failed getting " + fileReference));
         downloads.remove(fileReference);
+    }
+
+    private void backoff(int retryCount) {
+        if (retryCount > 0) {
+            try {
+                long sleepTime = Math.min(120_000, (long) (Math.pow(2, retryCount)) * sleepBetweenRetries.toMillis());
+                Thread.sleep(sleepTime);
+            } catch (InterruptedException e) {
+                /* ignored */
+            }
+        }
     }
 
     Future<Optional<File>> startDownload(FileReferenceDownload fileReferenceDownload) {
@@ -107,9 +120,8 @@ public class FileReferenceDownloader {
                 return false;
             }
         } else {
-            log.log(logLevel, "Downloading " + fileReference + " from " + connection.getAddress() + " failed: " +
-                    request + ", error: " + request.errorCode() + "(" + request.errorMessage() +
-                    "). Will switch config server for next request" +
+            log.log(logLevel, "Downloading " + fileReference + " from " + connection.getAddress() + " failed:" +
+                    " error code " + request.errorCode() + " (" + request.errorMessage() + ")." +
                     " (retry " + retryCount + ", rpc timeout " + rpcTimeout + ")");
             return false;
         }
@@ -123,7 +135,7 @@ public class FileReferenceDownloader {
     }
 
     private Duration rpcTimeout(int retryCount) {
-        return Duration.ofSeconds(rpcTimeout.getSeconds()).plus(Duration.ofSeconds(retryCount * 10L));
+        return Duration.ofSeconds(rpcTimeout.getSeconds()).plus(Duration.ofSeconds(retryCount * 5L));
     }
 
     private boolean validateResponse(Request request) {

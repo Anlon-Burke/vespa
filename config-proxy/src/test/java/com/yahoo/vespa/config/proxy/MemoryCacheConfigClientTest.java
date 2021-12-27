@@ -3,11 +3,10 @@ package com.yahoo.vespa.config.proxy;
 
 import org.junit.Test;
 
-import java.util.Collections;
+import java.util.List;
 
-import static org.hamcrest.CoreMatchers.is;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
 
 /**
  * @author hmusum
@@ -16,14 +15,13 @@ public class MemoryCacheConfigClientTest {
 
     @Test
     public void basic() {
-        MemoryCache cache = new MemoryCache();
-        cache.update(ConfigTester.fooConfig);
-        MemoryCacheConfigClient client = new MemoryCacheConfigClient(cache);
-        assertThat(client.getConfig(ConfigTester.fooConfig, null), is(ConfigTester.fooConfig));
+        MemoryCacheConfigClient client = new MemoryCacheConfigClient(new MemoryCache());
+        client.memoryCache().update(ConfigTester.fooConfig);
+        assertEquals(ConfigTester.fooConfig, client.getConfig(ConfigTester.fooConfig, null));
         assertNull(client.getConfig(ConfigTester.barConfig, null));
 
-        assertThat(client.getActiveSourceConnection(), is("N/A"));
-        assertThat(client.getSourceConnections(), is(Collections.singletonList("N/A")));
+        assertEquals("N/A", client.getActiveSourceConnection());
+        assertEquals(List.of("N/A"), client.getSourceConnections());
     }
 
 }

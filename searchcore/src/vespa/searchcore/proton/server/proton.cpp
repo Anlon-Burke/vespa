@@ -38,7 +38,9 @@
 #include <vespa/vespalib/util/lambdatask.h>
 #include <vespa/vespalib/util/mmap_file_allocator_factory.h>
 #include <vespa/vespalib/util/random.h>
+#include <vespa/vespalib/util/sequencedtaskexecutor.h>
 #include <vespa/vespalib/util/size_literals.h>
+#include <vespa/vespalib/util/invokeserviceimpl.h>
 #ifdef __linux__
 #include <malloc.h>
 #endif
@@ -446,8 +448,7 @@ Proton::~Proton()
         _flushEngine->close();
     }
     if (_shared_service) {
-        _shared_service->warmup_raw().sync();
-        _shared_service->shared_raw()->sync();
+        _shared_service->sync_all_executors();
     }
 
     if ( ! _documentDBMap.empty()) {
@@ -788,6 +789,9 @@ Proton::updateMetrics(const metrics::MetricLockGuard &)
         if (_shared_service) {
             metrics.shared.update(_shared_service->shared().getStats());
             metrics.warmup.update(_shared_service->warmup().getStats());
+            if (_shared_service->field_writer()) {
+                metrics.warmup.update(_shared_service->field_writer()->getStats());
+            }
         }
     }
 }
@@ -939,12 +943,13 @@ Proton::get_child(vespalib::stringref name) const
         return std::make_unique<ResourceUsageExplorer>(_diskMemUsageSampler->writeFilter(),
                                                        _persistenceEngine->get_resource_usage_tracker());
     } else if (name == THREAD_POOLS) {
-        return std::make_unique<ProtonThreadPoolsExplorer>((_shared_service) ? _shared_service->shared_raw().get() : nullptr,
+        return std::make_unique<ProtonThreadPoolsExplorer>((_shared_service) ? &_shared_service->shared() : nullptr,
                                                            (_matchEngine) ? &_matchEngine->get_executor() : nullptr,
                                                            (_summaryEngine) ? &_summaryEngine->get_executor() : nullptr,
                                                            (_flushEngine) ? &_flushEngine->get_executor() : nullptr,
                                                            &_executor,
-                                                           (_shared_service) ? &_shared_service->warmup() : nullptr);
+                                                           (_shared_service) ? &_shared_service->warmup() : nullptr,
+                                                           (_shared_service) ? _shared_service->field_writer() : nullptr);
     }
     return Explorer_UP(nullptr);
 }

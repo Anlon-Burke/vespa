@@ -1,30 +1,27 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.metricsproxy.metric;
 
-import ai.vespa.metricsproxy.metric.model.MetricId;
-
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 /**
  * Once a getter is called, the instance is frozen and no more metrics can be added.
- *
- * @author Unknown
  */
 // TODO: remove timestamp, only used as temporary storage.
 // TODO: instances of this class can probably be replaced by a simple freezable map.
 public class Metrics {
 
     private final List<Metric> metrics = new ArrayList<>();
-    private long timestamp;
+    private Instant timestamp;
     private boolean isFrozen = false;
 
     public Metrics() {
-        this(System.currentTimeMillis() / 1000L);
+        this(Instant.now());
     }
 
-    public Metrics(long timestamp) {
+    public Metrics(Instant timestamp) {
         this.timestamp = timestamp;
     }
 
@@ -32,7 +29,7 @@ public class Metrics {
         if (isFrozen) throw new IllegalStateException("Frozen Metrics cannot be modified!");
     }
 
-    public long getTimeStamp() {
+    public Instant getTimeStamp() {
         return this.timestamp;
     }
 
@@ -41,7 +38,7 @@ public class Metrics {
      *
      * @param timestamp IN UTC seconds resolution
      */
-    public void setTimeStamp(long timestamp) {
+    public void setTimeStamp(Instant timestamp) {
         ensureNotFrozen();
         this.timestamp = timestamp;
     }
@@ -52,37 +49,17 @@ public class Metrics {
         this.metrics.add(m);
     }
 
-    /**
-     * Get the size of the metrics covered. Note that this might also contain expired metrics
-     *
-     * @return size of metrics
-     */
+    /** Returns the size of the metrics covered. Note that this might also contain expired metrics. */
     public int size() {
         return this.metrics.size();
     }
 
-    /**
-     * TODO: Remove, might be multiple metrics with same name but different dimensions
-     *
-     * @param key metric name
-     * @return the metric, or null
-     */
-    public Metric getMetric(MetricId key) {
-        isFrozen = true;
-        for (Metric m: metrics) {
-            if (m.getName().equals(key)) {
-                return m;
-            }
-        }
-        return null;
-    }
-
-    public List<Metric> getMetrics() {
+    public List<Metric> list() {
         isFrozen = true;
         return Collections.unmodifiableList(metrics);
     }
 
-
+    @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
         for (Metric m : metrics) {

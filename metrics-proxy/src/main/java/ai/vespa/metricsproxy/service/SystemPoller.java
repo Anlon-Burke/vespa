@@ -5,6 +5,10 @@ import ai.vespa.metricsproxy.metric.Metric;
 import ai.vespa.metricsproxy.metric.Metrics;
 import ai.vespa.metricsproxy.metric.model.MetricId;
 
+import java.io.Reader;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.logging.Level;
 
 import java.io.BufferedReader;
@@ -35,7 +39,7 @@ public class SystemPoller {
     private static final MetricId MEMORY_VIRT = MetricId.toMetricId("memory_virt");
     private static final MetricId MEMORY_RSS = MetricId.toMetricId("memory_rss");
 
-    private final int pollingIntervalSecs;
+    private final Duration interval;
     private final List<VespaService> services;
     private final Map<VespaService, Long> lastCpuJiffiesMetrics = new ConcurrentHashMap<>();
     private final Timer systemPollTimer;
@@ -70,9 +74,9 @@ public class SystemPoller {
         long getJiffies(VespaService service);
     }
 
-    public SystemPoller(List<VespaService> services, int pollingIntervalSecs) {
+    public SystemPoller(List<VespaService> services, Duration interval) {
         this.services = services;
-        this.pollingIntervalSecs = pollingIntervalSecs;
+        this.interval = interval;
         systemPollTimer = new Timer("systemPollTimer", true);
         jiffiesInterface = new GetJiffies() {
             @Override
@@ -103,7 +107,6 @@ public class SystemPoller {
      * @return array[0] = memoryResident, array[1] = memoryVirtual (kB units)
      */
     static long[] getMemoryUsage(VespaService service) {
-        long[] size = new long[2];
         BufferedReader br;
         int pid = service.getPid();
 
@@ -111,24 +114,33 @@ public class SystemPoller {
             br = new BufferedReader(new FileReader("/proc/" + pid + "/smaps"));
         } catch (FileNotFoundException ex) {
             service.setAlive(false);
-            return size;
+            return new long[2];
         }
-        String line;
         try {
-            while ((line = br.readLine()) != null) {
-                String[] elems = line.split("\\s+");
-                /* Memory size is given in kB - convert to bytes by multiply with 1024*/
-                if (line.startsWith("Rss:")) {
-                    size[memoryTypeResident] += Long.parseLong(elems[1]) * 1024;
-                } else if (line.startsWith("Size:")) {
-                    size[memoryTypeVirtual] += Long.parseLong(elems[1]) * 1024;
-                }
-            }
-
-            br.close();
+            return getMemoryUsage(br);
         } catch (IOException ex) {
             log.log(Level.FINE, "Unable to read line from smaps file", ex);
-            return size;
+            return new long[2];
+        } finally {
+            try {
+                br.close();
+            } catch (IOException ex) {
+                log.log(Level.FINE, "Closing of smaps file failed", ex);
+            }
+        }
+    }
+    static long[] getMemoryUsage(BufferedReader br) throws IOException{
+        String line;
+        long[] size = new long[2];
+        while ((line = br.readLine()) != null) {
+            /* Memory size is given in kB - convert to bytes by multiply with 1024*/
+            if (line.startsWith("Rss:")) {
+                String remain = line.substring(4).trim();
+                size[memoryTypeResident] += Long.parseLong(remain.substring(0, remain.indexOf(' '))) * 1024;
+            } else if (line.startsWith("Size:")) {
+                String remain = line.substring(5).trim();
+                size[memoryTypeVirtual] += Long.parseLong(remain.substring(0, remain.indexOf(' '))) * 1024;
+            }
         }
 
         return size;
@@ -138,7 +150,7 @@ public class SystemPoller {
      * Poll services for system metrics
      */
     void poll() {
-        long startTime = System.currentTimeMillis();
+        Instant startTime = Instant.now();
 
         /* Don't do any work if there are no known services */
         if (services.isEmpty()) {
@@ -149,23 +161,27 @@ public class SystemPoller {
         log.log(Level.FINE, () -> "Monitoring system metrics for " + services.size() + " services");
 
         boolean someAlive = services.stream().anyMatch(VespaService::isAlive);
-        lastTotalCpuJiffies = updateMetrics(lastTotalCpuJiffies, startTime/1000, jiffiesInterface, services, lastCpuJiffiesMetrics);
+        lastTotalCpuJiffies = updateMetrics(lastTotalCpuJiffies, startTime, jiffiesInterface, services, lastCpuJiffiesMetrics);
 
         // If none of the services were alive, reschedule in a short time
         if (!someAlive) {
-            reschedule(System.currentTimeMillis() - startTime);
+            reschedule(Duration.between(startTime, Instant.now()));
         } else {
             schedule();
         }
     }
 
-    static JiffiesAndCpus updateMetrics(JiffiesAndCpus prevTotalJiffies, long timeStamp, GetJiffies getJiffies,
+    static JiffiesAndCpus updateMetrics(JiffiesAndCpus prevTotalJiffies, Instant timeStamp, GetJiffies getJiffies,
                                         List<VespaService> services, Map<VespaService, Long> lastCpuJiffiesMetrics) {
+        Map<VespaService, Long> currentServiceJiffies = new HashMap<>();
+        for (VespaService s : services) {
+            currentServiceJiffies.put(s, getJiffies.getJiffies(s));
+        }
         JiffiesAndCpus sysJiffies = getJiffies.getTotalSystemJiffies();
         JiffiesAndCpus sysJiffiesDiff = sysJiffies.diff(prevTotalJiffies);
+        log.log(Level.FINE, () -> "Total jiffies: " + sysJiffies.jiffies + " - " + prevTotalJiffies.jiffies + " = " + sysJiffiesDiff.jiffies);
         for (VespaService s : services) {
             Metrics metrics = new Metrics();
-            log.log(Level.FINE, () -> "Current size of system metrics for service  " + s + " is " + metrics.size());
 
             long[] size = getMemoryUsage(s);
             log.log(Level.FINE, () -> "Updating memory metric for service " + s);
@@ -173,16 +189,18 @@ public class SystemPoller {
             metrics.add(new Metric(MEMORY_VIRT, size[memoryTypeVirtual], timeStamp));
             metrics.add(new Metric(MEMORY_RSS, size[memoryTypeResident], timeStamp));
 
-            long procJiffies = getJiffies.getJiffies(s);
+            long procJiffies = currentServiceJiffies.get(s);
             long last = lastCpuJiffiesMetrics.get(s);
             long diff = procJiffies - last;
 
+            log.log(Level.FINE, () -> "Service " + s + " jiffies: " + procJiffies + " - " + last + " = " + diff);
             if (diff >= 0) {
                 metrics.add(new Metric(CPU, 100 * sysJiffiesDiff.ratioSingleCoreJiffies(diff), timeStamp));
                 metrics.add(new Metric(CPU_UTIL, 100 * sysJiffiesDiff.ratioJiffies(diff), timeStamp));
             }
             lastCpuJiffiesMetrics.put(s, procJiffies);
             s.setSystemMetrics(metrics);
+            log.log(Level.FINE, () -> "Current size of system metrics for service  " + s + " is " + metrics.size());
         }
         return sysJiffies;
     }
@@ -251,24 +269,27 @@ public class SystemPoller {
                 : new JiffiesAndCpus();
     }
 
-    private void schedule(long time) {
+    void schedule(Duration time) {
         try {
-            systemPollTimer.schedule(new PollTask(this), time);
+            systemPollTimer.schedule(new PollTask(this), time.toMillis());
         } catch(IllegalStateException e){
             log.info("Tried to schedule task, but timer was already shut down.");
         }
     }
 
-    public void schedule() {
-        schedule(pollingIntervalSecs * 1000L);
+    void schedule() {
+        schedule(interval);
     }
 
-    private void reschedule(long skew) {
-        long sleep = (pollingIntervalSecs * 1000L) - skew;
+    private void reschedule(Duration skew) {
+        Duration sleep = interval.minus(skew);
 
         // Don't sleep less than 1 min
-        sleep = Math.max(60 * 1000, sleep);
-        schedule(sleep);
+        if ( sleep.compareTo(Duration.ofMinutes(1)) < 0) {
+            schedule(Duration.ofMinutes(1));
+        } else {
+            schedule(sleep);
+        }
     }
 
 

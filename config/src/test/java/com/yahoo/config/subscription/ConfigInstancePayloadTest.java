@@ -15,9 +15,8 @@ import java.util.Arrays;
 import java.util.List;
 
 import static com.yahoo.foo.FunctionTestConfig.*;
-import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 /**
@@ -71,13 +70,10 @@ public class ConfigInstancePayloadTest {
                         intArr(310).intArr(311)).
 
                 rootStruct(new RootStruct.Builder().
-                        inner0(new RootStruct.Inner0.Builder().
-                                index(11)).
+                        inner0(b -> b.index(11)).
                         inner1(new RootStruct.Inner1.Builder().
                                 index(12)).
-                        innerArr(new RootStruct.InnerArr.Builder().
-                                boolVal(true).
-                                stringVal("deep")).
+                        innerArr(b -> b.boolVal(true).stringVal("deep")).
                         innerArr(new RootStruct.InnerArr.Builder().
                                 boolVal(false).
                                 stringVal("blue a=\"escaped\""))).
@@ -89,32 +85,29 @@ public class ConfigInstancePayloadTest {
                         enumval(Myarray.Enumval.INNER).
                         refval(":parent:").
                         fileVal("file0").
-                        anotherarray(new Myarray.Anotherarray.Builder().
-                                foo(7)).
+                        anotherarray(b -> b.foo(7)).
                         myStruct(new Myarray.MyStruct.Builder().
                                 a(1).
                                 b(2))).
 
-                myarray(new Myarray.Builder().
+                myarray(b -> b.
                         intval(5).
                         enumval(Myarray.Enumval.INNER).
                         refval(":parent:").
                         fileVal("file1").
-                        anotherarray(new Myarray.Anotherarray.Builder().
-                                foo(1).
-                                foo(2)).
-                        myStruct(new Myarray.MyStruct.Builder().
-                                a(-1).
-                                b(-2))).
+                        anotherarray(bb -> bb.foo(1).foo(2)).
+                        myStruct(bb -> bb.
+                                 a(-1).
+                                 b(-2))).
 
                 myStructMap("one", new MyStructMap.Builder().
                         myInt(1).
                         myString("bull").
                         myIntDef(2).
                         myStringDef("bear").
-                        anotherMap("anotherOne", new MyStructMap.AnotherMap.Builder().
-                                anInt(3).
-                                anIntDef(4)));
+                        anotherMap("anotherOne", b -> b.
+                                   anInt(3).
+                                   anIntDef(4)));
     }
 
     @Test
@@ -137,8 +130,8 @@ public class ConfigInstancePayloadTest {
         try {
             System.out.println(payload.toString(false));
             FunctionTestConfig config2 = new FunctionTestConfig((FunctionTestConfig.Builder)new ConfigTransformer<>(FunctionTestConfig.class).toConfigBuilder(payload));
-            assertThat(config2, is(expected));
-            assertThat(ConfigInstance.serialize(config2), is(ConfigInstance.serialize(expected)));
+            assertEquals(expected, config2);
+            assertEquals(ConfigInstance.serialize(expected), ConfigInstance.serialize(config2));
         } catch (Exception e) {
             e.printStackTrace();
             fail();
@@ -162,14 +155,14 @@ public class ConfigInstancePayloadTest {
         System.out.println(payload.toString());
         MaptypesConfig config = ConfigInstanceUtil.getNewInstance(MaptypesConfig.class, "foo", payload);
         System.out.println(config);
-        assertThat(config.intmap().size(), is(1));
-        assertThat(config.intmap("foo"), is(1337));
+        assertEquals(1, config.intmap().size());
+        assertEquals(1337, config.intmap("foo"));
         assertNotNull(config.innermap("bar"));
-        assertThat(config.innermap("bar").foo(), is(93));
-        assertThat(config.nestedmap().size(), is(1));
+        assertEquals(93, config.innermap("bar").foo());
+        assertEquals(1, config.nestedmap().size());
         assertNotNull(config.nestedmap("baz"));
-        assertThat(config.nestedmap("baz").inner("foo"), is(1));
-        assertThat(config.nestedmap("baz").inner("bar"), is(2));
+        assertEquals(1, config.nestedmap("baz").inner("foo"));
+        assertEquals(2, config.nestedmap("baz").inner("bar"));
     }
 
     private MaptypesConfig createMapTypesConfig() {

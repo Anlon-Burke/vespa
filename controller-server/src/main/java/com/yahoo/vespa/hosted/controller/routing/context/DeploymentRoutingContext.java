@@ -16,10 +16,11 @@ import com.yahoo.vespa.hosted.controller.routing.RoutingPolicyId;
 import com.yahoo.vespa.hosted.controller.routing.RoutingStatus;
 
 import java.time.Clock;
-import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * A deployment routing context, which extends {@link RoutingContext} to support routing configuration of a deployment.
@@ -49,7 +50,7 @@ public abstract class DeploymentRoutingContext implements RoutingContext {
 
     /** Configure routing for the deployment in this context, using given deployment spec */
     public final void configure(DeploymentSpec deploymentSpec) {
-        controller.policies().refresh(deployment.applicationId(), deploymentSpec, deployment.zoneId());
+        controller.policies().refresh(deployment, deploymentSpec);
     }
 
     /** Routing method of this context */
@@ -60,7 +61,7 @@ public abstract class DeploymentRoutingContext implements RoutingContext {
     /** Read the routing policy for given cluster in this deployment */
     public final Optional<RoutingPolicy> routingPolicy(ClusterSpec.Id cluster) {
         RoutingPolicyId id = new RoutingPolicyId(deployment.applicationId(), cluster, deployment.zoneId());
-        return Optional.ofNullable(controller.policies().get(deployment).get(id));
+        return controller.policies().read(deployment).of(id);
     }
 
     /**
@@ -83,36 +84,46 @@ public abstract class DeploymentRoutingContext implements RoutingContext {
             EndpointStatus newStatus = new EndpointStatus(value == RoutingStatus.Value.in
                                                                   ? EndpointStatus.Status.in
                                                                   : EndpointStatus.Status.out,
-                                                          "",
                                                           agent.name(),
-                                                          clock.instant().getEpochSecond());
-            primaryEndpoint().ifPresent(endpoint -> {
-                try {
-                    configServer.setGlobalRotationStatus(deployment, endpoint.upstreamIdOf(deployment), newStatus);
-                } catch (Exception e) {
-                    throw new RuntimeException("Failed to set rotation status of " + endpoint + " in " + deployment, e);
-                }
-            });
+                                                          clock.instant());
+            try {
+                configServer.setGlobalRotationStatus(deployment, upstreamNames(), newStatus);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to change rotation status of " + deployment, e);
+            }
         }
 
         @Override
         public RoutingStatus routingStatus() {
-            Optional<EndpointStatus> status = primaryEndpoint().map(endpoint -> {
-                var upstreamName = endpoint.upstreamIdOf(deployment);
-                return configServer.getGlobalRotationStatus(deployment, upstreamName);
-            });
-            if (status.isEmpty()) return RoutingStatus.DEFAULT;
+            // In a given deployment, all upstreams (clusters) share the same status, so we can query using any
+            // upstream name
+            String upstreamName = upstreamNames().get(0);
+            EndpointStatus status = configServer.getGlobalRotationStatus(deployment, upstreamName);
             RoutingStatus.Agent agent;
             try {
-                agent = RoutingStatus.Agent.valueOf(status.get().getAgent().toLowerCase());
+                agent = RoutingStatus.Agent.valueOf(status.agent().toLowerCase());
             } catch (IllegalArgumentException e) {
                 agent = RoutingStatus.Agent.unknown;
             }
-            return new RoutingStatus(status.get().getStatus() == EndpointStatus.Status.in
+            return new RoutingStatus(status.status() == EndpointStatus.Status.in
                                              ? RoutingStatus.Value.in
                                              : RoutingStatus.Value.out,
                                      agent,
-                                     Instant.ofEpochSecond(status.get().getEpoch()));
+                                     status.changedAt());
+        }
+
+        private List<String> upstreamNames() {
+            List<String> upstreamNames = controller.readEndpointsOf(deployment)
+                                                   .scope(Endpoint.Scope.zone)
+                                                   .shared()
+                                                   .asList().stream()
+                                                   .map(endpoint -> endpoint.upstreamName(deployment))
+                                                   .distinct()
+                                                   .collect(Collectors.toList());
+            if (upstreamNames.isEmpty()) {
+                throw new IllegalArgumentException("No upstream names found for " + deployment);
+            }
+            return upstreamNames;
         }
 
         private Optional<Endpoint> primaryEndpoint() {
@@ -142,8 +153,8 @@ public abstract class DeploymentRoutingContext implements RoutingContext {
         public RoutingStatus routingStatus() {
             // Status for a deployment applies to all clusters within the deployment, so we use the status from the
             // first matching policy here
-            return controller.policies().get(deployment).values().stream()
-                             .findFirst()
+            return controller.policies().read(deployment)
+                             .first()
                              .map(RoutingPolicy::status)
                              .map(RoutingPolicy.Status::routingStatus)
                              .orElse(RoutingStatus.DEFAULT);

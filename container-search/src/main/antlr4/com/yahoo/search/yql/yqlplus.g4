@@ -27,7 +27,6 @@ options {
   WHERE : 'where';
   ORDERBY : 'order by';
   DESC : 'desc';
-  ASC :;
   FROM : 'from';
   SOURCES : 'sources';
   AS : 'as';
@@ -55,7 +54,6 @@ options {
   OR : 'or';
   NOT_IN : 'not in';
   IN : 'in';
-  QUERY_ARRAY :;
 
   LT : '<';
   GT : '>';
@@ -92,7 +90,7 @@ options {
  * LEXER RULES
  *------------------------------------------------------------------*/
 
-ID  :	('a'..'z'|'A'..'Z'|'_') ('a'..'z'|'A'..'Z'|'0'..'9'|'_'|':'|'-')*
+IDENTIFIER  :	('a'..'z'|'A'..'Z'|'_') ('a'..'z'|'A'..'Z'|'0'..'9'|'_'|'-')*
     ;
 
 LONG_INT :	'-'?'0'..'9'+ ('L'|'l')
@@ -119,8 +117,8 @@ LETTER  : 'a'..'z'
     	| 'A'..'Z'
     	;
 
-STRING  :  '"' ( ESC_SEQ | ~('\\'| '"') )* '"'
-        |  '\'' ( ESC_SEQ | ~('\\' | '\'') )* '\''
+STRING  :  DQ ( ESC_SEQ | ~('\\'| '"') )* DQ
+        |  SQ ( ESC_SEQ | ~('\\' | '\'') )* SQ
 	;
 
 fragment
@@ -168,24 +166,15 @@ VESPA_GROUPING_ARG
 // --------- parser rules ------------
 
 ident
-   : keyword_as_ident //{addChild(new TerminalNodeImpl(keyword_as_ident.getText()));}
-   | ID
+   : keyword_as_ident
+   | IDENTIFIER
    ;
 
 keyword_as_ident
    : SELECT | LIMIT | OFFSET | WHERE | 'order' | 'by' | DESC | OUTPUT | COUNT | SOURCES | MATCHES | LIKE
    ;
 
-program : (statement SEMI)* EOF
-	;
-
-moduleId
-    :  ID
-    ;
-    
-moduleName
-	: literalString
-	| namespaced_name
+program : (statement SEMI?)* EOF
 	;
 
 statement
@@ -263,7 +252,7 @@ source_spec
 	;
 
 alias_def
-	:	(AS? ID)
+	:	(AS? IDENTIFIER)
 	;
 
 data_source
@@ -281,7 +270,7 @@ sequence_source
 	;
 
 namespaced_name
-    :   (ident (DOT ident)* (DOT STAR)?)
+    :   (dotted_idents (DOT STAR)?)
     ;
 
 orderby
@@ -313,12 +302,8 @@ field_def
 	: expression[true] alias_def?
 	;
 
-mapExpression
-    : LBRACE propertyNameAndValue? (COMMA propertyNameAndValue)* RBRACE
-    ;
-
-constantMapExpression
-    : LBRACE constantPropertyNameAndValue? (COMMA constantPropertyNameAndValue)* RBRACE
+map_expression
+    : LBRACE property_name_and_value? (COMMA property_name_and_value)* RBRACE
     ;
 
 arguments[boolean in_select]
@@ -340,90 +325,91 @@ expression [boolean select]
 @after {
 	expression_stack.pop();	
 }
-	: annotateExpression
-	| logicalORExpression
-	| nullOperator
+	: annotate_expression
+	| logical_OR_expression
+	| null_operator
 	;
 	
-nullOperator
+null_operator
 	: 'null'
 	;
 
-annotateExpression
-	: annotation logicalORExpression
+annotate_expression
+	: annotation logical_OR_expression
 	;
 
 annotation
-    : LBRACKET constantMapExpression RBRACKET
+    : LBRACKET map_expression RBRACKET
+    | map_expression
     ;
 
-logicalORExpression
-	: logicalANDExpression (OR logicalANDExpression)+
-	| logicalANDExpression
+logical_OR_expression
+	: logical_AND_expression (OR logical_AND_expression)+
+	| logical_AND_expression
 	;
 		
-logicalANDExpression
-	: equalityExpression (AND equalityExpression)*
+logical_AND_expression
+	: equality_expression (AND equality_expression)*
 	;
 
-equalityExpression
-	: relationalExpression (  ((IN | NOT_IN) inNotInTarget)
+equality_expression
+	: relational_expression (  ((IN | NOT_IN) in_not_in_target)
 	                         | (IS_NULL | IS_NOT_NULL)
-	                         | (equalityOp relationalExpression) )
-	 | relationalExpression
+	                         | (equality_op relational_expression) )
+	 | relational_expression
 	;
 
-inNotInTarget
+in_not_in_target
     : {expression_stack.peek().in_select}? LPAREN select_statement RPAREN
     | literal_list
     ;
 
-equalityOp 
+equality_op
 	:	(EQ | NEQ | LIKE | NOTLIKE | MATCHES | NOTMATCHES | CONTAINS)
 	;
 	
-relationalExpression
-	: additiveExpression (relationalOp additiveExpression)?
+relational_expression
+	: additive_expression (relational_op additive_expression)?
 	;
 
-relationalOp
+relational_op
 	:	(LT | GT | LTEQ | GTEQ)
 	;
 	
-additiveExpression
-	: multiplicativeExpression (additiveOp additiveExpression)?
+additive_expression
+	: multiplicative_expression (additive_op additive_expression)?
 	;
 	
-additiveOp
+additive_op
 	:	'+'
 	|   '-'
 	;	
 	
-multiplicativeExpression
-	: unaryExpression (multOp multiplicativeExpression)?
+multiplicative_expression
+	: unary_expression (mult_op multiplicative_expression)?
 	;
 	
-multOp
+mult_op
 	:	'*'
 	|   '/'
 	|   '%'
 	;
 
-unaryOp
+unary_op
     : '-'
     | '!'
 	;	
 	
-unaryExpression
-    : dereferencedExpression
-    | unaryOp dereferencedExpression
+unary_expression
+    : dereferenced_expression
+    | unary_op dereferenced_expression
 	;
 	
-dereferencedExpression
+dereferenced_expression
 @init{
 	boolean	in_select = expression_stack.peek().in_select;	
 }
-	:	 primaryExpression
+	:	 primary_expression
 	     (
 	        indexref[in_select]
           | propertyref
@@ -434,34 +420,25 @@ indexref[boolean in_select]
 	:	LBRACKET idx=expression[in_select] RBRACKET
 	;
 propertyref
-	: 	DOT nm=ID
+	: 	DOT nm=IDENTIFIER
 	;
 
-primaryExpression
+primary_expression
 @init {
     boolean in_select = expression_stack.peek().in_select;
 }
-	: callExpresion[in_select]
-	| parameter
+	: call_expression[in_select]
 	| fieldref
-	| scalar_literal
-	| arrayLiteral
-	| mapExpression
+	| constant_expression
 	| LPAREN expression[in_select] RPAREN
 	;
 	
-callExpresion[boolean in_select]
+call_expression[boolean in_select]
 	: namespaced_name arguments[in_select]
 	;
-	
+
 fieldref
 	: namespaced_name
-	;
-arrayLiteral
-@init {
-	boolean in_select = expression_stack.peek().in_select;
-}
-    : LBRACKET expression[in_select]? (COMMA expression[in_select])* RBRACKET
 	;
 
 // a parameter is an argument from outside the YQL statement
@@ -469,28 +446,28 @@ parameter
 	: AT ident
 	;	
 	       
-propertyNameAndValue
-	: propertyName ':' expression[{expression_stack.peek().in_select}] //{return (PROPERTY propertyName expression);}
+property_name_and_value
+	: property_name ':' constant_expression
 	;
 
-constantPropertyNameAndValue
-	: propertyName ':' constantExpression
+property_name
+	: dotted_idents
+	| STRING
 	;
 
-propertyName
-	: ID 
-	| literalString
-	;
+dotted_idents
+    :   ident (DOT ident)*
+    ;
 
-constantExpression
+constant_expression
     : scalar_literal
-    | constantMapExpression
-    | constantArray
+    | map_expression
+    | array_literal
     | parameter
     ;
 
-constantArray
-    : LBRACKET i+=constantExpression? (COMMA i+=constantExpression)* RBRACKET
+array_literal
+    : LBRACKET i+=constant_expression? (COMMA i+=constant_expression)* RBRACKET
     ;
 
 scalar_literal
@@ -502,10 +479,6 @@ scalar_literal
 	| FLOAT
 	;
 	
-literalString
-	: STRING
-	;
-
 array_parameter
     : AT i=ident {isArrayParameter($i.ctx)}?
     ;

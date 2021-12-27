@@ -42,6 +42,7 @@ vespa_define_module(
     src/tests/datastore/array_store
     src/tests/datastore/array_store_config
     src/tests/datastore/buffer_type
+    src/tests/datastore/compact_buffer_candidates
     src/tests/datastore/datastore
     src/tests/datastore/fixed_size_hash_map
     src/tests/datastore/sharded_hash_map
@@ -150,8 +151,8 @@ vespa_define_module(
     src/tests/util/size_literals
     src/tests/valgrind
     src/tests/visit_ranges
+    src/tests/invokeservice
     src/tests/wakeup
-    src/tests/websocket
     src/tests/zcurve
 
     LIBS
@@ -179,5 +180,4 @@ vespa_define_module(
     src/vespa/vespalib/time
     src/vespa/vespalib/trace
     src/vespa/vespalib/util
-    src/vespa/vespalib/websocket
 )

@@ -95,10 +95,12 @@ public class DocumentTestCase extends DocumentTestCaseBase {
 
     static DocumentTypeManager setUpDocType(String filename) {
         DocumentTypeManager dcMan = new DocumentTypeManager();
-        DocumentTypeManagerConfigurer.configure(dcMan, filename);
+        var sub = DocumentTypeManagerConfigurer.configure(dcMan, filename);
+        sub.close();
         return dcMan;
     }
 
+    @SuppressWarnings("deprecation")
     public void setUpSertestDocType() {
         docMan = new DocumentTypeManager();
 
@@ -876,6 +878,7 @@ public class DocumentTestCase extends DocumentTestCaseBase {
         doc.setFieldValue("something", testlist);
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testCompressionConfiguredIsIgnored() {
 
@@ -1093,6 +1096,7 @@ public class DocumentTestCase extends DocumentTestCaseBase {
         assertEquals(doc, doc2);
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testUnknownFieldsDeserialization() {
         DocumentTypeManager docTypeManasjer = new DocumentTypeManager();

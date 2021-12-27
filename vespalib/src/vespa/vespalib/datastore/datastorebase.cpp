@@ -1,8 +1,12 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "datastore.h"
+#include "compact_buffer_candidates.h"
+#include "compaction_spec.h"
+#include "compaction_strategy.h"
 #include <vespa/vespalib/util/array.hpp>
 #include <vespa/vespalib/util/stringfmt.h>
+#include <algorithm>
 #include <limits>
 #include <cassert>
 
@@ -526,42 +530,42 @@ DataStoreBase::markCompacting(uint32_t bufferId)
 }
 
 std::vector<uint32_t>
-DataStoreBase::startCompactWorstBuffers(bool compactMemory, bool compactAddressSpace)
+DataStoreBase::startCompactWorstBuffers(CompactionSpec compaction_spec, const CompactionStrategy& compaction_strategy)
 {
-    constexpr uint32_t noBufferId = std::numeric_limits<uint32_t>::max();
-    uint32_t worstMemoryBufferId = noBufferId;
-    uint32_t worstAddressSpaceBufferId = noBufferId;
-    size_t worstDeadElems = 0;
-    size_t worstDeadArrays = 0;
+    // compact memory usage
+    CompactBufferCandidates elem_buffers(_numBuffers, compaction_strategy.get_max_buffers(), compaction_strategy.get_active_buffers_ratio(), compaction_strategy.getMaxDeadBytesRatio() / 2, CompactionStrategy::DEAD_BYTES_SLACK);
+    // compact address space
+    CompactBufferCandidates array_buffers(_numBuffers, compaction_strategy.get_max_buffers(), compaction_strategy.get_active_buffers_ratio(), compaction_strategy.getMaxDeadAddressSpaceRatio() / 2, CompactionStrategy::DEAD_ADDRESS_SPACE_SLACK);
+    uint32_t free_buffers = 0;
     for (uint32_t bufferId = 0; bufferId < _numBuffers; ++bufferId) {
         const auto &state = getBufferState(bufferId);
         if (state.isActive()) {
             auto typeHandler = state.getTypeHandler();
             uint32_t arraySize = typeHandler->getArraySize();
             uint32_t reservedElements = typeHandler->getReservedElements(bufferId);
+            size_t used_elems = state.size();
             size_t deadElems = state.getDeadElems() - reservedElements;
-            if (compactMemory && deadElems > worstDeadElems) {
-                worstMemoryBufferId = bufferId;
-                worstDeadElems = deadElems;
+            if (compaction_spec.compact_memory()) {
+                elem_buffers.add(bufferId, used_elems, deadElems);
             }
-            if (compactAddressSpace) {
-                size_t deadArrays = deadElems / arraySize;
-                if (deadArrays > worstDeadArrays) {
-                    worstAddressSpaceBufferId = bufferId;
-                    worstDeadArrays = deadArrays;
-                }
+            if (compaction_spec.compact_address_space()) {
+                array_buffers.add(bufferId,  used_elems / arraySize, deadElems / arraySize);
             }
+        } else if (state.isFree()) {
+            ++free_buffers;
         }
     }
+    elem_buffers.set_free_buffers(free_buffers);
+    array_buffers.set_free_buffers(free_buffers);
     std::vector<uint32_t> result;
-    if (worstMemoryBufferId != noBufferId) {
-        markCompacting(worstMemoryBufferId);
-        result.emplace_back(worstMemoryBufferId);
-    }
-    if (worstAddressSpaceBufferId != noBufferId &&
-        worstAddressSpaceBufferId != worstMemoryBufferId) {
-        markCompacting(worstAddressSpaceBufferId);
-        result.emplace_back(worstAddressSpaceBufferId);
+    result.reserve(std::min(_numBuffers, 2 * compaction_strategy.get_max_buffers()));
+    elem_buffers.select(result);
+    array_buffers.select(result);
+    std::sort(result.begin(), result.end());
+    auto last = std::unique(result.begin(), result.end());
+    result.erase(last, result.end());
+    for (auto buffer_id : result) {
+        markCompacting(buffer_id);
     }
     return result;
 }

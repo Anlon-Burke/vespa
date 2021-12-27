@@ -4,7 +4,7 @@ package com.yahoo.vespa.config.proxy;
 import com.yahoo.concurrent.DaemonThreadFactory;
 import com.yahoo.config.ConfigurationRuntimeException;
 import com.yahoo.config.subscription.ConfigSourceSet;
-import com.yahoo.config.subscription.impl.JRTConfigRequester;
+import com.yahoo.config.subscription.impl.JrtConfigRequesters;
 import com.yahoo.jrt.Request;
 import com.yahoo.jrt.Spec;
 import com.yahoo.jrt.Supervisor;
@@ -17,6 +17,7 @@ import com.yahoo.vespa.config.TimingValues;
 import com.yahoo.vespa.config.protocol.JRTServerConfigRequest;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -43,29 +44,30 @@ class RpcConfigSourceClient implements ConfigSourceClient, Runnable {
 
     private final Supervisor supervisor = new Supervisor(new Transport("config-source-client"));
 
-    private final RpcServer rpcServer;
+    private final ResponseHandler responseHandler;
     private final ConfigSourceSet configSourceSet;
-    private final Map<ConfigCacheKey, Subscriber> activeSubscribers = new ConcurrentHashMap<>();
+    private final Object subscribersLock = new Object();
+    private final Map<ConfigCacheKey, Subscriber> subscribers = new ConcurrentHashMap<>();
     private final MemoryCache memoryCache;
     private final DelayedResponses delayedResponses;
     private final ScheduledExecutorService nextConfigScheduler =
             Executors.newScheduledThreadPool(1, new DaemonThreadFactory("next config"));
     private final ScheduledFuture<?> nextConfigFuture;
-    private final JRTConfigRequester requester;
+    private final JrtConfigRequesters requesters;
     // Scheduled executor that periodically checks for requests that have timed out and response should be returned to clients
     private final ScheduledExecutorService delayedResponsesScheduler =
             Executors.newScheduledThreadPool(1, new DaemonThreadFactory("delayed responses"));
     private final ScheduledFuture<?> delayedResponsesFuture;
 
-    RpcConfigSourceClient(RpcServer rpcServer, ConfigSourceSet configSourceSet, MemoryCache memoryCache) {
-        this.rpcServer = rpcServer;
+    RpcConfigSourceClient(ResponseHandler responseHandler, ConfigSourceSet configSourceSet) {
+        this.responseHandler = responseHandler;
         this.configSourceSet = configSourceSet;
-        this.memoryCache = memoryCache;
+        this.memoryCache = new MemoryCache();
         this.delayedResponses = new DelayedResponses();
         checkConfigSources();
         nextConfigFuture = nextConfigScheduler.scheduleAtFixedRate(this, 0, 10, MILLISECONDS);
-        this.requester = JRTConfigRequester.create(configSourceSet, timingValues);
-        DelayedResponseHandler command = new DelayedResponseHandler(delayedResponses, memoryCache, rpcServer);
+        this.requesters = new JrtConfigRequesters();
+        DelayedResponseHandler command = new DelayedResponseHandler(delayedResponses, memoryCache, responseHandler);
         this.delayedResponsesFuture = delayedResponsesScheduler.scheduleAtFixedRate(command, 5, 1, SECONDS);
     }
 
@@ -139,22 +141,29 @@ class RpcConfigSourceClient implements ConfigSourceClient, Runnable {
     }
 
     private void subscribeToConfig(RawConfig input, ConfigCacheKey configCacheKey) {
-        if (activeSubscribers.containsKey(configCacheKey)) return;
+        synchronized (subscribersLock) {
+            if (subscribers.containsKey(configCacheKey)) return;
 
-        log.log(Level.FINE, () -> "Could not find good config in cache, creating subscriber for: " + configCacheKey);
-        var subscriber = new Subscriber(input, configSourceSet, timingValues, requester);
-        try {
-            subscriber.subscribe();
-            activeSubscribers.put(configCacheKey, subscriber);
-        } catch (ConfigurationRuntimeException e) {
-            log.log(Level.INFO, "Subscribe for '" + configCacheKey + "' failed, closing subscriber");
-            subscriber.cancel();
+            log.log(Level.FINE, () -> "Could not find good config in cache, creating subscriber for: " + configCacheKey);
+            var subscriber = new Subscriber(input, timingValues, requesters
+                    .getRequester(configSourceSet, timingValues));
+            try {
+                subscriber.subscribe();
+                subscribers.put(configCacheKey, subscriber);
+            } catch (ConfigurationRuntimeException e) {
+                log.log(Level.INFO, "Subscribe for '" + configCacheKey + "' failed, closing subscriber");
+                subscriber.cancel();
+            }
         }
     }
 
     @Override
     public void run() {
-        activeSubscribers.values().forEach(subscriber -> {
+        Collection<Subscriber> s;
+        synchronized (subscribersLock) {
+            s = List.copyOf(subscribers.values());
+        }
+        s.forEach(subscriber -> {
             if (!subscriber.isClosed()) {
                 Optional<RawConfig> config = subscriber.nextGeneration();
                 config.ifPresent(this::updateWithNewConfig);
@@ -163,7 +172,7 @@ class RpcConfigSourceClient implements ConfigSourceClient, Runnable {
     }
 
     @Override
-    public void cancel() {
+    public void shutdown() {
         log.log(Level.FINE, "shutdownSourceConnections");
         shutdownSourceConnections();
         log.log(Level.FINE, "delayedResponsesFuture.cancel");
@@ -180,19 +189,21 @@ class RpcConfigSourceClient implements ConfigSourceClient, Runnable {
     @Override
     public void shutdownSourceConnections() {
         log.log(Level.FINE, "Subscriber::cancel");
-        activeSubscribers.values().forEach(Subscriber::cancel);
-        activeSubscribers.clear();
+        synchronized (subscribers) {
+            subscribers.values().forEach(Subscriber::cancel);
+            subscribers.clear();
+        }
         log.log(Level.FINE, "nextConfigFuture.cancel");
         nextConfigFuture.cancel(true);
         log.log(Level.FINE, "nextConfigScheduler.shutdownNow");
         nextConfigScheduler.shutdownNow();
         log.log(Level.FINE, "requester.close");
-        requester.close();
+        requesters.close();
     }
 
     @Override
     public String getActiveSourceConnection() {
-        return requester.getConnectionPool().getCurrent().getAddress();
+        return requesters.getRequester(configSourceSet, timingValues).getConnectionPool().getCurrent().getAddress();
     }
 
     @Override
@@ -230,7 +241,7 @@ class RpcConfigSourceClient implements ConfigSourceClient, Runnable {
                     log.log(Level.FINE, () -> "Call returnOkResponse for " + key + "," + generation);
                     if (config.getPayload().getData().getByteLength() == 0)
                         log.log(Level.WARNING, () -> "Call returnOkResponse for " + key + "," + generation + " with empty config");
-                    rpcServer.returnOkResponse(request, config);
+                    responseHandler.returnOkResponse(request, config);
                 } else {
                     log.log(Level.INFO, "Could not remove " + key + " from delayedResponses queue, already removed");
                 }
@@ -243,9 +254,10 @@ class RpcConfigSourceClient implements ConfigSourceClient, Runnable {
     }
 
     @Override
-    public DelayedResponses delayedResponses() {
-        return delayedResponses;
-    }
+    public DelayedResponses delayedResponses() { return delayedResponses; }
+
+    @Override
+    public MemoryCache memoryCache() { return memoryCache; }
 
     private void updateWithNewConfig(RawConfig newConfig) {
         log.log(Level.FINE, () -> "config to be returned for '" + newConfig.getKey() +

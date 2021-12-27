@@ -53,12 +53,11 @@ public:
     using LidVector = LidVectorContext::LidVector;
     using Document = document::Document;
     using DocumentUpdate = document::DocumentUpdate;
-    using OnWriteDoneType = const std::shared_ptr<vespalib::IDestructorCallback> &;
+    using OnWriteDoneType = DoneCallback;
     using OnForceCommitDoneType =const std::shared_ptr<ForceCommitContext> &;
     using OnOperationDoneType = const std::shared_ptr<OperationDoneContext> &;
     using OnPutDoneType = const std::shared_ptr<PutDoneContext> &;
     using OnRemoveDoneType = const std::shared_ptr<RemoveDoneContext> &;
-    using FeedTokenUP = std::unique_ptr<FeedToken>;
     using FutureDoc = std::shared_future<std::unique_ptr<const Document>>;
     using PromisedDoc = std::promise<std::unique_ptr<const Document>>;
     using FutureStream = std::future<vespalib::nbostream>;
@@ -66,7 +65,6 @@ public:
     using DocumentSP = std::shared_ptr<Document>;
     using DocumentUpdateSP = std::shared_ptr<DocumentUpdate>;
     using LidReuseDelayer = documentmetastore::LidReuseDelayer;
-    using IDestructorCallbackSP = std::shared_ptr<vespalib::IDestructorCallback>;
 
     using Lid = search::DocumentIdT;
 
@@ -161,7 +159,7 @@ private:
     void putSummary(SerialNum serialNum, Lid lid, DocumentSP doc, OnOperationDoneType onDone);
     void removeSummary(SerialNum serialNum, Lid lid, OnWriteDoneType onDone);
     void removeSummaries(SerialNum serialNum, const LidVector & lids, OnWriteDoneType onDone);
-    void heartBeatSummary(SerialNum serialNum);
+    void heartBeatSummary(SerialNum serialNum, DoneCallback onDone);
 
     bool useDocumentStore(SerialNum replaySerialNum) const {
         return replaySerialNum > _params._flushedDocumentStoreSerialNum;
@@ -180,7 +178,7 @@ private:
 
     // Removes documents from meta store and document store.
     // returns the number of documents removed.
-    size_t removeDocuments(const RemoveDocumentsOperation &op, bool remove_index_and_attribute_fields);
+    size_t removeDocuments(const RemoveDocumentsOperation &op, bool remove_index_and_attribute_fields, DoneCallback onDone);
 
     void internalRemove(IDestructorCallbackSP token, IPendingLidTracker::Token uncommitted, SerialNum serialNum, Lid lid);
 
@@ -190,9 +188,9 @@ private:
                              PromisedDoc promisedDoc, PromisedStream promisedStream);
 
 protected:
-    virtual void internalDeleteBucket(const DeleteBucketOperation &delOp);
-    virtual void heartBeatIndexedFields(SerialNum serialNum);
-    virtual void heartBeatAttributes(SerialNum serialNum);
+    virtual void internalDeleteBucket(const DeleteBucketOperation &delOp, DoneCallback onDone);
+    virtual void heartBeatIndexedFields(SerialNum serialNum, DoneCallback onDone);
+    virtual void heartBeatAttributes(SerialNum serialNum, DoneCallback onDone);
 
 private:
     virtual void putAttributes(SerialNum serialNum, Lid lid, const Document &doc, OnPutDoneType onWriteDone);
@@ -232,10 +230,10 @@ public:
     void prepareRemove(RemoveOperation &rmOp) override;
     void handleRemove(FeedToken token, const RemoveOperation &rmOp) override;
     void prepareDeleteBucket(DeleteBucketOperation &delOp) override;
-    void handleDeleteBucket(const DeleteBucketOperation &delOp) override;
+    void handleDeleteBucket(const DeleteBucketOperation &delOp, DoneCallback onDone) override;
     void prepareMove(MoveOperation &putOp) override;
-    void handleMove(const MoveOperation &putOp, std::shared_ptr<vespalib::IDestructorCallback> doneCtx) override;
-    void heartBeat(search::SerialNum serialNum) override;
+    void handleMove(const MoveOperation &putOp, DoneCallback doneCtx) override;
+    void heartBeat(search::SerialNum serialNum, DoneCallback onDone) override;
     void forceCommit(const CommitParam & param, DoneCallback onDone) override;
 
     /**
@@ -244,8 +242,8 @@ public:
      *
      * Called by writer thread.
      */
-    void handlePruneRemovedDocuments(const PruneRemovedDocumentsOperation &pruneOp) override;
-    void handleCompactLidSpace(const CompactLidSpaceOperation &op) override;
+    void handlePruneRemovedDocuments(const PruneRemovedDocumentsOperation &pruneOp, DoneCallback onDone) override;
+    void handleCompactLidSpace(const CompactLidSpaceOperation &op, DoneCallback onDone) override;
     std::shared_ptr<PendingLidTrackerBase> getUncommittedLidTracker() { return _pendingLidsForCommit; }
 };
 

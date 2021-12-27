@@ -207,8 +207,8 @@ public class PermanentFlags {
 
     // This must be set in a feature flag to avoid flickering between the new and old value during config server upgrade
     public static final UnboundDoubleFlag HOST_MEMORY = defineDoubleFlag(
-            "host-memory", 1.0,
-            "The memory required by a hosts management processes.",
+            "host-memory", 0.6,
+            "The memory in GB required by a host's management processes.",
             "Takes effect immediately",
             ZONE_ID
     );
@@ -218,6 +218,13 @@ public class PermanentFlags {
             "When the backend detects a problematic issue with a query, it will by default send it as an error message to the QRS, which adds it in an ErrorHit in the result.  May be disabled using this flag.",
             "Takes effect immediately",
             ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag DEACTIVATE_ROUTING = defineFeatureFlag(
+            "deactivate-routing", false,
+            "Deactivates routing for an application by removing all reals from its load balancers. Used in " +
+            "cases where we immediately need to stop serving an application, i.e. in case of service violations",
+            "Takes effect on next redeployment",
+            APPLICATION_ID);
 
     private PermanentFlags() {}
 

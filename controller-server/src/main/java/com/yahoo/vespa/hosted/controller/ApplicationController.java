@@ -87,6 +87,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -178,8 +179,8 @@ public class ApplicationController {
      * if no documents types are given, reindexing is triggered for all given clusters; otherwise
      * reindexing is triggered for the cartesian product of the given clusters and document types.
      */
-    public void reindex(ApplicationId id, ZoneId zoneId, List<String> clusterNames, List<String> documentTypes, boolean indexedOnly) {
-        configServer.reindex(new DeploymentId(id, zoneId), clusterNames, documentTypes, indexedOnly);
+    public void reindex(ApplicationId id, ZoneId zoneId, List<String> clusterNames, List<String> documentTypes, boolean indexedOnly, Double speed) {
+        configServer.reindex(new DeploymentId(id, zoneId), clusterNames, documentTypes, indexedOnly, speed);
     }
 
     /** Returns the reindexing status for the given application in the given zone. */
@@ -436,10 +437,12 @@ public class ApplicationController {
         // Validate new deployment spec thoroughly before storing it.
         controller.jobController().deploymentStatus(application.get());
 
-        // Clear notifications for instances that are no longer declared
-        for (var name : existingInstances)
-            if ( ! declaredInstances.contains(name))
-                controller.notificationsDb().removeNotifications(NotificationSource.from(application.get().id().instance(name)));
+        for (Notification notification : controller.notificationsDb().listNotifications(NotificationSource.from(application.get().id()), true)) {
+            if ( ! notification.source().instance().map(declaredInstances::contains).orElse(false))
+                controller.notificationsDb().removeNotifications(notification.source());
+            if ( ! notification.source().zoneId().map(application.get().require(notification.source().instance().get()).deployments()::containsKey).orElse(false))
+                controller.notificationsDb().removeNotifications(notification.source());
+        }
 
         store(application);
         return application;
@@ -561,6 +564,10 @@ public class ApplicationController {
      * @throws IllegalArgumentException if the application has deployments or the caller is not authorized
      */
     public void deleteApplication(TenantAndApplicationId id, Credentials credentials) {
+        deleteApplication(id, Optional.of(credentials));
+    }
+
+    public void deleteApplication(TenantAndApplicationId id, Optional<Credentials> credentials) {
         lockApplicationOrThrow(id, application -> {
             var deployments = application.get().instances().values().stream()
                                          .filter(instance -> ! instance.deployments().isEmpty())
@@ -580,7 +587,7 @@ public class ApplicationController {
             applicationStore.removeAllTesters(id.tenant(), id.application());
             applicationStore.putMetaTombstone(id.tenant(), id.application(), clock.instant());
 
-            accessControl.deleteApplication(id, credentials);
+            credentials.ifPresent(creds -> accessControl.deleteApplication(id, creds));
             curator.removeApplication(id);
 
             controller.jobController().collectGarbage();

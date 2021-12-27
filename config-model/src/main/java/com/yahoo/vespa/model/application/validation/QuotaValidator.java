@@ -8,7 +8,6 @@ import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.vespa.model.VespaModel;
-import org.jetbrains.annotations.NotNull;
 
 import java.math.BigDecimal;
 import java.util.Locale;
@@ -39,7 +38,7 @@ public class QuotaValidator extends Validator {
         var maxSpend = model.allClusters().stream()
                 .filter(id -> !adminClusterIds(model).contains(id))
                 .map(id -> model.provisioned().all().getOrDefault(id, zeroCapacity))
-                .mapToDouble(c -> c.maxResources().cost())
+                .mapToDouble(c -> c.maxResources().cost()) // TODO: This may be unspecified -> 0
                 .sum();
 
         var actualSpend = model.allocatedHosts().getHosts().stream()
@@ -57,7 +56,6 @@ public class QuotaValidator extends Validator {
         throwIfBudgetExceeded(maxSpend, budget, systemName);
     }
 
-    @NotNull
     private Set<ClusterSpec.Id> adminClusterIds(VespaModel model) {
         return model.allocatedHosts().getHosts().stream()
                 .map(hostSpec -> hostSpec.membership().orElseThrow().cluster())

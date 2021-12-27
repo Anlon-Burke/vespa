@@ -29,6 +29,7 @@ import com.yahoo.vespa.model.container.ApplicationContainerCluster;
 import com.yahoo.vespa.model.container.Container;
 import com.yahoo.vespa.model.container.ContainerCluster;
 import com.yahoo.vespa.model.content.ContentSearchCluster;
+import com.yahoo.vespa.model.content.StorageGroup;
 import com.yahoo.vespa.model.content.StorageNode;
 import com.yahoo.vespa.model.content.cluster.ContentCluster;
 import com.yahoo.vespa.model.content.storagecluster.StorageCluster;
@@ -51,12 +52,10 @@ import static com.yahoo.vespa.defaults.Defaults.getDefaults;
 import static com.yahoo.vespa.model.search.NodeResourcesTuning.GB;
 import static com.yahoo.vespa.model.search.NodeResourcesTuning.reservedMemoryGb;
 import static com.yahoo.vespa.model.test.utils.ApplicationPackageUtils.generateSchemas;
-import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -273,6 +272,43 @@ public class ModelProvisioningTest {
                          18, physicalMemoryPercentage(model.getContainerClusters().get("container1")));
             assertEquals("Memory for proton is lowered to account for the jvm heap",
                          (long)((3 - reservedMemoryGb) * (Math.pow(1024, 3)) * (1 - 0.18)), protonMemorySize(model.getContentClusters().get("content1")));
+            assertProvisioned(0, ClusterSpec.Id.from("container1"), ClusterSpec.Type.container, model);
+            assertProvisioned(2, ClusterSpec.Id.from("content1"), ClusterSpec.Id.from("container1"), ClusterSpec.Type.combined, model);
+        }
+    }
+
+    @Test
+    public void testCombinedClusterWithJvmHeapSizeOverride() {
+        var containerElements = Set.of("jdisc", "container");
+        for (var containerElement : containerElements) {
+            String xmlWithNodes =
+                    "<?xml version='1.0' encoding='utf-8' ?>" +
+                            "<services>" +
+                            "  <" + containerElement + " version='1.0' id='container1'>" +
+                            "     <search/>" +
+                            "     <nodes of='content1'>" +
+                            "      <jvm allocated-memory=\"30%\"/>" +
+                            "     </nodes>" +
+                            "  </" + containerElement + ">" +
+                            "  <content version='1.0' id='content1'>" +
+                            "     <redundancy>2</redundancy>" +
+                            "     <documents>" +
+                            "       <document type='type1' mode='index'/>" +
+                            "     </documents>" +
+                            "     <nodes count='2'>" +
+                            "       <resources vcpu='1' memory='3Gb' disk='9Gb'/>" +
+                            "     </nodes>" +
+                            "   </content>" +
+                            "</services>";
+            VespaModelTester tester = new VespaModelTester();
+            tester.addHosts(5);
+            VespaModel model = tester.createModel(xmlWithNodes, true);
+            assertEquals("Nodes in content1", 2, model.getContentClusters().get("content1").getRootGroup().getNodes().size());
+            assertEquals("Nodes in container1", 2, model.getContainerClusters().get("container1").getContainers().size());
+            assertEquals("Heap size is lowered with combined clusters",
+                    30, physicalMemoryPercentage(model.getContainerClusters().get("container1")));
+            assertEquals("Memory for proton is lowered to account for the jvm heap",
+                    (long)((3 - reservedMemoryGb) * (Math.pow(1024, 3)) * (1 - 0.30)), protonMemorySize(model.getContentClusters().get("content1")));
             assertProvisioned(0, ClusterSpec.Id.from("container1"), ClusterSpec.Type.container, model);
             assertProvisioned(2, ClusterSpec.Id.from("content1"), ClusterSpec.Id.from("container1"), ClusterSpec.Type.combined, model);
         }
@@ -503,58 +539,60 @@ public class ModelProvisioningTest {
 
         // Check content clusters
         ContentCluster cluster = model.getContentClusters().get("bar");
+        List<StorageGroup> subGroups = cluster.getRootGroup().getSubgroups();
         assertEquals(0, cluster.getRootGroup().getNodes().size());
-        assertEquals(9, cluster.getRootGroup().getSubgroups().size());
-        assertEquals("0", cluster.getRootGroup().getSubgroups().get(0).getIndex());
-        assertEquals(3, cluster.getRootGroup().getSubgroups().get(0).getNodes().size());
-        assertEquals(0, cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getDistributionKey());
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getConfigId(), is("bar/storage/0"));
-        assertEquals("node-1-3-10-57", cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getHostName());
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(1).getDistributionKey(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(1).getConfigId(), is("bar/storage/1"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(2).getDistributionKey(), is(2));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(2).getConfigId(), is("bar/storage/2"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getIndex(), is("1"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().size(), is(3));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getDistributionKey(), is(3));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getConfigId(), is("bar/storage/3"));
-        assertEquals("node-1-3-10-54", cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getHostName());
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(1).getDistributionKey(), is(4));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(1).getConfigId(), is("bar/storage/4"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(2).getDistributionKey(), is(5));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(2).getConfigId(), is("bar/storage/5"));
+        assertEquals(9, subGroups.size());
+        assertEquals("0", subGroups.get(0).getIndex());
+        assertEquals(3, subGroups.get(0).getNodes().size());
+        assertEquals(0, subGroups.get(0).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/0", subGroups.get(0).getNodes().get(0).getConfigId());
+        assertEquals("node-1-3-10-57", subGroups.get(0).getNodes().get(0).getHostName());
+        assertEquals(1, subGroups.get(0).getNodes().get(1).getDistributionKey());
+        assertEquals("bar/storage/1", subGroups.get(0).getNodes().get(1).getConfigId());
+        assertEquals(2, subGroups.get(0).getNodes().get(2).getDistributionKey());
+        assertEquals("bar/storage/2", subGroups.get(0).getNodes().get(2).getConfigId());
+        assertEquals("1", subGroups.get(1).getIndex());
+        assertEquals(3, subGroups.get(1).getNodes().size());
+        assertEquals(3, subGroups.get(1).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/3", subGroups.get(1).getNodes().get(0).getConfigId());
+        assertEquals("node-1-3-10-54", subGroups.get(1).getNodes().get(0).getHostName());
+        assertEquals(4, subGroups.get(1).getNodes().get(1).getDistributionKey());
+        assertEquals("bar/storage/4", subGroups.get(1).getNodes().get(1).getConfigId());
+        assertEquals(5, subGroups.get(1).getNodes().get(2).getDistributionKey());
+        assertEquals("bar/storage/5", subGroups.get(1).getNodes().get(2).getConfigId());
         // ...
-        assertEquals("node-1-3-10-51", cluster.getRootGroup().getSubgroups().get(2).getNodes().get(0).getHostName());
+        assertEquals("node-1-3-10-51", subGroups.get(2).getNodes().get(0).getHostName());
         // ...
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getIndex(), is("8"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().size(), is(3));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(0).getDistributionKey(), is(24));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(0).getConfigId(), is("bar/storage/24"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(1).getDistributionKey(), is(25));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(1).getConfigId(), is("bar/storage/25"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(2).getDistributionKey(), is(26));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(2).getConfigId(), is("bar/storage/26"));
+        assertEquals("8", subGroups.get(8).getIndex());
+        assertEquals(3, subGroups.get(8).getNodes().size());
+        assertEquals(24, subGroups.get(8).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/24", subGroups.get(8).getNodes().get(0).getConfigId());
+        assertEquals(25, subGroups.get(8).getNodes().get(1).getDistributionKey());
+        assertEquals("bar/storage/25", subGroups.get(8).getNodes().get(1).getConfigId());
+        assertEquals(26, subGroups.get(8).getNodes().get(2).getDistributionKey());
+        assertEquals("bar/storage/26", subGroups.get(8).getNodes().get(2).getConfigId());
 
         cluster = model.getContentClusters().get("baz");
+        subGroups = cluster.getRootGroup().getSubgroups();
         assertEquals(0, cluster.getRootGroup().getNodes().size());
-        assertEquals(27, cluster.getRootGroup().getSubgroups().size());
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getIndex(), is("0"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().size(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getDistributionKey(), is(0));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getConfigId(), is("baz/storage/0"));
-        assertEquals("node-1-3-10-27", cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getHostName());
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getIndex(), is("1"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().size(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getDistributionKey(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getConfigId(), is("baz/storage/1"));
-        assertEquals("node-1-3-10-26", cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getHostName());
+        assertEquals(27, subGroups.size());
+        assertEquals("0", subGroups.get(0).getIndex());
+        assertEquals(1, subGroups.get(0).getNodes().size());
+        assertEquals(0, subGroups.get(0).getNodes().get(0).getDistributionKey());
+        assertEquals("baz/storage/0", subGroups.get(0).getNodes().get(0).getConfigId());
+        assertEquals("node-1-3-10-27", subGroups.get(0).getNodes().get(0).getHostName());
+        assertEquals("1", subGroups.get(1).getIndex());
+        assertEquals(1, subGroups.get(1).getNodes().size());
+        assertEquals(1, subGroups.get(1).getNodes().get(0).getDistributionKey());
+        assertEquals("baz/storage/1", subGroups.get(1).getNodes().get(0).getConfigId());
+        assertEquals("node-1-3-10-26", subGroups.get(1).getNodes().get(0).getHostName());
         // ...
-        assertEquals("node-1-3-10-25", cluster.getRootGroup().getSubgroups().get(2).getNodes().get(0).getHostName());
+        assertEquals("node-1-3-10-25", subGroups.get(2).getNodes().get(0).getHostName());
         // ...
-        assertThat(cluster.getRootGroup().getSubgroups().get(26).getIndex(), is("26"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(26).getNodes().size(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(26).getNodes().get(0).getDistributionKey(), is(26));
-        assertThat(cluster.getRootGroup().getSubgroups().get(26).getNodes().get(0).getConfigId(), is("baz/storage/26"));
+        assertEquals("26", subGroups.get(26).getIndex());
+        assertEquals(1, subGroups.get(26).getNodes().size());
+        assertEquals(26, subGroups.get(26).getNodes().get(0).getDistributionKey());
+        assertEquals("baz/storage/26", subGroups.get(26).getNodes().get(0).getConfigId());
     }
 
     @Test
@@ -642,58 +680,60 @@ public class ModelProvisioningTest {
 
         // Check content clusters
         ContentCluster cluster = model.getContentClusters().get("bar");
+        List<StorageGroup> subGroups = cluster.getRootGroup().getSubgroups();
         assertEquals(0, cluster.getRootGroup().getNodes().size());
-        assertEquals(9, cluster.getRootGroup().getSubgroups().size());
-        assertEquals("0", cluster.getRootGroup().getSubgroups().get(0).getIndex());
-        assertEquals(3, cluster.getRootGroup().getSubgroups().get(0).getNodes().size());
-        assertEquals(0, cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getDistributionKey());
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getConfigId(), is("bar/storage/0"));
-        assertEquals("node-1-3-10-57", cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getHostName());
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(1).getDistributionKey(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(1).getConfigId(), is("bar/storage/1"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(2).getDistributionKey(), is(2));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(2).getConfigId(), is("bar/storage/2"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getIndex(), is("1"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().size(), is(3));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getDistributionKey(), is(3));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getConfigId(), is("bar/storage/3"));
-        assertEquals("node-1-3-10-54", cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getHostName());
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(1).getDistributionKey(), is(4));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(1).getConfigId(), is("bar/storage/4"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(2).getDistributionKey(), is(5));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(2).getConfigId(), is("bar/storage/5"));
+        assertEquals(9, subGroups.size());
+        assertEquals("0", subGroups.get(0).getIndex());
+        assertEquals(3, subGroups.get(0).getNodes().size());
+        assertEquals(0, subGroups.get(0).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/0", subGroups.get(0).getNodes().get(0).getConfigId());
+        assertEquals("node-1-3-10-57", subGroups.get(0).getNodes().get(0).getHostName());
+        assertEquals(1, subGroups.get(0).getNodes().get(1).getDistributionKey());
+        assertEquals("bar/storage/1", subGroups.get(0).getNodes().get(1).getConfigId());
+        assertEquals(2, subGroups.get(0).getNodes().get(2).getDistributionKey());
+        assertEquals("bar/storage/2", subGroups.get(0).getNodes().get(2).getConfigId());
+        assertEquals("1", subGroups.get(1).getIndex());
+        assertEquals(3, subGroups.get(1).getNodes().size());
+        assertEquals(3, subGroups.get(1).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/3", subGroups.get(1).getNodes().get(0).getConfigId());
+        assertEquals("node-1-3-10-54", subGroups.get(1).getNodes().get(0).getHostName());
+        assertEquals(4, subGroups.get(1).getNodes().get(1).getDistributionKey());
+        assertEquals("bar/storage/4", subGroups.get(1).getNodes().get(1).getConfigId());
+        assertEquals(5, subGroups.get(1).getNodes().get(2).getDistributionKey());
+        assertEquals("bar/storage/5", subGroups.get(1).getNodes().get(2).getConfigId());
         // ...
-        assertEquals("node-1-3-10-51", cluster.getRootGroup().getSubgroups().get(2).getNodes().get(0).getHostName());
+        assertEquals("node-1-3-10-51", subGroups.get(2).getNodes().get(0).getHostName());
         // ...
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getIndex(), is("8"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().size(), is(3));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(0).getDistributionKey(), is(24));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(0).getConfigId(), is("bar/storage/24"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(1).getDistributionKey(), is(25));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(1).getConfigId(), is("bar/storage/25"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(2).getDistributionKey(), is(26));
-        assertThat(cluster.getRootGroup().getSubgroups().get(8).getNodes().get(2).getConfigId(), is("bar/storage/26"));
+        assertEquals("8", subGroups.get(8).getIndex());
+        assertEquals(3, subGroups.get(8).getNodes().size());
+        assertEquals(24, subGroups.get(8).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/24", subGroups.get(8).getNodes().get(0).getConfigId());
+        assertEquals(25, subGroups.get(8).getNodes().get(1).getDistributionKey());
+        assertEquals("bar/storage/25", subGroups.get(8).getNodes().get(1).getConfigId());
+        assertEquals(26, subGroups.get(8).getNodes().get(2).getDistributionKey());
+        assertEquals("bar/storage/26", subGroups.get(8).getNodes().get(2).getConfigId());
 
         cluster = model.getContentClusters().get("baz");
+        subGroups = cluster.getRootGroup().getSubgroups();
         assertEquals(0, cluster.getRootGroup().getNodes().size());
-        assertEquals(27, cluster.getRootGroup().getSubgroups().size());
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getIndex(), is("0"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().size(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getDistributionKey(), is(0));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getConfigId(), is("baz/storage/0"));
-        assertEquals("node-1-3-10-27", cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getHostName());
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getIndex(), is("1"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().size(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getDistributionKey(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getConfigId(), is("baz/storage/1"));
-        assertEquals("node-1-3-10-26", cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getHostName());
+        assertEquals(27, subGroups.size());
+        assertEquals("0", subGroups.get(0).getIndex());
+        assertEquals(1, subGroups.get(0).getNodes().size());
+        assertEquals(0, subGroups.get(0).getNodes().get(0).getDistributionKey());
+        assertEquals("baz/storage/0", subGroups.get(0).getNodes().get(0).getConfigId());
+        assertEquals("node-1-3-10-27", subGroups.get(0).getNodes().get(0).getHostName());
+        assertEquals("1", subGroups.get(1).getIndex());
+        assertEquals(1, subGroups.get(1).getNodes().size());
+        assertEquals(1, subGroups.get(1).getNodes().get(0).getDistributionKey());
+        assertEquals("baz/storage/1", subGroups.get(1).getNodes().get(0).getConfigId());
+        assertEquals("node-1-3-10-26", subGroups.get(1).getNodes().get(0).getHostName());
         // ...
-        assertEquals("node-1-3-10-25", cluster.getRootGroup().getSubgroups().get(2).getNodes().get(0).getHostName());
+        assertEquals("node-1-3-10-25", subGroups.get(2).getNodes().get(0).getHostName());
         // ...
-        assertThat(cluster.getRootGroup().getSubgroups().get(26).getIndex(), is("26"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(26).getNodes().size(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(26).getNodes().get(0).getDistributionKey(), is(26));
-        assertThat(cluster.getRootGroup().getSubgroups().get(26).getNodes().get(0).getConfigId(), is("baz/storage/26"));
+        assertEquals("26", subGroups.get(26).getIndex());
+        assertEquals(1, subGroups.get(26).getNodes().size());
+        assertEquals(26, subGroups.get(26).getNodes().get(0).getDistributionKey());
+        assertEquals("baz/storage/26", subGroups.get(26).getNodes().get(0).getConfigId());
     }
 
     @Test
@@ -718,7 +758,7 @@ public class ModelProvisioningTest {
         VespaModelTester tester = new VespaModelTester();
         tester.addHosts(numberOfHosts);
         VespaModel model = tester.createModel(services, true);
-        assertThat(model.getRoot().hostSystem().getHosts().size(), is(numberOfHosts));
+        assertEquals(numberOfHosts, model.getRoot().hostSystem().getHosts().size());
 
         ClusterControllerContainerCluster clusterControllers = model.getAdmin().getClusterControllers();
         assertEquals(3, clusterControllers.getContainers().size());
@@ -729,27 +769,28 @@ public class ModelProvisioningTest {
 
         // Check content cluster
         ContentCluster cluster = model.getContentClusters().get("bar");
+        List<StorageGroup> subGroups = cluster.getRootGroup().getSubgroups();
         assertEquals(0, cluster.getRootGroup().getNodes().size());
-        assertEquals(8, cluster.getRootGroup().getSubgroups().size());
+        assertEquals(8, subGroups.size());
         assertEquals(8, cluster.distributionBits());
         // first group
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getIndex(), is("0"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().size(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getDistributionKey(), is(0));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getConfigId(), is("bar/storage/0"));
-        assertEquals("node-1-3-10-11", cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getHostName());
+        assertEquals("0", subGroups.get(0).getIndex());
+        assertEquals(1, subGroups.get(0).getNodes().size());
+        assertEquals(0, subGroups.get(0).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/0", subGroups.get(0).getNodes().get(0).getConfigId());
+        assertEquals("node-1-3-10-11", subGroups.get(0).getNodes().get(0).getHostName());
         // second group
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getIndex(), is("1"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().size(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getDistributionKey(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getConfigId(), is("bar/storage/1"));
-        assertEquals("node-1-3-10-10", cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getHostName());
+        assertEquals("1", subGroups.get(1).getIndex());
+        assertEquals(1, subGroups.get(1).getNodes().size());
+        assertEquals(1, subGroups.get(1).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/1", subGroups.get(1).getNodes().get(0).getConfigId());
+        assertEquals("node-1-3-10-10", subGroups.get(1).getNodes().get(0).getHostName());
         // ... last group
-        assertThat(cluster.getRootGroup().getSubgroups().get(7).getIndex(), is("7"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(7).getNodes().size(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(7).getNodes().get(0).getDistributionKey(), is(7));
-        assertThat(cluster.getRootGroup().getSubgroups().get(7).getNodes().get(0).getConfigId(), is("bar/storage/7"));
-        assertEquals("node-1-3-10-04", cluster.getRootGroup().getSubgroups().get(7).getNodes().get(0).getHostName());
+        assertEquals("7", subGroups.get(7).getIndex());
+        assertEquals(1, subGroups.get(7).getNodes().size());
+        assertEquals(7, subGroups.get(7).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/7", subGroups.get(7).getNodes().get(0).getConfigId());
+        assertEquals("node-1-3-10-04", subGroups.get(7).getNodes().get(0).getHostName());
     }
 
     @Test
@@ -767,7 +808,7 @@ public class ModelProvisioningTest {
         VespaModelTester tester = new VespaModelTester();
         tester.addHosts(numberOfHosts);
         VespaModel model = tester.createModel(services, true, "node-1-3-10-09");
-        assertThat(model.getRoot().hostSystem().getHosts().size(), is(numberOfHosts));
+        assertEquals(numberOfHosts, model.getRoot().hostSystem().getHosts().size());
 
         // Check slobroks clusters
         assertEquals("Includes retired node", 1+3, model.getAdmin().getSlobroks().size());
@@ -821,7 +862,7 @@ public class ModelProvisioningTest {
         VespaModelTester tester = new VespaModelTester();
         tester.addHosts(numberOfHosts);
         VespaModel model = tester.createModel(services, true, "node-1-3-10-15", "node-1-3-10-05", "node-1-3-10-04");
-        assertThat(model.getRoot().hostSystem().getHosts().size(), is(numberOfHosts));
+        assertEquals(numberOfHosts, model.getRoot().hostSystem().getHosts().size());
 
         // Check slobroks clusters
         // ... from cluster default
@@ -913,7 +954,7 @@ public class ModelProvisioningTest {
         tester.addHosts(numberOfHosts+1);
 
         VespaModel model = tester.createModel(Zone.defaultZone(), services, true);
-        assertThat(model.getRoot().hostSystem().getHosts().size(), is(numberOfHosts));
+        assertEquals(numberOfHosts, model.getRoot().hostSystem().getHosts().size());
 
         Admin admin = model.getAdmin();
         Logserver logserver = admin.getLogserver();
@@ -924,11 +965,15 @@ public class ModelProvisioningTest {
         assertNull(hostResource.getService("logforwarder"));
 
         var clist = model.getContainerClusters().get("foo").getContainers();
-        assertThat(clist.size(), is(1));
+        assertEquals(1, clist.size());
         hostResource = clist.get(0).getHostResource();
         assertNull(hostResource.getService("logserver"));
         assertNotNull(hostResource.getService("container"));
         assertNotNull(hostResource.getService("logforwarder"));
+
+        var lfs = hostResource.getService("logforwarder");
+        String shutdown = lfs.getPreShutdownCommand().orElse("<none>");
+        assertEquals("/usr/bin/env SPLUNK_HOME=/opt/splunkforwarder /opt/splunkforwarder/bin/splunk stop", shutdown);
     }
 
 
@@ -955,7 +1000,7 @@ public class ModelProvisioningTest {
         tester.addHosts(numberOfHosts+1);
 
         VespaModel model = tester.createModel(Zone.defaultZone(), services, true);
-        assertThat(model.getRoot().hostSystem().getHosts().size(), is(numberOfHosts));
+        assertEquals(numberOfHosts, model.getRoot().hostSystem().getHosts().size());
 
         Admin admin = model.getAdmin();
         Logserver logserver = admin.getLogserver();
@@ -966,7 +1011,7 @@ public class ModelProvisioningTest {
         assertNotNull(hostResource.getService("logforwarder"));
 
         var clist = model.getContainerClusters().get("foo").getContainers();
-        assertThat(clist.size(), is(1));
+        assertEquals(1, clist.size());
         hostResource = clist.get(0).getHostResource();
         assertNull(hostResource.getService("logserver"));
         assertNotNull(hostResource.getService("container"));
@@ -1011,30 +1056,31 @@ public class ModelProvisioningTest {
         assertEquals(numberOfHosts, model.getRoot().hostSystem().getHosts().size());
 
         ContentCluster cluster = model.getContentClusters().get("bar");
+        List<StorageGroup> subGroups = cluster.getRootGroup().getSubgroups();
         assertEquals(2*3, cluster.redundancy().effectiveInitialRedundancy()); // Reduced from 3*3
         assertEquals(2*3, cluster.redundancy().effectiveFinalRedundancy()); // Reduced from 3*4
         assertEquals(2*3, cluster.redundancy().effectiveReadyCopies()); // Reduced from 3*3
         assertEquals("2|2|*", cluster.getRootGroup().getPartitions().get()); // Reduced from 4|4|*
         assertEquals(0, cluster.getRootGroup().getNodes().size());
-        assertEquals(3, cluster.getRootGroup().getSubgroups().size());
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getIndex(), is("0"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().size(), is(2));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getDistributionKey(), is(0));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(0).getConfigId(), is("bar/storage/0"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(1).getDistributionKey(), is(1));
-        assertThat(cluster.getRootGroup().getSubgroups().get(0).getNodes().get(1).getConfigId(), is("bar/storage/1"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getIndex(), is("1"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().size(), is(2));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getDistributionKey(), is(2));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(0).getConfigId(), is("bar/storage/2"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(1).getDistributionKey(), is(3));
-        assertThat(cluster.getRootGroup().getSubgroups().get(1).getNodes().get(1).getConfigId(), is("bar/storage/3"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(2).getIndex(), is("2"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(2).getNodes().size(), is(2));
-        assertThat(cluster.getRootGroup().getSubgroups().get(2).getNodes().get(0).getDistributionKey(), is(4));
-        assertThat(cluster.getRootGroup().getSubgroups().get(2).getNodes().get(0).getConfigId(), is("bar/storage/4"));
-        assertThat(cluster.getRootGroup().getSubgroups().get(2).getNodes().get(1).getDistributionKey(), is(5));
-        assertThat(cluster.getRootGroup().getSubgroups().get(2).getNodes().get(1).getConfigId(), is("bar/storage/5"));
+        assertEquals(3, subGroups.size());
+        assertEquals("0", subGroups.get(0).getIndex());
+        assertEquals(2, subGroups.get(0).getNodes().size());
+        assertEquals(0, subGroups.get(0).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/0", subGroups.get(0).getNodes().get(0).getConfigId());
+        assertEquals(1, subGroups.get(0).getNodes().get(1).getDistributionKey());
+        assertEquals("bar/storage/1", subGroups.get(0).getNodes().get(1).getConfigId());
+        assertEquals("1", subGroups.get(1).getIndex());
+        assertEquals(2, subGroups.get(1).getNodes().size());
+        assertEquals(2, subGroups.get(1).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/2", subGroups.get(1).getNodes().get(0).getConfigId());
+        assertEquals(3, subGroups.get(1).getNodes().get(1).getDistributionKey());
+        assertEquals("bar/storage/3", subGroups.get(1).getNodes().get(1).getConfigId());
+        assertEquals("2", subGroups.get(2).getIndex());
+        assertEquals(2, subGroups.get(2).getNodes().size());
+        assertEquals(4, subGroups.get(2).getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/4", subGroups.get(2).getNodes().get(0).getConfigId());
+        assertEquals(5, subGroups.get(2).getNodes().get(1).getDistributionKey());
+        assertEquals("bar/storage/5", subGroups.get(2).getNodes().get(1).getConfigId());
     }
 
     @Test
@@ -1151,7 +1197,7 @@ public class ModelProvisioningTest {
         VespaModelTester tester = new VespaModelTester();
         tester.addHosts(numberOfHosts);
         VespaModel model = tester.createModel(services, false);
-        assertThat(model.getRoot().hostSystem().getHosts().size(), is(numberOfHosts));
+        assertEquals(numberOfHosts, model.getRoot().hostSystem().getHosts().size());
 
         ContentCluster cluster = model.getContentClusters().get("bar");
         assertEquals(4, cluster.redundancy().effectiveInitialRedundancy());
@@ -1162,15 +1208,15 @@ public class ModelProvisioningTest {
         assertFalse(cluster.getRootGroup().getPartitions().isPresent());
         assertEquals(4, cluster.getRootGroup().getNodes().size());
         assertEquals(0, cluster.getRootGroup().getSubgroups().size());
-        assertThat(cluster.getRootGroup().getNodes().size(), is(4));
-        assertThat(cluster.getRootGroup().getNodes().get(0).getDistributionKey(), is(0));
-        assertThat(cluster.getRootGroup().getNodes().get(0).getConfigId(), is("bar/storage/0"));
-        assertThat(cluster.getRootGroup().getNodes().get(1).getDistributionKey(), is(1));
-        assertThat(cluster.getRootGroup().getNodes().get(1).getConfigId(), is("bar/storage/1"));
-        assertThat(cluster.getRootGroup().getNodes().get(2).getDistributionKey(), is(2));
-        assertThat(cluster.getRootGroup().getNodes().get(2).getConfigId(), is("bar/storage/2"));
-        assertThat(cluster.getRootGroup().getNodes().get(3).getDistributionKey(), is(3));
-        assertThat(cluster.getRootGroup().getNodes().get(3).getConfigId(), is("bar/storage/3"));
+        assertEquals(4, cluster.getRootGroup().getNodes().size());
+        assertEquals(0, cluster.getRootGroup().getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/0", cluster.getRootGroup().getNodes().get(0).getConfigId());
+        assertEquals(1, cluster.getRootGroup().getNodes().get(1).getDistributionKey());
+        assertEquals("bar/storage/1", cluster.getRootGroup().getNodes().get(1).getConfigId());
+        assertEquals(2, cluster.getRootGroup().getNodes().get(2).getDistributionKey());
+        assertEquals("bar/storage/2", cluster.getRootGroup().getNodes().get(2).getConfigId());
+        assertEquals(3, cluster.getRootGroup().getNodes().get(3).getDistributionKey());
+        assertEquals("bar/storage/3", cluster.getRootGroup().getNodes().get(3).getConfigId());
     }
 
     @Test
@@ -1195,7 +1241,7 @@ public class ModelProvisioningTest {
         VespaModelTester tester = new VespaModelTester();
         tester.addHosts(numberOfHosts);
         VespaModel model = tester.createModel(services, false);
-        assertThat(model.getRoot().hostSystem().getHosts().size(), is(numberOfHosts));
+        assertEquals(numberOfHosts, model.getRoot().hostSystem().getHosts().size());
 
         ContentCluster cluster = model.getContentClusters().get("bar");
         assertEquals(1, cluster.redundancy().effectiveInitialRedundancy()); // Reduced from 3*3
@@ -1204,9 +1250,9 @@ public class ModelProvisioningTest {
         assertFalse(cluster.getRootGroup().getPartitions().isPresent()); // 1 group - > flattened -> no distribution
         assertEquals(1, cluster.getRootGroup().getNodes().size());
         assertEquals(0, cluster.getRootGroup().getSubgroups().size());
-        assertThat(cluster.getRootGroup().getNodes().size(), is(1));
-        assertThat(cluster.getRootGroup().getNodes().get(0).getDistributionKey(), is(0));
-        assertThat(cluster.getRootGroup().getNodes().get(0).getConfigId(), is("bar/storage/0"));
+        assertEquals(1, cluster.getRootGroup().getNodes().size());
+        assertEquals(0, cluster.getRootGroup().getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/0", cluster.getRootGroup().getNodes().get(0).getConfigId());
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -1296,7 +1342,7 @@ public class ModelProvisioningTest {
         VespaModelTester tester = new VespaModelTester();
         tester.addHosts(numberOfHosts);
         VespaModel model = tester.createModel(services, false);
-        assertThat(model.getRoot().hostSystem().getHosts().size(), is(numberOfHosts));
+        assertEquals(numberOfHosts, model.getRoot().hostSystem().getHosts().size());
 
         ContentCluster cluster = model.getContentClusters().get("bar");
         assertEquals(1, cluster.redundancy().effectiveInitialRedundancy());
@@ -1307,9 +1353,9 @@ public class ModelProvisioningTest {
         assertFalse(cluster.getRootGroup().getPartitions().isPresent());
         assertEquals(1, cluster.getRootGroup().getNodes().size());
         assertEquals(0, cluster.getRootGroup().getSubgroups().size());
-        assertThat(cluster.getRootGroup().getNodes().size(), is(1));
-        assertThat(cluster.getRootGroup().getNodes().get(0).getDistributionKey(), is(0));
-        assertThat(cluster.getRootGroup().getNodes().get(0).getConfigId(), is("bar/storage/0"));
+        assertEquals(1, cluster.getRootGroup().getNodes().size());
+        assertEquals(0, cluster.getRootGroup().getNodes().get(0).getDistributionKey());
+        assertEquals("bar/storage/0", cluster.getRootGroup().getNodes().get(0).getConfigId());
     }
 
     @Test
@@ -1488,7 +1534,10 @@ public class ModelProvisioningTest {
             fail("Expected exception");
         }
         catch (IllegalArgumentException e) {
-            assertEquals("You have specified both jvm-options='xyz' and deprecated jvmargs='abc'. Merge jvmargs into jvm-options.", e.getMessage());
+            assertEquals("You have specified both jvm-options='xyz' and deprecated jvmargs='abc'. " +
+                                 "Merge jvmargs into 'options' in 'jvm' element. " +
+                                 "See https://docs.vespa.ai/en/reference/services-container.html#jvm",
+                         e.getMessage());
         }
     }
 
@@ -1806,7 +1855,7 @@ public class ModelProvisioningTest {
                 "</services>";
 
         VespaModel model = createNonProvisionedMultitenantModel(services);
-        assertThat(model.getRoot().hostSystem().getHosts().size(), is(1));
+        assertEquals(1, model.getRoot().hostSystem().getHosts().size());
         ContentCluster content = model.getContentClusters().get("storage");
         assertEquals(1, content.getRootGroup().getNodes().size());
         ContainerCluster<?> controller = model.getAdmin().getClusterControllers();
@@ -2134,7 +2183,7 @@ public class ModelProvisioningTest {
         tester.addHosts(numberOfHosts);
 
         VespaModel model = tester.createModel(Zone.defaultZone(), services, true);
-        assertThat(model.getRoot().hostSystem().getHosts().size(), is(numberOfHosts));
+        assertEquals(numberOfHosts, model.getRoot().hostSystem().getHosts().size());
 
         Admin admin = model.getAdmin();
         Logserver logserver = admin.getLogserver();

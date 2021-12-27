@@ -152,6 +152,10 @@ public class ProvisioningTester {
     public NodeList getNodes(ApplicationId id, Node.State ... inState) { return nodeRepository.nodes().list(inState).owner(id); }
     public InMemoryFlagSource flagSource() { return (InMemoryFlagSource) nodeRepository.flagSource(); }
 
+    public int decideSize(Capacity capacity, ApplicationId application) {
+        return capacityPolicies.applyOn(capacity, application).minResources().nodes();
+    }
+
     public Node patchNode(Node node, UnaryOperator<Node> patcher) {
         return patchNodes(List.of(node), patcher).get(0);
     }
@@ -489,6 +493,7 @@ public class ProvisioningTester {
     public List<Node> makeReadyNodes(int n, Flavor flavor, Optional<TenantName> reservedTo, NodeType type, int ipAddressPoolSize, boolean dualStack) {
         List<Node> nodes = makeProvisionedNodes(n, flavor, reservedTo, type, ipAddressPoolSize, dualStack);
         nodes = nodeRepository.nodes().deallocate(nodes, Agent.system, getClass().getSimpleName());
+        nodes.forEach(node -> { if (node.resources().isUnspecified()) throw new IllegalArgumentException(); });
         return nodeRepository.nodes().setReady(nodes, Agent.system, getClass().getSimpleName());
     }
 

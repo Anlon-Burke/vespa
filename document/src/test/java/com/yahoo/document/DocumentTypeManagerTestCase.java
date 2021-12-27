@@ -59,6 +59,7 @@ public class DocumentTypeManagerTestCase {
         assertSame(DataType.DOUBLE, doubleType);
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testRecursiveRegister() {
         StructDataType struct = new StructDataType("mystruct");
@@ -87,6 +88,7 @@ public class DocumentTypeManagerTestCase {
         assertEquals(docType2, manager.getDocumentType(new DataTypeName("myotherdoc")));
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testMultipleDocuments() {
         DocumentType docType1 = new DocumentType("foo0");
@@ -120,6 +122,7 @@ public class DocumentTypeManagerTestCase {
         assertEquals(manager.getDocumentTypes().get(new DataTypeName("foo1")), docType2);
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testReverseMapOrder() {
         DocumentTypeManager manager = createConfiguredManager("file:src/test/document/documentmanager.map.cfg");
@@ -190,7 +193,7 @@ public class DocumentTypeManagerTestCase {
 
         Field arrayfloat = type.getField("arrayfloat");
         ArrayDataType dataType = (ArrayDataType) arrayfloat.getDataType();
-        assertTrue(dataType.getCode() == 99);
+        // assertTrue(dataType.getCode() == 99);
         assertTrue(dataType.getValueClass().equals(Array.class));
         assertTrue(dataType.getNestedType().getCode() == 1);
         assertTrue(dataType.getNestedType().getValueClass().equals(FloatFieldValue.class));
@@ -198,9 +201,9 @@ public class DocumentTypeManagerTestCase {
 
         Field arrayarrayfloat = type.getField("arrayarrayfloat");
         ArrayDataType subType = (ArrayDataType) arrayarrayfloat.getDataType();
-        assertTrue(subType.getCode() == 4003);
+        // assertTrue(subType.getCode() == 4003);
         assertTrue(subType.getValueClass().equals(Array.class));
-        assertTrue(subType.getNestedType().getCode() == 99);
+        // assertTrue(subType.getNestedType().getCode() == 99);
         assertTrue(subType.getNestedType().getValueClass().equals(Array.class));
         ArrayDataType subSubType = (ArrayDataType) subType.getNestedType();
         assertTrue(subSubType.getNestedType().getCode() == 1);
@@ -215,10 +218,10 @@ public class DocumentTypeManagerTestCase {
         DocumentType customtypes = manager.getDocumentType(new DataTypeName("customtypes"));
 
         assertNull(banana.getField("newfield"));
-        assertEquals(new Field("arrayfloat", 9489, new ArrayDataType(DataType.FLOAT, 99)), customtypes.getField("arrayfloat"));
+        assertEquals(new Field("arrayfloat", 9489, new ArrayDataType(DataType.FLOAT)), customtypes.getField("arrayfloat"));
 
-        DocumentTypeManagerConfigurer.configure(manager, "file:src/test/document/documentmanager.updated.cfg");
-
+        var sub = DocumentTypeManagerConfigurer.configure(manager, "file:src/test/document/documentmanager.updated.cfg");
+        sub.close();
         banana = manager.getDocumentType(new DataTypeName("banana"));
         customtypes = manager.getDocumentType(new DataTypeName("customtypes"));
 
@@ -501,6 +504,7 @@ search annotationsimplicitstruct {
         assertReferenceTypePresentInManager(manager, 12345678, "referenced_type");
     }
 
+    @SuppressWarnings("deprecation")
     private static void assertReferenceTypePresentInManager(DocumentTypeManager manager, int refTypeId,
                                                             String refTargetTypeName) {
         DataType type = manager.getDataType(refTypeId);
@@ -513,7 +517,8 @@ search annotationsimplicitstruct {
 
     private static DocumentTypeManager createConfiguredManager(String configFilePath) {
         DocumentTypeManager manager = new DocumentTypeManager();
-        DocumentTypeManagerConfigurer.configure(manager, configFilePath);
+        var sub = DocumentTypeManagerConfigurer.configure(manager, configFilePath);
+        sub.close();
         return manager;
     }
 
@@ -525,6 +530,7 @@ search annotationsimplicitstruct {
         assertReferenceTypePresentInManager(manager, 87654321, "referenced_type2");
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void no_temporary_targets_in_references_or_names() {
         DocumentTypeManager manager = createConfiguredManager("file:src/test/document/documentmanager.replaced_temporary.cfg");

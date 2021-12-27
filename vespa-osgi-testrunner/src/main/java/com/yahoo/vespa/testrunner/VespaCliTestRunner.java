@@ -28,6 +28,7 @@ import static com.yahoo.vespa.testrunner.TestRunner.Status.ERROR;
 import static com.yahoo.vespa.testrunner.TestRunner.Status.FAILURE;
 import static com.yahoo.vespa.testrunner.TestRunner.Status.RUNNING;
 import static com.yahoo.vespa.testrunner.TestRunner.Status.SUCCESS;
+import static com.yahoo.yolean.Exceptions.uncheck;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 /**
@@ -41,6 +42,8 @@ public class VespaCliTestRunner implements TestRunner {
     private final Path artifactsPath;
     private final Path testsPath;
     private final AtomicReference<Status> status = new AtomicReference<>(Status.NOT_STARTED);
+
+    private Path vespaCliHome = null;
 
     @Inject
     public VespaCliTestRunner(VespaCliTestRunnerConfig config) {
@@ -81,13 +84,10 @@ public class VespaCliTestRunner implements TestRunner {
         try {
             TestConfig testConfig = TestConfig.fromJson(config);
             process = testRunProcessBuilder(suite, testConfig).start();
-            BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            in.lines().forEach(line -> {
-                if (line.length() > 1 << 13)
-                    line = line.substring(0, 1 << 13) + " ... (this log entry was truncated due to size)";
 
-                log(Level.INFO, line, null);
-            });
+            HtmlLogger htmlLogger = new HtmlLogger();
+            BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            in.lines().forEach(line -> log(htmlLogger.toLog(line)));
             status.set(process.waitFor() == 0 ? SUCCESS : process.waitFor() == 3 ? FAILURE : ERROR);
         }
         catch (Exception e) {
@@ -99,14 +99,24 @@ public class VespaCliTestRunner implements TestRunner {
         }
     }
 
+    private Path ensureHomeDirectoryForVespaCli() {
+        if (vespaCliHome == null) {
+            vespaCliHome = uncheck(() -> Files.createTempDirectory(VespaCliTestRunner.class.getSimpleName()));
+            vespaCliHome.toFile().deleteOnExit();
+        }
+        return vespaCliHome;
+    }
+
     ProcessBuilder testRunProcessBuilder(Suite suite, TestConfig config) throws IOException {
         Path suitePath = getChildDirectory(testsPath, toSuiteDirectoryName(suite))
                 .orElseThrow(() -> new IllegalStateException("No tests found, for suite '" + suite + "'"));
 
         ProcessBuilder builder = new ProcessBuilder("vespa", "test", suitePath.toAbsolutePath().toString(),
                                                     "--application", config.application().toFullString(),
-                                                    "--zone", config.zone().value());
+                                                    "--zone", config.zone().value(),
+                                                    "--target", "cloud");
         builder.redirectErrorStream(true);
+        builder.environment().put("VESPA_CLI_HOME", ensureHomeDirectoryForVespaCli().toString());
         builder.environment().put("VESPA_CLI_ENDPOINTS", toEndpointsConfig(config));
         builder.environment().put("VESPA_CLI_DATA_PLANE_KEY_FILE", artifactsPath.resolve("key").toAbsolutePath().toString());
         builder.environment().put("VESPA_CLI_DATA_PLANE_CERT_FILE", artifactsPath.resolve("cert").toAbsolutePath().toString());
@@ -126,6 +136,10 @@ public class VespaCliTestRunner implements TestRunner {
     private void log(Level level, String message, Throwable thrown) {
         LogRecord record = new LogRecord(level, message);
         record.setThrown(thrown);
+        log(record);
+    }
+
+    private void log(LogRecord record) {
         logger.log(record);
         log.put(record.getSequenceNumber(), record);
     }
