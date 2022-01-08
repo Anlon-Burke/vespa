@@ -356,6 +356,8 @@ public class YqlParser implements Parser {
                     return buildFunctionCall(ast);
                 case LITERAL:
                     return buildLiteral(ast);
+                case NOT:
+                    return buildNot(ast);
                 default:
                     throw newUnexpectedArgumentException(ast.getOperator(),
                                                          ExpressionOperator.AND, ExpressionOperator.CALL,
@@ -1096,17 +1098,21 @@ public class YqlParser implements Parser {
         AndItem andItem = new AndItem();
         NotItem notItem = new NotItem();
         convertVarArgsAnd(ast, 0, andItem, notItem);
-        Preconditions
-                .checkArgument(andItem.getItemCount() > 0,
-                        "Vespa does not support AND with no logically positive branches.");
         if (notItem.getItemCount() == 0) {
             return andItem;
         }
         if (andItem.getItemCount() == 1) {
             notItem.setPositiveItem(andItem.getItem(0));
-        } else {
+        } else if (andItem.getItemCount() > 1) {
             notItem.setPositiveItem(andItem);
-        }
+        } // else no positives, which is ok
+        return notItem;
+    }
+
+    /** Build a "pure" not, without any positive terms. */
+    private CompositeItem buildNot(OperatorNode<ExpressionOperator> ast) {
+        NotItem notItem = new NotItem();
+        notItem.addNegativeItem(convertExpression(ast.getArgument(0)));
         return notItem;
     }
 
@@ -1663,13 +1669,17 @@ public class YqlParser implements Parser {
                 "Expected operator READ_FIELD or PRPPREF, got %s.", ast.getOperator());
     }
 
-    private static void addItems(OperatorNode<ExpressionOperator> ast, WeightedSetItem out) {
+    private void addItems(OperatorNode<ExpressionOperator> ast, WeightedSetItem out) {
         switch (ast.getOperator()) {
             case MAP:
                 addStringItems(ast, out);
                 break;
             case ARRAY:
                 addLongItems(ast, out);
+                break;
+            case VARREF:
+                Preconditions.checkState(userQuery != null, "Query properties are not available");
+                ParameterListParser.addItemsFromString(userQuery.properties().getString(ast.getArgument(0, String.class)), out);
                 break;
             default:
                 throw newUnexpectedArgumentException(ast.getOperator(),
@@ -1698,10 +1708,8 @@ public class YqlParser implements Parser {
             OperatorNode<ExpressionOperator> tokenValueNode = args.get(0);
             assertHasOperator(tokenValueNode, ExpressionOperator.LITERAL);
             Number tokenValue = tokenValueNode.getArgument(0, Number.class);
-            Preconditions.checkArgument(tokenValue instanceof Integer
-                    || tokenValue instanceof Long,
-                    "Expected Integer or Long, got %s.", tokenValue.getClass()
-                            .getName());
+            Preconditions.checkArgument(tokenValue instanceof Integer || tokenValue instanceof Long,
+                    "Expected Integer or Long, got %s.", tokenValue.getClass().getName());
 
             OperatorNode<ExpressionOperator> tokenWeightNode = args.get(1);
             assertHasOperator(tokenWeightNode, ExpressionOperator.LITERAL);

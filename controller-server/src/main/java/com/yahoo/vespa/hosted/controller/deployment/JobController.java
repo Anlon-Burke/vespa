@@ -3,7 +3,6 @@ package com.yahoo.vespa.hosted.controller.deployment;
 
 import com.google.common.collect.ImmutableSortedMap;
 import com.yahoo.component.Version;
-import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.vespa.curator.Lock;
@@ -42,6 +41,7 @@ import java.util.NavigableMap;
 import java.util.Optional;
 import java.util.Set;
 import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -396,22 +396,23 @@ public class JobController {
                 });
                 logs.flush(id);
                 metric.jobFinished(run.id().job(), finishedRun.status());
+
+                DeploymentId deploymentId = new DeploymentId(unlockedRun.id().application(), unlockedRun.id().job().type().zone(controller.system()));
+                (unlockedRun.versions().targetApplication().isDeployedDirectly() ?
+                 Stream.of(unlockedRun.id().type()) :
+                 JobType.allIn(controller.system()).stream().filter(jobType -> !jobType.environment().isManuallyDeployed()))
+                        .flatMap(jobType -> controller.jobController().runs(unlockedRun.id().application(), jobType).values().stream())
+                        .mapToLong(r -> r.versions().targetApplication().buildNumber().orElse(Integer.MAX_VALUE))
+                        .min()
+                        .ifPresent(oldestBuild -> {
+                            if (unlockedRun.versions().targetApplication().isDeployedDirectly())
+                                controller.applications().applicationStore().pruneDevDiffs(deploymentId, oldestBuild);
+                            else
+                                controller.applications().applicationStore().pruneDiffs(deploymentId.applicationId().tenant(), deploymentId.applicationId().application(), oldestBuild);
+                        });
+
                 return finishedRun;
             });
-
-            DeploymentId deploymentId = new DeploymentId(unlockedRun.id().application(), unlockedRun.id().job().type().zone(controller.system()));
-            (unlockedRun.versions().targetApplication().isDeployedDirectly() ?
-                            Stream.of(unlockedRun.id().type()) :
-                            JobType.allIn(controller.system()).stream().filter(jobType -> !jobType.environment().isManuallyDeployed()))
-                    .flatMap(jobType -> controller.jobController().runs(unlockedRun.id().application(), jobType).values().stream())
-                    .mapToLong(run -> run.versions().targetApplication().buildNumber().orElse(Integer.MAX_VALUE))
-                    .min()
-                    .ifPresent(oldestBuild -> {
-                        if (unlockedRun.versions().targetApplication().isDeployedDirectly())
-                            controller.applications().applicationStore().pruneDevDiffs(deploymentId, oldestBuild);
-                        else
-                            controller.applications().applicationStore().pruneDiffs(deploymentId.applicationId().tenant(), deploymentId.applicationId().application(), oldestBuild);
-                    });
         }
         finally {
             for (Lock lock : locks)
@@ -482,7 +483,7 @@ public class JobController {
         locked(id, type, __ -> {
             Optional<Run> last = last(id, type);
             if (last.flatMap(run -> active(run.id())).isPresent())
-                throw new IllegalStateException("Can not start " + type + " for " + id + "; it is already running!");
+                throw new IllegalArgumentException("Cannot start " + type + " for " + id + "; it is already running!");
 
             RunId newId = new RunId(id, type, last.map(run -> run.id().number()).orElse(0L) + 1);
             curator.writeLastRun(Run.initial(newId, versions, isRedeployment, controller.clock().instant(), profile));
@@ -604,7 +605,7 @@ public class JobController {
     /** Locks all runs and modifies the list of historic runs for the given application and job type. */
     private void locked(ApplicationId id, JobType type, Consumer<SortedMap<RunId, Run>> modifications) {
         try (Lock __ = curator.lock(id, type)) {
-            SortedMap<RunId, Run> runs = curator.readHistoricRuns(id, type);
+            SortedMap<RunId, Run> runs = new TreeMap<>(curator.readHistoricRuns(id, type));
             modifications.accept(runs);
             curator.writeHistoricRuns(id, type, runs.values());
         }

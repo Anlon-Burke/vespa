@@ -26,6 +26,8 @@
 #include <vespa/searchcore/proton/matchengine/matchengine.h>
 #include <vespa/searchcore/proton/persistenceengine/persistenceengine.h>
 #include <vespa/searchcore/proton/reference/document_db_reference_registry.h>
+#include <vespa/searchcore/proton/metrics/metrics_engine.h>
+#include <vespa/searchcore/proton/metrics/content_proton_metrics.h>
 #include <vespa/searchcore/proton/summaryengine/summaryengine.h>
 #include <vespa/searchlib/common/packets.h>
 #include <vespa/searchlib/transactionlog/trans_log_server_explorer.h>
@@ -755,7 +757,7 @@ Proton::updateMetrics(const metrics::MetricLockGuard &)
         metrics.resourceUsage.diskUtilization.set(dm_metrics.get_disk_utilization());
         metrics.resourceUsage.memory.set(dm_metrics.get_memory_usage());
         metrics.resourceUsage.memoryUtilization.set(dm_metrics.get_memory_utilization());
-        metrics.resourceUsage.transient_memory.set(usageFilter.get_relative_transient_memory_usage());
+        metrics.resourceUsage.transient_memory.set(dm_metrics.get_transient_memory_usage());
         metrics.resourceUsage.transient_disk.set(usageFilter.get_relative_transient_disk_usage());
         metrics.resourceUsage.memoryMappings.set(usageFilter.getMemoryStats().getMappingsCount());
         metrics.resourceUsage.openFileDescriptors.set(FastOS_File::count_open_files());
@@ -964,6 +966,11 @@ storage::spi::PersistenceProvider &
 Proton::getPersistence()
 {
     return *_persistenceEngine;
+}
+
+metrics::MetricManager &
+Proton::getMetricManager() {
+    return _metricsEngine->getManager();
 }
 
 } // namespace proton

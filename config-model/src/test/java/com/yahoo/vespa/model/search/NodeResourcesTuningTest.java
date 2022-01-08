@@ -113,22 +113,22 @@ public class NodeResourcesTuningTest {
         assertDocumentStoreMaxFileSize(256 * MB, 6);
         assertDocumentStoreMaxFileSize(256 * MB, 8);
         assertDocumentStoreMaxFileSize(256 * MB, 12);
-        assertDocumentStoreMaxFileSize(512 * MB, 16);
-        assertDocumentStoreMaxFileSize(1 * GB, 24);
-        assertDocumentStoreMaxFileSize(1 * GB, 32);
-        assertDocumentStoreMaxFileSize(1 * GB, 48);
-        assertDocumentStoreMaxFileSize(1 * GB, 64);
-        assertDocumentStoreMaxFileSize(4 * GB, 128);
-        assertDocumentStoreMaxFileSize(4 * GB, 256);
-        assertDocumentStoreMaxFileSize(4 * GB, 512);
+        assertDocumentStoreMaxFileSize((long)(16*GB*0.02), 16);
+        assertDocumentStoreMaxFileSize((long)(24*GB*0.02), 24);
+        assertDocumentStoreMaxFileSize((long)(32*GB*0.02), 32);
+        assertDocumentStoreMaxFileSize((long)(48*GB*0.02), 48);
+        assertDocumentStoreMaxFileSize((long)(64*GB*0.02), 64);
+        assertDocumentStoreMaxFileSize((long)(128*GB*0.02), 128);
+        assertDocumentStoreMaxFileSize((long)(256*GB*0.02), 256);
+        assertDocumentStoreMaxFileSize((long)(512*GB*0.02), 512);
     }
 
     @Test
     public void require_that_flush_strategy_memory_limits_are_set_based_on_available_memory() {
-        assertFlushStrategyMemory(512 * MB, 4);
-        assertFlushStrategyMemory(1 * GB, 8);
-        assertFlushStrategyMemory(3 * GB, 24);
-        assertFlushStrategyMemory(8 * GB, 64);
+        assertFlushStrategyMemory((long)(4 * GB * 0.10), 4);
+        assertFlushStrategyMemory((long)(8 * GB * 0.10), 8);
+        assertFlushStrategyMemory((long)(24 * GB * 0.10), 24);
+        assertFlushStrategyMemory((long)(64 * GB * 0.10), 64);
     }
 
     @Test

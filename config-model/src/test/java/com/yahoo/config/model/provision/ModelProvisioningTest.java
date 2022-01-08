@@ -1534,8 +1534,9 @@ public class ModelProvisioningTest {
             fail("Expected exception");
         }
         catch (IllegalArgumentException e) {
-            assertEquals("You have specified both jvm-options='xyz' and deprecated jvmargs='abc'. " +
-                                 "Merge jvmargs into 'options' in 'jvm' element. " +
+            assertEquals("You have specified both deprecated jvm-options='xyz' and deprecated jvmargs='abc'. " +
+                                 "'jvm-options' and 'jvmargs' are deprecated and will be removed in Vespa 8. " +
+                                 "Please merge 'jvmargs' into 'options' or 'gc-options' in 'jvm' element. " +
                                  "See https://docs.vespa.ai/en/reference/services-container.html#jvm",
                          e.getMessage());
         }
@@ -2165,7 +2166,7 @@ public class ModelProvisioningTest {
         ProtonConfig cfg = getProtonConfig(model, cluster.getSearchNodes().get(0).getConfigId());
         assertEquals(2000, cfg.flush().memory().maxtlssize()); // from config override
         assertEquals(1000, cfg.flush().memory().maxmemory()); // from explicit tuning
-        assertEquals((long) ((128 - reservedMemoryGb) * GB / 8), cfg.flush().memory().each().maxmemory()); // from default node flavor tuning
+        assertEquals((long) ((128 - reservedMemoryGb) * GB * 0.10), cfg.flush().memory().each().maxmemory()); // from default node flavor tuning
     }
 
     private static ProtonConfig getProtonConfig(VespaModel model, String configId) {

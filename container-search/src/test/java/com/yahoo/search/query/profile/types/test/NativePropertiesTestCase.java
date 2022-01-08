@@ -9,8 +9,7 @@ import com.yahoo.search.query.profile.types.QueryProfileType;
 import com.yahoo.yolean.Exceptions;
 import org.junit.Test;
 
-import static org.hamcrest.CoreMatchers.containsString;
-import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 /**
@@ -39,9 +38,7 @@ public class NativePropertiesTestCase {
             fail("Above statement should throw");
         } catch (IllegalArgumentException e) {
             // As expected.
-            assertThat(
-                    Exceptions.toMessageString(e),
-                    containsString(
+            assertTrue(Exceptions.toMessageString(e).contains(
                             "Could not set 'notnative' to '5':"
                             + " 'notnative' is not declared in query profile type 'strict', and the type is strict"));
         }

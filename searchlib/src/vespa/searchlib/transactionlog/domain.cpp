@@ -35,7 +35,7 @@ createCommitChunk(const DomainConfig &cfg) {
 
 }
 
-Domain::Domain(const string &domainName, const string & baseDir, Executor & executor,
+Domain::Domain(const string &domainName, const string & baseDir, vespalib::Executor & executor,
                const DomainConfig & cfg, const FileHeaderContext &fileHeaderContext)
     : _config(cfg),
       _currentChunk(createCommitChunk(cfg)),
@@ -396,6 +396,7 @@ void
 Domain::commitChunk(std::unique_ptr<CommitChunk> chunk, const UniqueLock & chunkOrderGuard) {
     assert(chunkOrderGuard.mutex() == &_currentChunkMonitor && chunkOrderGuard.owns_lock());
     if (chunk->getPacket().empty()) return;
+    chunk->shrinkPayloadToFit();
     std::promise<SerializedChunk> promise;
     std::future<SerializedChunk> future = promise.get_future();
     _executor.execute(makeLambdaTask([promise=std::move(promise), chunk = std::move(chunk),
@@ -420,7 +421,7 @@ Domain::doCommit(const SerializedChunk & serialized) {
     }
     cleanSessions();
     LOG(debug, "Releasing %zu acks and %zu entries and %zu bytes.",
-        serialized.commitChunk().getNumCallBacks(), serialized.getNumEntries(), serialized.getData().size());
+        serialized.getNumCallBacks(), serialized.getNumEntries(), serialized.getData().size());
 }
 
 bool

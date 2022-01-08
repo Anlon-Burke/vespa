@@ -1,7 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.io;
 
-
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
@@ -26,7 +25,6 @@ import java.nio.file.NoSuchFileException;
 import java.util.List;
 import java.nio.charset.Charset;
 import java.nio.ByteBuffer;
-
 
 /**
  * Some static io convenience methods.
@@ -227,7 +225,9 @@ public abstract class IOUtils {
      * @throws IOException if copying any file fails. This will typically result in some files being copied and
      *         others not, i.e this method is not exception safe
      */
-    public static void copyDirectory(File sourceLocation , File targetLocation, int maxRecurseLevel, FilenameFilter filter) throws IOException {
+    public static void copyDirectory(File sourceLocation, File targetLocation, int maxRecurseLevel, FilenameFilter filter) throws IOException {
+        if ( ! sourceLocation.exists()) throw new IllegalArgumentException(sourceLocation.getAbsolutePath() + " does not exist");
+
         if ( ! sourceLocation.isDirectory()) { // copy file
             InputStream in=null;
             OutputStream out=null;

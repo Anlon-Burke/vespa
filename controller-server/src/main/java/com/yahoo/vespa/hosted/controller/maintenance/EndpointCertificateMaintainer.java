@@ -4,7 +4,6 @@ package com.yahoo.vespa.hosted.controller.maintenance;
 import com.google.common.collect.Sets;
 import com.google.inject.Inject;
 import com.yahoo.config.provision.ApplicationId;
-import com.yahoo.config.provision.SystemName;
 import com.yahoo.container.jdisc.secretstore.SecretNotFoundException;
 import com.yahoo.container.jdisc.secretstore.SecretStore;
 import com.yahoo.log.LogLevel;
@@ -27,6 +26,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -54,7 +54,7 @@ public class EndpointCertificateMaintainer extends ControllerMaintainer {
 
     @Inject
     public EndpointCertificateMaintainer(Controller controller, Duration interval) {
-        super(controller, interval, null, SystemName.all());
+        super(controller, interval);
         this.deploymentTrigger = controller.applications().deploymentTrigger();
         this.clock = controller.clock();
         this.secretStore = controller.secretStore();
@@ -149,11 +149,10 @@ public class EndpointCertificateMaintainer extends ControllerMaintainer {
     }
 
     private boolean hasNoDeployments(ApplicationId applicationId) {
-        var deployments = curator.readApplication(TenantAndApplicationId.from(applicationId))
-                .flatMap(app -> app.get(applicationId.instance()))
-                .map(Instance::deployments);
-
-        return deployments.isEmpty() || deployments.get().size() == 0;
+        return controller().applications().getInstance(applicationId)
+                           .map(Instance::deployments)
+                           .orElseGet(Map::of)
+                           .isEmpty();
     }
 
     private void deleteOrReportUnmanagedCertificates() {
@@ -172,7 +171,7 @@ public class EndpointCertificateMaintainer extends ControllerMaintainer {
                         endpointCertificateProvider.deleteCertificate(ApplicationId.fromSerializedForm("applicationid:is:unknown"), providerCertificateMetadata.requestId());
                     }
                 } else {
-                    log.log(Level.INFO, String.format("Found unmaintained certificate with request_id %s and SANs %s",
+                    log.log(Level.FINE, () -> String.format("Found unmaintained certificate with request_id %s and SANs %s",
                             providerCertificateMetadata.requestId(),
                             providerCertificateMetadata.dnsNames().stream().map(d -> d.dnsName).collect(Collectors.joining(", "))));
                 }

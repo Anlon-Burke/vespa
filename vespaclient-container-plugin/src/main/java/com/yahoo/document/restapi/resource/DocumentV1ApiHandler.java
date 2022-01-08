@@ -1022,10 +1022,12 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                     case TIMEOUT:
                         jsonResponse.commit(Response.Status.GATEWAY_TIMEOUT);
                         break;
-                    default:
-                        log.log(WARNING, "Unexpected document API operation outcome '" + response.outcome() + "'");
                     case ERROR:
                         log.log(FINE, () -> "Exception performing document operation: " + response.getTextMessage());
+                        jsonResponse.commit(Response.Status.BAD_GATEWAY);
+                        break;
+                    default:
+                        log.log(WARNING, "Unexpected document API operation outcome '" + response.outcome() + "' " + response.getTextMessage());
                         jsonResponse.commit(Response.Status.BAD_GATEWAY);
                 }
             }
@@ -1059,7 +1061,8 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
     private void updateRemoveMetrics(Outcome outcome) {
         switch (outcome) {
-            case SUCCESS: metric.add(MetricNames.SUCCEEDED, 1, null); break;
+            case SUCCESS:
+            case NOT_FOUND: metric.add(MetricNames.SUCCEEDED, 1, null); break;
             case CONDITION_FAILED: metric.add(MetricNames.CONDITION_NOT_MET, 1, null); break;
             default: metric.add(MetricNames.FAILED, 1, null); break;
         }
@@ -1248,6 +1251,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         visit(request, parameters, false, handler, new VisitCallback() { });
     }
 
+    @SuppressWarnings("fallthrough")
     private void visit(HttpRequest request, VisitorParameters parameters, boolean streaming, ResponseHandler handler, VisitCallback callback) {
         try {
             JsonResponse response = JsonResponse.create(request, handler);

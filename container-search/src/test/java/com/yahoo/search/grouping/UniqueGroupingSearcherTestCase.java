@@ -17,9 +17,8 @@ import com.yahoo.search.searchchain.Execution;
 import com.yahoo.yolean.Exceptions;
 import org.junit.Test;
 
-import static org.hamcrest.CoreMatchers.containsString;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 /**
@@ -49,11 +48,9 @@ public class UniqueGroupingSearcherTestCase {
             fail("Above statement should throw");
         } catch (IllegalArgumentException e) {
             // As expected.
-            assertThat(
-                    Exceptions.toMessageString(e),
-                    containsString(
-                            "Could not set 'ranking.sorting' to '-1': " +
-                            "Illegal attribute name '1' for sorting. Requires '[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*[\\]]*'"));
+            assertTrue(Exceptions.toMessageString(e).contains("Could not set 'ranking.sorting' to '-1': " +
+                                                              "Illegal attribute name '1' for sorting. " +
+                                                              "Requires '[\\[]*[a-zA-Z_][\\.a-zA-Z0-9_-]*[\\]]*'"));
         }
     }
 

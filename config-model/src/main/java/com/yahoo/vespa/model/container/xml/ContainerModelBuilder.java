@@ -187,7 +187,6 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         addConfiguredComponents(deployState, cluster, spec);
         addSecretStore(cluster, spec, deployState);
 
-        addServlets(deployState, spec, cluster);
         addModelEvaluation(spec, cluster, context);
         addModelEvaluationBundles(cluster);
 
@@ -426,7 +425,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             cluster.setHttp(buildHttp(deployState, cluster, httpElement));
         }
         if (isHostedTenantApplication(context)) {
-            addHostedImplicitHttpIfNotPresent(cluster);
+            addHostedImplicitHttpIfNotPresent(deployState, cluster);
             addHostedImplicitAccessControlIfNotPresent(deployState, cluster);
             addDefaultConnectorHostedFilterBinding(cluster);
             addAdditionalHostedConnector(deployState, cluster, context);
@@ -488,13 +487,13 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         return deployState.isHosted() && context.getApplicationType() == ApplicationType.DEFAULT && !isTesterApplication;
     }
 
-    private static void addHostedImplicitHttpIfNotPresent(ApplicationContainerCluster cluster) {
+    private static void addHostedImplicitHttpIfNotPresent(DeployState deployState, ApplicationContainerCluster cluster) {
         if (cluster.getHttp() == null) {
             cluster.setHttp(new Http(new FilterChains(cluster)));
         }
         JettyHttpServer httpServer = cluster.getHttp().getHttpServer().orElse(null);
         if (httpServer == null) {
-            httpServer = new JettyHttpServer("DefaultHttpServer", cluster, cluster.isHostedVespa());
+            httpServer = new JettyHttpServer("DefaultHttpServer", cluster, deployState);
             cluster.getHttp().setHttpServer(httpServer);
         }
         int defaultPort = Defaults.getDefaults().vespaWebServicePort();
@@ -525,12 +524,6 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             http.removeAllServers();
 
         return http;
-    }
-
-    // TODO Vespa 8: Remove
-    private void addServlets(DeployState deployState, Element spec, ApplicationContainerCluster cluster) {
-        if (XML.getChildren(spec, "servlet").size() > 0)
-            throw new IllegalArgumentException("The 'servlet' tag is no longer supported in services.xml. Please use a handler instead.");
     }
 
     private void addDocumentApi(Element spec, ApplicationContainerCluster cluster) {
@@ -1070,7 +1063,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
     private static class JvmOptions {
 
-        private static final Pattern validPattern = Pattern.compile("-[a-zA-z0-9=:]+");
+        private static final Pattern validPattern = Pattern.compile("-[a-zA-z0-9=:./]+");
 
         private final ContainerCluster<?> cluster;
         private final Element nodesElement;
@@ -1102,23 +1095,34 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             String jvmOptions;
             if (nodesElement.hasAttribute(VespaDomBuilder.JVM_OPTIONS)) {
                 jvmOptions = nodesElement.getAttribute(VespaDomBuilder.JVM_OPTIONS);
-                validateJvmOptions(jvmOptions);
                 if (nodesElement.hasAttribute(VespaDomBuilder.JVMARGS_ATTRIB_NAME)) {
                     String jvmArgs = nodesElement.getAttribute(VespaDomBuilder.JVMARGS_ATTRIB_NAME);
-                    throw new IllegalArgumentException("You have specified both jvm-options='" + jvmOptions + "'" +
+                    throw new IllegalArgumentException("You have specified both deprecated jvm-options='" + jvmOptions + "'" +
                                                                " and deprecated jvmargs='" + jvmArgs +
-                                                               "'. Merge jvmargs into 'options' in 'jvm' element." +
+                                                               "'. 'jvm-options' and 'jvmargs' are deprecated and will be removed in Vespa 8." +
+                                                               " Please merge 'jvmargs' into 'options' or 'gc-options' in 'jvm' element." +
                                                                " See https://docs.vespa.ai/en/reference/services-container.html#jvm");
                 }
+                if (! jvmOptions.isEmpty())
+                    logger.logApplicationPackage(WARNING, "'jvm-options' is deprecated and will be removed in Vespa 8." +
+                            " Please merge 'jvm-options' into 'options' or 'gc-options' in 'jvm' element." +
+                            " See https://docs.vespa.ai/en/reference/services-container.html#jvm");
             } else {
                 jvmOptions = nodesElement.getAttribute(VespaDomBuilder.JVMARGS_ATTRIB_NAME);
-                validateJvmOptions(jvmOptions);
                 if (incompatibleGCOptions(jvmOptions)) {
-                    logger.logApplicationPackage(WARNING, "You need to move your GC-related options from deprecated 'jvmargs' to 'gc-options' in 'jvm' element." +
+                    logger.logApplicationPackage(WARNING, "You need to move your GC-related options from deprecated 'jvmargs'" +
+                            "  to 'gc-options' in 'jvm' element. 'jvmargs' is deprecated and will be removed in Vespa 8." +
                             " See https://docs.vespa.ai/en/reference/services-container.html#jvm");
                     cluster.setJvmGCOptions(ContainerCluster.G1GC);
                 }
+                if (! jvmOptions.isEmpty())
+                    logger.logApplicationPackage(WARNING, "'jvmargs' is deprecated and will be removed in Vespa 8." +
+                            " Please merge 'jvmargs' into 'options' or 'gc-options' in 'jvm' element." +
+                            " See https://docs.vespa.ai/en/reference/services-container.html#jvm");
             }
+
+            validateJvmOptions(jvmOptions);
+
             return jvmOptions;
         }
 

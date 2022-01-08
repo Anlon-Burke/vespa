@@ -303,7 +303,7 @@ public class Flags {
     );
 
     public static final UnboundBooleanFlag ENABLE_ROUTING_REUSE_PORT = defineFeatureFlag(
-            "enable-routing-reuse-port", false,
+            "enable-routing-reuse-port", true,
             List.of("mortent"), "2021-09-29", "2022-02-01",
             "Enable reuse port in routing configuration",
             "Takes effect on container restart",
@@ -398,6 +398,20 @@ public class Flags {
             List.of("hmusum"), "2021-12-20", "2022-01-20",
             "Whether to fail deployments with invalid JVM options in services.xml",
             "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag ENABLE_SERVER_OCSP_STAPLING = defineFeatureFlag(
+            "enable-server-ocsp-stapling", false,
+            List.of("bjorncs"), "2021-12-17", "2022-06-01",
+            "Enable server OCSP stapling for jdisc containers",
+            "Takes effect on redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag ENABLE_DATA_HIGHWAY_IN_AWS = defineFeatureFlag(
+            "enable-data-highway-in-aws", false,
+            List.of("hmusum"), "2022-01-06", "2022-04-06",
+            "Enable Data Highway in AWS",
+            "Takes effect on restart of Docker container",
             ZONE_ID, APPLICATION_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */

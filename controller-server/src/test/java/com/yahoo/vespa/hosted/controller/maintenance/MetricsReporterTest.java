@@ -295,7 +295,7 @@ public class MetricsReporterTest {
         var tester = new ControllerTester();
         var reporter = createReporter(tester.controller());
         var zone = ZoneId.from("prod.eu-west-1");
-        tester.zoneRegistry().setUpgradePolicy(UpgradePolicy.create().upgrade(ZoneApiMock.from(zone)));
+        tester.zoneRegistry().setUpgradePolicy(UpgradePolicy.builder().upgrade(ZoneApiMock.from(zone)).build());
         var systemUpgrader = new SystemUpgrader(tester.controller(), Duration.ofDays(1)
         );
         tester.configServer().bootstrap(List.of(zone), SystemApplication.configServer);
@@ -352,7 +352,7 @@ public class MetricsReporterTest {
         var reporter = createReporter(tester.controller());
         var zone = ZoneId.from("prod.eu-west-1");
         var cloud = CloudName.defaultName();
-        tester.zoneRegistry().setOsUpgradePolicy(cloud, UpgradePolicy.create().upgrade(ZoneApiMock.from(zone)));
+        tester.zoneRegistry().setOsUpgradePolicy(cloud, UpgradePolicy.builder().upgrade(ZoneApiMock.from(zone)).build());
         var osUpgrader = new OsUpgrader(tester.controller(), Duration.ofDays(1), CloudName.defaultName());
         var statusUpdater = new OsVersionStatusUpdater(tester.controller(), Duration.ofDays(1)
         );
@@ -552,15 +552,6 @@ public class MetricsReporterTest {
 
         tester.clock().advance(Duration.ofDays(2)); // Thursday at 10:30 (11:30 CET)
         assertEquals("Upgrade is overdue measure relative to window 3", Duration.ofHours(34).plusMinutes(30), metric.get());
-    }
-
-    @Test
-    public void overdue_upgrade_completely_blocked() {
-        ApplicationPackage pkg = new ApplicationPackageBuilder().region("us-west-1")
-                                                                .blockChange(false, true, "mon-sun", "0-23", "CET")
-                                                                .build();
-        Instant mondayNight = Instant.parse("2021-12-13T23:00:00.00Z");
-        assertEquals(Duration.ZERO, MetricsReporter.overdueUpgradeDuration(mondayNight, pkg.deploymentSpec().requireInstance("default")));
     }
 
     private void assertNodeCount(String metric, int n, Version version) {

@@ -87,7 +87,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Consumer;
-import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -440,7 +439,8 @@ public class ApplicationController {
         for (Notification notification : controller.notificationsDb().listNotifications(NotificationSource.from(application.get().id()), true)) {
             if ( ! notification.source().instance().map(declaredInstances::contains).orElse(false))
                 controller.notificationsDb().removeNotifications(notification.source());
-            if ( ! notification.source().zoneId().map(application.get().require(notification.source().instance().get()).deployments()::containsKey).orElse(false))
+            if (notification.source().instance().isPresent() &&
+                    ! notification.source().zoneId().map(application.get().require(notification.source().instance().get()).deployments()::containsKey).orElse(false))
                 controller.notificationsDb().removeNotifications(notification.source());
         }
 
@@ -449,12 +449,12 @@ public class ApplicationController {
     }
 
     /** Deploy a system application to given zone */
-    public void deploy(SystemApplication application, ZoneId zone, Version version) {
+    public void deploy(SystemApplication application, ZoneId zone, Version version, boolean allowDowngrade) {
         if (application.hasApplicationPackage()) {
             deploySystemApplicationPackage(application, zone, version);
         } else {
             // Deploy by calling node repository directly
-            configServer.nodeRepository().upgrade(zone, application.nodeType(), version);
+            configServer.nodeRepository().upgrade(zone, application.nodeType(), version, allowDowngrade);
         }
     }
 

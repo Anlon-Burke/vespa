@@ -26,11 +26,6 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.hamcrest</groupId>
-      <artifactId>hamcrest-library</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
       <groupId>com.yahoo.vespa</groupId>
       <artifactId>provided-dependencies</artifactId>
       <version>${project.version}</version>
@@ -218,9 +213,6 @@
             <arg>-Xlint:-rawtypes</arg>
             <arg>-Xlint:-unchecked</arg>
             <arg>-Xlint:-serial</arg>
-            <arg>-Xlint:-deprecation</arg>
-            <arg>-Xlint:-dep-ann</arg>
-            <arg>-Xlint:-cast</arg>
             <arg>-Werror</arg>
           </compilerArgs>
         </configuration>
