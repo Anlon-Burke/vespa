@@ -3,6 +3,7 @@
 #include "fusion.h"
 #include "fusion_input_index.h"
 #include "field_merger.h"
+#include "field_mergers_state.h"
 #include <vespa/fastos/file.h>
 #include <vespa/searchlib/common/documentsummary.h>
 #include <vespa/searchlib/common/i_flush_token.h>
@@ -34,6 +35,7 @@ namespace {
 std::vector<FusionInputIndex>
 createInputIndexes(const std::vector<vespalib::string> & sources, const SelectorArray &selector)
 {
+    assert(sources.size() <= 255); // due to source selector data type
     std::vector<FusionInputIndex> indexes;
     indexes.reserve(sources.size());
     uint32_t i = 0;
@@ -43,17 +45,28 @@ createInputIndexes(const std::vector<vespalib::string> & sources, const Selector
     return indexes;
 }
 
+uint32_t calc_trimmed_doc_id_limit(const SelectorArray& selector, const std::vector<vespalib::string>& sources)
+{
+    uint32_t docIdLimit = selector.size();
+    uint32_t trimmed_doc_id_limit = docIdLimit;
+
+    // Limit docIdLimit in output based on selections that cannot be satisfied
+    uint32_t sources_size = sources.size();
+    while (trimmed_doc_id_limit > 0 && selector[trimmed_doc_id_limit - 1] >= sources_size) {
+        --trimmed_doc_id_limit;
+    }
+    return trimmed_doc_id_limit;
 }
 
-Fusion::Fusion(uint32_t docIdLimit, const Schema & schema, const vespalib::string & dir,
-               const std::vector<vespalib::string> & sources, const SelectorArray &selector,
-               bool dynamicKPosIndexFormat, const TuneFileIndexing &tuneFileIndexing,
-               const FileHeaderContext &fileHeaderContext)
-    : _fusion_out_index(schema, dir, createInputIndexes(sources, selector), docIdLimit, dynamicKPosIndexFormat, tuneFileIndexing, fileHeaderContext)
+}
+
+Fusion::Fusion(const Schema& schema, const vespalib::string& dir,
+               const std::vector<vespalib::string>& sources, const SelectorArray& selector,
+               const TuneFileIndexing& tuneFileIndexing,
+               const FileHeaderContext& fileHeaderContext)
+    : _old_indexes(createInputIndexes(sources, selector)),
+      _fusion_out_index(schema, dir, _old_indexes, calc_trimmed_doc_id_limit(selector, sources), tuneFileIndexing, fileHeaderContext)
 {
-    if (!readSchemaFiles()) {
-        throw IllegalArgumentException("Cannot read schema files for source indexes");
-    }
 }
 
 Fusion::~Fusion() = default;
@@ -61,28 +74,17 @@ Fusion::~Fusion() = default;
 bool
 Fusion::mergeFields(vespalib::ThreadExecutor & executor, std::shared_ptr<IFlushToken> flush_token)
 {
+    FieldMergersState field_mergers_state(_fusion_out_index, executor, flush_token);
     const Schema &schema = getSchema();
-    std::atomic<uint32_t> failed(0);
-    uint32_t maxConcurrentThreads = std::max(1ul, executor.getNumThreads()/2);
-    document::Semaphore concurrent(maxConcurrentThreads);
-    vespalib::CountDownLatch  done(schema.getNumIndexFields());
     for (SchemaUtil::IndexIterator iter(schema); iter.isValid(); ++iter) {
-        concurrent.wait();
-        executor.execute(vespalib::makeLambdaTask([this, index=iter.getIndex(), &failed, &done, &concurrent, flush_token]() {
-            FieldMerger merger(index, _fusion_out_index, flush_token);
-            if (!merger.merge_field()) {
-                failed++;
-            }
-            concurrent.post();
-            done.countDown();
-        }));
+        auto& field_merger = field_mergers_state.alloc_field_merger(iter.getIndex());
+        field_mergers_state.schedule_task(field_merger);
     }
     LOG(debug, "Waiting for %u fields", schema.getNumIndexFields());
-    done.await();
+    field_mergers_state.wait_field_mergers_done();
     LOG(debug, "Done waiting for %u fields", schema.getNumIndexFields());
-    return (failed == 0u);
+    return (field_mergers_state.get_failed() == 0u);
 }
-
 
 bool
 Fusion::checkSchemaCompat()
@@ -102,51 +104,41 @@ Fusion::readSchemaFiles()
 }
 
 bool
-Fusion::merge(const Schema &schema, const vespalib::string &dir, const std::vector<vespalib::string> &sources,
-              const SelectorArray &selector, bool dynamicKPosOccFormat,
-              const TuneFileIndexing &tuneFileIndexing, const FileHeaderContext &fileHeaderContext,
-              vespalib::ThreadExecutor & executor,
-              std::shared_ptr<IFlushToken> flush_token)
+Fusion::merge(vespalib::ThreadExecutor& executor, std::shared_ptr<IFlushToken> flush_token)
 {
-    assert(sources.size() <= 255);
-    uint32_t docIdLimit = selector.size();
-    uint32_t trimmedDocIdLimit = docIdLimit;
-
-    // Limit docIdLimit in output based on selections that cannot be satisfied
-    uint32_t sourcesSize = sources.size();
-    while (trimmedDocIdLimit > 0 && selector[trimmedDocIdLimit - 1] >= sourcesSize) {
-        --trimmedDocIdLimit;
-    }
-
     FastOS_StatInfo statInfo;
-    if (!FastOS_File::Stat(dir.c_str(), &statInfo)) {
+    if (!FastOS_File::Stat(_fusion_out_index.get_path().c_str(), &statInfo)) {
         if (statInfo._error != FastOS_StatInfo::FileNotFound) {
-            LOG(error, "Could not stat \"%s\"", dir.c_str());
+            LOG(error, "Could not stat \"%s\"", _fusion_out_index.get_path().c_str());
             return false;
         }
     } else {
         if (!statInfo._isDirectory) {
-            LOG(error, "\"%s\" is not a directory", dir.c_str());
+            LOG(error, "\"%s\" is not a directory", _fusion_out_index.get_path().c_str());
             return false;
         }
-        search::DirectoryTraverse dt(dir.c_str());
+        search::DirectoryTraverse dt(_fusion_out_index.get_path().c_str());
         if (!dt.RemoveTree()) {
-            LOG(error, "Failed to clean directory \"%s\"", dir.c_str());
+            LOG(error, "Failed to clean directory \"%s\"", _fusion_out_index.get_path().c_str());
             return false;
         }
     }
 
-    vespalib::mkdir(dir, false);
-    schema.saveToFile(dir + "/schema.txt");
-    if (!DocumentSummary::writeDocIdLimit(dir, trimmedDocIdLimit)) {
-        LOG(error, "Could not write docsum count in dir %s: %s", dir.c_str(), getLastErrorString().c_str());
+    vespalib::mkdir(_fusion_out_index.get_path(), false);
+    _fusion_out_index.get_schema().saveToFile(_fusion_out_index.get_path() + "/schema.txt");
+    if (!DocumentSummary::writeDocIdLimit(_fusion_out_index.get_path(), _fusion_out_index.get_doc_id_limit())) {
+        LOG(error, "Could not write docsum count in dir %s: %s", _fusion_out_index.get_path().c_str(), getLastErrorString().c_str());
         return false;
     }
 
     try {
-        auto fusion = std::make_unique<Fusion>(trimmedDocIdLimit, schema, dir, sources, selector,
-                                               dynamicKPosOccFormat, tuneFileIndexing, fileHeaderContext);
-        return fusion->mergeFields(executor, flush_token);
+        for (auto& old_index : _old_indexes) {
+            old_index.setup();
+        }
+        if (!readSchemaFiles()) {
+            throw IllegalArgumentException("Cannot read schema files for source indexes");
+        }
+        return mergeFields(executor, flush_token);
     } catch (const std::exception & e) {
         LOG(error, "%s", e.what());
         return false;

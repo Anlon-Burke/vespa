@@ -40,9 +40,9 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private boolean useThreePhaseUpdates = false;
     private double defaultTermwiseLimit = 1.0;
     private String jvmGCOptions = null;
-    private String sequencerType = "LATENCY";
+    private String sequencerType = "THROUGHPUT";
     private int feedTaskLimit = 1000;
-    private int feedMasterTaskLimit = 0;
+    private int feedMasterTaskLimit = 1000;
     private String sharedFieldWriterExecutor = "NONE";
     private boolean firstTimeDeployment = false;
     private String responseSequencerType = "ADAPTIVE";
@@ -57,9 +57,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private List<TenantSecretStore> tenantSecretStores = Collections.emptyList();
     private String jvmOmitStackTraceInFastThrowOption;
     private int maxConcurrentMergesPerNode = 16;
-    private int maxMergeQueueSize = 1024;
-    private boolean ignoreMergeQueueLimit = false;
-    private int largeRankExpressionLimit = 8192;
+    private int maxMergeQueueSize = 100;
     private boolean allowDisableMtls = true;
     private List<X509Certificate> operatorCertificates = Collections.emptyList();
     private double resourceLimitDisk = 0.8;
@@ -67,17 +65,12 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private double minNodeRatioPerGroup = 0.0;
     private boolean containerDumpHeapOnShutdownTimeout = false;
     private double containerShutdownTimeout = 50.0;
-    private int distributorMergeBusyWait = 10;
-    private int docstoreCompressionLevel = 9;
     private int maxUnCommittedMemory = 123456;
-    private double diskBloatFactor = 0.2;
-    private boolean distributorEnhancedMaintenanceScheduling = false;
-    private boolean asyncApplyBucketDiff = false;
-    private boolean unorderedMergeChaining = false;
+    private boolean unorderedMergeChaining = true;
     private List<String> zoneDnsSuffixes = List.of();
     private int maxCompactBuffers = 1;
     private boolean failDeploymentWithInvalidJvmOptions = false;
-    private double tlsSizeFraction = 0.07;
+    private String persistenceAsyncThrottling = "UNLIMITED";
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
     @Override public boolean multitenant() { return multitenant; }
@@ -115,40 +108,22 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public String jvmOmitStackTraceInFastThrowOption(ClusterSpec.Type type) { return jvmOmitStackTraceInFastThrowOption; }
     @Override public boolean allowDisableMtls() { return allowDisableMtls; }
     @Override public List<X509Certificate> operatorCertificates() { return operatorCertificates; }
-    @Override public int largeRankExpressionLimit() { return largeRankExpressionLimit; }
     @Override public int maxConcurrentMergesPerNode() { return maxConcurrentMergesPerNode; }
     @Override public int maxMergeQueueSize() { return maxMergeQueueSize; }
-    @Override public boolean ignoreMergeQueueLimit() { return ignoreMergeQueueLimit; }
     @Override public double resourceLimitDisk() { return resourceLimitDisk; }
     @Override public double resourceLimitMemory() { return resourceLimitMemory; }
     @Override public double minNodeRatioPerGroup() { return minNodeRatioPerGroup; }
-    @Override public int metricsproxyNumThreads() { return 1; }
     @Override public double containerShutdownTimeout() { return containerShutdownTimeout; }
     @Override public boolean containerDumpHeapOnShutdownTimeout() { return containerDumpHeapOnShutdownTimeout; }
-    @Override public int distributorMergeBusyWait() { return distributorMergeBusyWait; }
-    @Override public double diskBloatFactor() { return diskBloatFactor; }
-    @Override public int docstoreCompressionLevel() { return docstoreCompressionLevel; }
-    @Override public boolean distributorEnhancedMaintenanceScheduling() { return distributorEnhancedMaintenanceScheduling; }
     @Override public int maxUnCommittedMemory() { return maxUnCommittedMemory; }
-    @Override public boolean asyncApplyBucketDiff() { return asyncApplyBucketDiff; }
     @Override public boolean unorderedMergeChaining() { return unorderedMergeChaining; }
     @Override public List<String> zoneDnsSuffixes() { return zoneDnsSuffixes; }
     @Override public int maxCompactBuffers() { return maxCompactBuffers; }
     @Override public boolean failDeploymentWithInvalidJvmOptions() { return failDeploymentWithInvalidJvmOptions; }
-    @Override public double tlsSizeFraction() { return tlsSizeFraction; }
+    @Override public String persistenceAsyncThrottling() { return persistenceAsyncThrottling; }
 
     public TestProperties maxUnCommittedMemory(int maxUnCommittedMemory) {
         this.maxUnCommittedMemory = maxUnCommittedMemory;
-        return this;
-    }
-
-    public TestProperties docstoreCompressionLevel(int docstoreCompressionLevel) {
-        this.docstoreCompressionLevel = docstoreCompressionLevel;
-        return this;
-    }
-
-    public TestProperties diskBloatFactor(double diskBloatFactor) {
-        this.diskBloatFactor = diskBloatFactor;
         return this;
     }
 
@@ -160,10 +135,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         containerShutdownTimeout = value;
         return this;
     }
-    public TestProperties largeRankExpressionLimit(int value) {
-        largeRankExpressionLimit = value;
-        return this;
-    }
+
     public TestProperties setFeedConcurrency(double feedConcurrency) {
         this.feedConcurrency = feedConcurrency;
         return this;
@@ -213,11 +185,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     }
     public TestProperties setMaxMergeQueueSize(int maxMergeQueueSize) {
         this.maxMergeQueueSize = maxMergeQueueSize;
-        return this;
-    }
-
-    public TestProperties setIgnoreMergeQueueLimit(boolean ignoreMergeQueueLimit) {
-        this.ignoreMergeQueueLimit = ignoreMergeQueueLimit;
         return this;
     }
 
@@ -321,21 +288,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
-    public TestProperties setDistributorMergeBusyWait(int value) {
-        distributorMergeBusyWait = value;
-        return this;
-    }
-
-    public TestProperties distributorEnhancedMaintenanceScheduling(boolean enhancedScheduling) {
-        distributorEnhancedMaintenanceScheduling = enhancedScheduling;
-        return this;
-    }
-
-    public TestProperties setAsyncApplyBucketDiff(boolean value) {
-        asyncApplyBucketDiff = value;
-        return this;
-    }
-
     public TestProperties setUnorderedMergeChaining(boolean unordered) {
         unorderedMergeChaining = unordered;
         return this;
@@ -356,8 +308,8 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
-    public TestProperties tlsSizeFraction(double tlsSizeFraction) {
-        this.tlsSizeFraction = tlsSizeFraction;
+    public TestProperties setPersistenceAsyncThrottling(String type) {
+        this.persistenceAsyncThrottling = type;
         return this;
     }
 

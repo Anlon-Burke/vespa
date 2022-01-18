@@ -33,7 +33,7 @@ public class DeploymentApiTest extends ControllerContainerTest {
     public void testDeploymentApi() {
         ContainerTester tester = new ContainerTester(container, responseFiles);
         DeploymentTester deploymentTester = new DeploymentTester(new ControllerTester(tester));
-        Version version = Version.fromString("5.0");
+        Version version = Version.fromString("4.9");
         deploymentTester.controllerTester().upgradeSystem(version);
         ApplicationPackage multiInstancePackage = new ApplicationPackageBuilder()
                 .instances("i1,i2")
@@ -42,8 +42,20 @@ public class DeploymentApiTest extends ControllerContainerTest {
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
                 .region("us-west-1")
                 .build();
+        ApplicationPackage emptyPackage = new ApplicationPackageBuilder().instances("default")
+                                                                         .allow(ValidationId.deploymentRemoval)
+                                                                         .build();
 
-        // 3 applications deploy on current system version
+        // Deploy application without any declared jobs on the oldest version.
+        var oldAppWithoutDeployment = deploymentTester.newDeploymentContext("tenant4", "application4", "default");
+        oldAppWithoutDeployment.submit().failDeployment(JobType.systemTest);
+        oldAppWithoutDeployment.submit(emptyPackage);
+
+        // System upgrades to 5.0 for the other applications.
+        version = Version.fromString("5.0");
+        deploymentTester.controllerTester().upgradeSystem(version);
+
+        // 3 applications deploy on current system version.
         var failingApp = deploymentTester.newDeploymentContext("tenant1", "application1", "default");
         var productionApp = deploymentTester.newDeploymentContext("tenant2", "application2", "i1");
         var otherProductionApp = deploymentTester.newDeploymentContext("tenant2", "application2", "i2");

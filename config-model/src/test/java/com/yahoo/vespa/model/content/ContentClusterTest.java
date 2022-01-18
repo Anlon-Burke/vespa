@@ -45,7 +45,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalDouble;
 import java.util.OptionalInt;
 
 import static org.junit.Assert.assertEquals;
@@ -1046,11 +1045,9 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(7, resolveMaxCompactBuffers(OptionalInt.of(7)));
     }
 
-    private long resolveMaxTLSSize(OptionalDouble tlsSizeFraction, Optional<Flavor> flavor) throws Exception {
+    private long resolveMaxTLSSize(Optional<Flavor> flavor) throws Exception {
         TestProperties testProperties = new TestProperties();
-        if (tlsSizeFraction.isPresent()) {
-            testProperties.tlsSizeFraction(tlsSizeFraction.getAsDouble());
-        }
+
         ContentCluster cc = createOneNodeCluster(testProperties, flavor);
         ProtonConfig.Builder protonBuilder = new ProtonConfig.Builder();
         cc.getSearch().getSearchNodes().get(0).getConfig(protonBuilder);
@@ -1058,13 +1055,10 @@ public class ContentClusterTest extends ContentBaseTest {
         return protonConfig.flush().memory().maxtlssize();
     }
     @Test
-    public void default_max_tls_size_controlled_by_properties() throws Exception {
+    public void verifyt_max_tls_size() throws Exception {
         var flavor = new Flavor(new FlavorsConfig.Flavor(new FlavorsConfig.Flavor.Builder().name("test").minDiskAvailableGb(100)));
-        assertEquals(21474836480L, resolveMaxTLSSize(OptionalDouble.empty(), Optional.empty()));
-        assertEquals(21474836480L, resolveMaxTLSSize(OptionalDouble.of(0.02), Optional.empty()));
-        assertEquals(7516192768L, resolveMaxTLSSize(OptionalDouble.empty(), Optional.of(flavor)));
-        assertEquals(2147483648L, resolveMaxTLSSize(OptionalDouble.of(0.02), Optional.of(flavor)));
-        assertEquals(3221225472L, resolveMaxTLSSize(OptionalDouble.of(0.03), Optional.of(flavor)));
+        assertEquals(21474836480L, resolveMaxTLSSize(Optional.empty()));
+        assertEquals(2147483648L, resolveMaxTLSSize(Optional.of(flavor)));
     }
 
     void assertZookeeperServerImplementation(String expectedClassName,
@@ -1126,49 +1120,15 @@ public class ContentClusterTest extends ContentBaseTest {
     }
 
     @Test
-    public void distributor_merge_busy_wait_controlled_by_properties() throws Exception {
-        assertEquals(10, resolveDistributorMergeBusyWaitConfig(Optional.empty()));
-        assertEquals(1, resolveDistributorMergeBusyWaitConfig(Optional.of(1)));
-    }
-
-    private int resolveDistributorMergeBusyWaitConfig(Optional<Integer> mergeBusyWait) throws Exception {
-        var props = new TestProperties();
-        if (mergeBusyWait.isPresent()) {
-            props.setDistributorMergeBusyWait(mergeBusyWait.get());
-        }
-        var cluster = createOneNodeCluster(props);
-        var builder = new StorDistributormanagerConfig.Builder();
-        cluster.getDistributorNodes().getConfig(builder);
-        return (new StorDistributormanagerConfig(builder)).inhibit_merge_sending_on_busy_node_duration_sec();
-    }
-
-    @Test
-    public void distributor_enhanced_maintenance_scheduling_controlled_by_properties() throws Exception {
-        assertFalse(resolveDistributorEnhancedSchedulingConfig(false));
-        assertTrue(resolveDistributorEnhancedSchedulingConfig(true));
-    }
-
-    private boolean resolveDistributorEnhancedSchedulingConfig(boolean enhancedScheduling) throws Exception {
-        var props = new TestProperties();
-        if (enhancedScheduling) {
-            props.distributorEnhancedMaintenanceScheduling(enhancedScheduling);
-        }
-        var cluster = createOneNodeCluster(props);
-        var builder = new StorDistributormanagerConfig.Builder();
-        cluster.getDistributorNodes().getConfig(builder);
-        return (new StorDistributormanagerConfig(builder)).implicitly_clear_bucket_priority_on_schedule();
-    }
-
-    @Test
     public void unordered_merge_chaining_config_controlled_by_properties() throws Exception {
-        assertFalse(resolveUnorderedMergeChainingConfig(false));
-        assertTrue(resolveUnorderedMergeChainingConfig(true));
+        assertFalse(resolveUnorderedMergeChainingConfig(Optional.of(false)));
+        assertTrue(resolveUnorderedMergeChainingConfig(Optional.empty()));
     }
 
-    private boolean resolveUnorderedMergeChainingConfig(boolean unorderedMergeChaining) throws Exception {
+    private boolean resolveUnorderedMergeChainingConfig(Optional<Boolean> unorderedMergeChaining) throws Exception {
         var props = new TestProperties();
-        if (unorderedMergeChaining) {
-            props.setUnorderedMergeChaining(true);
+        if (unorderedMergeChaining.isPresent()) {
+            props.setUnorderedMergeChaining(unorderedMergeChaining.get());
         }
         var cluster = createOneNodeCluster(props);
         var builder = new StorDistributormanagerConfig.Builder();

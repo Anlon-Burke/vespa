@@ -54,7 +54,7 @@ flush.strategy enum {SIMPLE, MEMORY} default=MEMORY restart
 flush.memory.maxmemory long default=4294967296
 
 ## Maximum total disk bloat factor before forcing flush.
-flush.memory.diskbloatfactor double default=0.2
+flush.memory.diskbloatfactor double default=0.25
 
 ## Max disk usage (in bytes) for all transaction logs before running flush.
 ## In this case the oldest component is flushed such that transaction log can be pruned and disk freed.
@@ -65,7 +65,7 @@ flush.memory.maxtlssize long default=21474836480
 flush.memory.each.maxmemory long default=1073741824
 
 ## Maximum disk bloat factor per component before forcing flush.
-flush.memory.each.diskbloatfactor double default=0.2
+flush.memory.each.diskbloatfactor double default=0.25
 
 ## Age of unflushed content before forcing age prioritization.
 ## Unit is seconds with 31 hours being the default.
@@ -130,7 +130,7 @@ indexing.threads int default=1 restart
 
 ## Option to specify what is most important during indexing.
 ## This is experimental and will most likely be temporary.
-indexing.optimize enum {LATENCY, THROUGHPUT, ADAPTIVE} default=LATENCY restart
+indexing.optimize enum {LATENCY, THROUGHPUT, ADAPTIVE} default=THROUGHPUT restart
 
 ## Maximum number of pending operations for each of the internal
 ## indexing threads.  Only used when visibility delay is zero.
@@ -203,7 +203,7 @@ distribution.searchablecopies long default=1
 ## Control cache size in bytes.
 ## Postive numbers are absolute in bytes.
 ## Negative numbers are a percentage of memory.
-summary.cache.maxbytes long default=-5
+summary.cache.maxbytes long default=-4
 
 ## Include visits in the cache, if the visitoperation allows it.
 ## This will enable another separate cache of summary.cache.maxbytes size.
@@ -517,7 +517,7 @@ feeding.shared_field_writer_executor enum {NONE, INDEX, INDEX_AND_ATTRIBUTE, DOC
 ## This limit is only considered when executing tasks for handling external feed operations.
 ## In that case the calling thread (persistence thread) is blocked until the master thread has capacity to handle more tasks.
 ## When this limit is set to 0 it is ignored.
-feeding.master_task_limit int default = 0
+feeding.master_task_limit int default = 1000
 
 ## Adjustment to resource limit when determining if maintenance jobs can run.
 ##

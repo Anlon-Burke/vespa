@@ -183,30 +183,24 @@ public class ModelContextImpl implements ModelContext {
         private final ToIntFunction<ClusterSpec.Type> jvmOmitStackTraceInFastThrow;
         private final int maxConcurrentMergesPerContentNode;
         private final int maxMergeQueueSize;
-        private final boolean ignoreMergeQueueLimit;
-        private final int largeRankExpressionLimit;
         private final double resourceLimitDisk;
         private final double resourceLimitMemory;
         private final double minNodeRatioPerGroup;
         private final int metricsproxyNumThreads;
+        private final int availableProcessors;
         private final boolean containerDumpHeapOnShutdownTimeout;
         private final double containerShutdownTimeout;
-        private final int distributorMergeBusyWait;
-        private final int docstoreCompressionLevel;
-        private final double diskBloatFactor;
-        private final boolean distributorEnhancedMaintenanceScheduling;
         private final int maxUnCommittedMemory;
         private final boolean forwardIssuesAsErrors;
-        private final boolean asyncApplyBucketDiff;
         private final boolean ignoreThreadStackSizes;
         private final boolean unorderedMergeChaining;
         private final boolean useV8GeoPositions;
         private final boolean useV8DocManagerCfg;
         private final int maxCompactBuffers;
         private final boolean failDeploymentWithInvalidJvmOptions;
-        private final double tlsSizeFraction;
         private final List<String> ignoredHttpUserAgents;
         private final boolean enableServerOcspStapling;
+        private final String persistenceAsyncThrottling;
 
         public FeatureFlags(FlagSource source, ApplicationId appId) {
             this.defaultTermwiseLimit = flagValue(source, appId, Flags.DEFAULT_TERM_WISE_LIMIT);
@@ -226,32 +220,26 @@ public class ModelContextImpl implements ModelContext {
             this.allowedAthenzProxyIdentities = flagValue(source, appId, Flags.ALLOWED_ATHENZ_PROXY_IDENTITIES);
             this.maxActivationInhibitedOutOfSyncGroups = flagValue(source, appId, Flags.MAX_ACTIVATION_INHIBITED_OUT_OF_SYNC_GROUPS);
             this.jvmOmitStackTraceInFastThrow = type -> flagValueAsInt(source, appId, type, PermanentFlags.JVM_OMIT_STACK_TRACE_IN_FAST_THROW);
-            this.largeRankExpressionLimit = flagValue(source, appId, Flags.LARGE_RANK_EXPRESSION_LIMIT);
             this.maxConcurrentMergesPerContentNode = flagValue(source, appId, Flags.MAX_CONCURRENT_MERGES_PER_NODE);
             this.maxMergeQueueSize = flagValue(source, appId, Flags.MAX_MERGE_QUEUE_SIZE);
-            this.ignoreMergeQueueLimit = flagValue(source, appId, Flags.IGNORE_MERGE_QUEUE_LIMIT);
             this.resourceLimitDisk = flagValue(source, appId, PermanentFlags.RESOURCE_LIMIT_DISK);
             this.resourceLimitMemory = flagValue(source, appId, PermanentFlags.RESOURCE_LIMIT_MEMORY);
             this.minNodeRatioPerGroup = flagValue(source, appId, Flags.MIN_NODE_RATIO_PER_GROUP);
             this.metricsproxyNumThreads = flagValue(source, appId, Flags.METRICSPROXY_NUM_THREADS);
+            this.availableProcessors = flagValue(source, appId, Flags.AVAILABLE_PROCESSORS);
             this.containerDumpHeapOnShutdownTimeout = flagValue(source, appId, Flags.CONTAINER_DUMP_HEAP_ON_SHUTDOWN_TIMEOUT);
             this.containerShutdownTimeout = flagValue(source, appId,Flags.CONTAINER_SHUTDOWN_TIMEOUT);
-            this.distributorMergeBusyWait = flagValue(source, appId, Flags.DISTRIBUTOR_MERGE_BUSY_WAIT);
-            this.docstoreCompressionLevel = flagValue(source, appId, Flags.DOCSTORE_COMPRESSION_LEVEL);
-            this.diskBloatFactor = flagValue(source, appId, Flags.DISK_BLOAT_FACTOR);
-            this.distributorEnhancedMaintenanceScheduling = flagValue(source, appId, Flags.DISTRIBUTOR_ENHANCED_MAINTENANCE_SCHEDULING);
-            this.maxUnCommittedMemory = flagValue(source, appId, Flags.MAX_UNCOMMITTED_MEMORY);;
+            this.maxUnCommittedMemory = flagValue(source, appId, Flags.MAX_UNCOMMITTED_MEMORY);
             this.forwardIssuesAsErrors = flagValue(source, appId, PermanentFlags.FORWARD_ISSUES_AS_ERRORS);
-            this.asyncApplyBucketDiff = flagValue(source, appId, Flags.ASYNC_APPLY_BUCKET_DIFF);
             this.ignoreThreadStackSizes = flagValue(source, appId, Flags.IGNORE_THREAD_STACK_SIZES);
             this.unorderedMergeChaining = flagValue(source, appId, Flags.UNORDERED_MERGE_CHAINING);
             this.useV8GeoPositions = flagValue(source, appId, Flags.USE_V8_GEO_POSITIONS);
             this.useV8DocManagerCfg = flagValue(source, appId, Flags.USE_V8_DOC_MANAGER_CFG);
             this.maxCompactBuffers = flagValue(source, appId, Flags.MAX_COMPACT_BUFFERS);
             this.failDeploymentWithInvalidJvmOptions = flagValue(source, appId, Flags.FAIL_DEPLOYMENT_WITH_INVALID_JVM_OPTIONS);
-            this.tlsSizeFraction = flagValue(source, appId, Flags.TLS_SIZE_FRACTION);
             this.ignoredHttpUserAgents = flagValue(source, appId, PermanentFlags.IGNORED_HTTP_USER_AGENTS);
             this.enableServerOcspStapling = flagValue(source, appId, Flags.ENABLE_SERVER_OCSP_STAPLING);
+            this.persistenceAsyncThrottling = flagValue(source, appId, Flags.PERSISTENCE_ASYNC_THROTTLING);
         }
 
         @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
@@ -273,32 +261,26 @@ public class ModelContextImpl implements ModelContext {
         @Override public String jvmOmitStackTraceInFastThrowOption(ClusterSpec.Type type) {
             return translateJvmOmitStackTraceInFastThrowIntToString(jvmOmitStackTraceInFastThrow, type);
         }
-        @Override public int largeRankExpressionLimit() { return largeRankExpressionLimit; }
         @Override public int maxConcurrentMergesPerNode() { return maxConcurrentMergesPerContentNode; }
         @Override public int maxMergeQueueSize() { return maxMergeQueueSize; }
-        @Override public boolean ignoreMergeQueueLimit() { return ignoreMergeQueueLimit; }
         @Override public double resourceLimitDisk() { return resourceLimitDisk; }
         @Override public double resourceLimitMemory() { return resourceLimitMemory; }
         @Override public double minNodeRatioPerGroup() { return minNodeRatioPerGroup; }
-        @Override public int metricsproxyNumThreads() { return metricsproxyNumThreads; }
+        @Override public int defaultPoolNumThreads() { return metricsproxyNumThreads; }
+        @Override public int availableProcessors() { return availableProcessors; }
         @Override public double containerShutdownTimeout() { return containerShutdownTimeout; }
         @Override public boolean containerDumpHeapOnShutdownTimeout() { return containerDumpHeapOnShutdownTimeout; }
-        @Override public int distributorMergeBusyWait() { return distributorMergeBusyWait; }
-        @Override public double diskBloatFactor() { return diskBloatFactor; }
-        @Override public int docstoreCompressionLevel() { return docstoreCompressionLevel; }
-        @Override public boolean distributorEnhancedMaintenanceScheduling() { return distributorEnhancedMaintenanceScheduling; }
         @Override public int maxUnCommittedMemory() { return maxUnCommittedMemory; }
         @Override public boolean forwardIssuesAsErrors() { return forwardIssuesAsErrors; }
-        @Override public boolean asyncApplyBucketDiff() { return asyncApplyBucketDiff; }
         @Override public boolean ignoreThreadStackSizes() { return ignoreThreadStackSizes; }
         @Override public boolean unorderedMergeChaining() { return unorderedMergeChaining; }
         @Override public boolean useV8GeoPositions() { return useV8GeoPositions; }
         @Override public boolean useV8DocManagerCfg() { return useV8DocManagerCfg; }
         @Override public boolean failDeploymentWithInvalidJvmOptions() { return failDeploymentWithInvalidJvmOptions; }
         @Override public int maxCompactBuffers() { return maxCompactBuffers; }
-        @Override public double tlsSizeFraction() { return tlsSizeFraction; }
         @Override public List<String> ignoredHttpUserAgents() { return ignoredHttpUserAgents; }
         @Override public boolean enableServerOcspStapling() { return enableServerOcspStapling; }
+        @Override public String persistenceAsyncThrottling() { return persistenceAsyncThrottling; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)

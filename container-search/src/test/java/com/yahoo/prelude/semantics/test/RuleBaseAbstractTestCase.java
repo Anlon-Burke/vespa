@@ -2,6 +2,7 @@
 package com.yahoo.prelude.semantics.test;
 
 import com.yahoo.component.chain.Chain;
+import com.yahoo.language.simple.SimpleLinguistics;
 import com.yahoo.search.Query;
 import com.yahoo.prelude.semantics.RuleBase;
 import com.yahoo.prelude.semantics.RuleBaseException;
@@ -16,7 +17,7 @@ import java.util.List;
 import static org.junit.Assert.assertEquals;
 
 /**
- * Tests semantic searching
+ * DO NOT USE. Use RuleBaseTester instead
  *
  * @author bratseth
  */
@@ -37,7 +38,7 @@ public abstract class RuleBaseAbstractTestCase {
         try {
             if (automataFileName != null)
                 automataFileName = root + automataFileName;
-            RuleBase ruleBase = RuleBase.createFromFile(root + ruleBaseName, automataFileName);
+            RuleBase ruleBase = RuleBase.createFromFile(root + ruleBaseName, automataFileName, new SimpleLinguistics());
             return new SemanticSearcher(ruleBase);
         } catch (Exception e) {
             throw new RuleBaseException("Initialization of rule base '" + ruleBaseName + "' failed",e);

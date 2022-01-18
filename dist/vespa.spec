@@ -50,11 +50,11 @@ BuildRequires: maven
 %define _java_home /usr/lib/jvm/java-11-amazon-corretto.%{?_arch}
 BuildRequires: python3-pytest
 %else
-BuildRequires: devtoolset-10-gcc-c++
-BuildRequires: devtoolset-10-libatomic-devel
-BuildRequires: devtoolset-10-binutils
+BuildRequires: devtoolset-11-gcc-c++
+BuildRequires: devtoolset-11-libatomic-devel
+BuildRequires: devtoolset-11-binutils
 BuildRequires: rh-maven35
-%define _devtoolset_enable /opt/rh/devtoolset-10/enable
+%define _devtoolset_enable /opt/rh/devtoolset-11/enable
 %define _rhmaven35_enable /opt/rh/rh-maven35/enable
 BuildRequires: python36-pytest
 %endif
@@ -69,10 +69,10 @@ BuildRequires: gcc-toolset-11-binutils
 BuildRequires: gcc-toolset-11-libatomic-devel
 %define _devtoolset_enable /opt/rh/gcc-toolset-11/enable
 %else
-BuildRequires: gcc-toolset-10-gcc-c++
-BuildRequires: gcc-toolset-10-binutils
-BuildRequires: gcc-toolset-10-libatomic-devel
-%define _devtoolset_enable /opt/rh/gcc-toolset-10/enable
+BuildRequires: gcc-toolset-11-gcc-c++
+BuildRequires: gcc-toolset-11-binutils
+BuildRequires: gcc-toolset-11-libatomic-devel
+%define _devtoolset_enable /opt/rh/gcc-toolset-11/enable
 %endif
 BuildRequires: maven
 BuildRequires: pybind11-devel
@@ -124,7 +124,7 @@ BuildRequires: (llvm-devel >= 13.0.0 and llvm-devel < 14)
 BuildRequires: (llvm-devel >= 12.0.0 and llvm-devel < 13)
 %endif
 %else
-BuildRequires: (llvm-devel >= 10.0.1 and llvm-devel < 11)
+BuildRequires: (llvm-devel >= 12.0.1 and llvm-devel < 13)
 %endif
 BuildRequires: vespa-boost-devel >= 1.76.0-1
 BuildRequires: vespa-openssl-devel >= 1.1.1l-1
@@ -302,7 +302,7 @@ Requires: vespa-gtest = 1.11.0
 %define _vespa_llvm_version 12
 %endif
 %else
-%define _vespa_llvm_version 10
+%define _vespa_llvm_version 12
 %endif
 Requires: vespa-gtest = 1.11.0
 %define _extra_link_directory %{_vespa_deps_prefix}/lib64
@@ -432,7 +432,7 @@ Requires: (llvm-libs >= 13.0.0 and llvm-libs < 14)
 Requires: (llvm-libs >= 12.0.0 and llvm-libs < 13)
 %endif
 %else
-Requires: (llvm-libs >= 10.0.1 and llvm-libs < 11)
+Requires: (llvm-libs >= 12.0.1 and llvm-libs < 13)
 %endif
 Requires: vespa-protobuf = 3.19.1
 %endif
@@ -549,6 +549,12 @@ nearest neighbor search used for low-level benchmarking.
 %setup -c -D -T
 %else
 %setup -q
+%if ( 0%{?el8} || 0%{?fc34} ) && %{_vespa_llvm_version} < 13
+if grep -qs 'result_pair<R>(' /usr/include/llvm/ADT/STLExtras.h
+then
+  patch /usr/include/llvm/ADT/STLExtras.h < dist/STLExtras.h.diff
+fi
+%endif
 echo '%{version}' > VERSION
 case '%{version}' in
     *.0)

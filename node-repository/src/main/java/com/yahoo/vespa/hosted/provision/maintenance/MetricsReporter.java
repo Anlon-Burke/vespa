@@ -133,7 +133,7 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
     }
 
     private void updateCacheMetrics() {
-        CacheStats nodeCacheStats = nodeRepository().database().nodeSerializerCacheStats();
+        CacheStats nodeCacheStats = nodeRepository().database().objectCacheStats();
         metric.set("cache.nodeObject.hitRate", nodeCacheStats.hitRate(), null);
         metric.set("cache.nodeObject.evictionCount", nodeCacheStats.evictionCount(), null);
         metric.set("cache.nodeObject.size", nodeCacheStats.size(), null);
@@ -369,9 +369,7 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
 
     static Map<String, String> dimensions(ApplicationId application, ClusterSpec.Id cluster) {
         Map<String, String> dimensions = new HashMap<>(dimensions(application));
-        //TODO: Remove "clusterId" once internal aggregation uses "clusterid"
         dimensions.put("clusterid", cluster.value());
-        dimensions.put("clusterId", cluster.value());
         return dimensions;
     }
 

@@ -190,7 +190,16 @@ FileStorThreadMetrics::~FileStorThreadMetrics() = default;
 
 FileStorStripeMetrics::FileStorStripeMetrics(const std::string& name, const std::string& description)
     : MetricSet(name, {{"partofsum"}}, description),
-      averageQueueWaitingTime("averagequeuewait", {}, "Average time an operation spends in input queue.", this)
+      averageQueueWaitingTime("averagequeuewait", {}, "Average time an operation spends in input queue.", this),
+      throttled_rpc_direct_dispatches("throttled_rpc_direct_dispatches", {},
+                                      "Number of times an RPC thread could not directly dispatch an async operation "
+                                      "directly to Proton because it was disallowed by the throttle policy", this),
+      throttled_persistence_thread_polls("throttled_persistence_thread_polls", {},
+                                         "Number of times a persistence thread could not immediately dispatch a "
+                                         "queued async operation because it was disallowed by the throttle policy", this),
+      timeouts_waiting_for_throttle_token("timeouts_waiting_for_throttle_token", {},
+                                          "Number of times a persistence thread timed out waiting for an available "
+                                          "throttle policy token", this)
 {
 }
 
@@ -203,6 +212,7 @@ FileStorDiskMetrics::FileStorDiskMetrics(const std::string& name, const std::str
       averageQueueWaitingTime("averagequeuewait.sum", {}, "Average time an operation spends in input queue.", this),
       queueSize("queuesize", {}, "Size of input message queue.", this),
       pendingMerges("pendingmerge", {}, "Number of buckets currently being merged.", this),
+      throttle_window_size("throttlewindowsize", {}, "Current size of async operation throttler window size", this),
       waitingForLockHitRate("waitingforlockrate", {},
               "Amount of times a filestor thread has needed to wait for "
               "lock to take next message in queue.", this),

@@ -1896,7 +1896,8 @@
       "public static final enum com.yahoo.search.Query$Type WEB",
       "public static final enum com.yahoo.search.Query$Type PROGRAMMATIC",
       "public static final enum com.yahoo.search.Query$Type YQL",
-      "public static final enum com.yahoo.search.Query$Type SELECT"
+      "public static final enum com.yahoo.search.Query$Type SELECT",
+      "public static final enum com.yahoo.search.Query$Type WEAKAND"
     ]
   },
   "com.yahoo.search.Query": {
@@ -5291,6 +5292,7 @@
       "public boolean isEmpty()",
       "public com.yahoo.prelude.query.Item and(com.yahoo.prelude.query.Item)",
       "public static java.util.List getPositiveTerms(com.yahoo.prelude.query.Item)",
+      "public int treeSize()",
       "public bridge synthetic com.yahoo.prelude.query.CompositeItem clone()",
       "public bridge synthetic com.yahoo.prelude.query.Item clone()",
       "public bridge synthetic java.lang.Object clone()"
@@ -5537,7 +5539,6 @@
       "public void setLocale(java.lang.String, com.yahoo.search.query.Sorting$UcaSorter$Strength)",
       "public java.lang.String getLocale()",
       "public com.yahoo.search.query.Sorting$UcaSorter$Strength getStrength()",
-      "public com.ibm.icu.text.Collator getCollator()",
       "public java.lang.String getDecomposition()",
       "public java.lang.String toSerialForm()",
       "public int hashCode()",

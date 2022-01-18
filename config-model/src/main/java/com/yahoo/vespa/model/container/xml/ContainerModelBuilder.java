@@ -101,6 +101,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.logging.Level;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -389,7 +390,12 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     }
 
     private void addClientProviders(DeployState deployState, Element spec, ApplicationContainerCluster cluster) {
-        for (Element clientSpec: XML.getChildren(spec, "client")) {
+        List<Element> clientElements = XML.getChildren(spec, "client");
+        if (! clientElements.isEmpty()) {
+            log.logApplicationPackage(
+                    Level.WARNING, "The 'client' element is deprecated for removal in Vespa 8, with no replacement");
+        }
+        for (Element clientSpec : clientElements) {
             cluster.addComponent(new DomClientProviderBuilder(cluster).build(deployState, cluster, clientSpec));
         }
     }
@@ -1061,15 +1067,22 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         return CONTAINER_TAG.equals(element.getTagName()) || DEPRECATED_CONTAINER_TAG.equals(element.getTagName());
     }
 
-    private static class JvmOptions {
+    /**
+     * Validates JVM options and logs a warning or fails deployment (depending on feature flag)
+     * if anyone of them has invalid syntax or is an option that is unsupported for the running system.
+     */
+     private static class JvmOptions {
 
-        private static final Pattern validPattern = Pattern.compile("-[a-zA-z0-9=:./]+");
+        private static final Pattern validPattern = Pattern.compile("-[a-zA-z0-9=:./,+-]+");
+        // debug port will not be available in hosted, don't allow
+        private static final Pattern invalidInHostedatttern = Pattern.compile("-Xrunjdwp:transport=.*");
 
         private final ContainerCluster<?> cluster;
         private final Element nodesElement;
         private final DeployLogger logger;
         private final boolean legacyOptions;
         private final boolean failDeploymentWithInvalidJvmOptions;
+        private final boolean isHosted;
 
         public JvmOptions(ContainerCluster<?> cluster, Element nodesElement, DeployState deployState, boolean legacyOptions) {
             this.cluster = cluster;
@@ -1077,6 +1090,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             this.logger = deployState.getDeployLogger();
             this.legacyOptions = legacyOptions;
             this.failDeploymentWithInvalidJvmOptions = deployState.featureFlags().failDeploymentWithInvalidJvmOptions();
+            this.isHosted = deployState.isHosted();
         }
 
         String build() {
@@ -1086,7 +1100,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             Element jvmElement = XML.getChild(nodesElement, "jvm");
             if (jvmElement == null) return "";
             String jvmOptions = jvmElement.getAttribute(VespaDomBuilder.OPTIONS);
-            if (jvmOptions == null) return "";
+            if (jvmOptions.isEmpty()) return "";
             validateJvmOptions(jvmOptions);
             return jvmOptions;
         }
@@ -1135,10 +1149,18 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
                                                 .filter(option -> !Pattern.matches(validPattern.pattern(), option))
                                                 .sorted()
                                                 .collect(Collectors.toList());
+            if (isHosted)
+                invalidOptions.addAll(Arrays.stream(optionList)
+                                            .filter(option -> !option.isEmpty())
+                                            .filter(option -> Pattern.matches(invalidInHostedatttern.pattern(), option))
+                                            .sorted()
+                                            .collect(Collectors.toList()));
 
             if (invalidOptions.isEmpty()) return;
 
-            String message = "Invalid JVM options in services.xml: " + String.join(",", invalidOptions);
+            String message = "Invalid or misplaced JVM options in services.xml: " +
+                    String.join(",", invalidOptions) + "." +
+                    " See https://docs.vespa.ai/en/reference/services-container.html#jvm";
             if (failDeploymentWithInvalidJvmOptions)
                 throw new IllegalArgumentException(message);
             else
@@ -1147,8 +1169,9 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     }
 
     /**
-     * Validates JVM GC options and logs a warning if anyone of them has invalid syntax or is an option
-     * that is unsupported for the running system (e.g. uses CMS options for hosted Vespa, which uses JDK 17)
+     * Validates JVM GC options and logs a warning or fails deployment (depending on feature flag)
+     * if anyone of them has invalid syntax or is an option that is unsupported for the running system
+     * (e.g. uses CMS options for hosted Vespa, which uses JDK 17).
      */
     private static class JvmGcOptions {
 
@@ -1201,7 +1224,9 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             if (options.isEmpty()) return;
 
             Collections.sort(options);
-            String message = "Invalid JVM GC options in services.xml: " + String.join(",", options);
+            String message = "Invalid or misplaced JVM GC options in services.xml: " +
+                    String.join(",", options) + "." +
+                    " See https://docs.vespa.ai/en/reference/services-container.html#jvm";
             if (failDeploymentWithInvalidJvmOptions)
                 throw new IllegalArgumentException(message);
             else

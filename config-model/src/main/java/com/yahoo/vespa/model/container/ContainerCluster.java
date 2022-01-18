@@ -146,6 +146,7 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     private final ComponentGroup<Component<?, ?>> componentGroup;
     private final boolean isHostedVespa;
     private final boolean zooKeeperLocalhostAffinity;
+    private final int numAvailableProcessors;
 
     private final Map<String, String> concreteDocumentTypes = new LinkedHashMap<>();
 
@@ -160,12 +161,13 @@ public abstract class ContainerCluster<CONTAINER extends Container>
 
     private boolean deferChangesUntilRestart = false;
 
-    public ContainerCluster(AbstractConfigProducer<?> parent, String configSubId, String clusterId, DeployState deployState, boolean zooKeeperLocalhostAffinity) {
+    public ContainerCluster(AbstractConfigProducer<?> parent, String configSubId, String clusterId, DeployState deployState, boolean zooKeeperLocalhostAffinity, int defaultPoolNumThreads) {
         super(parent, configSubId);
         this.name = clusterId;
         this.isHostedVespa = stateIsHosted(deployState);
         this.zone = (deployState != null) ? deployState.zone() : Zone.defaultZone();
         this.zooKeeperLocalhostAffinity = zooKeeperLocalhostAffinity;
+        numAvailableProcessors = deployState.featureFlags().availableProcessors();
 
         componentGroup = new ComponentGroup<>(this, "component");
 
@@ -176,7 +178,7 @@ public abstract class ContainerCluster<CONTAINER extends Container>
 
         addComponent(new StatisticsComponent());
         addSimpleComponent(AccessLog.class);
-        addComponent(new DefaultThreadpoolProvider(this, deployState.featureFlags().metricsproxyNumThreads()));
+        addComponent(new DefaultThreadpoolProvider(this, defaultPoolNumThreads));
         addSimpleComponent(com.yahoo.concurrent.classlock.ClassLocking.class);
         addSimpleComponent("com.yahoo.container.jdisc.metric.MetricConsumerProviderProvider");
         addSimpleComponent("com.yahoo.container.jdisc.metric.MetricProvider");
@@ -493,7 +495,7 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     public void getConfig(QrStartConfig.Builder builder) {
         builder.jvm
                 .verbosegc(false)
-                .availableProcessors(2)
+                .availableProcessors(numAvailableProcessors)
                 .compressedClassSpaceSize(32)
                 .minHeapsize(32)
                 .heapsize(256)

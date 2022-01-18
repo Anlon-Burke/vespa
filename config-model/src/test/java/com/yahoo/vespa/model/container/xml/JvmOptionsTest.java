@@ -181,7 +181,7 @@ public class JvmOptionsTest extends ContainerModelBuilderTestBase {
                     "-XX:+ParallelGCThreads=8 foo     bar");
             fail();
         } catch (IllegalArgumentException e) {
-            assertTrue(e.getMessage().contains("Invalid JVM GC options in services.xml: bar,foo"));
+            assertTrue(e.getMessage().startsWith("Invalid or misplaced JVM GC options in services.xml: bar,foo"));
         }
     }
 
@@ -196,15 +196,19 @@ public class JvmOptionsTest extends ContainerModelBuilderTestBase {
         List<String> strings = Arrays.asList(invalidOptions.clone());
         // Verify that nothing is logged if there are no invalid options
         if (strings.isEmpty()) {
-            assertEquals(0, logger.msgs.size());
+            assertEquals(logger.msgs.size() > 0 ? logger.msgs.get(0).getSecond() : "", 0, logger.msgs.size());
             return;
         }
 
-        Collections.sort(strings);
+        assertTrue("Expected 1 or more log messages for invalid JM options, got none", logger.msgs.size() > 0);
         Pair<Level, String> firstOption = logger.msgs.get(0);
         assertEquals(Level.WARNING, firstOption.getFirst());
-        assertEquals("Invalid JVM " + (optionName.equals("gc-options") ? "GC " : "") +
-                             "options in services.xml: " + String.join(",", strings), firstOption.getSecond());
+
+        Collections.sort(strings);
+        assertEquals("Invalid or misplaced JVM" + (optionName.equals("gc-options") ? " GC" : "") +
+                             " options in services.xml: " + String.join(",", strings) + "." +
+                             " See https://docs.vespa.ai/en/reference/services-container.html#jvm"
+                             , firstOption.getSecond());
     }
 
     private void buildModelWithJvmOptions(boolean isHosted, TestLogger logger, String optionName, String override) throws IOException, SAXException {
@@ -238,6 +242,11 @@ public class JvmOptionsTest extends ContainerModelBuilderTestBase {
                                   "$(touch /tmp/hello-from-gc-options)",
                                   "$(touch", "/tmp/hello-from-gc-options)");
 
+        verifyLoggingOfJvmOptions(true,
+                                  "options",
+                                  "-Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=5005",
+                                  "-Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=5005");
+
         verifyLoggingOfJvmOptions(false,
                                   "options",
                                   "$(touch /tmp/hello-from-gc-options)",
@@ -247,6 +256,7 @@ public class JvmOptionsTest extends ContainerModelBuilderTestBase {
         verifyLoggingOfJvmOptions(true, "options", "-Xms2G");
         verifyLoggingOfJvmOptions(true, "options", "-verbose:gc");
         verifyLoggingOfJvmOptions(true, "options", "-Djava.library.path=/opt/vespa/lib64:/home/y/lib64");
+        verifyLoggingOfJvmOptions(true, "options", "-XX:-OmitStackTraceInFastThrow");
         verifyLoggingOfJvmOptions(false, "options", "-Xms2G");
     }
 
@@ -259,7 +269,7 @@ public class JvmOptionsTest extends ContainerModelBuilderTestBase {
                                      "-Xms2G foo     bar");
             fail();
         } catch (IllegalArgumentException e) {
-            assertTrue(e.getMessage().contains("Invalid JVM options in services.xml: bar,foo"));
+            assertTrue(e.getMessage().contains("Invalid or misplaced JVM options in services.xml: bar,foo"));
         }
     }
 

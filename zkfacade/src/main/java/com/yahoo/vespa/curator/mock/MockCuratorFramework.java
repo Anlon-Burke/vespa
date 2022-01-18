@@ -1,10 +1,10 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.curator.mock;
 
-import com.google.common.util.concurrent.UncheckedTimeoutException;
 import com.yahoo.collections.Pair;
 import com.yahoo.concurrent.Lock;
 import com.yahoo.concurrent.Locks;
+import com.yahoo.concurrent.UncheckedTimeoutException;
 import com.yahoo.path.Path;
 import com.yahoo.vespa.curator.CompletionTimeoutException;
 import com.yahoo.vespa.curator.Curator;
@@ -1239,25 +1239,25 @@ public class MockCuratorFramework implements CuratorFramework  {
         }
 
         @Override
-        public TransactionCreateBuilder create() {
+        public TransactionCreateBuilder<CuratorTransactionBridge> create() {
             ensureNotCommitted();
             return new MockTransactionCreateBuilder();
         }
 
         @Override
-        public TransactionDeleteBuilder delete() {
+        public TransactionDeleteBuilder<CuratorTransactionBridge> delete() {
             ensureNotCommitted();
             return new MockTransactionDeleteBuilder();
         }
 
         @Override
-        public TransactionSetDataBuilder setData() {
+        public TransactionSetDataBuilder<CuratorTransactionBridge> setData() {
             ensureNotCommitted();
             return new MockTransactionSetDataBuilder();
         }
 
         @Override
-        public TransactionCheckBuilder check() {
+        public TransactionCheckBuilder<CuratorTransactionBridge> check() {
             ensureNotCommitted();
             throw new UnsupportedOperationException("Not implemented in MockCurator");
         }
@@ -1266,7 +1266,7 @@ public class MockCuratorFramework implements CuratorFramework  {
             if (committed) throw new IllegalStateException("transaction already committed");
         }
 
-        private class MockTransactionCreateBuilder implements TransactionCreateBuilder {
+        private class MockTransactionCreateBuilder implements TransactionCreateBuilder<CuratorTransactionBridge> {
 
             private CreateMode createMode = CreateMode.PERSISTENT;
 
@@ -1294,22 +1294,22 @@ public class MockCuratorFramework implements CuratorFramework  {
             }
 
             @Override
-            public TransactionCreateBuilder2 withTtl(long l) {
+            public TransactionCreateBuilder2<CuratorTransactionBridge> withTtl(long l) {
                 return this;
             }
 
             @Override
-            public Object withACL(List list, boolean b) {
+            public MockTransactionCreateBuilder withACL(List<ACL> list, boolean b) {
                 return this;
             }
 
             @Override
-            public Object withACL(List list) {
+            public MockTransactionCreateBuilder withACL(List<ACL> list) {
                 return this;
             }
         }
 
-        private class MockTransactionDeleteBuilder implements TransactionDeleteBuilder {
+        private class MockTransactionDeleteBuilder implements TransactionDeleteBuilder<CuratorTransactionBridge> {
 
             @Override
             public Pathable<CuratorTransactionBridge> withVersion(int i) {
@@ -1324,7 +1324,7 @@ public class MockCuratorFramework implements CuratorFramework  {
 
         }
 
-        private class MockTransactionSetDataBuilder implements TransactionSetDataBuilder {
+        private class MockTransactionSetDataBuilder implements TransactionSetDataBuilder<CuratorTransactionBridge> {
 
             @Override
             public VersionPathAndBytesable<CuratorTransactionBridge> compressed() {

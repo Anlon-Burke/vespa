@@ -52,15 +52,8 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundDoubleFlag TLS_SIZE_FRACTION = defineDoubleFlag(
-            "tls-size-fraction", 0.07,
-            List.of("baldersheim"), "2021-12-20", "2022-02-01",
-            "Fraction of disk available for transaction log",
-            "Takes effect at redeployment",
-            ZONE_ID, APPLICATION_ID);
-
     public static final UnboundStringFlag FEED_SEQUENCER_TYPE = defineStringFlag(
-            "feed-sequencer-type", "LATENCY",
+            "feed-sequencer-type", "THROUGHPUT",
             List.of("baldersheim"), "2020-12-02", "2022-02-01",
             "Selects type of sequenced executor used for feeding in proton, valid values are LATENCY, ADAPTIVE, THROUGHPUT",
             "Takes effect at redeployment (requires restart)",
@@ -74,7 +67,7 @@ public class Flags {
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundIntFlag FEED_MASTER_TASK_LIMIT = defineIntFlag(
-            "feed-master-task-limit", 0,
+            "feed-master-task-limit", 1000,
             List.of("geirst, baldersheim"), "2021-11-18", "2022-02-01",
             "The task limit used by the master thread in each document db in proton. Ignored when set to 0.",
             "Takes effect at redeployment",
@@ -159,26 +152,6 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundDoubleFlag DISK_BLOAT_FACTOR = defineDoubleFlag(
-            "disk-bloat-factor", 0.2,
-            List.of("baldersheim"), "2021-10-08", "2022-02-01",
-            "Amount of bloat allowed before compacting file",
-            "Takes effect at redeployment",
-            ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundIntFlag DOCSTORE_COMPRESSION_LEVEL = defineIntFlag(
-            "docstore-compression-level", 3,
-            List.of("baldersheim"), "2021-10-08", "2022-02-01",
-            "Default compression level used for document store",
-            "Takes effect at redeployment",
-            ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundIntFlag NUM_DEPLOY_HELPER_THREADS = defineIntFlag(
-            "num-model-builder-threads", -1,
-            List.of("balder"), "2021-09-09", "2022-02-01",
-            "Number of threads used for speeding up building of models.",
-            "Takes effect on first (re)start of config server");
-
     public static final UnboundBooleanFlag ENABLE_FEED_BLOCK_IN_DISTRIBUTOR = defineFeatureFlag(
             "enable-feed-block-in-distributor", true,
             List.of("geirst"), "2021-01-27", "2022-01-31",
@@ -222,33 +195,18 @@ public class Flags {
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundIntFlag MAX_CONCURRENT_MERGES_PER_NODE = defineIntFlag(
-            "max-concurrent-merges-per-node", 128,
+            "max-concurrent-merges-per-node", 16,
             List.of("balder", "vekterli"), "2021-06-06", "2022-02-01",
             "Specifies max concurrent merges per content node.",
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundIntFlag MAX_MERGE_QUEUE_SIZE = defineIntFlag(
-            "max-merge-queue-size", 1024,
+            "max-merge-queue-size", 100,
             List.of("balder", "vekterli"), "2021-06-06", "2022-02-01",
             "Specifies max size of merge queue.",
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundBooleanFlag IGNORE_MERGE_QUEUE_LIMIT = defineFeatureFlag(
-            "ignore-merge-queue-limit", false,
-            List.of("vekterli", "geirst"), "2021-10-06", "2022-03-01",
-            "Specifies if merges that are forwarded (chained) from another content node are always " +
-                    "allowed to be enqueued even if the queue is otherwise full.",
-            "Takes effect at redeploy",
-            ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundIntFlag LARGE_RANK_EXPRESSION_LIMIT = defineIntFlag(
-            "large-rank-expression-limit", 8192,
-            List.of("baldersheim"), "2021-06-09", "2022-02-01",
-            "Limit for size of rank expressions distributed by filedistribution",
-            "Takes effect on next internal redeployment",
-            APPLICATION_ID);
 
     public static final UnboundDoubleFlag MIN_NODE_RATIO_PER_GROUP = defineDoubleFlag(
             "min-node-ratio-per-group", 0.0,
@@ -261,6 +219,13 @@ public class Flags {
             "metricsproxy-num-threads", 2,
             List.of("balder"), "2021-09-01", "2022-02-01",
             "Number of threads for metrics proxy",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundIntFlag AVAILABLE_PROCESSORS = defineIntFlag(
+            "available-processors", 2,
+            List.of("balder"), "2022-01-18", "2022-04-01",
+            "Number of processors the jvm sees in non-application clusters",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
@@ -282,16 +247,9 @@ public class Flags {
 
     public static final UnboundBooleanFlag DELETE_UNMAINTAINED_CERTIFICATES = defineFeatureFlag(
             "delete-unmaintained-certificates", false,
-            List.of("andreer"), "2021-09-23", "2022-02-01",
+            List.of("andreer"), "2021-09-23", "2022-02-14",
             "Whether to delete certificates that are known by provider but not by controller",
             "Takes effect on next run of EndpointCertificateMaintainer"
-    );
-
-    public static final UnboundBooleanFlag USE_NEW_ENDPOINT_CERTIFICATE_PROVIDER_URL = defineFeatureFlag(
-            "use-new-endpoint-certificate-provider-url", true,
-            List.of("andreer"), "2021-12-14", "2022-01-14",
-            "Use the new URL for the endpoint certificate provider API",
-            "Takes effect immediately"
     );
 
     public static final UnboundBooleanFlag ENABLE_TENANT_DEVELOPER_ROLE = defineFeatureFlag(
@@ -318,30 +276,8 @@ public class Flags {
             TENANT_ID
     );
 
-    public static final UnboundIntFlag DISTRIBUTOR_MERGE_BUSY_WAIT = defineIntFlag(
-            "distributor-merge-busy-wait", 10,
-            List.of("geirst", "vekterli"), "2021-10-04", "2022-03-01",
-            "Number of seconds that scheduling of new merge operations in the distributor should be inhibited " +
-                    "towards a content node that has indicated merge busy",
-            "Takes effect at redeploy",
-            ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundBooleanFlag DISTRIBUTOR_ENHANCED_MAINTENANCE_SCHEDULING = defineFeatureFlag(
-            "distributor-enhanced-maintenance-scheduling", false,
-            List.of("vekterli", "geirst"), "2021-10-14", "2022-01-31",
-            "Enable enhanced maintenance operation scheduling semantics on the distributor",
-            "Takes effect at redeploy",
-            ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundBooleanFlag ASYNC_APPLY_BUCKET_DIFF = defineFeatureFlag(
-            "async-apply-bucket-diff", false,
-            List.of("geirst", "vekterli"), "2021-10-22", "2022-01-31",
-            "Whether portions of apply bucket diff handling will be performed asynchronously",
-            "Takes effect at redeploy",
-            ZONE_ID, APPLICATION_ID);
-
     public static final UnboundBooleanFlag UNORDERED_MERGE_CHAINING = defineFeatureFlag(
-            "unordered-merge-chaining", false,
+            "unordered-merge-chaining", true,
             List.of("vekterli", "geirst"), "2021-11-15", "2022-03-01",
             "Enables the use of unordered merge chains for data merge operations",
             "Takes effect at redeploy",
@@ -395,7 +331,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag FAIL_DEPLOYMENT_WITH_INVALID_JVM_OPTIONS = defineFeatureFlag(
             "fail-deployment-with-invalid-jvm-options", false,
-            List.of("hmusum"), "2021-12-20", "2022-01-20",
+            List.of("hmusum"), "2021-12-20", "2022-02-20",
             "Whether to fail deployments with invalid JVM options in services.xml",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
@@ -412,6 +348,28 @@ public class Flags {
             List.of("hmusum"), "2022-01-06", "2022-04-06",
             "Enable Data Highway in AWS",
             "Takes effect on restart of Docker container",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundStringFlag ZOOKEEPER_SNAPSHOT_METHOD = defineStringFlag(
+            "zookeeper-snapshot-method", "",
+            List.of("hmusum"), "2022-01-11", "2022-02-11",
+            "ZooKeeper snapshot method. Valid values are '', 'gz' and 'snappy'",
+            "Takes effect on Docker container restart",
+            ZONE_ID, APPLICATION_ID, NODE_TYPE);
+
+    public static final UnboundStringFlag PERSISTENCE_ASYNC_THROTTLING = defineStringFlag(
+            "persistence-async-throttling", "UNLIMITED",
+            List.of("vekterli"), "2022-01-12", "2022-05-01",
+            "Sets the throttling policy used for async persistence operations on the content nodes. " +
+            "Valid values: UNLIMITED, DYNAMIC",
+            "Triggers restart, takes effect immediately",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag CHECK_CONFIG_CONVERGENCE_BEFORE_RESTARTING = defineFeatureFlag(
+            "check-config-convergence-before-restart", false,
+            List.of("hmusum"), "2022-01-16", "2022-02-16",
+            "Check that config has converged to new generation on all services before restarting services",
+            "Takes effect immediately",
             ZONE_ID, APPLICATION_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
