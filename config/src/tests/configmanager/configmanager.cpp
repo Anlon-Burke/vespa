@@ -1,22 +1,22 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/vespalib/testkit/test_kit.h>
-#include <vespa/vespalib/util/noncopyable.hpp>
 #include <vespa/config/common/configmanager.h>
 #include <vespa/config/common/exceptions.h>
 #include <vespa/config/common/timingvalues.h>
 #include <vespa/config/subscription/sourcespec.h>
+#include <vespa/config/common/iconfigholder.h>
+
 #include <vespa/config/raw/rawsource.h>
 #include "config-my.h"
 
 using namespace config;
-using namespace std::chrono_literals;
 
 namespace {
 
     ConfigValue createValue(const std::string & myField, const std::string & md5)
     {
-        std::vector< vespalib::string > lines;
+        StringVector lines;
         lines.push_back("myField \"" + myField + "\"");
         return ConfigValue(lines, md5);
     }
@@ -36,12 +36,12 @@ namespace {
     class MySource : public Source
     {
     public:
-        MySource(TestContext * data, const IConfigHolder::SP & holder) : _holder(holder), _data(data) { }
+        MySource(TestContext * data, std::shared_ptr<IConfigHolder> holder) : _holder(std::move(holder)), _data(data) { }
         void getConfig() override
         {
             _data->numGetConfig++;
             if (_data->respond) {
-                _holder->handle(ConfigUpdate::UP(new ConfigUpdate(ConfigValue(), true, _data->generation)));
+                _holder->handle(std::make_unique<ConfigUpdate>(ConfigValue(), true, _data->generation));
             }
         }
         void reload(int64_t generation) override
@@ -53,7 +53,7 @@ namespace {
         {
             _data->numClose++;
         }
-        IConfigHolder::SP _holder;
+        std::shared_ptr<IConfigHolder> _holder;
         TestContext * _data;
     };
 
@@ -61,10 +61,10 @@ namespace {
     {
     public:
         MySourceFactory(TestContext * d) : data(d) { }
-        Source::UP createSource(const IConfigHolder::SP & holder, const ConfigKey & key) const override
+        std::unique_ptr<Source> createSource(std::shared_ptr<IConfigHolder> holder, const ConfigKey & key) const override
         {
             (void) key;
-            return Source::UP(new MySource(data, holder));
+            return std::make_unique<MySource>(data, std::move(holder));
         }
         TestContext * data;
     };
@@ -78,9 +78,9 @@ namespace {
         {
         }
         SourceSpecKey createKey() const { return SourceSpecKey(_key); }
-        SourceFactory::UP createSourceFactory(const TimingValues & timingValues) const override {
+        std::unique_ptr<SourceFactory> createSourceFactory(const TimingValues & timingValues) const override {
             (void) timingValues;
-            return SourceFactory::UP(new MySourceFactory(_data));
+            return std::make_unique<MySourceFactory>(_data);
         }
         SourceSpec * clone() const { return new MySpec(*this); }
     private:
@@ -89,17 +89,17 @@ namespace {
     };
 
     static TimingValues testTimingValues(
-            2000,  // successTimeout
-            500,  // errorTimeout
-            500,   // initialTimeout
+            2000ms,  // successTimeout
+            500ms,  // errorTimeout
+            500ms,   // initialTimeout
             4000ms,  // unsubscribeTimeout
-            0,     // fixedDelay
-            250,   // successDelay
-            250,   // unconfiguredDelay
-            500,   // configuredErrorDelay
+            0ms,     // fixedDelay
+            250ms,   // successDelay
+            250ms,   // unconfiguredDelay
+            500ms,   // configuredErrorDelay
             5,
-            1000,
-            2000);    // maxDelayMultiplier
+            1000ms,
+            2000ms);    // maxDelayMultiplier
 
     class ManagerTester {
     public:

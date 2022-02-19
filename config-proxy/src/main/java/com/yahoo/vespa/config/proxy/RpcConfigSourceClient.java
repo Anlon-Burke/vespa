@@ -2,6 +2,7 @@
 package com.yahoo.vespa.config.proxy;
 
 import com.yahoo.concurrent.DaemonThreadFactory;
+import com.yahoo.concurrent.SystemTimer;
 import com.yahoo.config.ConfigurationRuntimeException;
 import com.yahoo.config.subscription.ConfigSourceSet;
 import com.yahoo.config.subscription.impl.JrtConfigRequesters;
@@ -45,6 +46,7 @@ class RpcConfigSourceClient implements ConfigSourceClient, Runnable {
     private final Supervisor supervisor = new Supervisor(new Transport("config-source-client"));
 
     private final ResponseHandler responseHandler;
+    @SuppressWarnings("removal") // TODO Vespa 8: remove
     private final ConfigSourceSet configSourceSet;
     private final Object subscribersLock = new Object();
     private final Map<ConfigCacheKey, Subscriber> subscribers = new ConcurrentHashMap<>();
@@ -59,13 +61,14 @@ class RpcConfigSourceClient implements ConfigSourceClient, Runnable {
             Executors.newScheduledThreadPool(1, new DaemonThreadFactory("delayed responses"));
     private final ScheduledFuture<?> delayedResponsesFuture;
 
+    @SuppressWarnings("removal") // TODO Vespa 8: remove
     RpcConfigSourceClient(ResponseHandler responseHandler, ConfigSourceSet configSourceSet) {
         this.responseHandler = responseHandler;
         this.configSourceSet = configSourceSet;
         this.memoryCache = new MemoryCache();
         this.delayedResponses = new DelayedResponses();
         checkConfigSources();
-        nextConfigFuture = nextConfigScheduler.scheduleAtFixedRate(this, 0, 10, MILLISECONDS);
+        nextConfigFuture = nextConfigScheduler.scheduleAtFixedRate(this, 0, 10*1000/SystemTimer.detectHz(), MILLISECONDS);
         this.requesters = new JrtConfigRequesters();
         DelayedResponseHandler command = new DelayedResponseHandler(delayedResponses, memoryCache, responseHandler);
         this.delayedResponsesFuture = delayedResponsesScheduler.scheduleAtFixedRate(command, 5, 1, SECONDS);

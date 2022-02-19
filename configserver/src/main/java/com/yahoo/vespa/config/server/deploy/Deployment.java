@@ -29,9 +29,6 @@ import com.yahoo.vespa.config.server.configchange.RestartActions;
 import com.yahoo.vespa.config.server.session.PrepareParams;
 import com.yahoo.vespa.config.server.session.Session;
 import com.yahoo.vespa.config.server.tenant.Tenant;
-import com.yahoo.vespa.flags.BooleanFlag;
-import com.yahoo.vespa.flags.FetchVector;
-import com.yahoo.vespa.flags.Flags;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -178,13 +175,7 @@ public class Deployment implements com.yahoo.config.provision.Deployment {
     }
 
     private void waitForConfigToConverge(ApplicationId applicationId) {
-        BooleanFlag verify = Flags.CHECK_CONFIG_CONVERGENCE_BEFORE_RESTARTING
-                .bindTo(applicationRepository.flagSource())
-                .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm());
-        if ( ! verify.value()) return;
-
-        // Timeout per service when getting config generations
-        Duration timeout = Duration.ofSeconds(10);
+        deployLogger.log(Level.INFO, "Wait for all services to use new config generation before restarting");
         while (true) {
             try {
                 params.get().getTimeoutBudget().assertNotTimedOut(
@@ -193,20 +184,15 @@ public class Deployment implements com.yahoo.config.provision.Deployment {
                 throw new ConfigNotConvergedException(e);
             }
 
-            Application app = applicationRepository.getActiveApplication(applicationId);
-
-            // TODO: Don't wait for config convergence if restartOnDeploy is true for one o more container clusters
-            // (ideally wait for config convergence for all other services)
-
-            log.info(session.logPre() + "Wait for services to converge on new generation before restarting");
             ConfigConvergenceChecker convergenceChecker = applicationRepository.configConvergenceChecker();
-            ServiceListResponse response = convergenceChecker.getConfigGenerationsForAllServices(app, timeout);
+            Application app = applicationRepository.getActiveApplication(applicationId);
+            ServiceListResponse response = convergenceChecker.checkConvergenceUnlessDeferringChangesUntilRestart(app);
             if (response.converged) {
-                log.info(session.logPre() + "Services converged on new generation " + response.currentGeneration);
+                deployLogger.log(Level.INFO, "Services converged on new config generation " + response.currentGeneration);
                 return;
             } else {
-                log.info(session.logPre() + "Services not converged on new generation, wanted generation: " + response.wantedGeneration +
-                                 ", current generation: " + response.currentGeneration + ", will retry");
+                deployLogger.log(Level.INFO, "Services did not converge on new config generation " +
+                        response.wantedGeneration + ", current generation: " + response.currentGeneration + ", will retry");
                 try { Thread.sleep(10_000); } catch (InterruptedException e) { /* ignore */ }
             }
         }

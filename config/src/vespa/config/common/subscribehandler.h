@@ -2,24 +2,25 @@
 #pragma once
 
 #include "configkey.h"
-#include <vespa/config/subscription/configsubscription.h>
+#include <vespa/vespalib/util/time.h>
 
 namespace config {
 
+class ConfigSubscription;
+
 struct SubscribeHandler
 {
-    using milliseconds = std::chrono::milliseconds;
     /**
      * Subscribes to a spesific config given by a subscription.
      * If the subscribe call is successful, the callback handler will be called
      * with the new config.
      *
      * @param key the subscription key to subscribe to.
-     * @param timeoutInMillis the timeout of the subscribe call.
+     * @param timeout the timeout of the subscribe call.
      * @return subscription object containing data relevant to client
      */
-    virtual ConfigSubscription::SP subscribe(const ConfigKey & key, milliseconds timeoutInMillis) = 0;
-    virtual ~SubscribeHandler() { }
+    virtual std::shared_ptr<ConfigSubscription> subscribe(const ConfigKey & key, vespalib::duration timeout) = 0;
+    virtual ~SubscribeHandler() = default;
 };
 
 }

@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.searchdefinition;
 
+import com.yahoo.document.ArrayDataType;
 import com.yahoo.document.CollectionDataType;
 import com.yahoo.document.DataType;
 import com.yahoo.document.DocumentType;
@@ -10,6 +11,7 @@ import com.yahoo.document.ReferenceDataType;
 import com.yahoo.document.StructDataType;
 import com.yahoo.document.StructuredDataType;
 import com.yahoo.document.TemporaryStructuredDataType;
+import com.yahoo.document.WeightedSetDataType;
 import com.yahoo.document.annotation.AnnotationReferenceDataType;
 import com.yahoo.document.annotation.AnnotationType;
 import com.yahoo.documentmodel.DataTypeCollection;
@@ -32,14 +34,13 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-
-import static java.util.Collections.emptySet;
-import static java.util.stream.Collectors.toSet;
+import java.util.stream.Collectors;
 
 /**
  * @author baldersheim
@@ -48,12 +49,12 @@ public class DocumentModelBuilder {
 
     private final DocumentModel model;
 
-    public DocumentModelBuilder(DocumentModel model) {
-        this.model = model;
-        model.getDocumentManager().add(VespaDocumentType.INSTANCE);
+    public DocumentModelBuilder() {
+        this.model = new DocumentModel();
+        this.model.getDocumentManager().add(VespaDocumentType.INSTANCE);
     }
 
-    public void addToModel(Collection<Schema> schemaList) {
+    public DocumentModel build(Collection<Schema> schemaList) {
         List<SDDocumentType> docList = new LinkedList<>();
         for (Schema schema : schemaList) {
             docList.add(schema.getDocument());
@@ -65,6 +66,7 @@ public class DocumentModelBuilder {
              toAdd = tryAdd(schemaList)) {
             schemaList = toAdd;
         }
+        return model;
     }
 
     private List<SDDocumentType> sortDocumentTypes(List<SDDocumentType> docList) {
@@ -124,7 +126,7 @@ public class DocumentModelBuilder {
         return left;
     }
 
-    public void addToModel(Schema schema) {
+    private void addToModel(Schema schema) {
         // Then we add the search specific stuff
         SearchDef searchDef = new SearchDef(schema.getName());
         addSearchFields(schema.extraFieldList(), searchDef);
@@ -232,8 +234,7 @@ public class DocumentModelBuilder {
     @SuppressWarnings("deprecation")
     private static DataType resolveTemporariesRecurse(DataType type, DataTypeCollection repo,
                                                       Collection<NewDocumentType> docs,
-                                                      Set<TypeReplacement> replacements)
-    {
+                                                      Set<TypeReplacement> replacements) {
         DataType original = type;
         if (type instanceof TemporaryStructuredDataType) {
             DataType other = repo.getDataType(type.getId());
@@ -259,12 +260,21 @@ public class DocumentModelBuilder {
         }
         else if (type instanceof MapDataType) {
             MapDataType t = (MapDataType) type;
-            t.setKeyType(resolveTemporariesRecurse(t.getKeyType(), repo, docs, replacements));
-            t.setValueType(resolveTemporariesRecurse(t.getValueType(), repo, docs, replacements));
+            var kt = resolveTemporariesRecurse(t.getKeyType(), repo, docs, replacements);
+            var vt = resolveTemporariesRecurse(t.getValueType(), repo, docs, replacements);
+            type = new MapDataType(kt, vt, t.getId());
         }
-        else if (type instanceof CollectionDataType) {
-            CollectionDataType t = (CollectionDataType) type;
-            t.setNestedType(resolveTemporariesRecurse(t.getNestedType(), repo, docs, replacements));
+        else if (type instanceof ArrayDataType) {
+            ArrayDataType t = (ArrayDataType) type;
+            var nt = resolveTemporariesRecurse(t.getNestedType(), repo, docs, replacements);
+            type = new ArrayDataType(nt, t.getId());
+        }
+        else if (type instanceof WeightedSetDataType) {
+            WeightedSetDataType t = (WeightedSetDataType) type;
+            var nt = resolveTemporariesRecurse(t.getNestedType(), repo, docs, replacements);
+            boolean c = t.createIfNonExistent();
+            boolean r = t.removeIfZero();
+            type = new WeightedSetDataType(nt, c, r, t.getId());
         }
         else if (type instanceof ReferenceDataType) {
             ReferenceDataType t = (ReferenceDataType) type;
@@ -298,8 +308,7 @@ public class DocumentModelBuilder {
     }
 
     private static DataType specialHandleAnnotationReferenceRecurse(NewDocumentType docType, String fieldName,
-                                                                    DataType dataType)
-    {
+                                                                    DataType dataType) {
         if (dataType instanceof TemporaryAnnotationReferenceDataType) {
             TemporaryAnnotationReferenceDataType refType = (TemporaryAnnotationReferenceDataType)dataType;
             if (refType.getId() != 0) {
@@ -313,24 +322,36 @@ public class DocumentModelBuilder {
             dataType = new AnnotationReferenceDataType(target);
             addType(docType, dataType);
             return dataType;
-        } else if (dataType instanceof MapDataType) {
-            MapDataType mapType = (MapDataType)dataType;
-            DataType valueType = specialHandleAnnotationReferenceRecurse(docType, fieldName, mapType.getValueType());
+        }
+        else if (dataType instanceof MapDataType) {
+            MapDataType t = (MapDataType)dataType;
+            DataType valueType = specialHandleAnnotationReferenceRecurse(docType, fieldName, t.getValueType());
             if (valueType == null) {
                 return null;
             }
-            mapType = mapType.clone();
-            mapType.setValueType(valueType);
+            var mapType = new MapDataType(t.getKeyType(), valueType, t.getId());
             addType(docType, mapType);
             return mapType;
-        } else if (dataType instanceof CollectionDataType) {
-            CollectionDataType lstType = (CollectionDataType)dataType;
-            DataType nestedType = specialHandleAnnotationReferenceRecurse(docType, fieldName, lstType.getNestedType());
+        }
+        else if (dataType instanceof ArrayDataType) {
+            ArrayDataType t = (ArrayDataType) dataType;
+            DataType nestedType = specialHandleAnnotationReferenceRecurse(docType, fieldName, t.getNestedType());
             if (nestedType == null) {
                 return null;
             }
-            lstType = lstType.clone();
-            lstType.setNestedType(nestedType);
+            var lstType = new ArrayDataType(nestedType, t.getId());
+            addType(docType, lstType);
+            return lstType;
+        }
+        else if (dataType instanceof WeightedSetDataType) {
+            WeightedSetDataType t = (WeightedSetDataType) dataType;
+            DataType nestedType = specialHandleAnnotationReferenceRecurse(docType, fieldName, t.getNestedType());
+            if (nestedType == null) {
+                return null;
+            }
+            boolean c = t.createIfNonExistent();
+            boolean r = t.removeIfZero();
+            var lstType = new WeightedSetDataType(nestedType, c, r, t.getId());
             addType(docType, lstType);
             return lstType;
         }
@@ -359,6 +380,7 @@ public class DocumentModelBuilder {
         addType(dt, s);
         return s;
     }
+
     private static boolean anyParentsHavePayLoad(SDAnnotationType sa, SDDocumentType sdoc) {
         if (sa.getInherits() != null) {
             AnnotationType tmp = sdoc.findAnnotation(sa.getInherits());
@@ -367,7 +389,7 @@ public class DocumentModelBuilder {
         }
         return false;
     }
-    @SuppressWarnings("deprecation")
+
     private NewDocumentType convert(SDDocumentType sdoc) {
         Map<AnnotationType, String> annotationInheritance = new HashMap<>();
         Map<StructDataType, String> structInheritance = new HashMap<>();
@@ -439,17 +461,17 @@ public class DocumentModelBuilder {
 
     private static Set<NewDocumentType.Name> convertDocumentReferencesToNames(Optional<DocumentReferences> documentReferences) {
         if (!documentReferences.isPresent()) {
-            return emptySet();
+            return Set.of();
         }
         return documentReferences.get().referenceMap().values().stream()
                 .map(documentReference -> documentReference.targetSearch().getDocument())
                 .map(documentType -> new NewDocumentType.Name(documentType.getName()))
-                .collect(toSet());
+                .collect(Collectors.toCollection(() -> new LinkedHashSet<>()));
     }
 
     private static Set<String> convertTemporaryImportedFieldsToNames(TemporaryImportedFields importedFields) {
         if (importedFields == null) {
-            return emptySet();
+            return Set.of();
         }
         return Collections.unmodifiableSet(importedFields.fields().keySet());
     }
@@ -463,6 +485,7 @@ public class DocumentModelBuilder {
             }
         }
     }
+
     private static void extractNestedTypes(NewDocumentType dt, DataType type) {
         if (type instanceof StructDataType) {
             StructDataType tmp = (StructDataType) type;
@@ -484,8 +507,11 @@ public class DocumentModelBuilder {
             throw new IllegalArgumentException(type.toString());
         }
     }
+
     private static boolean testAddType(NewDocumentType dt, DataType type) { return internalAddType(dt, type, true); }
+
     private static boolean addType(NewDocumentType dt, DataType type) { return internalAddType(dt, type, false); }
+
     private static boolean internalAddType(NewDocumentType dt, DataType type, boolean dryRun) {
         DataType oldType = dt.getDataTypeRecursive(type.getId());
         if (oldType == null) {

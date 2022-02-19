@@ -4,7 +4,6 @@ package com.yahoo.vespa.hosted.node.admin.maintenance;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.yahoo.config.provision.ApplicationId;
-import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.vespa.hosted.node.admin.component.TaskContext;
 import com.yahoo.vespa.hosted.node.admin.container.Container;
@@ -183,9 +182,9 @@ public class StorageMaintainer {
         attributes.put("kernel_version", System.getProperty("os.version"));
         attributes.put("cpu_microcode_version", getMicrocodeVersion());
 
-        attributes.put("docker_image", getDockerImage(context, container));
+        container.map(c -> c.image().asString()).ifPresent(image -> attributes.put("docker_image", image));
+        container.flatMap(c -> c.image().tag()).ifPresent(version -> attributes.put("vespa_version", version));
         context.node().parentHostname().ifPresent(parent -> attributes.put("parent_hostname", parent));
-        context.node().currentVespaVersion().ifPresent(version -> attributes.put("vespa_version", version.toFullString()));
         context.node().owner().ifPresent(owner -> {
             attributes.put("tenant", owner.tenant().value());
             attributes.put("application", owner.application().value());
@@ -214,6 +213,13 @@ public class StorageMaintainer {
             containerLogsOnHost.moveIfExists(containerLogsInArchiveDir);
         }
         new UnixPath(context.paths().of("/")).deleteRecursively();
+
+        // Operations on ContainerPath will fail if Container FS root doesn't exist, it is therefore important that
+        // it exists as long as NodeAgent is running. Normally the root is only created when NodeAgent is first
+        // started. Because non-tenant nodes are never removed from node-repo, we immediately re-create the new root
+        // after archiving the previous
+        if (context.nodeType() != NodeType.tenant)
+            context.paths().of("/").getFileSystem().createRoot();
     }
 
     private String getMicrocodeVersion() {
@@ -228,13 +234,5 @@ public class StorageMaintainer {
         }
 
         return results[1].trim();
-    }
-
-    private String getDockerImage(NodeAgentContext context, Optional<Container> container) {
-        return container.map(c -> c.image().asString())
-                .orElse(context.node().currentDockerImage()
-                        .map(DockerImage::asString)
-                        .orElse("<none>")
-                );
     }
 }

@@ -25,6 +25,7 @@
 #include <vespa/vespalib/net/json_handler_repo.h>
 #include <vespa/vespalib/net/state_explorer.h>
 #include <vespa/vespalib/util/varholder.h>
+#include <vespa/vespalib/util/cpu_usage.h>
 #include <mutex>
 #include <shared_mutex>
 
@@ -64,7 +65,6 @@ private:
     using DocumentDBMap = std::map<DocTypeName, DocumentDB::SP>;
     using InitializeThreads = std::shared_ptr<vespalib::ThreadExecutor>;
     using BucketSpace = document::BucketSpace;
-    using InvokeService = vespalib::InvokeService;
 
     class ProtonFileHeaderContext : public search::common::FileHeaderContext
     {
@@ -81,6 +81,7 @@ private:
         void setClusterName(const vespalib::string &clusterName, const vespalib::string &baseDir);
     };
 
+    vespalib::CpuUtil                      _cpu_util;
     const config::ConfigUri                _configUri;
     mutable std::shared_mutex              _mutex;
     std::unique_ptr<metrics::UpdateHook>   _metricsHook;

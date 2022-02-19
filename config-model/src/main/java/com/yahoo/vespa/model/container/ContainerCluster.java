@@ -173,8 +173,9 @@ public abstract class ContainerCluster<CONTAINER extends Container>
 
         addCommonVespaBundles();
 
-        // TODO Vespa 8: remove LoggingRequestHandler.Context (replaced by ThreadedHttpRequestHandler.Context)
-        addSimpleComponent(com.yahoo.container.jdisc.LoggingRequestHandler.Context.class);
+        // TODO Vespa 8: remove LoggingRequestHandler.Context component if we can break binary compatibility
+        //               (ThreadedHttpRequestHandler.Context is source compatible.)
+        addSimpleComponent("com.yahoo.container.jdisc.LoggingRequestHandler$Context");
 
         addComponent(new StatisticsComponent());
         addSimpleComponent(AccessLog.class);
@@ -333,8 +334,8 @@ public abstract class ContainerCluster<CONTAINER extends Container>
 
     public SearchChains getSearchChains() {
         if (containerSearch == null)
-            throw new IllegalStateException("Search components not found in container cluster '" + getSubId() +
-                                            "': Add <search/> to the cluster in services.xml");
+            throw new IllegalArgumentException("Search components not found in container cluster '" + getSubId() +
+                                               "': Add <search/> to the cluster in services.xml");
         return containerSearch.getChains();
     }
 
@@ -373,8 +374,8 @@ public abstract class ContainerCluster<CONTAINER extends Container>
 
     public DocprocChains getDocprocChains() {
         if (containerDocproc == null)
-            throw new IllegalStateException("Document processing components not found in container cluster '" + getSubId() +
-                                                    "': Add <document-processing/> to the cluster in services.xml");
+            throw new IllegalArgumentException("Document processing components not found in container cluster '" + getSubId() +
+                                            "': Add <document-processing/> to the cluster in services.xml");
         return containerDocproc.getChains();
     }
 
@@ -578,6 +579,7 @@ public abstract class ContainerCluster<CONTAINER extends Container>
         builder.system(zone.system().value());
         builder.environment(zone.environment().value());
         builder.region(zone.region().value());
+        builder.cloud(zone.getCloud().name().value());
     }
 
     @Override

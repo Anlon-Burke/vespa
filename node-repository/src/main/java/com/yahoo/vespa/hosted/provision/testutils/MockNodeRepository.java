@@ -70,8 +70,9 @@ public class MockNodeRepository extends NodeRepository {
               Optional.empty(),
               new InMemoryFlagSource(),
               new MemoryMetricsDb(Clock.fixed(Instant.ofEpochMilli(123), ZoneId.of("Z"))),
+              new OrchestratorMock(),
               true,
-              0);
+              0, 1000);
         this.flavors = flavors;
 
         curator.setZooKeeperEnsembleConnectionSpec("cfg1:1234,cfg2:1234,cfg3:1234");

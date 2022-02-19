@@ -3,6 +3,7 @@ package com.yahoo.vespa.hosted.controller.notification;
 
 import com.yahoo.collections.Pair;
 import com.yahoo.config.provision.ClusterSpec;
+import com.yahoo.config.provision.TenantName;
 import com.yahoo.text.Text;
 import com.yahoo.vespa.curator.Lock;
 import com.yahoo.vespa.hosted.controller.Controller;
@@ -15,7 +16,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -40,6 +40,10 @@ public class NotificationsDb {
     NotificationsDb(Clock clock, CuratorDb curatorDb) {
         this.clock = clock;
         this.curatorDb = curatorDb;
+    }
+
+    public List<TenantName> listTenantsWithNotifications() {
+        return curatorDb.listTenantsWithNotifications();
     }
 
     public List<Notification> listNotifications(NotificationSource source, boolean productionOnly) {
@@ -168,7 +172,7 @@ public class NotificationsDb {
             String resource, Optional<Double> util, Optional<Double> feedBlockLimit) {
         if (util.isEmpty() || feedBlockLimit.isEmpty()) return Optional.empty();
         double utilRelativeToLimit = util.get() / feedBlockLimit.get();
-        if (utilRelativeToLimit < 0.9) return Optional.empty();
+        if (utilRelativeToLimit < 0.95) return Optional.empty();
 
         String message = Text.format("%s (usage: %.1f%%, feed block limit: %.1f%%)",
                 resource, 100 * util.get(), 100 * feedBlockLimit.get());

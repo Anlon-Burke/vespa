@@ -7,7 +7,6 @@
 #include <thread>
 
 using namespace config;
-using namespace std::chrono_literals;
 
 namespace {
 
@@ -38,12 +37,12 @@ namespace {
 
     struct SubscriptionFixture
     {
-        IConfigHolder::SP holder;
+        std::shared_ptr<IConfigHolder> holder;
         ConfigSubscription sub;
         SourceFixture src;
         SubscriptionFixture(const ConfigKey & key)
             : holder(new ConfigHolder()),
-              sub(0, key, holder, Source::UP(new MySource(&src)))
+              sub(0, key, holder, std::make_unique<MySource>(&src))
         {
         }
     };
@@ -79,7 +78,7 @@ TEST_MT_F("requireThatNextUpdateReturnsWhenNotified", 2, SubscriptionFixture(Con
         ASSERT_TRUE(f1.sub.nextUpdate(2, 5000ms));
         ASSERT_TRUE(timer.elapsed() > 200ms);
     } else {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(500ms);
         f1.holder->handle(std::make_unique<ConfigUpdate>(ConfigValue(), 1, 1));
     }
 }
@@ -93,18 +92,18 @@ TEST_MT_F("requireThatNextUpdateReturnsInterrupted", 2, SubscriptionFixture(Conf
         ASSERT_TRUE(f1.sub.nextUpdate(1, 5000ms));
         ASSERT_TRUE(timer.elapsed() > 300ms);
     } else {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(500ms);
         f1.sub.close();
     }
 }
 
 TEST_F("Require that isChanged takes generation into account", SubscriptionFixture(ConfigKey::create<MyConfig>("myid")))
 {
-    f1.holder->handle(std::make_unique<ConfigUpdate>(ConfigValue(std::vector<vespalib::string>(), "a"), true, 1));
+    f1.holder->handle(std::make_unique<ConfigUpdate>(ConfigValue(StringVector(), "a"), true, 1));
     ASSERT_TRUE(f1.sub.nextUpdate(0, 0ms));
     f1.sub.flip();
     ASSERT_EQUAL(1, f1.sub.getLastGenerationChanged());
-    f1.holder->handle(std::make_unique<ConfigUpdate>(ConfigValue(std::vector<vespalib::string>(), "b"), true, 2));
+    f1.holder->handle(std::make_unique<ConfigUpdate>(ConfigValue(StringVector(), "b"), true, 2));
     ASSERT_TRUE(f1.sub.nextUpdate(1, 0ms));
     f1.sub.flip();
     ASSERT_EQUAL(2, f1.sub.getLastGenerationChanged());

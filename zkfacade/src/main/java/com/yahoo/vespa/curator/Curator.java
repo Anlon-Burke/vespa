@@ -2,7 +2,6 @@
 package com.yahoo.vespa.curator;
 
 import com.google.inject.Inject;
-import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.cloud.config.CuratorConfig;
 import com.yahoo.path.Path;
 import com.yahoo.vespa.curator.api.VespaCurator;
@@ -62,23 +61,24 @@ public class Curator implements VespaCurator, AutoCloseable {
     private static final Duration BASE_SLEEP_TIME = Duration.ofSeconds(1);
     private static final int MAX_RETRIES = 10;
     private static final RetryPolicy DEFAULT_RETRY_POLICY = new ExponentialBackoffRetry((int) BASE_SLEEP_TIME.toMillis(), MAX_RETRIES);
-
-    protected final RetryPolicy retryPolicy = DEFAULT_RETRY_POLICY;
+    // Default value taken from ZookeeperServerConfig
+    static final long defaultJuteMaxBuffer = Long.parseLong(System.getProperty("jute.maxbuffer", "52428800"));
 
     private final CuratorFramework curatorFramework;
     private final ConnectionSpec connectionSpec;
+    private final long juteMaxBuffer;
 
     // All lock keys, to allow re-entrancy. This will grow forever, but this should be too slow to be a problem
     private final ConcurrentHashMap<Path, Lock> locks = new ConcurrentHashMap<>();
 
     /** Creates a curator instance from a comma-separated string of ZooKeeper host:port strings */
     public static Curator create(String connectionSpec) {
-        return new Curator(ConnectionSpec.create(connectionSpec), Optional.of(ZK_CLIENT_CONFIG_FILE));
+        return new Curator(ConnectionSpec.create(connectionSpec), Optional.of(ZK_CLIENT_CONFIG_FILE), defaultJuteMaxBuffer);
     }
 
     // For testing only, use Optional.empty for clientConfigFile parameter to create default zookeeper client config
     public static Curator create(String connectionSpec, Optional<File> clientConfigFile) {
-        return new Curator(ConnectionSpec.create(connectionSpec), clientConfigFile);
+        return new Curator(ConnectionSpec.create(connectionSpec), clientConfigFile, defaultJuteMaxBuffer);
     }
 
     @Inject
@@ -89,23 +89,15 @@ public class Curator implements VespaCurator, AutoCloseable {
                                    CuratorConfig.Server::hostname,
                                    CuratorConfig.Server::port,
                                    curatorConfig.zookeeperLocalhostAffinity()),
-             Optional.of(ZK_CLIENT_CONFIG_FILE));
-    }
-
-    // TODO: This can be removed when this package is no longer public API.
-    public Curator(ConfigserverConfig configserverConfig, @SuppressWarnings("unused") VespaZooKeeperServer server) {
-        this(ConnectionSpec.create(configserverConfig.zookeeperserver(),
-                                   ConfigserverConfig.Zookeeperserver::hostname,
-                                   ConfigserverConfig.Zookeeperserver::port,
-                                   configserverConfig.zookeeperLocalhostAffinity()),
-             Optional.of(ZK_CLIENT_CONFIG_FILE));
+             Optional.of(ZK_CLIENT_CONFIG_FILE),
+             defaultJuteMaxBuffer);
     }
 
     protected Curator(String connectionSpec, String zooKeeperEnsembleConnectionSpec, Function<RetryPolicy, CuratorFramework> curatorFactory) {
-        this(ConnectionSpec.create(connectionSpec, zooKeeperEnsembleConnectionSpec), curatorFactory.apply(DEFAULT_RETRY_POLICY));
+        this(ConnectionSpec.create(connectionSpec, zooKeeperEnsembleConnectionSpec), curatorFactory.apply(DEFAULT_RETRY_POLICY), defaultJuteMaxBuffer);
     }
 
-    Curator(ConnectionSpec connectionSpec, Optional<File> clientConfigFile) {
+    Curator(ConnectionSpec connectionSpec, Optional<File> clientConfigFile, long juteMaxBuffer) {
         this(connectionSpec,
              CuratorFrameworkFactory
                      .builder()
@@ -115,12 +107,14 @@ public class Curator implements VespaCurator, AutoCloseable {
                      .connectString(connectionSpec.local())
                      .zookeeperFactory(new VespaZooKeeperFactory(createClientConfig(clientConfigFile)))
                      .dontUseContainerParents() // TODO: Remove when we know ZooKeeper 3.5 works fine, consider waiting until Vespa 8
-                     .build());
+                     .build(),
+             juteMaxBuffer);
     }
 
-    private Curator(ConnectionSpec connectionSpec, CuratorFramework curatorFramework) {
+    private Curator(ConnectionSpec connectionSpec, CuratorFramework curatorFramework, long juteMaxBuffer) {
         this.connectionSpec = Objects.requireNonNull(connectionSpec);
         this.curatorFramework = Objects.requireNonNull(curatorFramework);
+        this.juteMaxBuffer = juteMaxBuffer;
         addLoggingListener();
         curatorFramework.start();
     }
@@ -138,16 +132,6 @@ public class Curator implements VespaCurator, AutoCloseable {
             return new ZKClientConfig();
         }
     }
-
-    /**
-     * Returns the ZooKeeper "connect string" used by curator: a comma-separated list of
-     * host:port of ZooKeeper endpoints to connect to. This may be a subset of
-     * zooKeeperEnsembleConnectionSpec() if there's some affinity, e.g. for
-     * performance reasons.
-     *
-     * This may be empty but never null 
-     */
-    public String connectionSpec() { return connectionSpec.local(); }
 
     /** For internal use; prefer creating a {@link CuratorCounter} */
     public DistributedAtomicLong createAtomicCounter(String path) {
@@ -203,6 +187,10 @@ public class Curator implements VespaCurator, AutoCloseable {
      */
     // TODO: Use create().orSetData() in Curator 4 and later
     public void set(Path path, byte[] data) {
+        if (data.length > juteMaxBuffer)
+            throw new IllegalArgumentException("Cannot not set data at " + path.getAbsolute() + ", " +
+                                               data.length + " bytes is too much, max number of bytes allowed per node is " + juteMaxBuffer);
+
         if ( ! exists(path))
             create(path);
 

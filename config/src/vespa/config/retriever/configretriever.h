@@ -25,23 +25,21 @@ class SourceSpec;
 class ConfigRetriever
 {
 public:
-    using milliseconds = std::chrono::milliseconds;
     ConfigRetriever(const ConfigKeySet & bootstrapSet,
-                    const IConfigContext::SP & context,
-                    milliseconds subscribeTimeout = DEFAULT_SUBSCRIBE_TIMEOUT);
+                    std::shared_ptr<IConfigContext> context,
+                    vespalib::duration subscribeTimeout = DEFAULT_SUBSCRIBE_TIMEOUT);
     ~ConfigRetriever();
 
     /**
      * Waits for the next generation of bootstrap configs to arrive, and returns
      * them. If no new generation has arrived, return an empty snapshot.
      *
-     * @param timeoutInMillis The timeout of the nextGeneration call, in
-     *                        milliseconds. Optional.
+     * @param timeout The timeout of the nextGeneration call. Optional.
      * @return a snapshot of bootstrap configs, empty if no new snapshot or
      *         retriever has been closed.
      * @throws ConfigTimeoutException if initial subscribe timed out.
      */
-    ConfigSnapshot getBootstrapConfigs(milliseconds timeoutInMillis = DEFAULT_NEXTGENERATION_TIMEOUT);
+    ConfigSnapshot getBootstrapConfigs(vespalib::duration timeout = DEFAULT_NEXTGENERATION_TIMEOUT);
 
     /**
      * Return the configs represented by a ConfigKeySet in a snapshot, and makes
@@ -50,7 +48,7 @@ public:
      *
      * @param keySet The set of configs that should be fetched. The set may only
      *               change when bootstrap has been changed.
-     * @param timeoutInMillis The timeout, in milliseconds. Optional.
+     * @param timeout The timeout. Optional.
      * @return a snapshot of configs corresponding to the keySet or
      *         an empty snapshot if
      *              a) retriever has been closed. The isClosed() method can be
@@ -62,7 +60,7 @@ public:
      *                 method can be used to check for this condition.
      * @throws ConfigTimeoutException if resubscribe timed out.
      */
-    ConfigSnapshot getConfigs(const ConfigKeySet & keySet, milliseconds timeoutInMillis = DEFAULT_NEXTGENERATION_TIMEOUT);
+    ConfigSnapshot getConfigs(const ConfigKeySet & keySet, vespalib::duration timeout = DEFAULT_NEXTGENERATION_TIMEOUT);
 
     /**
      * Close this retriever in order to shut down.
@@ -90,20 +88,20 @@ public:
      */
     int64_t getGeneration() const { return _generation; }
 
-    static const milliseconds DEFAULT_SUBSCRIBE_TIMEOUT;
-    static const milliseconds DEFAULT_NEXTGENERATION_TIMEOUT;
+    static const vespalib::duration DEFAULT_SUBSCRIBE_TIMEOUT;
+    static const vespalib::duration DEFAULT_NEXTGENERATION_TIMEOUT;
 private:
-    FixedConfigSubscriber                    _bootstrapSubscriber;
-    std::unique_ptr<GenericConfigSubscriber> _configSubscriber;
-    std::mutex                               _lock;
-    std::vector<ConfigSubscription::SP>      _subscriptionList;
-    ConfigKeySet                _lastKeySet;
-    IConfigContext::SP          _context;
-    std::unique_ptr<SourceSpec> _spec;
-    bool                        _closed;
-    int64_t                     _generation;
-    milliseconds                _subscribeTimeout;
-    bool                        _bootstrapRequired;
+    FixedConfigSubscriber                            _bootstrapSubscriber;
+    std::unique_ptr<GenericConfigSubscriber>         _configSubscriber;
+    std::mutex                                       _lock;
+    std::vector<std::shared_ptr<ConfigSubscription>> _subscriptionList;
+    ConfigKeySet                                     _lastKeySet;
+    std::shared_ptr<IConfigContext>                  _context;
+    std::unique_ptr<SourceSpec>                      _spec;
+    int64_t              _generation;
+    vespalib::duration   _subscribeTimeout;
+    bool                 _bootstrapRequired;
+    bool                 _closed;
 };
 
 } // namespace config

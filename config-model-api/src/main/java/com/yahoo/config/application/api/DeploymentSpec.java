@@ -550,14 +550,34 @@ public class DeploymentSpec {
     }
 
 
+    /** Determines what application changes to deploy to the instance. */
+    public enum RevisionTarget {
+        /** Next: Application changes are rolled through this instance in the same manner as they become ready. */
+        next,
+        /** Latest: Application changes are merged, so the latest available is always chosen for roll-out. */
+        latest
+    }
+
+
+    /** Determines when application changes deploy. */
+    public enum RevisionChange {
+        /** Exclusive: Application changes always wait for already rolling application changes to complete. */
+        whenClear,
+        /** Separate: Application changes wait for already rolling application changes to complete, unless they fail. */
+        whenFailing,
+        /** Latest: Application changes immediately supersede previous application changes, unless currently blocked. */
+        always
+    }
+
+
     /** Determines when application changes deploy, when there is already an ongoing platform upgrade. */
     public enum UpgradeRollout {
         /** Separate: Application changes wait for upgrade to complete, unless upgrade fails. */
         separate,
         /** Leading: Application changes are allowed to start and catch up to the platform upgrade. */
-        leading
+        leading,
         // /** Simultaneous: Application changes deploy independently of platform upgrades. */
-        // simultaneous
+        simultaneous
     }
 
 

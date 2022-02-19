@@ -194,9 +194,11 @@
       "public"
     ],
     "methods": [
-      "public void <init>(com.yahoo.config.provision.InstanceName, java.util.List, com.yahoo.config.application.api.DeploymentSpec$UpgradePolicy, com.yahoo.config.application.api.DeploymentSpec$UpgradeRollout, java.util.List, java.util.Optional, java.util.Optional, com.yahoo.config.application.api.Notifications, java.util.List, java.time.Instant)",
+      "public void <init>(com.yahoo.config.provision.InstanceName, java.util.List, com.yahoo.config.application.api.DeploymentSpec$UpgradePolicy, com.yahoo.config.application.api.DeploymentSpec$RevisionTarget, com.yahoo.config.application.api.DeploymentSpec$RevisionChange, com.yahoo.config.application.api.DeploymentSpec$UpgradeRollout, java.util.List, java.util.Optional, java.util.Optional, com.yahoo.config.application.api.Notifications, java.util.List, java.time.Instant)",
       "public com.yahoo.config.provision.InstanceName name()",
       "public com.yahoo.config.application.api.DeploymentSpec$UpgradePolicy upgradePolicy()",
+      "public com.yahoo.config.application.api.DeploymentSpec$RevisionTarget revisionTarget()",
+      "public com.yahoo.config.application.api.DeploymentSpec$RevisionChange revisionChange()",
       "public com.yahoo.config.application.api.DeploymentSpec$UpgradeRollout upgradeRollout()",
       "public java.util.List changeBlocker()",
       "public java.util.Optional globalServiceId()",
@@ -310,6 +312,41 @@
     ],
     "fields": []
   },
+  "com.yahoo.config.application.api.DeploymentSpec$RevisionChange": {
+    "superClass": "java.lang.Enum",
+    "interfaces": [],
+    "attributes": [
+      "public",
+      "final",
+      "enum"
+    ],
+    "methods": [
+      "public static com.yahoo.config.application.api.DeploymentSpec$RevisionChange[] values()",
+      "public static com.yahoo.config.application.api.DeploymentSpec$RevisionChange valueOf(java.lang.String)"
+    ],
+    "fields": [
+      "public static final enum com.yahoo.config.application.api.DeploymentSpec$RevisionChange whenClear",
+      "public static final enum com.yahoo.config.application.api.DeploymentSpec$RevisionChange whenFailing",
+      "public static final enum com.yahoo.config.application.api.DeploymentSpec$RevisionChange always"
+    ]
+  },
+  "com.yahoo.config.application.api.DeploymentSpec$RevisionTarget": {
+    "superClass": "java.lang.Enum",
+    "interfaces": [],
+    "attributes": [
+      "public",
+      "final",
+      "enum"
+    ],
+    "methods": [
+      "public static com.yahoo.config.application.api.DeploymentSpec$RevisionTarget[] values()",
+      "public static com.yahoo.config.application.api.DeploymentSpec$RevisionTarget valueOf(java.lang.String)"
+    ],
+    "fields": [
+      "public static final enum com.yahoo.config.application.api.DeploymentSpec$RevisionTarget next",
+      "public static final enum com.yahoo.config.application.api.DeploymentSpec$RevisionTarget latest"
+    ]
+  },
   "com.yahoo.config.application.api.DeploymentSpec$Step": {
     "superClass": "java.lang.Object",
     "interfaces": [],
@@ -379,7 +416,8 @@
     ],
     "fields": [
       "public static final enum com.yahoo.config.application.api.DeploymentSpec$UpgradeRollout separate",
-      "public static final enum com.yahoo.config.application.api.DeploymentSpec$UpgradeRollout leading"
+      "public static final enum com.yahoo.config.application.api.DeploymentSpec$UpgradeRollout leading",
+      "public static final enum com.yahoo.config.application.api.DeploymentSpec$UpgradeRollout simultaneous"
     ]
   },
   "com.yahoo.config.application.api.DeploymentSpec": {

@@ -165,6 +165,8 @@ public class DeploymentSpecXmlReader {
 
         // Values where the parent may provide a default
         DeploymentSpec.UpgradePolicy upgradePolicy = readUpgradePolicy(instanceTag, parentTag);
+        DeploymentSpec.RevisionTarget revisionTarget = readRevisionTarget(instanceTag, parentTag);
+        DeploymentSpec.RevisionChange revisionChange = readRevisionChange(instanceTag, parentTag);
         DeploymentSpec.UpgradeRollout upgradeRollout = readUpgradeRollout(instanceTag, parentTag);
         List<DeploymentSpec.ChangeBlocker> changeBlockers = readChangeBlockers(instanceTag, parentTag);
         Optional<AthenzService> athenzService = mostSpecificAttribute(instanceTag, athenzServiceAttribute).map(AthenzService::from);
@@ -183,6 +185,8 @@ public class DeploymentSpecXmlReader {
                      .map(name -> new DeploymentInstanceSpec(InstanceName.from(name),
                                                              steps,
                                                              upgradePolicy,
+                                                             revisionTarget,
+                                                             revisionChange,
                                                              upgradeRollout,
                                                              changeBlockers,
                                                              globalServiceId.asOptional(),
@@ -472,6 +476,45 @@ public class DeploymentSpecXmlReader {
         }
     }
 
+    private DeploymentSpec.RevisionChange readRevisionChange(Element parent, Element fallbackParent) {
+        Element upgradeElement = XML.getChild(parent, upgradeTag);
+        if (upgradeElement == null)
+            upgradeElement = XML.getChild(fallbackParent, upgradeTag);
+        if (upgradeElement == null)
+            return DeploymentSpec.RevisionChange.whenFailing;
+
+        String revision = upgradeElement.getAttribute("revision-change");
+        if (revision.isEmpty())
+            return DeploymentSpec.RevisionChange.whenFailing;
+
+        switch (revision) {
+            case "when-clear": return DeploymentSpec.RevisionChange.whenClear;
+            case "when-failing": return DeploymentSpec.RevisionChange.whenFailing;
+            case "always": return DeploymentSpec.RevisionChange.always;
+            default: throw new IllegalArgumentException("Illegal upgrade revision change policy '" + revision + "': " +
+                                                        "Must be one of " + Arrays.toString(DeploymentSpec.RevisionTarget.values()));
+        }
+    }
+
+    private DeploymentSpec.RevisionTarget readRevisionTarget(Element parent, Element fallbackParent) {
+        Element upgradeElement = XML.getChild(parent, upgradeTag);
+        if (upgradeElement == null)
+            upgradeElement = XML.getChild(fallbackParent, upgradeTag);
+        if (upgradeElement == null)
+            return DeploymentSpec.RevisionTarget.latest;
+
+        String revision = upgradeElement.getAttribute("revision-target");
+        if (revision.isEmpty())
+            return DeploymentSpec.RevisionTarget.latest;
+
+        switch (revision) {
+            case "next": return DeploymentSpec.RevisionTarget.next;
+            case "latest": return DeploymentSpec.RevisionTarget.latest;
+            default: throw new IllegalArgumentException("Illegal upgrade revision target '" + revision + "': " +
+                                                        "Must be one of " + Arrays.toString(DeploymentSpec.RevisionTarget.values()));
+        }
+    }
+
     private DeploymentSpec.UpgradeRollout readUpgradeRollout(Element parent, Element fallbackParent) {
         Element upgradeElement = XML.getChild(parent, upgradeTag);
         if (upgradeElement == null)
@@ -486,9 +529,9 @@ public class DeploymentSpecXmlReader {
         switch (rollout) {
             case "separate": return DeploymentSpec.UpgradeRollout.separate;
             case "leading": return DeploymentSpec.UpgradeRollout.leading;
-            // case "simultaneous": return DeploymentSpec.UpgradePolicy.conservative;
-            default: throw new IllegalArgumentException("Illegal upgrade policy '" + rollout + "': " +
-                                                        "Must be one of " + Arrays.toString(DeploymentSpec.UpgradePolicy.values()));
+            case "simultaneous": return DeploymentSpec.UpgradeRollout.simultaneous;
+            default: throw new IllegalArgumentException("Illegal upgrade rollout '" + rollout + "': " +
+                                                        "Must be one of " + Arrays.toString(DeploymentSpec.UpgradeRollout.values()));
         }
     }
 

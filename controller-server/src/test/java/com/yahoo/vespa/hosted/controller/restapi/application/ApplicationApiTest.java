@@ -861,6 +861,10 @@ public class ApplicationApiTest extends ControllerContainerTest {
                               "");
 
         addNotifications(TenantName.from("tenant1"));
+        addNotifications(TenantName.from("tenant2"));
+        tester.assertResponse(request("/application/v4/notifications", GET)
+                        .properties(Map.of("type", "applicationPackage", "excludeMessages", "true")).userIdentity(HOSTED_VESPA_OPERATOR),
+                new File("notifications-applicationPackage.json"));
         tester.assertResponse(request("/application/v4/tenant/tenant1/notifications", GET).userIdentity(USER_ID),
                 new File("notifications-tenant1.json"));
         tester.assertResponse(request("/application/v4/tenant/tenant1/notifications", GET)
@@ -1553,8 +1557,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
     public void support_access() {
         var app = deploymentTester.newDeploymentContext(createTenantAndApplication());
         var zone = ZoneId.from(Environment.prod, RegionName.from("us-west-1"));
-        deploymentTester.controllerTester().zoneRegistry().setRoutingMethod(ZoneApiMock.from(zone),
-                List.of(RoutingMethod.exclusive, RoutingMethod.shared));
+        deploymentTester.controllerTester().zoneRegistry().setRoutingMethod(ZoneApiMock.from(zone), RoutingMethod.exclusive);
         addUserToHostedOperatorRole(HostedAthenzIdentities.from(HOSTED_VESPA_OPERATOR));
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
                 .athenzIdentity(com.yahoo.config.provision.AthenzDomain.from("domain"), AthenzService.from("service"))

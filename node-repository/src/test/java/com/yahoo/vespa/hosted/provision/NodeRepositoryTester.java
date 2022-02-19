@@ -17,6 +17,7 @@ import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.provisioning.EmptyProvisionServiceProvider;
 import com.yahoo.vespa.hosted.provision.provisioning.FlavorConfigBuilder;
 import com.yahoo.vespa.hosted.provision.testutils.MockNameResolver;
+import com.yahoo.vespa.hosted.provision.testutils.OrchestratorMock;
 
 import java.util.List;
 import java.util.Optional;
@@ -47,8 +48,9 @@ public class NodeRepositoryTester {
                                             Optional.empty(),
                                             new InMemoryFlagSource(),
                                             new MemoryMetricsDb(clock),
+                                            new OrchestratorMock(),
                                             true,
-                                            0);
+                                            0, 1000);
     }
     
     public NodeRepository nodeRepository() { return nodeRepository; }

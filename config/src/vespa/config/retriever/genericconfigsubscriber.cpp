@@ -3,20 +3,20 @@
 
 namespace config {
 
-GenericConfigSubscriber::GenericConfigSubscriber(const IConfigContext::SP & context)
-    : _set(context)
+GenericConfigSubscriber::GenericConfigSubscriber(std::shared_ptr<IConfigContext> context)
+    : _set(std::move(context))
 { }
 
 bool
-GenericConfigSubscriber::nextGeneration(milliseconds timeoutInMillis)
+GenericConfigSubscriber::nextGeneration(vespalib::duration timeout)
 {
-    return _set.acquireSnapshot(timeoutInMillis, true);
+    return _set.acquireSnapshot(timeout, true);
 }
 
-ConfigSubscription::SP
-GenericConfigSubscriber::subscribe(const ConfigKey & key, milliseconds timeoutInMillis)
+std::shared_ptr<ConfigSubscription>
+GenericConfigSubscriber::subscribe(const ConfigKey & key, vespalib::duration timeout)
 {
-    return _set.subscribe(key, timeoutInMillis);
+    return _set.subscribe(key, timeout);
 }
 
 void

@@ -23,7 +23,7 @@ import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.container.handler.metrics.JsonResponse;
 import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
-import com.yahoo.container.jdisc.LoggingRequestHandler;
+import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
 import com.yahoo.io.IOUtils;
 import com.yahoo.restapi.ByteArrayResponse;
 import com.yahoo.restapi.ErrorResponse;
@@ -70,6 +70,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.resource.MeteringData;
 import com.yahoo.vespa.hosted.controller.api.integration.resource.ResourceAllocation;
 import com.yahoo.vespa.hosted.controller.api.integration.resource.ResourceSnapshot;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
+import com.yahoo.vespa.hosted.controller.api.integration.user.User;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
 import com.yahoo.vespa.hosted.controller.api.role.RoleDefinition;
 import com.yahoo.vespa.hosted.controller.api.role.SecurityContext;
@@ -143,6 +144,9 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Scanner;
 import java.util.StringJoiner;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -172,7 +176,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     private final TestConfigSerializer testConfigSerializer;
 
     @Inject
-    public ApplicationApiHandler(LoggingRequestHandler.Context parentCtx,
+    public ApplicationApiHandler(ThreadedHttpRequestHandler.Context parentCtx,
                                  Controller controller,
                                  AccessControlRequests accessControlRequests) {
         super(parentCtx, controller.auditLogger());
@@ -232,10 +236,12 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private HttpResponse handleGET(Path path, HttpRequest request) {
         if (path.matches("/application/v4/")) return root(request);
+        if (path.matches("/application/v4/notifications")) return notifications(request, Optional.ofNullable(request.getProperty("tenant")), true);
         if (path.matches("/application/v4/tenant")) return tenants(request);
         if (path.matches("/application/v4/tenant/{tenant}")) return tenant(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/access/request/ssh")) return accessRequests(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/info")) return tenantInfo(path.get("tenant"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/notifications")) return notifications(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/notifications")) return notifications(request, Optional.of(path.get("tenant")), false);
         if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}/validate")) return validateSecretStore(path.get("tenant"), path.get("name"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application")) return applications(path.get("tenant"), Optional.empty(), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}")) return application(path.get("tenant"), path.get("application"), request);
@@ -285,6 +291,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private HttpResponse handlePUT(Path path, HttpRequest request) {
         if (path.matches("/application/v4/tenant/{tenant}")) return updateTenant(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/access/request/ssh")) return requestSshAccess(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/access/approve/ssh")) return approveAccessRequest(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/info")) return updateTenantInfo(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/archive-access")) return allowArchiveAccess(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}")) return addSecretStore(path.get("tenant"), path.get("name"), request);
@@ -401,6 +409,44 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         return new SlimeJsonResponse(slime);
     }
 
+    private HttpResponse accessRequests(String tenantName, HttpRequest request) {
+        if (controller.tenants().require(TenantName.from(tenantName)).type() != Tenant.Type.cloud)
+            return ErrorResponse.badRequest("Can only see access requests for cloud tenants");
+
+        var pendingRequests = controller.serviceRegistry().accessControlService().hasPendingAccessRequests(TenantName.from(tenantName));
+        var slime = new Slime();
+        slime.setObject().setBool("hasPendingRequests", pendingRequests);
+        return new SlimeJsonResponse(slime);
+    }
+
+    private HttpResponse requestSshAccess(String tenantName, HttpRequest request) {
+        if (!isOperator(request)) {
+            return ErrorResponse.forbidden("Only operators are allowed to request ssh access");
+        }
+
+        if (controller.tenants().require(TenantName.from(tenantName)).type() != Tenant.Type.cloud)
+            return ErrorResponse.badRequest("Can only request access for cloud tenants");
+
+        controller.serviceRegistry().accessControlService().requestSshAccess(TenantName.from(tenantName));
+        return new MessageResponse("OK");
+
+    }
+
+    private HttpResponse approveAccessRequest(String tenantName, HttpRequest request) {
+        var tenant = TenantName.from(tenantName);
+
+        if (controller.tenants().require(tenant).type() != Tenant.Type.cloud)
+            return ErrorResponse.badRequest("Can only see access requests for cloud tenants");
+
+        var inspector = toSlime(request.getData()).get();
+        var expiry = inspector.field("expiry").valid() ?
+                Instant.ofEpochMilli(inspector.field("expiry").asLong()) :
+                Instant.now().plus(1, ChronoUnit.DAYS);
+
+        controller.serviceRegistry().accessControlService().approveSshAccess(tenant, expiry);
+        return new MessageResponse("OK");
+    }
+
     private HttpResponse tenantInfo(String tenantName, HttpRequest request) {
         return controller.tenants().get(TenantName.from(tenantName))
                 .filter(tenant -> tenant.type() == Tenant.Type.cloud)
@@ -500,26 +546,41 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                 .withAddress(updateTenantInfoAddress(insp.field("address"), oldContact.address()));
     }
 
-    private HttpResponse notifications(String tenantName, HttpRequest request) {
-        NotificationSource notificationSource = new NotificationSource(TenantName.from(tenantName),
-                Optional.ofNullable(request.getProperty("application")).map(ApplicationName::from),
-                Optional.ofNullable(request.getProperty("instance")).map(InstanceName::from),
-                Optional.empty(), Optional.empty(), Optional.empty(), OptionalLong.empty());
-
+    private HttpResponse notifications(HttpRequest request, Optional<String> tenant, boolean includeTenantFieldInResponse) {
+        boolean productionOnly = showOnlyProductionInstances(request);
+        boolean excludeMessages = "true".equals(request.getProperty("excludeMessages"));
         Slime slime = new Slime();
         Cursor notificationsArray = slime.setObject().setArray("notifications");
-        controller.notificationsDb().listNotifications(notificationSource, showOnlyProductionInstances(request))
-                .forEach(notification -> toSlime(notificationsArray.addObject(), notification));
+
+        tenant.map(t -> Stream.of(TenantName.from(t)))
+                .orElseGet(() -> controller.notificationsDb().listTenantsWithNotifications().stream())
+                .flatMap(tenantName -> controller.notificationsDb().listNotifications(NotificationSource.from(tenantName), productionOnly).stream())
+                .filter(notification ->
+                        propertyEquals(request, "application", ApplicationName::from, notification.source().application()) &&
+                        propertyEquals(request, "instance", InstanceName::from, notification.source().instance()) &&
+                        propertyEquals(request, "zone", ZoneId::from, notification.source().zoneId()) &&
+                        propertyEquals(request, "job", JobType::fromJobName, notification.source().jobType()) &&
+                        propertyEquals(request, "type", Notification.Type::valueOf, Optional.of(notification.type())) &&
+                        propertyEquals(request, "level", Notification.Level::valueOf, Optional.of(notification.level())))
+                .forEach(notification -> toSlime(notificationsArray.addObject(), notification, includeTenantFieldInResponse, excludeMessages));
         return new SlimeJsonResponse(slime);
     }
+    private static <T> boolean propertyEquals(HttpRequest request, String property, Function<String, T> mapper, Optional<T> value) {
+        return Optional.ofNullable(request.getProperty(property))
+                .map(propertyValue -> value.isPresent() && mapper.apply(propertyValue).equals(value.get()))
+                .orElse(true);
+    }
 
-    private static void toSlime(Cursor cursor, Notification notification) {
+    private static void toSlime(Cursor cursor, Notification notification, boolean includeTenantFieldInResponse, boolean excludeMessages) {
         cursor.setLong("at", notification.at().toEpochMilli());
         cursor.setString("level", notificationLevelAsString(notification.level()));
         cursor.setString("type", notificationTypeAsString(notification.type()));
-        Cursor messagesArray = cursor.setArray("messages");
-        notification.messages().forEach(messagesArray::addString);
+        if (!excludeMessages) {
+            Cursor messagesArray = cursor.setArray("messages");
+            notification.messages().forEach(messagesArray::addString);
+        }
 
+        if (includeTenantFieldInResponse) cursor.setString("tenant", notification.source().tenant().value());
         notification.source().application().ifPresent(application -> cursor.setString("application", application.value()));
         notification.source().instance().ifPresent(instance -> cursor.setString("instance", instance.value()));
         notification.source().zoneId().ifPresent(zoneId -> {
@@ -1438,7 +1499,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         response.setDouble("quota", deployment.quota().rate());
         deployment.cost().ifPresent(cost -> response.setDouble("cost", cost));
 
-        controller.archiveBucketDb().archiveUriFor(deploymentId.zoneId(), deploymentId.applicationId().tenant())
+        controller.archiveBucketDb().archiveUriFor(deploymentId.zoneId(), deploymentId.applicationId().tenant(), false)
                 .ifPresent(archiveUri -> response.setString("archiveUri", archiveUri.toString()));
 
         Cursor activity = response.setObject("activity");
@@ -1718,7 +1779,19 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         TenantName tenant = TenantName.from(tenantName);
         Inspector requestObject = toSlime(request.getData()).get();
         controller.tenants().create(accessControlRequests.specification(tenant, requestObject),
-                                    accessControlRequests.credentials(tenant, requestObject, request.getJDiscRequest()));
+                accessControlRequests.credentials(tenant, requestObject, request.getJDiscRequest()));
+        if (controller.system().isPublic()) {
+            User user = getAttribute(request, User.ATTRIBUTE_NAME, User.class);
+            TenantInfo info = controller.tenants().require(tenant, CloudTenant.class)
+                    .info()
+                    .withContactName(user.name())
+                    .withContactEmail(user.email());
+            // Store changes
+            controller.tenants().lockOrThrow(tenant, LockedTenant.Cloud.class, lockedTenant -> {
+                lockedTenant = lockedTenant.withInfo(info);
+                controller.tenants().store(lockedTenant);
+            });
+        }
         return tenant(controller.tenants().require(TenantName.from(tenantName)), request);
     }
 
@@ -1791,16 +1864,9 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private ApplicationVersion getApplicationVersion(Application application, Long build) {
-        // Check whether this is the latest version, and possibly return that.
-        // Otherwise, look through historic runs for a proper ApplicationVersion.
-        return application.latestVersion()
+        return application.versions().stream()
                           .filter(version -> version.buildNumber().stream().anyMatch(build::equals))
-                          .or(() -> controller.jobController().deploymentStatus(application).jobs()
-                                            .asList().stream()
-                                            .flatMap(job -> job.runs().values().stream())
-                                            .map(run -> run.versions().targetApplication())
-                                            .filter(version -> version.buildNumber().stream().anyMatch(build::equals))
-                                            .findAny())
+                          .findFirst()
                           .filter(version -> controller.applications().applicationStore().hasBuild(application.id().tenant(),
                                                                                                    application.id().application(),
                                                                                                    build))

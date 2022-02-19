@@ -3,9 +3,9 @@
 
 namespace config {
 FixedConfigSubscriber::FixedConfigSubscriber(const ConfigKeySet & keySet,
-                                             const IConfigContext::SP & context,
-                                             milliseconds subscribeTimeout)
-    : _set(context),
+                                             std::shared_ptr<IConfigContext> context,
+                                             vespalib::duration subscribeTimeout)
+    : _set(std::move(context)),
       _subscriptionList()
 {
     for (const ConfigKey & key : keySet) {
@@ -14,9 +14,9 @@ FixedConfigSubscriber::FixedConfigSubscriber(const ConfigKeySet & keySet,
 }
 
 bool
-FixedConfigSubscriber::nextGeneration(milliseconds timeoutInMillis)
+FixedConfigSubscriber::nextGeneration(vespalib::duration timeout)
 {
-    return _set.acquireSnapshot(timeoutInMillis, true);
+    return _set.acquireSnapshot(timeout, true);
 }
 
 void

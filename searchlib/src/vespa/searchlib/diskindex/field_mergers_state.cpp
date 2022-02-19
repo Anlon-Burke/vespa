@@ -5,15 +5,18 @@
 #include "field_merger_task.h"
 #include "fusion_output_index.h"
 #include <vespa/searchcommon/common/schema.h>
-#include <vespa/vespalib/util/threadexecutor.h>
+#include <vespa/vespalib/util/cpu_usage.h>
+#include <vespa/vespalib/util/executor.h>
+#include <cassert>
+
+using vespalib::CpuUsage;
 
 namespace search::diskindex {
 
-FieldMergersState::FieldMergersState(const FusionOutputIndex& fusion_out_index, vespalib::ThreadExecutor& executor, std::shared_ptr<IFlushToken> flush_token)
+FieldMergersState::FieldMergersState(const FusionOutputIndex& fusion_out_index, vespalib::Executor& executor, std::shared_ptr<IFlushToken> flush_token)
     : _fusion_out_index(fusion_out_index),
       _executor(executor),
       _flush_token(std::move(flush_token)),
-      _concurrent(std::max(1ul, _executor.getNumThreads() / 2)),
       _done(_fusion_out_index.get_schema().getNumIndexFields()),
       _failed(0u),
       _field_mergers(_fusion_out_index.get_schema().getNumIndexFields())
@@ -28,7 +31,6 @@ FieldMergersState::~FieldMergersState()
 FieldMerger&
 FieldMergersState::alloc_field_merger(uint32_t id)
 {
-    _concurrent.wait();
     assert(id < _field_mergers.size());
     auto field_merger = std::make_unique<FieldMerger>(id, _fusion_out_index, _flush_token);
     auto& result = *field_merger;
@@ -46,7 +48,6 @@ FieldMergersState::destroy_field_merger(FieldMerger& field_merger)
     old_merger = std::move(_field_mergers[id]);
     assert(old_merger.get() == &field_merger);
     old_merger.reset();
-    _concurrent.post();
     _done.countDown();
 }
 
@@ -68,7 +69,8 @@ FieldMergersState::wait_field_mergers_done()
 void
 FieldMergersState::schedule_task(FieldMerger& field_merger)
 {
-    auto rejected = _executor.execute(std::make_unique<FieldMergerTask>(field_merger, *this));
+    auto task = std::make_unique<FieldMergerTask>(field_merger, *this);
+    auto rejected = _executor.execute(CpuUsage::wrap(std::move(task), CpuUsage::Category::COMPACT));
     assert(!rejected);
 }
 

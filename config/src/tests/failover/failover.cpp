@@ -1,10 +1,9 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/vespalib/testkit/test_kit.h>
-#include <vespa/config/common/misc.h>
 #include <vespa/config/frt/protocol.h>
-#include <vespa/config/config.h>
 #include <vespa/config/common/configcontext.h>
+#include <vespa/config/subscription/configsubscriber.hpp>
 #include <vespa/fnet/frt/supervisor.h>
 #include <vespa/fnet/frt/rpcrequest.h>
 
@@ -20,7 +19,6 @@ using vespalib::Barrier;
 using namespace config::protocol::v2;
 using namespace vespalib::slime;
 using namespace vespalib;
-using namespace std::chrono_literals;
 
 namespace {
 
@@ -176,20 +174,20 @@ struct NetworkFixture {
 
 
 TimingValues testTimingValues(
-    500,  // successTimeout
-    500,  // errorTimeout
-    500,   // initialTimeout
+    500ms,  // successTimeout
+    500ms,  // errorTimeout
+    500ms,   // initialTimeout
     400ms,  // unsubscribeTimeout
-    0,     // fixedDelay
-    250,   // successDelay
-    250,   // unconfiguredDelay
-    500,   // configuredErrorDelay
+    0ms,     // fixedDelay
+    250ms,   // successDelay
+    250ms,   // unconfiguredDelay
+    500ms,   // configuredErrorDelay
     1,      // maxDelayMultiplier
-    600,  // transientDelay
-    1200); // fatalDelay
+    600ms,  // transientDelay
+    1200ms); // fatalDelay
 
 struct ConfigCheckFixture {
-    IConfigContext::SP ctx;
+    std::shared_ptr<IConfigContext> ctx;
     NetworkFixture & nf;
 
     ConfigCheckFixture(NetworkFixture & f2)
@@ -221,7 +219,7 @@ struct ConfigCheckFixture {
 };
 
 struct ConfigReloadFixture {
-    IConfigContext::SP ctx;
+    std::shared_ptr<IConfigContext> ctx;
     NetworkFixture & nf;
     ConfigSubscriber s;
     ConfigHandle<MyConfig>::UP handle;

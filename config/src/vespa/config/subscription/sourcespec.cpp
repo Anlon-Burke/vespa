@@ -6,6 +6,7 @@
 #include <vespa/config/file/filesourcefactory.h>
 #include <vespa/config/frt/frtsourcefactory.h>
 #include <vespa/config/frt/frtconnectionpool.h>
+#include <vespa/config/frt/protocol.h>
 #include <vespa/config/set/configsetsourcefactory.h>
 #include <vespa/config/set/configinstancesourcefactory.h>
 #include <vespa/vespalib/text/stringtokenizer.h>
@@ -153,7 +154,9 @@ ConfigInstanceSpec::ConfigInstanceSpec(const ConfigInstance& instance)
     writer.write(instance);
 }
 
-SourceFactory::UP
+ConfigInstanceSpec::~ConfigInstanceSpec() = default;
+
+std::unique_ptr<SourceFactory>
 ConfigInstanceSpec::createSourceFactory(const TimingValues& ) const
 {
     return std::make_unique<ConfigInstanceSourceFactory>(_key, _buffer);

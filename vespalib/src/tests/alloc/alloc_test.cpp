@@ -4,6 +4,7 @@
 #include <vespa/vespalib/util/alloc.h>
 #include <vespa/vespalib/util/memory_allocator.h>
 #include <vespa/vespalib/util/exceptions.h>
+#include <vespa/vespalib/util/round_up_to_page_size.h>
 #include <vespa/vespalib/util/size_literals.h>
 #include <cstddef>
 #include <sys/mman.h>
@@ -19,17 +20,23 @@ using namespace vespalib::alloc;
 #endif
 #endif
 
+namespace {
+
+size_t page_sz = round_up_to_page_size(1);
+
+}
+
 template <typename T>
 void
 testSwap(T & a, T & b)
 {
     void * tmpA(a.get());
     void * tmpB(b.get());
-    EXPECT_EQUAL(4_Ki, a.size());
-    EXPECT_EQUAL(8_Ki, b.size());
+    EXPECT_EQUAL(page_sz, a.size());
+    EXPECT_EQUAL(2 * page_sz, b.size());
     std::swap(a, b);
-    EXPECT_EQUAL(4_Ki, b.size());
-    EXPECT_EQUAL(8_Ki, a.size());
+    EXPECT_EQUAL(page_sz, b.size());
+    EXPECT_EQUAL(2 * page_sz, a.size());
     EXPECT_EQUAL(tmpA, b.get());
     EXPECT_EQUAL(tmpB, a.get());
 }
@@ -76,24 +83,24 @@ TEST("test basics") {
     }
     {
         Alloc h = Alloc::allocMMap(100);
-        EXPECT_EQUAL(4_Ki, h.size());
+        EXPECT_EQUAL(page_sz, h.size());
         EXPECT_TRUE(h.get() != nullptr);
     }
     {
-        Alloc a = Alloc::allocHeap(4_Ki), b = Alloc::allocHeap(8_Ki);
+        Alloc a = Alloc::allocHeap(page_sz), b = Alloc::allocHeap(2 * page_sz);
         testSwap(a, b);
     }
     {
-        Alloc a = Alloc::allocMMap(4_Ki), b = Alloc::allocMMap(8_Ki);
+        Alloc a = Alloc::allocMMap(page_sz), b = Alloc::allocMMap(2 * page_sz);
         testSwap(a, b);
     }
     {
-        Alloc a = Alloc::allocAlignedHeap(4_Ki, 1_Ki), b = Alloc::allocAlignedHeap(8_Ki, 1_Ki);
+        Alloc a = Alloc::allocAlignedHeap(page_sz, 1_Ki), b = Alloc::allocAlignedHeap(2 * page_sz, 1_Ki);
         testSwap(a, b);
     }
     {
-        Alloc a = Alloc::allocHeap(4_Ki);
-        Alloc b = Alloc::allocMMap(8_Ki);
+        Alloc a = Alloc::allocHeap(page_sz);
+        Alloc b = Alloc::allocMMap(2 * page_sz);
         testSwap(a, b);
     }
     {
@@ -139,22 +146,28 @@ TEST("rounding of large mmaped buffer") {
     EXPECT_EQUAL(MemoryAllocator::HUGEPAGE_SIZE*12ul, buf.size());
 }
 
+void verifyExtension(Alloc& buf, size_t currSZ, size_t newSZ) {
+    bool expectSuccess = (currSZ != newSZ);
+    void* oldPtr = buf.get();
+    EXPECT_EQUAL(currSZ, buf.size());
+    EXPECT_EQUAL(expectSuccess, buf.resize_inplace(currSZ + 1));
+    EXPECT_EQUAL(oldPtr, buf.get());
+    EXPECT_EQUAL(newSZ, buf.size());
+}
+
 TEST("heap alloc can not be extended") {
     Alloc buf = Alloc::allocHeap(100);
-    void * oldPtr = buf.get();
-    EXPECT_EQUAL(100ul, buf.size());
-    EXPECT_FALSE(buf.resize_inplace(101));
-    EXPECT_EQUAL(oldPtr, buf.get());
-    EXPECT_EQUAL(100ul, buf.size());
+    verifyExtension(buf, 100, 100);
+}
+
+TEST("mmap alloc cannot be extended from zero") {
+    Alloc buf = Alloc::allocMMap(0);
+    verifyExtension(buf, 0, 0);
 }
 
 TEST("auto alloced heap alloc can not be extended") {
     Alloc buf = Alloc::alloc(100);
-    void * oldPtr = buf.get();
-    EXPECT_EQUAL(100ul, buf.size());
-    EXPECT_FALSE(buf.resize_inplace(101));
-    EXPECT_EQUAL(oldPtr, buf.get());
-    EXPECT_EQUAL(100ul, buf.size());
+    verifyExtension(buf, 100, 100);
 }
 
 TEST("auto alloced heap alloc can not be extended, even if resize will be mmapped") {
@@ -164,15 +177,6 @@ TEST("auto alloced heap alloc can not be extended, even if resize will be mmappe
     EXPECT_FALSE(buf.resize_inplace(MemoryAllocator::HUGEPAGE_SIZE*3));
     EXPECT_EQUAL(oldPtr, buf.get());
     EXPECT_EQUAL(100ul, buf.size());
-}
-
-void verifyExtension(Alloc & buf, size_t currSZ, size_t newSZ) {
-    bool expectSuccess = (currSZ != newSZ);
-    void * oldPtr = buf.get();
-    EXPECT_EQUAL(currSZ, buf.size());
-    EXPECT_EQUAL(expectSuccess, buf.resize_inplace(currSZ+1));
-    EXPECT_EQUAL(oldPtr, buf.get());
-    EXPECT_EQUAL(newSZ, buf.size());
 }
 
 void ensureRoomForExtension(const Alloc & buf, Alloc & reserved) {
@@ -231,7 +235,7 @@ TEST("mmap alloc can be extended if room") {
     Alloc buf = Alloc::allocMMap(100);
 
     TEST_DO(ensureRoomForExtension(buf, reserved));
-    TEST_DO(verifyExtension(buf, 4_Ki, 4_Ki*2));
+    TEST_DO(verifyExtension(buf, page_sz, page_sz * 2));
 }
 
 TEST("mmap alloc can not be extended if no room") {
@@ -239,7 +243,7 @@ TEST("mmap alloc can not be extended if no room") {
     Alloc reserved = Alloc::allocMMap(100);
     Alloc buf = Alloc::allocMMap(100);
 
-    TEST_DO(verifyNoExtensionWhenNoRoom(buf, reserved, 4_Ki));
+    TEST_DO(verifyNoExtensionWhenNoRoom(buf, reserved, page_sz));
 }
 #endif
 #endif
@@ -253,13 +257,23 @@ TEST("heap alloc can not be shrinked") {
     EXPECT_EQUAL(101ul, buf.size());
 }
 
+TEST("heap alloc cannot be shrunk to zero") {
+    Alloc buf = Alloc::allocHeap(101);
+    EXPECT_FALSE(buf.resize_inplace(0));
+}
+
 TEST("mmap alloc can be shrinked") {
-    Alloc buf = Alloc::allocMMap(4097);
+    Alloc buf = Alloc::allocMMap(page_sz + 1);
     void * oldPtr = buf.get();
-    EXPECT_EQUAL(8_Ki, buf.size());
-    EXPECT_TRUE(buf.resize_inplace(4095));
+    EXPECT_EQUAL(2 * page_sz, buf.size());
+    EXPECT_TRUE(buf.resize_inplace(page_sz - 1));
     EXPECT_EQUAL(oldPtr, buf.get());
-    EXPECT_EQUAL(4_Ki, buf.size());
+    EXPECT_EQUAL(page_sz, buf.size());
+}
+
+TEST("mmap alloc cannot be shrunk to zero") {
+    Alloc buf = Alloc::allocMMap(page_sz + 1);
+    EXPECT_FALSE(buf.resize_inplace(0));
 }
 
 TEST("auto alloced heap alloc can not be shrinked") {
@@ -271,6 +285,11 @@ TEST("auto alloced heap alloc can not be shrinked") {
     EXPECT_EQUAL(101ul, buf.size());
 }
 
+TEST("auto alloced heap alloc cannot be shrunk to zero") {
+    Alloc buf = Alloc::alloc(101);
+    EXPECT_FALSE(buf.resize_inplace(0));
+}
+
 TEST("auto alloced mmap alloc can be shrinked") {
     static constexpr size_t SZ = MemoryAllocator::HUGEPAGE_SIZE;
     Alloc buf = Alloc::alloc(SZ + 1);
@@ -279,6 +298,11 @@ TEST("auto alloced mmap alloc can be shrinked") {
     EXPECT_TRUE(buf.resize_inplace(SZ-1));
     EXPECT_EQUAL(oldPtr, buf.get());
     EXPECT_EQUAL(SZ, buf.size());
+}
+
+TEST("auto alloced mmap alloc cannot be shrunk to zero") {
+    Alloc buf = Alloc::alloc(MemoryAllocator::HUGEPAGE_SIZE + 1);
+    EXPECT_FALSE(buf.resize_inplace(0));
 }
 
 TEST("auto alloced mmap alloc can not be shrinked below HUGEPAGE_SIZE/2 + 1 ") {

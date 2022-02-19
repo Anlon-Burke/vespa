@@ -36,6 +36,9 @@ public class Configurator {
         this.configFilePath = makeAbsolutePath(zookeeperServerConfig.zooKeeperConfigFile());
         System.setProperty(ZOOKEEPER_JMX_LOG4J_DISABLE, "true");
         System.setProperty("zookeeper.snapshot.trust.empty", Boolean.valueOf(zookeeperServerConfig.trustEmptySnapshot()).toString());
+        // Max serialization length. Has effect for both client and server.
+        // Doc says that it is max size of data in a zookeeper node, but it goes for everything that
+        // needs to be serialized, see https://issues.apache.org/jira/browse/ZOOKEEPER-1162 for details
         System.setProperty(ZOOKEEPER_JUTE_MAX_BUFFER, Integer.valueOf(zookeeperServerConfig.juteMaxBuffer()).toString());
         // Need to set this as a system property instead of config, config does not work
         System.setProperty("zookeeper.authProvider.x509", "com.yahoo.vespa.zookeeper.VespaMtlsAuthenticationProvider");
@@ -86,7 +89,7 @@ public class Configurator {
         sb.append("reconfigEnabled=true").append("\n");
         sb.append("skipACL=yes").append("\n");
         ensureThisServerIsRepresented(config.myid(), config.server());
-        config.server().forEach(server -> addServerToCfg(sb, server, config.clientPort()));
+        config.server().forEach(server -> sb.append(serverSpec(server, config.clientPort(), server.joining())).append("\n"));
         sb.append(new TlsQuorumConfig().createConfig(vespaTlsConfig));
         sb.append(new TlsClientServerConfig().createConfig(vespaTlsConfig));
         return sb.toString();
@@ -111,7 +114,8 @@ public class Configurator {
         }
     }
 
-    private void addServerToCfg(StringBuilder sb, ZookeeperServerConfig.Server server, int clientPort) {
+    static String serverSpec(ZookeeperServerConfig.Server server, int clientPort, boolean joining) {
+        StringBuilder sb = new StringBuilder();
         sb.append("server.")
           .append(server.id())
           .append("=")
@@ -120,7 +124,7 @@ public class Configurator {
           .append(server.quorumPort())
           .append(":")
           .append(server.electionPort());
-        if (server.joining()) {
+        if (joining) {
             // Servers that are joining an existing cluster must be marked as observers. Note that this will NOT
             // actually make the server an observer, but prevent it from forming an ensemble independently of the
             // existing cluster.
@@ -130,8 +134,8 @@ public class Configurator {
               .append("observer");
         }
         sb.append(";")
-          .append(clientPort)
-          .append("\n");
+          .append(server.clientPort());
+        return sb.toString();
     }
 
     static List<String> zookeeperServerHostnames(ZookeeperServerConfig zookeeperServerConfig) {
