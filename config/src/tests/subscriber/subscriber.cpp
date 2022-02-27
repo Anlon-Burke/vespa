@@ -77,6 +77,7 @@ namespace {
 
 
         MyManager() : idCounter(0), numCancel(0) { }
+        ~MyManager() override;
 
         ConfigSubscription::SP subscribe(const ConfigKey & key, vespalib::duration timeout) override {
             (void) timeout;
@@ -85,7 +86,7 @@ namespace {
 
             return std::make_shared<ConfigSubscription>(0, key, holder, std::make_unique<MySource>());
         }
-        void unsubscribe(const ConfigSubscription::SP & subscription) override {
+        void unsubscribe(const ConfigSubscription & subscription) override {
             (void) subscription;
             numCancel++;
         }
@@ -111,6 +112,8 @@ namespace {
         }
 
     };
+
+    MyManager::~MyManager() = default;
 
     class APIFixture : public IConfigContext
     {

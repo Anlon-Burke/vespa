@@ -2,6 +2,7 @@
 package com.yahoo.vespa.hosted.controller.deployment;
 
 import com.yahoo.component.Version;
+import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.zone.RoutingMethod;
 import com.yahoo.config.provision.zone.ZoneId;
@@ -200,6 +201,78 @@ public class DeploymentTriggerTest {
         assertEquals(EnumSet.of(productionUsCentral1), tester.jobs().active().stream()
                                                              .map(run -> run.id().type())
                                                              .collect(Collectors.toCollection(() -> EnumSet.noneOf(JobType.class))));
+    }
+
+    @Test
+    public void similarDeploymentSpecsAreNotRolledOut() {
+        ApplicationPackage firstPackage = new ApplicationPackageBuilder()
+                .region("us-east-3")
+                .build();
+
+        DeploymentContext app = tester.newDeploymentContext().submit(firstPackage, 5417);
+        var version = app.lastSubmission();
+        assertEquals(version, app.instance().change().application());
+        app.runJob(systemTest)
+           .runJob(stagingTest)
+           .runJob(productionUsEast3);
+        assertEquals(Change.empty(), app.instance().change());
+
+        // A similar application package is submitted. Since a new job is added, the original revision is again a target.
+        ApplicationPackage secondPackage = new ApplicationPackageBuilder()
+                .systemTest()
+                .stagingTest()
+                .region("us-east-3")
+                .delay(Duration.ofHours(1))
+                .test("us-east-3")
+                .build();
+
+        app.submit(secondPackage, 5417);
+        app.triggerJobs();
+        assertEquals(List.of(), tester.jobs().active());
+        assertEquals(version, app.instance().change().application());
+
+        tester.clock().advance(Duration.ofHours(1));
+        app.runJob(testUsEast3);
+        assertEquals(List.of(), tester.jobs().active());
+        assertEquals(Change.empty(), app.instance().change());
+
+        // The original application package is submitted again. No new jobs are added, so no change needs to roll out now.
+        app.submit(firstPackage, 5417);
+        app.triggerJobs();
+        assertEquals(List.of(), tester.jobs().active());
+        assertEquals(Change.empty(), app.instance().change());
+    }
+
+    @Test
+    public void testOutstandingChangeWithNextRevisionTarget() {
+        ApplicationPackage appPackage = new ApplicationPackageBuilder().revisionTarget("next")
+                                                                       .revisionChange("when-failing")
+                                                                       .region("us-east-3")
+                                                                       .build();
+        DeploymentContext app = tester.newDeploymentContext()
+                                      .submit(appPackage);
+        Optional<ApplicationVersion> revision0 = app.lastSubmission();
+
+        app.submit(appPackage);
+        Optional<ApplicationVersion> revision1 = app.lastSubmission();
+
+        app.submit(appPackage);
+        Optional<ApplicationVersion> revision2 = app.lastSubmission();
+
+        app.submit(appPackage);
+        Optional<ApplicationVersion> revision3 = app.lastSubmission();
+
+        assertEquals(revision0, app.instance().change().application());
+        assertEquals(revision1, app.deploymentStatus().outstandingChange(InstanceName.defaultName()).application());
+
+        tester.deploymentTrigger().forceChange(app.instanceId(), Change.of(revision1.get()));
+        assertEquals(revision1, app.instance().change().application());
+        assertEquals(revision2, app.deploymentStatus().outstandingChange(InstanceName.defaultName()).application());
+
+        app.deploy();
+        tester.outstandingChangeDeployer().run();
+        assertEquals(revision2, app.instance().change().application());
+        assertEquals(revision3, app.deploymentStatus().outstandingChange(InstanceName.defaultName()).application());
     }
 
     @Test
@@ -750,7 +823,7 @@ public class DeploymentTriggerTest {
     }
 
     @Test
-    public void requeueOutOfCapacityStagingJob() {
+    public void requeueNodeAllocationFailureStagingJob() {
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
                 .region("us-east-3")
                 .build();
@@ -786,9 +859,9 @@ public class DeploymentTriggerTest {
         tester.readyJobsTrigger().maintain();
         assertEquals(3, tester.jobs().active().size());
 
-        // Remove the jobs for app1 and app2, and then let app3 fail with outOfCapacity.
-        // All three jobs are now eligible, but the one for app3 should trigger first as an outOfCapacity-retry.
-        app3.outOfCapacity(stagingTest);
+        // Remove the jobs for app1 and app2, and then let app3 fail node allocation.
+        // All three jobs are now eligible, but the one for app3 should trigger first as a nodeAllocationFailure-retry.
+        app3.nodeAllocationFailure(stagingTest);
         app1.abortJob(stagingTest);
         app2.abortJob(stagingTest);
 
@@ -818,9 +891,9 @@ public class DeploymentTriggerTest {
         app1.assertRunning(stagingTest);
         assertEquals(2, tester.jobs().active().size());
 
-        // Let the test jobs start, remove everything except system test for app3, which fails with outOfCapacity again.
+        // Let the test jobs start, remove everything except system test for app3, which fails node allocation again.
         tester.triggerJobs();
-        app3.outOfCapacity(systemTest);
+        app3.nodeAllocationFailure(systemTest);
         app1.abortJob(systemTest);
         app1.abortJob(stagingTest);
         app2.abortJob(systemTest);
@@ -1028,6 +1101,23 @@ public class DeploymentTriggerTest {
         tester.clock().advance(Duration.ofMinutes(11)); // Job is cooling down after consecutive failures.
         app.runJob(testUsEast3);
         assertEquals(Change.empty().withPin(), app.instance().change());
+
+        // Same upgrade is attempted, and production tests wait for redeployment.
+        tester.deploymentTrigger().cancelChange(app.instanceId(), ALL);
+        tester.upgrader().overrideConfidence(version1, VespaVersion.Confidence.high);
+        tester.controllerTester().computeVersionStatus();
+        tester.upgrader().maintain();
+
+        app.triggerJobs();
+        app.assertRunning(productionUsEast3);
+        app.assertNotRunning(testUsEast3);
+        app.runJob(productionUsEast3);
+        tester.clock().advance(Duration.ofMinutes(1));
+        app.runJob(testUsEast3).runJob(productionUsWest1).triggerJobs();
+        app.assertRunning(productionUsCentral1);
+        tester.runner().run();
+        app.triggerJobs();
+        app.assertNotRunning(testUsCentral1);
     }
 
     @Test

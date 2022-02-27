@@ -38,6 +38,7 @@ import com.yahoo.slime.JsonParseException;
 import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
 import com.yahoo.text.Text;
+import com.yahoo.vespa.athenz.api.OAuthCredentials;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.Instance;
@@ -124,8 +125,10 @@ import javax.ws.rs.NotAuthorizedException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URL;
 import java.security.DigestInputStream;
 import java.security.Principal;
 import java.security.PublicKey;
@@ -141,12 +144,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.Scanner;
+import java.util.SortedSet;
 import java.util.StringJoiner;
 import java.util.function.Function;
-import java.util.function.Predicate;
-import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -443,7 +444,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                 Instant.ofEpochMilli(inspector.field("expiry").asLong()) :
                 Instant.now().plus(1, ChronoUnit.DAYS);
 
-        controller.serviceRegistry().accessControlService().approveSshAccess(tenant, expiry);
+        controller.serviceRegistry().accessControlService().approveSshAccess(tenant, expiry, OAuthCredentials.fromAuth0RequestContext(request.getJDiscRequest().context()));
         return new MessageResponse("OK");
     }
 
@@ -500,7 +501,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private String getString(Inspector field, String defaultVale) {
-        return field.valid() ? field.asString() : defaultVale;
+        return field.valid() ? field.asString().trim() : defaultVale;
     }
 
     private SlimeJsonResponse updateTenantInfo(CloudTenant tenant, HttpRequest request) {
@@ -518,6 +519,26 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                 .withAddress(updateTenantInfoAddress(insp.field("address"), oldInfo.address()))
                 .withBillingContact(updateTenantInfoBillingContact(insp.field("billingContact"), oldInfo.billingContact()));
 
+        // Assert that we have a valid tenant info
+        if (mergedInfo.contactName().isBlank()) {
+            throw new IllegalArgumentException("'contactName' cannot be empty");
+        }
+        if (mergedInfo.contactEmail().isBlank()) {
+            throw new IllegalArgumentException("'contactEmail' cannot be empty");
+        }
+        if (! mergedInfo.contactEmail().contains("@")) {
+            // email address validation is notoriously hard - we should probably just try to send a
+            // verification email to this address.  checking for @ is a simple best-effort.
+            throw new IllegalArgumentException("'contactEmail' needs to be an email address");
+        }
+        if (! mergedInfo.website().isBlank()) {
+            try {
+                new URL(mergedInfo.website());
+            } catch (MalformedURLException e) {
+                throw new IllegalArgumentException("'website' needs to be a valid address");
+            }
+        }
+
         // Store changes
         controller.tenants().lockOrThrow(tenant.name(), LockedTenant.Cloud.class, lockedTenant -> {
             lockedTenant = lockedTenant.withInfo(mergedInfo);
@@ -529,19 +550,39 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private TenantInfoAddress updateTenantInfoAddress(Inspector insp, TenantInfoAddress oldAddress) {
         if (!insp.valid()) return oldAddress;
-        return TenantInfoAddress.EMPTY
+        TenantInfoAddress address = TenantInfoAddress.EMPTY
                 .withCountry(getString(insp.field("country"), oldAddress.country()))
                 .withStateRegionProvince(getString(insp.field("stateRegionProvince"), oldAddress.stateRegionProvince()))
                 .withCity(getString(insp.field("city"), oldAddress.city()))
                 .withPostalCodeOrZip(getString(insp.field("postalCodeOrZip"), oldAddress.postalCodeOrZip()))
                 .withAddressLines(getString(insp.field("addressLines"), oldAddress.addressLines()));
+
+        List<String> fields = List.of(address.addressLines(),
+                        address.postalCodeOrZip(),
+                        address.country(),
+                        address.city(),
+                        address.stateRegionProvince());
+
+        if (fields.stream().allMatch(String::isBlank) || fields.stream().noneMatch(String::isBlank))
+            return address;
+
+        throw new IllegalArgumentException("All address fields must be set");
     }
 
     private TenantInfoBillingContact updateTenantInfoBillingContact(Inspector insp, TenantInfoBillingContact oldContact) {
         if (!insp.valid()) return oldContact;
+
+        String email = getString(insp.field("email"), oldContact.email());
+
+        if (!email.isBlank() && !email.contains("@")) {
+            // email address validation is notoriously hard - we should probably just try to send a
+            // verification email to this address.  checking for @ is a simple best-effort.
+            throw new IllegalArgumentException("'email' needs to be an email address");
+        }
+
         return TenantInfoBillingContact.EMPTY
                 .withName(getString(insp.field("name"), oldContact.name()))
-                .withEmail(getString(insp.field("email"), oldContact.email()))
+                .withEmail(email)
                 .withPhone(getString(insp.field("phone"), oldContact.phone()))
                 .withAddress(updateTenantInfoAddress(insp.field("address"), oldContact.address()));
     }
@@ -665,33 +706,30 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private HttpResponse applicationPackage(String tenantName, String applicationName, HttpRequest request) {
         var tenantAndApplication = TenantAndApplicationId.from(tenantName, applicationName);
+        SortedSet<ApplicationVersion> versions = controller.applications().requireApplication(tenantAndApplication).versions();
+        if (versions.isEmpty())
+            throw new NotExistsException("No application package has been submitted for '" + tenantAndApplication + "'");
 
-        long buildNumber;
-        var requestedBuild = Optional.ofNullable(request.getProperty("build")).map(build -> {
-            try {
-                return Long.parseLong(build);
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("Invalid build number", e);
-            }
-        });
-        if (requestedBuild.isEmpty()) { // Fall back to latest build
-            var application = controller.applications().requireApplication(tenantAndApplication);
-            var latestBuild = application.latestVersion().map(ApplicationVersion::buildNumber).orElse(OptionalLong.empty());
-            if (latestBuild.isEmpty()) {
-                throw new NotExistsException("No application package has been submitted for '" + tenantAndApplication + "'");
-            }
-            buildNumber = latestBuild.getAsLong();
-        } else {
-            buildNumber = requestedBuild.get();
-        }
-        var applicationPackage = controller.applications().applicationStore().find(tenantAndApplication.tenant(), tenantAndApplication.application(), buildNumber);
-        var filename = tenantAndApplication + "-build" + buildNumber + ".zip";
-        if (applicationPackage.isEmpty()) {
-            throw new NotExistsException("No application package found for '" +
-                                         tenantAndApplication +
-                                         "' with build number " + buildNumber);
-        }
-        return new ZipResponse(filename, applicationPackage.get());
+        ApplicationVersion version = Optional.ofNullable(request.getProperty("build"))
+                .map(build -> {
+                    try {
+                        return Long.parseLong(build);
+                    } catch (NumberFormatException e) {
+                        throw new IllegalArgumentException("Invalid build number", e);
+                    }
+                })
+                .map(build -> versions.stream()
+                        .filter(ver -> ver.buildNumber().orElse(-1) == build)
+                        .findFirst()
+                        .orElseThrow(() -> new NotExistsException("No application package found for '" + tenantAndApplication + "' with build number " + build)))
+                .orElseGet(versions::last);
+
+        boolean tests = request.getBooleanProperty("tests");
+        byte[] applicationPackage = tests ?
+                controller.applications().applicationStore().getTester(tenantAndApplication.tenant(), tenantAndApplication.application(), version) :
+                controller.applications().applicationStore().get(new DeploymentId(tenantAndApplication.defaultInstance(), ZoneId.defaultId()), version);
+        String filename = tenantAndApplication + (tests ? "-tests" : "-build") + version.buildNumber().getAsLong() + ".zip";
+        return new ZipResponse(filename, applicationPackage);
     }
 
     private HttpResponse applicationPackageDiff(String tenant, String application, String number) {
@@ -1820,6 +1858,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     /** Trigger deployment of the given Vespa version if a valid one is given, e.g., "7.8.9". */
     private HttpResponse deployPlatform(String tenantName, String applicationName, String instanceName, boolean pin, HttpRequest request) {
+
         String versionString = readToString(request.getData());
         ApplicationId id = ApplicationId.from(tenantName, applicationName, instanceName);
         StringBuilder response = new StringBuilder();

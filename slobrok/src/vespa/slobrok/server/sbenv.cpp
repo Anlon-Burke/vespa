@@ -98,7 +98,7 @@ ConfigTask::PerformTask()
 } // namespace slobrok::<unnamed>
 
 SBEnv::SBEnv(const ConfigShim &shim)
-    : _transport(std::make_unique<FNET_Transport>(TransportConfig().drop_empty_buffers(true))),
+    : _transport(std::make_unique<FNET_Transport>(fnet::TransportConfig().drop_empty_buffers(true))),
       _supervisor(std::make_unique<FRT_Supervisor>(_transport.get())),
       _configShim(shim),
       _configurator(shim.factory().create(*this)),
@@ -173,7 +173,7 @@ SBEnv::MainLoop()
 
     std::unique_ptr<ReconfigurableStateServer> stateServer;
     if (_configShim.enableStateServer()) {
-        stateServer = std::make_unique<ReconfigurableStateServer>(_configShim.configId(), _health, _metrics, _components);
+        stateServer = std::make_unique<ReconfigurableStateServer>(config::ConfigUri(_configShim.configId()), _health, _metrics, _components);
     }
 
     try {

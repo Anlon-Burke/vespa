@@ -4,7 +4,6 @@
 #include "proton.h"
 #include <vespa/searchcore/proton/matchengine/matchengine.h>
 #include <vespa/vespalib/util/lambdatask.h>
-#include <vespa/vespalib/util/size_literals.h>
 #include <vespa/fnet/frt/supervisor.h>
 #include <vespa/fnet/transport.h>
 
@@ -16,52 +15,20 @@ using vespalib::compression::CompressionConfig;
 
 namespace {
 
-using Pair = std::pair<string, string>;
+string delayed_configs_string("delayedConfigs");
 
-VESPA_THREAD_STACK_TAG(proton_rpc_executor)
+using Pair = std::pair<string, string>;
 
 }
 
 namespace proton {
 
 void
-RPCHooksBase::checkState(std::unique_ptr<StateArg> arg)
-{
-    steady_time now(steady_clock::now());
-    if (now < arg->_dueTime) {
-        std::unique_lock<std::mutex> guard(_stateLock);
-        vespalib::duration left = (arg->_dueTime - now);
-        if (_stateCond.wait_for(guard, left) == std::cv_status::no_timeout) {
-            LOG(debug, "state has changed");
-            reportState(*arg->_session, arg->_req);
-            arg->_req->Return();
-        } else {
-            LOG(debug, "Will reschedule");
-            FRT_RPCRequest * req = arg->_req;
-            Session & session = *arg->_session;
-            Executor::Task::UP failedTask = _executor.execute(makeLambdaTask([this, arg=std::move(arg)]() mutable {
-                checkState(std::move(arg));
-            }));
-            if (failedTask) {
-                reportState(session, req);
-                req->Return();
-            }
-        }
-    } else {
-        reportState(*arg->_session, arg->_req);
-        arg->_req->Return();
-    }
-}
-
-void
-RPCHooksBase::reportState(Session & session, FRT_RPCRequest * req)
+RPCHooksBase::reportState(FRT_RPCRequest * req)
 {
     std::vector<Pair> res;
     int64_t numDocs(_proton.getNumDocs());
     std::string delayedConfigs = _proton.getDelayedConfigs();
-    bool numDocsChanged = session.getNumDocs() != numDocs;
-    bool delayedConfigsChanged = session.getDelayedConfigs() != delayedConfigs;
-    bool changed = numDocsChanged || delayedConfigsChanged;
 
     if (_proton.getMatchEngine().isOnline()) {
         res.emplace_back("online", "true");
@@ -70,23 +37,9 @@ RPCHooksBase::reportState(Session & session, FRT_RPCRequest * req)
         res.emplace_back("online", "false");
         res.emplace_back("onlineState", "onlineSoon");
     }
-    if (session.getGen() < 0) {
-        if (delayedConfigsChanged) {
-            res.emplace_back("delayedConfigs", delayedConfigs);
-        }
-        res.emplace_back("onlineDocs", make_string("%" PRId64, numDocs));
-        session.setGen(0);
-    } else if (changed) {
-        if (delayedConfigsChanged) {
-            res.emplace_back("delayedConfigs", delayedConfigs);
-        }
-        res.emplace_back("onlineDocs", make_string("%" PRId64, numDocs));
-        session.setGen(session.getGen() + 1);
-    }
-    if (numDocsChanged)
-        session.setNumDocs(numDocs);
-    if (delayedConfigsChanged)
-        session.setDelayedConfigs(delayedConfigs);
+
+    res.emplace_back(delayed_configs_string, delayedConfigs);
+    res.emplace_back("onlineDocs", make_string("%" PRId64, numDocs));
 
     FRT_Values &ret = *req->GetReturn();
     FRT_StringValue *k = ret.AddStringArray(res.size());
@@ -95,29 +48,15 @@ RPCHooksBase::reportState(Session & session, FRT_RPCRequest * req)
         ret.SetString(&k[i], res[i].first.c_str());
         ret.SetString(&v[i], res[i].second.c_str());
     }
-    LOG(debug, "gen=%" PRId64, session.getGen());
     for (const auto & r : res) {
         LOG(debug, "key=%s, value=%s", r.first.c_str(), r.second.c_str());
     }
-    ret.AddInt32(session.getGen());
-}
-
-RPCHooksBase::Session::Session()
-    : _numDocs(0u),
-      _delayedConfigs(),
-      _gen(-1),
-      _down(false)
-{
+    ret.AddInt32(0);
 }
 
 void
 RPCHooksBase::initRPC()
 {
-    _orb->SetSessionInitHook(FRT_METHOD(RPCHooksBase::initSession), this);
-    _orb->SetSessionFiniHook(FRT_METHOD(RPCHooksBase::finiSession), this);
-    _orb->SetSessionDownHook(FRT_METHOD(RPCHooksBase::downSession), this);
-    _orb->SetMethodMismatchHook(FRT_METHOD(RPCHooksBase::mismatch), this);
-
     FRT_ReflectionBuilder rb(_orb.get());
     //-------------------------------------------------------------------------
     rb.DefineMethod("pandora.rtc.getState", "ii", "SSi",
@@ -138,18 +77,6 @@ RPCHooksBase::initRPC()
     rb.ReturnDesc("internalStates", "Array of internal states ");
     rb.ReturnDesc("message", "Array of status messages");
     //-------------------------------------------------------------------------
-    rb.DefineMethod("pandora.rtc.getIncrementalState", "i", "SSi",
-                    FRT_METHOD(RPCHooksBase::rpc_getIncrementalState), this);
-    rb.MethodDesc("Get node state changes since last invocation");
-    rb.ParamDesc("timeout", "How many milliseconds to wait for state update");
-    rb.ReturnDesc("keys", "Array of state keys");
-    rb.ReturnDesc("values", "Array of state values");
-    rb.ReturnDesc("dummy", "Dummy value to enable code reuse");
-    //-------------------------------------------------------------------------
-    rb.DefineMethod("pandora.rtc.shutdown", "", "",
-                    FRT_METHOD(RPCHooksBase::rpc_Shutdown), this);
-    rb.MethodDesc("Shut down the rtc application");
-    //-------------------------------------------------------------------------
     rb.DefineMethod("pandora.rtc.die", "", "",
                     FRT_METHOD(RPCHooksBase::rpc_die), this);
     rb.MethodDesc("Exit the rtc application without cleanup");
@@ -166,11 +93,11 @@ RPCHooksBase::initRPC()
     rb.ReturnDesc("success", "Whether or not prepare for restart was triggered.");
 }
 
-RPCHooksBase::Params::Params(Proton &parent, uint32_t port, const vespalib::string &ident,
-                             uint32_t transportThreads)
+RPCHooksBase::Params::Params(Proton &parent, uint32_t port, const config::ConfigUri & configUri,
+                             vespalib::stringref slobrokId, uint32_t transportThreads)
     : proton(parent),
-      slobrok_config(config::ConfigUri("client")),
-      identity(ident),
+      slobrok_config(configUri.createWithNewId(slobrokId)),
+      identity(configUri.getConfigId()),
       rtcPort(port),
       numTranportThreads(transportThreads)
 { }
@@ -185,10 +112,7 @@ RPCHooksBase::RPCHooksBase(Params &params)
                       _proton.get_search_server(),
                       _proton.get_docsum_server(),
                       _proton.get_monitor_server(), *_orb)),
-      _regAPI(*_orb, slobrok::ConfiguratorFactory(params.slobrok_config)),
-      _stateLock(),
-      _stateCond(),
-      _executor(1u, 128_Ki, proton_rpc_executor)
+      _regAPI(*_orb, slobrok::ConfiguratorFactory(params.slobrok_config))
 { }
 
 void
@@ -214,12 +138,6 @@ RPCHooksBase::close()
 {
     LOG(info, "shutting down monitoring interface");
     _transport->ShutDown(true);
-    _executor.shutdown();
-    {
-        std::lock_guard<std::mutex> guard(_stateLock);
-        _stateCond.notify_all();
-    }
-    _executor.sync();
 }
 
 void
@@ -260,25 +178,9 @@ RPCHooksBase::rpc_GetState(FRT_RPCRequest *req)
     FRT_Values &arg = *req->GetParams();
     uint32_t gen = arg[0]._intval32;
     uint32_t timeoutMS = arg[1]._intval32;
-    const Session::SP & sharedSession = getSession(req);
-    LOG(debug, "RPCHooksBase::rpc_GetState(gen=%d, timeoutMS=%d) , but using gen=%" PRId64 " instead",
-               gen, timeoutMS, sharedSession->getGen());
+    LOG(debug, "RPCHooksBase::rpc_GetState(gen=%d, timeoutMS=%d)", gen, timeoutMS);
 
-    int64_t numDocs(_proton.getNumDocs());
-    if (sharedSession->getGen() < 0 || sharedSession->getNumDocs() != numDocs) {  // NB Should use something else to define generation.
-        reportState(*sharedSession, req);
-    } else {
-        steady_time dueTime(steady_clock::now() + std::chrono::milliseconds(timeoutMS));
-        auto failed = _executor.execute(makeLambdaTask([this, arg=std::make_unique<StateArg>(sharedSession, req, dueTime)]() mutable {
-            checkState(std::move(arg));
-        }));
-        if (failed) {
-            reportState(*sharedSession, req);
-            req->Return();
-        } else {
-            req->Detach();
-        }
-    }
+    reportState(req);
 }
 
 void
@@ -286,7 +188,7 @@ RPCHooksBase::rpc_GetProtonStatus(FRT_RPCRequest *req)
 {
     LOG(debug, "RPCHooksBase::rpc_GetProtonStatus started");
     req->Detach();
-    _executor.execute(makeLambdaTask([this, req]() { getProtonStatus(req); }));
+    letProtonDo(makeLambdaTask([this, req]() { getProtonStatus(req); }));
 }
 
 void
@@ -324,39 +226,8 @@ RPCHooksBase::getProtonStatus(FRT_RPCRequest *req)
 }
 
 void
-RPCHooksBase::rpc_getIncrementalState(FRT_RPCRequest *req)
+RPCHooksBase::rpc_die(FRT_RPCRequest *)
 {
-    FRT_Values &arg = *req->GetParams();
-    uint32_t timeoutMS = arg[0]._intval32;
-    const Session::SP & sharedSession = getSession(req);
-    LOG(debug, "RPCHooksBase::rpc_getIncrementalState(timeoutMS=%d)", timeoutMS);
-
-    int64_t numDocs(_proton.getNumDocs());
-    if (sharedSession->getGen() < 0 || sharedSession->getNumDocs() != numDocs) {  // NB Should use something else to define generation.
-        reportState(*sharedSession, req);
-    } else {
-        steady_time dueTime(steady_clock::now() + std::chrono::milliseconds(timeoutMS));
-        auto stateArg = std::make_unique<StateArg>(sharedSession, req, dueTime);
-        if (_executor.execute(makeLambdaTask([this, arg=std::move(stateArg)]() mutable { checkState(std::move(arg)); }))) {
-            reportState(*sharedSession, req);
-            req->Return();
-        } else {
-            req->Detach();
-        }
-    }
-}
-
-void
-RPCHooksBase::rpc_Shutdown(FRT_RPCRequest *req)
-{
-    (void) req;
-    LOG(debug, "RPCHooksBase::rpc_Shutdown");
-}
-
-void
-RPCHooksBase::rpc_die(FRT_RPCRequest *req)
-{
-    (void) req;
     LOG(debug, "RPCHooksBase::rpc_die");
     _exit(0);
 }
@@ -375,51 +246,6 @@ RPCHooksBase::rpc_prepareRestart(FRT_RPCRequest *req)
     LOG(info, "RPCHooksBase::rpc_prepareRestart started");
     req->Detach();
     letProtonDo(makeLambdaTask([this, req]() { prepareRestart(req); }));
-}
-
-const RPCHooksBase::Session::SP &
-RPCHooksBase::getSession(FRT_RPCRequest *req)
-{
-    FNET_Connection *conn = req->GetConnection();
-    void *vctx = conn->GetContext()._value.VOIDP;
-    auto *sessionspp = static_cast<Session::SP *>(vctx);
-    return *sessionspp;
-}
-
-void
-RPCHooksBase::initSession(FRT_RPCRequest *req)
-{
-    FNET_Connection *conn = req->GetConnection();
-    const void * voidp(conn->GetContext()._value.VOIDP);
-    req->GetConnection()->SetContext(new Session::SP(new Session()));
-    void *vctx = conn->GetContext()._value.VOIDP;
-    LOG(debug, "RPCHooksBase::iniSession req=%p connection=%p session=%p oldSession=%p", req, conn, vctx, voidp);
-}
-
-void
-RPCHooksBase::finiSession(FRT_RPCRequest *req)
-{
-    FNET_Connection *conn = req->GetConnection();
-    void *vctx = conn->GetContext()._value.VOIDP;
-    conn->GetContextPT()->_value.VOIDP = nullptr;
-    LOG(debug, "RPCHooksBase::finiSession req=%p connection=%p session=%p", req, conn, vctx);
-
-    auto * sessionspp = static_cast<Session::SP *>(vctx);
-    delete sessionspp;
-}
-
-void
-RPCHooksBase::downSession(FRT_RPCRequest *req)
-{
-    LOG(debug, "RPCHooksBase::downSession req=%p connection=%p session=%p",
-               req, req->GetConnection(), req->GetConnection()->GetContext()._value.VOIDP);
-    getSession(req)->setDown();
-}
-
-void
-RPCHooksBase::mismatch(FRT_RPCRequest *req)
-{
-    LOG(warning, "RPC Mismatch: %s, (%d): %s", req->GetMethodName(), req->GetErrorCode(), req->GetErrorMessage());
 }
 
 RPCHooks::RPCHooks(Params &params) :

@@ -398,9 +398,9 @@ public class DeploymentTrigger {
 
     private Instance withRemainingChange(Instance instance, Change change, DeploymentStatus status) {
         Change remaining = change;
-        if (status.jobsToRun(Map.of(instance.name(), change.withoutApplication())).isEmpty())
+        if (status.hasCompleted(instance.name(), change.withoutApplication()))
             remaining = remaining.withoutPlatform();
-        if (status.jobsToRun(Map.of(instance.name(), change.withoutPlatform())).isEmpty()) {
+        if (status.hasCompleted(instance.name(), change.withoutPlatform())) {
             remaining = remaining.withoutApplication();
             if (change.application().isPresent())
                 instance = instance.withLatestDeployed(change.application().get());
@@ -411,7 +411,7 @@ public class DeploymentTrigger {
     // ---------- Version and job helpers ----------
 
     private Job deploymentJob(Instance instance, Versions versions, JobType jobType, JobStatus jobStatus, Instant availableSince) {
-        return new Job(instance, versions, jobType, availableSince, jobStatus.isOutOfCapacity(), instance.change().application().isPresent());
+        return new Job(instance, versions, jobType, availableSince, jobStatus.isNodeAllocationFailure(), instance.change().application().isPresent());
     }
 
     // ---------- Data containers ----------

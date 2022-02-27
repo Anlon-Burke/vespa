@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/vespa-engine/vespa/client/go/version"
 )
 
 type mockVespaApi struct {
@@ -22,6 +23,9 @@ type mockVespaApi struct {
 
 func (v *mockVespaApi) mockVespaHandler(w http.ResponseWriter, req *http.Request) {
 	switch req.URL.Path {
+	case "/cli/v1/":
+		response := `{"minVersion":"8.0.0"}`
+		w.Write([]byte(response))
 	case "/application/v4/tenant/t1/application/a1/instance/i1/environment/dev/region/us-north-1":
 		response := "{}"
 		if v.deploymentConverged {
@@ -137,22 +141,38 @@ func TestLog(t *testing.T) {
 	assert.Equal(t, expected, buf.String())
 }
 
+func TestCheckVersion(t *testing.T) {
+	vc := mockVespaApi{}
+	srv := httptest.NewServer(http.HandlerFunc(vc.mockVespaHandler))
+	defer srv.Close()
+
+	target := createCloudTarget(t, srv.URL, ioutil.Discard)
+	assert.Nil(t, target.CheckVersion(mustVersion("8.0.0")))
+	assert.Nil(t, target.CheckVersion(mustVersion("8.1.0")))
+	assert.NotNil(t, target.CheckVersion(mustVersion("7.0.0")))
+}
+
+func mustVersion(s string) version.Version {
+	v, err := version.Parse(s)
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func createCloudTarget(t *testing.T, url string, logWriter io.Writer) Target {
 	kp, err := CreateKeyPair()
 	assert.Nil(t, err)
 
 	x509KeyPair, err := tls.X509KeyPair(kp.Certificate, kp.PrivateKey)
 	assert.Nil(t, err)
-	var apiKey []byte = nil
-	if !Auth0AccessTokenEnabled() {
-		apiKey, err = CreateAPIKey()
-	}
+	apiKey, err := CreateAPIKey()
 	assert.Nil(t, err)
 
 	target := CloudTarget("https://example.com", Deployment{
 		Application: ApplicationID{Tenant: "t1", Application: "a1", Instance: "i1"},
 		Zone:        ZoneID{Environment: "dev", Region: "us-north-1"},
-	}, apiKey, TLSOptions{KeyPair: x509KeyPair}, LogOptions{Writer: logWriter}, "", "", "", nil)
+	}, apiKey, TLSOptions{KeyPair: x509KeyPair}, LogOptions{Writer: logWriter}, "", "", nil)
 	if ct, ok := target.(*cloudTarget); ok {
 		ct.apiURL = url
 	} else {

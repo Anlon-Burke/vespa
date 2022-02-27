@@ -129,12 +129,15 @@ private:
 class DaisyChainedFeedToken : public feedtoken::ITransport {
 public:
     DaisyChainedFeedToken(FeedToken token) : _token(std::move(token)) {}
+    ~DaisyChainedFeedToken() override;
     void send(ResultUP, bool ) override {
         _token.reset();
     }
 private:
     FeedToken _token;
 };
+
+DaisyChainedFeedToken::~DaisyChainedFeedToken() = default;
 
 }  // namespace
 
@@ -408,7 +411,7 @@ FeedHandler::FeedHandler(IThreadingService &writeService,
       _owner(owner),
       _writeFilter(writeFilter),
       _replayConfig(replayConfig),
-      _tlsMgr(tlsSpec, docTypeName.getName()),
+      _tlsMgr(writeService.transport(), tlsSpec, docTypeName.getName()),
       _tlsWriterfactory(tlsWriterFactory),
       _tlsMgrWriter(),
       _tlsWriter(tlsWriter),

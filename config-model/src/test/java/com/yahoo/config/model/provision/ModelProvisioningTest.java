@@ -85,7 +85,9 @@ public class ModelProvisioningTest {
                         "  <handler id='myHandler'>" +
                         "    <component id='injected' />" +
                         "  </handler>" +
-                        "  <nodes count='2' allocated-memory='45%' jvm-gc-options='-XX:+UseParNewGC' jvm-options='-verbosegc' preload='lib/blablamalloc.so'/>" +
+                        "  <nodes count='2' preload='lib/blablamalloc.so'>" +
+                        "    <jvm allocated-memory='45%' gc-options='-XX:+UseParNewGC' options='-verbosegc' />" +
+                        "  </nodes>" +
                         "</container>" +
                         "</services>";
         String hosts ="<hosts>"
@@ -355,7 +357,9 @@ public class ModelProvisioningTest {
                 "<services>" +
                 "  <container version='1.0' id='container1'>" +
                 "     <document-processing/>" +
-                "     <nodes of='content1' jvm-options='testoption'/>" +
+                "     <nodes of='content1'>" +
+                "       <jvm options='-Dtestoption=foo' />" +
+                "     </nodes>" +
                 "  </container>" +
                 "  <content version='1.0' id='content1'>" +
                 "     <redundancy>2</redundancy>" +
@@ -1377,7 +1381,7 @@ public class ModelProvisioningTest {
                 "   </admin>" +
                 "   <container version='1.0' id='container'>" +
                 "      <nodes count='4'>" +
-                "         <resources vcpu='12' memory='10Gb' disk='30Gb'/>" +
+                "         <resources vcpu='12' memory='10Gb' disk='30Gb' architecture='arm64'/>" +
                 "      </nodes>" +
                 "   </container>" +
                 "   <content version='1.0' id='foo'>" +
@@ -1402,7 +1406,8 @@ public class ModelProvisioningTest {
         VespaModelTester tester = new VespaModelTester();
         tester.addHosts(new NodeResources(0.1, 0.2, 300, 0.3, NodeResources.DiskSpeed.slow), 1);// Logserver
         tester.addHosts(new NodeResources(0.1, 0.3, 1, 0.5), 2); // Slobrok
-        tester.addHosts(new NodeResources(12, 10, 30, 0.3), 4); // Container
+        tester.addHosts(new NodeResources(12, 10, 30, 0.3,
+                                          NodeResources.DiskSpeed.fast, NodeResources.StorageType.local, NodeResources.Architecture.arm64), 4); // Container
         tester.addHosts(new NodeResources(8, 200, 1000000, 0.3), 5); // Content-foo
         tester.addHosts(new NodeResources(10, 64, 200, 0.3), 6); // Content-bar
         tester.addHosts(new NodeResources(0.5, 2, 10, 0.3), 6); // Cluster-controller
@@ -1508,18 +1513,20 @@ public class ModelProvisioningTest {
                 "<?xml version='1.0' encoding='utf-8' ?>\n" +
                         "<container version='1.0'>" +
                         "  <search/>" +
-                        "  <nodes jvm-options='xyz' count='3'/>" +
+                        "  <nodes count='3'>" +
+                        "    <jvm options='-DfooOption=xyz' /> " +
+                        "  </nodes>" +
                         "</container>";
         int numberOfHosts = 3;
         VespaModelTester tester = new VespaModelTester();
         tester.addHosts(numberOfHosts);
         VespaModel model = tester.createModel(services, true);
         assertEquals(numberOfHosts, model.getRoot().hostSystem().getHosts().size());
-        assertEquals("xyz", model.getContainerClusters().get("container").getContainers().get(0).getAssignedJvmOptions());
+        assertEquals("-DfooOption=xyz", model.getContainerClusters().get("container").getContainers().get(0).getAssignedJvmOptions());
     }
 
     @Test
-    public void testJvmOptionsOverridesJvmArgs() {
+    public void testFailWhenBothJvmOptionsAndJvmArgs() {
         String services =
                 "<?xml version='1.0' encoding='utf-8' ?>\n" +
                         "<container version='1.0'>" +
@@ -1647,7 +1654,7 @@ public class ModelProvisioningTest {
     /** Deploying an application with "nodes count" standalone should give a single-node deployment */
     @Test
     public void testThatHostedSyntaxWorksOnStandalone() {
-        String xmlWithNodes =
+        String services =
                 "<?xml version='1.0' encoding='utf-8' ?>" +
                 "<services>" +
                 "  <container version='1.0' id='container1'>" +
@@ -1665,7 +1672,63 @@ public class ModelProvisioningTest {
         VespaModelTester tester = new VespaModelTester();
         tester.setHosted(false);
         tester.addHosts(3);
-        VespaModel model = tester.createModel(xmlWithNodes, true);
+        VespaModel model = tester.createModel(services, true);
+
+        assertEquals("Nodes in container cluster", 1,
+                     model.getContainerClusters().get("container1").getContainers().size());
+        assertEquals("Nodes in content cluster (downscaled)", 1,
+                     model.getContentClusters().get("content").getRootGroup().getNodes().size());
+
+        assertEquals(1, model.getAdmin().getSlobroks().size());
+
+        model.getConfig(new StorStatusConfig.Builder(), "default");
+        StorageCluster storage = model.getContentClusters().get("content").getStorageCluster();
+        StorCommunicationmanagerConfig.Builder builder = new StorCommunicationmanagerConfig.Builder();
+        storage.getChildren().get("0").getConfig(builder);
+    }
+
+    /**
+     * Deploying an application with "nodes count" standalone should give a single-node deployment,
+     * also if the user has a lingering hosts file from running self-hosted.
+     *
+     * NOTE: This does *not* work (but gives an understandable error message),
+     *       but the current code does not get provoke the error that is thrown from HostsXmlProvisioner.prepare
+     */
+    @Test
+    public void testThatHostedSyntaxWorksOnStandaloneAlsoWithAHostedFile() {
+        String services =
+                "<?xml version='1.0' encoding='utf-8' ?>" +
+                "<services>" +
+                "  <container version='1.0' id='container1'>" +
+                "     <search/>" +
+                "     <nodes count='1'/>" +
+                "  </container>" +
+                "  <content version='1.0'>" +
+                "     <redundancy>2</redundancy>" +
+                "     <documents>" +
+                "       <document type='type1' mode='index'/>" +
+                "     </documents>" +
+                "     <nodes count='2'/>" +
+                "   </content>" +
+                "</services>";
+        String hosts =
+                "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n" +
+                "<hosts>\n" +
+                "  <host name=\"vespa-1\">\n" +
+                "    <alias>vespa-1</alias>\n" +
+                "  </host>\n" +
+                "  <host name=\"vespa-2\">\n" +
+                "    <alias>vespa-2</alias>\n" +
+                "  </host>\n" +
+                "  <host name=\"vespa-3\">\n" +
+                "    <alias>vespa-3</alias>\n" +
+                "  </host>\n" +
+                "</hosts>";
+
+        VespaModelTester tester = new VespaModelTester();
+        tester.setHosted(false);
+        tester.addHosts(3);
+        VespaModel model = tester.createModel(services, hosts, true);
 
         assertEquals("Nodes in container cluster", 1,
                      model.getContainerClusters().get("container1").getContainers().size());
@@ -1834,7 +1897,8 @@ public class ModelProvisioningTest {
                 "    <document-processing/>\n" +
                 "    <document-api/>\n" +
                 "    <search/>\n" +
-                "    <nodes jvm-options=\"-Xms512m -Xmx512m\">\n" +
+                "    <nodes>\n" +
+                "      <jvm options=\"-Xms512m -Xmx512m\"/>\n" +
                 "      <node hostalias=\"vespa-1\"/>\n" +
                 "    </nodes>\n" +
                 "  </container>\n" +

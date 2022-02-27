@@ -80,9 +80,9 @@ struct TargetPoolTask : public FNET_Task {
     }
 };
 
-TransportConfig
+fnet::TransportConfig
 toFNETConfig(const RPCNetworkParams & params) {
-    return TransportConfig(params.getNumNetworkThreads())
+    return fnet::TransportConfig(params.getNumNetworkThreads())
               .maxInputBufferSize(params.getMaxInputBufferSize())
               .maxOutputBufferSize(params.getMaxOutputBufferSize())
               .tcpNoDelay(params.getTcpNoDelay());
@@ -423,6 +423,8 @@ RPCNetwork::sync()
 void
 RPCNetwork::shutdown()
 {
+    // Unschedule any pending target pool flush task that may race with shutdown target flushing
+    _scheduler.Kill(_targetPoolTask.get());
     _transport->ShutDown(true);
     _threadPool->Close();
     _executor->shutdown().sync();

@@ -72,6 +72,9 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private String mergeThrottlingPolicy = "STATIC";
     private double persistenceThrottlingWsDecrementFactor = 1.2;
     private double persistenceThrottlingWsBackoff = 0.95;
+    private int persistenceThrottlingWindowSize = -1;
+    private double persistenceThrottlingWsResizeRate = 3.0;
+    private boolean persistenceThrottlingOfMergeFeedOps = true;
     private boolean inhibitDefaultMergesWhenGlobalMergesPending = false;
     private boolean useV8GeoPositions = false;
     private List<String> environmentVariables = List.of();
@@ -128,6 +131,9 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public String mergeThrottlingPolicy() { return mergeThrottlingPolicy; }
     @Override public double persistenceThrottlingWsDecrementFactor() { return persistenceThrottlingWsDecrementFactor; }
     @Override public double persistenceThrottlingWsBackoff() { return persistenceThrottlingWsBackoff; }
+    @Override public int persistenceThrottlingWindowSize() { return persistenceThrottlingWindowSize; }
+    @Override public double persistenceThrottlingWsResizeRate() { return persistenceThrottlingWsResizeRate; }
+    @Override public boolean persistenceThrottlingOfMergeFeedOps() { return persistenceThrottlingOfMergeFeedOps; }
     @Override public boolean inhibitDefaultMergesWhenGlobalMergesPending() { return inhibitDefaultMergesWhenGlobalMergesPending; }
     @Override public boolean useV8GeoPositions() { return useV8GeoPositions; }
     @Override public List<String> environmentVariables() { return environmentVariables; }
@@ -331,6 +337,21 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setPersistenceThrottlingWsBackoff(double backoff) {
         this.persistenceThrottlingWsBackoff = backoff;
+        return this;
+    }
+
+    public TestProperties setPersistenceThrottlingWindowSize(int windowSize) {
+        this.persistenceThrottlingWindowSize = windowSize;
+        return this;
+    }
+
+    public TestProperties setPersistenceThrottlingWsResizeRate(double resizeRate) {
+        this.persistenceThrottlingWsResizeRate = resizeRate;
+        return this;
+    }
+
+    public TestProperties setPersistenceThrottlingOfMergeFeedOps(boolean throttleOps) {
+        this.persistenceThrottlingOfMergeFeedOps = throttleOps;
         return this;
     }
 

@@ -7,6 +7,9 @@
 #include <vespa/fnet/transport.h>
 #include <vespa/fastos/thread.h>
 
+#include <vespa/log/log.h>
+LOG_SETUP(".config.frt.frtconnectionpool");
+
 namespace config {
 
 FRTConnectionPool::FRTConnectionKey::FRTConnectionKey(int idx, const vespalib::string& hostname)
@@ -27,10 +30,8 @@ FRTConnectionPool::FRTConnectionKey::operator==(const FRTConnectionKey& right) c
     return _hostname == right._hostname;
 }
 
-FRTConnectionPool::FRTConnectionPool(const ServerSpec & spec, const TimingValues & timingValues)
-    :  _threadPool(std::make_unique<FastOS_ThreadPool>(60_Ki)),
-       _transport(std::make_unique<FNET_Transport>()),
-       _supervisor(std::make_unique<FRT_Supervisor>(_transport.get())),
+FRTConnectionPool::FRTConnectionPool(FNET_Transport & transport, const ServerSpec & spec, const TimingValues & timingValues)
+    : _supervisor(std::make_unique<FRT_Supervisor>(& transport)),
       _selectIdx(0),
       _hostname("")
 {
@@ -39,12 +40,13 @@ FRTConnectionPool::FRTConnectionPool(const ServerSpec & spec, const TimingValues
         _connections[key] = std::make_shared<FRTConnection>(spec.getHost(i), *_supervisor, timingValues);
     }
     setHostname();
-    _transport->Start(_threadPool.get());
 }
 
-FRTConnectionPool::~FRTConnectionPool()
-{
-    _transport->ShutDown(true);
+FRTConnectionPool::~FRTConnectionPool() {
+    LOG(debug, "Shutting down %lu connections", _connections.size());
+    syncTransport();
+    _connections.clear();
+    syncTransport();
 }
 
 void
@@ -80,6 +82,27 @@ FRTConnectionPool::getNextRoundRobin()
         nextFRTConnection = suspended[sel];
     }
     return nextFRTConnection;
+}
+
+namespace {
+/**
+ * Implementation of the Java hashCode function for the String class.
+ *
+ * Ensures that the same hostname maps to the same configserver/proxy
+ * for both language implementations.
+ *
+ * @param s the string to compute the hash from
+ * @return the hash value
+ */
+int hashCode(const vespalib::string & s) {
+    int hashval = 0;
+
+    for (int i = 0; i < (int) s.length(); i++) {
+        hashval = 31 * hashval + s[i];
+    }
+    return hashval;
+}
+
 }
 
 FRTConnection *
@@ -129,25 +152,31 @@ FRTConnectionPool::getSuspendedSources() const
     return suspendedSources;
 }
 
-int FRTConnectionPool::hashCode(const vespalib::string & s)
-{
-    int hashval = 0;
-
-    for (int i = 0; i < (int)s.length(); i++) {
-        hashval = 31 * hashval + s[i];
-    }
-    return hashval;
-}
-
 void
 FRTConnectionPool::setHostname()
 {
-    _hostname = vespalib::HostName::get();
+    setHostname(vespalib::HostName::get());
 }
 
 FNET_Scheduler *
 FRTConnectionPool::getScheduler() {
     return _supervisor->GetScheduler();
+}
+
+FRTConnectionPoolWithTransport::FRTConnectionPoolWithTransport(std::unique_ptr<FastOS_ThreadPool> threadPool,
+                                                               std::unique_ptr<FNET_Transport> transport,
+                                                               const ServerSpec & spec, const TimingValues & timingValues)
+    :  _threadPool(std::move(threadPool)),
+       _transport(std::move(transport)),
+       _connectionPool(std::make_unique<FRTConnectionPool>(*_transport, spec, timingValues))
+{
+    _transport->Start(_threadPool.get());
+}
+
+FRTConnectionPoolWithTransport::~FRTConnectionPoolWithTransport()
+{
+    syncTransport();
+    _transport->ShutDown(true);
 }
 
 }

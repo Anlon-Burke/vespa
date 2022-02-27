@@ -247,7 +247,7 @@ struct TestFileStorComponents {
     explicit TestFileStorComponents(FileStorTestBase& test, bool use_small_config = false)
         : manager(nullptr)
     {
-        auto fsm = std::make_unique<FileStorManager>((use_small_config ? test.smallConfig : test.config)->getConfigId(),
+        auto fsm = std::make_unique<FileStorManager>(config::ConfigUri((use_small_config ? test.smallConfig : test.config)->getConfigId()),
                                                      test._node->getPersistenceProvider(),
                                                      test._node->getComponentRegister(), *test._node, test._node->get_host_info());
         manager = fsm.get();
@@ -284,19 +284,21 @@ struct FileStorHandlerComponents {
 FileStorHandlerComponents::~FileStorHandlerComponents() = default;
 
 struct PersistenceHandlerComponents : public FileStorHandlerComponents {
+    vespalib::ISequencedTaskExecutor& executor;
     ServiceLayerComponent component;
     BucketOwnershipNotifier bucketOwnershipNotifier;
     std::unique_ptr<PersistenceHandler> persistenceHandler;
 
     PersistenceHandlerComponents(FileStorTestBase& test)
         : FileStorHandlerComponents(test),
+          executor(test._node->executor()),
           component(test._node->getComponentRegister(), "test"),
           bucketOwnershipNotifier(component, messageSender),
           persistenceHandler()
     {
         vespa::config::content::StorFilestorConfig cfg;
         persistenceHandler =
-                std::make_unique<PersistenceHandler>(test._node->executor(), component, cfg,
+                std::make_unique<PersistenceHandler>(executor, component, cfg,
                                                      test._node->getPersistenceProvider(),
                                                      *filestorHandler, bucketOwnershipNotifier,
                                                      *metrics.disk->threads[0]);
@@ -307,7 +309,12 @@ struct PersistenceHandlerComponents : public FileStorHandlerComponents {
     }
 };
 
-PersistenceHandlerComponents::~PersistenceHandlerComponents() = default;
+PersistenceHandlerComponents::~PersistenceHandlerComponents()
+{
+    // Ensure any pending tasks have completed before destroying any resources they
+    // may implicitly depend on.
+    executor.sync_all();
+}
 
 }
 
@@ -811,6 +818,8 @@ TEST_F(FileStorManagerTest, priority) {
     // Closing file stor handler before threads are deleted, such that
     // file stor threads getNextMessage calls returns.
     filestorHandler.close();
+    // Sync any tasks that may be pending for the handlers on the stack.
+    _node->executor().sync_all();
 }
 
 TEST_F(FileStorManagerTest, split1) {

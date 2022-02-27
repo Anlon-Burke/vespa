@@ -43,6 +43,7 @@
 #include <vespa/vespalib/util/random.h>
 #include <vespa/vespalib/util/sequencedtaskexecutor.h>
 #include <vespa/vespalib/util/size_literals.h>
+#include <vespa/fnet/transport.h>
 #ifdef __linux__
 #include <malloc.h>
 #endif
@@ -200,9 +201,8 @@ Proton::ProtonFileHeaderContext::setClusterName(const vespalib::string & cluster
 }
 
 
-Proton::Proton(const config::ConfigUri & configUri,
-               const vespalib::string &progName,
-               std::chrono::milliseconds subscribeTimeout)
+Proton::Proton(FastOS_ThreadPool & threadPool, FNET_Transport & transport, const config::ConfigUri & configUri,
+               const vespalib::string &progName, vespalib::duration subscribeTimeout)
     : IProtonConfigurerOwner(),
       search::engine::MonitorServer(),
       IDocumentDBOwner(),
@@ -210,6 +210,8 @@ Proton::Proton(const config::ConfigUri & configUri,
       IPersistenceEngineOwner(),
       ComponentConfigProducer(),
       _cpu_util(),
+      _threadPool(threadPool),
+      _transport(transport),
       _configUri(configUri),
       _mutex(),
       _metricsHook(std::make_unique<MetricsUpdateHook>(*this)),
@@ -235,12 +237,11 @@ Proton::Proton(const config::ConfigUri & configUri,
       _executor(1, 128_Ki),
       _protonDiskLayout(),
       _protonConfigurer(_executor, *this, _protonDiskLayout),
-      _protonConfigFetcher(configUri, _protonConfigurer, subscribeTimeout),
+      _protonConfigFetcher(_transport, configUri, _protonConfigurer, subscribeTimeout),
       _shared_service(),
       _compile_cache_executor_binding(),
       _queryLimiter(),
       _clock(1.0/vespalib::getVespaTimerHz()),
-      _threadPool(128_Ki),
       _distributionKey(-1),
       _isInitializing(true),
       _abortInit(false),
@@ -261,7 +262,7 @@ Proton::init()
     if (_threadPool.NewThread(_clock.getRunnable(), nullptr) == nullptr) {
         throw IllegalStateException("Failed starting thread for the cheap clock");
     }
-    _protonConfigFetcher.start();
+    _protonConfigFetcher.start(_threadPool);
     auto configSnapshot = _protonConfigurer.getPendingConfigSnapshot();
     assert(configSnapshot);
     auto bootstrapConfig = configSnapshot->getBootstrapConfig();
@@ -279,7 +280,8 @@ Proton::init(const BootstrapConfig::SP & configSnapshot)
 
     setBucketCheckSumType(protonConfig);
     setFS4Compression(protonConfig);
-    _diskMemUsageSampler = std::make_unique<DiskMemUsageSampler>(protonConfig.basedir,
+    _shared_service = std::make_unique<SharedThreadingService>(SharedThreadingServiceConfig::make(protonConfig, hwInfo.cpu()), _transport);
+    _diskMemUsageSampler = std::make_unique<DiskMemUsageSampler>(_shared_service->transport(), protonConfig.basedir,
                                                                  diskMemUsageSamplerConfig(protonConfig, hwInfo));
 
     _tls = std::make_unique<TLS>(_configUri.createWithNewId(protonConfig.tlsconfigid), _fileHeaderContext);
@@ -310,10 +312,10 @@ Proton::init(const BootstrapConfig::SP & configSnapshot)
         strategy = std::make_shared<SimpleFlush>();
         break;
     }
-    _protonDiskLayout = std::make_unique<ProtonDiskLayout>(protonConfig.basedir, protonConfig.tlsspec);
+    _protonDiskLayout = std::make_unique<ProtonDiskLayout>(_transport, protonConfig.basedir, protonConfig.tlsspec);
     vespalib::chdir(protonConfig.basedir);
     vespalib::alloc::MmapFileAllocatorFactory::instance().setup(protonConfig.basedir + "/swapdirs");
-    _tls->start(hwInfo.cpu().cores());
+    _tls->start(_transport, hwInfo.cpu().cores());
     _flushEngine = std::make_unique<FlushEngine>(std::make_shared<flushengine::TlsStatsFactory>(_tls->getTransLogServer()),
                                                  strategy, flush.maxconcurrent, vespalib::from_s(flush.idleinterval));
     _metricsEngine->addExternalMetrics(_summaryEngine->getMetrics());
@@ -328,7 +330,6 @@ Proton::init(const BootstrapConfig::SP & configSnapshot)
                                                              protonConfig.visit.ignoremaxbytes);
 
     vespalib::string fileConfigId;
-    _shared_service = std::make_unique<SharedThreadingService>(SharedThreadingServiceConfig::make(protonConfig, hwInfo.cpu()));
     _compile_cache_executor_binding = vespalib::eval::CompileCache::bind(_shared_service->shared_raw());
     InitializeThreads initializeThreads;
     if (protonConfig.initialize.threads > 0) {
@@ -340,9 +341,8 @@ Proton::init(const BootstrapConfig::SP & configSnapshot)
     initializeThreads.reset();
 
     _prepareRestartHandler = std::make_unique<PrepareRestartHandler>(*_flushEngine);
-    RPCHooks::Params rpcParams(*this, protonConfig.rpcport, _configUri.getConfigId(),
+    RPCHooks::Params rpcParams(*this, protonConfig.rpcport, _configUri, protonConfig.slobrokconfigid,
                                std::max(2u, computeRpcTransportThreads(protonConfig, hwInfo.cpu())));
-    rpcParams.slobrok_config = _configUri.createWithNewId(protonConfig.slobrokconfigid);
     _rpcHooks = std::make_unique<RPCHooks>(rpcParams);
     _metricsEngine->addExternalMetrics(_rpcHooks->proto_rpc_adapter_metrics());
 
@@ -599,9 +599,8 @@ Proton::addDocumentDB(const document::DocumentType &docType,
 
     vespalib::string db_dir = config.basedir + "/documents/" + docTypeName.toString();
     vespalib::mkdir(db_dir, false); // Assume parent is created.
-    auto config_store = std::make_unique<FileConfigManager>(db_dir + "/config",
-                                                            documentDBConfig->getConfigId(),
-                                                            docTypeName.getName());
+    auto config_store = std::make_unique<FileConfigManager>(_transport, db_dir + "/config",
+                                                            documentDBConfig->getConfigId(), docTypeName.getName());
     config_store->setProtonConfig(bootstrapConfig->getProtonConfigSP());
     if (!initializeThreads) {
         // If configured value for initialize threads was 0, or we

@@ -14,6 +14,7 @@ import static com.yahoo.vespa.testrunner.TestRunner.Status.ERROR;
 import static com.yahoo.vespa.testrunner.TestRunner.Status.FAILURE;
 import static com.yahoo.vespa.testrunner.TestRunner.Status.INCONCLUSIVE;
 import static com.yahoo.vespa.testrunner.TestRunner.Status.NOT_STARTED;
+import static com.yahoo.vespa.testrunner.TestRunner.Status.NO_TESTS;
 import static com.yahoo.vespa.testrunner.TestRunner.Status.RUNNING;
 import static com.yahoo.vespa.testrunner.TestRunner.Status.SUCCESS;
 import static java.util.stream.Collectors.toList;
@@ -31,30 +32,34 @@ class AggregateTestRunnerTest {
 
     @Test
     void onlySupportedRunnersAreUsed() {
-        MockTestRunner unsupported = new MockTestRunner(false);
-        MockTestRunner suppported = new MockTestRunner(true);
-        TestRunner runner = AggregateTestRunner.of(List.of(unsupported, suppported));
+        MockTestRunner unsupported = new MockTestRunner();
+        unsupported.status = NO_TESTS;
+        MockTestRunner supported = new MockTestRunner();
+        supported.status = SUCCESS;
+        TestRunner runner = AggregateTestRunner.of(List.of(unsupported, supported));
         CompletableFuture<?> future = runner.test(null, null);
         assertFalse(future.isDone());
-        assertNull(unsupported.future);
-        assertNotNull(suppported.future);
-        suppported.future.complete(null);
+        assertNotNull(unsupported.future);
+        assertNull(supported.future);
+        unsupported.future.complete(null);
+        assertNotNull(supported.future);
+        supported.future.complete(null);
         assertTrue(future.isDone());
     }
 
     @Test
     void noTestsResultInFailure() {
-        TestRunner runner = AggregateTestRunner.of(List.of(new MockTestRunner(false)));
-        assertEquals("No tests were found", runner.getLog(-1).iterator().next().getMessage());
-        assertSame(FAILURE, runner.getStatus());
+        TestRunner runner = AggregateTestRunner.of(List.of());
+        runner.test(null, null);
+        assertSame(NO_TESTS, runner.getStatus());
     }
 
     @Test
     void chainedRunners() {
         LogRecord record1 = new LogRecord(Level.INFO, "one");
         LogRecord record2 = new LogRecord(Level.INFO, "two");
-        MockTestRunner first = new MockTestRunner(true);
-        MockTestRunner second = new MockTestRunner(true);
+        MockTestRunner first = new MockTestRunner();
+        MockTestRunner second = new MockTestRunner();
         TestRunner runner = AggregateTestRunner.of(List.of(first, second));
         assertSame(NOT_STARTED, runner.getStatus());
         assertEquals(List.of(), runner.getLog(-1));
@@ -72,7 +77,7 @@ class AggregateTestRunnerTest {
         assertEquals(List.of(), runner.getLog(record1.getSequenceNumber()));
 
         // First wrapped runner completes, second is started.
-        first.status = SUCCESS;
+        first.status = NO_TESTS;
         first.future.complete(null);
         assertNotNull(second.future);
         assertFalse(future.isDone());
@@ -82,8 +87,13 @@ class AggregateTestRunnerTest {
         second.log.add(record2);
         assertEquals(List.of(record1, record2), runner.getLog(-1));
 
-        // No failures means success.
+        // No tests in any runner means no tests.
+        second.status = NO_TESTS;
         second.future.complete(null);
+        assertEquals(NO_TESTS, runner.getStatus());
+
+        // No failures, and at least one success, mean success.
+        second.status = SUCCESS;
         assertEquals(SUCCESS, runner.getStatus());
 
         // An inconclusive test means inconclusive.
@@ -103,7 +113,7 @@ class AggregateTestRunnerTest {
         assertFalse(first.future.isDone());
         assertTrue(second.future.isDone());
         assertEquals(List.of(record1), runner.getLog(-1));
-        assertEquals(ERROR, runner.getStatus());
+        assertEquals(RUNNING, runner.getStatus());
 
         // First wrapped runner completes exceptionally, but the second should be started as usual.
         first.future.completeExceptionally(new RuntimeException("error"));
@@ -117,7 +127,6 @@ class AggregateTestRunnerTest {
         TestReport report = TestReport.builder()
                                       .withLogs(List.of(record1))
                                       .withFailures(List.of(failure))
-                                      .withTotalCount(15)
                                       .withSuccessCount(8)
                                       .withIgnoredCount(4)
                                       .withFailedCount(2)
@@ -130,24 +139,29 @@ class AggregateTestRunnerTest {
         TestReport merged = runner.getReport();
         assertEquals(List.of(record1, record1), merged.logLines);
         assertEquals(List.of(failure, failure), merged.failures);
-        assertEquals(30, merged.totalCount);
         assertEquals(16, merged.successCount);
         assertEquals(8, merged.ignoredCount);
         assertEquals(4, merged.failedCount);
         assertEquals(2, merged.abortedCount);
     }
 
+    @Test
+    void testReportStatus() {
+        assertEquals(NO_TESTS, TestReport.builder().build().status());
+        assertEquals(SUCCESS, TestReport.builder().withSuccessCount(1).build().status());
+        assertEquals(INCONCLUSIVE, TestReport.builder().withSuccessCount(1).withInconclusiveCount(1).build().status());
+        assertEquals(FAILURE, TestReport.builder().withSuccessCount(1).withFailedCount(1).build().status());
+        assertEquals(SUCCESS, TestReport.builder().withAbortedCount(1).build().status());
+        assertEquals(SUCCESS, TestReport.builder().withIgnoredCount(1).build().status());
+        assertEquals(FAILURE, JunitRunner.createReportWithFailedInitialization(new RuntimeException("hello")).status());
+    }
+
     static class MockTestRunner implements TestRunner {
 
         final List<LogRecord> log = new ArrayList<>();
-        final boolean supported;
         CompletableFuture<?> future;
         Status status = NOT_STARTED;
         TestReport report;
-
-        public MockTestRunner(boolean supported) {
-            this.supported = supported;
-        }
 
         @Override
         public Collection<LogRecord> getLog(long after) {
@@ -162,11 +176,6 @@ class AggregateTestRunnerTest {
         @Override
         public CompletableFuture<?> test(Suite suite, byte[] config) {
             return future = new CompletableFuture<>();
-        }
-
-        @Override
-        public boolean isSupported() {
-            return supported;
         }
 
         @Override

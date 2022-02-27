@@ -36,23 +36,19 @@ class SyncHandler : public std::enable_shared_from_this<SyncHandler>
     std::atomic<bool>         & _closed;
     FRT_RPCRequest            & _req;
     Domain::SP                  _domain;
-    TransLogServer::Session::SP _session; 
     SerialNum                   _syncTo;
     
 public:
-    SyncHandler(std::atomic<bool>& closed, FRT_RPCRequest *req, const Domain::SP &domain,
-                const TransLogServer::Session::SP &session, SerialNum syncTo) noexcept;
+    SyncHandler(std::atomic<bool>& closed, FRT_RPCRequest *req, Domain::SP domain, SerialNum syncTo) noexcept;
 
     ~SyncHandler();
     void poll();
 };
 
-SyncHandler::SyncHandler(std::atomic<bool>& closed, FRT_RPCRequest *req, const Domain::SP &domain,
-                         const TransLogServer::Session::SP &session, SerialNum syncTo) noexcept
+SyncHandler::SyncHandler(std::atomic<bool>& closed, FRT_RPCRequest *req, Domain::SP domain, SerialNum syncTo) noexcept
     : _closed(closed),
       _req(*req),
-      _domain(domain),
-      _session(session),
+      _domain(std::move(domain)),
       _syncTo(syncTo)
 {
 }
@@ -63,8 +59,7 @@ void
 SyncHandler::poll()
 {
     SerialNum synced(_domain->getSynced());
-    if (_session->getDown() ||
-        _domain->getMarkedDeleted() ||
+    if (_domain->getMarkedDeleted() ||
         _closed.load(std::memory_order_acquire) ||
         synced >= _syncTo)
     {
@@ -81,19 +76,19 @@ VESPA_THREAD_STACK_TAG(tls_executor);
 
 }
 
-TransLogServer::TransLogServer(const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
+TransLogServer::TransLogServer(FNET_Transport & transport, const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
                                const FileHeaderContext &fileHeaderContext)
-    : TransLogServer(name, listenPort, baseDir, fileHeaderContext,
+    : TransLogServer(transport, name, listenPort, baseDir, fileHeaderContext,
                      DomainConfig().setEncoding(Encoding(Encoding::xxh64, Encoding::Compression::zstd))
                                         .setPartSizeLimit(0x10000000).setChunkSizeLimit(0x40000))
 {}
 
-TransLogServer::TransLogServer(const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
+TransLogServer::TransLogServer(FNET_Transport & transport, const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
                                const FileHeaderContext &fileHeaderContext, const DomainConfig &  cfg)
-    : TransLogServer(name, listenPort, baseDir, fileHeaderContext, cfg, 4)
+    : TransLogServer(transport, name, listenPort, baseDir, fileHeaderContext, cfg, 4)
 {}
 
-TransLogServer::TransLogServer(const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
+TransLogServer::TransLogServer(FNET_Transport & transport, const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
                                const FileHeaderContext &fileHeaderContext, const DomainConfig & cfg, size_t maxThreads)
     : FRT_Invokable(),
       _name(name),
@@ -101,8 +96,7 @@ TransLogServer::TransLogServer(const vespalib::string &name, int listenPort, con
       _domainConfig(cfg),
       _executor(maxThreads, 128_Ki, CpuUsage::wrap(tls_executor, CpuUsage::Category::WRITE)),
       _threadPool(std::make_unique<FastOS_ThreadPool>(120_Ki)),
-      _transport(std::make_unique<FNET_Transport>()),
-      _supervisor(std::make_unique<FRT_Supervisor>(_transport.get())),
+      _supervisor(std::make_unique<FRT_Supervisor>(&transport)),
       _domains(),
       _reqQ(),
       _fileHeaderContext(fileHeaderContext),
@@ -130,7 +124,6 @@ TransLogServer::TransLogServer(const vespalib::string &name, int listenPort, con
             bool listenOk(false);
             for (int i(600); !listenOk && i; i--) {
                 if (_supervisor->Listen(listenSpec)) {
-                    _transport->Start(_threadPool.get());
                     listenOk = true;
                 } else {
                     LOG(warning, "Failed listening at port %s trying for %d seconds more.", listenSpec, i);
@@ -157,7 +150,6 @@ TransLogServer::~TransLogServer()
     _executor.sync();
     _executor.shutdown();
     _executor.sync();
-    _transport->ShutDown(true);
 }
 
 bool
@@ -256,9 +248,6 @@ TransLogServer::findDomain(stringref domainName) const
 void
 TransLogServer::exportRPC(FRT_Supervisor & supervisor)
 {
-    _supervisor->SetSessionInitHook(FRT_METHOD(TransLogServer::initSession), this);
-    _supervisor->SetSessionFiniHook(FRT_METHOD(TransLogServer::finiSession), this);
-    _supervisor->SetSessionDownHook(FRT_METHOD(TransLogServer::downSession), this);
     FRT_ReflectionBuilder rb( & supervisor);
 
     //-- Create Domain -----------------------------------------------------------
@@ -679,37 +668,6 @@ TransLogServer::domainPrune(FRT_RPCRequest *req)
     ret.AddInt32(retval);
 }
 
-const TransLogServer::Session::SP &
-TransLogServer::getSession(FRT_RPCRequest *req)
-{
-    FNET_Connection *conn = req->GetConnection();
-    void *vctx = conn->GetContext()._value.VOIDP;
-    Session::SP *sessionspp = static_cast<Session::SP *>(vctx);
-    return *sessionspp;
-}
-
-void
-TransLogServer::initSession(FRT_RPCRequest *req)
-{
-    req->GetConnection()->SetContext(new Session::SP(new Session()));
-}
-
-void
-TransLogServer::finiSession(FRT_RPCRequest *req)
-{
-    FNET_Connection *conn = req->GetConnection();
-    void *vctx = conn->GetContext()._value.VOIDP;
-    conn->GetContextPT()->_value.VOIDP = nullptr;
-    Session::SP *sessionspp = static_cast<Session::SP *>(vctx);
-    delete sessionspp;
-}
-
-void
-TransLogServer::downSession(FRT_RPCRequest *req)
-{
-    getSession(req)->setDown();
-}
-
 void
 TransLogServer::domainSync(FRT_RPCRequest *req)
 {
@@ -718,7 +676,6 @@ TransLogServer::domainSync(FRT_RPCRequest *req)
     SerialNum syncTo(params[1]._intval64);
     LOG(debug, "domainSync(%s, %" PRIu64 ")", domainName, syncTo);
     Domain::SP domain(findDomain(domainName));
-    Session::SP session(getSession(req));
 
     if ( ! domain) {
         FRT_Values &rvals = *req->GetReturn();
@@ -728,7 +685,7 @@ TransLogServer::domainSync(FRT_RPCRequest *req)
         return;
     }
 
-    auto syncHandler = std::make_shared<SyncHandler>(_closed, req, domain, session, syncTo);
+    auto syncHandler = std::make_shared<SyncHandler>(_closed, req, std::move(domain), syncTo);
     syncHandler->poll();
 }
 

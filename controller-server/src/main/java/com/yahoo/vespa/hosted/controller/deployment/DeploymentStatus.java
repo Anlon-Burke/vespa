@@ -196,7 +196,7 @@ public class DeploymentStatus {
         jobs.putAll(productionJobs);
         // Add runs for idle, declared test jobs if they have no successes on their instance's change's versions.
         jobSteps.forEach((job, step) -> {
-            if ( ! step.isDeclared() || jobs.containsKey(job))
+            if ( ! step.isDeclared() || step.type() != StepType.test || jobs.containsKey(job))
                 return;
 
             Change change = changes.get(job.application().instance());
@@ -216,7 +216,12 @@ public class DeploymentStatus {
     }
 
     /** The set of jobs that need to run for the given changes to be considered complete. */
-    public Map<JobId, List<Job>> jobsToRun(Map<InstanceName, Change> changes) {
+    public boolean hasCompleted(InstanceName instance, Change change) {
+        return jobsToRun(Map.of(instance, change), false).isEmpty();
+    }
+
+    /** The set of jobs that need to run for the given changes to be considered complete. */
+    private Map<JobId, List<Job>> jobsToRun(Map<InstanceName, Change> changes) {
         return jobsToRun(changes, false);
     }
 
@@ -257,24 +262,15 @@ public class DeploymentStatus {
      */
     public Change outstandingChange(InstanceName instance) {
         return Optional.ofNullable(instanceSteps().get(instance))
-                       .flatMap(instanceStatus -> application.versions().stream()
-                                                             .sorted(application.deploymentSpec().requireInstance(instance).revisionTarget() == next ? naturalOrder() : reverseOrder())
+                       .flatMap(instanceStatus -> application.deployableVersions(application.deploymentSpec().requireInstance(instance).revisionTarget() == next).stream()
                                                              .filter(version -> instanceStatus.dependenciesCompletedAt(Change.of(version), Optional.empty()).map(at -> ! at.isAfter(now)).orElse(false))
                                                              .filter(version -> application.productionDeployments().getOrDefault(instance, List.of()).stream()
                                                                                            .noneMatch(deployment -> deployment.applicationVersion().compareTo(version) > 0))
                                                              .map(Change::of)
                                                              .filter(change -> application.require(instance).change().application().map(change::upgrades).orElse(true))
-                                                             .filter(change -> ! jobsToRun(Map.of(instance, change)).isEmpty())
+                                                             .filter(change -> ! hasCompleted(instance, change))
                                                              .findFirst())
                        .orElse(Change.empty());
-    }
-
-    private Stream<InstanceStatus> allDependencies(StepStatus step) {
-        return step.dependencies.stream()
-                                .flatMap(dep -> Stream.concat(Stream.of(dep), allDependencies(dep)))
-                                .filter(InstanceStatus.class::isInstance)
-                                .map(InstanceStatus.class::cast)
-                                .distinct();
     }
 
     /** Earliest instant when job was triggered with given versions, or both system and staging tests were successful. */
@@ -753,7 +749,7 @@ public class DeploymentStatus {
             Versions lastVersions = job.lastCompleted().get().versions();
             if (change.platform().isPresent() && ! change.platform().get().equals(lastVersions.targetPlatform())) return Optional.empty();
             if (change.application().isPresent() && ! change.application().get().equals(lastVersions.targetApplication())) return Optional.empty();
-            if (job.id().type().environment().isTest() && job.isOutOfCapacity()) return Optional.empty();
+            if (job.id().type().environment().isTest() && job.isNodeAllocationFailure()) return Optional.empty();
 
             Instant firstFailing = job.firstFailing().get().end().get();
             Instant lastCompleted = job.lastCompleted().get().end().get();
@@ -816,6 +812,15 @@ public class DeploymentStatus {
                                                       DeploymentStatus status, InstanceName instance, JobType testType, JobType prodType) {
             JobStatus job = status.instanceJobs(instance).get(testType);
             return new JobStepStatus(StepType.test, step, dependencies, job, status) {
+                @Override
+                Optional<Instant> readyAt(Change change, Optional<JobId> dependent) {
+                    JobId prodId = new JobId(status.application().id().instance(instance()), prodType);
+                    Optional<Instant> readyAt = super.readyAt(change, dependent);
+                    Optional<Instant> deployedAt = status.jobSteps().get(prodId).completedAt(change, Optional.of(prodId));
+                    if (readyAt.isEmpty() || deployedAt.isEmpty()) return Optional.empty();
+                    return readyAt.get().isAfter(deployedAt.get()) ? readyAt : deployedAt;
+                }
+
                 @Override
                 Optional<Instant> completedAt(Change change, Optional<JobId> dependent) {
                     Versions versions = Versions.from(change, status.application, status.deploymentFor(job.id()), status.systemVersion);

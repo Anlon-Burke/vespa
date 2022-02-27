@@ -8,6 +8,7 @@ import java.util.logging.LogRecord;
 
 import static com.yahoo.vespa.testrunner.TestRunner.Status.FAILURE;
 import static com.yahoo.vespa.testrunner.TestRunner.Status.INCONCLUSIVE;
+import static com.yahoo.vespa.testrunner.TestRunner.Status.NO_TESTS;
 import static com.yahoo.vespa.testrunner.TestRunner.Status.SUCCESS;
 
 /**
@@ -15,7 +16,6 @@ import static com.yahoo.vespa.testrunner.TestRunner.Status.SUCCESS;
  */
 public class TestReport {
 
-    final long totalCount;
     final long successCount;
     final long failedCount;
     final long inconclusiveCount;
@@ -24,8 +24,7 @@ public class TestReport {
     final List<Failure> failures;
     final List<LogRecord> logLines;
 
-    private TestReport(long totalCount, long successCount, long failedCount, long inconclusiveCount, long ignoredCount, long abortedCount, List<Failure> failures, List<LogRecord> logLines) {
-        this.totalCount = totalCount;
+    private TestReport(long successCount, long failedCount, long inconclusiveCount, long ignoredCount, long abortedCount, List<Failure> failures, List<LogRecord> logLines) {
         this.successCount = successCount;
         this.failedCount = failedCount;
         this.inconclusiveCount = inconclusiveCount;
@@ -40,7 +39,7 @@ public class TestReport {
     }
 
     public TestRunner.Status status() {
-        return failedCount > 0 ? FAILURE : inconclusiveCount > 0 ? INCONCLUSIVE : SUCCESS;
+        return failedCount > 0 ? FAILURE : inconclusiveCount > 0 ? INCONCLUSIVE : (successCount + abortedCount + ignoredCount) > 0 ? SUCCESS : NO_TESTS;
     }
 
     public static Builder builder(){
@@ -50,7 +49,6 @@ public class TestReport {
 
     public static class Builder {
 
-        private long totalCount;
         private long successCount;
         private long failedCount;
         private long inconclusiveCount;
@@ -60,12 +58,7 @@ public class TestReport {
         private List<LogRecord> logLines = Collections.emptyList();
 
         public TestReport build() {
-            return new TestReport(totalCount, successCount, failedCount, inconclusiveCount, ignoredCount, abortedCount, failures, logLines);
-        }
-
-        public Builder withTotalCount(long totalCount) {
-            this.totalCount = totalCount;
-            return this;
+            return new TestReport(successCount, failedCount, inconclusiveCount, ignoredCount, abortedCount, failures, logLines);
         }
 
         public Builder withSuccessCount(long successCount) {

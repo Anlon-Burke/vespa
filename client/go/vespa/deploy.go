@@ -333,7 +333,7 @@ func Submit(opts DeploymentOpts) error {
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	serviceDescription := "Submit service"
 	sigKeyId := opts.Deployment.Application.SerializedForm()
-	if err := opts.Target.PrepareApiRequest(request, sigKeyId); err != nil {
+	if err := opts.Target.SignRequest(request, sigKeyId); err != nil {
 		return err
 	}
 	response, err := util.HttpDo(request, time.Minute*10, sigKeyId)
@@ -347,11 +347,6 @@ func Submit(opts DeploymentOpts) error {
 func checkDeploymentOpts(opts DeploymentOpts) error {
 	if !opts.ApplicationPackage.HasCertificate() {
 		return fmt.Errorf("%s: missing certificate in package", opts)
-	}
-	if !Auth0AccessTokenEnabled() {
-		if opts.APIKey == nil {
-			return fmt.Errorf("%s: missing api key", opts.String())
-		}
 	}
 	return nil
 }
@@ -371,7 +366,7 @@ func uploadApplicationPackage(url *url.URL, opts DeploymentOpts) (int64, error) 
 	}
 	serviceDescription := "Deploy service"
 	sigKeyId := opts.Deployment.Application.SerializedForm()
-	if err := opts.Target.PrepareApiRequest(request, sigKeyId); err != nil {
+	if err := opts.Target.SignRequest(request, sigKeyId); err != nil {
 		return 0, err
 	}
 

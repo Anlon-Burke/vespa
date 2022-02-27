@@ -18,15 +18,18 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"github.com/stretchr/testify/require"
 	"github.com/vespa-engine/vespa/client/go/util"
 )
 
 type command struct {
-	homeDir  string
-	cacheDir string
-	stdin    io.ReadWriter
-	args     []string
-	moreArgs []string
+	homeDir         string
+	cacheDir        string
+	stdin           io.ReadWriter
+	args            []string
+	moreArgs        []string
+	env             map[string]string
+	failTestOnError bool
 }
 
 func resetFlag(f *pflag.Flag) {
@@ -37,6 +40,28 @@ func resetFlag(f *pflag.Flag) {
 		switch v.Type() {
 		case "bool", "string", "int":
 			_ = v.Set(f.DefValue)
+		}
+	}
+}
+
+func setEnv(env map[string]string) map[string]string {
+	originalEnv := map[string]string{}
+	for k, v := range env {
+		value, ok := os.LookupEnv(k)
+		if ok {
+			originalEnv[k] = value
+		}
+		os.Setenv(k, v)
+	}
+	return originalEnv
+}
+
+func resetEnv(env map[string]string, original map[string]string) {
+	for k, _ := range env {
+		if v, ok := original[k]; ok {
+			os.Setenv(k, v)
+		} else {
+			os.Unsetenv(k)
 		}
 	}
 }
@@ -54,14 +79,26 @@ func execute(cmd command, t *testing.T, client *mockHttpClient) (string, string)
 	if cmd.cacheDir == "" {
 		cmd.cacheDir = filepath.Join(t.TempDir(), ".cache", "vespa")
 	}
-	os.Setenv("VESPA_CLI_HOME", cmd.homeDir)
-	os.Setenv("VESPA_CLI_CACHE_DIR", cmd.cacheDir)
+
+	env := map[string]string{}
+	for k, v := range cmd.env {
+		env[k] = v
+	}
+	env["VESPA_CLI_HOME"] = cmd.homeDir
+	env["VESPA_CLI_CACHE_DIR"] = cmd.cacheDir
+	originalEnv := setEnv(env)
+	defer resetEnv(env, originalEnv)
+
+	// Reset viper at end of test to ensure vespa config set does not leak between tests
+	t.Cleanup(viper.Reset)
 
 	// Reset flags to their default value - persistent flags in Cobra persists over tests
 	// TODO: Due to the bad design of viper, the only proper fix is to get rid of global state by moving each command to
 	// their own sub-package
 	rootCmd.Flags().VisitAll(resetFlag)
+	queryCmd.Flags().VisitAll(resetFlag)
 	documentCmd.Flags().VisitAll(resetFlag)
+	logCmd.Flags().VisitAll(resetFlag)
 
 	// Capture stdout and execute command
 	var capturedOut bytes.Buffer
@@ -76,7 +113,10 @@ func execute(cmd command, t *testing.T, client *mockHttpClient) (string, string)
 
 	// Execute command and return output
 	rootCmd.SetArgs(append(cmd.args, cmd.moreArgs...))
-	Execute()
+	err := Execute()
+	if cmd.failTestOnError {
+		require.Nil(t, err)
+	}
 	return capturedOut.String(), capturedErr.String()
 }
 
@@ -98,12 +138,16 @@ type mockHttpClient struct {
 
 type mockResponse struct {
 	status int
-	body   string
+	body   []byte
 }
 
-func (c *mockHttpClient) NextStatus(status int) { c.NextResponse(status, "") }
+func (c *mockHttpClient) NextStatus(status int) { c.NextResponseBytes(status, nil) }
 
 func (c *mockHttpClient) NextResponse(status int, body string) {
+	c.NextResponseBytes(status, []byte(body))
+}
+
+func (c *mockHttpClient) NextResponseBytes(status int, body []byte) {
 	c.nextResponses = append(c.nextResponses, mockResponse{status: status, body: body})
 }
 
@@ -118,7 +162,7 @@ func (c *mockHttpClient) Do(request *http.Request, timeout time.Duration) (*http
 	return &http.Response{
 			Status:     "Status " + strconv.Itoa(response.status),
 			StatusCode: response.status,
-			Body:       ioutil.NopCloser(bytes.NewBufferString(response.body)),
+			Body:       ioutil.NopCloser(bytes.NewBuffer(response.body)),
 			Header:     make(http.Header),
 		},
 		nil

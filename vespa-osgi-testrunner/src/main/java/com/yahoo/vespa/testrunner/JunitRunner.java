@@ -103,17 +103,19 @@ public class JunitRunner extends AbstractComponent implements TestRunner {
         }
         try {
             logRecords.clear();
-            testRuntimeProvider.initialize(testConfig);
             Optional<Bundle> testBundle = findTestBundle();
             if (testBundle.isEmpty()) {
-                throw new RuntimeException("No test bundle available");
+                execution = CompletableFuture.completedFuture(TestReport.builder().build());
+                return execution;
             }
 
+            testRuntimeProvider.initialize(testConfig);
             Optional<TestDescriptor> testDescriptor = loadTestDescriptor(testBundle.get());
             if (testDescriptor.isEmpty()) {
                 throw new RuntimeException("Could not find test descriptor");
             }
-            execution = CompletableFuture.supplyAsync(() -> launchJunit(loadClasses(testBundle.get(), testDescriptor.get(), toCategory(suite))));
+            execution = CompletableFuture.supplyAsync(() -> launchJunit(loadClasses(testBundle.get(), testDescriptor.get(), toCategory(suite)),
+                                                                        suite == Suite.PRODUCTION_TEST));
         } catch (Exception e) {
             execution = CompletableFuture.completedFuture(createReportWithFailedInitialization(e));
         }
@@ -125,27 +127,22 @@ public class JunitRunner extends AbstractComponent implements TestRunner {
         return logRecords.tailMap(after + 1).values();
     }
 
-    private static TestReport createReportWithFailedInitialization(Exception exception) {
+    static TestReport createReportWithFailedInitialization(Exception exception) {
         TestReport.Failure failure = new TestReport.Failure("init", exception);
-        return new TestReport.Builder()
-                        .withFailures(List.of(failure))
-                        .build();
-    }
-
-    @Override
-    public boolean isSupported() {
-        return findTestBundle().isPresent();
+        return new TestReport.Builder().withFailures(List.of(failure))
+                                       .withFailedCount(1)
+                                       .build();
     }
 
     private Optional<Bundle> findTestBundle() {
         return Stream.of(bundleContext.getBundles())
-                .filter(this::isTestBundle)
-                .findAny();
+                     .filter(this::isTestBundle)
+                     .findAny();
     }
 
     private boolean isTestBundle(Bundle bundle) {
         var testBundleHeader = bundle.getHeaders().get("X-JDisc-Test-Bundle-Version");
-        return testBundleHeader != null && !testBundleHeader.isBlank();
+        return testBundleHeader != null && ! testBundleHeader.isBlank();
     }
 
     private Optional<TestDescriptor> loadTestDescriptor(Bundle bundle) {
@@ -168,7 +165,7 @@ public class JunitRunner extends AbstractComponent implements TestRunner {
 
         StringBuffer buffer = new StringBuffer();
         testClasses.forEach(cl -> buffer.append("\t").append(cl.toString()).append(" / ").append(cl.getClassLoader().toString()).append("\n"));
-        logger.info("Loaded testClasses: \n" + buffer.toString());
+        logger.info("Loaded testClasses: \n" + buffer);
         return testClasses;
     }
 
@@ -180,11 +177,9 @@ public class JunitRunner extends AbstractComponent implements TestRunner {
         }
     }
 
-    private TestReport launchJunit(List<Class<?>> testClasses) {
+    private TestReport launchJunit(List<Class<?>> testClasses, boolean isProductionTest) {
         LauncherDiscoveryRequest discoveryRequest = LauncherDiscoveryRequestBuilder.request()
-                .selectors(
-                        testClasses.stream().map(DiscoverySelectors::selectClass).collect(Collectors.toList())
-                )
+                .selectors(testClasses.stream().map(DiscoverySelectors::selectClass).collect(Collectors.toList()))
                 .build();
 
         var launcherConfig = LauncherConfig.builder()
@@ -205,7 +200,10 @@ public class JunitRunner extends AbstractComponent implements TestRunner {
         var failures = report.getFailures().stream()
                 .map(failure -> new TestReport.Failure(failure.getTestIdentifier().getUniqueId(), failure.getException()))
                 .collect(Collectors.toList());
-        long inconclusive = failures.stream().filter(failure -> failure.exception() instanceof InconclusiveTestException).count();
+        long inconclusive = isProductionTest ? failures.stream()
+                                                       .filter(failure -> failure.exception() instanceof InconclusiveTestException)
+                                                       .count()
+                                             : 0;
         return TestReport.builder()
                 .withSuccessCount(report.getTestsSucceededCount())
                 .withAbortedCount(report.getTestsAbortedCount())
@@ -231,7 +229,7 @@ public class JunitRunner extends AbstractComponent implements TestRunner {
     @Override
     public TestRunner.Status getStatus() {
         if (execution == null) return TestRunner.Status.NOT_STARTED;
-        if (!execution.isDone()) return TestRunner.Status.RUNNING;
+        if ( ! execution.isDone()) return TestRunner.Status.RUNNING;
         try {
             return execution.get().status();
         } catch (InterruptedException|ExecutionException e) {

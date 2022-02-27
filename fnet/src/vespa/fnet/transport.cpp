@@ -6,8 +6,11 @@
 #include <vespa/vespalib/util/threadstackexecutor.h>
 #include <vespa/vespalib/util/size_literals.h>
 #include <vespa/vespalib/util/rendezvous.h>
-#include <chrono>
+#include <vespa/vespalib/util/backtrace.h>
 #include <xxhash.h>
+
+#include <vespa/log/log.h>
+LOG_SETUP(".fnet.transport");
 
 namespace {
 
@@ -95,8 +98,6 @@ TimeTools::make_debug(vespalib::duration event_timeout,
     return std::make_shared<DebugTimeTools>(event_timeout, std::move(current_time));
 }
 
-} // fnet
-
 TransportConfig::TransportConfig(int num_threads)
     : _config(),
       _resolver(),
@@ -122,7 +123,9 @@ TransportConfig::time_tools() const {
     return _time_tools ? _time_tools : std::make_shared<DefaultTimeTools>();
 }
 
-FNET_Transport::FNET_Transport(const TransportConfig &cfg)
+} // fnet
+
+FNET_Transport::FNET_Transport(const fnet::TransportConfig &cfg)
     : _async_resolver(cfg.resolver()),
       _crypto_engine(cfg.crypto()),
       _time_tools(cfg.time_tools()),
@@ -130,6 +133,8 @@ FNET_Transport::FNET_Transport(const TransportConfig &cfg)
       _threads(),
       _config(cfg.config())
 {
+    // TODO Temporary logging to track down overspend
+    LOG(debug, "FNET_Transport threads=%d from :%s", cfg.num_threads(), vespalib::getStackTrace(0).c_str());
     assert(cfg.num_threads() >= 1);
     for (size_t i = 0; i < cfg.num_threads(); ++i) {
         _threads.emplace_back(std::make_unique<FNET_TransportThread>(*this));

@@ -24,27 +24,16 @@ public:
     friend class TransLogServerExplorer;
     using SP = std::shared_ptr<TransLogServer>;
     using DomainSP = std::shared_ptr<Domain>;
-    TransLogServer(const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
+    TransLogServer(FNET_Transport & transport, const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
                    const common::FileHeaderContext &fileHeaderContext, const DomainConfig & cfg, size_t maxThreads);
-    TransLogServer(const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
+    TransLogServer(FNET_Transport & transport, const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
                    const common::FileHeaderContext &fileHeaderContext, const DomainConfig & cfg);
-    TransLogServer(const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
+    TransLogServer(FNET_Transport & transport, const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
                    const common::FileHeaderContext &fileHeaderContext);
     ~TransLogServer() override;
     DomainStats getDomainStats() const;
     std::shared_ptr<Writer> getWriter(const vespalib::string & domainName) const override;
     TransLogServer & setDomainConfig(const DomainConfig & cfg);
-
-    class Session
-    {
-        bool _down;
-    public:
-        typedef std::shared_ptr<Session> SP;
-
-        Session() : _down(false) { }
-        bool getDown() const { return _down; }
-        void setDown() { _down = true; }
-    };
 
 private:
     bool onStop() override;
@@ -65,16 +54,10 @@ private:
     void domainSessionClose(FRT_RPCRequest *req);
     void domainSync(FRT_RPCRequest *req);
 
-    void initSession(FRT_RPCRequest *req);
-    void finiSession(FRT_RPCRequest *req);
-    void downSession(FRT_RPCRequest *req);
-
     std::vector<vespalib::string> getDomainNames();
     DomainSP findDomain(vespalib::stringref name) const;
     vespalib::string dir()        const { return _baseDir + "/" + _name; }
     vespalib::string domainList() const { return dir() + "/" + _name + ".domains"; }
-
-    static const Session::SP & getSession(FRT_RPCRequest *req);
 
     using DomainList = std::map<vespalib::string, DomainSP >;
     using ReadGuard = std::shared_lock<std::shared_mutex>;
@@ -85,7 +68,6 @@ private:
     DomainConfig                        _domainConfig;
     vespalib::ThreadStackExecutor       _executor;
     std::unique_ptr<FastOS_ThreadPool>  _threadPool;
-    std::unique_ptr<FNET_Transport>     _transport;
     std::unique_ptr<FRT_Supervisor>     _supervisor;
     DomainList                          _domains;
     mutable std::shared_mutex           _domainMutex;;          // Protects _domains

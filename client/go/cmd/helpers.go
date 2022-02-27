@@ -13,18 +13,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vespa-engine/vespa/client/go/build"
+	"github.com/vespa-engine/vespa/client/go/version"
 	"github.com/vespa-engine/vespa/client/go/vespa"
 )
 
 func printErrHint(err error, hints ...string) {
-	printErr(err)
+	fmt.Fprintln(stderr, color.Red("Error:"), err)
 	for _, hint := range hints {
 		fmt.Fprintln(stderr, color.Cyan("Hint:"), hint)
 	}
-}
-
-func printErr(err error) {
-	fmt.Fprintln(stderr, color.Red("Error:"), err)
 }
 
 func printSuccess(msg ...interface{}) {
@@ -119,7 +117,7 @@ func getService(service string, sessionOrRunID int64, cluster string) (*vespa.Se
 	}
 	s, err := t.Service(service, timeout, sessionOrRunID, cluster)
 	if err != nil {
-		return nil, fmt.Errorf("service %s not found: %w", service, err)
+		return nil, fmt.Errorf("service '%s' is unavailable: %w", service, err)
 	}
 	return s, nil
 }
@@ -151,6 +149,21 @@ func getApiURL() string {
 }
 
 func getTarget() (vespa.Target, error) {
+	clientVersion, err := version.Parse(build.Version)
+	if err != nil {
+		return nil, err
+	}
+	target, err := createTarget()
+	if err != nil {
+		return nil, err
+	}
+	if err := target.CheckVersion(clientVersion); err != nil {
+		printErrHint(err, "This is not a fatal error, but this version may not work as expected", "Try 'vespa version' to check for a new version")
+	}
+	return target, nil
+}
+
+func createTarget() (vespa.Target, error) {
 	targetType, err := getTargetType()
 	if err != nil {
 		return nil, err
@@ -176,34 +189,15 @@ func getTarget() (vespa.Target, error) {
 		}
 
 		var apiKey []byte = nil
-		apiKey, err = cfg.ReadAPIKey(deployment.Application.Tenant)
-		if !vespa.Auth0AccessTokenEnabled() && endpoints == nil {
+		if cfg.UseAPIKey(deployment.Application.Tenant) {
+			apiKey, err = cfg.ReadAPIKey(deployment.Application.Tenant)
 			if err != nil {
-				return nil, errHint(err, "Deployment to cloud requires an API key. Try 'vespa api-key'")
+				return nil, err
 			}
 		}
 		kp, err := cfg.X509KeyPair(deployment.Application)
 		if err != nil {
-			var hint string
-			if vespa.Auth0AccessTokenEnabled() {
-				hint = "Deployment to cloud requires a certificate. Try 'vespa auth cert'"
-			} else {
-				hint = "Deployment to cloud requires a certificate. Try 'vespa cert'"
-			}
-			return nil, errHint(err, hint)
-		}
-		var cloudAuth string
-		if vespa.Auth0AccessTokenEnabled() {
-			cloudAuth, err = cfg.Get(cloudAuthFlag)
-			if err != nil {
-				if apiKey != nil {
-					cloudAuth = "api-key"
-				} else {
-					cloudAuth = "access-token"
-				}
-			}
-		} else {
-			cloudAuth = ""
+			return nil, errHint(err, "Deployment to cloud requires a certificate. Try 'vespa auth cert'")
 		}
 
 		return vespa.CloudTarget(
@@ -221,7 +215,6 @@ func getTarget() (vespa.Target, error) {
 			},
 			cfg.AuthConfigPath(),
 			getSystemName(),
-			cloudAuth,
 			endpoints,
 		), nil
 	}
@@ -257,18 +250,13 @@ func getDeploymentOpts(cfg *Config, pkg vespa.ApplicationPackage, target vespa.T
 			return vespa.DeploymentOpts{}, err
 		}
 		if !opts.ApplicationPackage.HasCertificate() {
-			var hint string
-			if vespa.Auth0AccessTokenEnabled() {
-				hint = "Try 'vespa auth cert'"
-			} else {
-				hint = "Try 'vespa cert'"
-			}
+			hint := "Try 'vespa auth cert'"
 			return vespa.DeploymentOpts{}, errHint(fmt.Errorf("missing certificate in application package"), "Applications in Vespa Cloud require a certificate", hint)
 		}
-		opts.APIKey, err = cfg.ReadAPIKey(deployment.Application.Tenant)
-		if !vespa.Auth0AccessTokenEnabled() {
+		if cfg.UseAPIKey(deployment.Application.Tenant) {
+			opts.APIKey, err = cfg.ReadAPIKey(deployment.Application.Tenant)
 			if err != nil {
-				return vespa.DeploymentOpts{}, errHint(err, "Deployment to cloud requires an API key. Try 'vespa api-key'")
+				return vespa.DeploymentOpts{}, err
 			}
 		}
 		opts.Deployment = deployment

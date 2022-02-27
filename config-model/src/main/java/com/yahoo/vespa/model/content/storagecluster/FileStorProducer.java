@@ -49,6 +49,9 @@ public class FileStorProducer implements StorFilestorConfig.Producer {
     private final StorFilestorConfig.Async_operation_throttler.Type.Enum asyncOperationThrottlerType;
     private final double persistenceThrottlingWsDecrementFactor;
     private final double persistenceThrottlingWsBackoff;
+    private final int persistenceThrottingWindowSize;
+    private final double persistenceThrottlingWsResizeRate;
+    private final boolean persistenceThrottlingOfMergeFeedOps;
     private final boolean useAsyncMessageHandlingOnSchedule;
 
     private static StorFilestorConfig.Response_sequencer_type.Enum convertResponseSequencerType(String sequencerType) {
@@ -75,6 +78,9 @@ public class FileStorProducer implements StorFilestorConfig.Producer {
         this.asyncOperationThrottlerType = toAsyncOperationThrottlerType(featureFlags.persistenceAsyncThrottling());
         this.persistenceThrottlingWsDecrementFactor = featureFlags.persistenceThrottlingWsDecrementFactor();
         this.persistenceThrottlingWsBackoff = featureFlags.persistenceThrottlingWsBackoff();
+        this.persistenceThrottingWindowSize = featureFlags.persistenceThrottlingWindowSize();
+        this.persistenceThrottlingWsResizeRate = featureFlags.persistenceThrottlingWsResizeRate();
+        this.persistenceThrottlingOfMergeFeedOps = featureFlags.persistenceThrottlingOfMergeFeedOps();
         this.useAsyncMessageHandlingOnSchedule = featureFlags.useAsyncMessageHandlingOnSchedule();
     }
 
@@ -96,6 +102,12 @@ public class FileStorProducer implements StorFilestorConfig.Producer {
         throttleBuilder.type(asyncOperationThrottlerType);
         throttleBuilder.window_size_decrement_factor(persistenceThrottlingWsDecrementFactor);
         throttleBuilder.window_size_backoff(persistenceThrottlingWsBackoff);
+        if (persistenceThrottingWindowSize > 0) {
+            throttleBuilder.min_window_size(persistenceThrottingWindowSize);
+            throttleBuilder.max_window_size(persistenceThrottingWindowSize);
+        }
+        throttleBuilder.resize_rate(persistenceThrottlingWsResizeRate);
+        throttleBuilder.throttle_individual_merge_feed_ops(persistenceThrottlingOfMergeFeedOps);
         builder.async_operation_throttler(throttleBuilder);
     }
 

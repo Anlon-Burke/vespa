@@ -20,10 +20,8 @@ import org.w3c.dom.Node;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import static java.util.stream.Collectors.toList;
 
@@ -73,7 +71,7 @@ public class NodesSpecification {
             throw new IllegalArgumentException("Min and max resources must have the same non-numeric settings, but " +
                                                "min is " + min + " and max " + max);
         if (min.nodeResources().bandwidthGbps() != max.nodeResources().bandwidthGbps())
-            throw new IllegalArgumentException("Min and max resources must have the same bandwith, but " +
+            throw new IllegalArgumentException("Min and max resources must have the same bandwidth, but " +
                                                "min is " + min + " and max " + max);
 
         this.min = min;
@@ -262,12 +260,13 @@ public class NodesSpecification {
         Pair<Double, Double> vcpu       = toRange(element.requiredStringAttribute("vcpu"),   .0, Double::parseDouble);
         Pair<Double, Double> memory     = toRange(element.requiredStringAttribute("memory"), .0, s -> parseGbAmount(s, "B"));
         Pair<Double, Double> disk       = toRange(element.requiredStringAttribute("disk"),   .0, s -> parseGbAmount(s, "B"));
-        Pair<Double, Double> bandwith   = toRange(element.stringAttribute("bandwith"),       .3, s -> parseGbAmount(s, "BPS"));
-        NodeResources.DiskSpeed   diskSpeed   = parseOptionalDiskSpeed(element.stringAttribute("disk-speed"));
-        NodeResources.StorageType storageType = parseOptionalStorageType(element.stringAttribute("storage-type"));
+        Pair<Double, Double> bandwith   = toRange(element.stringAttribute("bandwidth"),      .3, s -> parseGbAmount(s, "BPS"));
+        NodeResources.DiskSpeed   diskSpeed     = parseOptionalDiskSpeed(element.stringAttribute("disk-speed"));
+        NodeResources.StorageType storageType   = parseOptionalStorageType(element.stringAttribute("storage-type"));
+        NodeResources.Architecture architecture = parseOptionalArchitecture(element.stringAttribute("architecture"));
 
-        var min = new NodeResources(vcpu.getFirst(),  memory.getFirst(),  disk.getFirst(),  bandwith.getFirst(),  diskSpeed, storageType);
-        var max = new NodeResources(vcpu.getSecond(), memory.getSecond(), disk.getSecond(), bandwith.getSecond(), diskSpeed, storageType);
+        var min = new NodeResources(vcpu.getFirst(),  memory.getFirst(),  disk.getFirst(),  bandwith.getFirst(),  diskSpeed, storageType, architecture);
+        var max = new NodeResources(vcpu.getSecond(), memory.getSecond(), disk.getSecond(), bandwith.getSecond(), diskSpeed, storageType, architecture);
         return new Pair<>(min, max);
     }
 
@@ -325,6 +324,17 @@ public class NodesSpecification {
             case "any"    : return NodeResources.StorageType.any;
             default: throw new IllegalArgumentException("Illegal storage-type value '" + storageTypeString +
                                                         "': Legal values are 'remote', 'local' and 'any')");
+        }
+    }
+
+    private static NodeResources.Architecture parseOptionalArchitecture(String architecture) {
+        if (architecture == null) return NodeResources.Architecture.getDefault();
+        switch (architecture) {
+            case "x86_64" : return NodeResources.Architecture.x86_64;
+            case "arm64"  : return NodeResources.Architecture.arm64;
+            case "any"    : return NodeResources.Architecture.any;
+            default: throw new IllegalArgumentException("Illegal architecture value '" + architecture +
+                                                        "': Legal values are 'x86_64', 'arm64' and 'any')");
         }
     }
 

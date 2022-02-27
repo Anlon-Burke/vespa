@@ -19,9 +19,12 @@ import com.yahoo.vespa.hosted.controller.tenant.Tenant;
 
 import java.security.PublicKey;
 import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -113,8 +116,22 @@ public class Application {
         return versions.isEmpty() ? Optional.empty() : Optional.of(versions.last());
     }
 
-    /** Returns the currently deployed versions of the application */
+    /** Returns the currently deployed versions of the application, ordered from oldest to newest. */
     public SortedSet<ApplicationVersion> versions() {
+        return versions;
+    }
+
+    /** Returns the currently deployed versions of the application */
+    public Collection<ApplicationVersion> deployableVersions(boolean ascending) {
+        Deque<ApplicationVersion> versions = new ArrayDeque<>();
+        String previousHash = "";
+        for (ApplicationVersion version : versions()) {
+            if (version.bundleHash().isEmpty() || ! previousHash.equals(version.bundleHash().get())) {
+                if (ascending) versions.addLast(version);
+                else versions.addFirst(version);
+            }
+            previousHash = version.bundleHash().orElse("");
+        }
         return versions;
     }
 

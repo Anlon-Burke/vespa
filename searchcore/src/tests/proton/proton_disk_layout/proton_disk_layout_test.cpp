@@ -2,6 +2,7 @@
 
 #include <vespa/searchcore/proton/server/proton_disk_layout.h>
 #include <vespa/searchcore/proton/common/doctypename.h>
+#include <vespa/searchcore/proton/test/transport_helper.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
 #include <vespa/searchlib/transactionlog/translogserver.h>
 #include <vespa/searchlib/transactionlog/translogclient.h>
@@ -15,6 +16,7 @@ using search::transactionlog::client::TransLogClient;
 using search::transactionlog::TransLogServer;
 using proton::DocTypeName;
 using proton::ProtonDiskLayout;
+using proton::Transport;
 
 static constexpr unsigned int tlsPort = 9018;
 
@@ -29,6 +31,7 @@ struct FixtureBase
 
 struct DiskLayoutFixture {
     DummyFileHeaderContext  _fileHeaderContext;
+    Transport               _transport;
     TransLogServer          _tls;
     vespalib::string        _tlsSpec;
     ProtonDiskLayout        _diskLayout;
@@ -42,7 +45,7 @@ struct DiskLayoutFixture {
         }
     }
     void createDomains(const std::set<vespalib::string> &domains) {
-        TransLogClient tlc(_tlsSpec);
+        TransLogClient tlc(_transport.transport(), _tlsSpec);
         for (const auto &domain : domains) {
             ASSERT_TRUE(tlc.create(domain));
         }
@@ -50,7 +53,7 @@ struct DiskLayoutFixture {
 
     std::set<vespalib::string> listDomains() {
         std::vector<vespalib::string> domainVector;
-        TransLogClient tlc(_tlsSpec);
+        TransLogClient tlc(_transport.transport(), _tlsSpec);
         ASSERT_TRUE(tlc.listDomains(domainVector));
         std::set<vespalib::string> domains;
         for (const auto &domain : domainVector) {
@@ -91,9 +94,10 @@ struct DiskLayoutFixture {
 
 DiskLayoutFixture::DiskLayoutFixture()
     : _fileHeaderContext(),
-      _tls("tls", tlsPort, baseDir, _fileHeaderContext),
+      _transport(),
+      _tls(_transport.transport(), "tls", tlsPort, baseDir, _fileHeaderContext),
       _tlsSpec(vespalib::make_string("tcp/localhost:%u", tlsPort)),
-      _diskLayout(baseDir, _tlsSpec)
+      _diskLayout(_transport.transport(), baseDir, _tlsSpec)
 {
 }
 
