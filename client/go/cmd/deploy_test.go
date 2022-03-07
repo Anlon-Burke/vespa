@@ -5,11 +5,11 @@
 package cmd
 
 import (
-	"path/filepath"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/vespa-engine/vespa/client/go/mock"
 	"github.com/vespa-engine/vespa/client/go/vespa"
 )
 
@@ -32,10 +32,13 @@ func TestDeployZipWithURLTargetArgument(t *testing.T) {
 	applicationPackage := "testdata/applications/withTarget/target/application.zip"
 	arguments := []string{"deploy", "testdata/applications/withTarget/target/application.zip", "-t", "http://target:19071"}
 
-	client := &mockHttpClient{}
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	assert.Nil(t, cli.Run(arguments...))
 	assert.Equal(t,
-		"Success: Deployed "+applicationPackage+"\n",
-		executeCommand(t, client, arguments, []string{}))
+		"\nSuccess: Deployed "+applicationPackage+"\n",
+		stdout.String())
 	assertDeployRequestMade("http://target:19071", client, t)
 }
 
@@ -60,11 +63,11 @@ func TestDeployApplicationDirectoryWithPomAndTarget(t *testing.T) {
 }
 
 func TestDeployApplicationDirectoryWithPomAndEmptyTarget(t *testing.T) {
-	client := &mockHttpClient{}
-	_, outErr := execute(command{args: []string{"deploy", "testdata/applications/withEmptyTarget"}}, t, client)
+	cli, _, stderr := newTestCLI(t)
+	assert.NotNil(t, cli.Run("deploy", "testdata/applications/withEmptyTarget"))
 	assert.Equal(t,
 		"Error: pom.xml exists but no target/application.zip. Run mvn package first\n",
-		outErr)
+		stderr.String())
 }
 
 func TestDeployApplicationPackageErrorWithUnexpectedNonJson(t *testing.T) {
@@ -104,46 +107,52 @@ func TestDeployError(t *testing.T) {
 }
 
 func assertDeploy(applicationPackage string, arguments []string, t *testing.T) {
-	client := &mockHttpClient{}
+	cli, stdout, _ := newTestCLI(t)
+	client := &mock.HTTPClient{}
+	cli.httpClient = client
+	assert.Nil(t, cli.Run(arguments...))
 	assert.Equal(t,
-		"Success: Deployed "+applicationPackage+"\n",
-		executeCommand(t, client, arguments, []string{}))
+		"\nSuccess: Deployed "+applicationPackage+"\n",
+		stdout.String())
 	assertDeployRequestMade("http://127.0.0.1:19071", client, t)
 }
 
 func assertPrepare(applicationPackage string, arguments []string, t *testing.T) {
-	client := &mockHttpClient{}
+	client := &mock.HTTPClient{}
 	client.NextResponse(200, `{"session-id":"42"}`)
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	assert.Nil(t, cli.Run(arguments...))
 	assert.Equal(t,
 		"Success: Prepared "+applicationPackage+" with session 42\n",
-		executeCommand(t, client, arguments, []string{}))
+		stdout.String())
 
 	assertPackageUpload(0, "http://127.0.0.1:19071/application/v2/tenant/default/session", client, t)
 	sessionURL := "http://127.0.0.1:19071/application/v2/tenant/default/session/42/prepared"
-	assert.Equal(t, sessionURL, client.requests[1].URL.String())
-	assert.Equal(t, "PUT", client.requests[1].Method)
+	assert.Equal(t, sessionURL, client.Requests[1].URL.String())
+	assert.Equal(t, "PUT", client.Requests[1].Method)
 }
 
 func assertActivate(applicationPackage string, arguments []string, t *testing.T) {
-	client := &mockHttpClient{}
-	homeDir := t.TempDir()
-	cfg := Config{Home: filepath.Join(homeDir, ".vespa"), createDirs: true}
-	if err := cfg.WriteSessionID(vespa.DefaultApplication, 42); err != nil {
+	client := &mock.HTTPClient{}
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	if err := cli.config.writeSessionID(vespa.DefaultApplication, 42); err != nil {
 		t.Fatal(err)
 	}
-	out, _ := execute(command{args: arguments, homeDir: cfg.Home}, t, client)
+	assert.Nil(t, cli.Run(arguments...))
 	assert.Equal(t,
 		"Success: Activated "+applicationPackage+" with session 42\n",
-		out)
+		stdout.String())
 	url := "http://127.0.0.1:19071/application/v2/tenant/default/session/42/active"
-	assert.Equal(t, url, client.lastRequest.URL.String())
-	assert.Equal(t, "PUT", client.lastRequest.Method)
+	assert.Equal(t, url, client.LastRequest.URL.String())
+	assert.Equal(t, "PUT", client.LastRequest.Method)
 }
 
-func assertPackageUpload(requestNumber int, url string, client *mockHttpClient, t *testing.T) {
-	req := client.lastRequest
+func assertPackageUpload(requestNumber int, url string, client *mock.HTTPClient, t *testing.T) {
+	req := client.LastRequest
 	if requestNumber >= 0 {
-		req = client.requests[requestNumber]
+		req = client.Requests[requestNumber]
 	}
 	assert.Equal(t, url, req.URL.String())
 	assert.Equal(t, "application/zip", req.Header.Get("Content-Type"))
@@ -155,24 +164,28 @@ func assertPackageUpload(requestNumber int, url string, client *mockHttpClient, 
 	assert.Equal(t, "PK\x03\x04\x14\x00\b", string(buf))
 }
 
-func assertDeployRequestMade(target string, client *mockHttpClient, t *testing.T) {
+func assertDeployRequestMade(target string, client *mock.HTTPClient, t *testing.T) {
 	assertPackageUpload(-1, target+"/application/v2/tenant/default/prepareandactivate", client, t)
 }
 
 func assertApplicationPackageError(t *testing.T, cmd string, status int, expectedMessage string, returnBody string) {
-	client := &mockHttpClient{}
+	client := &mock.HTTPClient{}
 	client.NextResponse(status, returnBody)
-	_, outErr := execute(command{args: []string{cmd, "testdata/applications/withTarget/target/application.zip"}}, t, client)
+	cli, _, stderr := newTestCLI(t)
+	cli.httpClient = client
+	assert.NotNil(t, cli.Run(cmd, "testdata/applications/withTarget/target/application.zip"))
 	assert.Equal(t,
 		"Error: invalid application package (Status "+strconv.Itoa(status)+")\n"+expectedMessage+"\n",
-		outErr)
+		stderr.String())
 }
 
 func assertDeployServerError(t *testing.T, status int, errorMessage string) {
-	client := &mockHttpClient{}
+	client := &mock.HTTPClient{}
 	client.NextResponse(status, errorMessage)
-	_, outErr := execute(command{args: []string{"deploy", "testdata/applications/withTarget/target/application.zip"}}, t, client)
+	cli, _, stderr := newTestCLI(t)
+	cli.httpClient = client
+	assert.NotNil(t, cli.Run("deploy", "testdata/applications/withTarget/target/application.zip"))
 	assert.Equal(t,
-		"Error: error from deploy service at 127.0.0.1:19071 (Status "+strconv.Itoa(status)+"):\n"+errorMessage+"\n",
-		outErr)
+		"Error: error from deploy api at 127.0.0.1:19071 (Status "+strconv.Itoa(status)+"):\n"+errorMessage+"\n",
+		stderr.String())
 }

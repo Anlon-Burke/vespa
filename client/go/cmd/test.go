@@ -15,75 +15,77 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/vespa-engine/vespa/client/go/util"
 	"github.com/vespa-engine/vespa/client/go/vespa"
 )
 
-func init() {
-	rootCmd.AddCommand(testCmd)
-	testCmd.PersistentFlags().StringVarP(&zoneArg, zoneFlag, "z", "dev.aws-us-east-1c", "The zone to use for deployment")
-}
-
-var testCmd = &cobra.Command{
-	Use:   "test <tests directory or test file>",
-	Short: "Run a test suite, or a single test",
-	Long: `Run a test suite, or a single test
+func newTestCmd(cli *CLI) *cobra.Command {
+	var zoneArg string
+	testCmd := &cobra.Command{
+		Use:   "test test-directory-or-file",
+		Short: "Run a test suite, or a single test",
+		Long: `Run a test suite, or a single test
 
 Runs all JSON test files in the specified directory, or the single JSON test file specified.
 
-See https://cloud.vespa.ai/en/reference/testing.html for details.`,
-	Example: `$ vespa test src/test/application/tests/system-test
+See https://docs.vespa.ai/en/reference/testing.html for details.`,
+		Example: `$ vespa test src/test/application/tests/system-test
 $ vespa test src/test/application/tests/system-test/feed-and-query.json`,
-	Args:              cobra.ExactArgs(1),
-	DisableAutoGenTag: true,
-	SilenceUsage:      true,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		count, failed, err := runTests(args[0], false)
-		if err != nil {
-			return err
-		}
-		if len(failed) != 0 {
-			plural := "s"
-			if count == 1 {
-				plural = ""
+		Args:              cobra.ExactArgs(1),
+		DisableAutoGenTag: true,
+		SilenceUsage:      true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			count, failed, err := runTests(cli, zoneArg, args[0], false)
+			if err != nil {
+				return err
 			}
-			fmt.Fprintf(stdout, "\n%s %d of %d test%s failed:\n", color.Red("Failure:"), len(failed), count, plural)
-			for _, test := range failed {
-				fmt.Fprintln(stdout, test)
+			if len(failed) != 0 {
+				plural := "s"
+				if count == 1 {
+					plural = ""
+				}
+				fmt.Fprintf(cli.Stdout, "\n%s %d of %d test%s failed:\n", color.RedString("Failure:"), len(failed), count, plural)
+				for _, test := range failed {
+					fmt.Fprintln(cli.Stdout, test)
+				}
+				return ErrCLI{Status: 3, error: fmt.Errorf("tests failed"), quiet: true}
+			} else {
+				plural := "s"
+				if count == 1 {
+					plural = ""
+				}
+				fmt.Fprintf(cli.Stdout, "\n%s %d test%s OK\n", color.GreenString("Success:"), count, plural)
+				return nil
 			}
-			return ErrCLI{Status: 3, error: fmt.Errorf("tests failed"), quiet: true}
-		} else {
-			plural := "s"
-			if count == 1 {
-				plural = ""
-			}
-			fmt.Fprintf(stdout, "\n%s %d test%s OK\n", color.Green("Success:"), count, plural)
-			return nil
-		}
-	},
+		},
+	}
+	testCmd.PersistentFlags().StringVarP(&zoneArg, "zone", "z", "", "The zone to use for deployment. This defaults to a dev zone")
+	return testCmd
 }
 
-func runTests(rootPath string, dryRun bool) (int, []string, error) {
+func runTests(cli *CLI, zone, rootPath string, dryRun bool) (int, []string, error) {
 	count := 0
 	failed := make([]string, 0)
 	if stat, err := os.Stat(rootPath); err != nil {
-		return 0, nil, errHint(err, "See https://cloud.vespa.ai/en/reference/testing")
+		return 0, nil, errHint(err, "See https://docs.vespa.ai/en/reference/testing")
 	} else if stat.IsDir() {
 		tests, err := ioutil.ReadDir(rootPath) // TODO: Use os.ReadDir when >= 1.16 is required.
 		if err != nil {
-			return 0, nil, errHint(err, "See https://cloud.vespa.ai/en/reference/testing")
+			return 0, nil, errHint(err, "See https://docs.vespa.ai/en/reference/testing")
 		}
-		context := testContext{testsPath: rootPath, dryRun: dryRun}
+		context := testContext{testsPath: rootPath, dryRun: dryRun, cli: cli, zone: zone}
 		previousFailed := false
 		for _, test := range tests {
 			if !test.IsDir() && filepath.Ext(test.Name()) == ".json" {
 				testPath := filepath.Join(rootPath, test.Name())
 				if previousFailed {
-					fmt.Fprintln(stdout, "")
+					fmt.Fprintln(cli.Stdout, "")
 					previousFailed = false
 				}
 				failure, err := runTest(testPath, context)
@@ -98,7 +100,7 @@ func runTests(rootPath string, dryRun bool) (int, []string, error) {
 			}
 		}
 	} else if strings.HasSuffix(stat.Name(), ".json") {
-		failure, err := runTest(rootPath, testContext{testsPath: filepath.Dir(rootPath), dryRun: dryRun})
+		failure, err := runTest(rootPath, testContext{testsPath: filepath.Dir(rootPath), dryRun: dryRun, cli: cli})
 		if err != nil {
 			return 0, nil, err
 		}
@@ -108,7 +110,7 @@ func runTests(rootPath string, dryRun bool) (int, []string, error) {
 		count++
 	}
 	if count == 0 {
-		return 0, nil, errHint(fmt.Errorf("failed to find any tests at %s", rootPath), "See https://cloud.vespa.ai/en/reference/testing")
+		return 0, nil, errHint(fmt.Errorf("failed to find any tests at %s", rootPath), "See https://docs.vespa.ai/en/reference/testing")
 	}
 	return count, failed, nil
 }
@@ -118,10 +120,10 @@ func runTest(testPath string, context testContext) (string, error) {
 	var test test
 	testBytes, err := ioutil.ReadFile(testPath)
 	if err != nil {
-		return "", errHint(err, "See https://cloud.vespa.ai/en/reference/testing")
+		return "", errHint(err, "See https://docs.vespa.ai/en/reference/testing")
 	}
 	if err = json.Unmarshal(testBytes, &test); err != nil {
-		return "", errHint(fmt.Errorf("failed parsing test at %s: %w", testPath, err), "See https://cloud.vespa.ai/en/reference/testing")
+		return "", errHint(fmt.Errorf("failed parsing test at %s: %w", testPath, err), "See https://docs.vespa.ai/en/reference/testing")
 	}
 
 	testName := test.Name
@@ -129,18 +131,18 @@ func runTest(testPath string, context testContext) (string, error) {
 		testName = filepath.Base(testPath)
 	}
 	if !context.dryRun {
-		fmt.Fprintf(stdout, "%s:", testName)
+		fmt.Fprintf(context.cli.Stdout, "%s:", testName)
 	}
 
 	defaultParameters, err := getParameters(test.Defaults.ParametersRaw, filepath.Dir(testPath))
 	if err != nil {
-		fmt.Fprintln(stderr)
-		return "", errHint(fmt.Errorf("invalid default parameters for %s: %w", testName, err), "See https://cloud.vespa.ai/en/reference/testing")
+		fmt.Fprintln(context.cli.Stderr)
+		return "", errHint(fmt.Errorf("invalid default parameters for %s: %w", testName, err), "See https://docs.vespa.ai/en/reference/testing")
 	}
 
 	if len(test.Steps) == 0 {
-		fmt.Fprintln(stderr)
-		return "", errHint(fmt.Errorf("a test must have at least one step, but none were found in %s", testPath), "See https://cloud.vespa.ai/en/reference/testing")
+		fmt.Fprintln(context.cli.Stderr)
+		return "", errHint(fmt.Errorf("a test must have at least one step, but none were found in %s", testPath), "See https://docs.vespa.ai/en/reference/testing")
 	}
 	for i, step := range test.Steps {
 		stepName := fmt.Sprintf("Step %d", i+1)
@@ -149,22 +151,22 @@ func runTest(testPath string, context testContext) (string, error) {
 		}
 		failure, longFailure, err := verify(step, test.Defaults.Cluster, defaultParameters, context)
 		if err != nil {
-			fmt.Fprintln(stderr)
-			return "", errHint(fmt.Errorf("error in %s: %w", stepName, err), "See https://cloud.vespa.ai/en/reference/testing")
+			fmt.Fprintln(context.cli.Stderr)
+			return "", errHint(fmt.Errorf("error in %s: %w", stepName, err), "See https://docs.vespa.ai/en/reference/testing")
 		}
 		if !context.dryRun {
 			if failure != "" {
-				fmt.Fprintf(stdout, " %s\n%s:\n%s\n", color.Red("failed"), stepName, longFailure)
+				fmt.Fprintf(context.cli.Stdout, " %s\n%s:\n%s\n", color.RedString("failed"), stepName, longFailure)
 				return fmt.Sprintf("%s: %s: %s", testName, stepName, failure), nil
 			}
 			if i == 0 {
-				fmt.Fprintf(stdout, " ")
+				fmt.Fprintf(context.cli.Stdout, " ")
 			}
-			fmt.Fprint(stdout, ".")
+			fmt.Fprint(context.cli.Stdout, ".")
 		}
 	}
 	if !context.dryRun {
-		fmt.Fprintln(stdout, color.Green(" OK"))
+		fmt.Fprintln(context.cli.Stdout, color.GreenString(" OK"))
 	}
 	return "", nil
 }
@@ -206,12 +208,15 @@ func verify(step step, defaultCluster string, defaultParameters map[string]strin
 		return "", "", err
 	}
 	externalEndpoint := requestUrl.IsAbs()
+	if !externalEndpoint && filepath.Base(context.testsPath) == "production-test" {
+		return "", "", fmt.Errorf("production tests may not specify requests against Vespa endpoints")
+	}
 	if !externalEndpoint && !context.dryRun {
 		target, err := context.target()
 		if err != nil {
 			return "", "", err
 		}
-		service, err = target.Service("query", 0, 0, cluster)
+		service, err = target.Service(vespa.QueryService, 0, 0, cluster)
 		if err != nil {
 			return "", "", err
 		}
@@ -260,8 +265,8 @@ func verify(step step, defaultCluster string, defaultParameters map[string]strin
 
 	var response *http.Response
 	if externalEndpoint {
-		util.ActiveHttpClient.UseCertificate([]tls.Certificate{})
-		response, err = util.ActiveHttpClient.Do(request, 60*time.Second)
+		context.cli.httpClient.UseCertificate([]tls.Certificate{})
+		response, err = context.cli.httpClient.Do(request, 60*time.Second)
 	} else {
 		response, err = service.Do(request, 600*time.Second) // Vespa should provide a response within the given request timeout
 	}
@@ -271,12 +276,12 @@ func verify(step step, defaultCluster string, defaultParameters map[string]strin
 	defer response.Body.Close()
 
 	if statusCode != response.StatusCode {
-		return fmt.Sprintf("Unexpected status code: %d", color.Red(response.StatusCode)),
-			fmt.Sprintf("Unexpected status code\nExpected: %d\nActual:   %d\nRequested: %s at %s\nResponse:\n%s",
-				color.Cyan(statusCode),
-				color.Red(response.StatusCode),
-				color.Cyan(method),
-				color.Cyan(requestUrl),
+		return fmt.Sprintf("Unexpected status code: %s", color.RedString(strconv.Itoa(response.StatusCode))),
+			fmt.Sprintf("Unexpected status code\nExpected: %s\nActual:   %s\nRequested: %s at %s\nResponse:\n%s",
+				color.CyanString(strconv.Itoa(statusCode)),
+				color.RedString(strconv.Itoa(response.StatusCode)),
+				color.CyanString(method),
+				color.CyanString(requestUrl.String()),
 				util.ReaderToJSON(response.Body)), nil
 	}
 
@@ -305,7 +310,7 @@ func verify(step step, defaultCluster string, defaultParameters map[string]strin
 			failure += ": " + actual
 			longFailure += "\nActual:   " + actual
 		}
-		longFailure += fmt.Sprintf("\nRequested: %s at %s\nResponse:\n%s", color.Cyan(method), color.Cyan(requestUrl), string(responsePretty))
+		longFailure += fmt.Sprintf("\nRequested: %s at %s\nResponse:\n%s", color.CyanString(method), color.CyanString(requestUrl.String()), string(responsePretty))
 		return failure, longFailure, err
 	}
 	return "", "", err
@@ -342,9 +347,9 @@ func compare(expected interface{}, actual interface{}, path string) (string, str
 				}
 				valueMatch = true
 			} else {
-				return fmt.Sprintf("Unexpected number of elements at %s", color.Cyan(path)),
-					fmt.Sprintf("%d", color.Cyan(len(u))),
-					fmt.Sprintf("%d", color.Red(len(v))),
+				return fmt.Sprintf("Unexpected number of elements at %s", color.CyanString(path)),
+					color.CyanString(strconv.Itoa(len(u))),
+					color.RedString(strconv.Itoa(len(v))),
 					nil
 			}
 		}
@@ -356,7 +361,7 @@ func compare(expected interface{}, actual interface{}, path string) (string, str
 				childPath := fmt.Sprintf("%s/%s", path, strings.ReplaceAll(strings.ReplaceAll(n, "~", "~0"), "/", "~1"))
 				f, ok := v[n]
 				if !ok {
-					return fmt.Sprintf("Missing expected field at %s", color.Red(childPath)), "", "", nil
+					return fmt.Sprintf("Missing expected field at %s", color.RedString(childPath)), "", "", nil
 				}
 				if failure, expected, actual, err := compare(e, f, childPath); failure != "" || err != nil {
 					return failure, expected, actual, err
@@ -378,9 +383,9 @@ func compare(expected interface{}, actual interface{}, path string) (string, str
 		}
 		expectedJson, _ := json.Marshal(expected)
 		actualJson, _ := json.Marshal(actual)
-		return fmt.Sprintf("Unexpected %s at %s", mismatched, color.Cyan(path)),
-			fmt.Sprintf("%s", color.Cyan(expectedJson)),
-			fmt.Sprintf("%s", color.Red(actualJson)),
+		return fmt.Sprintf("Unexpected %s at %s", mismatched, color.CyanString(path)),
+			color.CyanString(string(expectedJson)),
+			color.RedString(string(actualJson)),
 			nil
 	}
 	return "", "", "", nil
@@ -465,6 +470,8 @@ type response struct {
 }
 
 type testContext struct {
+	cli        *CLI
+	zone       string
 	lazyTarget vespa.Target
 	testsPath  string
 	dryRun     bool
@@ -472,7 +479,7 @@ type testContext struct {
 
 func (t *testContext) target() (vespa.Target, error) {
 	if t.lazyTarget == nil {
-		target, err := getTarget()
+		target, err := t.cli.target(t.zone, "")
 		if err != nil {
 			return nil, err
 		}

@@ -30,6 +30,7 @@ import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.curator.mock.MockCurator;
 import com.yahoo.vespa.curator.transaction.CuratorTransaction;
 import com.yahoo.vespa.flags.FlagSource;
+import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
@@ -66,9 +67,6 @@ import java.util.stream.Collectors;
 import static com.yahoo.config.provision.NodeResources.StorageType.local;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
 
 /**
  * A test utility for provisioning tests.
@@ -135,6 +133,7 @@ public class ProvisioningTester {
         b.addFlavor("dockerLarge", 2., 10., 20, 1, Flavor.Type.DOCKER_CONTAINER).cost(3);
         b.addFlavor("v-4-8-100", 4., 80., 100, 10, Flavor.Type.VIRTUAL_MACHINE).cost(4);
         b.addFlavor("large", 4., 80., 100, 10, Flavor.Type.BARE_METAL).cost(10);
+        b.addFlavor("arm64", 4., 80., 100, 10, Flavor.Type.BARE_METAL, NodeResources.Architecture.arm64).cost(15);
         return b.build();
     }
 
@@ -151,6 +150,7 @@ public class ProvisioningTester {
     public CapacityPolicies capacityPolicies() { return capacityPolicies; }
     public NodeList getNodes(ApplicationId id, Node.State ... inState) { return nodeRepository.nodes().list(inState).owner(id); }
     public InMemoryFlagSource flagSource() { return (InMemoryFlagSource) nodeRepository.flagSource(); }
+    public Node node(String hostname) { return nodeRepository.nodes().node(hostname).get(); }
 
     public int decideSize(Capacity capacity, ApplicationId application) {
         return capacityPolicies.applyOn(capacity, application).minResources().nodes();
@@ -688,6 +688,12 @@ public class ProvisioningTester {
             return this;
         }
 
+        private FlagSource defaultFlagSource() {
+            var flagSource = new InMemoryFlagSource();
+            flagSource.withBooleanFlag(Flags.REUSE_NODE_INDEXES.id(), true);
+            return flagSource;
+        }
+
         public ProvisioningTester build() {
             return new ProvisioningTester(Optional.ofNullable(curator).orElseGet(MockCurator::new),
                                           new NodeFlavors(Optional.ofNullable(flavorsConfig).orElseGet(ProvisioningTester::createConfig)),
@@ -698,7 +704,7 @@ public class ProvisioningTester {
                                           Optional.ofNullable(orchestrator).orElseGet(OrchestratorMock::new),
                                           hostProvisioner,
                                           new LoadBalancerServiceMock(),
-                                          Optional.ofNullable(flagSource).orElseGet(InMemoryFlagSource::new),
+                                          Optional.ofNullable(flagSource).orElse(defaultFlagSource()),
                                           spareCount);
         }
 

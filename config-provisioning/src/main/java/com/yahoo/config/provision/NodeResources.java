@@ -199,6 +199,12 @@ public class NodeResources {
         return new NodeResources(vcpu, memoryGb, diskGb, bandwidthGbps, diskSpeed, storageType, architecture);
     }
 
+    public NodeResources with(Architecture architecture) {
+        ensureSpecified();
+        if (architecture == this.architecture) return this;
+        return new NodeResources(vcpu, memoryGb, diskGb, bandwidthGbps, diskSpeed, storageType, architecture);
+    }
+
     /** Returns this with disk speed and storage type set to any */
     public NodeResources justNumbers() {
         if (isUnspecified()) return unspecified();
@@ -221,8 +227,7 @@ public class NodeResources {
                                  diskGb - other.diskGb,
                                  bandwidthGbps - other.bandwidthGbps,
                                  this.diskSpeed.combineWith(other.diskSpeed),
-                                 this.storageType.combineWith(other.storageType),
-                                 this.architecture.combineWith(other.architecture));
+                                 this.storageType.combineWith(other.storageType));
     }
 
     public NodeResources add(NodeResources other) {
@@ -234,8 +239,7 @@ public class NodeResources {
                                  diskGb + other.diskGb,
                                  bandwidthGbps + other.bandwidthGbps,
                                  this.diskSpeed.combineWith(other.diskSpeed),
-                                 this.storageType.combineWith(other.storageType),
-                                 this.architecture.combineWith(other.architecture));
+                                 this.storageType.combineWith(other.storageType));
     }
 
     private boolean isInterchangeableWith(NodeResources other) {
@@ -244,8 +248,6 @@ public class NodeResources {
         if (this.diskSpeed != DiskSpeed.any && other.diskSpeed != DiskSpeed.any && this.diskSpeed != other.diskSpeed)
             return false;
         if (this.storageType != StorageType.any && other.storageType != StorageType.any && this.storageType != other.storageType)
-            return false;
-        if (this.architecture != other.architecture)
             return false;
         return true;
     }

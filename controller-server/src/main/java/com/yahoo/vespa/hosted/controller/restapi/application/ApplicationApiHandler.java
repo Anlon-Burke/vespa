@@ -240,7 +240,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/notifications")) return notifications(request, Optional.ofNullable(request.getProperty("tenant")), true);
         if (path.matches("/application/v4/tenant")) return tenants(request);
         if (path.matches("/application/v4/tenant/{tenant}")) return tenant(path.get("tenant"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/access/request/ssh")) return accessRequests(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/access/request/operator")) return accessRequests(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/info")) return tenantInfo(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/notifications")) return notifications(request, Optional.of(path.get("tenant")), false);
         if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}/validate")) return validateSecretStore(path.get("tenant"), path.get("name"), request);
@@ -292,8 +292,9 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private HttpResponse handlePUT(Path path, HttpRequest request) {
         if (path.matches("/application/v4/tenant/{tenant}")) return updateTenant(path.get("tenant"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/access/request/ssh")) return requestSshAccess(path.get("tenant"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/access/approve/ssh")) return approveAccessRequest(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/access/request/operator")) return requestSshAccess(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/access/approve/operator")) return approveAccessRequest(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/access/preapprove/operator")) return addPreapprovedAccess(path.get("tenant"));
         if (path.matches("/application/v4/tenant/{tenant}/info")) return updateTenantInfo(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/archive-access")) return allowArchiveAccess(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}")) return addSecretStore(path.get("tenant"), path.get("name"), request);
@@ -341,6 +342,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private HttpResponse handleDELETE(Path path, HttpRequest request) {
         if (path.matches("/application/v4/tenant/{tenant}")) return deleteTenant(path.get("tenant"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/access/preapprove/operator")) return removePreapprovedAccess(path.get("tenant"));
         if (path.matches("/application/v4/tenant/{tenant}/key")) return removeDeveloperKey(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/archive-access")) return removeArchiveAccess(path.get("tenant"));
         if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}")) return deleteSecretStore(path.get("tenant"), path.get("name"), request);
@@ -352,7 +354,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}")) return deleteInstance(path.get("tenant"), path.get("application"), path.get("instance"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/deploying")) return cancelDeploy(path.get("tenant"), path.get("application"), path.get("instance"), "all");
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/deploying/{choice}")) return cancelDeploy(path.get("tenant"), path.get("application"), path.get("instance"), path.get("choice"));
-        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/job/{jobtype}")) return JobControllerApiHandlerHelper.abortJobResponse(controller.jobController(), appIdFromPath(path), jobTypeFromPath(path));
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/job/{jobtype}")) return JobControllerApiHandlerHelper.abortJobResponse(controller.jobController(), request, appIdFromPath(path), jobTypeFromPath(path));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/job/{jobtype}/pause")) return resume(appIdFromPath(path), jobTypeFromPath(path));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}")) return deactivate(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/reindexing")) return disableReindexing(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
@@ -414,9 +416,27 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (controller.tenants().require(TenantName.from(tenantName)).type() != Tenant.Type.cloud)
             return ErrorResponse.badRequest("Can only see access requests for cloud tenants");
 
-        var pendingRequests = controller.serviceRegistry().accessControlService().hasPendingAccessRequests(TenantName.from(tenantName));
+        var accessControlService = controller.serviceRegistry().accessControlService();
+        var accessRoleInformation = accessControlService.getAccessRoleInformation(TenantName.from(tenantName));
+        var preapprovedAccess = !accessRoleInformation.isSelfServe() && !accessRoleInformation.isReviewEnabled();
         var slime = new Slime();
-        slime.setObject().setBool("hasPendingRequests", pendingRequests);
+        var cursor = slime.setObject();
+        cursor.setBool("preapprovedAccess", preapprovedAccess);
+        accessRoleInformation.getPendingRequest()
+                .ifPresent(membershipRequest -> {
+                    var requestCursor = cursor.setObject("pendingRequest");
+                    requestCursor.setString("requestTime", membershipRequest.getCreationTime());
+                    requestCursor.setString("reason", membershipRequest.getReason());
+                });
+        var auditLogCursor = cursor.setArray("auditLog");
+        accessRoleInformation.getAuditLog()
+                .forEach(auditLogEntry -> {
+                    var entryCursor = auditLogCursor.addObject();
+                    entryCursor.setString("created", auditLogEntry.getCreationTime());
+                    entryCursor.setString("approver", auditLogEntry.getApprover());
+                    entryCursor.setString("reason", auditLogEntry.getReason());
+                    entryCursor.setString("status", auditLogEntry.getAction());
+                });
         return new SlimeJsonResponse(slime);
     }
 
@@ -443,8 +463,27 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         var expiry = inspector.field("expiry").valid() ?
                 Instant.ofEpochMilli(inspector.field("expiry").asLong()) :
                 Instant.now().plus(1, ChronoUnit.DAYS);
+        var approve = inspector.field("approve").asBool();
 
-        controller.serviceRegistry().accessControlService().approveSshAccess(tenant, expiry, OAuthCredentials.fromAuth0RequestContext(request.getJDiscRequest().context()));
+        controller.serviceRegistry().accessControlService().decideSshAccess(tenant, expiry, OAuthCredentials.fromAuth0RequestContext(request.getJDiscRequest().context()), approve);
+        return new MessageResponse("OK");
+    }
+
+    private HttpResponse addPreapprovedAccess(String tenantName) {
+        return setPreapprovedAccess(tenantName, true);
+    }
+
+    private HttpResponse removePreapprovedAccess(String tenantName) {
+        return setPreapprovedAccess(tenantName, false);
+    }
+
+    private HttpResponse setPreapprovedAccess(String tenantName, boolean preapprovedAccess) {
+        var tenant = TenantName.from(tenantName);
+
+        if (controller.tenants().require(tenant).type() != Tenant.Type.cloud)
+            return ErrorResponse.badRequest("Can only set access privel for cloud tenants");
+
+        controller.serviceRegistry().accessControlService().setPreapprovedAccess(tenant, preapprovedAccess);
         return new MessageResponse("OK");
     }
 
@@ -1126,7 +1165,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         DeploymentId deployment = new DeploymentId(ApplicationId.from(tenantName, applicationName, instanceName), requireZone(environment, region));
         Principal principal = requireUserPrincipal(request);
         SupportAccess disallowed = controller.supportAccess().disallow(deployment, principal.getName());
-        controller.applications().deploymentTrigger().reTriggerOrAddToQueue(deployment);
+        controller.applications().deploymentTrigger().reTriggerOrAddToQueue(deployment, "re-triggered to disallow support access, by " + request.getJDiscRequest().getUserPrincipal().getName());
         return new SlimeJsonResponse(SupportAccessSerializer.serializeCurrentState(disallowed, controller.clock().instant()));
     }
 
@@ -1159,14 +1198,21 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         Inspector requestObject = toSlime(request.getData()).get();
         boolean requireTests = ! requestObject.field("skipTests").asBool();
         boolean reTrigger = requestObject.field("reTrigger").asBool();
+        boolean upgradeRevision = ! requestObject.field("skipRevision").asBool();
+        boolean upgradePlatform = ! requestObject.field("skipUpgrade").asBool();
         String triggered = reTrigger
                            ? controller.applications().deploymentTrigger()
-                                       .reTrigger(id, type).type().jobName()
+                                       .reTrigger(id, type, "re-triggered by " + request.getJDiscRequest().getUserPrincipal().getName()).type().jobName()
                            : controller.applications().deploymentTrigger()
-                                       .forceTrigger(id, type, request.getJDiscRequest().getUserPrincipal().getName(), requireTests)
+                                       .forceTrigger(id, type, "triggered by " + request.getJDiscRequest().getUserPrincipal().getName(), requireTests, upgradeRevision, upgradePlatform)
                                        .stream().map(job -> job.type().jobName()).collect(joining(", "));
+        String suppressedUpgrades = ( ! upgradeRevision || ! upgradePlatform ? ", without " : "") +
+                                    (upgradeRevision ? "" : "revision") +
+                                    ( ! upgradeRevision && ! upgradePlatform ? " and " : "") +
+                                    (upgradePlatform ? "" : "platform") +
+                                    ( ! upgradeRevision || ! upgradePlatform ? " upgrade" : "");
         return new MessageResponse(triggered.isEmpty() ? "Job " + type.jobName() + " for " + id + " not triggered"
-                                                       : "Triggered " + triggered + " for " + id);
+                                                       : "Triggered " + triggered + " for " + id + suppressedUpgrades);
     }
 
     private HttpResponse pause(ApplicationId id, JobType type) {
@@ -1190,7 +1236,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                                                  request.getUri()).toString());
 
         DeploymentStatus status = controller.jobController().deploymentStatus(application);
-        application.latestVersion().ifPresent(version -> toSlime(version, object.setObject("latestVersion")));
+        application.latestVersion().ifPresent(version -> JobControllerApiHandlerHelper.toSlime(object.setObject("latestVersion"), version));
 
         application.projectId().ifPresent(id -> object.setLong("projectId", id));
 
@@ -1314,7 +1360,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                                                  request.getUri()).toString());
 
         application.latestVersion().ifPresent(version -> {
-            sourceRevisionToSlime(version.source(), object.setObject("source"));
             version.sourceUrl().ifPresent(url -> object.setString("sourceUrl", url));
             version.commit().ifPresent(commit -> object.setString("commit", commit));
         });
@@ -1451,7 +1496,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         change.platform().ifPresent(version -> object.setString("version", version.toString()));
         change.application()
               .filter(version -> !version.isUnknown())
-              .ifPresent(version -> toSlime(version, object.setObject("revision")));
+              .ifPresent(version -> JobControllerApiHandlerHelper.toSlime(object.setObject("revision"), version));
     }
 
     private void toSlime(Endpoint endpoint, Cursor object) {
@@ -1503,7 +1548,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                   .ifPresent(deploymentTimeToLive -> response.setLong("expiryTimeEpochMs", lastDeploymentStart.plus(deploymentTimeToLive).toEpochMilli()));
 
         application.projectId().ifPresent(i -> response.setString("screwdriverId", String.valueOf(i)));
-        sourceRevisionToSlime(deployment.applicationVersion().source(), response);
 
         var instance = application.instances().get(deploymentId.applicationId().instance());
         if (instance != null) {
@@ -1516,7 +1560,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                         .map(type -> new JobId(instance.id(), type))
                         .map(status.jobSteps()::get)
                         .ifPresent(stepStatus -> {
-                            JobControllerApiHandlerHelper.applicationVersionToSlime(
+                            JobControllerApiHandlerHelper.toSlime(
                                     response.setObject("applicationVersion"), deployment.applicationVersion());
                             if (!status.jobsToRun().containsKey(stepStatus.job().get()))
                                 response.setString("status", "complete");
@@ -1562,23 +1606,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     private Instant lastDeploymentStart(ApplicationId instanceId, Deployment deployment) {
         return controller.jobController().jobStarts(new JobId(instanceId, JobType.from(controller.system(), deployment.zone()).get()))
                          .stream().findFirst().orElse(deployment.at());
-    }
-
-    private void toSlime(ApplicationVersion applicationVersion, Cursor object) {
-        if ( ! applicationVersion.isUnknown()) {
-            object.setLong("buildNumber", applicationVersion.buildNumber().getAsLong());
-            object.setString("hash", applicationVersion.id());
-            sourceRevisionToSlime(applicationVersion.source(), object.setObject("source"));
-            applicationVersion.sourceUrl().ifPresent(url -> object.setString("sourceUrl", url));
-            applicationVersion.commit().ifPresent(commit -> object.setString("commit", commit));
-        }
-    }
-
-    private void sourceRevisionToSlime(Optional<SourceRevision> revision, Cursor object) {
-        if (revision.isEmpty()) return;
-        object.setString("gitRepository", revision.get().repository());
-        object.setString("gitBranch", revision.get().branch());
-        object.setString("gitCommit", revision.get().commit());
     }
 
     private void toSlime(RotationState state, Cursor object) {
@@ -1858,7 +1885,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     /** Trigger deployment of the given Vespa version if a valid one is given, e.g., "7.8.9". */
     private HttpResponse deployPlatform(String tenantName, String applicationName, String instanceName, boolean pin, HttpRequest request) {
-
         String versionString = readToString(request.getData());
         ApplicationId id = ApplicationId.from(tenantName, applicationName, instanceName);
         StringBuilder response = new StringBuilder();
@@ -2519,7 +2545,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         object.setLong("id", run.id().number());
         object.setString("version", run.versions().targetPlatform().toFullString());
         if ( ! run.versions().targetApplication().isUnknown())
-            toSlime(run.versions().targetApplication(), object.setObject("revision"));
+            JobControllerApiHandlerHelper.toSlime(object.setObject("revision"), run.versions().targetApplication());
         object.setString("reason", "unknown reason");
         object.setLong("at", run.end().orElse(run.start()).toEpochMilli());
     }

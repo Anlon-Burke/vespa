@@ -2,6 +2,7 @@
 package com.yahoo.vespa.hosted.controller.deployment;
 
 import com.yahoo.config.application.api.DeploymentInstanceSpec;
+import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.text.Text;
@@ -30,6 +31,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -37,6 +39,7 @@ import java.util.stream.Collectors;
 import static java.util.Comparator.comparing;
 import static java.util.stream.Collectors.groupingBy;
 import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
 
 /**
  * Responsible for scheduling deployment jobs in a build system and keeping
@@ -164,18 +167,24 @@ public class DeploymentTrigger {
         return triggeredJobs;
     }
 
+
     /** Attempts to trigger the given job. */
-    public void trigger(Job job) {
+    private void trigger(Job job) {
+        trigger(job, null);
+    }
+
+    /** Attempts to trigger the given job. */
+    private void trigger(Job job, String reason) {
         log.log(Level.FINE, () -> "Triggering " + job);
         applications().lockApplicationOrThrow(TenantAndApplicationId.from(job.applicationId()), application -> {
-            jobs.start(job.applicationId(), job.jobType, job.versions);
+            jobs.start(job.applicationId(), job.jobType, job.versions, false, Optional.ofNullable(reason));
             applications().store(application.with(job.applicationId().instance(), instance ->
                     instance.withJobPause(job.jobType, OptionalLong.empty())));
         });
     }
 
     /** Force triggering of a job for given instance, with same versions as last run. */
-    public JobId reTrigger(ApplicationId applicationId, JobType jobType) {
+    public JobId reTrigger(ApplicationId applicationId, JobType jobType, String reason) {
         Application application = applications().requireApplication(TenantAndApplicationId.from(applicationId));
         Instance instance = application.require(applicationId.instance());
         JobId job = new JobId(instance.id(), jobType);
@@ -183,42 +192,51 @@ public class DeploymentTrigger {
         Versions versions = jobStatus.lastTriggered()
                                      .orElseThrow(() -> new IllegalArgumentException(job + " has never been triggered"))
                                      .versions();
-        trigger(deploymentJob(instance, versions, jobType, jobStatus, clock.instant()));
+        trigger(deploymentJob(instance, versions, jobType, jobStatus, clock.instant()), reason);
         return job;
     }
 
     /** Force triggering of a job for given instance. */
-    public List<JobId> forceTrigger(ApplicationId applicationId, JobType jobType, String user, boolean requireTests) {
+    public List<JobId> forceTrigger(ApplicationId applicationId, JobType jobType, String reason, boolean requireTests,
+                                    boolean upgradeRevision, boolean upgradePlatform) {
         Application application = applications().requireApplication(TenantAndApplicationId.from(applicationId));
         Instance instance = application.require(applicationId.instance());
         JobId job = new JobId(instance.id(), jobType);
         if (job.type().environment().isManuallyDeployed())
-            return forceTriggerManualJob(job);
+            return forceTriggerManualJob(job, reason);
 
         DeploymentStatus status = jobs.deploymentStatus(application);
-        Versions versions = Versions.from(instance.change(), application, status.deploymentFor(job), controller.readSystemVersion());
-        DeploymentStatus.Job toTrigger = new DeploymentStatus.Job(versions, Optional.of(controller.clock().instant()), instance.change());
-        Map<JobId, List<DeploymentStatus.Job>> jobs = status.testJobs(Map.of(job, List.of(toTrigger)));
-        if (jobs.isEmpty() || ! requireTests)
-            jobs = Map.of(job, List.of(toTrigger));
+        Change change = instance.change();
+        if ( ! upgradeRevision && change.application().isPresent()) change = change.withoutApplication();
+        if ( ! upgradePlatform && change.platform().isPresent()) change = change.withoutPlatform();
+        Versions versions = Versions.from(change, application, status.deploymentFor(job), controller.readSystemVersion());
+        DeploymentStatus.Job toTrigger = new DeploymentStatus.Job(job.type(), versions, Optional.of(controller.clock().instant()), instance.change());
+        Map<JobId, List<DeploymentStatus.Job>> testJobs = status.testJobs(Map.of(job, List.of(toTrigger)));
+
+        Map<JobId, List<DeploymentStatus.Job>> jobs = testJobs.isEmpty() || ! requireTests
+                                                      ? Map.of(job, List.of(toTrigger))
+                                                      : testJobs.entrySet().stream()
+                                                                .filter(entry -> controller.jobController().last(entry.getKey()).map(Run::hasEnded).orElse(true))
+                                                                .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
+
         jobs.forEach((jobId, versionsList) -> {
-            trigger(deploymentJob(instance, versionsList.get(0).versions(), jobId.type(), status.jobs().get(jobId).get(), clock.instant()));
+            trigger(deploymentJob(instance, versionsList.get(0).versions(), jobId.type(), status.jobs().get(jobId).get(), clock.instant()), reason);
         });
         return List.copyOf(jobs.keySet());
     }
 
-    private List<JobId> forceTriggerManualJob(JobId job) {
+    private List<JobId> forceTriggerManualJob(JobId job, String reason) {
         Run last = jobs.last(job).orElseThrow(() -> new IllegalArgumentException(job + " has never been run"));
         Versions target = new Versions(controller.readSystemVersion(),
                                        last.versions().targetApplication(),
                                        Optional.of(last.versions().targetPlatform()),
                                        Optional.of(last.versions().targetApplication()));
-        jobs.start(job.application(), job.type(), target, true);
+        jobs.start(job.application(), job.type(), target, true, Optional.of(reason));
         return List.of(job);
     }
 
     /** Retrigger job. If the job is already running, it will be canceled, and retrigger enqueued. */
-    public Optional<JobId> reTriggerOrAddToQueue(DeploymentId deployment) {
+    public Optional<JobId> reTriggerOrAddToQueue(DeploymentId deployment, String reason) {
         JobType jobType = JobType.from(controller.system(), deployment.zoneId())
                 .orElseThrow(() -> new IllegalArgumentException(Text.format("No job to trigger for (system/zone): %s/%s", controller.system().value(), deployment.zoneId().value())));
         Optional<Run> existingRun = controller.jobController().active(deployment.applicationId()).stream()
@@ -239,10 +257,10 @@ public class DeploymentTrigger {
                         .collect(toList());
                 controller.curator().writeRetriggerEntries(newList);
             }
-            controller.jobController().abort(run.id());
+            controller.jobController().abort(run.id(), "force re-triggered");
             return Optional.empty();
         } else {
-            return Optional.of(reTrigger(deployment.applicationId(), jobType));
+            return Optional.of(reTrigger(deployment.applicationId(), jobType, reason));
         }
     }
 
@@ -350,12 +368,15 @@ public class DeploymentTrigger {
     private void abortIfOutdated(DeploymentStatus status, Map<JobId, List<DeploymentStatus.Job>> jobs, JobId job) {
         status.jobs().get(job)
               .flatMap(JobStatus::lastTriggered)
-              .filter(last -> ! last.hasEnded())
+              .filter(last -> ! last.hasEnded() && last.reason().isEmpty())
               .ifPresent(last -> {
                   if (jobs.get(job).stream().noneMatch(versions ->    versions.versions().targetsMatch(last.versions())
                                                                    && versions.versions().sourcesMatchIfPresent(last.versions()))) {
-                      log.log(Level.INFO, "Aborting outdated run " + last);
-                      controller.jobController().abort(last.id());
+                      String blocked = jobs.get(job).stream()
+                                           .map(scheduled -> scheduled.versions().toString())
+                                           .collect(Collectors.joining(", "));
+                      log.log(Level.INFO, "Aborting outdated run " + last + ", which is blocking runs: " + blocked);
+                      controller.jobController().abort(last.id(), "run no longer scheduled, and is blocking scheduled runs: " + blocked);
                   }
               });
     }
@@ -388,9 +409,13 @@ public class DeploymentTrigger {
     private boolean acceptNewApplicationVersion(DeploymentStatus status, InstanceName instance, ApplicationVersion version) {
         if (status.application().deploymentSpec().instance(instance).isEmpty()) return false; // Unknown instance.
         boolean isChangingRevision = status.application().require(instance).change().application().isPresent();
-        switch (status.application().deploymentSpec().requireInstance(instance).revisionChange()) {
+        DeploymentInstanceSpec spec = status.application().deploymentSpec().requireInstance(instance);
+        Predicate<ApplicationVersion> versionFilter = spec.revisionTarget() == DeploymentSpec.RevisionTarget.next
+                                                      ? failing -> status.application().require(instance).change().application().get().compareTo(failing) == 0
+                                                      : failing -> version.compareTo(failing) > 0;
+        switch (spec.revisionChange()) {
             case whenClear:   return ! isChangingRevision;
-            case whenFailing: return ! isChangingRevision || status.hasFailures(version);
+            case whenFailing: return ! isChangingRevision || status.hasFailures(versionFilter);
             case always:      return true;
             default:          throw new IllegalStateException("Unknown revision upgrade policy");
         }

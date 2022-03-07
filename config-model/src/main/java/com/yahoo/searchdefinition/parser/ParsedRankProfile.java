@@ -8,7 +8,7 @@ import com.yahoo.searchlib.rankingexpression.evaluation.TensorValue;
 import com.yahoo.searchlib.rankingexpression.evaluation.Value;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -25,9 +25,9 @@ class ParsedRankProfile extends ParsedBlock {
     private boolean ignoreDefaultRankFeatures = false;
     private Double rankScoreDropLimit = null;
     private Double termwiseLimit = null;
-    private FeatureList matchFeatures = null;
-    private FeatureList rankFeatures = null;
-    private FeatureList summaryFeatures = null;
+    private List<FeatureList> matchFeatures = new ArrayList<>();
+    private List<FeatureList> rankFeatures = new ArrayList<>();
+    private List<FeatureList> summaryFeatures = new ArrayList<>();
     private Integer keepRankCount = null;
     private Integer minHitsPerThread = null;
     private Integer numSearchPartitions = null;
@@ -41,12 +41,12 @@ class ParsedRankProfile extends ParsedBlock {
     private Boolean strict = null;
     private final List<MutateOperation> mutateOperations = new ArrayList<>();
     private final List<String> inherited = new ArrayList<>();
-    private final Map<String, Boolean> fieldsRankFilter = new HashMap<>();
-    private final Map<String, Integer> fieldsRankWeight = new HashMap<>();
-    private final Map<String, ParsedRankFunction> functions = new HashMap<>();
-    private final Map<String, String> fieldsRankType = new HashMap<>();
-    private final Map<String, String> rankProperties =  new HashMap<>();
-    private final Map<String, Value> constants = new HashMap<>();
+    private final Map<String, Boolean> fieldsRankFilter = new LinkedHashMap<>();
+    private final Map<String, Integer> fieldsRankWeight = new LinkedHashMap<>();
+    private final Map<String, ParsedRankFunction> functions = new LinkedHashMap<>();
+    private final Map<String, String> fieldsRankType = new LinkedHashMap<>();
+    private final Map<String, List<String>> rankProperties = new LinkedHashMap<>();
+    private final Map<String, Value> constants = new LinkedHashMap<>();
 
     ParsedRankProfile(String name) {
         super(name, "rank-profile");
@@ -55,9 +55,9 @@ class ParsedRankProfile extends ParsedBlock {
     boolean getIgnoreDefaultRankFeatures() { return this.ignoreDefaultRankFeatures; }
     Optional<Double> getRankScoreDropLimit() { return Optional.ofNullable(this.rankScoreDropLimit); }
     Optional<Double> getTermwiseLimit() { return Optional.ofNullable(this.termwiseLimit); }
-    Optional<FeatureList> getMatchFeatures() { return Optional.ofNullable(this.matchFeatures); }
-    Optional<FeatureList> getRankFeatures() { return Optional.ofNullable(this.rankFeatures); }
-    Optional<FeatureList> getSummaryFeatures() { return Optional.ofNullable(this.summaryFeatures); }
+    List<FeatureList> getMatchFeatures() { return List.copyOf(this.matchFeatures); }
+    List<FeatureList> getRankFeatures() { return List.copyOf(this.rankFeatures); }
+    List<FeatureList> getSummaryFeatures() { return List.copyOf(this.summaryFeatures); }
     Optional<Integer> getKeepRankCount() { return Optional.ofNullable(this.keepRankCount); }
     Optional<Integer> getMinHitsPerThread() { return Optional.ofNullable(this.minHitsPerThread); }
     Optional<Integer> getNumSearchPartitions() { return Optional.ofNullable(this.numSearchPartitions); }
@@ -72,26 +72,15 @@ class ParsedRankProfile extends ParsedBlock {
     Map<String, Boolean> getFieldsWithRankFilter() { return Map.copyOf(fieldsRankFilter); }
     Map<String, Integer> getFieldsWithRankWeight() { return Map.copyOf(fieldsRankWeight); }
     Map<String, String> getFieldsWithRankType() { return Map.copyOf(fieldsRankType); }
-    Map<String, String> getRankProperties() { return Map.copyOf(rankProperties); }
+    Map<String, List<String>> getRankProperties() { return Map.copyOf(rankProperties); }
     Map<String, Value> getConstants() { return Map.copyOf(constants); }
     Optional<String> getInheritedSummaryFeatures() { return Optional.ofNullable(this.inheritedSummaryFeatures); }
     Optional<String> getSecondPhaseExpression() { return Optional.ofNullable(this.secondPhaseExpression); }
     Optional<Boolean> isStrict() { return Optional.ofNullable(this.strict); }
 
-    void addSummaryFeatures(FeatureList features) {
-        verifyThat(summaryFeatures == null, "already has summary-features");
-        this.summaryFeatures = features;
-    }
-
-    void addMatchFeatures(FeatureList features) {
-        verifyThat(matchFeatures == null, "already has match-features");
-        this.matchFeatures = features;
-    }
-
-    void addRankFeatures(FeatureList features) {
-        verifyThat(rankFeatures == null, "already has rank-features");
-        this.rankFeatures = features;
-    }
+    void addSummaryFeatures(FeatureList features) { this.summaryFeatures.add(features); }
+    void addMatchFeatures(FeatureList features) { this.matchFeatures.add(features); }
+    void addRankFeatures(FeatureList features) { this.rankFeatures.add(features); }
 
     void inherit(String other) { inherited.add(other); }
 
@@ -124,9 +113,10 @@ class ParsedRankProfile extends ParsedBlock {
         fieldsRankWeight.put(field, weight);
     }
 
-    void addFunction(ParsedRankFunction func) {
-        verifyThat(! functions.containsKey(func.name()), "already has function", func.name());
-        functions.put(func.name(), func);
+    ParsedRankFunction addOrReplaceFunction(ParsedRankFunction func) {
+        // allowed with warning
+        // verifyThat(! functions.containsKey(func.name()), "already has function", func.name());
+        return functions.put(func.name(), func);
     }
 
     void addMutateOperation(MutateOperation.Phase phase, String attrName, String operation) {
@@ -134,8 +124,8 @@ class ParsedRankProfile extends ParsedBlock {
     }
 
     void addRankProperty(String key, String value) {
-        verifyThat(! rankProperties.containsKey(key), "already has value for rank property", key);
-        rankProperties.put(key, value);
+        List<String> values = rankProperties.computeIfAbsent(key, k -> new ArrayList<String>());
+        values.add(value);
     }
 
     void setFirstPhaseRanking(String expression) {

@@ -9,19 +9,12 @@
 
 #include "app.h"
 #include "time.h"
-#include "process.h"
-#include "unix_ipc.h"
 #include <unistd.h>
 #include <csignal>
 #include <getopt.h>
 
 
-FastOS_UNIX_Application::FastOS_UNIX_Application ()
-    : _processStarter(nullptr),
-      _ipcHelper(nullptr)
-{
-}
-
+FastOS_UNIX_Application::FastOS_UNIX_Application() = default;
 FastOS_UNIX_Application::~FastOS_UNIX_Application() = default;
 
 extern "C"
@@ -31,8 +24,8 @@ extern char **environ;
 
 int
 FastOS_UNIX_Application::GetOpt (const char *optionsString,
-            const char* &optionArgument,
-            int &optionIndex)
+                                 const char* &optionArgument,
+                                 int &optionIndex)
 {
     int rc = getopt(_argc, _argv, optionsString);
     optionArgument = optarg;
@@ -72,10 +65,6 @@ bool FastOS_UNIX_Application::PreThreadInit ()
         sigemptyset(&act.sa_mask);
         act.sa_flags = 0;
         sigaction(SIGPIPE, &act, nullptr);
-
-        if (useProcessStarter()) {
-            _processStarter = new FastOS_UNIX_ProcessStarter(this);
-        }
     } else {
         rc = false;
         fprintf(stderr, "FastOS_ApplicationInterface::PreThreadInit failed\n");
@@ -89,13 +78,6 @@ bool FastOS_UNIX_Application::Init ()
 
     if(FastOS_ApplicationInterface::Init())
     {
-        int ipcDescriptor = -1;
-
-        if (useIPCHelper()) {
-            _ipcHelper = new FastOS_UNIX_IPCHelper(this, ipcDescriptor);
-            GetThreadPool()->NewThread(_ipcHelper);
-        }
-
         rc = true;
     }
 
@@ -104,39 +86,5 @@ bool FastOS_UNIX_Application::Init ()
 
 void FastOS_UNIX_Application::Cleanup ()
 {
-    if(_ipcHelper != nullptr)
-        _ipcHelper->Exit();
-
-    if (_processStarter != nullptr) {
-        {
-            std::unique_lock<std::mutex> guard;
-            if (_processListMutex) {
-                guard = getProcessGuard();
-            }
-        }
-        delete _processStarter;
-        _processStarter = nullptr;
-    }
-
     FastOS_ApplicationInterface::Cleanup();
-}
-
-FastOS_UNIX_ProcessStarter *
-FastOS_UNIX_Application::GetProcessStarter ()
-{
-    return _processStarter;
-}
-
-void FastOS_UNIX_Application::
-AddToIPCComm (FastOS_UNIX_Process *process)
-{
-    if(_ipcHelper != nullptr)
-        _ipcHelper->AddProcess(process);
-}
-
-void FastOS_UNIX_Application::
-RemoveFromIPCComm (FastOS_UNIX_Process *process)
-{
-    if(_ipcHelper != nullptr)
-        _ipcHelper->RemoveProcess(process);
 }

@@ -6,87 +6,68 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/vespa-engine/vespa/client/go/build"
-	"github.com/vespa-engine/vespa/client/go/util"
 	"github.com/vespa-engine/vespa/client/go/version"
 )
 
-var skipVersionCheck bool
-
-var sp subprocess = &execSubprocess{}
-
-type subprocess interface {
-	pathOf(name string) (string, error)
-	outputOf(name string, args ...string) ([]byte, error)
-	isTerminal() bool
+func newVersionCmd(cli *CLI) *cobra.Command {
+	var skipVersionCheck bool
+	cmd := &cobra.Command{
+		Use:               "version",
+		Short:             "Show current version and check for updates",
+		DisableAutoGenTag: true,
+		SilenceUsage:      true,
+		Args:              cobra.ExactArgs(0),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			log.Printf("vespa version %s compiled with %v on %v/%v", build.Version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+			if !skipVersionCheck && cli.isTerminal() {
+				return checkVersion(cli)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&skipVersionCheck, "no-check", "n", false, "Do not check if a new version is available")
+	return cmd
 }
 
-type execSubprocess struct{}
-
-func (c *execSubprocess) pathOf(name string) (string, error) { return exec.LookPath(name) }
-func (c *execSubprocess) isTerminal() bool                   { return isTerminal() }
-func (c *execSubprocess) outputOf(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).Output()
-}
-
-func init() {
-	rootCmd.AddCommand(versionCmd)
-	versionCmd.Flags().BoolVarP(&skipVersionCheck, "no-check", "n", false, "Do not check if a new version is available")
-}
-
-var versionCmd = &cobra.Command{
-	Use:               "version",
-	Short:             "Show current version and check for updates",
-	DisableAutoGenTag: true,
-	SilenceUsage:      true,
-	Args:              cobra.ExactArgs(0),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		log.Printf("vespa version %s compiled with %v on %v/%v", build.Version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
-		if !skipVersionCheck && sp.isTerminal() {
-			return checkVersion()
-		}
-		return nil
-	},
-}
-
-func checkVersion() error {
+func checkVersion(cli *CLI) error {
 	current, err := version.Parse(build.Version)
 	if err != nil {
 		return err
 	}
-	latest, err := latestRelease()
+	latest, err := latestRelease(cli)
 	if err != nil {
 		return err
 	}
 	if !current.Less(latest.Version) {
 		return nil
 	}
-	usingHomebrew := usingHomebrew()
+	usingHomebrew := usingHomebrew(cli)
 	if usingHomebrew && latest.isRecent() {
 		return nil // Allow some time for new release to appear in Homebrew repo
 	}
-	log.Printf("\nNew release available: %s", color.Green(latest.Version))
+	log.Printf("\nNew release available: %s", color.GreenString(latest.Version.String()))
 	log.Printf("https://github.com/vespa-engine/vespa/releases/tag/v%s", latest.Version)
 	if usingHomebrew {
-		log.Printf("\nUpgrade by running:\n%s", color.Cyan("brew update && brew upgrade vespa-cli"))
+		log.Printf("\nUpgrade by running:\n%s", color.CyanString("brew update && brew upgrade vespa-cli"))
 	}
 	return nil
 }
 
-func latestRelease() (release, error) {
+func latestRelease(cli *CLI) (release, error) {
 	req, err := http.NewRequest("GET", "https://api.github.com/repos/vespa-engine/vespa/releases", nil)
 	if err != nil {
 		return release{}, err
 	}
-	response, err := util.HttpDo(req, time.Minute, "GitHub")
+	response, err := cli.httpClient.Do(req, time.Minute)
 	if err != nil {
 		return release{}, err
 	}
@@ -117,12 +98,12 @@ func latestRelease() (release, error) {
 	return releases[len(releases)-1], nil
 }
 
-func usingHomebrew() bool {
-	selfPath, err := sp.pathOf("vespa")
+func usingHomebrew(cli *CLI) bool {
+	selfPath, err := cli.exec.LookPath("vespa")
 	if err != nil {
 		return false
 	}
-	brewPrefix, err := sp.outputOf("brew", "--prefix")
+	brewPrefix, err := cli.exec.Run("brew", "--prefix")
 	if err != nil {
 		return false
 	}

@@ -132,7 +132,7 @@ public:
         std::shared_ptr<FileStorHandler::BucketLockInterface> lock(const document::Bucket & bucket, api::LockingRequirements lockReq);
         void failOperations(const document::Bucket & bucket, const api::ReturnCode & code);
 
-        FileStorHandler::LockedMessage getNextMessage(vespalib::duration timeout);
+        FileStorHandler::LockedMessage getNextMessage(vespalib::steady_time deadline);
         void dumpQueue(std::ostream & os) const;
         void dumpActiveHtml(std::ostream & os) const;
         void dumpQueueHtml(std::ostream & os) const;
@@ -192,10 +192,10 @@ public:
     FileStorHandlerImpl(MessageSender& sender, FileStorMetrics& metrics,
                         ServiceLayerComponentRegister& compReg);
     FileStorHandlerImpl(uint32_t numThreads, uint32_t numStripes, MessageSender&, FileStorMetrics&,
-                        ServiceLayerComponentRegister&, std::unique_ptr<vespalib::SharedOperationThrottler>);
+                        ServiceLayerComponentRegister&,
+                        const vespalib::SharedOperationThrottler::DynamicThrottleParams& dyn_throttle_params);
 
     ~FileStorHandlerImpl() override;
-    void setGetNextMessageTimeout(vespalib::duration timeout) override { _getNextMessageTimeout = timeout; }
 
     void flush(bool killPendingMerges) override;
     void setDiskState(DiskState state) override;
@@ -204,7 +204,7 @@ public:
     bool schedule(const std::shared_ptr<api::StorageMessage>&) override;
     ScheduleAsyncResult schedule_and_get_next_async_message(const std::shared_ptr<api::StorageMessage>& msg) override;
 
-    FileStorHandler::LockedMessage getNextMessage(uint32_t stripeId) override;
+    FileStorHandler::LockedMessage getNextMessage(uint32_t stripeId, vespalib::steady_time deadline) override;
 
     void remapQueueAfterJoin(const RemapInfo& source, RemapInfo& target) override;
     void remapQueueAfterSplit(const RemapInfo& source, RemapInfo& target1, RemapInfo& target2) override;
@@ -245,8 +245,17 @@ public:
     void abortQueuedOperations(const AbortBucketOperationsCommand& cmd) override;
 
     vespalib::SharedOperationThrottler& operation_throttler() const noexcept override {
-        return *_operation_throttler;
+        // It would be reasonable to assume that this could be a relaxed load since the set
+        // of possible throttlers is static and all _persistence_ thread creation is sequenced
+        // after throttler creation. But since the throttler may be invoked by RPC threads
+        // created in another context, use acquire semantics to ensure transitive visibility.
+        // TODO remove need for atomics once the throttler testing dust settles
+        return *_active_throttler.load(std::memory_order_acquire);
     }
+
+    void reconfigure_dynamic_throttler(const vespalib::SharedOperationThrottler::DynamicThrottleParams& params) override;
+
+    void use_dynamic_operation_throttling(bool use_dynamic) noexcept override;
 
     void set_throttle_apply_bucket_diff_ops(bool throttle_apply_bucket_diff) noexcept override {
         // Relaxed is fine, worst case from temporarily observing a stale value is that
@@ -264,13 +273,14 @@ private:
     ServiceLayerComponent   _component;
     std::atomic<DiskState>  _state;
     FileStorDiskMetrics   * _metrics;
-    std::unique_ptr<vespalib::SharedOperationThrottler> _operation_throttler;
+    std::unique_ptr<vespalib::SharedOperationThrottler> _dynamic_operation_throttler;
+    std::unique_ptr<vespalib::SharedOperationThrottler> _unlimited_operation_throttler;
+    std::atomic<vespalib::SharedOperationThrottler*>    _active_throttler;
     std::vector<Stripe>     _stripes;
     MessageSender&          _messageSender;
     const document::BucketIdFactory& _bucketIdFactory;
     mutable std::mutex    _mergeStatesLock;
     std::map<document::Bucket, std::shared_ptr<MergeStatus>> _mergeStates;
-    vespalib::duration    _getNextMessageTimeout;
     const uint32_t        _max_active_merges_per_stripe; // Read concurrently by stripes.
     mutable std::mutex              _pauseMonitor;
     mutable std::condition_variable _pauseCond;
@@ -354,9 +364,6 @@ private:
     }
     Stripe & stripe(const document::Bucket & bucket) {
         return _stripes[stripe_index(bucket)];
-    }
-    FileStorHandler::LockedMessage getNextMessage(uint32_t stripeId, vespalib::duration timeout) {
-        return _stripes[stripeId].getNextMessage(timeout);
     }
 
     ActiveOperationsStats get_active_operations_stats(bool reset_min_max) const override;

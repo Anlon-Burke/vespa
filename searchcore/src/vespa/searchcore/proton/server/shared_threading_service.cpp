@@ -3,13 +3,11 @@
 #include "shared_threading_service.h"
 #include <vespa/vespalib/util/blockingthreadstackexecutor.h>
 #include <vespa/vespalib/util/cpu_usage.h>
-#include <vespa/vespalib/util/isequencedtaskexecutor.h>
 #include <vespa/vespalib/util/sequencedtaskexecutor.h>
 #include <vespa/vespalib/util/size_literals.h>
-#include <vespa/fnet/transport.h>
-#include <vespa/fastos/thread.h>
 
 using vespalib::CpuUsage;
+using vespalib::steady_time;
 
 VESPA_THREAD_STACK_TAG(proton_field_writer_executor)
 VESPA_THREAD_STACK_TAG(proton_shared_executor)
@@ -26,9 +24,10 @@ SharedThreadingService::SharedThreadingService(const SharedThreadingServiceConfi
       _shared(std::make_shared<vespalib::BlockingThreadStackExecutor>(cfg.shared_threads(), 128_Ki,
                                                                       cfg.shared_task_limit(), proton_shared_executor)),
       _field_writer(),
-      _invokeService(std::max(vespalib::from_s(1.0/vespalib::getVespaTimerHz()),
+      _invokeService(std::max(vespalib::adjustTimeoutByDetectedHz(1ms),
                               cfg.field_writer_config().reactionTime())),
-      _invokeRegistrations()
+      _invokeRegistrations(),
+      _clock(_invokeService.nowRef())
 {
     const auto& fw_cfg = cfg.field_writer_config();
     if (fw_cfg.shared_field_writer() == SharedFieldWriterExecutor::DOCUMENT_DB) {

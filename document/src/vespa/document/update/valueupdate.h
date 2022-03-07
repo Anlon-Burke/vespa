@@ -19,18 +19,20 @@
 #pragma once
 
 #include "updatevisitor.h"
-#include <vespa/document/datatype/datatype.h>
+#include <vespa/document/util/printable.h>
 #include <vespa/document/util/xmlserializable.h>
+#include <vespa/document/util/identifiableid.h>
+#include <vespa/vespalib/objects/nbostream.h>
 
 namespace document {
 
 class DocumentTypeRepo;
 class Field;
 class FieldValue;
+class DataType;
 
 class ValueUpdate : public vespalib::Identifiable,
                     public Printable,
-                    public vespalib::Cloneable,
                     public XmlSerializable
 {
 protected:
@@ -60,9 +62,9 @@ public:
     };
 
     ValueUpdate()
-        : Printable(), Cloneable(), XmlSerializable() {}
+        : Printable(), XmlSerializable() {}
 
-    virtual ~ValueUpdate() {}
+    virtual ~ValueUpdate() = default;
 
     virtual bool operator==(const ValueUpdate&) const = 0;
     bool operator != (const ValueUpdate & rhs) const { return ! (*this == rhs); }
@@ -82,7 +84,7 @@ public:
      */
     virtual bool applyTo(FieldValue& value) const = 0;
 
-    ValueUpdate* clone() const override = 0;
+    virtual ValueUpdate* clone() const = 0;
 
     /**
      * Deserializes the given stream into an instance of an update object.

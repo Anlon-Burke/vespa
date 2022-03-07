@@ -15,14 +15,12 @@
 
 namespace document {
 
-class NumericDataType : public PrimitiveDataType {
+class NumericDataType final : public PrimitiveDataType {
 public:
     NumericDataType(Type type);
 
-    NumericDataType* clone() const override { return new NumericDataType(*this); }
     void print(std::ostream&, bool verbose, const std::string& indent) const override;
-
-    DECLARE_IDENTIFIABLE_ABSTRACT(NumericDataType);
+    bool isNumeric() const noexcept override { return true; }
 };
 
 }

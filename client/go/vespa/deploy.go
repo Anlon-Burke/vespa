@@ -5,18 +5,14 @@
 package vespa
 
 import (
-	"archive/zip"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -38,20 +34,28 @@ type ZoneID struct {
 }
 
 type Deployment struct {
+	System      System
 	Application ApplicationID
 	Zone        ZoneID
 }
 
-type DeploymentOpts struct {
-	ApplicationPackage ApplicationPackage
+type DeploymentOptions struct {
 	Target             Target
-	Deployment         Deployment
-	APIKey             []byte
+	ApplicationPackage ApplicationPackage
+	Timeout            time.Duration
+	HTTPClient         util.HTTPClient
 }
 
-type ApplicationPackage struct {
-	Path     string
-	TestPath string
+type LogLinePrepareResponse struct {
+	Time    int64
+	Level   string
+	Message string
+}
+
+type PrepareResult struct {
+	// Session or Run ID
+	ID       int64
+	LogLines []LogLinePrepareResponse
 }
 
 func (a ApplicationID) String() string {
@@ -66,117 +70,21 @@ func (d Deployment) String() string {
 	return fmt.Sprintf("deployment of %s in %s", d.Application, d.Zone)
 }
 
-func (d DeploymentOpts) String() string {
-	return fmt.Sprintf("%s to %s", d.Deployment, d.Target.Type())
+func (d DeploymentOptions) String() string {
+	return fmt.Sprintf("%s to %s", d.Target.Deployment(), d.Target.Type())
 }
 
-func (d *DeploymentOpts) IsCloud() bool { return d.Target.Type() == cloudTargetType }
+// IsCloud returns whether this is a deployment to Vespa Cloud or hosted Vespa
+func (d *DeploymentOptions) IsCloud() bool {
+	return d.Target.Type() == TargetCloud || d.Target.Type() == TargetHosted
+}
 
-func (d *DeploymentOpts) url(path string) (*url.URL, error) {
-	service, err := d.Target.Service(deployService, 0, 0, "")
+func (d *DeploymentOptions) url(path string) (*url.URL, error) {
+	service, err := d.Target.Service(DeployService, 0, 0, "")
 	if err != nil {
 		return nil, err
 	}
 	return url.Parse(service.BaseURL + path)
-}
-
-func (ap *ApplicationPackage) HasCertificate() bool {
-	return ap.hasFile(filepath.Join("security", "clients.pem"), "security/clients.pem")
-}
-
-func (ap *ApplicationPackage) HasDeployment() bool { return ap.hasFile("deployment.xml", "") }
-
-func (ap *ApplicationPackage) hasFile(filename, zipName string) bool {
-	if zipName == "" {
-		zipName = filename
-	}
-	if ap.IsZip() {
-		r, err := zip.OpenReader(ap.Path)
-		if err != nil {
-			return false
-		}
-		defer r.Close()
-		for _, f := range r.File {
-			if f.Name == zipName {
-				return true
-			}
-		}
-		return false
-	}
-	return util.PathExists(filepath.Join(ap.Path, filename))
-}
-
-func (ap *ApplicationPackage) IsZip() bool { return isZip(ap.Path) }
-
-func (ap *ApplicationPackage) IsJava() bool {
-	if ap.IsZip() {
-		r, err := zip.OpenReader(ap.Path)
-		if err != nil {
-			return false
-		}
-		defer r.Close()
-		for _, f := range r.File {
-			if filepath.Ext(f.Name) == ".jar" {
-				return true
-			}
-		}
-		return false
-	}
-	return util.PathExists(filepath.Join(ap.Path, "pom.xml"))
-}
-
-func (ap *ApplicationPackage) zipReader(test bool) (io.ReadCloser, error) {
-	zipFile := ap.Path
-	if test {
-		zipFile = ap.TestPath
-	}
-	if !ap.IsZip() {
-		tempZip, err := ioutil.TempFile("", "vespa")
-		if err != nil {
-			return nil, fmt.Errorf("could not create a temporary zip file for the application package: %w", err)
-		}
-		defer func() {
-			tempZip.Close()
-			os.Remove(tempZip.Name())
-		}()
-		if err := zipDir(zipFile, tempZip.Name()); err != nil {
-			return nil, err
-		}
-		zipFile = tempZip.Name()
-	}
-	f, err := os.Open(zipFile)
-	if err != nil {
-		return nil, fmt.Errorf("could not open application package at %s: %w", ap.Path, err)
-	}
-	return f, nil
-}
-
-// FindApplicationPackage finds the path to an application package from the zip file or directory zipOrDir.
-func FindApplicationPackage(zipOrDir string, requirePackaging bool) (ApplicationPackage, error) {
-	if isZip(zipOrDir) {
-		return ApplicationPackage{Path: zipOrDir}, nil
-	}
-	if util.PathExists(filepath.Join(zipOrDir, "pom.xml")) {
-		zip := filepath.Join(zipOrDir, "target", "application.zip")
-		if util.PathExists(zip) {
-			testZip := filepath.Join(zipOrDir, "target", "application-test.zip")
-			return ApplicationPackage{Path: zip, TestPath: testZip}, nil
-		}
-		if requirePackaging {
-			return ApplicationPackage{}, errors.New("pom.xml exists but no target/application.zip. Run mvn package first")
-		}
-	}
-	if util.PathExists(filepath.Join(zipOrDir, "src", "main", "application")) {
-		if util.PathExists(filepath.Join(zipOrDir, "src", "test", "application")) {
-			return ApplicationPackage{Path: filepath.Join(zipOrDir, "src", "main", "application"),
-				TestPath: filepath.Join(zipOrDir, "src", "test", "application")}, nil
-		}
-		return ApplicationPackage{Path: filepath.Join(zipOrDir, "src", "main", "application")}, nil
-	}
-	if util.PathExists(filepath.Join(zipOrDir, "services.xml")) {
-		return ApplicationPackage{Path: zipOrDir}, nil
-	}
-	return ApplicationPackage{}, errors.New("Could not find an application package source in '" + zipOrDir + "'")
 }
 
 func ApplicationFromString(s string) (ApplicationID, error) {
@@ -196,40 +104,40 @@ func ZoneFromString(s string) (ZoneID, error) {
 }
 
 // Prepare deployment and return the session ID
-func Prepare(deployment DeploymentOpts) (int64, error) {
+func Prepare(deployment DeploymentOptions) (PrepareResult, error) {
 	if deployment.IsCloud() {
-		return 0, fmt.Errorf("prepare is not supported with %s target", deployment.Target.Type())
+		return PrepareResult{}, fmt.Errorf("prepare is not supported with %s target", deployment.Target.Type())
 	}
 	sessionURL, err := deployment.url("/application/v2/tenant/default/session")
 	if err != nil {
-		return 0, err
+		return PrepareResult{}, err
 	}
-	sessionID, err := uploadApplicationPackage(sessionURL, deployment)
+	result, err := uploadApplicationPackage(sessionURL, deployment)
 	if err != nil {
-		return 0, err
+		return PrepareResult{}, err
 	}
-	prepareURL, err := deployment.url(fmt.Sprintf("/application/v2/tenant/default/session/%d/prepared", sessionID))
+	prepareURL, err := deployment.url(fmt.Sprintf("/application/v2/tenant/default/session/%d/prepared", result.ID))
 	if err != nil {
-		return 0, err
+		return PrepareResult{}, err
 	}
 	req, err := http.NewRequest("PUT", prepareURL.String(), nil)
 	if err != nil {
-		return 0, err
+		return PrepareResult{}, err
 	}
 	serviceDescription := "Deploy service"
-	response, err := util.HttpDo(req, time.Second*30, serviceDescription)
+	response, err := deployment.HTTPClient.Do(req, time.Second*30)
 	if err != nil {
-		return 0, err
+		return PrepareResult{}, err
 	}
 	defer response.Body.Close()
 	if err := checkResponse(req, response, serviceDescription); err != nil {
-		return 0, err
+		return PrepareResult{}, err
 	}
-	return sessionID, nil
+	return result, nil
 }
 
 // Activate deployment with sessionID from a past prepare
-func Activate(sessionID int64, deployment DeploymentOpts) error {
+func Activate(sessionID int64, deployment DeploymentOptions) error {
 	if deployment.IsCloud() {
 		return fmt.Errorf("activate is not supported with %s target", deployment.Target.Type())
 	}
@@ -242,7 +150,7 @@ func Activate(sessionID int64, deployment DeploymentOpts) error {
 		return err
 	}
 	serviceDescription := "Deploy service"
-	response, err := util.HttpDo(req, time.Second*30, serviceDescription)
+	response, err := deployment.HTTPClient.Do(req, time.Second*30)
 	if err != nil {
 		return err
 	}
@@ -250,25 +158,25 @@ func Activate(sessionID int64, deployment DeploymentOpts) error {
 	return checkResponse(req, response, serviceDescription)
 }
 
-func Deploy(opts DeploymentOpts) (int64, error) {
+func Deploy(opts DeploymentOptions) (PrepareResult, error) {
 	path := "/application/v2/tenant/default/prepareandactivate"
 	if opts.IsCloud() {
 		if err := checkDeploymentOpts(opts); err != nil {
-			return 0, err
+			return PrepareResult{}, err
 		}
-		if opts.Deployment.Zone.Environment == "" || opts.Deployment.Zone.Region == "" {
-			return 0, fmt.Errorf("%s: missing zone", opts)
+		if opts.Target.Deployment().Zone.Environment == "" || opts.Target.Deployment().Zone.Region == "" {
+			return PrepareResult{}, fmt.Errorf("%s: missing zone", opts)
 		}
 		path = fmt.Sprintf("/application/v4/tenant/%s/application/%s/instance/%s/deploy/%s-%s",
-			opts.Deployment.Application.Tenant,
-			opts.Deployment.Application.Application,
-			opts.Deployment.Application.Instance,
-			opts.Deployment.Zone.Environment,
-			opts.Deployment.Zone.Region)
+			opts.Target.Deployment().Application.Tenant,
+			opts.Target.Deployment().Application.Application,
+			opts.Target.Deployment().Application.Instance,
+			opts.Target.Deployment().Zone.Environment,
+			opts.Target.Deployment().Zone.Region)
 	}
 	u, err := opts.url(path)
 	if err != nil {
-		return 0, err
+		return PrepareResult{}, err
 	}
 	return uploadApplicationPackage(u, opts)
 }
@@ -290,14 +198,14 @@ func copyToPart(dst *multipart.Writer, src io.Reader, fieldname, filename string
 	return nil
 }
 
-func Submit(opts DeploymentOpts) error {
+func Submit(opts DeploymentOptions) error {
 	if !opts.IsCloud() {
-		return fmt.Errorf("%s: submit is unsupported", opts)
+		return fmt.Errorf("%s: submit is unsupported by %s target", opts, opts.Target.Type())
 	}
 	if err := checkDeploymentOpts(opts); err != nil {
 		return err
 	}
-	path := fmt.Sprintf("/application/v4/tenant/%s/application/%s/submit", opts.Deployment.Application.Tenant, opts.Deployment.Application.Application)
+	path := fmt.Sprintf("/application/v4/tenant/%s/application/%s/submit", opts.Target.Deployment().Application.Tenant, opts.Target.Deployment().Application.Application)
 	u, err := opts.url(path)
 	if err != nil {
 		return err
@@ -332,11 +240,11 @@ func Submit(opts DeploymentOpts) error {
 	}
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	serviceDescription := "Submit service"
-	sigKeyId := opts.Deployment.Application.SerializedForm()
+	sigKeyId := opts.Target.Deployment().Application.SerializedForm()
 	if err := opts.Target.SignRequest(request, sigKeyId); err != nil {
-		return err
+		return fmt.Errorf("failed to sign api request: %w", err)
 	}
-	response, err := util.HttpDo(request, time.Minute*10, sigKeyId)
+	response, err := opts.HTTPClient.Do(request, time.Minute*10)
 	if err != nil {
 		return err
 	}
@@ -344,17 +252,17 @@ func Submit(opts DeploymentOpts) error {
 	return checkResponse(request, response, serviceDescription)
 }
 
-func checkDeploymentOpts(opts DeploymentOpts) error {
-	if !opts.ApplicationPackage.HasCertificate() {
+func checkDeploymentOpts(opts DeploymentOptions) error {
+	if opts.Target.Type() == TargetCloud && !opts.ApplicationPackage.HasCertificate() {
 		return fmt.Errorf("%s: missing certificate in package", opts)
 	}
 	return nil
 }
 
-func uploadApplicationPackage(url *url.URL, opts DeploymentOpts) (int64, error) {
+func uploadApplicationPackage(url *url.URL, opts DeploymentOptions) (PrepareResult, error) {
 	zipReader, err := opts.ApplicationPackage.zipReader(false)
 	if err != nil {
-		return 0, err
+		return PrepareResult{}, err
 	}
 	header := http.Header{}
 	header.Add("Content-Type", "application/zip")
@@ -364,36 +272,44 @@ func uploadApplicationPackage(url *url.URL, opts DeploymentOpts) (int64, error) 
 		Header: header,
 		Body:   ioutil.NopCloser(zipReader),
 	}
-	serviceDescription := "Deploy service"
-	sigKeyId := opts.Deployment.Application.SerializedForm()
-	if err := opts.Target.SignRequest(request, sigKeyId); err != nil {
-		return 0, err
+	service, err := opts.Target.Service(DeployService, opts.Timeout, 0, "")
+	if err != nil {
+		return PrepareResult{}, err
 	}
 
-	var response *http.Response
-	err = util.Spinner("Uploading application package ...", func() error {
-		response, err = util.HttpDo(request, time.Minute*10, serviceDescription)
-		return err
-	})
+	keyID := opts.Target.Deployment().Application.SerializedForm()
+	if err := opts.Target.SignRequest(request, keyID); err != nil {
+		return PrepareResult{}, err
+	}
+	response, err := service.Do(request, time.Minute*10)
 	if err != nil {
-		return 0, err
+		return PrepareResult{}, err
 	}
 	defer response.Body.Close()
 
 	var jsonResponse struct {
 		SessionID string `json:"session-id"` // Config server
 		RunID     int64  `json:"run"`        // Controller
+
+		Log []LogLinePrepareResponse `json:"log"`
 	}
 	jsonResponse.SessionID = "0" // Set a default session ID for responses that don't contain int (e.g. cloud deployment)
-	if err := checkResponse(request, response, serviceDescription); err != nil {
-		return 0, err
+	if err := checkResponse(request, response, service.Description()); err != nil {
+		return PrepareResult{}, err
 	}
 	jsonDec := json.NewDecoder(response.Body)
 	jsonDec.Decode(&jsonResponse) // Ignore error in case this is a non-JSON response
-	if jsonResponse.RunID > 0 {
-		return jsonResponse.RunID, nil
+	id := jsonResponse.RunID
+	if id == 0 {
+		id, err = strconv.ParseInt(jsonResponse.SessionID, 10, 64)
+		if err != nil {
+			return PrepareResult{}, err
+		}
 	}
-	return strconv.ParseInt(jsonResponse.SessionID, 10, 64)
+	return PrepareResult{
+		ID:       id,
+		LogLines: jsonResponse.Log,
+	}, err
 }
 
 func checkResponse(req *http.Request, response *http.Response, serviceDescription string) error {
@@ -403,63 +319,6 @@ func checkResponse(req *http.Request, response *http.Response, serviceDescriptio
 		return fmt.Errorf("error from %s at %s (%s):\n%s", strings.ToLower(serviceDescription), req.URL.Host, response.Status, util.ReaderToJSON(response.Body))
 	}
 	return nil
-}
-
-func isZip(filename string) bool { return filepath.Ext(filename) == ".zip" }
-
-func zipDir(dir string, destination string) error {
-	if filepath.IsAbs(dir) {
-		message := "Path must be relative, but '" + dir + "'"
-		return errors.New(message)
-	}
-	if !util.PathExists(dir) {
-		message := "'" + dir + "' should be an application package zip or dir, but does not exist"
-		return errors.New(message)
-	}
-	if !util.IsDirectory(dir) {
-		message := "'" + dir + "' should be an application package dir, but is a (non-zip) file"
-		return errors.New(message)
-	}
-
-	file, err := os.Create(destination)
-	if err != nil {
-		message := "Could not create a temporary zip file for the application package: " + err.Error()
-		return errors.New(message)
-	}
-	defer file.Close()
-
-	w := zip.NewWriter(file)
-	defer w.Close()
-
-	walker := func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return nil
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-
-		zippath, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		zipfile, err := w.Create(zippath)
-		if err != nil {
-			return err
-		}
-
-		_, err = io.Copy(zipfile, file)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	return filepath.Walk(dir, walker)
 }
 
 // Returns the error message in the given JSON, or the entire content if it could not be extracted

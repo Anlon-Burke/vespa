@@ -1,10 +1,10 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // Unit tests for vespadocumentserializer.
 
+#include <vespa/document/test/fieldvalue_helpers.h>
 #include <vespa/document/annotation/annotation.h>
 #include <vespa/document/annotation/span.h>
 #include <vespa/document/annotation/spantree.h>
-#include <vespa/document/config/config-documenttypes.h>
 #include <vespa/document/config/documenttypes_config_fwd.h>
 #include <vespa/document/datatype/annotationreferencedatatype.h>
 #include <vespa/document/datatype/arraydatatype.h>
@@ -346,7 +346,7 @@ void checkArrayFieldValue(SizeType value_count) {
     ArrayDataType array_type(*DataType::INT);
     ArrayFieldValue value(array_type);
     for (uint32_t i = 0; i < value_count; ++i) {
-        value.add(static_cast<int32_t>(i));
+        CollectionHelper(value).add(static_cast<int32_t>(i));
     }
 
     nbostream stream;
@@ -651,7 +651,7 @@ TEST("requireThatReadDocumentTypeThrowsIfUnknownType") {
     stream.write(my_type.c_str(), my_type.size() + 1);
     stream << static_cast<uint16_t>(0);  // version (unused)
 
-    DocumentType value;
+    DocumentType value("invalid");
     VespaDocumentDeserializer deserializer(repo, stream, serialization_version);
     EXPECT_EXCEPTION(deserializer.read(value), DocumentTypeNotFoundException,
                 "Document type " + my_type + " not found");

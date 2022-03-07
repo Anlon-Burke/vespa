@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/vespa-engine/vespa/client/go/mock"
 	"github.com/vespa-engine/vespa/client/go/util"
 	"github.com/vespa-engine/vespa/client/go/vespa"
 )
@@ -65,21 +66,19 @@ func TestDocumentRemoveWithoutIdArg(t *testing.T) {
 }
 
 func TestDocumentSendMissingId(t *testing.T) {
-	arguments := []string{"document", "put", "testdata/A-Head-Full-of-Dreams-Without-Operation.json"}
-	client := &mockHttpClient{}
-	_, outErr := execute(command{args: arguments}, t, client)
+	cli, _, stderr := newTestCLI(t)
+	assert.NotNil(t, cli.Run("document", "put", "testdata/A-Head-Full-of-Dreams-Without-Operation.json"))
 	assert.Equal(t,
 		"Error: No document id given neither as argument or as a 'put' key in the json file\n",
-		outErr)
+		stderr.String())
 }
 
 func TestDocumentSendWithDisagreeingOperations(t *testing.T) {
-	arguments := []string{"document", "update", "testdata/A-Head-Full-of-Dreams-Put.json"}
-	client := &mockHttpClient{}
-	_, outErr := execute(command{args: arguments}, t, client)
+	cli, _, stderr := newTestCLI(t)
+	assert.NotNil(t, cli.Run("document", "update", "testdata/A-Head-Full-of-Dreams-Put.json"))
 	assert.Equal(t,
 		"Error: Wanted document operation is update but the JSON file specifies put\n",
-		outErr)
+		stderr.String())
 }
 
 func TestDocumentPutDocumentError(t *testing.T) {
@@ -96,15 +95,17 @@ func TestDocumentGet(t *testing.T) {
 }
 
 func assertDocumentSend(arguments []string, expectedOperation string, expectedMethod string, expectedDocumentId string, expectedPayloadFile string, t *testing.T) {
-	client := &mockHttpClient{}
+	client := &mock.HTTPClient{}
+	cli, stdout, stderr := newTestCLI(t)
+	cli.httpClient = client
 	documentURL, err := documentServiceURL(client)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expectedPath, _ := vespa.IdToURLPath(expectedDocumentId)
 	expectedURL := documentURL + "/document/v1/" + expectedPath
-	out, errOut := execute(command{args: arguments}, t, client)
 
+	assert.Nil(t, cli.Run(arguments...))
 	verbose := false
 	for _, a := range arguments {
 		if a == "-v" {
@@ -113,24 +114,27 @@ func assertDocumentSend(arguments []string, expectedOperation string, expectedMe
 	}
 	if verbose {
 		expectedCurl := "curl -X " + expectedMethod + " -H 'Content-Type: application/json' --data-binary @" + expectedPayloadFile + " " + expectedURL + "\n"
-		assert.Equal(t, expectedCurl, errOut)
+		assert.Equal(t, expectedCurl, stderr.String())
 	}
-	assert.Equal(t, "Success: "+expectedOperation+" "+expectedDocumentId+"\n", out)
-	assert.Equal(t, expectedURL, client.lastRequest.URL.String())
-	assert.Equal(t, "application/json", client.lastRequest.Header.Get("Content-Type"))
-	assert.Equal(t, expectedMethod, client.lastRequest.Method)
+	assert.Equal(t, "Success: "+expectedOperation+" "+expectedDocumentId+"\n", stdout.String())
+	assert.Equal(t, expectedURL, client.LastRequest.URL.String())
+	assert.Equal(t, "application/json", client.LastRequest.Header.Get("Content-Type"))
+	assert.Equal(t, expectedMethod, client.LastRequest.Method)
 
 	expectedPayload, _ := ioutil.ReadFile(expectedPayloadFile)
-	assert.Equal(t, string(expectedPayload), util.ReaderToString(client.lastRequest.Body))
+	assert.Equal(t, string(expectedPayload), util.ReaderToString(client.LastRequest.Body))
 }
 
 func assertDocumentGet(arguments []string, documentId string, t *testing.T) {
-	client := &mockHttpClient{}
+	client := &mock.HTTPClient{}
 	documentURL, err := documentServiceURL(client)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client.NextResponse(200, "{\"fields\":{\"foo\":\"bar\"}}")
+	cli, stdout, _ := newTestCLI(t)
+	cli.httpClient = client
+	assert.Nil(t, cli.Run(arguments...))
 	assert.Equal(t,
 		`{
     "fields": {
@@ -138,38 +142,38 @@ func assertDocumentGet(arguments []string, documentId string, t *testing.T) {
     }
 }
 `,
-		executeCommand(t, client, arguments, []string{}))
+		stdout.String())
 	expectedPath, _ := vespa.IdToURLPath(documentId)
-	assert.Equal(t, documentURL+"/document/v1/"+expectedPath, client.lastRequest.URL.String())
-	assert.Equal(t, "GET", client.lastRequest.Method)
+	assert.Equal(t, documentURL+"/document/v1/"+expectedPath, client.LastRequest.URL.String())
+	assert.Equal(t, "GET", client.LastRequest.Method)
 }
 
 func assertDocumentError(t *testing.T, status int, errorMessage string) {
-	client := &mockHttpClient{}
+	client := &mock.HTTPClient{}
 	client.NextResponse(status, errorMessage)
-	_, outErr := execute(command{args: []string{"document", "put",
+	cli, _, stderr := newTestCLI(t)
+	cli.httpClient = client
+	assert.NotNil(t, cli.Run("document", "put",
 		"id:mynamespace:music::a-head-full-of-dreams",
-		"testdata/A-Head-Full-of-Dreams-Put.json"}}, t, client)
+		"testdata/A-Head-Full-of-Dreams-Put.json"))
 	assert.Equal(t,
 		"Error: Invalid document operation: Status "+strconv.Itoa(status)+"\n\n"+errorMessage+"\n",
-		outErr)
+		stderr.String())
 }
 
 func assertDocumentServerError(t *testing.T, status int, errorMessage string) {
-	client := &mockHttpClient{}
+	client := &mock.HTTPClient{}
 	client.NextResponse(status, errorMessage)
-	_, outErr := execute(command{args: []string{"document", "put",
+	cli, _, stderr := newTestCLI(t)
+	cli.httpClient = client
+	assert.NotNil(t, cli.Run("document", "put",
 		"id:mynamespace:music::a-head-full-of-dreams",
-		"testdata/A-Head-Full-of-Dreams-Put.json"}}, t, client)
+		"testdata/A-Head-Full-of-Dreams-Put.json"))
 	assert.Equal(t,
 		"Error: Container (document API) at 127.0.0.1:8080: Status "+strconv.Itoa(status)+"\n\n"+errorMessage+"\n",
-		outErr)
+		stderr.String())
 }
 
-func documentServiceURL(client *mockHttpClient) (string, error) {
-	service, err := getService("document", 0, "")
-	if err != nil {
-		return "", err
-	}
-	return service.BaseURL, nil
+func documentServiceURL(client *mock.HTTPClient) (string, error) {
+	return "http://127.0.0.1:8080", nil
 }

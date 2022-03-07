@@ -144,6 +144,9 @@ public class TensorFunctionNode extends CompositeNode {
         return new ExpressionScalarFunction(node);
     }
 
+    @Override
+    public int hashCode() { return function.hashCode(); }
+
     private static class ExpressionScalarFunction implements ScalarFunction<Reference> {
 
         private final ExpressionNode expression;
@@ -249,6 +252,9 @@ public class TensorFunctionNode extends CompositeNode {
         public String toString() {
             return toString(ExpressionToStringContext.empty);
         }
+
+        @Override
+        public int hashCode() { return expression.hashCode(); }
 
         @Override
         public String toString(ToStringContext<Reference> c) {
@@ -360,15 +366,20 @@ public class TensorFunctionNode extends CompositeNode {
         /** Returns a new context with the bindings replaced by the given bindings */
         @Override
         public ExpressionToStringContext withBindings(Map<String, String> bindings) {
-            SerializationContext serializationContext = new SerializationContext(getFunctions(), bindings, serializedFunctions());
+            SerializationContext serializationContext = new SerializationContext(getFunctions(), bindings, typeContext(), serializedFunctions());
             return new ExpressionToStringContext(serializationContext, wrappedToStringContext, path, parent);
         }
 
         /** Returns a fresh context without bindings */
         @Override
         public SerializationContext withoutBindings() {
-            SerializationContext serializationContext = new SerializationContext(getFunctions(), null, serializedFunctions());
+            SerializationContext serializationContext = new SerializationContext(getFunctions(), null, typeContext(), serializedFunctions());
             return new ExpressionToStringContext(serializationContext, null, path, parent);
+        }
+
+        @Override
+        public String toString() {
+            return "TensorFunctionNode.ExpressionToStringContext with wrapped serialization context: " + wrappedSerializationContext;
         }
 
     }

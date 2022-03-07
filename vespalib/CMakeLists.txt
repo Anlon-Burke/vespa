@@ -29,7 +29,6 @@ vespa_define_module(
     src/tests/btree/btree_store
     src/tests/btree/btree-scan-speed
     src/tests/btree/btree-stress
-    src/tests/child_process
     src/tests/component
     src/tests/compress
     src/tests/compression
@@ -97,6 +96,7 @@ vespa_define_module(
     src/tests/portal/reactor
     src/tests/printable
     src/tests/priority_queue
+    src/tests/process
     src/tests/random
     src/tests/referencecounter
     src/tests/regex
@@ -177,6 +177,7 @@ vespa_define_module(
     src/vespa/vespalib/net/tls/impl
     src/vespa/vespalib/objects
     src/vespa/vespalib/portal
+    src/vespa/vespalib/process
     src/vespa/vespalib/regex
     src/vespa/vespalib/stllike
     src/vespa/vespalib/test

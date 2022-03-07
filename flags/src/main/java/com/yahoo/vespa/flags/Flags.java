@@ -188,7 +188,7 @@ public class Flags {
 
     public static final UnboundDoubleFlag MIN_NODE_RATIO_PER_GROUP = defineDoubleFlag(
             "min-node-ratio-per-group", 0.0,
-            List.of("geirst", "vekterli"), "2021-07-16", "2022-05-01",
+            List.of("geirst", "vekterli"), "2021-07-16", "2022-06-01",
             "Minimum ratio of nodes that have to be available (i.e. not Down) in any hierarchic content cluster group for the group to be Up",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
@@ -224,14 +224,14 @@ public class Flags {
 
     public static final UnboundBooleanFlag UNORDERED_MERGE_CHAINING = defineFeatureFlag(
             "unordered-merge-chaining", true,
-            List.of("vekterli", "geirst"), "2021-11-15", "2022-03-01",
+            List.of("vekterli", "geirst"), "2021-11-15", "2022-06-01",
             "Enables the use of unordered merge chains for data merge operations",
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundStringFlag JDK_VERSION = defineStringFlag(
             "jdk-version", "11",
-            List.of("hmusum"), "2021-10-25", "2022-03-15",
+            List.of("hmusum"), "2021-10-25", "2022-04-01",
             "JDK version to use on host and inside containers. Note application-id dimension only applies for container, " +
                     "while hostname and node type applies for host.",
             "Takes effect on restart for Docker container and on next host-admin tick for host",
@@ -263,14 +263,14 @@ public class Flags {
 
     public static final UnboundIntFlag MAX_COMPACT_BUFFERS = defineIntFlag(
                 "max-compact-buffers", 1,
-                List.of("baldersheim", "geirst", "toregge"), "2021-12-15", "2022-03-31",
+                List.of("baldersheim", "geirst", "toregge"), "2021-12-15", "2022-06-01",
                 "Upper limit of buffers to compact in a data store at the same time for each reason (memory usage, address space usage)",
                 "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag FAIL_DEPLOYMENT_WITH_INVALID_JVM_OPTIONS = defineFeatureFlag(
             "fail-deployment-with-invalid-jvm-options", false,
-            List.of("hmusum"), "2021-12-20", "2022-03-01",
+            List.of("hmusum"), "2021-12-20", "2022-04-01",
             "Whether to fail deployments with invalid JVM options in services.xml",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
@@ -288,13 +288,6 @@ public class Flags {
             "Enable Data Highway in AWS",
             "Takes effect on restart of Docker container",
             ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundStringFlag ZOOKEEPER_SNAPSHOT_METHOD = defineStringFlag(
-            "zookeeper-snapshot-method", "gz",
-            List.of("hmusum"), "2022-01-11", "2022-03-01",
-            "ZooKeeper snapshot method. Valid values are '', 'gz' and 'snappy'",
-            "Takes effect on Docker container restart",
-            ZONE_ID, APPLICATION_ID, NODE_TYPE);
 
     public static final UnboundStringFlag PERSISTENCE_ASYNC_THROTTLING = defineStringFlag(
             "persistence-async-throttling", "UNLIMITED",
@@ -380,6 +373,34 @@ public class Flags {
             "avoid-renaming-summary-features", false,
             List.of("arnej"), "2022-01-15", "2023-12-31",
             "Tell backend about the original name of summary-features that were wrapped in a rankingExpression feature",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag REUSE_NODE_INDEXES = defineFeatureFlag(
+            "reuse-node-indexes", false,
+            List.of("bratseth"), "2022-02-25", "2022-04-25",
+            "Whether we should reuse earlier indexes when allocating new nodes",
+            "Takes effect immediately",
+            ZONE_ID);
+
+    public static final UnboundBooleanFlag ALLOW_NO_TESTS = defineFeatureFlag(
+            "allow-no-tests", false,
+            List.of("jonmv"), "2022-02-28", "2022-06-25",
+            "Whether test jobs without any tests run are acceptable",
+            "Takes effect immediately",
+            TENANT_ID);
+
+    public static final UnboundBooleanFlag MERGE_GROUPING_RESULT_IN_SEARCH_INVOKER = defineFeatureFlag(
+            "merge-grouping-result-in-search-invoker", false,
+            List.of("bjorncs", "baldersheim"), "2022-02-23", "2022-08-01",
+            "Merge grouping results incrementally in interleaved search invoker",
+            "Takes effect at redeployment",
+            APPLICATION_ID);
+
+    public static final UnboundBooleanFlag EXPERIMENTAL_SD_PARSING = defineFeatureFlag(
+            "experimental-sd-parsing", false,
+            List.of("arnej"), "2022-03-04", "2022-12-31",
+            "Parsed schema files via intermediate format",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 

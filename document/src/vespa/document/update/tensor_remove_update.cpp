@@ -9,10 +9,8 @@
 #include <vespa/document/serialization/vespadocumentdeserializer.h>
 #include <vespa/eval/eval/fast_value.h>
 #include <vespa/eval/eval/value.h>
-#include <vespa/vespalib/objects/nbostream.h>
 #include <vespa/vespalib/util/xmlstream.h>
 #include <ostream>
-#include <cassert>
 
 using vespalib::IllegalArgumentException;
 using vespalib::IllegalStateException;
@@ -49,13 +47,13 @@ TensorRemoveUpdate::TensorRemoveUpdate()
 }
 
 TensorRemoveUpdate::TensorRemoveUpdate(const TensorRemoveUpdate &rhs)
-    : _tensorType(rhs._tensorType->clone()),
+    : _tensorType(std::make_unique<TensorDataType>(*rhs._tensorType)),
       _tensor(rhs._tensor->clone())
 {
 }
 
 TensorRemoveUpdate::TensorRemoveUpdate(std::unique_ptr<TensorFieldValue> tensor)
-    : _tensorType(Identifiable::cast<const TensorDataType &>(*tensor->getDataType()).clone()),
+    : _tensorType(std::make_unique<TensorDataType>(dynamic_cast<const TensorDataType &>(*tensor->getDataType()))),
       _tensor(Identifiable::cast<TensorFieldValue *>(_tensorType->createFieldValue().release()))
 {
     *_tensor = *tensor;
@@ -68,7 +66,7 @@ TensorRemoveUpdate::operator=(const TensorRemoveUpdate &rhs)
 {
     if (&rhs != this) {
         _tensor.reset();
-        _tensorType.reset(rhs._tensorType->clone());
+        _tensorType = std::make_unique<TensorDataType>(*rhs._tensorType);
         _tensor.reset(Identifiable::cast<TensorFieldValue *>(_tensorType->createFieldValue().release()));
         *_tensor = *rhs._tensor;
     }
@@ -99,7 +97,7 @@ TensorRemoveUpdate::operator==(const ValueUpdate &other) const
 void
 TensorRemoveUpdate::checkCompatibility(const Field &field) const
 {
-    if (field.getDataType().getClass().id() != TensorDataType::classId) {
+    if ( ! field.getDataType().isTensor()) {
         throw IllegalArgumentException(make_string("Cannot perform tensor remove update on non-tensor field '%s'",
                                                    field.getName().data()), VESPA_STRLOC);
     }
@@ -195,7 +193,7 @@ TensorRemoveUpdate::deserialize(const DocumentTypeRepo &repo, const DataType &ty
     VespaDocumentDeserializer deserializer(repo, stream, Document::getNewestSerializationVersion());
     auto tensor = deserializer.readTensor();
     verifyAddressTensorIsSparse(tensor.get());
-    auto compatible_type = convertToCompatibleType(Identifiable::cast<const TensorDataType &>(type));
+    auto compatible_type = convertToCompatibleType(dynamic_cast<const TensorDataType &>(type));
     verify_tensor_type_dimensions_are_subset_of(tensor->type(), compatible_type->getTensorType());
     _tensorType = std::make_unique<const TensorDataType>(tensor->type());
     _tensor = std::make_unique<TensorFieldValue>(*_tensorType);

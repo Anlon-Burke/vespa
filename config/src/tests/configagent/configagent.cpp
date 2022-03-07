@@ -89,9 +89,8 @@ public:
         return std::move(_update);
     }
 
-    bool wait(vespalib::duration timeout) override
+    bool wait_until(vespalib::steady_time) override
     {
-        (void) timeout;
         return true;
     }
 
@@ -104,7 +103,7 @@ public:
     }
 
     bool poll() override { return true; }
-    void interrupt() override { }
+    void close() override { }
 private:
     std::unique_ptr<ConfigUpdate> _update;
 };

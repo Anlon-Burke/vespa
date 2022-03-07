@@ -5,11 +5,7 @@
 #include <atomic>
 #include <memory>
 
-class FastOS_Runnable;
-
 namespace vespalib {
-
-namespace clock::internal { class Updater; }
 
 /**
  * Clock is a clock that updates the time at defined intervals.
@@ -20,30 +16,18 @@ namespace clock::internal { class Updater; }
 class Clock
 {
 private:
-    mutable std::atomic<int64_t>              _timeNS;
-    std::unique_ptr<clock::internal::Updater> _updater;
-    std::atomic<bool>                         _running;
-
-    void setTime() const;
-    void start();
-    friend clock::internal::Updater;
+    const std::atomic<steady_time> &_timeNS;
 public:
-    Clock(double timePeriod=0.100);
+    Clock(const std::atomic<steady_time> & source) noexcept;
+    Clock(const Clock &) = delete;
+    Clock & operator =(const Clock &) = delete;
+    Clock(Clock &&) = delete;
+    Clock & operator =(Clock &&) = delete;
     ~Clock();
 
-    vespalib::steady_time getTimeNS() const {
-        if (!_running) {
-            setTime();
-        }
-        return getTimeNSAssumeRunning();
+    vespalib::steady_time getTimeNS() const noexcept {
+        return vespalib::steady_time(_timeNS.load(std::memory_order_relaxed));
     }
-    vespalib::steady_time getTimeNSAssumeRunning() const {
-        return vespalib::steady_time(std::chrono::nanoseconds(_timeNS.load(std::memory_order_relaxed)));
-    }
-
-    void stop();
-    FastOS_Runnable * getRunnable();
 };
 
 }
-

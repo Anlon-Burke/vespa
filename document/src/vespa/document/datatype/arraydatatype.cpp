@@ -1,13 +1,11 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/document/datatype/arraydatatype.h>
+#include "arraydatatype.h"
 #include <vespa/document/fieldvalue/arrayfieldvalue.h>
 #include <vespa/vespalib/util/exceptions.h>
 #include <ostream>
 
 namespace document {
-
-IMPLEMENT_IDENTIFIABLE(ArrayDataType, CollectionDataType);
 
 ArrayDataType::ArrayDataType(const DataType &nestedType, int32_t id)
     : CollectionDataType("Array<" + nestedType.getName() + ">", nestedType, id)
@@ -22,7 +20,7 @@ ArrayDataType::ArrayDataType(const DataType& nestedType)
 FieldValue::UP
 ArrayDataType::createFieldValue() const
 {
-    return FieldValue::UP(new ArrayFieldValue(*this));
+    return std::make_unique<ArrayFieldValue>(*this);
 }
 
 void
@@ -35,11 +33,10 @@ ArrayDataType::print(std::ostream& out, bool verbose,
 }
 
 bool
-ArrayDataType::operator==(const DataType& other) const
+ArrayDataType::equals(const DataType& other) const noexcept
 {
     if (this == &other) return true;
-    if (!CollectionDataType::operator==(other)) return false;
-    return other.inherits(ArrayDataType::classId);
+    return CollectionDataType::equals(other) && other.isArray();
 }
 
 void

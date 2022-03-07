@@ -11,10 +11,7 @@
 
 #include "types.h"
 #include "app.h"
-
-class FastOS_UNIX_ProcessStarter;
-class FastOS_UNIX_IPCHelper;
-class FastOS_UNIX_Process;
+#include <memory>
 
 /**
  * This is the generic UNIX implementation of @ref FastOS_ApplicationInterface
@@ -24,9 +21,6 @@ class FastOS_UNIX_Application : public FastOS_ApplicationInterface
 private:
     FastOS_UNIX_Application(const FastOS_UNIX_Application&);
     FastOS_UNIX_Application& operator=(const FastOS_UNIX_Application&);
-
-    FastOS_UNIX_ProcessStarter *_processStarter;
-    FastOS_UNIX_IPCHelper     *_ipcHelper;
 
 protected:
     bool PreThreadInit () override;
@@ -70,11 +64,6 @@ public:
      */
     static void resetOptIndex(int OptionIndex);
 
-    FastOS_UNIX_ProcessStarter *GetProcessStarter ();
     bool Init () override;
     void Cleanup () override;
-    void AddToIPCComm (FastOS_UNIX_Process *process);
-    void RemoveFromIPCComm (FastOS_UNIX_Process *process);
 };
-
-

@@ -29,7 +29,7 @@ ConfigSubscription::~ConfigSubscription()
 
 
 bool
-ConfigSubscription::nextUpdate(int64_t generation, vespalib::duration timeout)
+ConfigSubscription::nextUpdate(int64_t generation, vespalib::steady_time deadline)
 {
     if (_closed || !_holder->poll()) {
         return false;
@@ -42,7 +42,7 @@ ConfigSubscription::nextUpdate(int64_t generation, vespalib::duration timeout)
     if (isGenerationNewer(_next->getGeneration(), generation)) {
         return true;
     }
-    return (!_closed && _holder->wait(timeout));
+    return (!_closed && _holder->wait_until(deadline));
 }
 
 bool
@@ -63,38 +63,13 @@ ConfigSubscription::getGeneration() const
     return _next->getGeneration();
 }
 
-const ConfigKey &
-ConfigSubscription::getKey() const
-{
-    return _key;
-}
-
 void
 ConfigSubscription::close()
 {
-    if (!_closed) {
-        _closed = true;
-        _holder->interrupt();
+    if (!_closed.exchange(true)) {
+        _holder->close();
         _source->close();
     }
-}
-
-void
-ConfigSubscription::reset()
-{
-    _isChanged = false;
-}
-
-bool
-ConfigSubscription::isChanged() const
-{
-    return _isChanged;
-}
-
-int64_t
-ConfigSubscription::getLastGenerationChanged() const
-{
-    return _lastGenerationChanged;
 }
 
 void

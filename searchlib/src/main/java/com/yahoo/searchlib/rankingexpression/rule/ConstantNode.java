@@ -2,12 +2,14 @@
 package com.yahoo.searchlib.rankingexpression.rule;
 
 import com.yahoo.searchlib.rankingexpression.Reference;
+import com.yahoo.searchlib.rankingexpression.evaluation.BooleanValue;
 import com.yahoo.searchlib.rankingexpression.evaluation.Context;
 import com.yahoo.searchlib.rankingexpression.evaluation.Value;
 import com.yahoo.tensor.TensorType;
 import com.yahoo.tensor.evaluation.TypeContext;
 
 import java.util.Deque;
+import java.util.Objects;
 
 /**
  * A node which holds a constant (frozen) value.
@@ -54,5 +56,8 @@ public final class ConstantNode extends ExpressionNode {
     public Value evaluate(Context context) {
         return value;
     }
+
+    @Override
+    public int hashCode() { return Objects.hash("constantNode", value); }
 
 }

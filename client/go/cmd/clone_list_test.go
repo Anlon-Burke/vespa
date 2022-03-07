@@ -7,18 +7,17 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/vespa-engine/vespa/client/go/util"
+	"github.com/vespa-engine/vespa/client/go/mock"
 )
 
 func TestListSampleApps(t *testing.T) {
-	c := &mockHttpClient{}
+	c := &mock.HTTPClient{}
 	c.NextResponse(200, readTestData(t, "sample-apps-contents.json"))
 	c.NextResponse(200, readTestData(t, "sample-apps-news.json"))
 	c.NextResponse(200, readTestData(t, "sample-apps-operations.json"))
 	c.NextResponse(200, readTestData(t, "sample-apps-vespa-cloud.json"))
-	util.ActiveHttpClient = c
 
-	apps, err := listSampleApps()
+	apps, err := listSampleApps(c)
 	assert.Nil(t, err)
 	expected := []string{
 		"album-recommendation-monitoring",

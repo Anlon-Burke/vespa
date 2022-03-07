@@ -12,15 +12,16 @@ import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.HostFilter;
 import com.yahoo.config.provision.HostSpec;
+import com.yahoo.config.provision.NodeAllocationException;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
-import com.yahoo.config.provision.NodeAllocationException;
 import com.yahoo.config.provision.ParentHostUnavailableException;
 import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
+import com.yahoo.vespa.hosted.provision.NodeMutex;
 import com.yahoo.vespa.hosted.provision.maintenance.ReservationExpirer;
 import com.yahoo.vespa.hosted.provision.maintenance.TestMetric;
 import com.yahoo.vespa.hosted.provision.node.Agent;
@@ -47,6 +48,7 @@ import java.util.stream.Collectors;
 import static java.time.temporal.ChronoUnit.MILLIS;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -142,6 +144,39 @@ public class ProvisioningTest {
         tester.provisioner().restart(application1, clusterTypeFilter);
         tester.provisioner().restart(application1, clusterIdFilter);
         tester.assertRestartCount(application1, allFilter, hostFilter, clusterTypeFilter, clusterIdFilter);
+    }
+
+    @Test
+    public void application_deployment_reuses_node_indexes() {
+        ProvisioningTester tester = new ProvisioningTester.Builder().zone(new Zone(Environment.prod, RegionName.from("us-east"))).build();
+
+        ApplicationId app1 = ProvisioningTester.applicationId("app1");
+
+        tester.makeReadyHosts(21, defaultResources).activateTenantHosts();
+
+        // deploy
+        SystemState state1 = prepare(app1, 2, 2, 3, 3, defaultResources, tester);
+        tester.activate(app1, state1.allHosts);
+        Set<Integer> state1Indexes = state1.allHosts.stream().map(hostSpec -> hostSpec.membership().get().index()).collect(Collectors.toSet());
+
+        // deallocate 2 nodes with index 0
+        NodeMutex node1 = tester.nodeRepository().nodes().lockAndGet(tester.removeOne(state1.container0).hostname()).get();
+        NodeMutex node2 = tester.nodeRepository().nodes().lockAndGet(tester.removeOne(state1.content0).hostname()).get();
+        tester.nodeRepository().nodes().write(node1.node().withoutAllocation(), node1);
+        tester.nodeRepository().nodes().write(node2.node().withoutAllocation(), node1);
+
+        // redeploy to get new nodes
+        SystemState state2 = prepare(app1, 2, 2, 3, 3, defaultResources, tester);
+        Set<Integer> state2Indexes = state2.allHosts.stream().map(hostSpec -> hostSpec.membership().get().index()).collect(Collectors.toSet());
+        assertEquals("Indexes are reused", state1Indexes, state2Indexes);
+
+        // if nodes are e.g failed indexes are not reused as they are still allocated
+        tester.nodeRepository().nodes().fail(tester.removeOne(state2.container0).hostname(), Agent.system, "test");
+        tester.nodeRepository().nodes().fail(tester.removeOne(state2.content0).hostname(), Agent.system, "test");
+        SystemState state3 = prepare(app1, 2, 2, 3, 3, defaultResources, tester);
+        Set<Integer> state3Indexes = state3.allHosts.stream().map(hostSpec -> hostSpec.membership().get().index()).collect(Collectors.toSet());
+        assertNotEquals("Indexes are not reused", state2Indexes, state3Indexes);
+
     }
 
     @Test
@@ -969,6 +1004,20 @@ public class ProvisioningTest {
 
         stateAsserter.accept(new Zone(Environment.prod, RegionName.from("us-east")), Node.State.inactive);
         stateAsserter.accept(new Zone(SystemName.cd, Environment.prod, RegionName.from("us-east")), Node.State.dirty);
+    }
+
+    @Test
+    public void arm64_architecture() {
+        ProvisioningTester tester = new ProvisioningTester.Builder().zone(new Zone(Environment.dev, RegionName.from("us-east"))).build();
+
+        NodeResources nodeResources = new NodeResources(1, 4, 10, 4, NodeResources.DiskSpeed.any, NodeResources.StorageType.any, NodeResources.Architecture.arm64);
+        tester.makeReadyHosts(4, nodeResources);
+        tester.prepareAndActivateInfraApplication(ProvisioningTester.applicationId(), NodeType.host);
+
+        ApplicationId application = ProvisioningTester.applicationId();
+        SystemState state = prepare(application, 1, 1, 1, 1, nodeResources, tester);
+        assertEquals(4, state.allHosts.size());
+        tester.activate(application, state.allHosts);
     }
 
     private SystemState prepare(ApplicationId application, int container0Size, int container1Size, int content0Size,

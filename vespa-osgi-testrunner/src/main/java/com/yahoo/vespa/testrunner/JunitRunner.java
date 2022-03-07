@@ -13,6 +13,7 @@ import com.yahoo.io.IOUtils;
 import com.yahoo.jdisc.application.OsgiFramework;
 import com.yahoo.vespa.defaults.Defaults;
 import org.junit.jupiter.engine.JupiterTestEngine;
+import org.junit.platform.engine.UniqueId;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
@@ -43,6 +44,7 @@ import java.util.stream.Stream;
  * @author mortent
  */
 public class JunitRunner extends AbstractComponent implements TestRunner {
+
     private static final Logger logger = Logger.getLogger(JunitRunner.class.getName());
 
     private final SortedMap<Long, LogRecord> logRecords = new ConcurrentSkipListMap<>();
@@ -105,7 +107,7 @@ public class JunitRunner extends AbstractComponent implements TestRunner {
             logRecords.clear();
             Optional<Bundle> testBundle = findTestBundle();
             if (testBundle.isEmpty()) {
-                execution = CompletableFuture.completedFuture(TestReport.builder().build());
+                execution = CompletableFuture.completedFuture(null);
                 return execution;
             }
 
@@ -189,7 +191,7 @@ public class JunitRunner extends AbstractComponent implements TestRunner {
         Launcher launcher = LauncherFactory.create(launcherConfig);
 
         // Create log listener:
-        var logListener = VespaJunitLogListener.forBiConsumer((t, m) -> log(logRecords, m.get(), t));
+        var logListener = new VespaJunitLogListener(record -> logRecords.put(record.getSequenceNumber(), record));
         // Create a summary listener:
         var summaryListener = new SummaryGeneratingListener();
         launcher.registerTestExecutionListeners(logListener, summaryListener);
@@ -198,7 +200,11 @@ public class JunitRunner extends AbstractComponent implements TestRunner {
         launcher.execute(discoveryRequest);
         var report = summaryListener.getSummary();
         var failures = report.getFailures().stream()
-                .map(failure -> new TestReport.Failure(failure.getTestIdentifier().getUniqueId(), failure.getException()))
+                .map(failure -> {
+                    TestReport.trimStackTraces(failure.getException(), JunitRunner.class.getName());
+                    return new TestReport.Failure(VespaJunitLogListener.toString(failure.getTestIdentifier().getUniqueIdObject()),
+                                                  failure.getException());
+                })
                 .collect(Collectors.toList());
         long inconclusive = isProductionTest ? failures.stream()
                                                        .filter(failure -> failure.exception() instanceof InconclusiveTestException)
@@ -208,17 +214,11 @@ public class JunitRunner extends AbstractComponent implements TestRunner {
                 .withSuccessCount(report.getTestsSucceededCount())
                 .withAbortedCount(report.getTestsAbortedCount())
                 .withIgnoredCount(report.getTestsSkippedCount())
-                .withFailedCount(report.getTotalFailureCount() - inconclusive)
+                .withFailedCount(report.getTestsFailedCount() - inconclusive)
                 .withInconclusiveCount(inconclusive)
                 .withFailures(failures)
                 .withLogs(logRecords.values())
                 .build();
-    }
-
-    private void log(SortedMap<Long, LogRecord> logs, String message, Throwable t) {
-        LogRecord logRecord = new LogRecord(Level.INFO, message);
-        Optional.ofNullable(t).ifPresent(logRecord::setThrown);
-        logs.put(logRecord.getSequenceNumber(), logRecord);
     }
 
     @Override
@@ -231,8 +231,8 @@ public class JunitRunner extends AbstractComponent implements TestRunner {
         if (execution == null) return TestRunner.Status.NOT_STARTED;
         if ( ! execution.isDone()) return TestRunner.Status.RUNNING;
         try {
-            return execution.get().status();
-        } catch (InterruptedException|ExecutionException e) {
+            return execution.get() == null ? Status.NO_TESTS : execution.get().status();
+        } catch (InterruptedException | ExecutionException e) {
             logger.log(Level.WARNING, "Error while getting test report", e);
             return TestRunner.Status.ERROR;
         }

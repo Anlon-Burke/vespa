@@ -32,10 +32,10 @@ ConfigHolder::handle(std::unique_ptr<ConfigUpdate> update)
 }
 
 bool
-ConfigHolder::wait(vespalib::duration timeout)
+ConfigHolder::wait_until(vespalib::steady_time deadline)
 {
     std::unique_lock guard(_lock);
-    return static_cast<bool>(_current) || (_cond.wait_for(guard, timeout) == std::cv_status::no_timeout);
+    return static_cast<bool>(_current) || (_cond.wait_until(guard, deadline) == std::cv_status::no_timeout);
 }
 
 bool
@@ -46,8 +46,10 @@ ConfigHolder::poll()
 }
 
 void
-ConfigHolder::interrupt()
+ConfigHolder::close()
 {
+    std::lock_guard guard(_lock);
+    _current.reset();
     _cond.notify_all();
 }
 

@@ -745,8 +745,8 @@ public class RankProfile implements Cloneable {
     public RankingExpressionFunction addFunction(ExpressionFunction function, boolean inline) {
         RankingExpressionFunction rankingExpressionFunction = new RankingExpressionFunction(function, inline);
         if (functions.containsKey(function.getName())) {
-            deployLogger.log(Level.WARNING, "Function '" + function.getName() + "' replaces a previous function " +
-                    "with the same name in rank profile '" + this.name + "'");
+            deployLogger.log(Level.WARNING, "Function '" + function.getName() + "' is defined twice " +
+                    "in rank profile '" + this.name + "'");
         }
         functions.put(function.getName(), rankingExpressionFunction);
         allFunctionsCached = null;
@@ -783,11 +783,14 @@ public class RankProfile implements Cloneable {
     }
     private final List<MutateOperation> mutateOperations = new ArrayList<>();
 
+    public void addMutateOperation(MutateOperation op) {
+        mutateOperations.add(op);
+        String prefix = "vespa.mutate." + op.phase.toString();
+        addRankProperty(prefix + ".attribute", op.attribute);
+        addRankProperty(prefix + ".operation", op.operation);
+    }
     public void addMutateOperation(MutateOperation.Phase phase, String attribute, String operation) {
-        mutateOperations.add(new MutateOperation(phase, attribute, operation));
-        String prefix = "vespa.mutate." + phase.toString();
-        addRankProperty(prefix + ".attribute", attribute);
-        addRankProperty(prefix + ".operation", operation);
+        addMutateOperation(new MutateOperation(phase, attribute, operation));
     }
     public List<MutateOperation> getMutateOperations() { return mutateOperations; }
 
@@ -965,12 +968,13 @@ public class RankProfile implements Cloneable {
         Map<String, RankingExpressionFunction> compiledFunctions = new LinkedHashMap<>();
         Map.Entry<String, RankingExpressionFunction> entry;
         // Compile all functions. Why iterate in such a complicated way?
-        // Because some functions (imported models adding generated macros) may add other functions during compiling.
+        // Because some functions (imported models adding generated functions) may add other functions during compiling.
         // A straightforward iteration will either miss those functions, or may cause a ConcurrentModificationException
         while (null != (entry = findUncompiledFunction(functions.get(), compiledFunctions.keySet()))) {
             RankingExpressionFunction rankingExpressionFunction = entry.getValue();
             RankingExpressionFunction compiled = compile(rankingExpressionFunction, queryProfiles, featureTypes,
-                                                 importedModels, getConstants(), inlineFunctions, expressionTransforms);
+                                                         importedModels, getConstants(), inlineFunctions,
+                                                         expressionTransforms);
             compiledFunctions.put(entry.getKey(), compiled);
         }
         return compiledFunctions;
@@ -986,12 +990,12 @@ public class RankProfile implements Cloneable {
     }
 
     private RankingExpressionFunction compile(RankingExpressionFunction function,
-                                      QueryProfileRegistry queryProfiles,
-                                      Map<Reference, TensorType> featureTypes,
-                                      ImportedMlModels importedModels,
-                                      Map<String, Value> constants,
-                                      Map<String, RankingExpressionFunction> inlineFunctions,
-                                      ExpressionTransforms expressionTransforms) {
+                                              QueryProfileRegistry queryProfiles,
+                                              Map<Reference, TensorType> featureTypes,
+                                              ImportedMlModels importedModels,
+                                              Map<String, Value> constants,
+                                              Map<String, RankingExpressionFunction> inlineFunctions,
+                                              ExpressionTransforms expressionTransforms) {
         if (function == null) return null;
 
         RankProfileTransformContext context = new RankProfileTransformContext(this,

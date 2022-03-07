@@ -3,11 +3,7 @@ package com.yahoo.vespa.hosted.controller.deployment;
 
 import com.google.common.collect.ImmutableSortedMap;
 import com.yahoo.component.Version;
-import com.yahoo.config.application.api.DeploymentInstanceSpec;
-import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.provision.ApplicationId;
-import com.yahoo.config.provision.InstanceName;
-import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.vespa.curator.Lock;
 import com.yahoo.vespa.hosted.controller.Application;
@@ -28,11 +24,9 @@ import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
 import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackageDiff;
-import com.yahoo.vespa.hosted.controller.application.pkg.ZipStreamReader;
 import com.yahoo.vespa.hosted.controller.persistence.BufferedLogStore;
 import com.yahoo.vespa.hosted.controller.persistence.CuratorDb;
 
-import java.io.ByteArrayInputStream;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
@@ -51,26 +45,25 @@ import java.util.TreeMap;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import java.util.logging.Level;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static com.yahoo.config.provision.Environment.prod;
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.reset;
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.running;
 import static com.yahoo.vespa.hosted.controller.deployment.Step.Status.succeeded;
+import static com.yahoo.vespa.hosted.controller.deployment.Step.Status.unfinished;
 import static com.yahoo.vespa.hosted.controller.deployment.Step.copyVespaLogs;
 import static com.yahoo.vespa.hosted.controller.deployment.Step.deactivateTester;
 import static com.yahoo.vespa.hosted.controller.deployment.Step.endStagingSetup;
 import static com.yahoo.vespa.hosted.controller.deployment.Step.endTests;
 import static com.yahoo.vespa.hosted.controller.deployment.Step.report;
+import static java.time.temporal.ChronoUnit.SECONDS;
 import static java.util.Comparator.naturalOrder;
 import static java.util.function.Predicate.not;
+import static java.util.logging.Level.INFO;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
-import static java.util.stream.Collectors.toSet;
 import static java.util.stream.Collectors.toUnmodifiableList;
 
 /**
@@ -215,8 +208,8 @@ public class JobController {
         });
     }
 
-    public Optional<String> getTestReport(RunId id) {
-        return logs.readTestReport(id);
+    public Optional<String> getTestReports(RunId id) {
+        return logs.readTestReports(id);
     }
 
     /** Stores the given certificate as the tester certificate for this run, or throws if it's already set. */
@@ -387,7 +380,11 @@ public class JobController {
 
             locked(id, run -> {
                 // If run should be reset, just return here.
-                if (run.status() == reset) return run.reset();
+                if (run.status() == reset) {
+                    for (Step step : run.steps().keySet())
+                        log(id, step, INFO, List.of("### Run will reset, and start over at " + run.sleepUntil().orElse(controller.clock().instant()).truncatedTo(SECONDS), ""));
+                    return run.reset();
+                }
                 if (run.status() == running && run.stepStatuses().values().stream().anyMatch(not(succeeded::equals))) return run;
 
                 // Store the modified run after it has been written to history, in case the latter fails.
@@ -440,8 +437,13 @@ public class JobController {
     }
 
     /** Marks the given run as aborted; no further normal steps will run, but run-always steps will try to succeed. */
-    public void abort(RunId id) {
-        locked(id, run -> run.aborted());
+    public void abort(RunId id, String reason) {
+        locked(id, run -> {
+            run.stepStatuses().entrySet().stream()
+               .filter(entry -> entry.getValue() == unfinished)
+               .forEach(entry -> log(id, entry.getKey(), INFO, "Aborting run: " + reason));
+            return run.aborted();
+        });
     }
 
     /** Accepts and stores a new application package and test jar pair under a generated application version key. */
@@ -488,24 +490,19 @@ public class JobController {
     }
 
     /** Orders a run of the given type, or throws an IllegalStateException if that job type is already running. */
-    public void start(ApplicationId id, JobType type, Versions versions) {
-        start(id, type, versions, false);
+    public void start(ApplicationId id, JobType type, Versions versions, boolean isRedeployment, Optional<String> reason) {
+        start(id, type, versions, isRedeployment, JobProfile.of(type), reason);
     }
 
     /** Orders a run of the given type, or throws an IllegalStateException if that job type is already running. */
-    public void start(ApplicationId id, JobType type, Versions versions, boolean isRedeployment) {
-        start(id, type, versions, isRedeployment, JobProfile.of(type));
-    }
-
-    /** Orders a run of the given type, or throws an IllegalStateException if that job type is already running. */
-    public void start(ApplicationId id, JobType type, Versions versions, boolean isRedeployment, JobProfile profile) {
+    public void start(ApplicationId id, JobType type, Versions versions, boolean isRedeployment, JobProfile profile, Optional<String> reason) {
         locked(id, type, __ -> {
             Optional<Run> last = last(id, type);
             if (last.flatMap(run -> active(run.id())).isPresent())
                 throw new IllegalArgumentException("Cannot start " + type + " for " + id + "; it is already running!");
 
             RunId newId = new RunId(id, type, last.map(run -> run.id().number()).orElse(0L) + 1);
-            curator.writeLastRun(Run.initial(newId, versions, isRedeployment, controller.clock().instant(), profile));
+            curator.writeLastRun(Run.initial(newId, versions, isRedeployment, controller.clock().instant(), profile, reason));
             metric.jobStarted(newId.job());
         });
     }
@@ -550,7 +547,8 @@ public class JobController {
                                lastRun.map(run -> run.versions().targetPlatform()),
                                lastRun.map(run -> run.versions().targetApplication())),
                   false,
-                  dryRun ? JobProfile.developmentDryRun : JobProfile.development);
+                  dryRun ? JobProfile.developmentDryRun : JobProfile.development,
+                  Optional.empty());
         });
 
         locked(id, type, __ -> {
@@ -560,7 +558,7 @@ public class JobController {
 
     /** Aborts a run and waits for it complete. */
     private void abortAndWait(RunId id) {
-        abort(id);
+        abort(id, "replaced by new deployment");
         runner.get().accept(last(id.application(), id.type()).get());
 
         while ( ! last(id.application(), id.type()).get().hasEnded()) {

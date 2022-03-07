@@ -2,7 +2,7 @@
 
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/util/clock.h>
-#include <vespa/fastos/thread.h>
+#include <vespa/vespalib/util/invokeserviceimpl.h>
 #include <thread>
 
 using vespalib::Clock;
@@ -18,21 +18,12 @@ void waitForMovement(steady_time start, Clock & clock, vespalib::duration timeou
 }
 
 TEST("Test that clock is ticking forward") {
-
-    Clock clock(0.050);
-    FastOS_ThreadPool pool(0x10000);
-    ASSERT_TRUE(pool.NewThread(clock.getRunnable(), nullptr) != nullptr);
+    vespalib::InvokeServiceImpl invoker(50ms);
+    Clock clock(invoker.nowRef());
     steady_time start = clock.getTimeNS();
     waitForMovement(start, clock, 10s);
     steady_time stop = clock.getTimeNS();
     EXPECT_TRUE(stop > start);
-    std::this_thread::sleep_for(1s);
-    start = clock.getTimeNS();
-    waitForMovement(start, clock, 10s);
-    clock.stop();
-    steady_time stop2 = clock.getTimeNS();
-    EXPECT_TRUE(stop2 > stop);
-    EXPECT_TRUE(vespalib::count_ms(stop2 - stop) > 1000);
 }
 
 TEST_MAIN() { TEST_RUN_ALL(); }

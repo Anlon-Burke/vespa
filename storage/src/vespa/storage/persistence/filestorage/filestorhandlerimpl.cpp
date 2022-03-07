@@ -5,7 +5,6 @@
 #include "mergestatus.h"
 #include <vespa/storageapi/message/bucketsplitting.h>
 #include <vespa/storageapi/message/persistence.h>
-#include <vespa/storageapi/message/removelocation.h>
 #include <vespa/storage/bucketdb/storbucketdb.h>
 #include <vespa/storage/common/bucketmessages.h>
 #include <vespa/storage/common/statusmessages.h>
@@ -40,22 +39,23 @@ uint32_t per_stripe_merge_limit(uint32_t num_threads, uint32_t num_stripes) noex
 
 FileStorHandlerImpl::FileStorHandlerImpl(MessageSender& sender, FileStorMetrics& metrics,
                                          ServiceLayerComponentRegister& compReg)
-    : FileStorHandlerImpl(1, 1, sender, metrics, compReg, vespalib::SharedOperationThrottler::make_unlimited_throttler())
+    : FileStorHandlerImpl(1, 1, sender, metrics, compReg, vespalib::SharedOperationThrottler::DynamicThrottleParams())
 {
 }
 
 FileStorHandlerImpl::FileStorHandlerImpl(uint32_t numThreads, uint32_t numStripes, MessageSender& sender,
                                          FileStorMetrics& metrics,
                                          ServiceLayerComponentRegister& compReg,
-                                         std::unique_ptr<vespalib::SharedOperationThrottler> operation_throttler)
+                                         const vespalib::SharedOperationThrottler::DynamicThrottleParams& dyn_throttle_params)
     : _component(compReg, "filestorhandlerimpl"),
       _state(FileStorHandler::AVAILABLE),
       _metrics(nullptr),
-      _operation_throttler(std::move(operation_throttler)),
+      _dynamic_operation_throttler(vespalib::SharedOperationThrottler::make_dynamic_throttler(dyn_throttle_params)),
+      _unlimited_operation_throttler(vespalib::SharedOperationThrottler::make_unlimited_throttler()),
+      _active_throttler(_unlimited_operation_throttler.get()), // Will be set by FileStorManager
       _stripes(),
       _messageSender(sender),
       _bucketIdFactory(_component.getBucketIdFactory()),
-      _getNextMessageTimeout(100ms),
       _max_active_merges_per_stripe(per_stripe_merge_limit(numThreads, numStripes)),
       _paused(false),
       _throttle_apply_bucket_diff_ops(false),
@@ -251,6 +251,22 @@ FileStorHandlerImpl::schedule_and_get_next_async_message(const std::shared_ptr<a
     return {};
 }
 
+void
+FileStorHandlerImpl::reconfigure_dynamic_throttler(const vespalib::SharedOperationThrottler::DynamicThrottleParams& params)
+{
+    _dynamic_operation_throttler->reconfigure_dynamic_throttling(params);
+}
+
+void
+FileStorHandlerImpl::use_dynamic_operation_throttling(bool use_dynamic) noexcept
+{
+    // Use release semantics instead of relaxed to ensure transitive visibility even in
+    // non-persistence threads that try to invoke the throttler (i.e. RPC threads).
+    _active_throttler.store(use_dynamic ? _dynamic_operation_throttler.get()
+                                        : _unlimited_operation_throttler.get(),
+                            std::memory_order_release);
+}
+
 bool
 FileStorHandlerImpl::messageMayBeAborted(const api::StorageMessage& msg)
 {
@@ -333,9 +349,9 @@ FileStorHandlerImpl::updateMetrics(const MetricLockGuard &)
     std::lock_guard lockGuard(_mergeStatesLock);
     _metrics->pendingMerges.addValue(_mergeStates.size());
     _metrics->queueSize.addValue(getQueueSize());
-    _metrics->throttle_window_size.addValue(_operation_throttler->current_window_size());
-    _metrics->throttle_waiting_threads.addValue(_operation_throttler->waiting_threads());
-    _metrics->throttle_active_tokens.addValue(_operation_throttler->current_active_token_count());
+    _metrics->throttle_window_size.addValue(operation_throttler().current_window_size());
+    _metrics->throttle_waiting_threads.addValue(operation_throttler().waiting_threads());
+    _metrics->throttle_active_tokens.addValue(operation_throttler().current_active_token_count());
 
     for (const auto & stripe : _metrics->stripes) {
         const auto & m = stripe->averageQueueWaitingTime;
@@ -377,13 +393,13 @@ FileStorHandlerImpl::makeQueueTimeoutReply(api::StorageMessage& msg)
 }
 
 FileStorHandler::LockedMessage
-FileStorHandlerImpl::getNextMessage(uint32_t stripeId)
+FileStorHandlerImpl::getNextMessage(uint32_t stripeId, vespalib::steady_time deadline)
 {
     if (!tryHandlePause()) {
         return {}; // Still paused, return to allow tick.
     }
 
-    return getNextMessage(stripeId, _getNextMessageTimeout);
+    return _stripes[stripeId].getNextMessage(deadline);
 }
 
 std::shared_ptr<FileStorHandler::BucketLockInterface>
@@ -919,7 +935,7 @@ FileStorHandlerImpl::Stripe::operation_type_should_be_throttled(api::MessageType
 }
 
 FileStorHandler::LockedMessage
-FileStorHandlerImpl::Stripe::getNextMessage(vespalib::duration timeout)
+FileStorHandlerImpl::Stripe::getNextMessage(vespalib::steady_time deadline)
 {
     std::unique_lock guard(*_lock);
     ThrottleToken throttle_token;
@@ -955,12 +971,12 @@ FileStorHandlerImpl::Stripe::getNextMessage(vespalib::duration timeout)
             // Depending on whether we were blocked due to no usable ops in queue or throttling,
             // wait for either the queue or throttler to (hopefully) have some fresh stuff for us.
             if (!was_throttled) {
-                _cond->wait_for(guard, timeout);
+                _cond->wait_until(guard, deadline);
             } else {
                 // Have to release lock before doing a blocking throttle token fetch, since it
                 // prevents RPC threads from pushing onto the queue.
                 guard.unlock();
-                throttle_token = _owner.operation_throttler().blocking_acquire_one(timeout);
+                throttle_token = _owner.operation_throttler().blocking_acquire_one(deadline);
                 guard.lock();
                 if (!throttle_token.valid()) {
                     _metrics->timeouts_waiting_for_throttle_token.inc();

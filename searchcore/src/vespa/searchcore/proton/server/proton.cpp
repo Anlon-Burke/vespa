@@ -241,7 +241,6 @@ Proton::Proton(FastOS_ThreadPool & threadPool, FNET_Transport & transport, const
       _shared_service(),
       _compile_cache_executor_binding(),
       _queryLimiter(),
-      _clock(1.0/vespalib::getVespaTimerHz()),
       _distributionKey(-1),
       _isInitializing(true),
       _abortInit(false),
@@ -259,9 +258,6 @@ Proton::init()
 {
     assert( ! _initStarted && ! _initComplete );
     _initStarted = true;
-    if (_threadPool.NewThread(_clock.getRunnable(), nullptr) == nullptr) {
-        throw IllegalStateException("Failed starting thread for the cheap clock");
-    }
     _protonConfigFetcher.start(_threadPool);
     auto configSnapshot = _protonConfigurer.getPendingConfigSnapshot();
     assert(configSnapshot);
@@ -476,7 +472,6 @@ Proton::~Proton()
     _tls.reset();
     _compile_cache_executor_binding.reset();
     _shared_service.reset();
-    _clock.stop();
     LOG(debug, "Explicit destructor done");
 }
 
@@ -612,7 +607,6 @@ Proton::addDocumentDB(const document::DocumentType &docType,
                                   documentDBConfig,
                                   config.tlsspec,
                                   _queryLimiter,
-                                  _clock,
                                   docTypeName,
                                   bucketSpace,
                                   config,
@@ -810,7 +804,7 @@ Proton::updateMetrics(const metrics::MetricLockGuard &)
             metrics.shared.update(_shared_service->shared().getStats());
             metrics.warmup.update(_shared_service->warmup().getStats());
             if (_shared_service->field_writer()) {
-                metrics.warmup.update(_shared_service->field_writer()->getStats());
+                metrics.field_writer.update(_shared_service->field_writer()->getStats());
             }
         }
     }

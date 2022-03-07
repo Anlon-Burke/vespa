@@ -943,7 +943,6 @@
       "public final java.lang.String tag()",
       "public final java.util.List tagCommaLeadingList()",
       "public final com.yahoo.searchlib.rankingexpression.rule.ExpressionNode constantPrimitive(boolean)",
-      "public final com.yahoo.searchlib.rankingexpression.evaluation.Value primitiveValue()",
       "public final com.yahoo.searchlib.rankingexpression.rule.TensorFunctionNode tensorValueBody(com.yahoo.tensor.TensorType, java.util.List)",
       "public final com.yahoo.tensor.functions.DynamicTensor mappedTensorValueBody(com.yahoo.tensor.TensorType)",
       "public final com.yahoo.tensor.functions.DynamicTensor mixedTensorValueBody(com.yahoo.tensor.TensorType, java.util.List)",
@@ -1086,6 +1085,8 @@
       "public static final int MIN",
       "public static final int PROD",
       "public static final int SUM",
+      "public static final int TRUE",
+      "public static final int FALSE",
       "public static final int IDENTIFIER",
       "public static final int SINGLE_LINE_COMMENT",
       "public static final int DEFAULT",
@@ -1235,8 +1236,9 @@
       "public java.lang.StringBuilder toString(java.lang.StringBuilder, com.yahoo.searchlib.rankingexpression.rule.SerializationContext, java.util.Deque, com.yahoo.searchlib.rankingexpression.rule.CompositeNode)",
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
       "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
-      "public static com.yahoo.searchlib.rankingexpression.rule.ArithmeticNode resolve(com.yahoo.searchlib.rankingexpression.rule.ExpressionNode, com.yahoo.searchlib.rankingexpression.rule.ArithmeticOperator, com.yahoo.searchlib.rankingexpression.rule.ExpressionNode)",
-      "public com.yahoo.searchlib.rankingexpression.rule.CompositeNode setChildren(java.util.List)"
+      "public com.yahoo.searchlib.rankingexpression.rule.CompositeNode setChildren(java.util.List)",
+      "public int hashCode()",
+      "public static com.yahoo.searchlib.rankingexpression.rule.ArithmeticNode resolve(com.yahoo.searchlib.rankingexpression.rule.ExpressionNode, com.yahoo.searchlib.rankingexpression.rule.ArithmeticOperator, com.yahoo.searchlib.rankingexpression.rule.ExpressionNode)"
     ],
     "fields": []
   },
@@ -1295,6 +1297,7 @@
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
       "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
       "public com.yahoo.searchlib.rankingexpression.rule.ComparisonNode setChildren(java.util.List)",
+      "public int hashCode()",
       "public bridge synthetic com.yahoo.searchlib.rankingexpression.rule.CompositeNode setChildren(java.util.List)"
     ],
     "fields": []
@@ -1327,7 +1330,8 @@
       "public java.lang.StringBuilder toString(java.lang.StringBuilder, com.yahoo.searchlib.rankingexpression.rule.SerializationContext, java.util.Deque, com.yahoo.searchlib.rankingexpression.rule.CompositeNode)",
       "public java.lang.String sourceString()",
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
-      "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)"
+      "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
+      "public int hashCode()"
     ],
     "fields": []
   },
@@ -1345,7 +1349,8 @@
       "public java.lang.StringBuilder toString(java.lang.StringBuilder, com.yahoo.searchlib.rankingexpression.rule.SerializationContext, java.util.Deque, com.yahoo.searchlib.rankingexpression.rule.CompositeNode)",
       "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
-      "public com.yahoo.searchlib.rankingexpression.rule.CompositeNode setChildren(java.util.List)"
+      "public com.yahoo.searchlib.rankingexpression.rule.CompositeNode setChildren(java.util.List)",
+      "public int hashCode()"
     ],
     "fields": []
   },
@@ -1360,13 +1365,13 @@
     ],
     "methods": [
       "public void <init>()",
-      "public int hashCode()",
-      "public final boolean equals(java.lang.Object)",
-      "public final java.lang.String toString()",
-      "public final java.lang.StringBuilder toString(com.yahoo.searchlib.rankingexpression.rule.SerializationContext)",
       "public abstract java.lang.StringBuilder toString(java.lang.StringBuilder, com.yahoo.searchlib.rankingexpression.rule.SerializationContext, java.util.Deque, com.yahoo.searchlib.rankingexpression.rule.CompositeNode)",
       "public abstract com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
-      "public abstract com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)"
+      "public abstract com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
+      "public final java.lang.StringBuilder toString(com.yahoo.searchlib.rankingexpression.rule.SerializationContext)",
+      "public final boolean equals(java.lang.Object)",
+      "public abstract int hashCode()",
+      "public final java.lang.String toString()"
     ],
     "fields": []
   },
@@ -1438,6 +1443,7 @@
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
       "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
       "public com.yahoo.searchlib.rankingexpression.rule.FunctionNode setChildren(java.util.List)",
+      "public int hashCode()",
       "public bridge synthetic com.yahoo.searchlib.rankingexpression.rule.CompositeNode setChildren(java.util.List)"
     ],
     "fields": []
@@ -1472,12 +1478,13 @@
     ],
     "methods": [
       "public void <init>(com.yahoo.tensor.TensorType, com.yahoo.searchlib.rankingexpression.rule.ExpressionNode)",
+      "public com.yahoo.searchlib.rankingexpression.rule.GeneratorLambdaFunctionNode$LongListToDoubleLambda asLongListToDoubleOperator()",
       "public java.util.List children()",
       "public com.yahoo.searchlib.rankingexpression.rule.CompositeNode setChildren(java.util.List)",
       "public java.lang.StringBuilder toString(java.lang.StringBuilder, com.yahoo.searchlib.rankingexpression.rule.SerializationContext, java.util.Deque, com.yahoo.searchlib.rankingexpression.rule.CompositeNode)",
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
       "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
-      "public com.yahoo.searchlib.rankingexpression.rule.GeneratorLambdaFunctionNode$LongListToDoubleLambda asLongListToDoubleOperator()"
+      "public int hashCode()"
     ],
     "fields": []
   },
@@ -1500,6 +1507,7 @@
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
       "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
       "public com.yahoo.searchlib.rankingexpression.rule.IfNode setChildren(java.util.List)",
+      "public int hashCode()",
       "public bridge synthetic com.yahoo.searchlib.rankingexpression.rule.CompositeNode setChildren(java.util.List)"
     ],
     "fields": []
@@ -1518,7 +1526,8 @@
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
       "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
       "public java.util.function.DoubleUnaryOperator asDoubleUnaryOperator()",
-      "public java.util.function.DoubleBinaryOperator asDoubleBinaryOperator()"
+      "public java.util.function.DoubleBinaryOperator asDoubleBinaryOperator()",
+      "public int hashCode()"
     ],
     "fields": []
   },
@@ -1534,7 +1543,8 @@
       "public java.lang.String getValue()",
       "public java.lang.StringBuilder toString(java.lang.StringBuilder, com.yahoo.searchlib.rankingexpression.rule.SerializationContext, java.util.Deque, com.yahoo.searchlib.rankingexpression.rule.CompositeNode)",
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
-      "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)"
+      "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
+      "public int hashCode()"
     ],
     "fields": []
   },
@@ -1552,6 +1562,7 @@
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
       "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
       "public com.yahoo.searchlib.rankingexpression.rule.NegativeNode setChildren(java.util.List)",
+      "public int hashCode()",
       "public bridge synthetic com.yahoo.searchlib.rankingexpression.rule.CompositeNode setChildren(java.util.List)"
     ],
     "fields": []
@@ -1570,6 +1581,7 @@
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
       "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
       "public com.yahoo.searchlib.rankingexpression.rule.NotNode setChildren(java.util.List)",
+      "public int hashCode()",
       "public bridge synthetic com.yahoo.searchlib.rankingexpression.rule.CompositeNode setChildren(java.util.List)"
     ],
     "fields": []
@@ -1609,13 +1621,14 @@
     "methods": [
       "public void <init>()",
       "public void <init>(java.util.Collection)",
+      "public void <init>(java.util.Collection, java.util.Optional)",
       "public void <init>(java.util.Map)",
       "public void <init>(java.util.Collection, java.util.Map)",
       "public void <init>(java.util.Collection, java.util.Map, com.yahoo.tensor.evaluation.TypeContext)",
-      "public java.util.Optional typeContext()",
       "public void <init>(java.util.Map, java.util.Map, java.util.Map)",
       "public void <init>(java.util.Map, java.util.Map, java.util.Optional, java.util.Map)",
       "public void <init>(com.google.common.collect.ImmutableMap, java.util.Map, java.util.Map)",
+      "public java.util.Optional typeContext()",
       "public void addFunctionSerialization(java.lang.String, java.lang.String)",
       "public void addArgumentTypeSerialization(java.lang.String, java.lang.String, com.yahoo.tensor.TensorType)",
       "public void addFunctionTypeSerialization(java.lang.String, com.yahoo.tensor.TensorType)",
@@ -1643,6 +1656,7 @@
       "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
       "public com.yahoo.searchlib.rankingexpression.evaluation.Value evaluate(com.yahoo.searchlib.rankingexpression.evaluation.Context)",
       "public com.yahoo.searchlib.rankingexpression.rule.SetMembershipNode setChildren(java.util.List)",
+      "public int hashCode()",
       "public bridge synthetic com.yahoo.searchlib.rankingexpression.rule.CompositeNode setChildren(java.util.List)"
     ],
     "fields": []
@@ -1662,6 +1676,7 @@
       "public java.util.Optional asScalarFunction()",
       "public com.yahoo.tensor.Tensor evaluate(com.yahoo.tensor.evaluation.EvaluationContext)",
       "public java.lang.String toString()",
+      "public int hashCode()",
       "public java.lang.String toString(com.yahoo.tensor.functions.ToStringContext)"
     ],
     "fields": []
@@ -1684,7 +1699,8 @@
       "public static java.util.Map wrapScalars(java.util.Map)",
       "public static void wrapScalarBlock(com.yahoo.tensor.TensorType, java.util.List, java.lang.String, java.util.List, java.util.Map)",
       "public static java.util.List wrapScalars(com.yahoo.tensor.TensorType, java.util.List, java.util.List)",
-      "public static com.yahoo.tensor.functions.ScalarFunction wrapScalar(com.yahoo.searchlib.rankingexpression.rule.ExpressionNode)"
+      "public static com.yahoo.tensor.functions.ScalarFunction wrapScalar(com.yahoo.searchlib.rankingexpression.rule.ExpressionNode)",
+      "public int hashCode()"
     ],
     "fields": []
   },

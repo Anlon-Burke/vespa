@@ -6,17 +6,16 @@ package com.yahoo.searchlib.rankingexpression.evaluation;
  * In numerical context true is interpreted as 1 and false as 0.
  *
  * @author bratseth
- * @since 5.1.21
  */
 public class BooleanValue extends DoubleCompatibleValue {
 
-    private boolean value;
+    private final boolean value;
 
     /**
      * Create a boolean value which is frozen at the outset.
      */
     public static BooleanValue frozen(boolean value) {
-        BooleanValue booleanValue=new BooleanValue(value);
+        BooleanValue booleanValue = new BooleanValue(value);
         booleanValue.freeze();
         return booleanValue;
     }

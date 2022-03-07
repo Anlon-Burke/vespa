@@ -2,7 +2,7 @@
 package com.yahoo.searchdefinition.parser;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -14,14 +14,19 @@ import java.util.Map;
  **/
 public class ParsedStruct extends ParsedBlock {
     private final List<String> inherited = new ArrayList<>();
-    private final Map<String, ParsedField> fields = new HashMap<>();
+    private final Map<String, ParsedField> fields = new LinkedHashMap<>();
+    private final ParsedType asParsedType;
+    private String ownedBy = null;
 
     public ParsedStruct(String name) {
         super(name, "struct");
+        this.asParsedType = ParsedType.fromName(name);
+        asParsedType.setVariant(ParsedType.Variant.STRUCT);
     }
 
     List<ParsedField> getFields() { return List.copyOf(fields.values()); }
     List<String> getInherited() { return List.copyOf(inherited); }
+    String getOwner() { return ownedBy; }
 
     void addField(ParsedField field) {
         String fieldName = field.name();
@@ -29,6 +34,15 @@ public class ParsedStruct extends ParsedBlock {
         fields.put(fieldName, field);
     }
 
-    void inherit(String other) { inherited.add(other); }
+    void inherit(String other) {
+        verifyThat(! name().equals(other), "cannot inherit from itself");
+        inherited.add(other);
+    }
+
+    void tagOwner(String document) {
+        verifyThat(ownedBy == null, "already owned by document "+ownedBy);
+        this.ownedBy = document;
+    }
+
 }
 

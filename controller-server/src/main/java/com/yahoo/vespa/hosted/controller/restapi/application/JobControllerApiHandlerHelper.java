@@ -4,9 +4,11 @@ package com.yahoo.vespa.hosted.controller.restapi.application;
 import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.application.api.DeploymentSpec.ChangeBlocker;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.restapi.MessageResponse;
 import com.yahoo.restapi.SlimeJsonResponse;
+import com.yahoo.slime.ArrayTraverser;
 import com.yahoo.slime.Cursor;
 import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
@@ -102,22 +104,6 @@ class JobControllerApiHandlerHelper {
         return new SlimeJsonResponse(slime);
     }
 
-    static void applicationVersionToSlime(Cursor versionObject, ApplicationVersion version) {
-        versionObject.setString("hash", version.id());
-        if (version.isUnknown())
-            return;
-
-        versionObject.setLong("build", version.buildNumber().getAsLong());
-        Cursor sourceObject = versionObject.setObject("source");
-        version.source().ifPresent(source -> {
-            sourceObject.setString("gitRepository", source.repository());
-            sourceObject.setString("gitBranch", source.branch());
-            sourceObject.setString("gitCommit", source.commit());
-        });
-        version.sourceUrl().ifPresent(url -> versionObject.setString("sourceUrl", url));
-        version.commit().ifPresent(commit -> versionObject.setString("commit", commit));
-    }
-
     /**
      * @return Response with logs from a single run
      */
@@ -162,10 +148,16 @@ class JobControllerApiHandlerHelper {
         });
 
         // If a test report is available, include it in the response.
-        Optional<String> testReport = jobController.getTestReport(runId);
+        Optional<String> testReport = jobController.getTestReports(runId);
         testReport.map(SlimeUtils::jsonToSlime)
-                .map(Slime::get)
-                .ifPresent(reportCursor -> SlimeUtils.copyObject(reportCursor, detailsObject.setObject("testReport")));
+                  .map(Slime::get)
+                  .ifPresent(reportArrayCursor -> {
+                      reportArrayCursor.traverse((ArrayTraverser) (i, reportCursor) -> {
+                          if (i > 0) return;
+                          SlimeUtils.copyObject(reportCursor, detailsObject.setObject("testReport"));
+                      });
+                      SlimeUtils.copyArray(reportArrayCursor, detailsObject.setArray("testReports"));
+                  });
 
         return new SlimeJsonResponse(slime);
     }
@@ -218,12 +210,12 @@ class JobControllerApiHandlerHelper {
     }
 
     /** Aborts any job of the given type. */
-    static HttpResponse abortJobResponse(JobController jobs, ApplicationId id, JobType type) {
+    static HttpResponse abortJobResponse(JobController jobs, HttpRequest request, ApplicationId id, JobType type) {
         Slime slime = new Slime();
         Cursor responseObject = slime.setObject();
         Optional<Run> run = jobs.last(id, type).flatMap(last -> jobs.active(last.id()));
         if (run.isPresent()) {
-            jobs.abort(run.get().id());
+            jobs.abort(run.get().id(), "aborted by " + request.getJDiscRequest().getUserPrincipal());
             responseObject.setString("message", "Aborting " + run.get().id());
         }
         else
@@ -312,7 +304,7 @@ class JobControllerApiHandlerHelper {
                     for (VespaVersion available : availablePlatforms) {
                         if (   deployments.stream().anyMatch(deployment -> deployment.version().isAfter(available.versionNumber()))
                             || deployments.stream().noneMatch(deployment -> deployment.version().isBefore(available.versionNumber())) && ! deployments.isEmpty()
-                            || change.platform().map(available.versionNumber()::compareTo).orElse(1) <= 0)
+                            || change.platform().map(available.versionNumber()::compareTo).orElse(1) < 0)
                             break;
 
                         Cursor availableObject = availableArray.addObject();
@@ -334,7 +326,7 @@ class JobControllerApiHandlerHelper {
                     for (ApplicationVersion available : availableApplications) {
                         if (   deployments.stream().anyMatch(deployment -> deployment.applicationVersion().compareTo(available) > 0)
                             || deployments.stream().noneMatch(deployment -> deployment.applicationVersion().compareTo(available) < 0) && ! deployments.isEmpty()
-                            || change.application().map(available::compareTo).orElse(1) <= 0)
+                            || change.application().map(available::compareTo).orElse(1) < 0)
                             break;
 
                         Cursor availableObject = availableArray.addObject();
@@ -380,12 +372,12 @@ class JobControllerApiHandlerHelper {
         }
 
         Cursor buildsArray = responseObject.setArray("builds");
-        application.versions().stream().sorted(reverseOrder()).forEach(version -> applicationVersionToSlime(buildsArray.addObject(), version));
+        application.versions().stream().sorted(reverseOrder()).forEach(version -> toSlime(buildsArray.addObject(), version));
 
         return new SlimeJsonResponse(slime);
     }
 
-    private static void toSlime(Cursor versionObject, ApplicationVersion version) {
+    static void toSlime(Cursor versionObject, ApplicationVersion version) {
         version.buildNumber().ifPresent(id -> versionObject.setLong("build", id));
         version.compileVersion().ifPresent(platform -> versionObject.setString("compileVersion", platform.toFullString()));
         version.sourceUrl().ifPresent(url -> versionObject.setString("sourceUrl", url));
