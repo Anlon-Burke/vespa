@@ -6,6 +6,7 @@ import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.zone.RoutingMethod;
 import com.yahoo.config.provision.zone.ZoneId;
+import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationVersion;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
@@ -1076,6 +1077,73 @@ public class DeploymentTriggerTest {
     }
 
     @Test
+    public void testMultipleInstancesWithRevisionCatchingUpToUpgrade() {
+        String spec = "<deployment>\n" +
+                      "    <instance id='alpha'>\n" +
+                      "        <upgrade rollout=\"simultaneous\" revision-target=\"next\" />\n" +
+                      "        <test />\n" +
+                      "        <staging />\n" +
+                      "    </instance>\n" +
+                      "    <instance id='beta'>\n" +
+                      "        <upgrade rollout=\"simultaneous\" revision-change=\"when-clear\" revision-target=\"next\" />\n" +
+                      "        <prod>\n" +
+                      "            <region>us-east-3</region>\n" +
+                      "            <test>us-east-3</test>\n" +
+                      "        </prod>\n" +
+                      "    </instance>\n" +
+                      "</deployment>\n";
+        ApplicationPackage applicationPackage = ApplicationPackageBuilder.fromDeploymentXml(spec);
+        DeploymentContext alpha = tester.newDeploymentContext("t", "a", "alpha");
+        DeploymentContext beta = tester.newDeploymentContext("t", "a", "beta");
+        alpha.submit(applicationPackage).deploy();
+        Optional<ApplicationVersion> revision1 = alpha.lastSubmission();
+
+        Version version1 = new Version("7.1");
+        tester.controllerTester().upgradeSystem(version1);
+        tester.upgrader().run();
+        alpha.runJob(systemTest).runJob(stagingTest);
+        assertEquals(Change.empty(), alpha.instance().change());
+        assertEquals(Change.empty(), beta.instance().change());
+
+        tester.upgrader().run();
+        assertEquals(Change.empty(), alpha.instance().change());
+        assertEquals(Change.of(version1), beta.instance().change());
+
+        tester.outstandingChangeDeployer().run();
+        beta.triggerJobs();
+        tester.runner().run();
+        tester.outstandingChangeDeployer().run();
+        beta.triggerJobs();
+        tester.outstandingChangeDeployer().run();
+        beta.assertRunning(productionUsEast3);
+        beta.assertNotRunning(testUsEast3);
+
+        alpha.submit(applicationPackage);
+        Optional<ApplicationVersion> revision2 = alpha.lastSubmission();
+        assertEquals(Change.of(revision2.get()), alpha.instance().change());
+        assertEquals(Change.of(version1), beta.instance().change());
+
+        alpha.runJob(systemTest).runJob(stagingTest);
+        assertEquals(Change.empty(), alpha.instance().change());
+        assertEquals(Change.of(version1), beta.instance().change());
+
+        tester.outstandingChangeDeployer().run();
+        assertEquals(Change.of(version1).with(revision2.get()), beta.instance().change());
+
+        beta.triggerJobs();
+        tester.runner().run();
+        beta.triggerJobs();
+
+        beta.assertRunning(productionUsEast3);
+        beta.assertNotRunning(testUsEast3);
+
+        beta.runJob(productionUsEast3)
+            .runJob(testUsEast3);
+
+        assertEquals(Change.empty(), beta.instance().change());
+    }
+
+    @Test
     public void testMultipleInstances() {
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
                 .instances("instance1,instance2")
@@ -1873,7 +1941,7 @@ public class DeploymentTriggerTest {
         // Deploy manually again, then submit new package.
         app.runJob(productionCdUsEast1, cdPackage);
         app.submit(cdPackage);
-        app.runJob(systemTest);
+        app.triggerJobs().runJob(systemTest);
         // Staging test requires unknown initial version, and is broken.
         tester.controller().applications().deploymentTrigger().forceTrigger(app.instanceId(), productionCdUsEast1, "user", false, true, true);
         app.runJob(productionCdUsEast1)
@@ -1893,7 +1961,7 @@ public class DeploymentTriggerTest {
                 "    </instance>\n" +
                 "    <instance id='default'>\n" +
                 "        <prod>\n" +
-                "            <region active='true'>eu-west-1</region>\n" +
+                "            <region>eu-west-1</region>\n" +
                 "            <test>eu-west-1</test>\n" +
                 "        </prod>\n" +
                 "    </instance>\n" +
@@ -2021,4 +2089,30 @@ public class DeploymentTriggerTest {
         List<RetriggerEntry> retriggerEntries = tester.controller().curator().readRetriggerEntries();
         Assert.assertEquals(1, retriggerEntries.size());
     }
+
+    @Test
+    public void testOrchestrationWithIncompatibleVersionPairs() {
+        Version version1 = new Version("7");
+        Version version2 = new Version("8");
+        tester.controllerTester().flagSource().withListFlag(PermanentFlags.INCOMPATIBLE_VERSIONS.id(), List.of("8"), String.class);
+
+        tester.controllerTester().upgradeSystem(version1);
+        DeploymentContext app = tester.newDeploymentContext()
+                                      .submit(new ApplicationPackageBuilder().region("us-east-3")
+                                                                             .compileVersion(version1)
+                                                                             .build())
+                                      .deploy();
+
+        tester.controllerTester().upgradeSystem(version2);
+        tester.upgrader().run();
+        assertEquals(Change.empty(), app.instance().change());
+
+        app.submit(new ApplicationPackageBuilder().region("us-east-3")
+                                                  .compileVersion(version2)
+                                                  .build());
+        app.deploy();
+        assertEquals(version2, tester.jobs().last(app.instanceId(), productionUsEast3).get().versions().targetPlatform());
+        assertEquals(version2, tester.jobs().last(app.instanceId(), productionUsEast3).get().versions().targetApplication().compileVersion().get());
+    }
+
 }

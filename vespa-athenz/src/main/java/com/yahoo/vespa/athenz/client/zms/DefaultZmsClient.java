@@ -229,7 +229,7 @@ public class DefaultZmsClient extends ClientBase implements ZmsClient {
                 athenzDomain.getName(), athenzPolicy));
         HttpUriRequest request = RequestBuilder.put()
                 .setUri(uri)
-                .setEntity(toJsonStringEntity(new AssertionEntity(athenzRole.toResourceNameString(), resourceName.toResourceNameString(), action)))
+                .setEntity(toJsonStringEntity(new AssertionEntity(athenzRole.toResourceNameString(), resourceName.toResourceNameString(), action, "ALLOW")))
                 .build();
         execute(request, response -> readEntity(response, Void.class));
     }
@@ -281,6 +281,7 @@ public class DefaultZmsClient extends ClientBase implements ZmsClient {
                         AthenzResourceName.fromString(a.getResource()),
                         a.getAction())
                         .id(a.getId())
+                        .effect(AthenzAssertion.Effect.valueOrNull(a.getEffect()))
                         .build())
                 .collect(toList());
         return Optional.of(new AthenzPolicy(entity.getName(), assertions));
@@ -305,7 +306,7 @@ public class DefaultZmsClient extends ClientBase implements ZmsClient {
     public void decidePendingRoleMembership(AthenzRole athenzRole, AthenzIdentity athenzIdentity, Instant expiry,
                                              Optional<String> reason, Optional<OAuthCredentials> oAuthCredentials, boolean approve) {
         URI uri = zmsUrl.resolve(String.format("domain/%s/role/%s/member/%s/decision", athenzRole.domain().getName(), athenzRole.roleName(), athenzIdentity.getFullName()));
-        MembershipEntity membership = new MembershipEntity.RoleMembershipEntity(athenzIdentity.getFullName(), approve, athenzRole.roleName(), Long.toString(expiry.getEpochSecond()));
+        var membership = new MembershipEntity.RoleMembershipDecisionEntity(athenzIdentity.getFullName(), approve, athenzRole.roleName(), Long.toString(expiry.getEpochSecond()), approve);
 
         var requestBuilder = RequestBuilder.put()
                 .setUri(uri)

@@ -8,20 +8,14 @@ ifeq ($(VERSION),)
 	VERSION = $(DEVEL_VERSION)
 endif
 
-BIN ?= $(CURDIR)/bin
-SHARE ?= $(CURDIR)/share
+PREFIX ?= $(CURDIR)
+BIN ?= $(PREFIX)/bin
+SHARE ?= $(PREFIX)/share
 DIST ?= $(CURDIR)/dist
 
 GO_FLAGS := -ldflags "-X github.com/vespa-engine/vespa/client/go/build.Version=$(VERSION)"
 GIT_ROOT := $(shell git rev-parse --show-toplevel)
 DIST_TARGETS := dist-mac dist-mac-arm64 dist-linux dist-linux-arm64 dist-win32 dist-win64
-
-GOPROXY_OVERRIDE :=
-ifndef GOPROXY
-ifeq ($(shell go env GOPROXY),direct)
-GOPROXY_OVERRIDE := GOPROXY=https://proxy.golang.org,direct
-endif
-endif
 
 all: test checkfmt install
 
@@ -31,12 +25,16 @@ all: test checkfmt install
 
 # Bump the version of the vespa-cli formula and create a pull request to Homebrew repository.
 #
+# Homebrew's automated BrewTestBot must do the merge for the bottles to be published. When
+# the PR has been merged check that the merge was done by their bot, and that installing
+# the new version works by running: `brew update && brew install vespa-cli`.
+#
 # Example:
 #
 # $ git checkout vX.Y.Z
 # $ make dist-homebrew
 dist-homebrew: dist-version
-	brew bump-formula-pr --version $(VERSION) vespa-cli
+	brew bump-formula-pr --version $(VERSION) --no-browse vespa-cli
 
 # Create a GitHub release draft for all platforms. Note that this only creates a
 # draft, which is not publicly visible until it's explicitly published.
@@ -79,7 +77,7 @@ dist-win64: GOOS=windows
 dist-win64: GOARCH=amd64
 
 $(DIST_TARGETS): DIST_NAME=vespa-cli_$(VERSION)_$(GOOS)_$(GOARCH)
-$(DIST_TARGETS): dist-version manpages
+$(DIST_TARGETS): dist-version ci manpages
 $(DIST_TARGETS):
 	mkdir -p $(DIST)/$(DIST_NAME)/bin
 	env GOOS=$(GOOS) GOARCH=$(GOARCH) $(GOPROXY_OVERRIDE) go build -o $(DIST)/$(DIST_NAME)/bin $(GO_FLAGS) ./...
@@ -105,11 +103,15 @@ install-all: all manpages
 # Development targets
 #
 
-install:
+ci:
 ifdef CI
+# Ensure that CI systems use a proxy for downloading dependencies
+	go env -w GOPROXY="https://proxy.golang.org,direct"
 	go env
 endif
-	env GOBIN=$(BIN) $(GOPROXY_OVERRIDE) go install $(GO_FLAGS) ./...
+
+install: ci
+	env GOBIN=$(BIN) go install $(GO_FLAGS) ./...
 
 manpages: install
 	mkdir -p $(SHARE)/man/man1
@@ -121,8 +123,8 @@ clean:
 	rmdir -p $(BIN) &> /dev/null || true
 	rmdir -p $(SHARE)/man/man1 &> /dev/null || true
 
-test:
-	env $(GOPROXY_OVERRIDE) go test ./...
+test: ci
+	go test ./...
 
 checkfmt:
 	@bash -c "diff --line-format='%L' <(echo -n) <(gofmt -l .)" || { echo "one or more files need to be formatted: try make fmt to fix this automatically"; exit 1; }

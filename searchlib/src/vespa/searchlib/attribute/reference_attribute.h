@@ -31,7 +31,7 @@ public:
     using EntryRef = vespalib::datastore::EntryRef;
     using GlobalId = document::GlobalId;
     using ReferenceStore = vespalib::datastore::UniqueStore<Reference>;
-    using ReferenceStoreIndices = vespalib::RcuVectorBase<EntryRef>;
+    using ReferenceStoreIndices = vespalib::RcuVectorBase<AtomicEntryRef>;
     using IndicesCopyVector = std::vector<EntryRef, vespalib::allocator_large<EntryRef>>;
     // Class used to map from target lid to source lids
     using ReverseMapping = vespalib::btree::BTreeStore<uint32_t, vespalib::btree::BTreeNoLeafData,
@@ -89,7 +89,7 @@ public:
     bool notifyReferencedRemoveNoCommit(const GlobalId &gid);
     void notifyReferencedRemove(const GlobalId &gid);
     void populateTargetLids(const std::vector<GlobalId>& removes);
-    void clearDocs(DocId lidLow, DocId lidLimit) override;
+    void clearDocs(DocId lidLow, DocId lidLimit, bool in_shrink_lid_space) override;
     void onShrinkLidSpace() override;
 
     template <typename FunctionType>

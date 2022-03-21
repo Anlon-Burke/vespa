@@ -4,12 +4,12 @@ package com.yahoo.searchdefinition.parser;
 import com.yahoo.document.DataType;
 import com.yahoo.document.DocumentType;
 import com.yahoo.document.DocumentTypeManager;
-import com.yahoo.document.ReferenceDataType;
+import com.yahoo.documentmodel.NewDocumentReferenceDataType;
 import com.yahoo.document.StructDataType;
 import com.yahoo.document.PositionDataType;
 import com.yahoo.document.WeightedSetDataType;
 import com.yahoo.document.annotation.AnnotationReferenceDataType;
-import com.yahoo.document.annotation.AnnotationType;
+import com.yahoo.searchdefinition.document.annotation.SDAnnotationType;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -47,7 +47,7 @@ public class ConvertParsedTypes {
 
     private Map<String, DocumentType> documentsFromSchemas = new HashMap<>();
     private Map<String, StructDataType> structsFromSchemas = new HashMap<>();
-    private Map<String, AnnotationType> annotationsFromSchemas = new HashMap<>();
+    private Map<String, SDAnnotationType> annotationsFromSchemas = new HashMap<>();
 
     private void startDataTypes() {
         for (var schema : orderedInput) {
@@ -58,32 +58,60 @@ public class ConvertParsedTypes {
             var doc = schema.getDocument();
             for (var struct : doc.getStructs()) {
                 String structId = doc.name() + "->" + struct.name();
-                // int id = new StructDataType(structId).getId();
-                // var dt = new StructDataType(id, struct.name());
                 var dt = new StructDataType(struct.name());
                 structsFromSchemas.put(structId, dt);
             }
             for (var annotation : doc.getAnnotations()) {
                 String annId = doc.name() + "->" + annotation.name();
-                var at = new AnnotationType(annotation.name());
+                var at = new SDAnnotationType(annotation.name());
                 annotationsFromSchemas.put(annId, at);
+                for (String inherit : annotation.getInherited()) {
+                    at.inherit(inherit);
+                }
                 var withStruct = annotation.getStruct();
                 if (withStruct.isPresent()) {
-                    var sn = withStruct.get().name();
-                    var dt = new StructDataType(sn);
-                    String structId = doc.name() + "->" + sn;
-                    structsFromSchemas.put(structId, dt);
+                    ParsedStruct struct = withStruct.get();
+                    String structId = doc.name() + "->" + struct.name();
+                    var old = structsFromSchemas.put(structId, new StructDataType(struct.name()));
+                    assert(old == null);
                 }
             }
+        }
+    }
+
+    void fillAnnotationStruct(ParsedAnnotation annotation) {
+        var withStruct = annotation.getStruct();
+        if (withStruct.isPresent()) {
+            var doc = annotation.getOwnerDoc();
+            var toFill = findStructFromParsed(withStruct.get());
+            for (ParsedField field : withStruct.get().getFields()) {
+                var t = resolveFromContext(field.getType(), doc);
+                var f = field.hasIdOverride()
+                    ? new com.yahoo.document.Field(field.name(), field.idOverride(), t)
+                    : new com.yahoo.document.Field(field.name(), t);
+                toFill.addField(f);
+            }
+            for (var parent : annotation.getResolvedInherits()) {
+                parent.getStruct().ifPresent
+                    (ps -> toFill.inherit(findStructFromParsed(ps)));
+            }
+            var at = findAnnotationFromParsed(annotation);
+            at.setDataType(toFill);
         }
     }
 
     private void fillDataTypes() {
         for (var schema : orderedInput) {
             var doc = schema.getDocument();
+            for (var annotation : doc.getAnnotations()) {
+                var at = findAnnotationFromParsed(annotation);
+                for (var parent : annotation.getResolvedInherits()) {
+                    at.inherit(findAnnotationFromParsed(parent));
+                }
+                fillAnnotationStruct(annotation);
+            }
             for (var struct : doc.getStructs()) {
-                String structId = doc.name() + "->" + struct.name();
-                var toFill = structsFromSchemas.get(structId);
+                var toFill = findStructFromParsed(struct);
                 // evil ugliness
                 for (ParsedField field : struct.getFields()) {
                     if (! field.hasIdOverride()) {
@@ -99,31 +127,22 @@ public class ConvertParsedTypes {
                         toFill.addField(f);
                     }
                 }
-                for (String inherit : struct.getInherited()) {
-                    var parent = findStructFromSchemas(inherit, doc);
-                    toFill.inherit(parent);
-                }
-            }
-            for (var annotation : doc.getAnnotations()) {
-                String annId = doc.name() + "->" + annotation.name();
-                var at = annotationsFromSchemas.get(annId);
-                var withStruct = annotation.getStruct();
-                if (withStruct.isPresent()) {
-                    ParsedStruct struct = withStruct.get();
-                    String structId = doc.name() + "->" + struct.name();
-                    var toFill = structsFromSchemas.get(structId);
-                    for (ParsedField field : struct.getFields()) {
-                        var t = resolveFromContext(field.getType(), doc);
-                        var f = field.hasIdOverride()
-                            ? new com.yahoo.document.Field(field.name(), field.idOverride(), t)
-                            : new com.yahoo.document.Field(field.name(), t);
-                        toFill.addField(f);
+                for (var inherit : struct.getResolvedInherits()) {
+                    var parent = findStructFromParsed(inherit);
+                    // ensure a nice, compatible exception message
+                    for (var field : toFill.getFields()) {
+                        if (parent.hasField(field)) {
+                            for (var base : parent.getInheritedTypes()) {
+                                if (base.hasField(field)) {
+                                    parent = base;
+                                }
+                            }
+                            throw new IllegalArgumentException
+                                ("In document " + doc.name() + ": struct " + struct.name() +
+                                 " cannot inherit from " + parent.getName() + " and redeclare field " + field.getName());
+                        }
                     }
-                    at.setDataType(toFill);
-                }
-                for (String inherit : annotation.getInherited()) {
-                    var parent = findAnnotationFromSchemas(inherit, doc);
-                    at.inherit(parent);
+                    toFill.inherit(parent);
                 }
             }
             var docToFill = documentsFromSchemas.get(doc.name());
@@ -142,6 +161,7 @@ public class ConvertParsedTypes {
             fieldSets.put("[document]", inDocFields);
             for (var extraField : schema.getFields()) {
                 String name = extraField.name();
+                if (docToFill.hasField(name)) continue;
                 var t = resolveFromContext(extraField.getType(), doc);
                 var f = new com.yahoo.document.Field(name, t);
                 docToFill.addField(f);
@@ -156,20 +176,24 @@ public class ConvertParsedTypes {
         }
     }
 
-    private StructDataType findStructFromSchemas(String name, ParsedDocument context) {
-        var resolved = findParsedStruct(context, name);
-        if (resolved == null) {
-            throw new IllegalArgumentException("no struct named " + name + " in context " + context);
-        }
-        String structId = resolved.getOwner() + "->" + resolved.name();
+    private StructDataType findStructFromParsed(ParsedStruct resolved) {
+        String structId = resolved.getOwnerName() + "->" + resolved.name();
         var struct = structsFromSchemas.get(structId);
         assert(struct != null);
         return struct;
     }
 
-    private AnnotationType findAnnotationFromSchemas(String name, ParsedDocument context) {
-        var resolved = findParsedAnnotation(context, name);
-        String annotationId = resolved.getOwner() + "->" + resolved.name();
+    private StructDataType findStructFromSchemas(String name, ParsedDocument context) {
+        var resolved = context.findParsedStruct(name);
+        if (resolved == null) {
+            throw new IllegalArgumentException("no struct named " + name + " in context " + context);
+        }
+        return findStructFromParsed(resolved);
+    }
+
+    private SDAnnotationType findAnnotationFromSchemas(String name, ParsedDocument context) {
+        var resolved = context.findParsedAnnotation(name);
+        String annotationId = resolved.getOwnerName() + "->" + resolved.name();
         var annotation = annotationsFromSchemas.get(annotationId);
         if (annotation == null) {
             throw new IllegalArgumentException("no annotation named " + name + " in context " + context);
@@ -177,48 +201,13 @@ public class ConvertParsedTypes {
         return annotation;
     }
 
-    private ParsedStruct findParsedStruct(ParsedDocument doc, String name) {
-        ParsedStruct found = doc.getStruct(name);
-        if (found != null) return found;
-        for (var parent : doc.getResolvedInherits()) {
-            var fromParent = findParsedStruct(parent, name);
-            if (fromParent == null) continue;
-            if (fromParent == found) continue;
-            if (found == null) {
-                found = fromParent;
-            } else {
-                throw new IllegalArgumentException("conflicting values for struct " + name + " in " +doc);
-            }
+    private SDAnnotationType findAnnotationFromParsed(ParsedAnnotation resolved) {
+        String annotationId = resolved.getOwnerName() + "->" + resolved.name();
+        var annotation = annotationsFromSchemas.get(annotationId);
+        if (annotation == null) {
+            throw new IllegalArgumentException("no annotation " + resolved.name() + " in " + resolved.getOwnerName());
         }
-        if (found == null) {
-            // TODO: be more restrictive here, but we need something
-            // for imported fields. For now, fall back to looking for
-            // struct in any schema.
-            for (var schema : orderedInput) {
-                for (var struct : schema.getDocument().getStructs()) {
-                    if (struct.name().equals(name)) {
-                        return struct;
-                    }
-                }
-            }
-        }
-        return found;
-    }
-
-    private ParsedAnnotation findParsedAnnotation(ParsedDocument doc, String name) {
-        ParsedAnnotation found = doc.getAnnotation(name);
-        if (found != null) return found;
-        for (var parent : doc.getResolvedInherits()) {
-            var fromParent = findParsedAnnotation(parent, name);
-            if (fromParent == null) continue;
-            if (fromParent == found) continue;
-            if (found == null) {
-                found = fromParent;
-            } else {
-                throw new IllegalArgumentException("conflicting values for annotation " + name + " in " +doc);
-            }
-        }
-        return found;
+        return annotation;
     }
 
     private DataType createArray(ParsedType pType, ParsedDocument context) {
@@ -248,14 +237,14 @@ public class ConvertParsedTypes {
     }
 
     private DataType createAnnRef(ParsedType pType, ParsedDocument context) {
-        AnnotationType annotation = findAnnotationFromSchemas(pType.getNameOfReferencedAnnotation(), context);
+        SDAnnotationType annotation = findAnnotationFromSchemas(pType.getNameOfReferencedAnnotation(), context);
         return new AnnotationReferenceDataType(annotation);
     }
 
     private DataType createDocRef(ParsedType pType) {
         var ref = pType.getReferencedDocumentType();
         assert(ref.getVariant() == ParsedType.Variant.DOCUMENT);
-        return ReferenceDataType.createWithInferredId(findDocFromSchemas(ref.name()));
+        return new NewDocumentReferenceDataType(findDocFromSchemas(ref.name()));
     }
 
     private DataType resolveFromContext(ParsedType pType, ParsedDocument context) {
@@ -276,7 +265,7 @@ public class ConvertParsedTypes {
             // fallthrough
         }
         // unknown is probably struct
-        var found = findParsedStruct(context, name);
+        var found = context.findParsedStruct(name);
         if (found != null) {
             pType.setVariant(ParsedType.Variant.STRUCT);
             return findStructFromSchemas(name, context);
@@ -295,7 +284,7 @@ public class ConvertParsedTypes {
         for (DocumentType t : documentsFromSchemas.values()) {
             docMan.register(t);
         }
-        for (AnnotationType t : annotationsFromSchemas.values()) {
+        for (SDAnnotationType t : annotationsFromSchemas.values()) {
             docMan.getAnnotationTypeRegistry().register(t);
         }
     }
@@ -312,6 +301,9 @@ public class ConvertParsedTypes {
                 throw new IllegalArgumentException("no datatype found for struct: " + structId);
             }
             return r;
+        }
+        public SDAnnotationType resolveAnnotation(String name) {
+            return findAnnotationFromSchemas(name, context);
         }
         TypeResolver(ParsedDocument context) {
             this.context = context;

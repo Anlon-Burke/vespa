@@ -28,7 +28,7 @@ public abstract class AbstractExportingTestCase extends AbstractSchemaTestCase {
     private static final String tempDir = "temp/";
     private static final String searchDefRoot = "src/test/derived/";
 
-    boolean useV8DocManagerCfg() { return false; }
+    boolean useV8DocManagerCfg() { return true; }
 
     private DerivedConfiguration derive(String dirName,
                                         String searchDefinitionName,
@@ -100,6 +100,7 @@ public abstract class AbstractExportingTestCase extends AbstractSchemaTestCase {
                                                          DeployLogger logger) throws IOException, ParseException {
         return assertCorrectDeriving(dirName, searchDefinitionName, new TestProperties(), logger);
     }
+
     protected DerivedConfiguration assertCorrectDeriving(String dirName,
                                                          TestProperties properties) throws IOException, ParseException
     {

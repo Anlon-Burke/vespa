@@ -2,7 +2,6 @@
 package cmd
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,7 +31,7 @@ func TestConfig(t *testing.T) {
 	assertConfigCommand(t, "", "config", "set", "application", "t1.a1.i1")
 	assertConfigCommand(t, "application = t1.a1.i1\n", "config", "get", "application")
 
-	assertConfigCommand(t, "api-key-file = /tmp/private.key\napplication = t1.a1.i1\ncolor = auto\nquiet = false\ntarget = https://127.0.0.1\nwait = 0\n", "config", "get")
+	assertConfigCommand(t, "api-key-file = /tmp/private.key\napplication = t1.a1.i1\ncolor = auto\ninstance = <unset>\nquiet = false\ntarget = https://127.0.0.1\nwait = 0\n", "config", "get")
 
 	assertConfigCommand(t, "", "config", "set", "wait", "60")
 	assertConfigCommandErr(t, "Error: wait option must be an integer >= 0, got \"foo\"\n", "config", "set", "wait", "foo")
@@ -40,6 +39,12 @@ func TestConfig(t *testing.T) {
 
 	assertConfigCommand(t, "", "config", "set", "quiet", "true")
 	assertConfigCommand(t, "", "config", "set", "quiet", "false")
+
+	assertConfigCommand(t, "", "config", "set", "instance", "i2")
+	assertConfigCommand(t, "instance = i2\n", "config", "get", "instance")
+
+	assertConfigCommand(t, "", "config", "set", "application", "t1.a1")
+	assertConfigCommand(t, "application = t1.a1.default\n", "config", "get", "application")
 }
 
 func assertConfigCommand(t *testing.T, expected string, args ...string) {
@@ -93,6 +98,6 @@ func TestUseAPIKey(t *testing.T) {
 	_, err := os.Create(filepath.Join(cli.config.homeDir, "t2.api-key.pem"))
 	require.Nil(t, err)
 	assert.True(t, cli.config.useAPIKey(cli, vespa.PublicSystem, "t2"))
-	require.Nil(t, ioutil.WriteFile(filepath.Join(cli.config.homeDir, "auth.json"), []byte(authContent), 0600))
+	require.Nil(t, os.WriteFile(filepath.Join(cli.config.homeDir, "auth.json"), []byte(authContent), 0600))
 	assert.False(t, cli.config.useAPIKey(cli, vespa.PublicSystem, "t2"))
 }

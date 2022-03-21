@@ -7,13 +7,16 @@ import com.yahoo.document.*;
 import com.yahoo.document.annotation.AnnotationReferenceDataType;
 import com.yahoo.document.annotation.AnnotationType;
 import com.yahoo.documentmodel.DataTypeCollection;
+import com.yahoo.documentmodel.NewDocumentReferenceDataType;
 import com.yahoo.documentmodel.NewDocumentType;
 import com.yahoo.documentmodel.VespaDocumentType;
 import com.yahoo.searchdefinition.document.FieldSet;
 import com.yahoo.vespa.documentmodel.DocumentModel;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -28,7 +31,7 @@ import java.util.Set;
 public class DocumentManager {
 
     private boolean useV8GeoPositions = false;
-    private boolean useV8DocManagerCfg = false;
+    private boolean useV8DocManagerCfg = true;
 
     public DocumentManager useV8GeoPositions(boolean value) {
         this.useV8GeoPositions = value;
@@ -135,7 +138,7 @@ public class DocumentManager {
             builder.documenttype(doc);
             doc.
                 name(dt.getName()).
-                headerstruct(dt.getHeader().getId());
+                headerstruct(dt.getContentStruct().getId());
             for (NewDocumentType inherited : dt.getInherited()) {
                 doc.inherits(new Datatype.Documenttype.Inherits.Builder().name(inherited.getName()));
             }
@@ -170,9 +173,12 @@ public class DocumentManager {
             // Nothing to do; the type of the tensor is instead stored in each field as detailed type information
             // to provide better compatibility. A tensor field can have its tensorType changed (in compatible ways)
             // without changing the field type and thus requiring data refeed
-        } else if (type instanceof ReferenceDataType) {
-            ReferenceDataType refType = (ReferenceDataType) type;
-            builder.referencetype(new Datatype.Referencetype.Builder().target_type_id(refType.getTargetType().getId()));
+        } else if (type instanceof NewDocumentReferenceDataType) {
+            NewDocumentReferenceDataType refType = (NewDocumentReferenceDataType) type;
+            if (refType.isTemporary()) {
+                throw new IllegalArgumentException("Still temporary: " + refType);
+            }
+            builder.referencetype(new Datatype.Referencetype.Builder().target_type_id(refType.getTargetTypeId()));
         } else {
             throw new IllegalArgumentException("Can not create config for data type " + type + " of class " + type.getClass());
         }
@@ -262,23 +268,33 @@ public class DocumentManager {
         }
     }
 
+    static private <T> List<T> sortedList(Collection<T> unsorted, Comparator<T> cmp) {
+        var list = new ArrayList<T>();
+        list.addAll(unsorted);
+        list.sort(cmp);
+        return list;
+    }
+
     private void docTypeBuild(NewDocumentType documentType, DocumentmanagerConfig.Builder builder, IdxMap indexMap) {
         DocumentmanagerConfig.Doctype.Builder db = new DocumentmanagerConfig.Doctype.Builder();
         db.
             idx(indexMap.idxOf(documentType)).
             name(documentType.getName()).
-            contentstruct(indexMap.idxOf(documentType.getHeader()));
+            contentstruct(indexMap.idxOf(documentType.getContentStruct()));
         docTypeBuildFieldSets(documentType.getFieldSets(), db);
         docTypeBuildImportedFields(documentType.getImportedFieldNames(), db);
         for (NewDocumentType inherited : documentType.getInherited()) {
             db.inherits(b -> b.idx(indexMap.idxOf(inherited)));
         }
-        docTypeBuildAnyType(documentType.getHeader(), db, indexMap);
-        for (DataType dt : documentType.getAllTypes().getTypes()) {
+        docTypeBuildAnyType(documentType.getContentStruct(), db, indexMap);
+
+        for (DataType dt : sortedList(documentType.getAllTypes().getTypes(),
+                                      (a,b) -> a.getName().compareTo(b.getName()))) {
             docTypeBuildAnyType(dt, db, indexMap);
         }
-        for (AnnotationType annotation : documentType.getAnnotations()) {
-            docTypeBuildAnnotationType(annotation, db, indexMap);
+        for (AnnotationType ann : sortedList(documentType.getAnnotations(),
+                                             (a,b) -> a.getName().compareTo(b.getName()))) {
+            docTypeBuildAnnotationType(ann, db, indexMap);
         }
         builder.doctype(db);
         indexMap.setDone(documentType);
@@ -344,8 +360,12 @@ public class DocumentManager {
             docTypeBuildOneType((AnnotationReferenceDataType) type, documentBuilder, indexMap);
         } else if (type instanceof TensorDataType) {
             docTypeBuildOneType((TensorDataType) type, documentBuilder, indexMap);
-        } else if (type instanceof ReferenceDataType) {
-            docTypeBuildOneType((ReferenceDataType) type, documentBuilder, indexMap);
+        } else if (type instanceof NewDocumentReferenceDataType) {
+            var refType = (NewDocumentReferenceDataType) type;
+            if (refType.isTemporary()) {
+                throw new IllegalArgumentException("Still temporary: " + refType);
+            }
+            docTypeBuildOneType(refType, documentBuilder, indexMap);
         } else if (type instanceof PrimitiveDataType) {
             docTypeBuildOneType((PrimitiveDataType) type, documentBuilder, indexMap);
         } else if (type instanceof DocumentType) {
@@ -453,7 +473,7 @@ public class DocumentManager {
                               .annotationtype(indexMap.idxOf(type.getAnnotationType())));
     }
 
-    private void docTypeBuildOneType(ReferenceDataType type,
+    private void docTypeBuildOneType(NewDocumentReferenceDataType type,
                                      DocumentmanagerConfig.Doctype.Builder builder,
                                      IdxMap indexMap)
     {

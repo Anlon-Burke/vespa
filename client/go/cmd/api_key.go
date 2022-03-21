@@ -5,8 +5,8 @@ package cmd
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
+	"os"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -28,13 +28,13 @@ key as necessary.
 It's possible to override the API key used through environment variables. This
 can be useful in continuous integration systems.
 
-* VESPA_CLI_API_KEY containing the key directly:
+Example of setting the key in-line:
 
-  export VESPA_CLI_API_KEY="my api key"
+    export VESPA_CLI_API_KEY="my api key"
 
-* VESPA_CLI_API_KEY_FILE containing path to the key:
+Example of loading the key from a custom path:
 
-  export VESPA_CLI_API_KEY_FILE=/path/to/api-key
+    export VESPA_CLI_API_KEY_FILE=/path/to/api-key
 
 Note that when overriding API key through environment variables, that key will
 always be used. It's not possible to specify a tenant-specific key.`,
@@ -70,7 +70,7 @@ func doApiKey(cli *CLI, overwriteKey bool, args []string) error {
 	apiKeyFile := cli.config.apiKeyPath(app.Tenant)
 	if util.PathExists(apiKeyFile) && !overwriteKey {
 		err := fmt.Errorf("refusing to overwrite %s", apiKeyFile)
-		cli.printErrHint(err, "Use -f to overwrite it")
+		cli.printErr(err, "Use -f to overwrite it")
 		printPublicKey(system, apiKeyFile, app.Tenant)
 		return ErrCLI{error: err, quiet: true}
 	}
@@ -78,7 +78,7 @@ func doApiKey(cli *CLI, overwriteKey bool, args []string) error {
 	if err != nil {
 		return fmt.Errorf("could not create api key: %w", err)
 	}
-	if err := ioutil.WriteFile(apiKeyFile, apiKey, 0600); err == nil {
+	if err := os.WriteFile(apiKeyFile, apiKey, 0600); err == nil {
 		cli.printSuccess("API private key written to ", apiKeyFile)
 		return printPublicKey(system, apiKeyFile, app.Tenant)
 	} else {
@@ -87,7 +87,7 @@ func doApiKey(cli *CLI, overwriteKey bool, args []string) error {
 }
 
 func printPublicKey(system vespa.System, apiKeyFile, tenant string) error {
-	pemKeyData, err := ioutil.ReadFile(apiKeyFile)
+	pemKeyData, err := os.ReadFile(apiKeyFile)
 	if err != nil {
 		return fmt.Errorf("failed to read: %s: %w", apiKeyFile, err)
 	}
@@ -106,7 +106,7 @@ func printPublicKey(system vespa.System, apiKeyFile, tenant string) error {
 	log.Printf("\nThis is your public key:\n%s", color.GreenString(string(pemPublicKey)))
 	log.Printf("Its fingerprint is:\n%s\n", color.CyanString(fingerprint))
 	log.Print("\nTo use this key in Vespa Cloud click 'Add custom key' at")
-	log.Printf(color.CyanString("%s/tenant/%s/keys"), system.ConsoleURL, tenant)
+	log.Printf(color.CyanString("%s/tenant/%s/account/keys"), system.ConsoleURL, tenant)
 	log.Print("and paste the entire public key including the BEGIN and END lines.")
 	return nil
 }

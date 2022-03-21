@@ -7,7 +7,6 @@ package cmd
 import (
 	"crypto/tls"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -51,9 +50,19 @@ overridden by setting the VESPA_CLI_HOME environment variable.`,
 
 func newConfigSetCmd(cli *CLI) *cobra.Command {
 	return &cobra.Command{
-		Use:               "set option-name value",
-		Short:             "Set a configuration option.",
-		Example:           "$ vespa config set target cloud",
+		Use:   "set option-name value",
+		Short: "Set a configuration option.",
+		Example: `# Set the target to Vespa Cloud
+$ vespa config set target cloud
+
+# Set application, without a specific instance. The instance will be named "default"
+$ vespa config set application my-tenant.my-application
+
+# Set application with a specific instance
+$ vespa config set application my-tenant.my-application.my-instance
+
+# Set the instance explicitly. This will take precedence over an instance specified as part of the application option.
+$ vespa config set instance other-instance`,
 		DisableAutoGenTag: true,
 		SilenceUsage:      true,
 		Args:              cobra.ExactArgs(2),
@@ -95,6 +104,7 @@ $ vespa config get target`,
 
 type Config struct {
 	homeDir     string
+	cacheDir    string
 	environment map[string]string
 	bindings    ConfigBindings
 	createDirs  bool
@@ -131,8 +141,13 @@ func loadConfig(environment map[string]string, bindings ConfigBindings) (*Config
 	if err != nil {
 		return nil, fmt.Errorf("could not detect config directory: %w", err)
 	}
+	cacheDir, err := vespaCliCacheDir(environment)
+	if err != nil {
+		return nil, fmt.Errorf("could not detect cache directory: %w", err)
+	}
 	c := &Config{
 		homeDir:     home,
+		cacheDir:    cacheDir,
 		environment: environment,
 		bindings:    bindings,
 		createDirs:  true,
@@ -171,7 +186,11 @@ func (c *Config) application() (vespa.ApplicationID, error) {
 	}
 	application, err := vespa.ApplicationFromString(app)
 	if err != nil {
-		return vespa.ApplicationID{}, errHint(err, "application format is <tenant>.<app>.<instance>")
+		return vespa.ApplicationID{}, errHint(err, "application format is <tenant>.<app>[.<instance>]")
+	}
+	instance, ok := c.get(instanceFlag)
+	if ok {
+		application.Instance = instance
 	}
 	return application, nil
 }
@@ -248,7 +267,7 @@ func (c *Config) readAPIKey(tenantName string) ([]byte, error) {
 	if override, ok := c.get(apiKeyFlag); ok {
 		return []byte(override), nil
 	}
-	return ioutil.ReadFile(c.apiKeyPath(tenantName))
+	return os.ReadFile(c.apiKeyPath(tenantName))
 }
 
 // useAPIKey returns true if an API key should be used when authenticating with system.
@@ -276,7 +295,7 @@ func (c *Config) readSessionID(app vespa.ApplicationID) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	b, err := ioutil.ReadFile(sessionPath)
+	b, err := os.ReadFile(sessionPath)
 	if err != nil {
 		return 0, err
 	}
@@ -288,7 +307,7 @@ func (c *Config) writeSessionID(app vespa.ApplicationID, sessionID int64) error 
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile(sessionPath, []byte(fmt.Sprintf("%d\n", sessionID)), 0600)
+	return os.WriteFile(sessionPath, []byte(fmt.Sprintf("%d\n", sessionID)), 0600)
 }
 
 func (c *Config) applicationFilePath(app vespa.ApplicationID, name string) (string, error) {
@@ -341,9 +360,13 @@ func (c *Config) set(option, value string) error {
 			return nil
 		}
 	case applicationFlag:
-		if _, err := vespa.ApplicationFromString(value); err != nil {
+		app, err := vespa.ApplicationFromString(value)
+		if err != nil {
 			return err
 		}
+		viper.Set(option, app.String())
+		return nil
+	case instanceFlag:
 		viper.Set(option, value)
 		return nil
 	case waitFlag:

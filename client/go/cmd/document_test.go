@@ -5,7 +5,7 @@
 package cmd
 
 import (
-	"io/ioutil"
+	"os"
 	"strconv"
 	"testing"
 
@@ -121,7 +121,7 @@ func assertDocumentSend(arguments []string, expectedOperation string, expectedMe
 	assert.Equal(t, "application/json", client.LastRequest.Header.Get("Content-Type"))
 	assert.Equal(t, expectedMethod, client.LastRequest.Method)
 
-	expectedPayload, _ := ioutil.ReadFile(expectedPayloadFile)
+	expectedPayload, _ := os.ReadFile(expectedPayloadFile)
 	assert.Equal(t, string(expectedPayload), util.ReaderToString(client.LastRequest.Body))
 }
 
@@ -131,7 +131,7 @@ func assertDocumentGet(arguments []string, documentId string, t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.NextResponse(200, "{\"fields\":{\"foo\":\"bar\"}}")
+	client.NextResponseString(200, "{\"fields\":{\"foo\":\"bar\"}}")
 	cli, stdout, _ := newTestCLI(t)
 	cli.httpClient = client
 	assert.Nil(t, cli.Run(arguments...))
@@ -150,7 +150,7 @@ func assertDocumentGet(arguments []string, documentId string, t *testing.T) {
 
 func assertDocumentError(t *testing.T, status int, errorMessage string) {
 	client := &mock.HTTPClient{}
-	client.NextResponse(status, errorMessage)
+	client.NextResponseString(status, errorMessage)
 	cli, _, stderr := newTestCLI(t)
 	cli.httpClient = client
 	assert.NotNil(t, cli.Run("document", "put",
@@ -163,7 +163,7 @@ func assertDocumentError(t *testing.T, status int, errorMessage string) {
 
 func assertDocumentServerError(t *testing.T, status int, errorMessage string) {
 	client := &mock.HTTPClient{}
-	client.NextResponse(status, errorMessage)
+	client.NextResponseString(status, errorMessage)
 	cli, _, stderr := newTestCLI(t)
 	cli.httpClient = client
 	assert.NotNil(t, cli.Run("document", "put",

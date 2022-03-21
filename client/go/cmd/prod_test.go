@@ -3,15 +3,16 @@ package cmd
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/vespa-engine/vespa/client/go/mock"
 	"github.com/vespa-engine/vespa/client/go/util"
+	"github.com/vespa-engine/vespa/client/go/vespa"
 )
 
 func TestProdInit(t *testing.T) {
@@ -77,7 +78,7 @@ func TestProdInit(t *testing.T) {
 }
 
 func readFileString(t *testing.T, filename string) string {
-	content, err := ioutil.ReadFile(filename)
+	content, err := os.ReadFile(filename)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +97,7 @@ func createApplication(t *testing.T, pkgDir string, java bool) {
     <region>aws-us-east-1c</region>
   </prod>
 </deployment>`
-	if err := ioutil.WriteFile(filepath.Join(appDir, "deployment.xml"), []byte(deploymentXML), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(appDir, "deployment.xml"), []byte(deploymentXML), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,19 +118,19 @@ func createApplication(t *testing.T, pkgDir string, java bool) {
   </content>
 </services>`
 
-	if err := ioutil.WriteFile(filepath.Join(appDir, "services.xml"), []byte(servicesXML), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(appDir, "services.xml"), []byte(servicesXML), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if java {
-		if err := ioutil.WriteFile(filepath.Join(pkgDir, "pom.xml"), []byte(""), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(pkgDir, "pom.xml"), []byte(""), 0644); err != nil {
 			t.Fatal(err)
 		}
 	} else {
 		testsDir := filepath.Join(pkgDir, "src", "test", "application", "tests")
-		testBytes, _ := ioutil.ReadAll(strings.NewReader("{\"steps\":[{}]}"))
+		testBytes, _ := io.ReadAll(strings.NewReader("{\"steps\":[{}]}"))
 		writeTest(filepath.Join(testsDir, "system-test", "test.json"), testBytes, t)
 		writeTest(filepath.Join(testsDir, "staging-setup", "test.json"), testBytes, t)
 		writeTest(filepath.Join(testsDir, "staging-test", "test.json"), testBytes, t)
@@ -140,7 +141,7 @@ func writeTest(path string, content []byte, t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := ioutil.WriteFile(path, content, 0644); err != nil {
+	if err := os.WriteFile(path, content, 0644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -150,14 +151,27 @@ func TestProdSubmit(t *testing.T) {
 	createApplication(t, pkgDir, false)
 
 	httpClient := &mock.HTTPClient{}
-	httpClient.NextResponse(200, `ok`)
+	httpClient.NextResponseString(200, `ok`)
 
 	cli, stdout, _ := newTestCLI(t, "CI=true")
 	cli.httpClient = httpClient
-	assert.Nil(t, cli.Run("config", "set", "application", "t1.a1.i1"))
+	app := vespa.ApplicationID{Tenant: "t1", Application: "a1", Instance: "i1"}
+	assert.Nil(t, cli.Run("config", "set", "application", app.String()))
 	assert.Nil(t, cli.Run("config", "set", "target", "cloud"))
 	assert.Nil(t, cli.Run("auth", "api-key"))
 	assert.Nil(t, cli.Run("auth", "cert", pkgDir))
+
+	// Remove certificate as it's not required for submission (but it must be part of the application package)
+	if path, err := cli.config.privateKeyPath(app); err == nil {
+		os.RemoveAll(path)
+	} else {
+		require.Nil(t, err)
+	}
+	if path, err := cli.config.certificatePath(app); err == nil {
+		os.RemoveAll(path)
+	} else {
+		require.Nil(t, err)
+	}
 
 	// Zipping requires relative paths, so must let command run from pkgDir, then reset cwd for subsequent tests.
 	if cwd, err := os.Getwd(); err != nil {
@@ -180,7 +194,7 @@ func TestProdSubmitWithJava(t *testing.T) {
 	createApplication(t, pkgDir, true)
 
 	httpClient := &mock.HTTPClient{}
-	httpClient.NextResponse(200, `ok`)
+	httpClient.NextResponseString(200, `ok`)
 	cli, stdout, _ := newTestCLI(t, "CI=true")
 	cli.httpClient = httpClient
 	assert.Nil(t, cli.Run("config", "set", "application", "t1.a1.i1"))

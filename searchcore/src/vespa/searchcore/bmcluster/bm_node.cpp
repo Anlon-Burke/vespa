@@ -54,6 +54,7 @@
 #include <vespa/searchcore/proton/server/persistencehandlerproxy.h>
 #include <vespa/searchcore/proton/test/disk_mem_usage_notifier.h>
 #include <vespa/searchcore/proton/test/mock_shared_threading_service.h>
+#include <vespa/searchlib/attribute/interlock.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
 #include <vespa/searchlib/transactionlog/translogserver.h>
 #include <vespa/searchsummary/config/config-juniperrc.h>
@@ -591,8 +592,9 @@ MyBmNode::create_document_db(const BmClusterParams& params)
     mgr.nextGeneration(_shared_service.transport(), 0ms);
     _document_db = DocumentDB::create(_base_dir, mgr.getConfig(), _tls_spec, _query_limiter, _doc_type_name,
                                       _bucket_space, *bootstrap_config->getProtonConfigSP(), _document_db_owner,
-                                      _shared_service, *_persistence_engine, _tls,
+                                      _shared_service, _tls,
                                       _metrics_wire_service, _file_header_context,
+                                      std::make_shared<search::attribute::Interlock>(),
                                       _config_stores.getConfigStore(_doc_type_name.toString()),
                                       std::make_shared<vespalib::ThreadStackExecutor>(16, 128_Ki), HwInfo());
     _document_db->start();

@@ -4,6 +4,7 @@ package com.yahoo.searchdefinition;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.document.*;
 import com.yahoo.document.annotation.AnnotationReferenceDataType;
+import com.yahoo.documentmodel.NewDocumentReferenceDataType;
 import com.yahoo.documentmodel.NewDocumentType;
 import com.yahoo.searchdefinition.document.SDDocumentType;
 import com.yahoo.searchdefinition.document.TemporarySDDocumentType;
@@ -81,7 +82,10 @@ public class SDDocumentTypeOrderer {
             }
             else {
                 inherited = createdSDTypes.get(name);
-                if (inherited == null) throw new IllegalArgumentException("Document type '" + name + "' not found");
+                if (inherited == null) {
+                    throw new IllegalArgumentException("document " + type.getName() +
+                                                       " inherits from unavailable document " + name);
+                }
                 process(inherited, inherited);
             }
             type.inherit(inherited);
@@ -130,7 +134,7 @@ public class SDDocumentTypeOrderer {
             //do nothing
         } else if (type instanceof TensorDataType) {
             //do nothing
-        } else if (type instanceof ReferenceDataType) {
+        } else if (type instanceof NewDocumentReferenceDataType) {
             //do nothing
         } else {
             deployLogger.logApplicationPackage(Level.WARNING, "Unknown type : " + type);

@@ -15,6 +15,7 @@ import com.yahoo.searchdefinition.document.RankType;
 import com.yahoo.searchdefinition.document.SDDocumentType;
 import com.yahoo.searchdefinition.document.SDField;
 import com.yahoo.searchdefinition.document.Sorting;
+import com.yahoo.searchdefinition.document.annotation.SDAnnotationType;
 import com.yahoo.vespa.documentmodel.SummaryField;
 import com.yahoo.vespa.documentmodel.SummaryTransform;
 
@@ -138,6 +139,7 @@ public class ConvertParsedFields {
         if (indexing.isPresent()) {
             field.setIndexingScript(indexing.get().script());
         }
+        parsed.getWeight().ifPresent(value -> field.setWeight(value));
         parsed.getStemming().ifPresent(value -> field.setStemming(value));
         parsed.getNormalizing().ifPresent(value -> convertNormalizing(field, value));
         for (var attribute : parsed.getAttributes()) {
@@ -187,18 +189,21 @@ public class ConvertParsedFields {
         }
         parsed.getRankTypes().forEach((indexName, rankType) -> convertRankType(field, indexName, rankType));
         parsed.getSorting().ifPresent(sortInfo -> convertSorting(field, sortInfo, name));
-        if (parsed.getBolding()) {
+        if (parsed.hasBolding()) {
             // TODO must it be so ugly:
             SummaryField summaryField = field.getSummaryField(name, true);
             summaryField.addSource(name);
             summaryField.addDestination("default");
             summaryField.setTransform(summaryField.getTransform().bold());
         }
-        if (parsed.getLiteral()) {
+        if (parsed.hasLiteral()) {
             field.getRanking().setLiteral(true);
         }
-        if (parsed.getFilter()) {
+        if (parsed.hasFilter()) {
             field.getRanking().setFilter(true);
+        }
+        if (parsed.hasNormal()) {
+            field.getRanking().setNormal(true);
         }
     }
 
@@ -290,13 +295,12 @@ public class ConvertParsedFields {
         schema.addIndex(index);
     }
 
-    SDDocumentType convertStructDeclaration(Schema schema, ParsedStruct parsed) {
+    SDDocumentType convertStructDeclaration(Schema schema, SDDocumentType document, ParsedStruct parsed) {
         // TODO - can we cleanup this mess
         var structProxy = new SDDocumentType(parsed.name(), schema);
-        structProxy.setStruct(context.resolveStruct(parsed));
         for (var parsedField : parsed.getFields()) {
             var fieldType = context.resolveType(parsedField.getType());
-            var field = new SDField(structProxy, parsedField.name(), fieldType);
+            var field = new SDField(document, parsedField.name(), fieldType);
             convertCommonFieldSettings(field, parsedField);
             structProxy.addField(field);
             if (parsedField.hasIdOverride()) {
@@ -306,7 +310,19 @@ public class ConvertParsedFields {
         for (String inherit : parsed.getInherited()) {
             structProxy.inherit(new DataTypeName(inherit));                
         }
+        structProxy.setStruct(context.resolveStruct(parsed));
         return structProxy;
     }
 
+    void convertAnnotation(Schema schema, SDDocumentType document, ParsedAnnotation parsed) {
+        SDAnnotationType annType = context.resolveAnnotation(parsed.name());
+        var withStruct = parsed.getStruct();
+        if (withStruct.isPresent()) {
+            ParsedStruct parsedStruct = withStruct.get();
+            SDDocumentType structProxy = convertStructDeclaration(schema, document, parsedStruct);
+            structProxy.setStruct(context.resolveStruct(parsedStruct));
+            annType.setSdDocType(structProxy);
+        }
+        document.addAnnotation(annType);
+    }
 }

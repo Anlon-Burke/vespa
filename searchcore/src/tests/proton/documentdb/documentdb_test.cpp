@@ -2,11 +2,12 @@
 
 #include <tests/proton/common/dummydbowner.h>
 #include <vespa/config-bucketspaces.h>
+#include <vespa/config/subscription/sourcespec.h>
 #include <vespa/document/config/documenttypes_config_fwd.h>
 #include <vespa/document/datatype/documenttype.h>
 #include <vespa/document/repo/documenttyperepo.h>
 #include <vespa/document/test/make_bucket_space.h>
-#include <vespa/persistence/dummyimpl/dummy_bucket_executor.h>
+#include <vespa/fnet/transport.h>
 #include <vespa/searchcore/proton/attribute/flushableattribute.h>
 #include <vespa/searchcore/proton/common/statusreport.h>
 #include <vespa/searchcore/proton/docsummary/summaryflushtarget.h>
@@ -27,6 +28,7 @@
 #include <vespa/searchcore/proton/test/mock_shared_threading_service.h>
 #include <vespa/searchcorespi/index/indexflushtarget.h>
 #include <vespa/searchlib/attribute/attribute_read_guard.h>
+#include <vespa/searchlib/attribute/interlock.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
 #include <vespa/searchlib/transactionlog/translogserver.h>
 #include <vespa/vespalib/data/slime/slime.h>
@@ -34,8 +36,6 @@
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/vespalib/testkit/test_kit.h>
 #include <vespa/vespalib/util/size_literals.h>
-#include <vespa/config/subscription/sourcespec.h>
-#include <vespa/fnet/transport.h>
 #include <iostream>
 
 using namespace cloud::config::filedistribution;
@@ -122,7 +122,6 @@ struct Fixture : public FixtureBase {
     vespalib::ThreadStackExecutor _summaryExecutor;
     MockSharedThreadingService _shared_service;
     HwInfo _hwInfo;
-    storage::spi::dummy::DummyBucketExecutor _bucketExecutor;
     DocumentDB::SP _db;
     DummyFileHeaderContext _fileHeaderContext;
     TransLogServer _tls;
@@ -146,7 +145,6 @@ Fixture::Fixture(bool file_config)
       _summaryExecutor(8, 128_Ki),
       _shared_service(_summaryExecutor, _summaryExecutor),
       _hwInfo(),
-      _bucketExecutor(2),
       _db(),
       _fileHeaderContext(),
       _tls(_shared_service.transport(), "tmp", 9014, ".", _fileHeaderContext),
@@ -167,8 +165,10 @@ Fixture::Fixture(bool file_config)
     mgr.nextGeneration(_shared_service.transport(), 0ms);
     _db = DocumentDB::create(".", mgr.getConfig(), "tcp/localhost:9014", _queryLimiter, DocTypeName("typea"),
                              makeBucketSpace(),
-                             *b->getProtonConfigSP(), _myDBOwner, _shared_service, _bucketExecutor, _tls, _dummy,
-                             _fileHeaderContext, make_config_store(),
+                             *b->getProtonConfigSP(), _myDBOwner, _shared_service, _tls, _dummy,
+                             _fileHeaderContext,
+                             std::make_shared<search::attribute::Interlock>(),
+                             make_config_store(),
                              std::make_shared<vespalib::ThreadStackExecutor>(16, 128_Ki), _hwInfo);
     _db->start();
     _db->waitForOnlineState();

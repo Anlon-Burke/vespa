@@ -24,7 +24,6 @@ namespace document {
 
 namespace fieldvalue { class IteratorHandler; }
 
-class ByteBuffer;
 class DataType;
 
 class FieldValue : public vespalib::Identifiable
@@ -66,9 +65,6 @@ public:
     /** Get the datatype describing what can be stored in this fieldvalue. */
     virtual const DataType *getDataType() const = 0;
 
-    /** Wrapper for datatypes isA() function. See DataType. */
-    virtual bool isA(const FieldValue& other) const;
-
     void serialize(vespalib::nbostream &stream) const;
     vespalib::nbostream serialize() const;
 
@@ -107,13 +103,6 @@ public:
 
     /** Override toXml from XmlSerializable to add start/stop tags. */
     virtual std::string toXml(const std::string& indent = "") const;
-
-    // Utility functions to set commonly used value types.
-    virtual FieldValue& operator=(vespalib::stringref);
-    virtual FieldValue& operator=(int32_t);
-    virtual FieldValue& operator=(int64_t);
-    virtual FieldValue& operator=(float);
-    virtual FieldValue& operator=(double);
 
     // Utility functions to unwrap field values if you know the type.
 
@@ -179,14 +168,12 @@ public:
     }
 
     virtual void print(std::ostream& out, bool verbose, const std::string& indent) const = 0;
-    // Duplication to reduce size of FieldValue
-    void print(std::ostream& out) const { print(out, false, ""); }
-    void print(std::ostream& out, bool verbose) const { print(out, verbose, ""); }
-    void print(std::ostream& out, const std::string& indent) const { print(out, false, indent); }
     /** Utility function to get this output as a string.  */
     std::string toString(bool verbose=false, const std::string& indent="") const;
     virtual void printXml(XmlOutputStream& out) const = 0;
 
+    // Utility functions to set commonly used value types.
+    virtual FieldValue& operator=(vespalib::stringref);
 private:
     fieldvalue::ModificationStatus
     iterateNested(FieldPath::const_iterator start, FieldPath::const_iterator end, fieldvalue::IteratorHandler & handler) const {

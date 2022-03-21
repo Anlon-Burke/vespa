@@ -2,6 +2,7 @@
 package com.yahoo.vespa.hosted.controller;
 
 import com.yahoo.component.Version;
+import com.yahoo.component.VersionCompatibility;
 import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.application.api.ValidationId;
 import com.yahoo.config.application.api.ValidationOverrides;
@@ -20,6 +21,7 @@ import com.yahoo.vespa.athenz.api.AthenzUser;
 import com.yahoo.vespa.curator.Lock;
 import com.yahoo.vespa.flags.FetchVector;
 import com.yahoo.vespa.flags.FlagSource;
+import com.yahoo.vespa.flags.ListFlag;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.flags.StringFlag;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.DeploymentData;
@@ -84,20 +86,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Consumer;
-import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
+import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
 import static com.yahoo.vespa.hosted.controller.api.integration.configserver.Node.State.active;
 import static com.yahoo.vespa.hosted.controller.api.integration.configserver.Node.State.reserved;
+import static com.yahoo.vespa.hosted.controller.versions.VespaVersion.Confidence.low;
 import static java.util.Comparator.naturalOrder;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
+import static java.util.stream.Collectors.toSet;
 
 /**
  * A singleton owned by the Controller which contains the methods and state for controlling applications.
@@ -123,6 +129,7 @@ public class ApplicationController {
     private final ApplicationPackageValidator applicationPackageValidator;
     private final EndpointCertificates endpointCertificates;
     private final StringFlag dockerImageRepoFlag;
+    private final ListFlag<String> incompatibleVersions;
     private final BillingController billingController;
 
     ApplicationController(Controller controller, CuratorDb curator, AccessControl accessControl, Clock clock,
@@ -137,6 +144,7 @@ public class ApplicationController {
         artifactRepository = controller.serviceRegistry().artifactRepository();
         applicationStore = controller.serviceRegistry().applicationStore();
         dockerImageRepoFlag = PermanentFlags.DOCKER_IMAGE_REPO.bindTo(flagSource);
+        incompatibleVersions = PermanentFlags.INCOMPATIBLE_VERSIONS.bindTo(flagSource);
         deploymentTrigger = new DeploymentTrigger(controller, clock);
         applicationPackageValidator = new ApplicationPackageValidator(controller);
         endpointCertificates = new EndpointCertificates(controller,
@@ -222,6 +230,16 @@ public class ApplicationController {
         return curator.readApplications(false);
     }
 
+    /** Returns the target major version for applications not specifying one */
+    public OptionalInt targetMajorVersion() {
+        return curator.readTargetMajorVersion().map(OptionalInt::of).orElse(OptionalInt.empty());
+    }
+
+    /** Sets the default target major version. Set to empty to determine target version normally (by confidence) */
+    public void setTargetMajorVersion(Optional<Integer> targetMajorVersion) {
+        curator.writeTargetMajorVersion(targetMajorVersion);
+    }
+
     /**
      * Returns a snapshot of all readable applications. Unlike {@link ApplicationController#asList()} this ignores
      * applications that cannot currently be read (e.g. due to serialization issues) and may return an incomplete
@@ -292,6 +310,87 @@ public class ApplicationController {
                          .flatMap(Optional::stream)
                          .min(naturalOrder())
                          .orElse(controller.readSystemVersion());
+    }
+
+    /**
+     * Returns the preferred Vespa version to compile against, for the given application, on an optionally restricted major.
+     *
+     * A target major may be specified as an argument; or it may be set specifically for the application;
+     * or in general, for all applications; the first such specification wins.
+     *
+     * The returned version is not newer than the oldest deployed platform for the application, unless
+     * the target major differs from the oldest deployed platform, in which case it is not newer than
+     * the oldest available platform version on that major instead.
+     *
+     * The returned version is compatible with a platform version available in the system.
+     *
+     * A candidate is sought first among versions with non-broken confidence, then among those with forgotten confidence.
+     *
+     * The returned version is the latest in the relevant candidate set.
+     *
+     * If no such version exists, an {@link IllegalArgumentException} is thrown.
+     */
+    public Version compileVersion(TenantAndApplicationId id, OptionalInt wantedMajor) {
+
+        // Read version status, and pick out target platforms we could run the compiled package on.
+        OptionalInt targetMajor = firstNonEmpty(wantedMajor, requireApplication(id).majorVersion(), targetMajorVersion());
+        VersionStatus versionStatus = controller.readVersionStatus();
+        Version systemVersion = controller.systemVersion(versionStatus);
+        Version oldestInstalledPlatform = oldestInstalledPlatform(id);
+
+        // Target platforms are all versions not older than the oldest installed platform, unless forcing a major version change.
+        Predicate<Version> isTargetPlatform = targetMajor.isEmpty() || targetMajor.getAsInt() == oldestInstalledPlatform.getMajor()
+                                              ? version -> ! version.isBefore(oldestInstalledPlatform)
+                                              : version -> targetMajor.getAsInt() == version.getMajor();
+        Set<Version> platformVersions = versionStatus.versions().stream()
+                                                     .map(VespaVersion::versionNumber)
+                                                     .filter(version -> ! version.isAfter(systemVersion))
+                                                     .filter(isTargetPlatform)
+                                                     .collect(toSet());
+        if (platformVersions.isEmpty())
+            throw new IllegalArgumentException("this system has no available versions" +
+                                               (targetMajor.isPresent() ? " on specified major: " + targetMajor.getAsInt() : ""));
+
+        // The returned compile version must be compatible with at least one target platform.
+        // If it is incompatible with any of the current platforms, the system will trigger a platform change.
+        // The returned compile version should also be at least as old as both the oldest target platform version,
+        // and the oldest current platform, unless the two are incompatible, in which case only the target matters.
+        VersionCompatibility compatibility = versionCompatibility(id.defaultInstance()); // Wrong id level >_<
+        Version oldestTargetPlatform = platformVersions.stream().min(naturalOrder()).get();
+        Version newestVersion =    compatibility.accept(oldestInstalledPlatform, oldestTargetPlatform)
+                                && oldestInstalledPlatform.isBefore(oldestTargetPlatform)
+                                ? oldestInstalledPlatform
+                                : oldestTargetPlatform;
+        Predicate<Version> systemCompatible = version ->    ! version.isAfter(newestVersion)
+                                                         &&   platformVersions.stream().anyMatch(platform -> compatibility.accept(platform, version));
+
+        // Find the newest, system-compatible version with non-broken confidence.
+        Optional<Version> nonBroken = versionStatus.versions().stream()
+                                                   .filter(VespaVersion::isReleased)
+                                                   .filter(version -> version.confidence().equalOrHigherThan(low))
+                                                   .map(VespaVersion::versionNumber)
+                                                   .filter(systemCompatible)
+                                                   .max(naturalOrder());
+        if (nonBroken.isPresent()) return nonBroken.get();
+
+        // Fall back to the newest, system-compatible version with unknown confidence.
+        Set<Version> knownVersions = versionStatus.versions().stream().map(VespaVersion::versionNumber).collect(toSet());
+        Optional<Version> unknown = controller.mavenRepository().metadata().versions().stream()
+                                              .filter(version -> ! knownVersions.contains(version))
+                                              .filter(systemCompatible)
+                                              .max(naturalOrder());
+        if (unknown.isPresent()) return unknown.get();
+
+        throw new IllegalArgumentException("no suitable, released compile version exists" +
+                                           (targetMajor.isPresent() ? " for specified major: " + targetMajor.getAsInt() : ""));
+    }
+
+    private OptionalInt firstNonEmpty(OptionalInt... choices) {
+        for (OptionalInt choice : choices)
+            if (choice.isPresent())
+                return choice;
+
+        return OptionalInt.empty();
     }
 
     /**
@@ -446,21 +545,17 @@ public class ApplicationController {
                 controller.notificationsDb().removeNotifications(notification.source());
         }
 
-        var oldestDeployedVersion = application.get().productionDeployments().values().stream()
-                                               .flatMap(List::stream)
-                                               .map(Deployment::applicationVersion)
-                                               .filter(version -> ! version.isDeployedDirectly())
-                                               .min(naturalOrder())
-                                               .orElse(ApplicationVersion.unknown);
+        ApplicationVersion oldestDeployedVersion = application.get().oldestDeployedApplication()
+                                                              .orElse(ApplicationVersion.unknown);
 
-        var olderVersions = application.get().versions().stream()
-                .filter(version -> version.compareTo(oldestDeployedVersion) < 0)
-                .sorted()
-                .collect(Collectors.toList());
+        List<ApplicationVersion> olderVersions = application.get().versions().stream()
+                                                            .filter(version -> version.compareTo(oldestDeployedVersion) < 0)
+                                                            .sorted()
+                                                            .collect(Collectors.toList());
 
         // Remove any version not deployed anywhere - but keep one
-        for (int i = 0; i < olderVersions.size() - 1; i++) {
-            application = application.withoutVersion(olderVersions.get(i));
+        for (ApplicationVersion version : olderVersions) {
+            application = application.withoutVersion(version);
         }
 
         store(application);
@@ -502,7 +597,7 @@ public class ApplicationController {
             Optional<DockerImage> dockerImageRepo = Optional.ofNullable(
                     dockerImageRepoFlag
                             .with(FetchVector.Dimension.ZONE_ID, zone.value())
-                            .with(FetchVector.Dimension.APPLICATION_ID, application.serializedForm())
+                            .with(APPLICATION_ID, application.serializedForm())
                             .value())
                     .filter(s -> !s.isBlank())
                     .map(DockerImage::fromString);
@@ -755,6 +850,10 @@ public class ApplicationController {
         return curator.lockForDeployment(application, zone);
     }
 
+    public VersionCompatibility versionCompatibility(ApplicationId id) {
+        return VersionCompatibility.fromVersionList(incompatibleVersions.with(APPLICATION_ID, id.serializedForm()).value());
+    }
+
     /**
      * Verifies that the application can be deployed to the tenant, following these rules:
      *
@@ -871,11 +970,9 @@ public class ApplicationController {
     /** Returns the latest known version within the given major, which is not newer than the system version. */
     public Optional<Version> lastCompatibleVersion(int targetMajorVersion) {
         VersionStatus versions = controller.readVersionStatus();
-        Version systemVersion = controller.systemVersion(versions);
-        return versions.versions().stream()
+        return versions.deployableVersions().stream()
                        .map(VespaVersion::versionNumber)
                        .filter(version -> version.getMajor() == targetMajorVersion)
-                       .filter(version -> ! version.isAfter(systemVersion))
                        .max(naturalOrder());
     }
 

@@ -20,6 +20,7 @@ public interface AccessControlService {
     boolean decideSshAccess(TenantName tenantName, Instant expiry, OAuthCredentials oAuthCredentials, boolean approve);
     boolean requestSshAccess(TenantName tenantName);
     AthenzRoleInformation getAccessRoleInformation(TenantName tenantName);
-    void setPreapprovedAccess(TenantName tenantName, boolean preapproved);
+    void setManagedAccess(TenantName tenantName, boolean managedAccess);
+    boolean getManagedAccess(TenantName tenantName);
     Collection<AthenzUser> listMembers();
 }

@@ -2,7 +2,9 @@
 package com.yahoo.vespa.hosted.controller.deployment;
 
 import com.google.common.collect.ImmutableSortedMap;
+import com.yahoo.collections.Iterables;
 import com.yahoo.component.Version;
+import com.yahoo.component.VersionCompatibility;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.vespa.curator.Lock;
@@ -26,13 +28,17 @@ import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
 import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackageDiff;
 import com.yahoo.vespa.hosted.controller.persistence.BufferedLogStore;
 import com.yahoo.vespa.hosted.controller.persistence.CuratorDb;
+import com.yahoo.vespa.hosted.controller.versions.VersionStatus;
+import com.yahoo.vespa.hosted.controller.versions.VespaVersion;
 
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -49,6 +55,7 @@ import java.util.function.UnaryOperator;
 import java.util.logging.Level;
 import java.util.stream.Stream;
 
+import static com.yahoo.collections.Iterables.reversed;
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.reset;
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.running;
 import static com.yahoo.vespa.hosted.controller.deployment.Step.Status.succeeded;
@@ -59,7 +66,6 @@ import static com.yahoo.vespa.hosted.controller.deployment.Step.endStagingSetup;
 import static com.yahoo.vespa.hosted.controller.deployment.Step.endTests;
 import static com.yahoo.vespa.hosted.controller.deployment.Step.report;
 import static java.time.temporal.ChronoUnit.SECONDS;
-import static java.util.Comparator.naturalOrder;
 import static java.util.function.Predicate.not;
 import static java.util.logging.Level.INFO;
 import static java.util.stream.Collectors.toList;
@@ -341,6 +347,7 @@ public class JobController {
                                                                    LinkedHashMap::new)),
                                     controller.system(),
                                     systemVersion,
+                                    instance -> controller.applications().versionCompatibility(application.id().instance(instance)),
                                     controller.clock().instant());
     }
 
@@ -496,6 +503,12 @@ public class JobController {
 
     /** Orders a run of the given type, or throws an IllegalStateException if that job type is already running. */
     public void start(ApplicationId id, JobType type, Versions versions, boolean isRedeployment, JobProfile profile, Optional<String> reason) {
+        if (versions.targetApplication().compileVersion()
+                    .map(version -> controller.applications().versionCompatibility(id).refuse(versions.targetPlatform(), version))
+                    .orElse(false))
+            throw new IllegalArgumentException("Will not start a job with incompatible platform version (" + versions.targetPlatform() + ") " +
+                                               "and compile versions (" + versions.targetApplication().compileVersion().get() + ")");
+
         locked(id, type, __ -> {
             Optional<Run> last = last(id, type);
             if (last.flatMap(run -> active(run.id())).isPresent())
@@ -527,8 +540,10 @@ public class JobController {
         lastRun.filter(run -> ! run.hasEnded()).ifPresent(run -> abortAndWait(run.id()));
 
         long build = 1 + lastRun.map(run -> run.versions().targetApplication().buildNumber().orElse(0)).orElse(0L);
-        ApplicationVersion version = ApplicationVersion.from(Optional.empty(), build, Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(), Optional.empty(), true, Optional.empty());
+        ApplicationVersion version = ApplicationVersion.from(Optional.empty(), build, Optional.empty(),
+                                                             applicationPackage.compileVersion(),
+                                                             Optional.empty(), Optional.empty(),
+                                                             Optional.empty(), true, Optional.empty());
 
         byte[] diff = lastRun.map(run -> run.versions().targetApplication())
                 .map(prevVersion -> ApplicationPackageDiff.diff(new ApplicationPackage(controller.applications().applicationStore().get(deploymentId, prevVersion)), applicationPackage))
@@ -536,16 +551,10 @@ public class JobController {
 
         controller.applications().lockApplicationOrThrow(TenantAndApplicationId.from(id), application -> {
             controller.applications().applicationStore().putDev(deploymentId, version, applicationPackage.zippedContent(), diff);
+            Version targetPlatform = platform.orElseGet(() -> findTargetPlatform(applicationPackage, lastRun, id));
             start(id,
                   type,
-                  new Versions(platform.orElse(applicationPackage.deploymentSpec().majorVersion()
-                                                                 .flatMap(controller.applications()::lastCompatibleVersion)
-                                                                 .or(() -> lastRun.map(run -> run.versions().targetPlatform())
-                                                                                  .filter(controller.readVersionStatus()::isActive))
-                                                                 .orElseGet(controller::readSystemVersion)),
-                               version,
-                               lastRun.map(run -> run.versions().targetPlatform()),
-                               lastRun.map(run -> run.versions().targetApplication())),
+                  new Versions(targetPlatform, version, lastRun.map(run -> run.versions().targetPlatform()), lastRun.map(run -> run.versions().targetApplication())),
                   false,
                   dryRun ? JobProfile.developmentDryRun : JobProfile.development,
                   Optional.empty());
@@ -554,6 +563,31 @@ public class JobController {
         locked(id, type, __ -> {
             runner.get().accept(last(id, type).get());
         });
+    }
+
+    private Version findTargetPlatform(ApplicationPackage applicationPackage, Optional<Run> lastRun, ApplicationId id) {
+        Optional<Integer> major = applicationPackage.deploymentSpec().majorVersion();
+        if (major.isPresent())
+            return controller.applications().lastCompatibleVersion(major.get())
+                             .orElseThrow(() -> new IllegalArgumentException("major " + major.get() + " specified in deployment.xml, " +
+                                                                             "but no version on this major was found"));
+
+        // Prefer previous platform if possible.
+        VersionStatus versionStatus = controller.readVersionStatus();
+        VersionCompatibility compatibility = controller.applications().versionCompatibility(id);
+        Optional<Version> target = lastRun.map(run -> run.versions().targetPlatform()).filter(versionStatus::isActive);
+        if (target.isPresent() && compatibility.accept(target.get(), applicationPackage.compileVersion().orElse(target.get())))
+            return target.get();
+
+        // Otherwise, use newest, compatible version.
+        for (VespaVersion platform : reversed(versionStatus.deployableVersions()))
+            if (compatibility.accept(platform.versionNumber(), applicationPackage.compileVersion().orElse(platform.versionNumber())))
+                return platform.versionNumber();
+
+        throw new IllegalArgumentException("no suitable platform version found" +
+                                           applicationPackage.compileVersion()
+                                                             .map(version -> " for package compiled against " + version)
+                                                             .orElse(""));
     }
 
     /** Aborts a run and waits for it complete. */
@@ -607,11 +641,7 @@ public class JobController {
 
     private void prunePackages(TenantAndApplicationId id) {
         controller.applications().lockApplicationIfPresent(id, application -> {
-            application.get().productionDeployments().values().stream()
-                       .flatMap(List::stream)
-                       .map(Deployment::applicationVersion)
-                       .filter(version -> ! version.isUnknown() && ! version.isDeployedDirectly())
-                       .min(naturalOrder())
+            application.get().oldestDeployedApplication()
                        .ifPresent(oldestDeployed -> {
                            controller.applications().applicationStore().prune(id.tenant(), id.application(), oldestDeployed);
                            controller.applications().applicationStore().pruneTesters(id.tenant(), id.application(), oldestDeployed);

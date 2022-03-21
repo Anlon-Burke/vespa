@@ -518,7 +518,8 @@
           "versions": {
             "targetPlatform": "6.1.0",
             "targetApplication": {
-              "build": 1
+              "build": 1,
+              "compileVersion": "6.1.0"
             }
           },
           "steps": [
@@ -572,14 +573,6 @@
             {
               "application": {
                 "build": 4,
-                "compileVersion": "6.1.0",
-                "sourceUrl": "repository1/tree/commit1",
-                "commit": "commit1"
-              }
-            },
-            {
-              "application": {
-                "build": 3,
                 "compileVersion": "6.1.0",
                 "sourceUrl": "repository1/tree/commit1",
                 "commit": "commit1"

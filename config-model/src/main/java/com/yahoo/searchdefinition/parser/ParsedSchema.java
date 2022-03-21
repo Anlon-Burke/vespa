@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * This class holds the extracted information after parsing
@@ -30,7 +31,7 @@ public class ParsedSchema extends ParsedBlock {
     }
 
     private boolean documentWithoutSchema = false;
-    private boolean rawAsBase64 = false; // TODO Vespa 8 flip default
+    private Boolean rawAsBase64 = null;
     private ParsedDocument myDocument = null;
     private Stemming defaultStemming = null;
     private final List<ImportedField> importedFields = new ArrayList<>();
@@ -53,7 +54,7 @@ public class ParsedSchema extends ParsedBlock {
     }
 
     boolean getDocumentWithoutSchema() { return documentWithoutSchema; }
-    boolean getRawAsBase64() { return rawAsBase64; }
+    Optional<Boolean> getRawAsBase64() { return Optional.ofNullable(rawAsBase64); }
     boolean hasDocument() { return myDocument != null; }
     ParsedDocument getDocument() { return myDocument; }
     boolean hasStemming() { return defaultStemming != null; }
@@ -82,8 +83,9 @@ public class ParsedSchema extends ParsedBlock {
     void addDocument(ParsedDocument document) {
         verifyThat(myDocument == null,
                    "already has", myDocument, "so cannot add", document);
-        verifyThat(name().equals(document.name()),
-                   "schema " + name() + "can only contain document named " + name() + ", was: "+ document.name());
+        // TODO - disallow?
+        // verifyThat(name().equals(document.name()),
+        // "schema " + name() + " can only contain document named " + name() + ", was: "+ document.name());
         this.myDocument = document;
     }
 
@@ -156,16 +158,15 @@ public class ParsedSchema extends ParsedBlock {
         verifyThat(name.equals(parsed.name()), "resolveInherit name mismatch for", name);
         verifyThat(! resolvedInherits.containsKey(name), "double resolveInherit for", name);
         resolvedInherits.put(name, parsed);
-        var old = allResolvedInherits.put(name, parsed);
+        var old = allResolvedInherits.put("schema " + name, parsed);
         verifyThat(old == null || old == parsed, "conflicting resolveInherit for", name);
     }
 
     void resolveInheritByDocument(String name, ParsedSchema parsed) {
         verifyThat(inheritedByDocument.contains(name),
                    "resolveInheritByDocument for non-inherited name", name);
-        verifyThat(name.equals(parsed.name()), "resolveInheritByDocument name mismatch for", name);
-        var old = allResolvedInherits.put(name, parsed);
-        verifyThat(old == null || old == parsed, "conflicting resolveInherit for", name);
+        var old = allResolvedInherits.put("document " + name, parsed);
+        verifyThat(old == null || old == parsed, "conflicting resolveInheritByDocument for", name);
     }
 
 }

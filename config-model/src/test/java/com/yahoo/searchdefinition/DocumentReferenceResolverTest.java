@@ -3,7 +3,7 @@ package com.yahoo.searchdefinition;
 
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.document.DataType;
-import com.yahoo.document.ReferenceDataType;
+import com.yahoo.documentmodel.NewDocumentReferenceDataType;
 import com.yahoo.document.TemporaryStructuredDataType;
 import com.yahoo.searchdefinition.document.SDDocumentType;
 import com.yahoo.searchdefinition.document.SDField;
@@ -38,12 +38,12 @@ public class DocumentReferenceResolverTest {
         barSchema.addDocument(barDocument);
 
         // Create foo document with document reference to bar and add another field
-        SDField fooRefToBarField = new SDField
-                ("bar_ref", ReferenceDataType.createWithInferredId(barDocument.getDocumentType()));
-        AttributeUtils.addAttributeAspect(fooRefToBarField);
-        SDField irrelevantField = new SDField("irrelevant_stuff", DataType.INT);
         Schema fooSchema = new Schema(FOO, MockApplicationPackage.createEmpty());
         SDDocumentType fooDocument = new SDDocumentType("foo", fooSchema);
+        SDField fooRefToBarField = new SDField
+            (fooDocument, "bar_ref", new NewDocumentReferenceDataType(barDocument.getDocumentType()));
+        AttributeUtils.addAttributeAspect(fooRefToBarField);
+        SDField irrelevantField = new SDField(fooDocument, "irrelevant_stuff", DataType.INT);
         fooDocument.addField(fooRefToBarField);
         fooDocument.addField(irrelevantField);
         fooSchema.addDocument(fooDocument);
@@ -62,11 +62,12 @@ public class DocumentReferenceResolverTest {
     @Test
     public void throws_user_friendly_exception_if_referenced_document_does_not_exist() {
         // Create foo document with document reference to non-existing document bar
-        SDField fooRefToBarField = new SDField(
-                "bar_ref", ReferenceDataType.createWithInferredId(TemporaryStructuredDataType.create("bar")));
-        AttributeUtils.addAttributeAspect(fooRefToBarField);
         Schema fooSchema = new Schema(FOO, MockApplicationPackage.createEmpty());
         SDDocumentType fooDocument = new SDDocumentType("foo", fooSchema);
+        SDField fooRefToBarField = new SDField(
+                fooDocument,
+                "bar_ref", NewDocumentReferenceDataType.forDocumentName("bar"));
+        AttributeUtils.addAttributeAspect(fooRefToBarField);
         fooDocument.addField(fooRefToBarField);
         fooSchema.addDocument(fooDocument);
 
@@ -86,10 +87,10 @@ public class DocumentReferenceResolverTest {
         barSchema.addDocument(barDocument);
 
         // Create foo document with document reference to bar
-        SDField fooRefToBarField = new SDField
-                ("bar_ref", ReferenceDataType.createWithInferredId(barDocument.getDocumentType()));
         Schema fooSchema = new Schema(FOO, MockApplicationPackage.createEmpty());
         SDDocumentType fooDocument = new SDDocumentType("foo", fooSchema);
+        SDField fooRefToBarField = new SDField
+            (fooDocument, "bar_ref", new NewDocumentReferenceDataType(barDocument.getDocumentType()));
         fooDocument.addField(fooRefToBarField);
         fooSchema.addDocument(fooDocument);
 

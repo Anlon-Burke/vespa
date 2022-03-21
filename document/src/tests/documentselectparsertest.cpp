@@ -6,6 +6,7 @@
 #include <vespa/document/update/assignvalueupdate.h>
 #include <vespa/document/update/documentupdate.h>
 #include <vespa/document/datatype/documenttype.h>
+#include <vespa/document/fieldvalue/boolfieldvalue.h>
 #include <vespa/document/fieldvalue/bytefieldvalue.h>
 #include <vespa/document/fieldvalue/intfieldvalue.h>
 #include <vespa/document/fieldvalue/longfieldvalue.h>
@@ -43,7 +44,7 @@ protected:
     std::vector<Document::SP > _doc;
     std::vector<DocumentUpdate::SP > _update;
 
-    ~DocumentSelectParserTest();
+    ~DocumentSelectParserTest() override;
 
     Document::SP createDoc(
             vespalib::stringref doctype, vespalib::stringref id, uint32_t hint,
@@ -153,18 +154,18 @@ DocumentSelectParserTest::createDocs()
         // Add some arrays and structs to doc 1
     {
         StructFieldValue sval(_doc.back()->getField("mystruct").getDataType());
-        sval.set("key", 14);
-        sval.set("value", "structval");
+        sval.setValue("key", IntFieldValue::make(14));
+        sval.setValue("value", StringFieldValue::make("structval"));
         _doc.back()->setValue("mystruct", sval);
         ArrayFieldValue
             aval(_doc.back()->getField("structarray").getDataType());
         {
             StructFieldValue sval1(aval.getNestedType());
-            sval1.set("key", 15);
-            sval1.set("value", "structval1");
+            sval1.setValue("key", IntFieldValue::make(15));
+            sval1.setValue("value", StringFieldValue::make("structval1"));
             StructFieldValue sval2(aval.getNestedType());
-            sval2.set("key", 16);
-            sval2.set("value", "structval2");
+            sval2.setValue("key", IntFieldValue::make(16));
+            sval2.setValue("value", StringFieldValue::make("structval2"));
             aval.add(sval1);
             aval.add(sval2);
         }
@@ -182,11 +183,11 @@ DocumentSelectParserTest::createDocs()
         ArrayFieldValue abval(_doc.back()->getField("structarray").getDataType());
         {
             StructFieldValue sval1(aval.getNestedType());
-            sval1.set("key", 17);
-            sval1.set("value", "structval3");
+            sval1.setValue("key", IntFieldValue::make(17));
+            sval1.setValue("value", StringFieldValue::make("structval3"));
             StructFieldValue sval2(aval.getNestedType());
-            sval2.set("key", 18);
-            sval2.set("value", "structval4");
+            sval2.setValue("key", IntFieldValue::make(18));
+            sval2.setValue("value", StringFieldValue::make("structval4"));
             abval.add(sval1);
             abval.add(sval2);
         }
@@ -237,6 +238,14 @@ DocumentSelectParserTest::createDocs()
     _doc.push_back(createDoc(
         "testdoctype1", "id:myspace:testdoctype1:g=xyzzy:foo",
         10, 1.4, "inherited", "", 42)); // DOC 10
+    _doc.push_back(createDoc(
+            "testdoctype1", "id:myspace:testdoctype1::withtruebool",
+            10, 1.4, "inherited", "", 42)); // DOC 11
+    _doc.back()->setValue("boolfield", BoolFieldValue(true));
+    _doc.push_back(createDoc(
+            "testdoctype1", "id:myspace:testdoctype1::withfalsebool",
+            10, 1.4, "inherited", "", 42)); // DOC 12
+    _doc.back()->setValue("boolfield", BoolFieldValue(false));
 
     _update.clear();
     _update.push_back(createUpdate("testdoctype1", "id:myspace:testdoctype1::anything", 20, "hmm"));
@@ -912,6 +921,16 @@ TEST_F(DocumentSelectParserTest, operators_9)
     PARSE("testdoctype1.structarray.key <= 14", *_doc[1], False);
     PARSE("testdoctype1.structarray.key >= 16", *_doc[1], True);
     PARSE("testdoctype1.structarray.key >= 17", *_doc[1], False);
+}
+
+TEST_F(DocumentSelectParserTest, can_use_boolean_fields_in_expressions) {
+    createDocs();
+    PARSE("testdoctype1.boolfield == 1", *_doc[11], True); // has explicit field set to true
+    PARSE("testdoctype1.boolfield == 1", *_doc[12], False); // has explicit field set to false
+    PARSE("testdoctype1.boolfield == 0", *_doc[12], True);
+    // FIXME very un-intuitive behavior when nulls are implicitly returned:
+    PARSE("testdoctype1.boolfield == 1", *_doc[1], False); // Does not have field set in document
+    PARSE("testdoctype1.boolfield == 0", *_doc[1], False); // Does not have field set in document
 }
 
 namespace {

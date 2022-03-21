@@ -11,7 +11,6 @@
 #include <vespa/document/annotation/spantree.h>
 #include <vespa/vespalib/stllike/hash_map.h>
 #include <vespa/vespalib/util/buffer.h>
-#include <vespa/fastos/dynamiclibrary.h>
 
 namespace document {
 
@@ -24,7 +23,7 @@ public:
     typedef std::vector<SpanTree::UP> SpanTrees;
 
     StringFieldValue() : Parent(), _annotationData() { }
-    StringFieldValue(const string &value)
+    StringFieldValue(const vespalib::stringref &value)
             : Parent(value), _annotationData() { }
 
     StringFieldValue(const StringFieldValue &rhs);
@@ -57,6 +56,8 @@ public:
 
     using LiteralFieldValueB::operator=;
     DECLARE_IDENTIFIABLE(StringFieldValue);
+    static std::unique_ptr<StringFieldValue> make(vespalib::stringref value) { return std::make_unique<StringFieldValue>(value); }
+    static std::unique_ptr<StringFieldValue> make() { return StringFieldValue::make(""); }
 private:
     void doClearSpanTrees();
 

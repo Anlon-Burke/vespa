@@ -2,7 +2,7 @@
 package cmd
 
 import (
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -12,10 +12,10 @@ import (
 
 func TestListSampleApps(t *testing.T) {
 	c := &mock.HTTPClient{}
-	c.NextResponse(200, readTestData(t, "sample-apps-contents.json"))
-	c.NextResponse(200, readTestData(t, "sample-apps-news.json"))
-	c.NextResponse(200, readTestData(t, "sample-apps-operations.json"))
-	c.NextResponse(200, readTestData(t, "sample-apps-vespa-cloud.json"))
+	c.NextResponseString(200, readTestData(t, "sample-apps-contents.json"))
+	c.NextResponseString(200, readTestData(t, "sample-apps-news.json"))
+	c.NextResponseString(200, readTestData(t, "sample-apps-operations.json"))
+	c.NextResponseString(200, readTestData(t, "sample-apps-vespa-cloud.json"))
 
 	apps, err := listSampleApps(c)
 	assert.Nil(t, err)
@@ -59,7 +59,7 @@ func TestListSampleApps(t *testing.T) {
 }
 
 func readTestData(t *testing.T, name string) string {
-	contents, err := ioutil.ReadFile(filepath.Join("testdata", name))
+	contents, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,14 +20,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Random;
 import java.util.function.UnaryOperator;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 
 import static com.yahoo.vespa.hosted.controller.deployment.DeploymentTrigger.ChangesToCancel.PLATFORM;
-import static java.util.Comparator.reverseOrder;
 
 /**
  * Maintenance job which schedules applications for Vespa version upgrade
@@ -57,7 +56,7 @@ public class Upgrader extends ControllerMaintainer {
         VersionStatus versionStatus = controller().readVersionStatus();
         cancelBrokenUpgrades(versionStatus);
 
-        Optional<Integer> targetMajorVersion = targetMajorVersion();
+        OptionalInt targetMajorVersion = targetMajorVersion();
         InstanceList instances = instances(controller().systemVersion(versionStatus));
         for (UpgradePolicy policy : UpgradePolicy.values())
             updateTargets(versionStatus, instances, policy, targetMajorVersion);
@@ -84,7 +83,7 @@ public class Upgrader extends ControllerMaintainer {
         }
     }
 
-    private void updateTargets(VersionStatus versionStatus, InstanceList instances, UpgradePolicy policy, Optional<Integer> targetMajorVersion) {
+    private void updateTargets(VersionStatus versionStatus, InstanceList instances, UpgradePolicy policy, OptionalInt targetMajorVersion) {
         InstanceList remaining = instances.with(policy);
         List<Version> targetAndNewer = new ArrayList<>();
         UnaryOperator<InstanceList> cancellationCriterion = policy == UpgradePolicy.canary ? i -> i.not().upgradingTo(targetAndNewer)
@@ -92,9 +91,9 @@ public class Upgrader extends ControllerMaintainer {
                                                                                                    .not().upgradingTo(targetAndNewer);
 
         Map<ApplicationId, Version> targets = new LinkedHashMap<>();
-        for (Version version : targetsForPolicy(versionStatus, policy)) {
+        for (Version version : controller().applications().deploymentTrigger().targetsForPolicy(versionStatus, policy)) {
             targetAndNewer.add(version);
-            InstanceList eligible = eligibleForVersion(remaining, version, cancellationCriterion, targetMajorVersion);
+            InstanceList eligible = eligibleForVersion(remaining, version, targetMajorVersion);
             InstanceList outdated = cancellationCriterion.apply(eligible);
             cancelUpgradesOf(outdated.upgrading(), "Upgrading to outdated versions");
 
@@ -111,25 +110,12 @@ public class Upgrader extends ControllerMaintainer {
         }
     }
 
-    /** Returns target versions for given confidence, by descending version number. */
-    private List<Version> targetsForPolicy(VersionStatus versions, UpgradePolicy policy) {
-        Version systemVersion = controller().systemVersion(versions);
-        if (policy == UpgradePolicy.canary)
-            return List.of(systemVersion);
-
-        Confidence target = policy == UpgradePolicy.defaultPolicy ? Confidence.normal : Confidence.high;
-        return versions.versions().stream()
-                .filter(version ->    ! version.versionNumber().isAfter(systemVersion)
-                                   &&   version.confidence().equalOrHigherThan(target))
-                .map(VespaVersion::versionNumber)
-                .sorted(reverseOrder())
-                .collect(Collectors.toList());
-    }
-
-    private InstanceList eligibleForVersion(InstanceList instances, Version version, UnaryOperator<InstanceList> cancellationCriterion, Optional<Integer> targetMajorVersion) {
+    private InstanceList eligibleForVersion(InstanceList instances, Version version,
+                                            OptionalInt targetMajorVersion) {
         Change change = Change.of(version);
         return instances.not().failingOn(version)
-                        .allowMajorVersion(version.getMajor(), targetMajorVersion.orElse(version.getMajor()))
+                        .allowingMajorVersion(version.getMajor(), targetMajorVersion.orElse(version.getMajor()))
+                        .compatibleWithPlatform(version, controller().applications()::versionCompatibility)
                         .not().hasCompleted(change) // Avoid rescheduling change for instances without production steps.
                         .onLowerVersionThan(version)
                         .canUpgradeAt(version, controller().clock().instant());
@@ -172,13 +158,13 @@ public class Upgrader extends ControllerMaintainer {
     }
 
     /** Returns the target major version for applications not specifying one */
-    public Optional<Integer> targetMajorVersion() {
-        return curator.readTargetMajorVersion();
+    public OptionalInt targetMajorVersion() {
+        return controller().applications().targetMajorVersion();
     }
 
     /** Sets the default target major version. Set to empty to determine target version normally (by confidence) */
     public void setTargetMajorVersion(Optional<Integer> targetMajorVersion) {
-        curator.writeTargetMajorVersion(targetMajorVersion);
+        controller().applications().setTargetMajorVersion(targetMajorVersion);
     }
 
     /** Override confidence for given version. This will cause the computed confidence to be ignored */

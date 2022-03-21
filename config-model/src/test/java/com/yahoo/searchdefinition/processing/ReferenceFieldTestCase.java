@@ -1,9 +1,10 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.searchdefinition.processing;
 
+import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.document.DataType;
 import com.yahoo.document.Field;
-import com.yahoo.document.ReferenceDataType;
+import com.yahoo.documentmodel.NewDocumentReferenceDataType;
 import com.yahoo.searchdefinition.DocumentGraphValidator;
 import com.yahoo.searchdefinition.Schema;
 import com.yahoo.searchdefinition.ApplicationBuilder;
@@ -57,7 +58,7 @@ public class ReferenceFieldTestCase {
 
     @Test
     public void cyclic_document_dependencies_are_detected() throws ParseException {
-        ApplicationBuilder builder = new ApplicationBuilder();
+        var builder = new ApplicationBuilder(new TestProperties().setExperimentalSdParsing(false));
         String campaignSdContent =
                 "search campaign {\n" +
                         "  document campaign {\n" +
@@ -77,15 +78,38 @@ public class ReferenceFieldTestCase {
         builder.build(true);
     }
 
+    @Test
+    public void cyclic_document_dependencies_are_detected_new_parser() throws ParseException {
+        var builder = new ApplicationBuilder(new TestProperties().setExperimentalSdParsing(true));
+        String campaignSdContent =
+                "search campaign {\n" +
+                        "  document campaign {\n" +
+                        "    field ad_ref type reference<ad> { indexing: attribute }\n" +
+                        "  }\n" +
+                        "}";
+        String adSdContent =
+                "search ad {\n" +
+                        "  document ad {\n" +
+                        "    field campaign_ref type reference<campaign> { indexing: attribute }\n" +
+                        "  }\n" +
+                        "}";
+        builder.addSchema(campaignSdContent);
+        builder.addSchema(adSdContent);
+        exceptionRule.expect(IllegalArgumentException.class);
+        exceptionRule.expectMessage("reference cycle for documents");
+        builder.build(true);
+    }
+
     private static void assertSearchContainsReferenceField(String expectedFieldname,
                                                            String referencedDocType,
                                                            SDDocumentType documentType) {
         Field field = documentType.getDocumentType().getField(expectedFieldname);
         assertNotNull("Field does not exist in document type: " + expectedFieldname, field);
         DataType dataType = field.getDataType();
-        assertTrue(dataType instanceof ReferenceDataType);
-        ReferenceDataType refField = (ReferenceDataType) dataType;
-        assertEquals(referencedDocType, refField.getTargetType().getName());
+        assertTrue(dataType instanceof NewDocumentReferenceDataType);
+        NewDocumentReferenceDataType refField = (NewDocumentReferenceDataType) dataType;
+        assertEquals(referencedDocType, refField.getTargetTypeName());
+        assertTrue(! refField.isTemporary());
     }
 
 }

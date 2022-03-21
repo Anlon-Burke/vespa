@@ -2,12 +2,11 @@
 package com.yahoo.vespa.hosted.controller.restapi.application;
 
 import ai.vespa.hosted.api.MultiPartStreamer;
+import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.TenantName;
-import com.yahoo.slime.Slime;
-import com.yahoo.slime.SlimeUtils;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.hosted.controller.ControllerTester;
@@ -32,7 +31,6 @@ import org.junit.Test;
 
 import javax.ws.rs.ForbiddenException;
 import java.io.File;
-import java.io.IOException;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
@@ -89,19 +87,26 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
         tester.assertResponse(infoRequest, "{}", 200);
 
         String partialInfo = "{\"contactName\":\"newName\", \"contactEmail\": \"foo@example.com\", \"billingContact\":{\"name\":\"billingName\"}}";
-
         var postPartial =
                 request("/application/v4/tenant/scoober/info", PUT)
                         .data(partialInfo)
                         .roles(Set.of(Role.administrator(tenantName)));
         tester.assertResponse(postPartial, "{\"message\":\"Tenant info updated\"}", 200);
 
+        String partialContacts = "{\"contacts\": [{\"audiences\": [\"tenant\"],\"email\": \"contact1@example.com\"}]}";
+        var postPartialContacts =
+                request("/application/v4/tenant/scoober/info", PUT)
+                        .data(partialContacts)
+                        .roles(Set.of(Role.administrator(tenantName)));
+        tester.assertResponse(postPartialContacts, "{\"message\":\"Tenant info updated\"}", 200);
+
         // Read back the updated info
-        tester.assertResponse(infoRequest, "{\"name\":\"\",\"email\":\"\",\"website\":\"\",\"invoiceEmail\":\"\",\"contactName\":\"newName\",\"contactEmail\":\"foo@example.com\",\"billingContact\":{\"name\":\"billingName\",\"email\":\"\",\"phone\":\"\"}}", 200);
+        tester.assertResponse(infoRequest, "{\"name\":\"\",\"email\":\"\",\"website\":\"\",\"contactName\":\"newName\",\"contactEmail\":\"foo@example.com\",\"billingContact\":{\"name\":\"billingName\",\"email\":\"\",\"phone\":\"\"},\"contacts\":[{\"audiences\":[\"tenant\"],\"email\":\"contact1@example.com\"}]}", 200);
 
         String fullAddress = "{\"addressLines\":\"addressLines\",\"postalCodeOrZip\":\"postalCodeOrZip\",\"city\":\"city\",\"stateRegionProvince\":\"stateRegionProvince\",\"country\":\"country\"}";
         String fullBillingContact = "{\"name\":\"name\",\"email\":\"foo@example\",\"phone\":\"phone\",\"address\":" + fullAddress + "}";
-        String fullInfo = "{\"name\":\"name\",\"email\":\"foo@example\",\"website\":\"https://yahoo.com\",\"invoiceEmail\":\"invoiceEmail\",\"contactName\":\"contactName\",\"contactEmail\":\"contact@example.com\",\"address\":" + fullAddress + ",\"billingContact\":" + fullBillingContact + "}";
+        String fullContacts = "[{\"audiences\":[\"tenant\"],\"email\":\"contact1@example.com\"},{\"audiences\":[\"notifications\"],\"email\":\"contact2@example.com\"},{\"audiences\":[\"tenant\",\"notifications\"],\"email\":\"contact3@example.com\"}]";
+        String fullInfo = "{\"name\":\"name\",\"email\":\"foo@example\",\"website\":\"https://yahoo.com\",\"contactName\":\"contactName\",\"contactEmail\":\"contact@example.com\",\"address\":" + fullAddress + ",\"billingContact\":" + fullBillingContact + ",\"contacts\":" + fullContacts + "}";
 
         // Now set all fields
         var postFull =
@@ -167,6 +172,27 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
                 .data(addressInfo)
                 .roles(Set.of(Role.administrator(tenantName)));
         tester.assertResponse(addressInfoResponse, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"All address fields must be set\"}", 400);
+
+        // at least one notification activity must be enabled
+        var contactsWithoutAudience = "{\"contacts\": [{\"email\": \"contact1@example.com\"}]}";
+        var contactsWithoutAudienceResponse = request("/application/v4/tenant/scoober/info", PUT)
+                .data(contactsWithoutAudience)
+                .roles(Set.of(Role.administrator(tenantName)));
+        tester.assertResponse(contactsWithoutAudienceResponse, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"At least one notification activity must be enabled\"}", 400);
+
+        // email needs to be present, not blank, and contain an @
+        var contactsWithInvalidEmail = "{\"contacts\": [{\"audiences\": [\"tenant\"],\"email\": \"contact1\"}]}";
+        var contactsWithInvalidEmailResponse = request("/application/v4/tenant/scoober/info", PUT)
+                .data(contactsWithInvalidEmail)
+                .roles(Set.of(Role.administrator(tenantName)));
+        tester.assertResponse(contactsWithInvalidEmailResponse, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"'email' needs to be an email address\"}", 400);
+
+        // duplicate contact is not allowed
+        var contactsWithDuplicateEmail = "{\"contacts\": [{\"audiences\": [\"tenant\"],\"email\": \"contact1@email.com\"}, {\"audiences\": [\"tenant\"],\"email\": \"contact1@email.com\"}]}";
+        var contactsWithDuplicateEmailResponse = request("/application/v4/tenant/scoober/info", PUT)
+                .data(contactsWithDuplicateEmail)
+                .roles(Set.of(Role.administrator(tenantName)));
+        tester.assertResponse(contactsWithDuplicateEmailResponse, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Duplicate contact: email 'contact1@email.com'\"}", 400);
 
         // updating a tenant that already has the fields set works
         var basicInfo = "{\"contactName\": \"Scoober Rentals Inc.\", \"contactEmail\": \"foo@example.com\"}";
@@ -311,6 +337,7 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
         var application = ApplicationName.from("unique");
         var applicationPackage = new ApplicationPackageBuilder().withoutAthenzIdentity().build();
 
+        new ControllerTester(tester).upgradeSystem(new Version("6.1"));
         assertTrue(tester.controller().applications().getApplication(TenantAndApplicationId.from(tenantName, application)).isEmpty());
 
         tester.assertResponse(
@@ -372,6 +399,7 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
                 .globalServiceId("foo")
                 .region("aws-us-east-1c")
                 .build();
+        new ControllerTester(tester).upgradeSystem(new Version("6.1"));
         tester.controller().jobController().deploy(ApplicationId.from("scoober", "albums", "default"),
                                                    JobType.productionAwsUsEast1c,
                                                    Optional.empty(),

@@ -2,7 +2,6 @@
 package vespa
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +16,10 @@ func TestApplicationFromString(t *testing.T) {
 	assert.Equal(t, ApplicationID{Tenant: "t1", Application: "a1", Instance: "i1"}, app)
 	_, err = ApplicationFromString("foo")
 	assert.NotNil(t, err)
+
+	app, err = ApplicationFromString("t1.a1")
+	assert.Nil(t, err)
+	assert.Equal(t, ApplicationID{Tenant: "t1", Application: "a1", Instance: "default"}, app)
 }
 
 func TestZoneFromString(t *testing.T) {
@@ -77,7 +80,7 @@ func writeFile(t *testing.T, name string) {
 	err := os.MkdirAll(filepath.Dir(name), 0755)
 	assert.Nil(t, err)
 	if !strings.HasSuffix(name, string(os.PathSeparator)) {
-		err = ioutil.WriteFile(name, []byte{0}, 0644)
+		err = os.WriteFile(name, []byte{0}, 0644)
 		assert.Nil(t, err)
 	}
 }

@@ -10,7 +10,14 @@ import java.util.OptionalLong;
  */
 public class AthenzAssertion {
 
-    public enum Effect { ALLOW, DENY }
+    public enum Effect {
+        ALLOW, DENY;
+
+        public static Effect valueOrNull(String value) {
+            try { return valueOf(value); }
+            catch (RuntimeException e) { return null; }
+        }
+    }
 
     private final Long id;
     private final Effect effect;
@@ -34,6 +41,13 @@ public class AthenzAssertion {
 
     public static Builder newBuilder(AthenzRole role, AthenzResourceName resource, String action) {
         return new Builder(role, resource, action);
+    }
+
+    public boolean satisfies(AthenzAssertion other) {
+        return role.equals(other.role()) &&
+                action.equals(other.action()) &&
+                effect().equals(other.effect()) &&
+                resource.equals(other.resource());
     }
 
     public static class Builder {

@@ -31,7 +31,7 @@ protected:
 public:
     typedef Number value_type;
 
-    NumericFieldValue(Number value=0) : NumericFieldValueBase(), _value(value), _altered(false) { }
+    explicit NumericFieldValue(Number value=0) : NumericFieldValueBase(), _value(value), _altered(false) { }
 
     value_type getValue() const { return _value; }
     void setValue(Number newValue) { _value = newValue; }
@@ -41,10 +41,6 @@ public:
     int fastCompare(const FieldValue& other) const override final;
 
     FieldValue& operator=(vespalib::stringref) override;
-    FieldValue& operator=(int32_t) override;
-    FieldValue& operator=(int64_t) override;
-    FieldValue& operator=(float) override;
-    FieldValue& operator=(double) override;
     size_t hash() const override final { return vespalib::hash<Number>()(_value); }
 
     char getAsByte() const override;

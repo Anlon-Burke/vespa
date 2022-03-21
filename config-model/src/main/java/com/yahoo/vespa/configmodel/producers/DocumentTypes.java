@@ -6,6 +6,7 @@ import com.yahoo.document.config.DocumenttypesConfig;
 import com.yahoo.document.annotation.AnnotationReferenceDataType;
 import com.yahoo.document.annotation.AnnotationType;
 import com.yahoo.documentmodel.DataTypeCollection;
+import com.yahoo.documentmodel.NewDocumentReferenceDataType;
 import com.yahoo.documentmodel.NewDocumentType;
 import com.yahoo.documentmodel.VespaDocumentType;
 import com.yahoo.searchdefinition.document.FieldSet;
@@ -42,6 +43,13 @@ public class DocumentTypes {
         }
     }
 
+    static private <T> List<T> sortedList(Collection<T> unsorted, Comparator<T> cmp) {
+        var list = new ArrayList<T>();
+        list.addAll(unsorted);
+        list.sort(cmp);
+        return list;
+    }
+
     private void buildConfig(NewDocumentType documentType, DocumenttypesConfig.Builder builder) {
         if (documentType == VespaDocumentType.INSTANCE) {
             return;
@@ -50,16 +58,16 @@ public class DocumentTypes {
         db.
                 id(documentType.getId()).
                 name(documentType.getName()).
-                headerstruct(documentType.getHeader().getId());
+                headerstruct(documentType.getContentStruct().getId());
         Set<Integer> built = new HashSet<>();
         for (NewDocumentType inherited : documentType.getInherited()) {
             db.inherits(new DocumenttypesConfig.Documenttype.Inherits.Builder().id(inherited.getId()));
             markAsBuilt(built, inherited.getAllTypes());
         }
-        for (DataType dt : documentType.getTypes()) {
+        for (DataType dt : sortedList(documentType.getTypes(), (a,b) -> a.getName().compareTo(b.getName()))) {
             buildConfig(dt, db, built);
         }
-        for (AnnotationType annotation : documentType.getAnnotations()) {
+        for (AnnotationType annotation : sortedList(documentType.getAnnotations(), (a,b) -> a.getName().compareTo(b.getName()))) {
             DocumenttypesConfig.Documenttype.Annotationtype.Builder atb = new DocumenttypesConfig.Documenttype.Annotationtype.Builder();
             db.annotationtype(atb);
             buildConfig(annotation, atb);
@@ -118,8 +126,12 @@ public class DocumentTypes {
                 // to provide better compatibility. A tensor field can have its tensorType changed (in compatible ways)
                 // without changing the field type and thus requiring data refeed
                 return;
-            } else if (type instanceof ReferenceDataType) {
-                buildConfig((ReferenceDataType) type, documentBuilder);
+            } else if (type instanceof NewDocumentReferenceDataType) {
+                var refType = (NewDocumentReferenceDataType) type;
+                if (refType.isTemporary()) {
+                    throw new IllegalArgumentException("Still temporary: " + refType);
+                }
+                buildConfig(refType, documentBuilder);
                 return;
             } else {
                 return;
@@ -206,13 +218,13 @@ public class DocumentTypes {
                                 id(type.getAnnotationType().getId())));
     }
 
-    private void buildConfig(ReferenceDataType type,
+    private void buildConfig(NewDocumentReferenceDataType type,
                              DocumenttypesConfig.Documenttype.Builder documentBuilder) {
-        ReferenceDataType refType = type;
+        NewDocumentReferenceDataType refType = type;
         DocumenttypesConfig.Documenttype.Referencetype.Builder refBuilder =
                 new DocumenttypesConfig.Documenttype.Referencetype.Builder();
         refBuilder.id(refType.getId());
-        refBuilder.target_type_id(type.getTargetType().getId());
+        refBuilder.target_type_id(type.getTargetTypeId());
         documentBuilder.referencetype(refBuilder);
     }
 

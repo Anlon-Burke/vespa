@@ -2,8 +2,8 @@
 
 #pragma once
 
+#include <vespa/vespalib/datastore/atomic_entry_ref.h>
 #include <vespa/vespalib/datastore/compaction_spec.h>
-#include <vespa/vespalib/datastore/entryref.h>
 #include <vespa/vespalib/util/address_space.h>
 #include <vespa/vespalib/util/rcuvector.h>
 #include <functional>
@@ -23,8 +23,9 @@ class MultiValueMappingBase
 public:
     using CompactionSpec = vespalib::datastore::CompactionSpec;
     using CompactionStrategy = vespalib::datastore::CompactionStrategy;
+    using AtomicEntryRef = vespalib::datastore::AtomicEntryRef;
     using EntryRef = vespalib::datastore::EntryRef;
-    using RefVector = vespalib::RcuVectorBase<EntryRef>;
+    using RefVector = vespalib::RcuVectorBase<AtomicEntryRef>;
 
 protected:
     std::shared_ptr<vespalib::alloc::MemoryAllocator> _memory_allocator;
@@ -38,6 +39,8 @@ protected:
     void updateValueCount(size_t oldValues, size_t newValues) {
         _totalValues += newValues - oldValues;
     }
+
+    EntryRef acquire_entry_ref(uint32_t docId) const noexcept { return _indices.acquire_elem_ref(docId).load_acquire(); }
 public:
     using RefCopyVector = vespalib::Array<EntryRef>;
 

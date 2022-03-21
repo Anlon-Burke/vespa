@@ -18,6 +18,7 @@ import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.zone.RoutingMethod;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.path.Path;
+import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateMetadata;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ContainerEndpoint;
@@ -30,6 +31,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.dns.WeightedAliasTarget
 import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.DeploymentMetrics;
 import com.yahoo.vespa.hosted.controller.application.Endpoint;
+import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
 import com.yahoo.vespa.hosted.controller.deployment.ApplicationPackageBuilder;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentContext;
@@ -722,6 +724,54 @@ public class ControllerTest {
     }
 
     @Test
+    public void testDevDeploymentWithIncompatibleVersions() {
+        Version version1 = new Version("7");
+        Version version2 = new Version("7.5");
+        Version version3 = new Version("8");
+        var context = tester.newDeploymentContext();
+        tester.controllerTester().flagSource().withListFlag(PermanentFlags.INCOMPATIBLE_VERSIONS.id(), List.of("8"), String.class);
+        tester.controllerTester().upgradeSystem(version2);
+        ZoneId zone = ZoneId.from("dev", "us-east-1");
+
+        context.runJob(zone, new ApplicationPackageBuilder().compileVersion(version1).build());
+        assertEquals(version2, context.deployment(zone).version());
+        assertEquals(Optional.of(version1), context.deployment(zone).applicationVersion().compileVersion());
+
+        try {
+            context.runJob(zone, new ApplicationPackageBuilder().compileVersion(version1).majorVersion(8).build());
+            fail("Should fail when specifying a major that does not yet exist");
+        }
+        catch (IllegalArgumentException e) {
+            assertEquals("major 8 specified in deployment.xml, but no version on this major was found", e.getMessage());
+        }
+
+        try {
+            context.runJob(zone, new ApplicationPackageBuilder().compileVersion(version3).build());
+            fail("Should fail when compiled against a version which does not yet exist");
+        }
+        catch (IllegalArgumentException e) {
+            assertEquals("no suitable platform version found for package compiled against 8", e.getMessage());
+        }
+
+        tester.controllerTester().upgradeSystem(version3);
+        try {
+            context.runJob(zone, new ApplicationPackageBuilder().compileVersion(version1).majorVersion(8).build());
+            fail("Should fail when specifying a major which is incompatible with compile version");
+        }
+        catch (IllegalArgumentException e) {
+            assertEquals("Will not start a job with incompatible platform version (8) and compile versions (7)", e.getMessage());
+        }
+
+        context.runJob(zone, new ApplicationPackageBuilder().compileVersion(version3).majorVersion(8).build());
+        assertEquals(version3, context.deployment(zone).version());
+        assertEquals(Optional.of(version3), context.deployment(zone).applicationVersion().compileVersion());
+
+        context.runJob(zone, new ApplicationPackageBuilder().compileVersion(version3).build());
+        assertEquals(version3, context.deployment(zone).version());
+        assertEquals(Optional.of(version3), context.deployment(zone).applicationVersion().compileVersion());
+    }
+
+    @Test
     public void testSuspension() {
         var context = tester.newDeploymentContext();
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
@@ -1048,6 +1098,54 @@ public class ControllerTest {
             assertEquals("Endpoint with ID 'default' in instance 'dev' clashes with endpoint 'dev' in instance 'default'",
                          e.getMessage());
         }
+    }
+
+    @Test
+    public void testCompileVersion() {
+        DeploymentContext context = tester.newDeploymentContext();
+        ApplicationPackage applicationPackage = new ApplicationPackageBuilder().region("us-west-1").build();
+        TenantAndApplicationId application = TenantAndApplicationId.from(context.instanceId());
+
+        // No deployments result in system version
+        Version version0 = Version.fromString("7.1");
+        tester.controllerTester().upgradeSystem(version0);
+        assertEquals(version0, tester.applications().compileVersion(application, OptionalInt.empty()));
+        context.submit(applicationPackage).deploy();
+
+        // System is upgraded
+        Version version1 = Version.fromString("7.2");
+        tester.controllerTester().upgradeSystem(version1);
+        assertEquals(version0, tester.applications().compileVersion(application, OptionalInt.empty()));
+
+        // Application is upgraded and compile version is bumped
+        tester.upgrader().maintain();
+        context.deployPlatform(version1);
+        assertEquals(version1, tester.applications().compileVersion(application, OptionalInt.empty()));
+
+        // A new major is released to the system
+        Version version2 = Version.fromString("8.0");
+        tester.controllerTester().upgradeSystem(version2);
+        assertEquals(version1, tester.applications().compileVersion(application, OptionalInt.empty()));
+        assertEquals(version1, tester.applications().compileVersion(application, OptionalInt.of(8)));
+
+        // The new major is marked as incompatible with older compile versions
+        tester.controllerTester().flagSource().withListFlag(PermanentFlags.INCOMPATIBLE_VERSIONS.id(), List.of("8"), String.class);
+        assertEquals(version2, tester.applications().compileVersion(application, OptionalInt.of(8)));
+
+        // Default major version is set to 8.
+        tester.applications().setTargetMajorVersion(Optional.of(8));
+        assertEquals(version1, tester.applications().compileVersion(application, OptionalInt.of(7)));
+        assertEquals(version2, tester.applications().compileVersion(application, OptionalInt.empty()));
+
+        // Application sets target major to 7.
+        tester.applications().lockApplicationOrThrow(application, locked -> tester.applications().store(locked.withMajorVersion(7)));
+        assertEquals(version1, tester.applications().compileVersion(application, OptionalInt.empty()));
+        assertEquals(version2, tester.applications().compileVersion(application, OptionalInt.of(8)));
+
+        // Application sets target major to 8.
+        tester.applications().lockApplicationOrThrow(application, locked -> tester.applications().store(locked.withMajorVersion(8)));
+        assertEquals(version1, tester.applications().compileVersion(application, OptionalInt.of(7)));
+        assertEquals(version2, tester.applications().compileVersion(application, OptionalInt.empty()));
     }
 
 }

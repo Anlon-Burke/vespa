@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -28,6 +27,7 @@ import (
 
 const (
 	applicationFlag = "application"
+	instanceFlag    = "instance"
 	targetFlag      = "target"
 	waitFlag        = "wait"
 	colorFlag       = "color"
@@ -52,12 +52,14 @@ type CLI struct {
 	httpClient util.HTTPClient
 	exec       executor
 	isTerminal func() bool
+	spinner    func(w io.Writer, message string, fn func() error) error
 }
 
 // Flags holds the global Flags of Vespa CLI.
 type Flags struct {
 	target      string
 	application string
+	instance    string
 	waitSecs    int
 	color       string
 	quiet       bool
@@ -71,6 +73,15 @@ type ErrCLI struct {
 	quiet  bool
 	hints  []string
 	error
+}
+
+type targetOptions struct {
+	// zone declares the zone use when using this target. If empty, a default zone for the system is chosen.
+	zone string
+	// logLevel sets the log level to use for this target. If empty, it defaults to "info".
+	logLevel string
+	// noCertificate declares that no client certificate should be required when using this target.
+	noCertificate bool
 }
 
 // errHint creates a new CLI error, with optional hints that will be printed after the error
@@ -127,11 +138,12 @@ Vespa documentation: https://docs.vespa.ai`,
 		httpClient: util.CreateClient(time.Second * 10),
 		exec:       &execSubprocess{},
 	}
-	cli.isTerminal = func() bool { return isTerminal(cli.Stdout) || isTerminal(cli.Stderr) }
+	cli.isTerminal = func() bool { return isTerminal(cli.Stdout) && isTerminal(cli.Stderr) }
 	cli.configureFlags()
 	if err := cli.loadConfig(); err != nil {
 		return nil, err
 	}
+	cli.configureSpinner()
 	cli.configureCommands()
 	cmd.PersistentPreRunE = cli.configureOutput
 	return &cli, nil
@@ -141,11 +153,12 @@ func (c *CLI) loadConfig() error {
 	bindings := NewConfigBindings()
 	bindings.bindFlag(targetFlag, c.cmd)
 	bindings.bindFlag(applicationFlag, c.cmd)
+	bindings.bindFlag(instanceFlag, c.cmd)
 	bindings.bindFlag(waitFlag, c.cmd)
 	bindings.bindFlag(colorFlag, c.cmd)
 	bindings.bindFlag(quietFlag, c.cmd)
 	bindings.bindFlag(apiKeyFileFlag, c.cmd)
-	bindings.bindEnvironment(apiKeyFlag, "VESPA_CLI_API_KEY")
+	bindings.bindEnvironment(apiKeyFlag, "VESPA_CLI_API_KEY") // not bound to a flag because we don't want secrets in argv
 	bindings.bindEnvironment(apiKeyFileFlag, "VESPA_CLI_API_KEY_FILE")
 	config, err := loadConfig(c.Environment, bindings)
 	if err != nil {
@@ -163,7 +176,7 @@ func (c *CLI) configureOutput(cmd *cobra.Command, args []string) error {
 		c.Stderr = colorable.NewColorable(f)
 	}
 	if quiet, _ := c.config.get(quietFlag); quiet == "true" {
-		c.Stdout = ioutil.Discard
+		c.Stdout = io.Discard
 	}
 	log.SetFlags(0) // No timestamps
 	log.SetOutput(c.Stdout)
@@ -187,11 +200,25 @@ func (c *CLI) configureFlags() {
 	flags := Flags{}
 	c.cmd.PersistentFlags().StringVarP(&flags.target, targetFlag, "t", "local", "The name or URL of the recipient of this command")
 	c.cmd.PersistentFlags().StringVarP(&flags.application, applicationFlag, "a", "", "The application to manage")
+	c.cmd.PersistentFlags().StringVarP(&flags.instance, instanceFlag, "i", "", "The instance of the application to manage")
 	c.cmd.PersistentFlags().IntVarP(&flags.waitSecs, waitFlag, "w", 0, "Number of seconds to wait for a service to become ready")
 	c.cmd.PersistentFlags().StringVarP(&flags.color, colorFlag, "c", "auto", "Whether to use colors in output.")
 	c.cmd.PersistentFlags().BoolVarP(&flags.quiet, quietFlag, "q", false, "Quiet mode. Only errors will be printed")
 	c.cmd.PersistentFlags().StringVarP(&flags.apiKeyFile, apiKeyFileFlag, "k", "", "Path to API key used for cloud authentication")
 	c.flags = &flags
+}
+
+func (c *CLI) configureSpinner() {
+	// Explicitly disable spinner for Screwdriver. It emulates a tty but
+	// \r result in a newline, and output gets truncated.
+	_, screwdriver := c.Environment["SCREWDRIVER"]
+	if c.flags.quiet || !c.isTerminal() || screwdriver {
+		c.spinner = func(w io.Writer, message string, fn func() error) error {
+			return fn()
+		}
+	} else {
+		c.spinner = util.Spinner
+	}
 }
 
 func (c *CLI) configureCommands() {
@@ -237,7 +264,7 @@ func (c *CLI) configureCommands() {
 	rootCmd.AddCommand(newVersionCmd(c))            // version
 }
 
-func (c *CLI) printErrHint(err error, hints ...string) {
+func (c *CLI) printErr(err error, hints ...string) {
 	fmt.Fprintln(c.Stderr, color.RedString("Error:"), err)
 	for _, hint := range hints {
 		fmt.Fprintln(c.Stderr, color.CyanString("Hint:"), hint)
@@ -245,32 +272,31 @@ func (c *CLI) printErrHint(err error, hints ...string) {
 }
 
 func (c *CLI) printSuccess(msg ...interface{}) {
-	log.Print(color.GreenString("Success: "), fmt.Sprint(msg...))
+	fmt.Fprintln(c.Stdout, color.GreenString("Success:"), fmt.Sprint(msg...))
 }
 
-func (c *CLI) printWarning(msg string, hints ...string) {
+func (c *CLI) printWarning(msg interface{}, hints ...string) {
 	fmt.Fprintln(c.Stderr, color.YellowString("Warning:"), msg)
 	for _, hint := range hints {
 		fmt.Fprintln(c.Stderr, color.CyanString("Hint:"), hint)
 	}
 }
 
-// target creates a target according the configuration of this CLI. If zone is empty, the default zone for the system is
-// used. If logLevel is empty, it defaults to "info".
-func (c *CLI) target(zone, logLevel string) (vespa.Target, error) {
-	target, err := c.createTarget(zone, logLevel)
+// target creates a target according the configuration of this CLI and given opts.
+func (c *CLI) target(opts targetOptions) (vespa.Target, error) {
+	target, err := c.createTarget(opts)
 	if err != nil {
 		return nil, err
 	}
 	if !c.isCloudCI() { // Vespa Cloud always runs an up-to-date version
 		if err := target.CheckVersion(c.version); err != nil {
-			c.printErrHint(err, "This is not a fatal error, but this version may not work as expected", "Try 'vespa version' to check for a new version")
+			c.printWarning(err, "This version may not work as expected", "Try 'vespa version' to check for a new version")
 		}
 	}
 	return target, nil
 }
 
-func (c *CLI) createTarget(zone, logLevel string) (vespa.Target, error) {
+func (c *CLI) createTarget(opts targetOptions) (vespa.Target, error) {
 	targetType, err := c.config.targetType()
 	if err != nil {
 		return nil, err
@@ -282,17 +308,17 @@ func (c *CLI) createTarget(zone, logLevel string) (vespa.Target, error) {
 	case vespa.TargetLocal:
 		return vespa.LocalTarget(c.httpClient), nil
 	case vespa.TargetCloud, vespa.TargetHosted:
-		return c.createCloudTarget(targetType, zone, logLevel)
+		return c.createCloudTarget(targetType, opts)
 	}
 	return nil, errHint(fmt.Errorf("invalid target: %s", targetType), "Valid targets are 'local', 'cloud', 'hosted' or an URL")
 }
 
-func (c *CLI) createCloudTarget(targetType, zone, logLevel string) (vespa.Target, error) {
+func (c *CLI) createCloudTarget(targetType string, opts targetOptions) (vespa.Target, error) {
 	system, err := c.system(targetType)
 	if err != nil {
 		return nil, err
 	}
-	deployment, err := c.config.deploymentIn(zone, system)
+	deployment, err := c.config.deploymentIn(opts.zone, system)
 	if err != nil {
 		return nil, err
 	}
@@ -315,14 +341,17 @@ func (c *CLI) createCloudTarget(targetType, zone, logLevel string) (vespa.Target
 			}
 		}
 		authConfigPath = c.config.authConfigPath()
-		kp, err := c.config.x509KeyPair(deployment.Application)
-		if err != nil {
-			return nil, errHint(err, "Deployment to cloud requires a certificate. Try 'vespa auth cert'")
-		}
-		deploymentTLSOptions = vespa.TLSOptions{
-			KeyPair:         kp.KeyPair,
-			CertificateFile: kp.CertificateFile,
-			PrivateKeyFile:  kp.PrivateKeyFile,
+		deploymentTLSOptions = vespa.TLSOptions{}
+		if !opts.noCertificate {
+			kp, err := c.config.x509KeyPair(deployment.Application)
+			if err != nil {
+				return nil, errHint(err, "Deployment to cloud requires a certificate. Try 'vespa auth cert'")
+			}
+			deploymentTLSOptions = vespa.TLSOptions{
+				KeyPair:         kp.KeyPair,
+				CertificateFile: kp.CertificateFile,
+				PrivateKeyFile:  kp.PrivateKeyFile,
+			}
 		}
 	case vespa.TargetHosted:
 		kp, err := athenzKeyPair()
@@ -349,6 +378,7 @@ func (c *CLI) createCloudTarget(targetType, zone, logLevel string) (vespa.Target
 		TLSOptions:  deploymentTLSOptions,
 		ClusterURLs: endpoints,
 	}
+	logLevel := opts.logLevel
 	if logLevel == "" {
 		logLevel = "info"
 	}
@@ -378,7 +408,7 @@ func (c *CLI) system(targetType string) (vespa.System, error) {
 // wait period configured in this CLI. The parameter sessionOrRunID specifies either the session ID (local target) or
 // run ID (cloud target) to wait for.
 func (c *CLI) service(name string, sessionOrRunID int64, cluster string) (*vespa.Service, error) {
-	t, err := c.target("", "")
+	t, err := c.target(targetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -393,17 +423,13 @@ func (c *CLI) service(name string, sessionOrRunID int64, cluster string) (*vespa
 	return s, nil
 }
 
-func (c *CLI) createDeploymentOptions(pkg vespa.ApplicationPackage, target vespa.Target) (vespa.DeploymentOptions, error) {
-	opts := vespa.DeploymentOptions{ApplicationPackage: pkg, Target: target}
-	if opts.IsCloud() {
-		if target.Type() == vespa.TargetCloud && !opts.ApplicationPackage.HasCertificate() {
-			hint := "Try 'vespa auth cert'"
-			return vespa.DeploymentOptions{}, errHint(fmt.Errorf("missing certificate in application package"), "Applications in Vespa Cloud require a certificate", hint)
-		}
+func (c *CLI) createDeploymentOptions(pkg vespa.ApplicationPackage, target vespa.Target) vespa.DeploymentOptions {
+	return vespa.DeploymentOptions{
+		ApplicationPackage: pkg,
+		Target:             target,
+		Timeout:            time.Duration(c.flags.waitSecs) * time.Second,
+		HTTPClient:         c.httpClient,
 	}
-	opts.Timeout = time.Duration(c.flags.waitSecs) * time.Second
-	opts.HTTPClient = c.httpClient
-	return opts, nil
 }
 
 // isCI returns true if running inside a continuous integration environment.
@@ -444,10 +470,10 @@ func (c *CLI) Run(args ...string) error {
 	if err != nil {
 		if cliErr, ok := err.(ErrCLI); ok {
 			if !cliErr.quiet {
-				c.printErrHint(cliErr, cliErr.hints...)
+				c.printErr(cliErr, cliErr.hints...)
 			}
 		} else {
-			c.printErrHint(err)
+			c.printErr(err)
 		}
 	}
 	return err

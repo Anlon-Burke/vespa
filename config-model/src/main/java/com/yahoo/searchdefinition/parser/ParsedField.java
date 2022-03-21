@@ -44,9 +44,10 @@ class ParsedField extends ParsedBlock {
     }
 
     ParsedType getType() { return this.type; }
-    boolean getBolding() { return this.hasBolding; }
-    boolean getFilter() { return this.isFilter; }
-    boolean getLiteral() { return this.isLiteral; }
+    boolean hasBolding() { return this.hasBolding; }
+    boolean hasFilter() { return this.isFilter; }
+    boolean hasLiteral() { return this.isLiteral; }
+    boolean hasNormal() { return this.isNormal; }
     boolean hasIdOverride() { return overrideId != 0; }
     int idOverride() { return overrideId; }
     List<DictionaryOption> getDictionaryOptions() { return List.copyOf(dictionaryOptions); }
@@ -58,6 +59,7 @@ class ParsedField extends ParsedBlock {
     List<String> getQueryCommands() { return List.copyOf(queryCommands); }
     String lookupAliasedFrom(String alias) { return aliases.get(alias); }
     ParsedMatchSettings matchSettings() { return this.matchInfo; }
+    Optional<Integer> getWeight() { return Optional.ofNullable(weight); }
     Optional<Stemming> getStemming() { return Optional.ofNullable(stemming); }
     Optional<String> getNormalizing() { return Optional.ofNullable(normalizing); }
     Optional<ParsedIndexingOp> getIndexing() { return Optional.ofNullable(indexingOp); }
