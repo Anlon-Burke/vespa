@@ -5,12 +5,13 @@
 #include <vespa/searchlib/attribute/attributeguard.h>
 #include <vespa/searchlib/attribute/attributefactory.h>
 #include <vespa/fastos/thread.h>
-#include <vespa/fastos/app.h>
+#include <vespa/vespalib/util/signalhandler.h>
 #include <iostream>
 #include <fstream>
 #include "attributesearcher.h"
 #include "attributeupdater.h"
 #include <sys/resource.h>
+#include <unistd.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("attributebenchmark");
@@ -28,7 +29,7 @@ namespace search {
 using AttributePtr = AttributeVector::SP;
 using DocId = AttributeVector::DocId;
 
-class AttributeBenchmark : public FastOS_Application
+class AttributeBenchmark
 {
 private:
     class Config {
@@ -134,7 +135,7 @@ public:
             delete _threadPool;
         }
     }
-    int Main() override;
+    int main(int argc, char **argv);
 };
 
 
@@ -459,7 +460,7 @@ AttributeBenchmark::usage()
 }
 
 int
-AttributeBenchmark::Main()
+AttributeBenchmark::main(int argc, char **argv)
 {
     Config dc;
     dc._numDocs = 50000;
@@ -485,62 +486,60 @@ AttributeBenchmark::Main()
     dc._prefixLength = 2;
     dc._prefixSearch = false;
 
-    int idx = 1;
     int opt;
-    const char * arg;
     bool optError = false;
-    while ((opt = GetOpt("n:u:v:s:q:p:r:c:l:h:i:a:e:S:E:D:L:bRPtw", arg, idx)) != -1) {
+    while ((opt = getopt(argc, argv, "n:u:v:s:q:p:r:c:l:h:i:a:e:S:E:D:L:bRPtw")) != -1) {
         switch (opt) {
         case 'n':
-            dc._numDocs = atoi(arg);
+            dc._numDocs = atoi(optarg);
             break;
         case 'u':
-            dc._numUpdates = atoi(arg);
+            dc._numUpdates = atoi(optarg);
             break;
         case 'v':
-            dc._numValues = atoi(arg);
+            dc._numValues = atoi(optarg);
             break;
         case 's':
-            dc._numSearchers = atoi(arg);
+            dc._numSearchers = atoi(optarg);
             break;
         case 'q':
-            dc._numQueries = atoi(arg);
+            dc._numQueries = atoi(optarg);
             break;
         case 'p':
-            dc._populateRuns = atoi(arg);
+            dc._populateRuns = atoi(optarg);
             break;
         case 'r':
-            dc._updateRuns = atoi(arg);
+            dc._updateRuns = atoi(optarg);
             break;
         case 'c':
-            dc._commitFreq = atoi(arg);
+            dc._commitFreq = atoi(optarg);
             break;
         case 'l':
-            dc._minValueCount = atoi(arg);
+            dc._minValueCount = atoi(optarg);
             break;
         case 'h':
-            dc._maxValueCount = atoi(arg);
+            dc._maxValueCount = atoi(optarg);
             break;
         case 'i':
-            dc._minStringLen = atoi(arg);
+            dc._minStringLen = atoi(optarg);
             break;
         case 'a':
-            dc._maxStringLen = atoi(arg);
+            dc._maxStringLen = atoi(optarg);
             break;
         case 'e':
-            dc._seed = atoi(arg);
+            dc._seed = atoi(optarg);
             break;
         case 'S':
-            dc._rangeStart = strtoll(arg, NULL, 10);
+            dc._rangeStart = strtoll(optarg, NULL, 10);
             break;
         case 'E':
-            dc._rangeEnd = strtoll(arg, NULL, 10);
+            dc._rangeEnd = strtoll(optarg, NULL, 10);
             break;
         case 'D':
-            dc._rangeDelta = strtoll(arg, NULL, 10);
+            dc._rangeDelta = strtoll(optarg, NULL, 10);
             break;
         case 'L':
-            dc._prefixLength = atoi(arg);
+            dc._prefixLength = atoi(optarg);
             break;
         case 'b':
             dc._searchersOnly = false;
@@ -563,12 +562,12 @@ AttributeBenchmark::Main()
         }
     }
 
-    if (_argc != (idx + 1) || optError) {
+    if (argc != (optind + 1) || optError) {
         usage();
         return -1;
     }
 
-    dc._attribute = vespalib::string(_argv[idx]);
+    dc._attribute = vespalib::string(argv[optind]);
 
     _threadPool = new FastOS_ThreadPool(256000);
 
@@ -663,9 +662,9 @@ AttributeBenchmark::Main()
 }
 }
 
-int main(int argc, char ** argv)
-{
+int main(int argc, char **argv) {
+    vespalib::SignalHandler::PIPE.ignore();
     search::AttributeBenchmark myapp;
-    return myapp.Entry(argc, argv);
+    return myapp.main(argc, argv);
 }
 

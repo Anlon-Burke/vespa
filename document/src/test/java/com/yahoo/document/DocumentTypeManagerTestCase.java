@@ -46,16 +46,16 @@ public class DocumentTypeManagerTestCase {
     @Test
     public void testBasicTypes() {
         DocumentTypeManager dtm = new DocumentTypeManager();
-        DataType intType = dtm.getDataType("int");
+        DataType intType = dtm.getDataTypeInternal("int");
         assertSame(DataType.INT, intType);
 
-        DataType stringType = dtm.getDataType("string");
+        DataType stringType = dtm.getDataTypeInternal("string");
         assertSame(DataType.STRING, stringType);
 
-        DataType longType = dtm.getDataType("long");
+        DataType longType = dtm.getDataTypeInternal("long");
         assertSame(DataType.LONG, longType);
 
-        DataType doubleType = dtm.getDataType("double");
+        DataType doubleType = dtm.getDataTypeInternal("double");
         assertSame(DataType.DOUBLE, doubleType);
     }
 
@@ -78,12 +78,12 @@ public class DocumentTypeManagerTestCase {
         manager.register(docType2);
 
         assertEquals(struct, manager.getDataType(struct.getId()));
-        assertEquals(struct, manager.getDataType("mystruct"));
+        assertEquals(struct, manager.getDataTypeInternal("mystruct"));
         assertEquals(wset1, manager.getDataType(wset1.getId()));
         assertEquals(wset2, manager.getDataType(wset2.getId()));
         assertEquals(array, manager.getDataType(array.getId()));
-        assertEquals(docType, manager.getDataType("mydoc"));
-        assertEquals(docType2, manager.getDataType("myotherdoc"));
+        assertEquals(docType, manager.getDataTypeInternal("mydoc"));
+        assertEquals(docType2, manager.getDataTypeInternal("myotherdoc"));
         assertEquals(docType, manager.getDocumentType(new DataTypeName("mydoc")));
         assertEquals(docType2, manager.getDocumentType(new DataTypeName("myotherdoc")));
     }
@@ -418,13 +418,13 @@ search annotationsimplicitstruct {
 
         DocumentTypeManager manager = createConfiguredManager("file:src/test/document/documentmanager.structsanyorder.cfg");
 
-        StructDataType foo = (StructDataType) manager.getDataType("foo");
+        StructDataType foo = (StructDataType) manager.getDataTypeInternal("foo");
         assertNotNull(foo);
         assertEquals(1, foo.getFields().size());
         Field foos1 = foo.getField("s1");
         assertSame(DataType.INT, foos1.getDataType());
 
-        StructDataType sct = (StructDataType) manager.getDataType("sct");
+        StructDataType sct = (StructDataType) manager.getDataTypeInternal("sct");
         assertNotNull(sct);
         assertEquals(4, sct.getFields().size());
         Field s1 = sct.getField("s1");
@@ -605,40 +605,76 @@ search annotationsimplicitstruct {
         var docType = manager.getDocumentType("foo");
         var struct = docType.getDeclaredStructType("mystructinfoo");
         assertNotNull(struct);
+        struct = docType.getStructType("mystructinfoo");
         assertNotNull(struct.getField("f1"));
         struct = docType.getDeclaredStructType("mystructinbar");
         assertNull(struct);
+        struct = docType.getStructType("mystructinbar");
+        assertNull(struct);
         struct = docType.getDeclaredStructType("mystructinfoobar");
         assertNull(struct);
+        struct = docType.getStructType("mystructinfoobar");
+        assertNull(struct);
         struct = docType.getDeclaredStructType("mystruct");
+        assertNull(struct);
+        struct = docType.getStructType("mystruct");
         assertNotNull(struct);
         assertNotNull(struct.getField("f0"));
 
         docType = manager.getDocumentType("bar");
         struct = docType.getDeclaredStructType("mystructinfoo");
         assertNull(struct);
+        struct = docType.getStructType("mystructinfoo");
+        assertNull(struct);
         struct = docType.getDeclaredStructType("mystructinbar");
+        assertNotNull(struct);
+        assertNotNull(struct.getField("f2"));
+        struct = docType.getStructType("mystructinbar");
         assertNotNull(struct);
         assertNotNull(struct.getField("f2"));
         struct = docType.getDeclaredStructType("mystructinfoobar");
         assertNull(struct);
+        struct = docType.getStructType("mystructinfoobar");
+        assertNull(struct);
         struct = docType.getDeclaredStructType("mystruct");
+        assertNull(struct);
+        struct = docType.getStructType("mystruct");
         assertNotNull(struct);
         assertNotNull(struct.getField("f0"));
 
         docType = manager.getDocumentType("foobar");
         struct = docType.getDeclaredStructType("mystructinfoo");
+        assertNull(struct);
+        struct = docType.getStructType("mystructinfoo");
         assertNotNull(struct);
         assertNotNull(struct.getField("f1"));
         struct = docType.getDeclaredStructType("mystructinbar");
+        assertNull(struct);
+        struct = docType.getStructType("mystructinbar");
         assertNotNull(struct);
         assertNotNull(struct.getField("f2"));
         struct = docType.getDeclaredStructType("mystructinfoobar");
         assertNotNull(struct);
         assertNotNull(struct.getField("f3"));
+        struct = docType.getStructType("mystructinfoobar");
+        assertNotNull(struct);
+        assertNotNull(struct.getField("f3"));
         struct = docType.getDeclaredStructType("mystruct");
+        assertNull(struct);
+        struct = docType.getStructType("mystruct");
         assertNotNull(struct);
         assertNotNull(struct.getField("f0"));
+
+        assertNull(manager.getDataTypeInternal("mystruct@common"));
+        assertNull(manager.getDataTypeInternal("mystructinfoo@foo"));
+        assertNull(manager.getDataTypeInternal("mystructinbar@bar"));
+        assertNull(manager.getDataTypeInternal("mystructinfoobar@foobar"));
+        assertNull(manager.getDataTypeInternal("mystruct"));
+        assertNull(manager.getDataTypeInternal("mystructinfoo"));
+        assertNull(manager.getDataTypeInternal("mystructinbar"));
+        assertNull(manager.getDataTypeInternal("mystructinfoobar"));
+        assertNull(manager.getDataTypeInternal("foo.header"));
+        assertNull(manager.getDataTypeInternal("position"));
     }
 
     // TODO test clone(). Also fieldSets not part of clone()..!

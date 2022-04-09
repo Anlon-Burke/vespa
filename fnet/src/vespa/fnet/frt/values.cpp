@@ -129,10 +129,16 @@ FRT_Values::EnsureFree(uint32_t need)
         cnt = 16;
 
     char *types = (char *) _stash.alloc(cnt + 1);
-    memcpy(types, _typeString, _numValues);
+    if (_numValues > 0) {
+        assert(_typeString != nullptr);
+        memcpy(types, _typeString, _numValues);
+    }
     memset(types + _numValues, FRT_VALUE_NONE, cnt + 1 - _numValues);
     FRT_Value *values = (FRT_Value *) (void *)_stash.alloc(cnt * sizeof(FRT_Value));
-    memcpy(values, _values, _numValues * sizeof(FRT_Value));
+    if (_numValues > 0) {
+        assert(_values != nullptr);
+        memcpy(values, _values, _numValues * sizeof(FRT_Value));
+    }
     _maxValues  = cnt;
     _typeString = types;
     _values     = values;
@@ -978,7 +984,7 @@ FRT_Values::DecodeBig(FNET_DataBuffer *src, uint32_t len)
     }
 
     if (len != 0) goto error;
-    if (strncmp(typeString, _typeString, numValues) != 0) goto error;
+    if ((numValues > 0) && strncmp(typeString, _typeString, numValues) != 0) goto error;
     return true;
 
 error:
@@ -1379,6 +1385,9 @@ FRT_Values::EncodeBig(FNET_DataBuffer *dst)
     const char *p = _typeString;
 
     dst->WriteInt32Fast(numValues);
+    if (numValues == 0) {
+        return; // p may be nullptr, don't try to write what does not exist.
+    }
     dst->WriteBytesFast(p, numValues);
 
     for (uint32_t i = 0; i < numValues; i++, p++) {

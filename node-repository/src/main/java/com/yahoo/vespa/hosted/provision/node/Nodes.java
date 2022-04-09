@@ -322,7 +322,12 @@ public class Nodes {
         if (parkOnDeallocationOf(node, agent)) {
             return park(node.hostname(), false, agent, reason, transaction);
         } else {
-            return db.writeTo(Node.State.dirty, List.of(node), agent, Optional.of(reason), transaction).get(0);
+            Node.State toState = Node.State.dirty;
+            if (node.state() == Node.State.parked) {
+                if (node.status().wantToDeprovision()) throw new IllegalArgumentException("Cannot move " + node + " to " + toState + ": It's being deprovisioned");
+                if (node.status().wantToRebuild()) throw new IllegalArgumentException("Cannot move " + node + " to " + toState + ": It's being rebuilt");
+            }
+            return db.writeTo(toState, List.of(node), agent, Optional.of(reason), transaction).get(0);
         }
     }
 

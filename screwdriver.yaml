@@ -183,6 +183,8 @@ jobs:
       - *save-cache
 
   publish-release:
+    image: docker.io/vespaengine/vespa-build-centos-stream8:latest
+
     annotations:
       screwdriver.cd/cpu: 7
       screwdriver.cd/ram: 16
@@ -216,10 +218,9 @@ jobs:
             exit 1
           fi
       - install-dependencies: |
-          yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-          yum install -y --setopt skip_missing_names_on_install=False docker-ce docker-ce-cli containerd.io rh-git227
+          dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+          dnf install -y docker-ce docker-ce-cli containerd.io
           docker system info
-          source /opt/rh/rh-git227/enable
       - release-rpms: |
           screwdriver/release-rpms.sh $VESPA_VERSION $VESPA_REF
       - release-container-image: |
@@ -228,6 +229,25 @@ jobs:
           screwdriver/release-java-artifacts.sh $VESPA_VERSION $VESPA_REF
       - update-sample-apps: |
           screwdriver/update-vespa-version-in-sample-apps.sh $VESPA_VERSION
+
+  publish-cli-release:
+    image: homebrew/brew:latest
+    annotations:
+      # Run once an hour, in the hours 7-15 UTC, Monday-Thursday
+      screwdriver.cd/buildPeriodically: H 7-15 * * 1-4
+    secrets:
+      - HOMEBREW_GITHUB_API_TOKEN
+      - GH_TOKEN
+    steps:
+      - install-dependencies: |
+          export HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ANALYTICS=1
+          brew install --quiet gh zip go
+      - publish-github:
+          make -C client/go clean dist-github
+      - publish-homebrew:
+          make -C client/go clean dist-homebrew
+      - verify-brew-install:
+          make -C client/go install-brew
 
   verify-opensource-release-7days:
     annotations:

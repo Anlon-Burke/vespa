@@ -1,0 +1,248 @@
+# Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+search neuralnet {
+
+    document neuralnet {
+
+        field pinned type int {
+            indexing: attribute
+        }
+
+        field createdAt type long {
+            indexing: attribute
+        }
+
+        field updatedAt type long {
+            indexing: attribute
+        }
+
+        field uvCount type int {
+            indexing: attribute
+        }
+
+        field dvCount type int {
+            indexing: attribute
+        }
+
+        field aVoteCount type int {
+            indexing: attribute
+        }
+
+        field rCount type int {
+            indexing: attribute
+        }
+
+        field uniqueRACount type int {
+            indexing: attribute
+        }
+
+        field rTo type string {
+            indexing: attribute
+        }
+
+        field markedAsAAt type long {
+            indexing: attribute
+        }
+
+        field normalizedTextScore type float {
+            indexing: attribute
+        }
+
+        field t type float {
+            indexing: attribute
+        }
+
+        field relevance type float {
+            indexing: attribute
+        }
+
+        field normalizedCS type float {
+            indexing: attribute
+        }
+
+        field laAt type long {
+            indexing: attribute
+        }
+
+        field hsScore type double {
+            indexing: attribute
+        }
+
+    }
+
+    rank-profile defaultRankProfile inherits default {
+
+        inputs {
+            query(W_0)   tensor(x[9],hidden[9])
+            query(b_0)   tensor(hidden[9])
+            query(W_1)   tensor(hidden[9],out[9])
+            query(b_1)   tensor(out[9])
+            query(W_out) tensor(out[9])
+            query(b_out) tensor(out[1])
+        }
+
+        constants {
+            maxSignedSixtyFourBitInteger: 9223372036854775807
+        }
+
+         function log10_1p(x) {
+            expression: log10(x+1)
+        }
+
+        function textScoreToUse() {
+            expression: if(isNan(attribute(normalizedTextScore)) == 1, 0, attribute(normalizedTextScore))
+        }
+
+        function rCountToUse() {
+            expression: if(isNan(attribute(rCount)) == 1, 0, if(attribute(rCount) < 0, 0, attribute(rCount)))
+        }
+
+        function uniqueRCountToUse() {
+            expression: if(isNan(attribute(uniqueRCount)) == 1, 0, if(attribute(uniqueRACount) < 0, 0, attribute(uniqueRACount)))
+        }
+
+        function uvCountToUse() {
+            expression: if(isNan(attribute(uvCount)) == 1, 0, if(attribute(uvCount) < 0, 0, attribute(uvCount)))
+        }
+
+        function dvCountToUse() {
+            expression: if(isNan(attribute(dvCount)) == 1, 0, if(attribute(dvCount) < 0, 0, attribute(dvCount)))
+        }
+
+        function aVoteCountToUse() {
+            expression: if(isNan(attribute(aVoteCount)) == 1, 0, if(attribute(aVoteCount) < 0, 0, attribute(aVoteCount)))
+        }
+
+        function totalPR() {
+            expression: uniqueRCountToUse + query(voteToRRatio) * (uvCountToUse - dvCountToUse) - aVoteCountToUse
+        }
+
+        function totalvote() {
+            expression: query(reportaweight) * aVoteCountToUse + dvCountToUse + query(rweight) * uniqueRCountToUse + uvCountToUse
+        }
+
+        function phat() {
+            expression: if (totalvote == 0, 0, ( query(rweight) * uniqueRCountToUse + uvCountToUse) / totalvote)
+        }
+
+        function nCScoreToUse() {
+            expression: if (totalPR > 0, log10(totalPR), 0)
+        }
+
+        function hsScoreToUse() {
+            expression: attribute(hsScore)
+        }
+
+        function tScoreToUse() {
+            expression: if (isNan(attribute(t)) == 1, 0.6, attribute(t))
+        }
+
+        function relevanceScoreToUse() {
+            expression: if (isNan(attribute(relevance)) == 1, 0.254, attribute(relevance))
+        }
+
+        function freshnessToUse() {
+            expression: if (freshness(createdAt).logscale < 0.01, 0.01, freshness(createdAt).logscale)
+        }
+
+        function rankedAt() {
+            expression: now
+        }
+
+        function createdAtToUse() {
+            expression: if(isNan(attribute(createdAt)) == 1, rankedAt, attribute(createdAt))
+        }
+
+        function laAtToUse() {
+            expression: if(isNan(attribute(laAt)) == 1, attribute(createdAt), attribute(laAt))
+        }
+
+        function markedAsAAtToUse() {
+            expression: if(isNan(attribute(markedAsAAt)) == 1, maxSignedSixtyFourBitInteger, attribute(markedAsAAt))
+        }
+
+        function tdToUse() {
+            expression: pow(2, 0 - ((rankedAt - createdAtToUse) / query(decay)))
+        }
+
+        function commentOverallScore() {
+            expression: query(textweight) * textScoreToUse  + query(communityweight) * nCScoreToUse
+        }
+
+        function pinScore() {
+            expression: if(isNan(attribute(pinned)) == 1, 0, query(pinweight) * attribute(pinned))
+        }
+
+        function freshnessRank() {
+            expression: nativeRank + freshness(createdAt)
+        }
+
+        first-phase {
+            expression: nativeRank
+        }
+
+    }
+
+    rank-profile neuralNetworkProfile inherits defaultRankProfile {
+        function nn_input() {
+            expression {
+                concat(log10_1p(aVoteCountToUse),
+                concat(log10_1p(dvCountToUse),
+                concat(log10_1p(uniqueRCountToUse),
+                concat(log10_1p(uvCountToUse),
+                concat(phat,
+                concat(log10_1p(totalvote),
+                concat(hsScoreToUse,
+                concat(tdToUse,
+                tScoreToUse, x), x), x), x), x), x), x), x)
+            }
+        }
+
+        function get_model_weights(field) {
+            expression: if(query(field) == 0, constant(field), query(field))
+        }
+
+        function layer_0() {
+            expression: elu(xw_plus_b(nn_input, get_model_weights(W_0), get_model_weights(b_0), x))
+        }
+        function layer_1() {
+            expression: elu(xw_plus_b(layer_0, get_model_weights(W_1), get_model_weights(b_1), hidden))
+        }
+        function layer_out() {
+            expression: sum(xw_plus_b(layer_1, get_model_weights(W_out), get_model_weights(b_out), out))
+        }
+        first-phase {
+            expression: freshnessRank
+        }
+        second-phase {
+            expression: layer_out
+            rerank-count: 2000
+        }
+
+    }
+
+    constant W_0 {
+        file: neural-network-201805/W_0.json
+        type: tensor(x[9],hidden[9])
+    }
+    constant b_0 {
+        file: neural-network-201805/b_0.json
+        type: tensor(hidden[9])
+    }
+    constant W_1 {
+        file: neural-network-201805/W_1.json
+        type: tensor(hidden[9],out[9])
+    }
+    constant b_1 {
+        file: neural-network-201805/b_1.json
+        type: tensor(out[9])
+    }
+    constant W_out {
+        file: neural-network-201805/W_out.json
+        type: tensor(out[9])
+    }
+    constant b_out {
+        file: neural-network-201805/b_out.json
+        type: tensor(out[1])
+    }
+
+}

@@ -75,95 +75,95 @@ search neuralnet {
             maxSignedSixtyFourBitInteger: 9223372036854775807
         }
 
-        macro log10_1p(x) {
+         function log10_1p(x) {
             expression: log10(x+1)
         }
 
-        macro textScoreToUse() {
+        function textScoreToUse() {
             expression: if(isNan(attribute(normalizedTextScore)) == 1, 0, attribute(normalizedTextScore))
         }
 
-        macro rCountToUse() {
+        function rCountToUse() {
             expression: if(isNan(attribute(rCount)) == 1, 0, if(attribute(rCount) < 0, 0, attribute(rCount)))
         }
 
-        macro uniqueRCountToUse() {
+        function uniqueRCountToUse() {
             expression: if(isNan(attribute(uniqueRCount)) == 1, 0, if(attribute(uniqueRACount) < 0, 0, attribute(uniqueRACount)))
         }
 
-        macro uvCountToUse() {
+        function uvCountToUse() {
             expression: if(isNan(attribute(uvCount)) == 1, 0, if(attribute(uvCount) < 0, 0, attribute(uvCount)))
         }
 
-        macro dvCountToUse() {
+        function dvCountToUse() {
             expression: if(isNan(attribute(dvCount)) == 1, 0, if(attribute(dvCount) < 0, 0, attribute(dvCount)))
         }
 
-        macro aVoteCountToUse() {
+        function aVoteCountToUse() {
             expression: if(isNan(attribute(aVoteCount)) == 1, 0, if(attribute(aVoteCount) < 0, 0, attribute(aVoteCount)))
         }
 
-        macro totalPR() {
+        function totalPR() {
             expression: uniqueRCountToUse + query(voteToRRatio) * (uvCountToUse - dvCountToUse) - aVoteCountToUse
         }
 
-        macro totalvote() {
+        function totalvote() {
             expression: query(reportaweight) * aVoteCountToUse + dvCountToUse + query(rweight) * uniqueRCountToUse + uvCountToUse
         }
 
-        macro phat() {
+        function phat() {
             expression: if (totalvote == 0, 0, ( query(rweight) * uniqueRCountToUse + uvCountToUse) / totalvote)
         }
 
-        macro nCScoreToUse() {
+        function nCScoreToUse() {
             expression: if (totalPR > 0, log10(totalPR), 0)
         }
 
-        macro hsScoreToUse() {
+        function hsScoreToUse() {
             expression: attribute(hsScore)
         }
 
-        macro tScoreToUse() {
+        function tScoreToUse() {
             expression: if (isNan(attribute(t)) == 1, 0.6, attribute(t))
         }
 
-        macro relevanceScoreToUse() {
+        function relevanceScoreToUse() {
             expression: if (isNan(attribute(relevance)) == 1, 0.254, attribute(relevance))
         }
 
-        macro freshnessToUse() {
+        function freshnessToUse() {
             expression: if (freshness(createdAt).logscale < 0.01, 0.01, freshness(createdAt).logscale)
         }
 
-        macro rankedAt() {
+        function rankedAt() {
             expression: now
         }
 
-        macro createdAtToUse() {
+        function createdAtToUse() {
             expression: if(isNan(attribute(createdAt)) == 1, rankedAt, attribute(createdAt))
         }
 
-        macro laAtToUse() {
+        function laAtToUse() {
             expression: if(isNan(attribute(laAt)) == 1, attribute(createdAt), attribute(laAt))
         }
 
-        macro markedAsAAtToUse() {
+        function markedAsAAtToUse() {
             expression: if(isNan(attribute(markedAsAAt)) == 1, maxSignedSixtyFourBitInteger, attribute(markedAsAAt))
         }
 
-        macro tdToUse() {
+        function tdToUse() {
             expression: pow(2, 0 - ((rankedAt - createdAtToUse) / query(decay)))
         }
 
-        macro commentOverallScore() {
+        function commentOverallScore() {
             expression: query(textweight) * textScoreToUse  + query(communityweight) * nCScoreToUse
         }
 
-        macro pinScore() {
+        function pinScore() {
             expression: if(isNan(attribute(pinned)) == 1, 0, query(pinweight) * attribute(pinned))
         }
 
-        macro freshnessRank() {
+        function freshnessRank() {
             expression: nativeRank + freshness(createdAt)
         }
 
@@ -174,7 +174,7 @@ search neuralnet {
     }
 
     rank-profile neuralNetworkProfile inherits defaultRankProfile {
-        macro nn_input() {
+        function nn_input() {
             expression {
                 concat(log10_1p(aVoteCountToUse),
                 concat(log10_1p(dvCountToUse),
@@ -188,17 +188,17 @@ search neuralnet {
             }
         }
 
-        macro get_model_weights(field) {
+        function get_model_weights(field) {
             expression: if(query(field) == 0, constant(field), query(field))
         }
 
-        macro layer_0() {
+        function layer_0() {
             expression: elu(xw_plus_b(nn_input, get_model_weights(W_0), get_model_weights(b_0), x))
         }
-        macro layer_1() {
+        function layer_1() {
             expression: elu(xw_plus_b(layer_0, get_model_weights(W_1), get_model_weights(b_1), hidden))
         }
-        macro layer_out() {
+        function layer_out() {
             expression: sum(xw_plus_b(layer_1, get_model_weights(W_out), get_model_weights(b_out), out))
         }
         first-phase {

@@ -40,11 +40,12 @@ SingleValueEnumAttributeBase::addDoc(bool &incGeneration)
 SingleValueEnumAttributeBase::EnumIndexCopyVector
 SingleValueEnumAttributeBase::getIndicesCopy(uint32_t size) const
 {
-    assert(size <= _enumIndices.size());
+    assert(size <= _enumIndices.get_size());            // Called from writer only
+    auto* enum_indices = &_enumIndices.get_elem_ref(0); // Called from writer only
     EnumIndexCopyVector result;
     result.reserve(size);
     for (uint32_t lid = 0; lid < size; ++lid) {
-        result.push_back(_enumIndices[lid].load_relaxed());
+        result.push_back(enum_indices[lid].load_relaxed());
     }
     return result;
 }

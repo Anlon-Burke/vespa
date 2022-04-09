@@ -33,7 +33,7 @@ public:
         ITEM_TERM                  =   4,
         ITEM_NUMTERM               =   5,
         ITEM_PHRASE                =   6,
-        /* removed: ITEM_PAREN     =   7, */
+        ITEM_MULTI_TERM            =   7,
         ITEM_PREFIXTERM            =   8,
         ITEM_SUBSTRINGTERM         =   9,
         ITEM_ANY                   =   10,
@@ -56,8 +56,10 @@ public:
         ITEM_GEO_LOCATION_TERM     =   27,
         ITEM_TRUE                  =   28,
         ITEM_FALSE                 =   29,
-        ITEM_MULTI_TERM            =   30,
-        ITEM_UNDEF                 =   31,
+        ITEM_FUZZY                 =   30,
+        ITEM_UNDEF                 =   32,
+        // NOTE: Only 5 bits are used to encode the item type in the protocol, and 31 is the last available value.
+        // We might need to use 31 to signal a protocol extension in order to support more item types.
     };
 
     /** A tag identifying the origin of this query node.

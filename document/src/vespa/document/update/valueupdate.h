@@ -19,10 +19,9 @@
 #pragma once
 
 #include "updatevisitor.h"
-#include <vespa/document/util/printable.h>
-#include <vespa/document/util/xmlserializable.h>
 #include <vespa/document/util/identifiableid.h>
 #include <vespa/vespalib/objects/nbostream.h>
+#include <vespa/vespalib/util/xmlstream.h>
 
 namespace document {
 
@@ -31,14 +30,12 @@ class Field;
 class FieldValue;
 class DataType;
 
-class ValueUpdate : public vespalib::Identifiable,
-                    public Printable,
-                    public XmlSerializable
+class ValueUpdate
 {
 protected:
     using nbostream = vespalib::nbostream;
 public:
-    using CP = vespalib::CloneablePtr<ValueUpdate>;
+    using XmlOutputStream = vespalib::xml::XmlOutputStream;
 
     /**
      * Create a value update object from the given stream.
@@ -56,16 +53,12 @@ public:
         Clear      = IDENTIFIABLE_CLASSID(ClearValueUpdate),
         Map        = IDENTIFIABLE_CLASSID(MapValueUpdate),
         Remove     = IDENTIFIABLE_CLASSID(RemoveValueUpdate),
-        TensorModifyUpdate = IDENTIFIABLE_CLASSID(TensorModifyUpdate),
-        TensorAddUpdate = IDENTIFIABLE_CLASSID(TensorAddUpdate),
-        TensorRemoveUpdate = IDENTIFIABLE_CLASSID(TensorRemoveUpdate)
+        TensorModify = IDENTIFIABLE_CLASSID(TensorModifyUpdate),
+        TensorAdd = IDENTIFIABLE_CLASSID(TensorAddUpdate),
+        TensorRemove = IDENTIFIABLE_CLASSID(TensorRemoveUpdate)
     };
 
-    ValueUpdate()
-        : Printable(), XmlSerializable() {}
-
     virtual ~ValueUpdate() = default;
-
     virtual bool operator==(const ValueUpdate&) const = 0;
     bool operator != (const ValueUpdate & rhs) const { return ! (*this == rhs); }
 
@@ -84,8 +77,6 @@ public:
      */
     virtual bool applyTo(FieldValue& value) const = 0;
 
-    virtual ValueUpdate* clone() const = 0;
-
     /**
      * Deserializes the given stream into an instance of an update object.
      *
@@ -95,17 +86,23 @@ public:
     virtual void deserialize(const DocumentTypeRepo& repo, const DataType& type, nbostream & stream) = 0;
 
     /** @return The operation type. */
-    ValueUpdateType getType() const {
-        return static_cast<ValueUpdateType>(getClass().id());
-    }
-
+    ValueUpdateType getType() const noexcept { return _type; }
+    const char * className() const noexcept;
     /**
      * Visit this fieldvalue for double dispatch.
      */
     virtual void accept(UpdateVisitor &visitor) const = 0;
 
-    DECLARE_IDENTIFIABLE_ABSTRACT(ValueUpdate);
+    virtual void print(std::ostream& out, bool verbose, const std::string& indent) const = 0;
+    virtual void printXml(XmlOutputStream& out) const = 0;
+protected:
+    ValueUpdate(ValueUpdateType type) : _type(type) { }
+private:
+    static std::unique_ptr<ValueUpdate> create(ValueUpdateType type);
+    ValueUpdateType _type;
 };
+
+std::ostream& operator<<(std::ostream& out, const ValueUpdate & p);
 
 }
 

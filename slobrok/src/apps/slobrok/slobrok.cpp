@@ -2,8 +2,9 @@
 #include <vespa/slobrok/server/sbenv.h>
 #include <vespa/config/common/exceptions.h>
 #include <vespa/vespalib/util/exceptions.h>
-#include <vespa/fastos/app.h>
+#include <vespa/vespalib/util/signalhandler.h>
 #include <csignal>
+#include <unistd.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("vespa-slobrok");
@@ -13,10 +14,10 @@ LOG_SETUP("vespa-slobrok");
  **/
 namespace slobrok {
 
-class App : public FastOS_Application
+class App
 {
 public:
-    int Main() override;
+    int main(int argc, char **argv);
 };
 
 static std::unique_ptr<SBEnv> mainobj;
@@ -46,21 +47,19 @@ hook_sigterm(void)
 
 
 int
-App::Main()
+App::main(int argc, char **argv)
 {
     uint32_t portnum = 2773;
     vespalib::string cfgId;
 
-    int argi = 1;
-    const char* optArg;
     int c;
-    while ((c = GetOpt("c:s:p:N", optArg, argi)) != -1) {
+    while ((c = getopt(argc, argv, "c:s:p:N")) != -1) {
         switch (c) {
         case 'c':
-            cfgId = std::string(optArg);
+            cfgId = std::string(optarg);
             break;
         case 'p':
-            portnum = atoi(optArg);
+            portnum = atoi(optarg);
             break;
         case 'N':
             // ignored
@@ -106,9 +105,8 @@ App::Main()
 
 } // namespace slobrok
 
-int
-main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
+    vespalib::SignalHandler::PIPE.ignore();
     slobrok::App slobrok;
-    return slobrok.Entry(argc, argv);
+    return slobrok.main(argc, argv);
 }

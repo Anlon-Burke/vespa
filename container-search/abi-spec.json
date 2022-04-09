@@ -541,6 +541,30 @@
     ],
     "fields": []
   },
+  "com.yahoo.prelude.query.FuzzyItem": {
+    "superClass": "com.yahoo.prelude.query.TermItem",
+    "interfaces": [],
+    "attributes": [
+      "public"
+    ],
+    "methods": [
+      "public void <init>(java.lang.String, boolean, java.lang.String)",
+      "public void setValue(java.lang.String)",
+      "public java.lang.String getRawWord()",
+      "public boolean isWords()",
+      "public com.yahoo.prelude.query.Item$ItemType getItemType()",
+      "public java.lang.String getName()",
+      "public java.lang.String stringValue()",
+      "public boolean isStemmed()",
+      "public java.lang.String getIndexedString()",
+      "public int getNumWords()",
+      "public boolean equals(java.lang.Object)",
+      "public int hashCode()",
+      "public java.lang.String toString()",
+      "protected void encodeThis(java.nio.ByteBuffer)"
+    ],
+    "fields": []
+  },
   "com.yahoo.prelude.query.GeoLocationItem": {
     "superClass": "com.yahoo.prelude.query.TermItem",
     "interfaces": [],
@@ -720,6 +744,7 @@
       "public static final enum com.yahoo.prelude.query.Item$ItemType WORD",
       "public static final enum com.yahoo.prelude.query.Item$ItemType INT",
       "public static final enum com.yahoo.prelude.query.Item$ItemType PHRASE",
+      "public static final enum com.yahoo.prelude.query.Item$ItemType MULTI_TERM",
       "public static final enum com.yahoo.prelude.query.Item$ItemType PREFIX",
       "public static final enum com.yahoo.prelude.query.Item$ItemType SUBSTRING",
       "public static final enum com.yahoo.prelude.query.Item$ItemType NEAR",
@@ -741,7 +766,7 @@
       "public static final enum com.yahoo.prelude.query.Item$ItemType GEO_LOCATION_TERM",
       "public static final enum com.yahoo.prelude.query.Item$ItemType TRUE",
       "public static final enum com.yahoo.prelude.query.Item$ItemType FALSE",
-      "public static final enum com.yahoo.prelude.query.Item$ItemType MULTI_TERM",
+      "public static final enum com.yahoo.prelude.query.Item$ItemType FUZZY",
       "public final int code"
     ]
   },
@@ -1868,7 +1893,9 @@
       "public com.yahoo.search.Query$Builder setQueryProfile(com.yahoo.search.query.profile.compiled.CompiledQueryProfile)",
       "public com.yahoo.search.query.profile.compiled.CompiledQueryProfile getQueryProfile()",
       "public com.yahoo.search.Query$Builder setEmbedder(com.yahoo.language.process.Embedder)",
+      "public com.yahoo.search.Query$Builder setEmbedders(java.util.Map)",
       "public com.yahoo.language.process.Embedder getEmbedder()",
+      "public java.util.Map getEmbedders()",
       "public com.yahoo.search.Query$Builder setZoneInfo(ai.vespa.cloud.ZoneInfo)",
       "public ai.vespa.cloud.ZoneInfo getZoneInfo()",
       "public com.yahoo.search.Query build()"
@@ -2320,7 +2347,9 @@
       "public static final com.yahoo.processing.request.CompoundName PARAM_REQUEST",
       "public static final com.yahoo.processing.request.CompoundName PARAM_TIMEZONE",
       "public static final com.yahoo.processing.request.CompoundName PARAM_DEFAULT_MAX_HITS",
-      "public static final com.yahoo.processing.request.CompoundName PARAM_DEFAULT_MAX_GROUPS"
+      "public static final com.yahoo.processing.request.CompoundName PARAM_DEFAULT_MAX_GROUPS",
+      "public static final com.yahoo.processing.request.CompoundName PARAM_DEFAULT_PRECISION_FACTOR",
+      "public static final com.yahoo.processing.request.CompoundName GROUPING_GLOBAL_MAX_GROUPS"
     ]
   },
   "com.yahoo.search.grouping.GroupingRequest": {
@@ -2342,6 +2371,9 @@
       "public void setDefaultMaxHits(int)",
       "public java.util.OptionalInt defaultMaxGroups()",
       "public void setDefaultMaxGroups(int)",
+      "public java.util.OptionalLong globalMaxGroups()",
+      "public void setGlobalMaxGroups(long)",
+      "public java.util.OptionalDouble defaultPrecisionFactor()",
       "public static com.yahoo.search.grouping.GroupingRequest newInstance(com.yahoo.search.Query)",
       "public java.lang.String toString()"
     ],
@@ -2927,6 +2959,7 @@
       "public com.yahoo.search.grouping.request.GroupingOperation setMax(int)",
       "public int getMax()",
       "public boolean hasMax()",
+      "public boolean hasUnlimitedMax()",
       "public com.yahoo.search.grouping.request.GroupingOperation setAccuracy(double)",
       "public double getAccuracy()",
       "public com.yahoo.search.grouping.request.GroupingOperation addOrderBy(com.yahoo.search.grouping.request.GroupingExpression)",
@@ -2951,7 +2984,9 @@
       "public static java.util.List fromStringAsList(java.lang.String)",
       "public bridge synthetic com.yahoo.search.grouping.request.GroupingNode setLabel(java.lang.String)"
     ],
-    "fields": []
+    "fields": [
+      "public static final int UNLIMITED_MAX"
+    ]
   },
   "com.yahoo.search.grouping.request.HourOfDayFunction": {
     "superClass": "com.yahoo.search.grouping.request.FunctionNode",
@@ -4351,7 +4386,7 @@
       "public"
     ],
     "methods": [
-      "public void <init>(com.yahoo.jdisc.Metric, com.yahoo.container.handler.threadpool.ContainerThreadPool, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.container.core.ContainerHttpConfig, com.yahoo.language.process.Embedder, com.yahoo.search.searchchain.ExecutionFactory, ai.vespa.cloud.ZoneInfo)",
+      "public void <init>(com.yahoo.jdisc.Metric, com.yahoo.container.handler.threadpool.ContainerThreadPool, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.container.core.ContainerHttpConfig, com.yahoo.component.provider.ComponentRegistry, com.yahoo.search.searchchain.ExecutionFactory, ai.vespa.cloud.ZoneInfo)",
       "public void <init>(com.yahoo.jdisc.Metric, com.yahoo.container.handler.threadpool.ContainerThreadPool, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.container.core.ContainerHttpConfig, com.yahoo.language.process.Embedder, com.yahoo.search.searchchain.ExecutionFactory)",
       "public void <init>(com.yahoo.statistics.Statistics, com.yahoo.jdisc.Metric, com.yahoo.container.handler.threadpool.ContainerThreadPool, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.container.core.ContainerHttpConfig, com.yahoo.language.process.Embedder, com.yahoo.search.searchchain.ExecutionFactory)",
       "public void <init>(com.yahoo.statistics.Statistics, com.yahoo.jdisc.Metric, com.yahoo.container.handler.threadpool.ContainerThreadPool, com.yahoo.container.logging.AccessLog, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.container.core.ContainerHttpConfig, com.yahoo.search.searchchain.ExecutionFactory)",
@@ -5192,7 +5227,7 @@
       "public void setType(java.lang.String)",
       "public boolean equals(java.lang.Object)",
       "public int hashCode()",
-      "public java.lang.Object clone()",
+      "public com.yahoo.search.query.Model clone()",
       "public com.yahoo.search.query.Model cloneFor(com.yahoo.search.Query)",
       "public com.yahoo.search.Query getParent()",
       "public void setParent(com.yahoo.search.Query)",
@@ -5206,7 +5241,8 @@
       "public com.yahoo.search.searchchain.Execution getExecution()",
       "public static com.yahoo.search.query.Model getFrom(com.yahoo.search.Query)",
       "public java.lang.String toString()",
-      "public void prepare(com.yahoo.search.query.Ranking)"
+      "public void prepare(com.yahoo.search.query.Ranking)",
+      "public bridge synthetic java.lang.Object clone()"
     ],
     "fields": [
       "public static final java.lang.String MODEL",
@@ -5292,6 +5328,7 @@
       "public com.yahoo.search.query.Properties clone()",
       "public com.yahoo.search.Query getParentQuery()",
       "public void setParentQuery(com.yahoo.search.Query)",
+      "public void requireSettable(com.yahoo.processing.request.CompoundName, java.lang.Object, java.util.Map)",
       "public bridge synthetic com.yahoo.processing.request.Properties clone()",
       "public bridge synthetic com.yahoo.processing.request.Properties chained()",
       "public bridge synthetic java.lang.Object clone()"
@@ -5336,6 +5373,7 @@
       "public"
     ],
     "methods": [
+      "public static java.lang.String lookupRankProfileIn(java.util.Map)",
       "public static com.yahoo.search.query.profile.types.QueryProfileType getArgumentType()",
       "public void <init>(com.yahoo.search.Query)",
       "public boolean hasRankProfile()",
@@ -5358,14 +5396,17 @@
       "public com.yahoo.search.query.ranking.MatchPhase getMatchPhase()",
       "public com.yahoo.search.query.ranking.Matching getMatching()",
       "public com.yahoo.search.query.ranking.SoftTimeout getSoftTimeout()",
-      "public java.lang.Object clone()",
-      "public boolean equals(java.lang.Object)",
-      "public int hashCode()",
       "public com.yahoo.search.query.Sorting getSorting()",
       "public void setSorting(com.yahoo.search.query.Sorting)",
       "public void setSorting(java.lang.String)",
       "public static com.yahoo.search.query.Ranking getFrom(com.yahoo.search.Query)",
-      "public void prepare()"
+      "public void prepare()",
+      "public com.yahoo.search.Query getParent()",
+      "public com.yahoo.search.query.Ranking clone()",
+      "public com.yahoo.search.query.Ranking cloneFor(com.yahoo.search.Query)",
+      "public boolean equals(java.lang.Object)",
+      "public int hashCode()",
+      "public bridge synthetic java.lang.Object clone()"
     ],
     "fields": [
       "public static final com.yahoo.processing.request.CompoundName RANKFEATURES",
@@ -5946,8 +5987,6 @@
       "public com.yahoo.search.query.profile.QueryProfile clone()",
       "public static void validateName(java.lang.String)",
       "protected void set(com.yahoo.processing.request.CompoundName, java.lang.Object, com.yahoo.search.query.profile.DimensionBinding, com.yahoo.search.query.profile.QueryProfileRegistry)",
-      "protected java.lang.Object convertToSubstitutionString(java.lang.Object)",
-      "protected com.yahoo.search.query.profile.types.FieldDescription getFieldDescription(com.yahoo.processing.request.CompoundName, com.yahoo.search.query.profile.DimensionBinding)",
       "protected java.lang.Boolean isLocalInstanceOverridable(java.lang.String)",
       "protected java.lang.Object lookup(com.yahoo.processing.request.CompoundName, boolean, com.yahoo.search.query.profile.DimensionBinding)",
       "protected final void accept(com.yahoo.search.query.profile.QueryProfileVisitor, com.yahoo.search.query.profile.DimensionBinding, com.yahoo.search.query.profile.QueryProfile)",
@@ -5990,9 +6029,11 @@
     "methods": [
       "public void <init>(com.yahoo.search.query.profile.compiled.CompiledQueryProfile)",
       "public void <init>(com.yahoo.search.query.profile.compiled.CompiledQueryProfile, com.yahoo.language.process.Embedder)",
+      "public void <init>(com.yahoo.search.query.profile.compiled.CompiledQueryProfile, java.util.Map)",
       "public com.yahoo.search.query.profile.compiled.CompiledQueryProfile getQueryProfile()",
       "public java.lang.Object get(com.yahoo.processing.request.CompoundName, java.util.Map, com.yahoo.processing.request.Properties)",
       "public void set(com.yahoo.processing.request.CompoundName, java.lang.Object, java.util.Map)",
+      "public void requireSettable(com.yahoo.processing.request.CompoundName, java.lang.Object, java.util.Map)",
       "public void clearAll(com.yahoo.processing.request.CompoundName, java.util.Map)",
       "public java.util.Map listProperties(com.yahoo.processing.request.CompoundName, java.util.Map, com.yahoo.processing.request.Properties)",
       "public boolean isComplete(java.lang.StringBuilder, java.util.Map)",
@@ -6197,7 +6238,7 @@
       "public static com.yahoo.search.query.profile.SubstituteString create(java.lang.String)",
       "public void <init>(java.util.List, java.lang.String)",
       "public boolean hasRelative()",
-      "public java.lang.String substitute(java.util.Map, com.yahoo.processing.request.Properties)",
+      "public java.lang.Object substitute(java.util.Map, com.yahoo.processing.request.Properties)",
       "public java.util.List components()",
       "public java.lang.String stringValue()",
       "public int hashCode()",
@@ -6365,6 +6406,7 @@
     ],
     "methods": [
       "public void <init>(java.lang.String, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.language.process.Embedder, java.util.Map)",
+      "public void <init>(java.lang.String, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, java.util.Map, java.util.Map)",
       "public java.lang.String destination()",
       "public static com.yahoo.search.query.profile.types.ConversionContext empty()"
     ],
@@ -6639,6 +6681,7 @@
     ],
     "methods": [
       "public void <init>(com.yahoo.search.Query, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.language.process.Embedder)",
+      "public void <init>(com.yahoo.search.Query, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, java.util.Map)",
       "public void setParentQuery(com.yahoo.search.Query)",
       "public java.lang.Object get(com.yahoo.processing.request.CompoundName, java.util.Map, com.yahoo.processing.request.Properties)",
       "public void set(com.yahoo.processing.request.CompoundName, java.lang.Object, java.util.Map)",
@@ -6656,6 +6699,18 @@
     "methods": [
       "public void <init>(java.util.Map)",
       "protected com.yahoo.processing.request.CompoundName unalias(com.yahoo.processing.request.CompoundName)"
+    ],
+    "fields": []
+  },
+  "com.yahoo.search.query.properties.RankProfileInputProperties": {
+    "superClass": "com.yahoo.search.query.Properties",
+    "interfaces": [],
+    "attributes": [
+      "public"
+    ],
+    "methods": [
+      "public void <init>(com.yahoo.search.Query)",
+      "public void requireSettable(com.yahoo.processing.request.CompoundName, java.lang.Object, java.util.Map)"
     ],
     "fields": []
   },
@@ -6817,6 +6872,7 @@
     ],
     "methods": [
       "public void <init>()",
+      "public void <init>(com.yahoo.search.query.Ranking)",
       "public void put(java.lang.String, double)",
       "public void put(java.lang.String, com.yahoo.tensor.Tensor)",
       "public void put(java.lang.String, java.lang.String)",
@@ -6824,6 +6880,7 @@
       "public java.lang.Object getObject(java.lang.String)",
       "public java.util.OptionalDouble getDouble(java.lang.String)",
       "public java.util.Optional getTensor(java.lang.String)",
+      "public java.util.Optional getString(java.lang.String)",
       "public java.util.Map asMap()",
       "public boolean isEmpty()",
       "public void prepare(com.yahoo.search.query.ranking.RankProperties)",
@@ -6831,6 +6888,7 @@
       "public boolean equals(java.lang.Object)",
       "public int hashCode()",
       "public com.yahoo.search.query.ranking.RankFeatures clone()",
+      "public com.yahoo.search.query.ranking.RankFeatures cloneFor(com.yahoo.search.query.Ranking)",
       "public java.lang.String toString()",
       "public bridge synthetic java.lang.Object clone()"
     ],

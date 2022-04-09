@@ -129,11 +129,11 @@ public class DocumentRetrieverTest {
         return new DocumentRetriever(
                 clusterList,
                 mockedFactory,
-                new LoadTypeSet(),
                 params);
     }
 
     @Test
+    @SuppressWarnings("removal") // TODO: Remove on Vespa 8
     public void testSendSingleMessage() throws DocumentRetrieverException {
         ClientParameters params = createParameters()
                 .setDocumentIds(asIterator(DOC_ID_1))
@@ -144,7 +144,7 @@ public class DocumentRetrieverTest {
 
         when(mockedSession.syncSend(any())).thenReturn(createDocumentReply(DOC_ID_1));
 
-        LoadTypeSet loadTypeSet = new LoadTypeSet();
+        LoadTypeSet loadTypeSet = new LoadTypeSet(); // TODO remove on Vespa 8
         loadTypeSet.addLoadType(1, "loadtype", DocumentProtocol.Priority.HIGH_1);
         DocumentRetriever documentRetriever = new DocumentRetriever(
                 new ClusterList(),
@@ -156,7 +156,7 @@ public class DocumentRetrieverTest {
         verify(mockedSession, times(1)).syncSend(argThat((ArgumentMatcher<GetDocumentMessage>) o ->
                 o.getPriority().equals(DocumentProtocol.Priority.HIGH_1) &&
                 !o.getRetryEnabled() &&
-                o.getLoadType().equals(new LoadType(1, "loadtype", DocumentProtocol.Priority.HIGH_1))));
+                o.getLoadType().equals(new LoadType(1, "loadtype", DocumentProtocol.Priority.HIGH_1)))); // TODO: Remove on Vespa 8
         assertContainsDocument(DOC_ID_1);
     }
 

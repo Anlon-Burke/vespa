@@ -44,11 +44,11 @@ public:
 
 private:
     FNET_Transport               *_transport;
-    FRT_PacketFactory             _packetFactory;
-    FNET_SimplePacketStreamer     _packetStreamer;
     FNET_Connector               *_connector;
     FRT_ReflectionManager         _reflectionManager;
     RPCHooks                      _rpcHooks;
+
+    static FNET_IPacketStreamer *get_packet_streamer();
 
 public:
     explicit FRT_Supervisor(FNET_Transport *transport);
@@ -84,7 +84,6 @@ public:
 
 
     // FNET ServerAdapter Interface
-    bool InitAdminChannel(FNET_Channel *channel) override;
     bool InitChannel(FNET_Channel *channel, uint32_t pcode) override;
 
     // Packet Handling

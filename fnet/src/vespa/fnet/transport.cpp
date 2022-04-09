@@ -125,6 +125,11 @@ TransportConfig::time_tools() const {
 
 } // fnet
 
+void
+FNET_Transport::wait_for_pending_resolves() {
+    _async_resolver->wait_for_pending_resolves();
+}
+
 FNET_Transport::FNET_Transport(const fnet::TransportConfig &cfg)
     : _async_resolver(cfg.resolver()),
       _crypto_engine(cfg.crypto()),
@@ -188,12 +193,10 @@ FNET_Transport::Listen(const char *spec, FNET_IPacketStreamer *streamer,
 
 FNET_Connection *
 FNET_Transport::Connect(const char *spec, FNET_IPacketStreamer *streamer,
-                        FNET_IPacketHandler *adminHandler,
-                        FNET_Context adminContext,
                         FNET_IServerAdapter *serverAdapter,
                         FNET_Context connContext)
 {
-    return select_thread(spec, strlen(spec))->Connect(spec, streamer, adminHandler, adminContext, serverAdapter, connContext);
+    return select_thread(spec, strlen(spec))->Connect(spec, streamer, serverAdapter, connContext);
 }
 
 uint32_t
@@ -212,6 +215,20 @@ FNET_Transport::sync()
     for (const auto &thread: _threads) {
         thread->sync();
     }
+}
+
+void
+FNET_Transport::detach(FNET_IServerAdapter *server_adapter)
+{
+    for (const auto &thread: _threads) {
+        thread->init_detach(server_adapter);
+    }
+    wait_for_pending_resolves();
+    sync();
+    for (const auto &thread: _threads) {
+        thread->fini_detach(server_adapter);
+    }
+    sync();
 }
 
 FNET_Scheduler *
@@ -233,7 +250,7 @@ FNET_Transport::ShutDown(bool waitFinished)
         thread->ShutDown(waitFinished);
     }
     if (waitFinished) {
-        _async_resolver->wait_for_pending_resolves();
+        wait_for_pending_resolves();
         _work_pool->shutdown().sync();
     }
 }
@@ -244,7 +261,7 @@ FNET_Transport::WaitFinished()
     for (const auto &thread: _threads) {
         thread->WaitFinished();
     }
-    _async_resolver->wait_for_pending_resolves();
+    wait_for_pending_resolves();
     _work_pool->shutdown().sync();
 }
 

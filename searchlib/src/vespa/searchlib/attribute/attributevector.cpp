@@ -3,14 +3,12 @@
 #include "address_space_components.h"
 #include "attribute_read_guard.h"
 #include "attributefilesavetarget.h"
-#include "attributeiterators.hpp"
 #include "attributesaver.h"
 #include "attributevector.h"
 #include "attributevector.hpp"
 #include "floatbase.h"
 #include "interlock.h"
 #include "ipostinglistattributebase.h"
-#include "ipostinglistsearchcontext.h"
 #include "stringbase.h"
 #include <vespa/document/update/assignvalueupdate.h>
 #include <vespa/document/update/mapvalueupdate.h>
@@ -19,7 +17,6 @@
 #include <vespa/searchlib/common/tunefileinfo.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
 #include <vespa/searchlib/query/query_term_decoder.h>
-#include <vespa/searchlib/queryeval/emptysearch.h>
 #include <vespa/searchlib/util/file_settings.h>
 #include <vespa/searchlib/util/logutil.h>
 #include <vespa/vespalib/util/exceptions.h>
@@ -421,70 +418,16 @@ AttributeVector::findFoldedEnums(const char *) const {
 
 const char * AttributeVector::getStringFromEnum(EnumHandle) const { return nullptr; }
 
-AttributeVector::SearchContext::SearchContext(const AttributeVector &attr) :
-    _attr(attr),
-    _plsc(nullptr)
-{ }
-
-AttributeVector::SearchContext::UP
+std::unique_ptr<attribute::SearchContext>
 AttributeVector::getSearch(QueryPacketT searchSpec, const SearchContextParams &params) const
 {
     return getSearch(QueryTermDecoder::decodeTerm(searchSpec), params);
 }
 
-attribute::ISearchContext::UP
+std::unique_ptr<attribute::ISearchContext>
 AttributeVector::createSearchContext(QueryTermSimpleUP term, const attribute::SearchContextParams &params) const
 {
     return getSearch(std::move(term), params);
-}
-
-AttributeVector::SearchContext::~SearchContext() = default;
-
-unsigned int
-AttributeVector::SearchContext::approximateHits() const
-{
-    if (_plsc != nullptr) {
-        return _plsc->approximateHits();
-    }
-    return std::max(uint64_t(_attr.getNumDocs()),
-                    _attr.getStatus().getNumValues());
-}
-
-SearchIterator::UP
-AttributeVector::SearchContext::
-createIterator(fef::TermFieldMatchData *matchData, bool strict)
-{
-    if (_plsc != nullptr) {
-        SearchIterator::UP res = _plsc->createPostingIterator(matchData, strict);
-        if (res) {
-            return res;
-        }
-    }
-    return createFilterIterator(matchData, strict);
-}
-
-
-SearchIterator::UP
-AttributeVector::SearchContext::
-createFilterIterator(fef::TermFieldMatchData *matchData, bool strict)
-{
-    if (!valid())
-        return std::make_unique<queryeval::EmptySearch>();
-    if (getIsFilter()) {
-        return SearchIterator::UP(strict ?
-            new FilterAttributeIteratorStrict<AttributeVector::SearchContext>(*this, matchData) :
-            new FilterAttributeIteratorT<AttributeVector::SearchContext>(*this, matchData));
-    }
-    return SearchIterator::UP(strict ?
-            new AttributeIteratorStrict<AttributeVector::SearchContext>(*this, matchData) :
-            new AttributeIteratorT<AttributeVector::SearchContext>(*this, matchData));
-}
-
-
-void
-AttributeVector::SearchContext::fetchPostings(const queryeval::ExecuteInfo &execInfo) {
-    if (_plsc != nullptr)
-        _plsc->fetchPostings(execInfo);
 }
 
 
@@ -493,10 +436,10 @@ AttributeVector::apply(DocId doc, const MapValueUpdate &map) {
     bool retval(doc < getNumDocs());
     if (retval) {
         const ValueUpdate & vu(map.getUpdate());
-        if (vu.inherits(ArithmeticValueUpdate::classId)) {
+        if (vu.getType() == ValueUpdate::Arithmetic) {
             const ArithmeticValueUpdate &au(static_cast<const ArithmeticValueUpdate &>(vu));
             retval = applyWeight(doc, map.getKey(), au);
-        } else if (vu.inherits(AssignValueUpdate::classId)) {
+        } else if (vu.getType() == ValueUpdate::Assign) {
             const AssignValueUpdate &au(static_cast<const AssignValueUpdate &>(vu));
             retval = applyWeight(doc, map.getKey(), au);
         } else {
@@ -567,6 +510,7 @@ attribute::IPostingListAttributeBase *AttributeVector::getIPostingListAttributeB
 const attribute::IPostingListAttributeBase *AttributeVector::getIPostingListAttributeBase() const { return nullptr; }
 const IDocumentWeightAttribute * AttributeVector::asDocumentWeightAttribute() const { return nullptr; }
 const tensor::ITensorAttribute *AttributeVector::asTensorAttribute() const { return nullptr; }
+const attribute::IMultiValueAttribute* AttributeVector::as_multi_value_attribute() const { return nullptr; }
 bool AttributeVector::hasPostings() { return getIPostingListAttributeBase() != nullptr; }
 uint64_t AttributeVector::getUniqueValueCount() const { return getTotalValueCount(); }
 uint64_t AttributeVector::getTotalValueCount() const { return getNumDocs(); }

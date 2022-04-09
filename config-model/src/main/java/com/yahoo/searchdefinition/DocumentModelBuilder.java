@@ -7,7 +7,6 @@ import com.yahoo.document.DataType;
 import com.yahoo.document.DocumentType;
 import com.yahoo.document.Field;
 import com.yahoo.document.MapDataType;
-import com.yahoo.documentmodel.NewDocumentReferenceDataType;
 import com.yahoo.document.StructDataType;
 import com.yahoo.document.StructuredDataType;
 import com.yahoo.document.TemporaryStructuredDataType;
@@ -15,7 +14,11 @@ import com.yahoo.document.WeightedSetDataType;
 import com.yahoo.document.annotation.AnnotationReferenceDataType;
 import com.yahoo.document.annotation.AnnotationType;
 import com.yahoo.documentmodel.DataTypeCollection;
+import com.yahoo.documentmodel.NewDocumentReferenceDataType;
 import com.yahoo.documentmodel.NewDocumentType;
+import com.yahoo.documentmodel.OwnedStructDataType;
+import com.yahoo.documentmodel.OwnedTemporaryType;
+import com.yahoo.documentmodel.TemporaryUnknownType;
 import com.yahoo.documentmodel.VespaDocumentType;
 import com.yahoo.searchdefinition.document.Attribute;
 import com.yahoo.searchdefinition.document.SDDocumentType;
@@ -157,7 +160,7 @@ public class DocumentModelBuilder {
     private static void addSearchField(SDField field, SearchDef searchDef) {
         SearchField searchField =
             new SearchField(field,
-                            field.getIndices().containsKey(field.getName()) && field.getIndices().get(field.getName()).getType().equals(Index.Type.VESPA), 
+                            field.getIndices().containsKey(field.getName()) && field.getIndices().get(field.getName()).getType().equals(Index.Type.VESPA),
                             field.getAttributes().containsKey(field.getName()));
         searchDef.add(searchField);
 
@@ -232,13 +235,37 @@ public class DocumentModelBuilder {
         }
         DataType original = type;
         if (type instanceof TemporaryStructuredDataType) {
+            throw new IllegalArgumentException("Cannot handle temporary: " + type);
+        }
+        if (type instanceof TemporaryUnknownType) {
+            // must be a known struct or document type
             DataType other = repo.getDataType(type.getId());
             if (other == null || other == type) {
+                // maybe it is the name of a document type:
                 other = getDocumentType(docs, type.getName());
             }
-            if (other != null) {
-                type = other;
+            if (other == null) {
+                throw new IllegalArgumentException("No replacement found for temporary type: " + type);
             }
+            type = other;
+        } else if (type instanceof OwnedTemporaryType) {
+            // must be replaced with the real struct type
+            DataType other = repo.getDataType(type.getId());
+            if (other == null || other == type) {
+                throw new IllegalArgumentException("No replacement found for temporary type: " + type);
+            }
+            if (other instanceof OwnedStructDataType) {
+                var owned = (OwnedTemporaryType) type;
+                String ownedBy = owned.getOwnerName();
+                var otherOwned = (OwnedStructDataType) other;
+                String otherOwnedBy = otherOwned.getOwnerName();
+                if (! ownedBy.equals(otherOwnedBy)) {
+                    throw new IllegalArgumentException("Wrong document for type: " + otherOwnedBy + " but expected " + ownedBy);
+                }
+            } else {
+                throw new IllegalArgumentException("Found wrong sort of type: " + other + " [" + other.getClass() + "]");
+            }
+            type = other;
         } else if (type instanceof DocumentType) {
             DataType other = getDocumentType(docs, type.getName());
             if (other != null) {
@@ -364,6 +391,8 @@ public class DocumentModelBuilder {
                 for (SDDocumentType proxy : type.getInheritedTypes()) {
                     var inherited = (StructDataType) targetDt.getDataTypeRecursive(proxy.getName());
                     var converted = (StructDataType) targetDt.getDataType(type.getName());
+                    assert(converted instanceof OwnedStructDataType);
+                    assert(inherited instanceof OwnedStructDataType);
                     if (! converted.inherits(inherited)) {
                         converted.inherit(inherited);
                     }
@@ -382,15 +411,15 @@ public class DocumentModelBuilder {
                         StructDataType s = handleStruct(sa.getSdDocType());
                         annotation.setDataType(s);
                         if ((sa.getInherits() != null)) {
-                            structInheritance.put(s, "annotation."+sa.getInherits());
+                            structInheritance.put(s, "annotation." + sa.getInherits());
                         }
                     } else if (sa.getInherits() != null) {
-                        StructDataType s = new StructDataType("annotation."+annotation.getName());
+                        StructDataType s = new OwnedStructDataType("annotation." + annotation.getName(), sdoc.getName());
                         if (anyParentsHavePayLoad(sa, sdoc)) {
                             annotation.setDataType(s);
                             addType(s);
                         }
-                        structInheritance.put(s, "annotation."+sa.getInherits());
+                        structInheritance.put(s, "annotation." + sa.getInherits());
                     }
                 } else {
                     var dt = annotation.getDataType();
@@ -456,7 +485,27 @@ public class DocumentModelBuilder {
                     targetDt.add(type);
                 }
                 return true;
-            } else if ((type instanceof StructDataType) && (oldType instanceof StructDataType)) {
+            }
+            if (oldType == type) {
+                return false;
+            }
+            if (targetDt.getDataType(type.getId()) == null) {
+                if ((oldType instanceof OwnedStructDataType)
+                    && (type instanceof OwnedStructDataType))
+                {
+                    var oldOwned = (OwnedStructDataType) oldType;
+                    var newOwned = (OwnedStructDataType) type;
+                    if (newOwned.getOwnerName().equals(targetDt.getName()) &&
+                        ! oldOwned.getOwnerName().equals(targetDt.getName()))
+                    {
+                        if ( ! dryRun) {
+                            targetDt.add(type);
+                        }
+                        return true;
+                    }
+                }
+            }
+            if ((type instanceof StructDataType) && (oldType instanceof StructDataType)) {
                 StructDataType s = (StructDataType) type;
                 StructDataType os = (StructDataType) oldType;
                 if ((os.getFieldCount() == 0) && (s.getFieldCount() > os.getFieldCount())) {
@@ -536,12 +585,13 @@ public class DocumentModelBuilder {
                 var st = type.getStruct();
                 if (st.getName().equals(type.getName()) &&
                     (st instanceof StructDataType) &&
-                    ! (st instanceof TemporaryStructuredDataType))
+                    (! (st instanceof TemporaryUnknownType)) &&
+                    (! (st instanceof OwnedTemporaryType)))
                     {
                         return handleStruct((StructDataType) st);
                     }
             }
-            StructDataType s = new StructDataType(type.getName());
+            StructDataType s = new OwnedStructDataType(type.getName(), targetDt.getName());
             for (Field f : type.getDocumentType().contentStruct().getFieldsThisTypeOnly()) {
                 specialHandleAnnotationReference(f);
                 s.addField(f);
@@ -562,7 +612,7 @@ public class DocumentModelBuilder {
             addType(s);
             return s;
         }
-        
+
     }
 
     private static Set<NewDocumentType.Name> convertDocumentReferencesToNames(Optional<DocumentReferences> documentReferences) {

@@ -134,7 +134,28 @@ public class DocumentTypeManager {
         return dataTypes.containsKey(code);
     }
 
+    /**
+     * @deprecated //TODO Will be package-private or removed on Vespa 8
+     * Use constants and factories in DataType instead.
+     * For structs, use getStructType() in DocumentType.
+     * For annotation payloads, use getDataType() in AnnotationType.
+     **/
+    @Deprecated
     public DataType getDataType(String name) {
+        var type = getDataTypeInternal(name);
+        if (type == null) {
+            throw new IllegalArgumentException("No datatype named " + name);
+        }
+        return type;
+    }
+
+    /**
+     * For internal use only, avoid whenever possible.
+     * Use constants and factories in DataType instead.
+     * For structs, use getStructType() in DocumentType.
+     * For annotation payloads, use getDataType() in AnnotationType.
+     **/
+    DataType getDataTypeInternal(String name) {
         if (name.startsWith("tensor(")) // built-in dynamic
             return new TensorDataType(TensorType.fromSpec(name));
 
@@ -145,7 +166,7 @@ public class DocumentTypeManager {
             }
         }
         if (foundTypes.isEmpty()) {
-            throw new IllegalArgumentException("No datatype named " + name);
+            return null;
         } else if (foundTypes.size() == 1) {
             return foundTypes.get(0);
         } else {
@@ -234,37 +255,14 @@ public class DocumentTypeManager {
         }
         if (dataTypes.containsKey(type.getId())) {
             DataType existingType = dataTypes.get(type.getId());
-            if (((type instanceof TemporaryDataType) || (type instanceof TemporaryStructuredDataType))
-                && !((existingType instanceof TemporaryDataType) || (existingType instanceof TemporaryStructuredDataType))) {
-                //we're trying to register a temporary type over a permanent one, don't do that:
-                return;
-            } else if ((existingType == type || existingType.equals(type))
-                    && !(existingType instanceof TemporaryDataType)
-                    && !(type instanceof TemporaryDataType)
-                    && !(existingType instanceof TemporaryStructuredDataType)
-                    && !(type instanceof TemporaryStructuredDataType)) { // Shortcut to improve speed
+            if ((existingType == type) || existingType.equals(type)) {
                 // Oki. Already registered.
                 return;
-            } else if (type instanceof DocumentType && dataTypes.get(type.getId()) instanceof DocumentType) {
-                /*
-                DocumentType newInstance = (DocumentType) type;
-                DocumentType oldInstance = (DocumentType) dataTypes.get(type.getId());
-                TODO fix tests
-                */
-                log.warning("Document type " + existingType + " is not equal to document type attempted registered " + type
-                        + ", but have same name. OVERWRITING TYPE as many tests currently does this. "
-                        + "Fix tests so we can throw exception here.");
-                //throw new IllegalStateException("Datatype " + existingType + " is not equal to datatype attempted registered "
-                //        + type + ", but already uses id " + type.getId());
-            } else if ((existingType instanceof TemporaryDataType) || (existingType instanceof TemporaryStructuredDataType)) {
-                //removing temporary type to be able to register correct type
-                dataTypes.remove(existingType.getId());
             } else {
                 throw new IllegalStateException("Datatype " + existingType + " is not equal to datatype attempted registered "
                                                 + type + ", but already uses id " + type.getId());
             }
         }
-
         if (type instanceof DocumentType) {
             DocumentType docType = (DocumentType) type;
             if (docType.getInheritedTypes().size() == 0) {

@@ -2,6 +2,7 @@
 
 #include "value.h"
 #include "operator.h"
+#include "variablemap.h"
 #include <vespa/document/fieldvalue/fieldvalue.h>
 #include <bitset>
 #include <ostream>
@@ -45,8 +46,7 @@ InvalidValue::operator==(const Value&) const
 }
 
 void
-InvalidValue::print(std::ostream& out, bool verbose,
-                    const std::string& indent) const
+InvalidValue::print(std::ostream& out, bool verbose, const std::string& indent) const
 {
     (void) verbose; (void) indent;
     out << "invalid";
@@ -123,8 +123,7 @@ StringValue::operator==(const Value& value) const
 }
 
 void
-StringValue::print(std::ostream& out, bool verbose,
-                    const std::string& indent) const
+StringValue::print(std::ostream& out, bool verbose, const std::string& indent) const
 {
     (void) verbose; (void) indent;
     out << "\"" << _value << "\"";
@@ -156,8 +155,7 @@ IntegerValue::operator==(const Value& value) const
 }
 
 void
-IntegerValue::print(std::ostream& out, bool verbose,
-                    const std::string& indent) const
+IntegerValue::print(std::ostream& out, bool verbose, const std::string& indent) const
 {
     (void) verbose; (void) indent;
     out << _value << 'i';
@@ -189,18 +187,18 @@ FloatValue::operator==(const Value& value) const
 }
 
 void
-FloatValue::print(std::ostream& out, bool verbose,
-                    const std::string& indent) const
+FloatValue::print(std::ostream& out, bool verbose, const std::string& indent) const
 {
     (void) verbose; (void) indent;
     out << _value << 'f';
 }
 
-ArrayValue::ArrayValue(const std::vector<VariableValue>& values)
+ArrayValue::ArrayValue(std::vector<VariableValue> values)
     : Value(Array),
-      _values(values)
+      _values(std::move(values))
 {
 }
+ArrayValue::~ArrayValue() = default;
 
 struct ArrayValue::EqualsComparator {
     bool operator()(std::size_t lhs, std::size_t rhs) const { return lhs == rhs; }
@@ -311,18 +309,19 @@ ArrayValue::regexTrace(const Value& value, std::ostream& trace) const
 }
 
 void
-ArrayValue::print(std::ostream& out, bool verbose,
-                    const std::string& indent) const
+ArrayValue::print(std::ostream& out, bool verbose, const std::string& indent) const
 {
     (void) verbose; (void) indent;
     out << "<no array representation in language yet>";
 }
 
-StructValue::StructValue(const ValueMap & values)
+StructValue::StructValue(ValueMap values)
     : Value(Struct),
-      _values(values)
+      _values(std::move(values))
 {
 }
+
+StructValue::~StructValue() = default;
 
 ResultList
 StructValue::operator<(const Value& value) const
@@ -381,11 +380,23 @@ StructValue::operator==(const Value& value) const
 }
 
 void
-StructValue::print(std::ostream& out, bool verbose,
-                    const std::string& indent) const
+StructValue::print(std::ostream& out, bool verbose, const std::string& indent) const
 {
     (void) verbose; (void) indent;
     out << "<no struct representation in language yet>";
+}
+
+namespace {
+
+fieldvalue::VariableMap
+cloneMap(const fieldvalue::VariableMap &map) {
+    fieldvalue::VariableMap m;
+    for (const auto & item : map) {
+        m.emplace(item.first, item.second);
+    }
+    return m;
+}
+
 }
 
 template <typename Predicate>
@@ -416,7 +427,7 @@ ArrayValue::doCompare(const Value& value, const Predicate& cmp) const
             if (item.first.empty()) {
                 resultForNoVariables.set(result.toEnum());
             } else {
-                results.add(item.first, result);
+                results.add(cloneMap(item.first), result);
             }
         }
         for (uint32_t i(0); i < resultForNoVariables.size(); i++) {

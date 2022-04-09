@@ -40,10 +40,6 @@ private:
     using PostingMap = typename PostingParent::PostingMap;
     using QueryTermSimpleUP = AttributeVector::QueryTermSimpleUP;
     using SelfType = SingleValueStringPostingAttributeT<B>;
-    using StringSingleImplSearchContext = typename SingleValueStringAttributeT<B>::StringSingleImplSearchContext;
-    using StringSinglePostingSearchContext = attribute::StringPostingSearchContext<StringSingleImplSearchContext,
-                                                                                   SelfType,
-                                                                                   vespalib::btree::BTreeNoLeafData>;
     using ValueModifier = typename SingleValueStringAttributeT<B>::ValueModifier;
     using generation_t = typename SingleValueStringAttributeT<B>::generation_t;
 
@@ -78,7 +74,7 @@ public:
     void removeOldGenerations(generation_t firstUsed) override;
     void onGenerationChange(generation_t generation) override;
 
-    AttributeVector::SearchContext::UP
+    std::unique_ptr<attribute::SearchContext>
     getSearch(QueryTermSimpleUP term, const attribute::SearchContextParams & params) const override;
 
     bool onAddDoc(DocId doc) override {

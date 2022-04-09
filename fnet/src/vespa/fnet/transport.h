@@ -113,6 +113,11 @@ private:
     Threads            _threads;
     const FNET_Config  _config;
 
+    /**
+     * Wait for all pending resolve requests.
+     **/
+    void wait_for_pending_resolves();
+
 public:
     FNET_Transport(const FNET_Transport &) = delete;
     FNET_Transport & operator = (const FNET_Transport &) = delete;
@@ -217,25 +222,15 @@ public:
      * holds a host name (or IP address) and a port number. Example:
      * connect to www.fast.no on port 80 (using tcp/ip): spec =
      * 'tcp/www.fast.no:80'. The newly created connection will be
-     * serviced by this transport layer object. If the adminHandler
-     * parameter is given, an internal admin channel is created in the
-     * connection object. The admin channel will be used to deliver
-     * packets tagged with the reserved channel id (FNET_NOID) to the
-     * admin handler.
+     * serviced by this transport layer object.
      *
      * @return an object representing the new connection.
      * @param spec string specifying how and where to connect.
      * @param streamer custom packet streamer.
-     * @param adminHandler packet handler for incoming packets on the
-     *                     admin channel.
-     * @param adminContext application context to be used for incoming
-     *                     packets on the admin channel.
      * @param serverAdapter adapter used to support 2way channel creation.
      * @param connContext application context for the connection.
      **/
     FNET_Connection *Connect(const char *spec, FNET_IPacketStreamer *streamer,
-                             FNET_IPacketHandler *adminHandler = nullptr,
-                             FNET_Context adminContext = FNET_Context(),
                              FNET_IServerAdapter *serverAdapter = nullptr,
                              FNET_Context connContext = FNET_Context());
 
@@ -258,6 +253,15 @@ public:
      * method from a transport thread is not a good idea.
      **/
     void sync();
+
+    /**
+     * Detach a server adapter from this transport.
+     *
+     * This will close all connectors and connections referencing the
+     * server adapter. Note that this function will also synchronize
+     * with async address resolving and underlying transport threads.
+     **/
+    void detach(FNET_IServerAdapter *server_adapter);
 
     /**
      * Obtain a pointer to a transport thread scheduler.

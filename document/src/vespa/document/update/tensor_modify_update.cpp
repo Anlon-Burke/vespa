@@ -82,59 +82,31 @@ convertToCompatibleType(const TensorDataType &tensorType)
 
 }
 
-IMPLEMENT_IDENTIFIABLE(TensorModifyUpdate, ValueUpdate);
-
 TensorModifyUpdate::TensorModifyUpdate()
-    : _operation(Operation::MAX_NUM_OPERATIONS),
+    : ValueUpdate(TensorModify),
+      TensorUpdate(),
+      _operation(Operation::MAX_NUM_OPERATIONS),
       _tensorType(),
       _tensor()
 {
 }
 
-TensorModifyUpdate::TensorModifyUpdate(const TensorModifyUpdate &rhs)
-    : _operation(rhs._operation),
-      _tensorType(std::make_unique<TensorDataType>(*rhs._tensorType)),
-      _tensor(Identifiable::cast<TensorFieldValue *>(_tensorType->createFieldValue().release()))
-{
-    *_tensor = *rhs._tensor;
-}
-
 TensorModifyUpdate::TensorModifyUpdate(Operation operation, std::unique_ptr<TensorFieldValue> tensor)
-    : _operation(operation),
+    : ValueUpdate(TensorModify),
+      TensorUpdate(),
+      _operation(operation),
       _tensorType(std::make_unique<TensorDataType>(dynamic_cast<const TensorDataType &>(*tensor->getDataType()))),
-      _tensor(Identifiable::cast<TensorFieldValue *>(_tensorType->createFieldValue().release()))
+      _tensor(static_cast<TensorFieldValue *>(_tensorType->createFieldValue().release()))
 {
     *_tensor = *tensor;
 }
 
 TensorModifyUpdate::~TensorModifyUpdate() = default;
 
-TensorModifyUpdate &
-TensorModifyUpdate::operator=(const TensorModifyUpdate &rhs)
-{
-    if (&rhs != this) {
-        _operation = rhs._operation;
-        _tensor.reset();
-        _tensorType = std::make_unique<TensorDataType>(*rhs._tensorType);
-        _tensor.reset(Identifiable::cast<TensorFieldValue *>(_tensorType->createFieldValue().release()));
-        *_tensor = *rhs._tensor;
-    }
-    return *this;
-}
-
-TensorModifyUpdate &
-TensorModifyUpdate::operator=(TensorModifyUpdate &&rhs)
-{
-    _operation = rhs._operation;
-    _tensorType = std::move(rhs._tensorType);
-    _tensor = std::move(rhs._tensor);
-    return *this;
-}
-
 bool
 TensorModifyUpdate::operator==(const ValueUpdate &other) const
 {
-    if (other.getClass().id() != TensorModifyUpdate::classId) {
+    if (other.getType() != TensorModify) {
         return false;
     }
     const TensorModifyUpdate& o(static_cast<const TensorModifyUpdate&>(other));
@@ -177,7 +149,7 @@ TensorModifyUpdate::apply_to(const Value &old_tensor,
 bool
 TensorModifyUpdate::applyTo(FieldValue& value) const
 {
-    if (value.inherits(TensorFieldValue::classId)) {
+    if (value.isA(FieldValue::Type::TENSOR)) {
         TensorFieldValue &tensorFieldValue = static_cast<TensorFieldValue &>(value);
         auto oldTensor = tensorFieldValue.getAsTensorPtr();
         if (oldTensor) {
@@ -188,7 +160,7 @@ TensorModifyUpdate::applyTo(FieldValue& value) const
         }
     } else {
         vespalib::string err = make_string("Unable to perform a tensor modify update on a '%s' field value",
-                                           value.getClass().name());
+                                           value.className());
         throw IllegalStateException(err, VESPA_STRLOC);
     }
     return true;
@@ -241,22 +213,16 @@ TensorModifyUpdate::deserialize(const DocumentTypeRepo &repo, const DataType &ty
     _operation = static_cast<Operation>(op);
     _tensorType = convertToCompatibleType(dynamic_cast<const TensorDataType &>(type));
     auto tensor = _tensorType->createFieldValue();
-    if (tensor->inherits(TensorFieldValue::classId)) {
+    if (tensor->isA(FieldValue::Type::TENSOR)) {
         _tensor.reset(static_cast<TensorFieldValue *>(tensor.release()));
     } else {
         vespalib::string err = make_string("Expected tensor field value, got a '%s' field value",
-                                           tensor->getClass().name());
+                                           tensor->className());
         throw IllegalStateException(err, VESPA_STRLOC);
     }
     VespaDocumentDeserializer deserializer(repo, stream, Document::getNewestSerializationVersion());
     deserializer.read(*_tensor);
     verifyCellsTensorIsSparse(_tensor->getAsTensorPtr());
-}
-
-TensorModifyUpdate*
-TensorModifyUpdate::clone() const
-{
-    return new TensorModifyUpdate(*this);
 }
 
 }

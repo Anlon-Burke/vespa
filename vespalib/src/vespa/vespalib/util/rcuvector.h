@@ -4,6 +4,7 @@
 
 #include "alloc.h"
 #include "array.h"
+#include "arrayref.h"
 #include "generationholder.h"
 #include "growstrategy.h"
 #include "memoryusage.h"
@@ -88,8 +89,10 @@ public:
      * Return whether all capacity has been used.  If true the next
      * call to push_back() will cause an expand of the underlying
      * data.
+     * isFull() should be called from writer only.
+     * Const type qualifier removed to prevent call from readers.
      **/
-    bool isFull() const { return _data.size() == _data.capacity(); }
+    bool isFull() { return _data.size() == _data.capacity(); }
 
     /**
      * Return the combined memory usage for this instance.
@@ -116,17 +119,44 @@ public:
     }
 
     bool empty() const { return _data.empty(); }
-    size_t size() const { return _data.size(); }
-    size_t capacity() const { return _data.capacity(); }
+    /*
+     * size() should be called from writer only.
+     * Const type qualifier removed to prevent call from readers.
+     */
+    size_t size()  { return _data.size(); }
+    /*
+     * get_size() should be called from writer only or with proper lock held.
+     * Used in predicate attribute by reader (causing data race).
+     */
+    size_t get_size() const { return _data.size(); }
+    /*
+     * capacity() should be called from writer only.
+     * Const type qualifier removed to prevent call from readers.
+     */
+    size_t capacity() { return _data.capacity(); }
     void clear() { _data.clear(); }
+    /*
+     * operator[]() should be called from writer only.
+     * Overload with const type qualifier removed to prevent call from readers.
+     */
     T & operator[](size_t i) { return _data[i]; }
-    const T & operator[](size_t i) const { return _data[i]; }
     /*
      * Readers holding a generation guard can call acquire_elem_ref(i)
      * to get a const reference to element i. Array bound must be handled
      * by reader, cf. committed docid limit in attribute vectors.
      */
     const T& acquire_elem_ref(size_t i) const noexcept { return *(_vector_start.load(std::memory_order_acquire) + i); }
+
+    const T& get_elem_ref(size_t i) const noexcept { return _data[i]; } // Called from writer only
+
+    /*
+     * Readers holding a generation guard can call make_read_view() to
+     * get a read view to the rcu vector. Array bound (read_size) must
+     * be specified by reader, cf. committed docid limit in attribute vectors.
+     */
+    ConstArrayRef<T> make_read_view(size_t read_size) const noexcept {
+        return ConstArrayRef<T>(&acquire_elem_ref(0), read_size);
+    }
 
     void reset();
     void shrink(size_t newSize) __attribute__((noinline));

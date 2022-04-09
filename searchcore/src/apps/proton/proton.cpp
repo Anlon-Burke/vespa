@@ -12,9 +12,10 @@
 #include <vespa/config/common/configcontext.h>
 #include <vespa/fnet/transport.h>
 #include <vespa/fastos/thread.h>
-#include <vespa/fastos/app.h>
+#include <vespa/fastos/file.h>
 #include <iostream>
 #include <thread>
+#include <fcntl.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("proton");
@@ -38,14 +39,15 @@ Params::Params()
 {}
 Params::~Params() = default;
 
-class App : public FastOS_Application
+class App
 {
 private:
     static void setupSignals();
-    Params parseParams();
-    void startAndRun(FastOS_ThreadPool & threadPool, FNET_Transport & transport);
+    static void setup_fadvise();
+    Params parseParams(int argc, char **argv);
+    void startAndRun(FastOS_ThreadPool & threadPool, FNET_Transport & transport, int argc, char **argv);
 public:
-    int Main() override;
+    int main(int argc, char **argv);
 };
 
 void
@@ -56,11 +58,28 @@ App::setupSignals()
     SIG::TERM.hook();
 }
 
+void
+App::setup_fadvise()
+{
+#ifdef __linux__
+    char * fadvise = getenv("VESPA_FADVISE_OPTIONS");
+    if (fadvise != nullptr) {
+        int fadviseOptions(0);
+        if (strstr(fadvise, "SEQUENTIAL")) { fadviseOptions |= POSIX_FADV_SEQUENTIAL; }
+        if (strstr(fadvise, "RANDOM"))     { fadviseOptions |= POSIX_FADV_RANDOM; }
+        if (strstr(fadvise, "WILLNEED"))   { fadviseOptions |= POSIX_FADV_WILLNEED; }
+        if (strstr(fadvise, "DONTNEED"))   { fadviseOptions |= POSIX_FADV_DONTNEED; }
+        if (strstr(fadvise, "NOREUSE"))    { fadviseOptions |= POSIX_FADV_NOREUSE; }
+        FastOS_FileInterface::setDefaultFAdviseOptions(fadviseOptions);
+    }
+#endif
+}
+
 Params
-App::parseParams()
+App::parseParams(int argc, char **argv)
 {
     Params params;
-    vespalib::ProgramOptions parser(_argc, _argv);
+    vespalib::ProgramOptions parser(argc, argv);
     parser.setSyntaxMessage("proton -- the nextgen search core");
     parser.addOption("identity", params.identity, "Node identity and config id");
     std::string empty;
@@ -187,8 +206,8 @@ buildTransportConfig() {
 }
 
 void
-App::startAndRun(FastOS_ThreadPool & threadPool, FNET_Transport & transport) {
-    Params params = parseParams();
+App::startAndRun(FastOS_ThreadPool & threadPool, FNET_Transport & transport, int argc, char **argv) {
+    Params params = parseParams(argc, argv);
     LOG(debug, "identity: '%s'", params.identity.c_str());
     LOG(debug, "serviceidentity: '%s'", params.serviceidentity.c_str());
     LOG(debug, "subscribeTimeout: '%" PRIu64 "'", params.subscribeTimeout);
@@ -197,7 +216,7 @@ App::startAndRun(FastOS_ThreadPool & threadPool, FNET_Transport & transport) {
     config::ConfigServerSpec configServerSpec(transport);
     config::ConfigUri identityUri(params.identity, std::make_shared<config::ConfigContext>(configServerSpec));
     auto protonUP = std::make_unique<proton::Proton>(threadPool, transport, identityUri,
-                                                _argc > 0 ? _argv[0] : "proton", subscribeTimeout);
+                                                     (argc > 0) ? argv[0] : "proton", subscribeTimeout);
     proton::Proton & proton = *protonUP;
     proton::BootstrapConfig::SP configSnapshot = proton.init();
     if (proton.hasAbortedInit()) {
@@ -243,14 +262,15 @@ App::startAndRun(FastOS_ThreadPool & threadPool, FNET_Transport & transport) {
 }
 
 int
-App::Main()
+App::main(int argc, char **argv)
 {
     try {
         setupSignals();
+        setup_fadvise();
         FastOS_ThreadPool threadPool(128_Ki);
         FNET_Transport transport(buildTransportConfig());
         transport.Start(&threadPool);
-        startAndRun(threadPool, transport);
+        startAndRun(threadPool, transport, argc, argv);
         transport.ShutDown(true);
     } catch (const vespalib::InvalidCommandLineArgumentsException &e) {
         LOG(warning, "Invalid commandline arguments: '%s'", e.what());
@@ -278,5 +298,5 @@ App::Main()
 
 int main(int argc, char **argv) {
     App app;
-    return app.Entry(argc, argv);
+    return app.main(argc, argv);
 }

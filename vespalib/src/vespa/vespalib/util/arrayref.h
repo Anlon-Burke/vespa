@@ -42,7 +42,7 @@ public:
     ConstArrayRef(const SmallVector<T, N> &v) noexcept :  _v(&v[0]), _sz(v.size()) { }
     ConstArrayRef(const ArrayRef<T> & v) noexcept : _v(&v[0]), _sz(v.size()) { }
     ConstArrayRef(const Array<T> &v) noexcept : _v(&v[0]), _sz(v.size()) { }
-    ConstArrayRef() noexcept : _v(nullptr), _sz(0) {}
+    constexpr ConstArrayRef() noexcept : _v(nullptr), _sz(0) {}
     const T & operator [] (size_t i) const { return _v[i]; }
     size_t size() const { return _sz; }
     bool empty() const { return _sz == 0; }
@@ -50,6 +50,7 @@ public:
     const T *cend() const { return _v + _sz; }
     const T *begin() const { return _v; }
     const T *end() const { return _v + _sz; }
+    const T *data() const noexcept { return _v; }
 private:
     const T *_v;
     size_t   _sz;

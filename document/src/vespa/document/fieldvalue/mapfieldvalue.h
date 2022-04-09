@@ -18,7 +18,7 @@ namespace document {
 namespace mapfieldvalue {
     class HashMap;
 }
-class MapFieldValue : public FieldValue
+class MapFieldValue final : public FieldValue
 {
 public:
     using IArray=vespalib::IArrayT<FieldValue>;
@@ -30,7 +30,6 @@ private:
     IArray::UP         _values;
     std::vector<bool>  _present;
     mutable HashMapUP  _lookupMap;
-    bool               _altered;
 
     virtual bool addValue(const FieldValue& fv);
     virtual bool containsValue(const FieldValue& fv) const { return contains(fv); }
@@ -134,7 +133,6 @@ public:
     MapFieldValue* clone() const override { return new MapFieldValue(*this); }
     int compare(const FieldValue&) const override;
     void print(std::ostream& out, bool verbose, const std::string& indent) const override;
-    bool hasChanged() const override;
     const DataType *getDataType() const override;
     void printXml(XmlOutputStream& out) const override;
 
@@ -162,8 +160,6 @@ public:
     }
 
     FieldValue::UP createValue() const;
-
-    DECLARE_IDENTIFIABLE_ABSTRACT(MapFieldValue);
 };
 
 }  // namespace document

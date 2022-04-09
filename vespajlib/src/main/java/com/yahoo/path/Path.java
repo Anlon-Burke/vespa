@@ -2,7 +2,6 @@
 package com.yahoo.path;
 
 import com.yahoo.api.annotations.Beta;
-import com.google.common.collect.ImmutableList;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -12,7 +11,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * Represents a path represented by a list of elements. Immutable
+ * Represents a path as a list of elements. Immutable.
  *
  * @author Ulf Lilleengen
  * @author bratseth
@@ -21,20 +20,11 @@ import java.util.stream.Collectors;
 public final class Path {
 
     private final String delimiter;
-    private final ImmutableList<String> elements;
+    private final List<String> elements;
 
     /** Creates an empty path */
     private Path(String delimiter) {
-        this(new ArrayList<>(), delimiter);
-    }
-
-    /**
-     * Create a new path as a copy of the provided path
-     *
-     * @param path the path to copy
-     */
-    private Path(Path path) {
-        this(path.elements, path.delimiter);
+        this(List.of(), delimiter);
     }
 
     /**
@@ -43,8 +33,17 @@ public final class Path {
      * @param elements a list of path elements
      */
     private Path(List<String> elements, String delimiter) {
-        this.elements = ImmutableList.copyOf(elements);
+        for (String element : elements)
+            if ("..".equals(element))
+                throw new IllegalArgumentException("'..' is not allowed in path");
+
+        this.elements = List.copyOf(elements);
         this.delimiter = delimiter;
+    }
+
+    /** Creates a new path with the given segments. */
+    public static Path from(List<String> segments) {
+        return new Path(segments, "/");
     }
 
     /** Returns whether this path is an immediate child of the given path */
@@ -138,6 +137,7 @@ public final class Path {
      * @throws IllegalStateException if this path is empty
      */
     public Path withLast(String element) {
+        if (element.contains(delimiter)) throw new IllegalArgumentException("single element cannot contain delimiter " + delimiter);
         if (element.isEmpty()) throw new IllegalStateException("Cannot set the last element of an empty path");
         List<String> newElements = new ArrayList<>(elements);
         newElements.set(newElements.size() -1, element);

@@ -562,6 +562,13 @@ public:
         return std::make_unique<queryeval::DocumentWeightSearchIterator>(*tfmda[0], _attr, _dict_entry);
     }
 
+    SearchIteratorUP createFilterSearch(bool strict, FilterConstraint constraint) const override {
+        (void) constraint; // We provide an iterator with exact results, so no need to take constraint into consideration.
+        auto wrapper = std::make_unique<FilterWrapper>(getState().numFields());
+        wrapper->wrap(createLeafSearch(wrapper->tfmda(), strict));
+        return wrapper;
+    }
+
     void visitMembers(vespalib::ObjectVisitor &visitor) const override {
         LeafBlueprint::visitMembers(visitor);
         visit(visitor, "attribute", _attrName);
@@ -779,6 +786,8 @@ public:
                                                                         n.get_distance_threshold(),
                                                                         getRequestContext().get_attribute_blueprint_params().nearest_neighbor_brute_force_limit));
     }
+
+    void visit(query::FuzzyTerm &n) override { visitTerm(n); }
 };
 
 template <typename WS>

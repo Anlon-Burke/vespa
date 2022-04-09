@@ -2,6 +2,7 @@
 package com.yahoo.vespa.hosted.controller.restapi.application;
 
 import ai.vespa.hosted.api.Signatures;
+import ai.vespa.http.HttpURL.Query;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Joiner;
@@ -25,8 +26,10 @@ import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
 import com.yahoo.io.IOUtils;
+import ai.vespa.http.DomainName;
 import com.yahoo.restapi.ByteArrayResponse;
 import com.yahoo.restapi.ErrorResponse;
+import ai.vespa.http.HttpURL;
 import com.yahoo.restapi.MessageResponse;
 import com.yahoo.restapi.Path;
 import com.yahoo.restapi.ResourceResponse;
@@ -50,7 +53,6 @@ import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbi
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbindings.RestartAction;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbindings.ServiceInfo;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
-import com.yahoo.vespa.hosted.controller.api.identifiers.Hostname;
 import com.yahoo.vespa.hosted.controller.api.identifiers.TenantId;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.TenantRoles;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.Quota;
@@ -67,9 +69,6 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.SourceRevision;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartFilter;
-import com.yahoo.vespa.hosted.controller.api.integration.resource.MeteringData;
-import com.yahoo.vespa.hosted.controller.api.integration.resource.ResourceAllocation;
-import com.yahoo.vespa.hosted.controller.api.integration.resource.ResourceSnapshot;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
 import com.yahoo.vespa.hosted.controller.api.integration.user.User;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
@@ -255,7 +254,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/diff/{number}")) return applicationPackageDiff(path.get("tenant"), path.get("application"), path.get("number"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/deploying")) return deploying(path.get("tenant"), path.get("application"), "default", request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/deploying/pin")) return deploying(path.get("tenant"), path.get("application"), "default", request);
-        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/metering")) return metering(path.get("tenant"), path.get("application"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance")) return applications(path.get("tenant"), Optional.of(path.get("application")), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}")) return instance(path.get("tenant"), path.get("application"), path.get("instance"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/deploying")) return deploying(path.get("tenant"), path.get("application"), path.get("instance"), request);
@@ -270,7 +268,9 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/reindexing")) return getReindexing(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/suspended")) return suspended(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/service")) return services(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/service/{service}/{*}")) return service(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("service"), path.getRest(), request);
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/service/{service}/state/v1/{*}")) return service(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("service"), path.getRest(), request);
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/service/{service}/{host}/status/{*}")) return status(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("service"), path.get("host"), path.getRest(), request);
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/service/{service}/{host}/state/v1/metrics")) return stateV1Metrics(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("service"), path.get("host"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/nodes")) return nodes(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/clusters")) return clusters(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/content/{*}")) return content(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.getRest(), request);
@@ -284,7 +284,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}")) return deployment(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/suspended")) return suspended(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/service")) return services(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/service/{service}/{*}")) return service(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("service"), path.getRest(), request);
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/service/{service}/state/v1/{*}")) return service(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("service"), path.getRest(), request);
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/service/{service}/{host}/status/{*}")) return status(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("service"), path.get("host"), path.getRest(), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/nodes")) return nodes(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/clusters")) return clusters(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/logs")) return logs(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request.propertyMap());
@@ -1762,68 +1763,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         return new SlimeJsonResponse(slime);
     }
 
-    private HttpResponse metering(String tenant, String application, HttpRequest request) {
-
-        Slime slime = new Slime();
-        Cursor root = slime.setObject();
-
-        MeteringData meteringData = controller.serviceRegistry()
-                .meteringService()
-                .getMeteringData(TenantName.from(tenant), ApplicationName.from(application));
-
-        ResourceAllocation currentSnapshot = meteringData.getCurrentSnapshot();
-        Cursor currentRate = root.setObject("currentrate");
-        currentRate.setDouble("cpu", currentSnapshot.getCpuCores());
-        currentRate.setDouble("mem", currentSnapshot.getMemoryGb());
-        currentRate.setDouble("disk", currentSnapshot.getDiskGb());
-
-        ResourceAllocation thisMonth = meteringData.getThisMonth();
-        Cursor thismonth = root.setObject("thismonth");
-        thismonth.setDouble("cpu", thisMonth.getCpuCores());
-        thismonth.setDouble("mem", thisMonth.getMemoryGb());
-        thismonth.setDouble("disk", thisMonth.getDiskGb());
-
-        ResourceAllocation lastMonth = meteringData.getLastMonth();
-        Cursor lastmonth = root.setObject("lastmonth");
-        lastmonth.setDouble("cpu", lastMonth.getCpuCores());
-        lastmonth.setDouble("mem", lastMonth.getMemoryGb());
-        lastmonth.setDouble("disk", lastMonth.getDiskGb());
-
-
-        Map<ApplicationId, List<ResourceSnapshot>> history = meteringData.getSnapshotHistory();
-        Cursor details = root.setObject("details");
-
-        Cursor detailsCpu = details.setObject("cpu");
-        Cursor detailsMem = details.setObject("mem");
-        Cursor detailsDisk = details.setObject("disk");
-
-        history.forEach((applicationId, resources) -> {
-            String instanceName = applicationId.instance().value();
-            Cursor detailsCpuApp = detailsCpu.setObject(instanceName);
-            Cursor detailsMemApp = detailsMem.setObject(instanceName);
-            Cursor detailsDiskApp = detailsDisk.setObject(instanceName);
-            Cursor detailsCpuData = detailsCpuApp.setArray("data");
-            Cursor detailsMemData = detailsMemApp.setArray("data");
-            Cursor detailsDiskData = detailsDiskApp.setArray("data");
-
-            resources.forEach(resourceSnapshot -> {
-                Cursor cpu = detailsCpuData.addObject();
-                cpu.setLong("unixms", resourceSnapshot.getTimestamp().toEpochMilli());
-                cpu.setDouble("value", resourceSnapshot.getCpuCores());
-
-                Cursor mem = detailsMemData.addObject();
-                mem.setLong("unixms", resourceSnapshot.getTimestamp().toEpochMilli());
-                mem.setDouble("value", resourceSnapshot.getMemoryGb());
-
-                Cursor disk = detailsDiskData.addObject();
-                disk.setLong("unixms", resourceSnapshot.getTimestamp().toEpochMilli());
-                disk.setDouble("value", resourceSnapshot.getDiskGb());
-            });
-        });
-
-        return new SlimeJsonResponse(slime);
-    }
-
     private HttpResponse deploying(String tenantName, String applicationName, String instanceName, HttpRequest request) {
         Instance instance = controller.applications().requireInstance(ApplicationId.from(tenantName, applicationName, instanceName));
         Slime slime = new Slime();
@@ -1857,33 +1796,35 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         return response;
     }
 
-    private HttpResponse service(String tenantName, String applicationName, String instanceName, String environment, String region, String serviceName, String restPath, HttpRequest request) {
+    private HttpResponse status(String tenantName, String applicationName, String instanceName, String environment, String region, String serviceName, String host, HttpURL.Path restPath, HttpRequest request) {
         DeploymentId deploymentId = new DeploymentId(ApplicationId.from(tenantName, applicationName, instanceName), requireZone(environment, region));
+        return controller.serviceRegistry().configServer().getServiceNodePage(deploymentId,
+                                                                              serviceName,
+                                                                              DomainName.of(host),
+                                                                              HttpURL.Path.parse("/status").append(restPath),
+                                                                              Query.empty().add(request.getJDiscRequest().parameters()));
+    }
 
-        if (restPath.contains("/status/")) {
-            String[] parts = restPath.split("/status/", 2);
-            String result = controller.serviceRegistry().configServer().getServiceStatusPage(deploymentId, serviceName, parts[0], parts[1]);
-            return new HtmlResponse(result);
-        }
+    private HttpResponse stateV1Metrics(String tenantName, String applicationName, String instanceName, String environment, String region, String serviceName, String host) {
+        DeploymentId deploymentId = new DeploymentId(ApplicationId.from(tenantName, applicationName, instanceName), requireZone(environment, region));
+        return controller.serviceRegistry().configServer().getServiceNodePage(
+                deploymentId, serviceName, DomainName.of(host), HttpURL.Path.parse("/state/v1/metrics"), Query.empty());
+    }
 
-        String normalizedRestPath = URI.create(restPath).normalize().toString();
-        // Only state/v1 is allowed
-        if (! normalizedRestPath.startsWith("state/v1/")) {
-            return ErrorResponse.forbidden("Access denied");
-        }
-
+    private HttpResponse service(String tenantName, String applicationName, String instanceName, String environment, String region, String serviceName, HttpURL.Path restPath, HttpRequest request) {
+        DeploymentId deploymentId = new DeploymentId(ApplicationId.from(tenantName, applicationName, instanceName), requireZone(environment, region));
         Map<?,?> result = controller.serviceRegistry().configServer().getServiceApiResponse(deploymentId, serviceName, restPath);
         ServiceApiResponse response = new ServiceApiResponse(deploymentId.zoneId(),
                                                              deploymentId.applicationId(),
                                                              List.of(controller.zoneRegistry().getConfigServerVipUri(deploymentId.zoneId())),
                                                              request.getUri());
-        response.setResponse(result, serviceName, restPath);
+        response.setResponse(result, serviceName, HttpURL.Path.parse("/state/v1").append(restPath));
         return response;
     }
 
-    private HttpResponse content(String tenantName, String applicationName, String instanceName, String environment, String region, String restPath, HttpRequest request) {
+    private HttpResponse content(String tenantName, String applicationName, String instanceName, String environment, String region, HttpURL.Path restPath, HttpRequest request) {
         DeploymentId deploymentId = new DeploymentId(ApplicationId.from(tenantName, applicationName, instanceName), requireZone(environment, region));
-        return controller.serviceRegistry().configServer().getApplicationPackageContent(deploymentId, "/" + restPath, request.getUri());
+        return controller.serviceRegistry().configServer().getApplicationPackageContent(deploymentId, restPath, request.getUri());
     }
 
     private HttpResponse updateTenant(String tenantName, HttpRequest request) {
@@ -2111,7 +2052,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         DeploymentId deploymentId = new DeploymentId(ApplicationId.from(tenantName, applicationName, instanceName),
                                                      requireZone(environment, region));
         RestartFilter restartFilter = new RestartFilter()
-                .withHostName(Optional.ofNullable(request.getProperty("hostname")).map(HostName::from))
+                .withHostName(Optional.ofNullable(request.getProperty("hostname")).map(HostName::of))
                 .withClusterType(Optional.ofNullable(request.getProperty("clusterType")).map(ClusterSpec.Type::from))
                 .withClusterId(Optional.ofNullable(request.getProperty("clusterId")).map(ClusterSpec.Id::from));
 
@@ -2353,7 +2294,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         try {
             node = nodeRepository.getNode(zone, hostname);
         } catch (IllegalArgumentException e) {
-            throw new NotExistsException(new Hostname(hostname));
+            throw new NotExistsException(hostname);
         }
         ApplicationId app = ApplicationId.from(tenant, application, instance);
         ApplicationId owner = node.owner().orElseThrow(() -> new IllegalArgumentException("Node has no owner"));

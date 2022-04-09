@@ -77,7 +77,8 @@ public:
     void setArrayIndex(uint32_t index) { _arrayIndexStack.back() = index; }
     ModificationStatus modify(FieldValue &fv) { return doModify(fv); }
     fieldvalue::VariableMap &getVariables() { return _variables; }
-    void setVariables(const fieldvalue::VariableMap &vars) { _variables = vars; }
+    fieldvalue::VariableMap && stealVariables() { return std::move(_variables); }
+    void setVariables(fieldvalue::VariableMap vars) { _variables = std::move(vars); }
     virtual bool createMissingPath() const { return false; }
 private:
     virtual bool onComplex(const Content &fv) {

@@ -95,6 +95,12 @@ FNET_ControlPacket
 FNET_ControlPacket::IOCClose(FNET_CMD_IOC_CLOSE);
 
 FNET_ControlPacket
+FNET_ControlPacket::DetachServerAdapterInit(FNET_CMD_DETACH_SERVER_ADAPTER_INIT);
+
+FNET_ControlPacket
+FNET_ControlPacket::DetachServerAdapterFini(FNET_CMD_DETACH_SERVER_ADAPTER_FINI);
+
+FNET_ControlPacket
 FNET_ControlPacket::Execute(FNET_CMD_EXECUTE);
 
 FNET_ControlPacket

@@ -18,7 +18,7 @@ import java.util.logging.Level;
 public class SDDocumentTypeOrderer {
 
     private final Map<DataTypeName, SDDocumentType> createdSDTypes = new LinkedHashMap<>();
-    private final Set<Integer> seenTypes = new LinkedHashSet<>();
+    private final Set<Object> seenTypes = Collections.newSetFromMap(new IdentityHashMap<>());
     List<SDDocumentType> processingOrder = new LinkedList<>();
     private final DeployLogger deployLogger;
 
@@ -27,11 +27,6 @@ public class SDDocumentTypeOrderer {
         for (SDDocumentType type : sdTypes) {
             createdSDTypes.put(type.getDocumentName(), type);
         }
-        DocumentTypeManager dtm = new DocumentTypeManager();
-        for (DataType type : dtm.getDataTypes()) {
-            seenTypes.add(type.getId());
-        }
-
     }
 
     List<SDDocumentType> getOrdered() { return processingOrder; }
@@ -44,23 +39,17 @@ public class SDDocumentTypeOrderer {
 
     private void process(SDDocumentType docOrStruct, SDDocumentType owningDocument) {
         resolveAndProcessInheritedTemporaryTypes(docOrStruct, owningDocument);
-        int id;
-        if (docOrStruct.isStruct()) {
-            id = new StructDataType(docOrStruct.getName()).getId();
-        } else {
-            id = new DocumentType(docOrStruct.getName()).getId();
-        }
-
-        if (seenTypes.contains(id)) {
+        if (seenTypes.contains(docOrStruct)) {
             return;
-        } else {
-            seenTypes.add((new StructDataType(docOrStruct.getName()).getId()));
         }
-
+        seenTypes.add(docOrStruct);
         for (Field field : docOrStruct.fieldSet()) {
-            if (!seenTypes.contains(field.getDataType().getId())) {
+            var type = field.getDataType();
+            String typeName = type.getName();
+            if (!seenTypes.contains(type)) {
+                seenTypes.add(type);
                 //we haven't seen this before, do it
-                visit(field.getDataType(), owningDocument);
+                visit(type, owningDocument);
             }
         }
         processingOrder.add(docOrStruct);
@@ -100,7 +89,7 @@ public class SDDocumentTypeOrderer {
         for(SDDocumentType sdoc : createdSDTypes.values()) {
              for (SDDocumentType stype : sdoc.getTypes()) {
                  if (stype.getName().equals(name)) {
-                    return stype;
+                     return stype;
                  }
              }
         }
@@ -110,7 +99,10 @@ public class SDDocumentTypeOrderer {
     private void visit(DataType type, SDDocumentType owningDocument) {
         if (type instanceof StructuredDataType) {
             StructuredDataType structType = (StructuredDataType) type;
-            SDDocumentType sdDocType = find(structType.getName());
+            SDDocumentType sdDocType = owningDocument.getType(structType.getName());
+            if (sdDocType == null) {
+                sdDocType = find(structType.getName());
+            }
             if (sdDocType == null) {
                 throw new IllegalArgumentException("Could not find struct '" + type.getName() + "'");
             }

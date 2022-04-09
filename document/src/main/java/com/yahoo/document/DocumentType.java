@@ -142,17 +142,19 @@ public class DocumentType extends StructuredDataType {
     /**
      * Get a struct declared in this document (or any inherited
      * document). Returns null if no such struct was found.
+     * If multiple possible structs are found in inherited
+     * documents, throws exception.
      *
      * @param name the name of the struct
      * @return reference to a struct data type, or null
      **/
-    public StructDataType getDeclaredStructType(String name) {
+    public StructDataType getStructType(String name) {
         var mine = declaredStructTypes.get(name);
         if (mine != null) {
             return mine;
         }
         for (DocumentType inheritedType : inherits) {
-            var fromParent = inheritedType.getDeclaredStructType(name);
+            var fromParent = inheritedType.getStructType(name);
             if (fromParent == null) {
                 continue;
             } else if (mine == null) {
@@ -162,6 +164,17 @@ public class DocumentType extends StructuredDataType {
             }
         }
         return mine;
+    }
+
+    /**
+     * Get a struct declared in this document only.
+     * Returns null if no such struct was found.
+     *
+     * @param name the name of the struct
+     * @return reference to a struct data type, or null
+     **/
+    public StructDataType getDeclaredStructType(String name) {
+        return declaredStructTypes.get(name);
     }
 
     /** only used during configuration */
@@ -291,8 +304,8 @@ public class DocumentType extends StructuredDataType {
      * @param type An already DocumentType object.
      */
     public void inherit(DocumentType type) {
-    	//TODO: There is also a check like the following in SDDocumentType addField(), try to move that to this class' addField() to get it proper,
-    	// as this method is called only when the doc types are exported.
+        //TODO: There is also a check like the following in SDDocumentType addField(), try to move that to this class' addField() to get it proper,
+        // as this method is called only when the doc types are exported.
         verifyTypeConsistency(type);
         if (isRegistered()) {
             throw new IllegalStateException("You cannot add inheritance to a document type that is already registered.");
@@ -310,6 +323,11 @@ public class DocumentType extends StructuredDataType {
         }
 
         inherits.add(type);
+        for (var field : type.getAllUniqueFields()) {
+            if (! headerType.hasField(field)) {
+                headerType.addField(field);
+            }
+        }
     }
 
     /**

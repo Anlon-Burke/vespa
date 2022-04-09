@@ -10,22 +10,22 @@
 
 namespace document {
 
-class RemoveValueUpdate : public ValueUpdate {
-    FieldValue::CP _key; // The field value to remove by this update.
+class RemoveValueUpdate final : public ValueUpdate {
+    std::unique_ptr<FieldValue> _key; // The field value to remove by this update.
 
-    RemoveValueUpdate() : ValueUpdate(), _key() {}
     ACCEPT_UPDATE_VISITOR;
-
+    friend ValueUpdate;
+    RemoveValueUpdate() : ValueUpdate(Remove), _key() {}
 public:
-    typedef std::unique_ptr<RemoveValueUpdate> UP;
-
     /**
      * The default constructor requires initial values for all member variables.
      *
      * @param value The identifier of the field value to update.
      */
-    RemoveValueUpdate(const FieldValue& key);
-    ~RemoveValueUpdate();
+    explicit RemoveValueUpdate(std::unique_ptr<FieldValue> key);
+    RemoveValueUpdate(const RemoveValueUpdate &) = delete;
+    RemoveValueUpdate & operator=(const RemoveValueUpdate &) = delete;
+    ~RemoveValueUpdate() override;
 
     bool operator==(const ValueUpdate& other) const override;
 
@@ -35,26 +35,11 @@ public:
      */
     const FieldValue& getKey() const { return *_key; }
 
-    /**
-     * Sets the field value to remove during this update.
-     *
-     * @param The new field value.
-     * @return A pointer to this.
-     */
-    RemoveValueUpdate& setKey(const FieldValue& key) {
-        _key.reset(key.clone());
-        return *this;
-    }
-
     void checkCompatibility(const Field& field) const override;
     bool applyTo(FieldValue& value) const override;
     void printXml(XmlOutputStream& xos) const override;
     void print(std::ostream& out, bool verbose, const std::string& indent) const override;
     void deserialize(const DocumentTypeRepo& repo, const DataType& type, nbostream& buffer) override;
-    RemoveValueUpdate* clone() const override { return new RemoveValueUpdate(*this); }
-
-    DECLARE_IDENTIFIABLE(RemoveValueUpdate);
-
 };
 
 }

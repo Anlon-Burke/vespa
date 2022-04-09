@@ -34,6 +34,11 @@ using document::Document;
 using document::DocumentId;
 using document::DocumentType;
 using document::DocumentTypeRepo;
+using document::FieldUpdate;
+using document::FieldPathUpdate;
+using document::AssignValueUpdate;
+using document::IntFieldValue;
+using document::RemoveFieldPathUpdate;
 using document::test::makeDocumentBucket;
 using document::test::makeBucketSpace;
 using storage::lib::ClusterState;
@@ -243,15 +248,10 @@ TEST_P(StorageProtocolTest, response_metadata_is_propagated) {
 }
 
 TEST_P(StorageProtocolTest, update) {
-    auto update = std::make_shared<document::DocumentUpdate>(
-            _docMan.getTypeRepo(), *_testDoc->getDataType(), _testDoc->getId());
-    auto assignUpdate = std::make_shared<document::AssignValueUpdate>(document::IntFieldValue(17));
-    document::FieldUpdate fieldUpdate(_testDoc->getField("headerval"));
-    fieldUpdate.addUpdate(*assignUpdate);
-    update->addUpdate(fieldUpdate);
+    auto update = std::make_shared<document::DocumentUpdate>(_docMan.getTypeRepo(), *_testDoc->getDataType(), _testDoc->getId());
+    update->addUpdate(FieldUpdate(_testDoc->getField("headerval")).addUpdate(std::make_unique<AssignValueUpdate>(std::make_unique<IntFieldValue>(17))));
 
-    update->addFieldPathUpdate(document::FieldPathUpdate::CP(
-                    new document::RemoveFieldPathUpdate("headerval", "testdoctype1.headerval > 0")));
+    update->addFieldPathUpdate(std::make_unique<RemoveFieldPathUpdate>("headerval", "testdoctype1.headerval > 0"));
 
     auto cmd = std::make_shared<UpdateCommand>(_bucket, update, 14);
     EXPECT_EQ(Timestamp(0), cmd->getOldTimestamp());
@@ -845,10 +845,10 @@ TEST_P(StorageProtocolTest, track_memory_footprint_for_some_messages) {
     EXPECT_EQ(88u, sizeof(StorageCommand));
     EXPECT_EQ(112u, sizeof(BucketCommand));
     EXPECT_EQ(112u, sizeof(BucketInfoCommand));
-    EXPECT_EQ(112u + sizeof(std::string), sizeof(TestAndSetCommand));
-    EXPECT_EQ(144u + sizeof(std::string), sizeof(PutCommand));
-    EXPECT_EQ(144u + sizeof(std::string), sizeof(UpdateCommand));
-    EXPECT_EQ(224u + sizeof(std::string), sizeof(RemoveCommand));
+    EXPECT_EQ(112u + sizeof(vespalib::string), sizeof(TestAndSetCommand));
+    EXPECT_EQ(144u + sizeof(vespalib::string), sizeof(PutCommand));
+    EXPECT_EQ(144u + sizeof(vespalib::string), sizeof(UpdateCommand));
+    EXPECT_EQ(224u + sizeof(vespalib::string), sizeof(RemoveCommand));
     EXPECT_EQ(296u, sizeof(GetCommand));
 }
 

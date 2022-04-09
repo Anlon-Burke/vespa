@@ -25,6 +25,8 @@ using document::BucketSpace;
 using document::Document;
 using document::DocumentId;
 using document::DocumentType;
+using document::DocumentTypeRepo;
+using document::DocumentUpdate;
 using document::test::makeBucketSpace;
 using search::DocumentMetaData;
 using storage::spi::Bucket;
@@ -56,19 +58,19 @@ createDocType(const vespalib::string &name, int32_t id)
 }
 
 
-document::Document::SP
+Document::SP
 createDoc(const DocumentType &docType, const DocumentId &docId)
 {
-    return std::make_shared<document::Document>(docType, docId);
+    return std::make_shared<Document>(docType, docId);
 }
 
 
-document::DocumentUpdate::SP
+DocumentUpdate::SP
 createUpd(const DocumentType& docType, const DocumentId &docId)
 {
-    static std::vector<std::unique_ptr<document::DocumentTypeRepo>> repoList;
-    repoList.emplace_back(std::make_unique<document::DocumentTypeRepo>(docType));
-    return std::make_shared<document::DocumentUpdate>(*repoList.back(), docType, docId);
+    static std::vector<std::unique_ptr<DocumentTypeRepo>> repoList;
+    repoList.emplace_back(std::make_unique<DocumentTypeRepo>(docType));
+    return std::make_shared<DocumentUpdate>(*repoList.back(), docType, docId);
 }
 
 storage::spi::ClusterState
@@ -105,14 +107,14 @@ createClusterState(const storage::lib::State& nodeState = storage::lib::State::U
 
 
 struct MyDocumentRetriever : DocumentRetrieverBaseForTest {
-    document::DocumentTypeRepo repo;
+    DocumentTypeRepo repo;
     const Document *document;
     Timestamp timestamp;
     DocumentId &last_doc_id;
 
     MyDocumentRetriever(const Document *d, Timestamp ts, DocumentId &last_id)
         : repo(), document(d), timestamp(ts), last_doc_id(last_id) {}
-    const document::DocumentTypeRepo &getDocumentTypeRepo() const override {
+    const DocumentTypeRepo &getDocumentTypeRepo() const override {
         return repo;
     }
     void getBucketMetaData(const storage::spi::Bucket &, search::DocumentMetaData::Vector &v) const override {
@@ -123,11 +125,11 @@ struct MyDocumentRetriever : DocumentRetrieverBaseForTest {
     DocumentMetaData getDocumentMetaData(const DocumentId &id) const override {
         last_doc_id = id;
         if (document != nullptr) {
-            return DocumentMetaData(1, timestamp, document::BucketId(1), document->getId().getGlobalId());
+            return DocumentMetaData(1, timestamp, BucketId(1), document->getId().getGlobalId());
         }
         return DocumentMetaData();
     }
-    document::Document::UP getFullDocument(search::DocumentIdT) const override {
+    Document::UP getFullDocument(search::DocumentIdT) const override {
         if (document != nullptr) {
             return Document::UP(document->clone());
         }
@@ -271,7 +273,7 @@ struct MyHandler : public IPersistenceHandler, IBucketFreezer {
         resultHandler.handle(BucketIdListResult());
     }
 
-    void handlePopulateActiveBuckets(document::BucketId::List buckets, IGenericResultHandler &resultHandler) override {
+    void handlePopulateActiveBuckets(BucketId::List buckets, IGenericResultHandler &resultHandler) override {
         (void) buckets;
         resultHandler.handle(Result());
     }
@@ -317,10 +319,10 @@ DocumentId docId3("id:type3:type3::1");
 Document::SP doc1(createDoc(type1, docId1));
 Document::SP doc2(createDoc(type2, docId2));
 Document::SP doc3(createDoc(type3, docId3));
-document::DocumentUpdate::SP upd1(createUpd(type1, docId1));
-document::DocumentUpdate::SP upd2(createUpd(type2, docId2));
-document::DocumentUpdate::SP upd3(createUpd(type3, docId3));
-document::DocumentUpdate::SP bad_id_upd(createUpd(type1, docId2));
+DocumentUpdate::SP upd1(createUpd(type1, docId1));
+DocumentUpdate::SP upd2(createUpd(type2, docId2));
+DocumentUpdate::SP upd3(createUpd(type3, docId3));
+DocumentUpdate::SP bad_id_upd(createUpd(type1, docId2));
 BucketId bckId1(1);
 BucketId bckId2(2);
 BucketId bckId3(3);
@@ -444,17 +446,16 @@ TEST_F("require that getPartitionStates() prepares all handlers", SimpleFixture)
 
 TEST_F("require that puts are routed to handler", SimpleFixture)
 {
-    Context context(storage::spi::Priority(0), storage::spi::Trace::TraceLevel(0));
-    f.engine.put(bucket1, tstamp1, doc1, context);
+    f.engine.put(bucket1, tstamp1, doc1);
     TEST_DO(assertHandler(bucket1, tstamp1, docId1, f.hset.handler1));
     TEST_DO(assertHandler(bucket0, tstamp0, docId0, f.hset.handler2));
 
-    f.engine.put(bucket1, tstamp1, doc2, context);
+    f.engine.put(bucket1, tstamp1, doc2);
     TEST_DO(assertHandler(bucket1, tstamp1, docId1, f.hset.handler1));
     TEST_DO(assertHandler(bucket1, tstamp1, docId2, f.hset.handler2));
 
     EXPECT_EQUAL(Result(Result::ErrorType::PERMANENT_ERROR, "No handler for document type 'type3'"),
-                 f.engine.put(bucket1, tstamp1, doc3, context));
+                 f.engine.put(bucket1, tstamp1, doc3));
 }
 
 
@@ -463,39 +464,35 @@ TEST_F("require that put is rejected if resource limit is reached", SimpleFixtur
     f._writeFilter._acceptWriteOperation = false;
     f._writeFilter._message = "Disk is full";
 
-    Context context(storage::spi::Priority(0), storage::spi::Trace::TraceLevel(0));
     EXPECT_EQUAL(
             Result(Result::ErrorType::RESOURCE_EXHAUSTED,
                    "Put operation rejected for document 'id:type3:type3::1': 'Disk is full'"),
-            f.engine.put(bucket1, tstamp1, doc3, context));
+            f.engine.put(bucket1, tstamp1, doc3));
 }
 
 
 TEST_F("require that updates are routed to handler", SimpleFixture)
 {
-    Context context(storage::spi::Priority(0), storage::spi::Trace::TraceLevel(0));
     f.hset.handler1.setExistingTimestamp(tstamp2);
-    UpdateResult ur = f.engine.update(bucket1, tstamp1, upd1, context);
+    UpdateResult ur = f.engine.update(bucket1, tstamp1, upd1);
     TEST_DO(assertHandler(bucket1, tstamp1, docId1, f.hset.handler1));
     TEST_DO(assertHandler(bucket0, tstamp0, docId0, f.hset.handler2));
     EXPECT_EQUAL(tstamp2, ur.getExistingTimestamp());
 
     f.hset.handler2.setExistingTimestamp(tstamp3);
-    ur = f.engine.update(bucket1, tstamp1, upd2, context);
+    ur = f.engine.update(bucket1, tstamp1, upd2);
     TEST_DO(assertHandler(bucket1, tstamp1, docId1, f.hset.handler1));
     TEST_DO(assertHandler(bucket1, tstamp1, docId2, f.hset.handler2));
     EXPECT_EQUAL(tstamp3, ur.getExistingTimestamp());
 
     EXPECT_EQUAL(Result(Result::ErrorType::PERMANENT_ERROR, "No handler for document type 'type3'"),
-                 f.engine.update(bucket1, tstamp1, upd3, context));
+                 f.engine.update(bucket1, tstamp1, upd3));
 }
 
 TEST_F("require that updates with bad ids are rejected", SimpleFixture)
 {
-    Context context(storage::spi::Priority(0), storage::spi::Trace::TraceLevel(0));
-
     EXPECT_EQUAL(UpdateResult(Result::ErrorType::PERMANENT_ERROR, "Update operation rejected due to bad id (id:type2:type2::1, type1)"),
-                 f.engine.update(bucket1, tstamp1, bad_id_upd, context));
+                 f.engine.update(bucket1, tstamp1, bad_id_upd));
 }
 
 TEST_F("require that simple, cheap update is not rejected if resource limit is reached", SimpleFixture)
@@ -503,10 +500,8 @@ TEST_F("require that simple, cheap update is not rejected if resource limit is r
     f._writeFilter._acceptWriteOperation = false;
     f._writeFilter._message = "Disk is full";
 
-    Context context(storage::spi::Priority(0), storage::spi::Trace::TraceLevel(0));
-
     EXPECT_EQUAL(Result(Result::ErrorType::NONE, ""),
-                 f.engine.update(bucket1, tstamp1, upd1, context));
+                 f.engine.update(bucket1, tstamp1, upd1));
 }
 
 TEST_F("require that update is rejected if resource limit is reached", SimpleFixture)
@@ -514,25 +509,21 @@ TEST_F("require that update is rejected if resource limit is reached", SimpleFix
     f._writeFilter._acceptWriteOperation = false;
     f._writeFilter._message = "Disk is full";
 
-    Context context(storage::spi::Priority(0), storage::spi::Trace::TraceLevel(0));
     DocumentType type(createDocType("type_with_one_string", 1));
     document::Field field("string", 1, *document::DataType::STRING);
     type.addField(field);
-    document::DocumentUpdate::SP upd = createUpd(type, docId1);
-    document::FieldUpdate fUpd(field);
-    fUpd.addUpdate(document::AssignValueUpdate(document::StringFieldValue("new value")));
-    upd->addUpdate(fUpd);
+    DocumentUpdate::SP upd = createUpd(type, docId1);
+    upd->addUpdate(std::move(document::FieldUpdate(field).addUpdate(std::make_unique<document::AssignValueUpdate>(std::make_unique<document::StringFieldValue>("new value")))));
 
     EXPECT_EQUAL(
             Result(Result::ErrorType::RESOURCE_EXHAUSTED,
                    "Update operation rejected for document 'id:type1:type1::1': 'Disk is full'"),
-            f.engine.update(bucket1, tstamp1, upd, context));
+            f.engine.update(bucket1, tstamp1, upd));
 }
 
 TEST_F("require that removes are routed to handlers", SimpleFixture)
 {
-    Context context(storage::spi::Priority(0), storage::spi::Trace::TraceLevel(0));
-    RemoveResult rr = f.engine.remove(bucket1, tstamp1, docId3, context);
+    RemoveResult rr = f.engine.remove(bucket1, tstamp1, docId3);
     TEST_DO(assertHandler(bucket0, tstamp0, docId0, f.hset.handler1));
     TEST_DO(assertHandler(bucket0, tstamp0, docId0, f.hset.handler2));
     EXPECT_FALSE(rr.wasFound());
@@ -540,7 +531,7 @@ TEST_F("require that removes are routed to handlers", SimpleFixture)
     EXPECT_EQUAL(Result(Result::ErrorType::PERMANENT_ERROR, "No handler for document type 'type3'"), rr);
 
     f.hset.handler1.setExistingTimestamp(tstamp2);
-    rr = f.engine.remove(bucket1, tstamp1, docId1, context);
+    rr = f.engine.remove(bucket1, tstamp1, docId1);
     TEST_DO(assertHandler(bucket1, tstamp1, docId1, f.hset.handler1));
     TEST_DO(assertHandler(bucket0, tstamp0, docId0, f.hset.handler2));
     EXPECT_TRUE(rr.wasFound());
@@ -548,14 +539,14 @@ TEST_F("require that removes are routed to handlers", SimpleFixture)
 
     f.hset.handler1.setExistingTimestamp(tstamp0);
     f.hset.handler2.setExistingTimestamp(tstamp3);
-    rr = f.engine.remove(bucket1, tstamp1, docId2, context);
+    rr = f.engine.remove(bucket1, tstamp1, docId2);
     TEST_DO(assertHandler(bucket1, tstamp1, docId1, f.hset.handler1));
     TEST_DO(assertHandler(bucket1, tstamp1, docId2, f.hset.handler2));
     EXPECT_TRUE(rr.wasFound());
     EXPECT_FALSE(rr.hasError());
 
     f.hset.handler2.setExistingTimestamp(tstamp0);
-    rr = f.engine.remove(bucket1, tstamp1, docId2, context);
+    rr = f.engine.remove(bucket1, tstamp1, docId2);
     TEST_DO(assertHandler(bucket1, tstamp1, docId1, f.hset.handler1));
     TEST_DO(assertHandler(bucket1, tstamp1, docId2, f.hset.handler2));
     EXPECT_FALSE(rr.wasFound());
@@ -567,9 +558,7 @@ TEST_F("require that remove is NOT rejected if resource limit is reached", Simpl
     f._writeFilter._acceptWriteOperation = false;
     f._writeFilter._message = "Disk is full";
 
-    Context context(storage::spi::Priority(0), storage::spi::Trace::TraceLevel(0));
-
-    EXPECT_EQUAL(RemoveResult(false), f.engine.remove(bucket1, tstamp1, docId1, context));
+    EXPECT_EQUAL(RemoveResult(false), f.engine.remove(bucket1, tstamp1, docId1));
 }
 
 
@@ -619,11 +608,10 @@ TEST_F("require that getBucketInfo() is routed to handlers and merged", SimpleFi
 
 TEST_F("require that createBucket() is routed to handlers and merged", SimpleFixture)
 {
-    Context context(storage::spi::Priority(0), storage::spi::Trace::TraceLevel(0));
     f.hset.handler1._createBucketResult = Result(Result::ErrorType::TRANSIENT_ERROR, "err1a");
     f.hset.handler2._createBucketResult = Result(Result::ErrorType::PERMANENT_ERROR, "err2a");
 
-    Result result = f.engine.createBucket(bucket1, context);
+    Result result = f.engine.createBucket(bucket1);
     EXPECT_EQUAL(Result::ErrorType::PERMANENT_ERROR, result.getErrorCode());
     EXPECT_EQUAL("err1a, err2a", result.getErrorMessage());
 }
@@ -631,11 +619,10 @@ TEST_F("require that createBucket() is routed to handlers and merged", SimpleFix
 
 TEST_F("require that deleteBucket() is routed to handlers and merged", SimpleFixture)
 {
-    Context context(storage::spi::Priority(0), storage::spi::Trace::TraceLevel(0));
     f.hset.handler1.deleteBucketResult = Result(Result::ErrorType::TRANSIENT_ERROR, "err1");
     f.hset.handler2.deleteBucketResult = Result(Result::ErrorType::PERMANENT_ERROR, "err2");
 
-    Result result = f.engine.deleteBucket(bucket1, context);
+    Result result = f.engine.deleteBucket(bucket1);
     EXPECT_EQUAL(Result::ErrorType::PERMANENT_ERROR, result.getErrorCode());
     EXPECT_EQUAL("err1, err2", result.getErrorMessage());
 }
@@ -680,7 +667,7 @@ TEST_F("require that createIterator does", SimpleFixture) {
     EXPECT_TRUE(result.getIteratorId());
 
     uint64_t max_size = 1024;
-    IterateResult it_result = f.engine.iterate(result.getIteratorId(), max_size, context);
+    IterateResult it_result = f.engine.iterate(result.getIteratorId(), max_size);
     EXPECT_FALSE(it_result.hasError());
 }
 
@@ -700,7 +687,7 @@ TEST_F("require that iterator ids are unique", SimpleFixture) {
 TEST_F("require that iterate requires valid iterator", SimpleFixture) {
     uint64_t max_size = 1024;
     Context context(storage::spi::Priority(0), storage::spi::Trace::TraceLevel(0));
-    IterateResult it_result = f.engine.iterate(IteratorId(1), max_size, context);
+    IterateResult it_result = f.engine.iterate(IteratorId(1), max_size);
     EXPECT_TRUE(it_result.hasError());
     EXPECT_EQUAL(Result::ErrorType::PERMANENT_ERROR, it_result.getErrorCode());
     EXPECT_EQUAL("Unknown iterator with id 1", it_result.getErrorMessage());
@@ -710,7 +697,7 @@ TEST_F("require that iterate requires valid iterator", SimpleFixture) {
                                 storage::spi::NEWEST_DOCUMENT_ONLY, context);
     EXPECT_TRUE(result.getIteratorId());
 
-    it_result = f.engine.iterate(result.getIteratorId(), max_size, context);
+    it_result = f.engine.iterate(result.getIteratorId(), max_size);
     EXPECT_FALSE(it_result.hasError());
 }
 
@@ -725,7 +712,7 @@ TEST_F("require that iterate returns documents", SimpleFixture) {
                                 storage::spi::NEWEST_DOCUMENT_ONLY, context);
     EXPECT_TRUE(result.getIteratorId());
 
-    IterateResult it_result = f.engine.iterate(result.getIteratorId(), max_size, context);
+    IterateResult it_result = f.engine.iterate(result.getIteratorId(), max_size);
     EXPECT_FALSE(it_result.hasError());
     EXPECT_EQUAL(2u, it_result.getEntries().size());
 }
@@ -739,11 +726,11 @@ TEST_F("require that destroyIterator prevents iteration", SimpleFixture) {
                                 storage::spi::NEWEST_DOCUMENT_ONLY, context);
     EXPECT_TRUE(create_result.getIteratorId());
 
-    Result result = f.engine.destroyIterator(create_result.getIteratorId(), context);
+    Result result = f.engine.destroyIterator(create_result.getIteratorId());
     EXPECT_FALSE(result.hasError());
 
     uint64_t max_size = 1024;
-    IterateResult it_result = f.engine.iterate(create_result.getIteratorId(), max_size, context);
+    IterateResult it_result = f.engine.iterate(create_result.getIteratorId(), max_size);
     EXPECT_TRUE(it_result.hasError());
     EXPECT_EQUAL(Result::ErrorType::PERMANENT_ERROR, it_result.getErrorCode());
     string msg_prefix = "Unknown iterator with id";

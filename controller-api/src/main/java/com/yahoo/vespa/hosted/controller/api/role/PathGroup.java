@@ -228,8 +228,8 @@ enum PathGroup {
     hostedAccountant("/billing/v1/invoice/{*}",
                      "/billing/v1/billing"),
 
-    /** Path used for listing endpoint certificate request info */
-    endpointCertificateRequestInfo("/certificateRequests/"),
+    /** Path used for listing endpoint certificate request and re-requesting endpoint certificates */
+    endpointCertificates("/endpointcertificates/"),
 
     /** Path used for secret store management */
     secretStore(Matcher.tenant, "/application/v4/tenant/{tenant}/secret-store/{*}"),
@@ -238,11 +238,11 @@ enum PathGroup {
     horizonProxy("/horizon/v1/{*}"),
 
     /** Paths used to list and request access to tenant resources */
-    accessRequests(Matcher.tenant, "/application/v4/tenant/{tenant}/access/request/{*}"),
+    accessRequests(Matcher.tenant, "/application/v4/tenant/{tenant}/access/request/operator"),
 
     /** Paths used to approve requests to access tenant resources */
-    accessRequestApproval(Matcher.tenant, "/application/v4/tenant/{tenant}/access/approve/{*}",
-            "/application/v4/tenant/{tenant}/access/managed/{*}");
+    accessRequestApproval(Matcher.tenant, "/application/v4/tenant/{tenant}/access/approve/operator",
+            "/application/v4/tenant/{tenant}/access/managed/operator");
 
     final List<String> pathSpecs;
     final List<Matcher> matchers;

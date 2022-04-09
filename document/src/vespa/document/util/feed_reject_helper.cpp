@@ -4,14 +4,12 @@
 #include <vespa/document/update/documentupdate.h>
 #include <vespa/document/update/assignvalueupdate.h>
 #include <vespa/document/fieldvalue/boolfieldvalue.h>
-#include <vespa/document/fieldvalue/numericfieldvalue.h>
-
 
 namespace document {
 
 bool
 FeedRejectHelper::isFixedSizeSingleValue(const document::FieldValue & fv) {
-    return fv.inherits(BoolFieldValue::classId) || fv.inherits(NumericFieldValueBase::classId);
+    return fv.isFixedSizeSingleValue();
 }
 
 bool
@@ -19,8 +17,8 @@ FeedRejectHelper::mustReject(const document::ValueUpdate & valueUpdate) {
     using namespace document;
     switch (valueUpdate.getType()) {
         case ValueUpdate::Add:
-        case ValueUpdate::TensorAddUpdate:
-        case ValueUpdate::TensorModifyUpdate:
+        case ValueUpdate::TensorAdd:
+        case ValueUpdate::TensorModify:
         case ValueUpdate::Map:
             return true;
         case ValueUpdate::Assign: {

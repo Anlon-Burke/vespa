@@ -1,6 +1,8 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.restapi;
 
+import ai.vespa.http.HttpURL;
+import ai.vespa.http.HttpURL.Query;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yahoo.container.jdisc.AclMapping;
 import com.yahoo.container.jdisc.HttpRequest;
@@ -398,7 +400,7 @@ class RestApiImpl implements RestApi {
             return requestContent().orElseThrow(() -> new RestApiException.BadRequest("Request content missing"));
         }
         @Override public ObjectMapper jacksonJsonMapper() { return jacksonJsonMapper; }
-        @Override public UriBuilder uriBuilder() {
+        @Override public HttpURL baseRequestURL() {
             URI uri = request.getUri();
             // Reconstruct the URI used by the client to access the API.
             // This is needed for producing URIs in the response that links to other parts of the Rest API.
@@ -408,7 +410,7 @@ class RestApiImpl implements RestApi {
             if (hostHeader == null || hostHeader.isBlank()) {
                 hostHeader = request.getHeader("Host");
             }
-            if (hostHeader != null && !hostHeader.isBlank()) {
+            if (hostHeader != null && ! hostHeader.isBlank()) {
                 sb.append(hostHeader);
             } else {
                 sb.append(uri.getHost());
@@ -416,7 +418,7 @@ class RestApiImpl implements RestApi {
                     sb.append(":").append(uri.getPort());
                 }
             }
-            return new UriBuilder(sb.toString());
+            return HttpURL.from(URI.create(sb.toString()));
         }
         @Override public AclMapping.Action aclAction() { return aclAction; }
         @Override public Optional<Principal> userPrincipal() {
@@ -429,15 +431,17 @@ class RestApiImpl implements RestApi {
         private class PathParametersImpl implements RestApi.RequestContext.PathParameters {
             @Override
             public Optional<String> getString(String name) {
-                if (name.equals("*")) {
-                    String rest = pathMatcher.getRest();
-                    return rest.isEmpty() ? Optional.empty() : Optional.of(rest);
-                }
                 return Optional.ofNullable(pathMatcher.get(name));
             }
             @Override public String getStringOrThrow(String name) {
                 return getString(name)
                         .orElseThrow(() -> new RestApiException.BadRequest("Path parameter '" + name + "' is missing"));
+            }
+            @Override public HttpURL.Path getFullPath() {
+                return pathMatcher.getPath();
+            }
+            @Override public Optional<HttpURL.Path> getRest() {
+                return Optional.ofNullable(pathMatcher.getRest());
             }
         }
 
@@ -452,6 +456,7 @@ class RestApiImpl implements RestApi {
                 if (result == null) return List.of();
                 return List.copyOf(result);
             }
+            @Override public HttpURL.Query getFullQuery() { return Query.empty().add(request.getJDiscRequest().parameters()); }
         }
 
         private class HeadersImpl implements RestApi.RequestContext.Headers {

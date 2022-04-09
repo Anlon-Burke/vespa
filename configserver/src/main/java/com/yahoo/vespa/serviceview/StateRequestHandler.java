@@ -1,12 +1,17 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.serviceview;
 
+import com.fasterxml.jackson.jaxrs.json.JacksonJsonProvider;
 import com.google.inject.Inject;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
+import ai.vespa.http.DomainName;
+import ai.vespa.http.HttpURL;
+import ai.vespa.http.HttpURL.Path;
+import ai.vespa.http.HttpURL.Query;
+import ai.vespa.http.HttpURL.Scheme;
 import com.yahoo.restapi.RestApi;
 import com.yahoo.restapi.RestApiRequestHandler;
-import com.yahoo.restapi.UriBuilder;
 import com.yahoo.vespa.serviceview.bindings.ApplicationView;
 import com.yahoo.vespa.serviceview.bindings.ConfigClient;
 import com.yahoo.vespa.serviceview.bindings.HealthClient;
@@ -41,6 +46,7 @@ public class StateRequestHandler extends RestApiRequestHandler<StateRequestHandl
             .newBuilder()
             .property(ClientProperties.CONNECT_TIMEOUT, 10000)
             .property(ClientProperties.READ_TIMEOUT, 10000)
+            .register(JacksonJsonProvider.class)
             .register((ClientRequestFilter) ctx -> ctx.getHeaders().put(HttpHeaders.USER_AGENT, List.of(USER_AGENT)))
             .build();
 
@@ -85,7 +91,7 @@ public class StateRequestHandler extends RestApiRequestHandler<StateRequestHandl
     }
 
     private ApplicationView getDefaultUserInfo(RestApi.RequestContext context) {
-        return getUserInfo(context.uriBuilder(), "default", "default", "default", "default", "default");
+        return getUserInfo(context.baseRequestURL(), "default", "default", "default", "default", "default");
     }
 
     private ApplicationView getUserInfo(RestApi.RequestContext context) {
@@ -94,7 +100,7 @@ public class StateRequestHandler extends RestApiRequestHandler<StateRequestHandl
         String environmentName = context.pathParameters().getStringOrThrow("environmentName");
         String regionName = context.pathParameters().getStringOrThrow("regionName");
         String instanceName = context.pathParameters().getStringOrThrow("instanceName");
-        return getUserInfo(context.uriBuilder(), tenantName, applicationName, environmentName, regionName, instanceName);
+        return getUserInfo(context.baseRequestURL(), tenantName, applicationName, environmentName, regionName, instanceName);
     }
 
     public HashMap<?, ?> singleService(RestApi.RequestContext context) {
@@ -104,15 +110,16 @@ public class StateRequestHandler extends RestApiRequestHandler<StateRequestHandl
         String regionName = context.pathParameters().getStringOrThrow("regionName");
         String instanceName = context.pathParameters().getStringOrThrow("instanceName");
         String identifier = context.pathParameters().getStringOrThrow("serviceIdentifier");
-        String apiParams = context.pathParameters().getString("*").orElse("");
-        return singleService(context.uriBuilder(), context.request().getUri(), tenantName, applicationName, environmentName, regionName, instanceName, identifier, apiParams);
+        Path apiParams = context.pathParameters().getRest().orElse(Path.empty());
+        Query apiQuery = context.queryParameters().getFullQuery();
+        return singleService(context.baseRequestURL(), tenantName, applicationName, environmentName, regionName, instanceName, identifier, apiParams, apiQuery);
     }
 
-    protected ApplicationView getUserInfo(UriBuilder uriBuilder, String tenantName, String applicationName, String environmentName, String regionName, String instanceName) {
+    protected ApplicationView getUserInfo(HttpURL url, String tenantName, String applicationName, String environmentName, String regionName, String instanceName) {
         ServiceModel model = new ServiceModel(
                 getModelConfig(tenantName, applicationName, environmentName, regionName, instanceName));
         return model.showAllClusters(
-                baseUri(uriBuilder).toString(),
+                baseUri(url).toString(),
                 applicationIdentifier(tenantName, applicationName, environmentName, regionName, instanceName));
     }
 
@@ -123,21 +130,19 @@ public class StateRequestHandler extends RestApiRequestHandler<StateRequestHandl
     }
 
     protected HashMap<?, ?> singleService(
-            UriBuilder uriBuilder, URI requestUri, String tenantName, String applicationName, String environmentName, String regionName, String instanceName, String identifier, String apiParams) {
+            HttpURL url, String tenantName, String applicationName, String environmentName, String regionName, String instanceName, String identifier, Path path, Query query) {
         ServiceModel model = new ServiceModel(getModelConfig(tenantName, applicationName, environmentName, regionName, instanceName));
         Service s = model.getService(identifier);
         int requestedPort = s.matchIdentifierWithPort(identifier);
-        HealthClient resource = getHealthClient(apiParams, s, requestedPort, requestUri.getRawQuery(), client);
+        HealthClient resource = getHealthClient(path, s, requestedPort, query, client);
         HashMap<?, ?> apiResult = resource.getHealthInfo();
-        rewriteResourceLinks(uriBuilder, apiResult, model, s, applicationIdentifier(tenantName, applicationName, environmentName, regionName, instanceName), identifier);
+        rewriteResourceLinks(url, apiResult, model, s, applicationIdentifier(tenantName, applicationName, environmentName, regionName, instanceName), identifier);
         return apiResult;
     }
 
-    protected HealthClient getHealthClient(String apiParams, Service s, int requestedPort, String uriQuery, Client client) {
-        final StringBuilder uriBuffer = new StringBuilder("http://").append(s.host).append(':').append(requestedPort).append('/')
-                .append(apiParams);
-        addQuery(uriQuery, uriBuffer);
-        WebTarget target = client.target(uriBuffer.toString());
+    protected HealthClient getHealthClient(Path apiParams, Service s, int requestedPort, Query query, Client client) {
+        URI uri = HttpURL.create(Scheme.http, DomainName.of(s.host), requestedPort, apiParams, query).asURI();
+        WebTarget target = client.target(uri);
         return WebResourceFactory.newResource(HealthClient.class, target);
     }
 
@@ -149,7 +154,7 @@ public class StateRequestHandler extends RestApiRequestHandler<StateRequestHandl
                 + "/instance/" + instance;
     }
 
-    private void rewriteResourceLinks(UriBuilder uriBuilder,
+    private void rewriteResourceLinks(HttpURL url,
                                       Object apiResult,
                                       ServiceModel model,
                                       Service self,
@@ -160,7 +165,7 @@ public class StateRequestHandler extends RestApiRequestHandler<StateRequestHandl
                 Object resource = i.next();
                 if (resource instanceof String) {
                     try {
-                        StringBuilder buffer = linkBuffer(uriBuilder, applicationIdentifier);
+                        StringBuilder buffer = linkBuffer(url, applicationIdentifier);
                         // if it points to a port and host not part of the application, rewriting will not occur, so this is kind of safe
                         retarget(model, self, buffer, (String) resource);
                         i.set(buffer.toString());
@@ -168,7 +173,7 @@ public class StateRequestHandler extends RestApiRequestHandler<StateRequestHandl
                         break; // assume relatively homogenous lists when doing rewrites to avoid freezing up on scanning long lists
                     }
                 } else {
-                    rewriteResourceLinks(uriBuilder, resource, model, self, applicationIdentifier, incomingIdentifier);
+                    rewriteResourceLinks(url, resource, model, self, applicationIdentifier, incomingIdentifier);
                 }
             }
         } else if (apiResult instanceof Map) {
@@ -177,14 +182,14 @@ public class StateRequestHandler extends RestApiRequestHandler<StateRequestHandl
             for (Map.Entry<Object, Object> entry : api.entrySet()) {
                 if (SINGLE_API_LINK.equals(entry.getKey()) && entry.getValue() instanceof String) {
                     try {
-                        rewriteSingleLink(entry, model, self, linkBuffer(uriBuilder, applicationIdentifier));
+                        rewriteSingleLink(entry, model, self, linkBuffer(url, applicationIdentifier));
                     } catch (GiveUpLinkRetargetingException e) {
                         // NOP
                     }
                 } else if ("link".equals(entry.getKey()) && entry.getValue() instanceof String) {
-                    buildSingleLink(entry, linkBuffer(uriBuilder, applicationIdentifier), incomingIdentifier);
+                    buildSingleLink(entry, linkBuffer(url, applicationIdentifier), incomingIdentifier);
                 } else {
-                    rewriteResourceLinks(uriBuilder, entry.getValue(), model, self, applicationIdentifier, incomingIdentifier);
+                    rewriteResourceLinks(url, entry.getValue(), model, self, applicationIdentifier, incomingIdentifier);
                 }
             }
         }
@@ -205,8 +210,8 @@ public class StateRequestHandler extends RestApiRequestHandler<StateRequestHandl
         }
     }
 
-    private StringBuilder linkBuffer(UriBuilder uriBuilder, String applicationIdentifier) {
-        return baseUri(uriBuilder).append(applicationIdentifier);
+    private StringBuilder linkBuffer(HttpURL url, String applicationIdentifier) {
+        return new StringBuilder(baseUri(url).appendPath(Path.parse(applicationIdentifier)).toString());
     }
 
     private void rewriteSingleLink(Map.Entry<Object, Object> entry,
@@ -242,7 +247,7 @@ public class StateRequestHandler extends RestApiRequestHandler<StateRequestHandl
         newUri.append(link.getRawPath());
     }
 
-    private static StringBuilder baseUri(UriBuilder uriBuilder) {
-        return new StringBuilder(uriBuilder.withPath("/serviceview/v1/").toString());
+    private static HttpURL baseUri(HttpURL url) {
+        return url.withPath(Path.parse("/serviceview/v1/"));
     }
 }

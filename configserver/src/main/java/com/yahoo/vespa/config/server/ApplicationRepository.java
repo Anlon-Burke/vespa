@@ -1,6 +1,9 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server;
 
+import ai.vespa.http.DomainName;
+import ai.vespa.http.HttpURL;
+import ai.vespa.http.HttpURL.Query;
 import com.google.inject.Inject;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.Version;
@@ -557,27 +560,8 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         }
     }
 
-    public HttpResponse serviceStatusPage(ApplicationId applicationId, String hostName, String serviceName, String pathSuffix) {
-        // WARNING: pathSuffix may be given by the external user. Make sure no security issues arise...
-        // We should be OK here, because at most, pathSuffix may change the parent path, but cannot otherwise
-        // change the hostname and port. Exposing other paths on the cluster controller should be fine.
-        // TODO: It would be nice to have a simple check to verify pathSuffix doesn't contain /../ components.
-        String pathPrefix;
-        switch (serviceName) {
-            case "container-clustercontroller": {
-                pathPrefix = "clustercontroller-status/v1/";
-                break;
-            }
-            case "distributor":
-            case "storagenode": {
-                pathPrefix = "";
-                break;
-            }
-            default:
-                throw new NotFoundException("No status page for service: " + serviceName);
-        }
-
-        return httpProxy.get(getApplication(applicationId), hostName, serviceName, pathPrefix + pathSuffix);
+    public HttpResponse proxyServiceHostnameRequest(ApplicationId applicationId, String hostName, String serviceName, HttpURL.Path path, Query query) {
+        return httpProxy.get(getApplication(applicationId), hostName, serviceName, path, query);
     }
 
     public Map<String, ClusterReindexing> getClusterReindexingStatus(ApplicationId applicationId) {
@@ -658,9 +642,9 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         return getOptionalApplication(applicationId).map(app -> app.getModel().fileReferences()).orElse(Set.of());
     }
 
-    public ApplicationFile getApplicationFileFromSession(TenantName tenantName, long sessionId, String path, Session.Mode mode) {
+    public ApplicationFile getApplicationFileFromSession(TenantName tenantName, long sessionId, HttpURL.Path path, Session.Mode mode) {
         Tenant tenant = tenantRepository.getTenant(tenantName);
-        return getLocalSession(tenant, sessionId).getApplicationFile(Path.fromString(path), mode);
+        return getLocalSession(tenant, sessionId).getApplicationFile(Path.from(path.segments()), mode);
     }
 
     public Tenant getTenant(ApplicationId applicationId) {
@@ -761,7 +745,7 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
 
     // ---------------- Logs ----------------------------------------------------------------
 
-    public HttpResponse getLogs(ApplicationId applicationId, Optional<String> hostname, String apiParams) {
+    public HttpResponse getLogs(ApplicationId applicationId, Optional<DomainName> hostname, String apiParams) {
         String logServerURI = getLogServerURI(applicationId, hostname) + apiParams;
         return logRetriever.getLogs(logServerURI);
     }
@@ -1052,7 +1036,7 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
 
     private File decompressApplication(InputStream in, String contentType, File tempDir) {
         try (CompressedApplicationInputStream application =
-                     CompressedApplicationInputStream.createFromCompressedStream(in, contentType)) {
+                     CompressedApplicationInputStream.createFromCompressedStream(in, contentType, configserverConfig.maxApplicationPackageSize())) {
             return decompressApplication(application, tempDir);
         } catch (IOException e) {
             throw new IllegalArgumentException("Unable to decompress data in body", e);
@@ -1128,14 +1112,14 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         }
     }
 
-    private String getLogServerURI(ApplicationId applicationId, Optional<String> hostname) {
+    private String getLogServerURI(ApplicationId applicationId, Optional<DomainName> hostname) {
         // Allow to get logs from a given hostname if the application is under the hosted-vespa tenant.
         // We make no validation that the hostname is actually allocated to the given application since
         // most applications under hosted-vespa are not known to the model and it's OK for a user to get
         // logs for any host if they are authorized for the hosted-vespa tenant.
         if (hostname.isPresent() && HOSTED_VESPA_TENANT.equals(applicationId.tenant())) {
             int port = List.of(InfrastructureApplication.CONFIG_SERVER.id(), InfrastructureApplication.CONTROLLER.id()).contains(applicationId) ? 19071 : 8080;
-            return "http://" + hostname.get() + ":" + port + "/logs";
+            return "http://" + hostname.get().value() + ":" + port + "/logs";
         }
 
         Application application = getApplication(applicationId);

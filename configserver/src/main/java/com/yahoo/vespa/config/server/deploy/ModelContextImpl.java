@@ -21,10 +21,10 @@ import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.DockerImage;
-import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.container.jdisc.secretstore.SecretStore;
+import com.yahoo.config.provision.HostName;
 import com.yahoo.vespa.config.server.tenant.SecretStoreExternalIdRetriever;
 import com.yahoo.vespa.flags.FetchVector;
 import com.yahoo.vespa.flags.FlagSource;
@@ -42,6 +42,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.function.ToIntFunction;
 
+import static com.yahoo.config.provision.NodeResources.Architecture;
 import static com.yahoo.vespa.config.server.ConfigServerSpec.fromConfig;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_TYPE;
 
@@ -209,9 +210,8 @@ public class ModelContextImpl implements ModelContext {
         private final boolean inhibitDefaultMergesWhenGlobalMergesPending;
         private final boolean useQrserverServiceName;
         private final boolean avoidRenamingSummaryFeatures;
-        private final boolean mergeGroupingResultInSearchInvoker;
         private final boolean experimentalSdParsing;
-        private final String adminClusterNodeResourcesArchitecture;
+        private final Architecture adminClusterArchitecture;
 
         public FeatureFlags(FlagSource source, ApplicationId appId, Version version) {
             this.defaultTermwiseLimit = flagValue(source, appId, version, Flags.DEFAULT_TERM_WISE_LIMIT);
@@ -259,9 +259,8 @@ public class ModelContextImpl implements ModelContext {
             this.inhibitDefaultMergesWhenGlobalMergesPending = flagValue(source, appId, version, Flags.INHIBIT_DEFAULT_MERGES_WHEN_GLOBAL_MERGES_PENDING);
             this.useQrserverServiceName = flagValue(source, appId, version, Flags.USE_QRSERVER_SERVICE_NAME);
             this.avoidRenamingSummaryFeatures = flagValue(source, appId, version, Flags.AVOID_RENAMING_SUMMARY_FEATURES);
-            this.mergeGroupingResultInSearchInvoker = flagValue(source, appId, version, Flags.MERGE_GROUPING_RESULT_IN_SEARCH_INVOKER);
             this.experimentalSdParsing = flagValue(source, appId, version, Flags.EXPERIMENTAL_SD_PARSING);
-            this.adminClusterNodeResourcesArchitecture = flagValue(source, appId, version, PermanentFlags.ADMIN_CLUSTER_NODE_ARCHITECTURE);
+            this.adminClusterArchitecture = Architecture.valueOf(flagValue(source, appId, version, PermanentFlags.ADMIN_CLUSTER_NODE_ARCHITECTURE));
         }
 
         @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
@@ -311,9 +310,8 @@ public class ModelContextImpl implements ModelContext {
         @Override public boolean inhibitDefaultMergesWhenGlobalMergesPending() { return inhibitDefaultMergesWhenGlobalMergesPending; }
         @Override public boolean useQrserverServiceName() { return useQrserverServiceName; }
         @Override public boolean avoidRenamingSummaryFeatures() { return avoidRenamingSummaryFeatures; }
-        @Override public boolean mergeGroupingResultInSearchInvoker() { return mergeGroupingResultInSearchInvoker; }
         @Override public boolean experimentalSdParsing() { return experimentalSdParsing; }
-        @Override public String adminClusterNodeArchitecture() { return adminClusterNodeResourcesArchitecture; }
+        @Override public Architecture adminClusterArchitecture() { return adminClusterArchitecture; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, Version vespaVersion, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)
@@ -400,7 +398,7 @@ public class ModelContextImpl implements ModelContext {
             this.applicationId = applicationId;
             this.multitenant = configserverConfig.multitenant() || configserverConfig.hostedVespa() || Boolean.getBoolean("multitenant");
             this.configServerSpecs = fromConfig(configserverConfig);
-            this.loadBalancerName = HostName.from(configserverConfig.loadBalancerAddress());
+            this.loadBalancerName = configserverConfig.loadBalancerAddress().isEmpty() ? null : HostName.of(configserverConfig.loadBalancerAddress());
             this.ztsUrl = configserverConfig.ztsUrl() != null ? URI.create(configserverConfig.ztsUrl()) : null;
             this.athenzDnsSuffix = configserverConfig.athenzDnsSuffix();
             this.hostedVespa = configserverConfig.hostedVespa();

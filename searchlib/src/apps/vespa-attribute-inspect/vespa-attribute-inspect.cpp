@@ -8,13 +8,14 @@
 #include <fstream>
 
 #include <vespa/fastlib/io/bufferedfile.h>
-#include <vespa/fastos/app.h>
+#include <vespa/vespalib/util/signalhandler.h>
+#include <unistd.h>
 
 namespace search {
 
 typedef AttributeVector::SP AttributePtr;
 
-class LoadAttribute : public FastOS_Application
+class LoadAttribute
 {
 private:
     void load(const AttributePtr & ptr);
@@ -23,7 +24,7 @@ private:
     void usage();
 
 public:
-    int Main() override;
+    int main(int argc, char **argv);
 };
 
 void
@@ -104,7 +105,7 @@ LoadAttribute::usage()
 }
 
 int
-LoadAttribute::Main()
+LoadAttribute::main(int argc, char **argv)
 {
     bool doPrintContent = false;
     bool doApplyUpdate = false;
@@ -112,11 +113,9 @@ LoadAttribute::Main()
     bool doFastSearch = false;
     bool doHuge = false;
 
-    int idx = 1;
     int opt;
-    const char * arg;
     bool optError = false;
-    while ((opt = GetOpt("pasf:h", arg, idx)) != -1) {
+    while ((opt = getopt(argc, argv, "pasf:h")) != -1) {
         switch (opt) {
         case 'p':
             doPrintContent = true;
@@ -128,11 +127,11 @@ LoadAttribute::Main()
             doHuge = true;
             break;
         case 'f':
-            if (strcmp(arg, "search") == 0) {
+            if (strcmp(optarg, "search") == 0) {
                 doFastSearch = true;
             } else {
                 std::cerr << "Expected 'search' or 'aggregate', got '" <<
-                    arg << "'" << std::endl;
+                    optarg << "'" << std::endl;
                 optError = true;
             }
             break;
@@ -145,12 +144,12 @@ LoadAttribute::Main()
         }
     }
 
-    if (_argc != (idx + 1) || optError) {
+    if (argc != (optind + 1) || optError) {
         usage();
         return -1;
     }
 
-    vespalib::string fileName(_argv[idx]);
+    vespalib::string fileName(argv[optind]);
     vespalib::FileHeader fh;
     {
         vespalib::string datFileName(fileName + ".dat");
@@ -200,8 +199,8 @@ LoadAttribute::Main()
 
 }
 
-int main(int argc, char ** argv)
-{
+int main(int argc, char ** argv) {
+    vespalib::SignalHandler::PIPE.ignore();
     search::LoadAttribute myApp;
-    return myApp.Entry(argc, argv);
+    return myApp.main(argc, argv);
 }

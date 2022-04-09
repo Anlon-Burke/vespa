@@ -17,19 +17,19 @@ using namespace vespalib::xml;
 
 namespace document {
 
-IMPLEMENT_IDENTIFIABLE(AddValueUpdate, ValueUpdate);
 
-AddValueUpdate:: AddValueUpdate(const FieldValue& value, int weight)
-    : ValueUpdate(),
-      _value(value.clone()),
+AddValueUpdate:: AddValueUpdate(std::unique_ptr<FieldValue> value, int weight)
+    : ValueUpdate(Add),
+      _value(std::move(value)),
       _weight(weight)
 {}
 
 AddValueUpdate::~AddValueUpdate() = default;
+
 bool
 AddValueUpdate::operator==(const ValueUpdate& other) const
 {
-    if (other.getClass().id() != AddValueUpdate::classId) return false;
+    if (other.getType() != Add) return false;
     const AddValueUpdate& o(static_cast<const AddValueUpdate&>(other));
     if (*_value != *o._value) return false;
     if (_weight != o._weight) return false;
@@ -63,14 +63,14 @@ AddValueUpdate::print(std::ostream& out, bool, const std::string& indent) const
 bool
 AddValueUpdate::applyTo(FieldValue& value) const
 {
-    if (value.inherits(ArrayFieldValue::classId)) {
+    if (value.isA(FieldValue::Type::ARRAY)) {
         ArrayFieldValue& doc(static_cast<ArrayFieldValue&>(value));
         doc.add(*_value);	
-    } else if (value.inherits(WeightedSetFieldValue::classId)) {
+    } else if (value.isA(FieldValue::Type::WSET)) {
         WeightedSetFieldValue& doc(static_cast<WeightedSetFieldValue&>(value));
         doc.add(*_value, _weight);	
     } else {
-        std::string err = make_string("Unable to add a value to a \"%s\" field value.", value.getClass().name());
+        vespalib::string err = make_string("Unable to add a value to a \"%s\" field value.", value.className());
         throw IllegalStateException(err, VESPA_STRLOC);
     }
     return true;

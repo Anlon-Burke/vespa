@@ -6,6 +6,7 @@
 #include "stringattribute.h"
 #include "singleenumattribute.hpp"
 #include "attributevector.hpp"
+#include "single_string_enum_hint_search_context.h"
 #include <vespa/vespalib/text/utf8.h>
 #include <vespa/vespalib/text/lowercase.h>
 #include <vespa/searchlib/util/bufferwriter.h>
@@ -36,36 +37,12 @@ SingleValueStringAttributeT<B>::freezeEnumDictionary()
 
 
 template <typename B>
-AttributeVector::SearchContext::UP
+std::unique_ptr<attribute::SearchContext>
 SingleValueStringAttributeT<B>::getSearch(QueryTermSimpleUP qTerm,
                                           const attribute::SearchContextParams &) const
 {
-    return std::make_unique<StringTemplSearchContext>(std::move(qTerm), *this);
-}
-
-template <typename B>
-SingleValueStringAttributeT<B>::StringTemplSearchContext::StringTemplSearchContext(QueryTermSimple::UP qTerm, const AttrType & toBeSearched) :
-    StringSingleImplSearchContext(std::move(qTerm), toBeSearched),
-    EnumHintSearchContext(toBeSearched.getEnumStore().get_dictionary(),
-                          toBeSearched.getCommittedDocIdLimit(),
-                          toBeSearched.getStatus().getNumValues())
-{
-    const EnumStore &enumStore(toBeSearched.getEnumStore());
-
-    this->_plsc = static_cast<attribute::IPostingListSearchContext *>(this);
-    if (this->valid()) {
-        if (this->isPrefix()) {
-            auto comp = enumStore.make_folded_comparator_prefix(queryTerm()->getTerm());
-            lookupRange(comp, comp);
-        } else if (this->isRegex()) {
-            vespalib::string prefix(vespalib::RegexpUtil::get_prefix(this->queryTerm()->getTerm()));
-            auto comp = enumStore.make_folded_comparator_prefix(prefix.c_str());
-            lookupRange(comp, comp);
-        } else {
-            auto comp = enumStore.make_folded_comparator(queryTerm()->getTerm());
-            lookupTerm(comp);
-        }
-    }
+    bool cased = this->get_match_is_cased();
+    return std::make_unique<attribute::SingleStringEnumHintSearchContext>(std::move(qTerm), cased, *this, &this->_enumIndices.acquire_elem_ref(0), this->_enumStore, this->getCommittedDocIdLimit(), this->getStatus().getNumValues());
 }
 
 }

@@ -4,9 +4,9 @@ package com.yahoo.vespa.config.server.http.v2.request;
 import com.yahoo.config.application.api.ApplicationFile;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.container.jdisc.HttpRequest;
-import com.yahoo.jdisc.application.BindingMatch;
+import ai.vespa.http.HttpURL;
+import com.yahoo.restapi.Path;
 import com.yahoo.vespa.config.server.http.ContentRequest;
-import com.yahoo.vespa.config.server.http.Utils;
 
 /**
  * Requests for content and content status (v2)
@@ -16,14 +16,14 @@ import com.yahoo.vespa.config.server.http.Utils;
  * @since 5.3
  */
 public class SessionContentRequestV2 extends ContentRequest {
-    private static final String uriPattern = "http://*/application/v2/tenant/*/session/*/content/*";
+
     private final TenantName tenantName;
     private final long sessionId;
 
     public SessionContentRequestV2(HttpRequest request,
                             long sessionId,
                             TenantName tenantName,
-                            String path,
+                            HttpURL.Path path,
                             ApplicationFile applicationFile) {
         super(request, sessionId, path, applicationFile);
         this.tenantName = tenantName;
@@ -35,8 +35,11 @@ public class SessionContentRequestV2 extends ContentRequest {
         return "/application/v2/tenant/" + tenantName.value() + "/session/" + sessionId;
     }
 
-    public static String getContentPath(HttpRequest request) {
-        BindingMatch<?> bm = Utils.getBindingMatch(request, uriPattern);
-        return bm.group(4);
+    public static HttpURL.Path getContentPath(HttpRequest request) {
+        Path path = new Path(request.getUri());
+        if ( ! path.matches("/application/v2/tenant/{tenant}/session/{session}/content/{*}"))
+            throw new IllegalStateException("error in request routing");
+        return path.getRest();
     }
+
 }

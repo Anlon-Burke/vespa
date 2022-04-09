@@ -39,27 +39,28 @@ public class Bug4259784TestCase {
 
 
     private void annotate(Document document, DocumentTypeManager manager) {
+        DocumentType docType = manager.getDocumentType("blog");
         AnnotationTypeRegistry registry = manager.getAnnotationTypeRegistry();
 
-		AnnotationType company = registry.getType("company");
-		AnnotationType industry = registry.getType("industry");
-		AnnotationType person  = registry.getType("person");
-		AnnotationType location = registry.getType("location");
+        AnnotationType company = registry.getType("company");
+        AnnotationType industry = registry.getType("industry");
+        AnnotationType person  = registry.getType("person");
+        AnnotationType location = registry.getType("location");
 
-	    SpanTree tree = new SpanTree("testannotations");
+        SpanTree tree = new SpanTree("testannotations");
         SpanList root = (SpanList) tree.getRoot();
 
-	    SpanNode span1 = new Span(0,5);
-	    SpanNode span2 = new Span(5,10);
-	    SpanNode span3 = new Span(10,15);
-	    SpanNode span4 = new Span(15,20);
-	    SpanNode span5 = new Span(6,10);
-	    SpanNode span6 = new Span(8,4);
+        SpanNode span1 = new Span(0,5);
+        SpanNode span2 = new Span(5,10);
+        SpanNode span3 = new Span(10,15);
+        SpanNode span4 = new Span(15,20);
+        SpanNode span5 = new Span(6,10);
+        SpanNode span6 = new Span(8,4);
         SpanNode span7 = new Span(4, 2);
 
-	    root.add(span1);
-	    root.add(span2);
-	    root.add(span4);
+        root.add(span1);
+        root.add(span2);
+        root.add(span4);
         root.add(span5);
         root.add(span6);
 
@@ -71,35 +72,35 @@ public class Bug4259784TestCase {
 
         root.add(aspl);
 
-	    Struct personValue = (Struct) person.getDataType().createFieldValue();
-	    personValue.setFieldValue("name", "Richard Bair");
-	    Annotation personAn = new Annotation(person, personValue);
-	    tree.annotate(span1, personAn);
+        Struct personValue = (Struct) person.getDataType().createFieldValue();
+        personValue.setFieldValue("name", "Richard Bair");
+        Annotation personAn = new Annotation(person, personValue);
+        tree.annotate(span1, personAn);
 
-		Struct companyValue = (Struct) company.getDataType().createFieldValue();
-		companyValue.setFieldValue("name", "Sun");
+        Struct companyValue = (Struct) company.getDataType().createFieldValue();
+        companyValue.setFieldValue("name", "Sun");
         Annotation compAn = new Annotation(company, companyValue);
         tree.annotate(span2, compAn);
 
-        Struct locationVal = new Struct(manager.getDataType("annotation.location"));
-		locationVal.setFieldValue("lat", 37.774929);
-		locationVal.setFieldValue("lon", -122.419415);
+        Struct locationVal = new Struct(location.getDataType());
+        locationVal.setFieldValue("lat", 37.774929);
+        locationVal.setFieldValue("lon", -122.419415);
         Annotation locAnnotation = new Annotation(location, locationVal);
         tree.annotate(span3, locAnnotation);
 
 
-        Struct dirValue1 = new Struct(manager.getDataType("annotation.person"));
+        Struct dirValue1 = new Struct(person.getDataType());
         dirValue1.setFieldValue("name", "Jonathan Schwartz");
         Annotation dirAnnotation1 = new Annotation(person, dirValue1);
         tree.annotate(span5, dirAnnotation1);
 
-        Struct dirValue2 = new Struct(manager.getDataType("annotation.person"));
+        Struct dirValue2 = new Struct(person.getDataType());
         dirValue2.setFieldValue("name", "Scott Mcnealy");
         Annotation dirAnnotation2 = new Annotation(person, dirValue2);
         tree.annotate(span6, dirAnnotation2);
 
 
-        Struct indValue = new Struct(manager.getDataType("annotation.industry"));
+        Struct indValue = new Struct(industry.getDataType());
         indValue.setFieldValue("vertical", "Manufacturing");
         Annotation indAn = new Annotation(industry, indValue);
         tree.annotate(span4, indAn);
@@ -108,24 +109,24 @@ public class Bug4259784TestCase {
         Field compLocField = ((StructDataType) company.getDataType()).getField("place");
         AnnotationReferenceDataType annType = (AnnotationReferenceDataType) compLocField.getDataType();
         FieldValue compLocFieldVal = new AnnotationReference(annType, locAnnotation);
-		companyValue.setFieldValue(compLocField, compLocFieldVal);
-		companyValue.setFieldValue("vertical", "software");
+        companyValue.setFieldValue(compLocField, compLocFieldVal);
+        companyValue.setFieldValue("vertical", "software");
 
 
 
-		Field dirField = ((StructDataType) company.getDataType()).getField("directors");
-		Array<FieldValue> dirFieldVal = new Array<FieldValue>(dirField.getDataType());
-		AnnotationReferenceDataType annRefType = (AnnotationReferenceDataType) ((ArrayDataType) dirField.getDataType()).getNestedType();
-		dirFieldVal.add(new AnnotationReference(annRefType, dirAnnotation1));
-		dirFieldVal.add(new AnnotationReference(annRefType, dirAnnotation2));
-		companyValue.setFieldValue(dirField, dirFieldVal);
+        Field dirField = ((StructDataType) company.getDataType()).getField("directors");
+        Array<FieldValue> dirFieldVal = new Array<FieldValue>(dirField.getDataType());
+        AnnotationReferenceDataType annRefType = (AnnotationReferenceDataType) ((ArrayDataType) dirField.getDataType()).getNestedType();
+        dirFieldVal.add(new AnnotationReference(annRefType, dirAnnotation1));
+        dirFieldVal.add(new AnnotationReference(annRefType, dirAnnotation2));
+        companyValue.setFieldValue(dirField, dirFieldVal);
 
         tree.clearAnnotations(span3);
 
         StringFieldValue body = (StringFieldValue) document.getFieldValue(document.getDataType().getField("body"));
-		body.setSpanTree(tree);
-	    document.setFieldValue(document.getDataType().getField("body"), body);
-	}
+        body.setSpanTree(tree);
+        document.setFieldValue(document.getDataType().getField("body"), body);
+    }
 
 }
 

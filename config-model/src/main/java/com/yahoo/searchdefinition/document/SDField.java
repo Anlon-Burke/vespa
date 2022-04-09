@@ -7,9 +7,10 @@ import com.yahoo.document.DocumentType;
 import com.yahoo.document.Field;
 import com.yahoo.document.MapDataType;
 import com.yahoo.document.StructDataType;
-import com.yahoo.document.TemporaryStructuredDataType;
 import com.yahoo.document.TensorDataType;
 import com.yahoo.document.WeightedSetDataType;
+import com.yahoo.documentmodel.OwnedTemporaryType;
+import com.yahoo.documentmodel.TemporaryUnknownType;
 import com.yahoo.language.Linguistics;
 import com.yahoo.language.process.Embedder;
 import com.yahoo.language.simple.SimpleLinguistics;
@@ -307,7 +308,11 @@ public class SDField extends Field implements TypedKey, FieldOperationContainer,
                 return;
             }
             SDDocumentType subType = sdoc != null ? sdoc.getType(dataType.getName()) : null;
-            if (dataType instanceof TemporaryStructuredDataType && subType != null) {
+            if (dataType instanceof TemporaryUnknownType && subType != null) {
+                for (Field field : subType.fieldSet()) {
+                    supplyStructField.accept(field.getName(), field.getDataType());
+                }
+            } else if (dataType instanceof OwnedTemporaryType && subType != null) {
                 for (Field field : subType.fieldSet()) {
                     supplyStructField.accept(field.getName(), field.getDataType());
                 }
@@ -410,14 +415,14 @@ public class SDField extends Field implements TypedKey, FieldOperationContainer,
         return wasConfiguredToDoAttributing;
     }
 
-    /** Parse an indexing expression which will use the simple linguistics implementatino suitable for testing */
+    /** Parse an indexing expression which will use the simple linguistics implementation suitable for testing */
     public void parseIndexingScript(String script) {
-        parseIndexingScript(script, new SimpleLinguistics(), Embedder.throwsOnUse);
+        parseIndexingScript(script, new SimpleLinguistics(), Embedder.throwsOnUse.asMap());
     }
 
-    public void parseIndexingScript(String script, Linguistics linguistics, Embedder embedder) {
+    public void parseIndexingScript(String script, Linguistics linguistics, Map<String, Embedder> embedders) {
         try {
-            ScriptParserContext config = new ScriptParserContext(linguistics, embedder);
+            ScriptParserContext config = new ScriptParserContext(linguistics, embedders);
             config.setInputStream(new IndexingInput(script));
             setIndexingScript(ScriptExpression.newInstance(config));
         } catch (ParseException e) {
@@ -488,7 +493,7 @@ public class SDField extends Field implements TypedKey, FieldOperationContainer,
 
     @Override
     public boolean hasIndex() {
-        return  (getIndexingScript() != null) && doesIndexing();
+        return (getIndexingScript() != null) && doesIndexing();
     }
 
     /** Sets the literal boost of this field */
@@ -707,7 +712,7 @@ public class SDField extends Field implements TypedKey, FieldOperationContainer,
      * @param create true to create the summary field and add it to this field before returning if it is missing
      * @return the summary field, or null if not present and create is false
      */
-    public SummaryField getSummaryField(String name,boolean create) {
+    public SummaryField getSummaryField(String name, boolean create) {
         SummaryField summaryField=summaryFields.get(name);
         if (summaryField==null && create) {
             summaryField=new SummaryField(name, getDataType());

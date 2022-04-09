@@ -43,6 +43,8 @@ public:
     typedef documentmetastore::IStore::GlobalId GlobalId;
     typedef documentmetastore::IStore::BucketId BucketId;
     typedef documentmetastore::IStore::Timestamp Timestamp;
+    using MetaDataView = vespalib::ConstArrayRef<RawDocumentMetaData>;
+    using UnboundMetaDataView = const RawDocumentMetaData *;
 
     // If using proton::DocumentMetaStore directly, the
     // DocumentMetaStoreAttribute functions here are used instead of
@@ -131,6 +133,10 @@ private:
     RawDocumentMetaData removeInternal(DocId lid, uint64_t cached_iterator_sequence_id);
     void remove_batch_internal_btree(std::vector<LidAndRawDocumentMetaData>& removed);
 
+    MetaDataView make_meta_data_view() { return vespalib::ConstArrayRef(&_metaDataStore[0], getCommittedDocIdLimit()); }
+    UnboundMetaDataView acquire_unbound_meta_data_view() const noexcept { return &_metaDataStore.acquire_elem_ref(0); }
+    UnboundMetaDataView get_unbound_meta_data_view() const noexcept { return &_metaDataStore.get_elem_ref(0); } // Called from writer only
+
 public:
     typedef TreeType::Iterator Iterator;
     typedef TreeType::ConstIterator ConstIterator;
@@ -176,9 +182,10 @@ public:
     void move(DocId fromLid, DocId toLid, uint64_t prepare_serial_num) override;
     bool validButMaybeUnusedLid(DocId lid) const { return _lidAlloc.validButMaybeUnusedLid(lid); }
     bool validLidFast(DocId lid) const { return _lidAlloc.validLid(lid); }
+    bool validLidFastSafe(DocId lid, uint32_t limit) const { return _lidAlloc.validLidSafe(lid, limit); }
     bool validLid(DocId lid) const override { return validLidFast(lid); }
     void removeBatch(const std::vector<DocId> &lidsToRemove, const DocId docIdLimit) override;
-    const RawDocumentMetaData & getRawMetaData(DocId lid) const override { return _metaDataStore[lid]; }
+    const RawDocumentMetaData & getRawMetaData(DocId lid) const override { return _metaDataStore.acquire_elem_ref(lid); }
 
     /**
      * Implements search::IDocumentMetaStore
@@ -196,7 +203,7 @@ public:
     /**
      * Implements search::AttributeVector
      */
-    SearchContext::UP
+    std::unique_ptr<search::attribute::SearchContext>
     getSearch(std::unique_ptr<search::QueryTermSimple> qTerm,
               const search::attribute::SearchContextParams &params) const override;
 

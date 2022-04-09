@@ -12,12 +12,12 @@ vespa_define_module(
     TESTS
     src/examples/frt/rpc
     src/examples/ping
-    src/examples/proxy
     src/examples/timeout
     src/tests/connect
     src/tests/connection_spread
     src/tests/databuffer
     src/tests/examples
+    src/tests/frt/detach_supervisor
     src/tests/frt/method_pt
     src/tests/frt/parallel_rpc
     src/tests/frt/rpc

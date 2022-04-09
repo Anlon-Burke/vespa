@@ -24,6 +24,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 
+import static com.yahoo.config.provision.NodeResources.Architecture;
+
 /**
  * Model context containing state provided to model factories.
  *
@@ -100,7 +102,7 @@ public interface ModelContext {
         @ModelFeatureFlag(owners = {"arnej"}) default boolean ignoreThreadStackSizes() { return false; }
         @ModelFeatureFlag(owners = {"vekterli", "geirst"}) default boolean unorderedMergeChaining() { return true; }
         @ModelFeatureFlag(owners = {"arnej"}) default boolean useV8GeoPositions() { return false; }
-        @ModelFeatureFlag(owners = {"arnej", "baldersheim"}) default boolean useV8DocManagerCfg() { return false; }
+        @ModelFeatureFlag(owners = {"arnej", "baldersheim"}) default boolean useV8DocManagerCfg() { return true; }
         @ModelFeatureFlag(owners = {"baldersheim", "geirst", "toregge"}) default int maxCompactBuffers() { return 1; }
         @ModelFeatureFlag(owners = {"hmusum"}) default boolean failDeploymentWithInvalidJvmOptions() { return false; }
         @ModelFeatureFlag(owners = {"arnej", "andreer"}) default List<String> ignoredHttpUserAgents() { return List.of(); }
@@ -116,9 +118,10 @@ public interface ModelContext {
         @ModelFeatureFlag(owners = {"arnej"}) default boolean useQrserverServiceName() { return true; }
         @ModelFeatureFlag(owners = {"bjorncs", "baldersheim"}) default boolean enableJdiscPreshutdownCommand() { return true; }
         @ModelFeatureFlag(owners = {"arnej"}) default boolean avoidRenamingSummaryFeatures() { return false; }
-        @ModelFeatureFlag(owners = {"bjorncs", "baldersheim"}) default boolean mergeGroupingResultInSearchInvoker() { return false; }
+        @ModelFeatureFlag(owners = {"bjorncs", "baldersheim"}, removeAfter = "7.569") default boolean mergeGroupingResultInSearchInvoker() { return true; }
         @ModelFeatureFlag(owners = {"arnej"}) default boolean experimentalSdParsing() { return false; }
-        @ModelFeatureFlag(owners = {"hmusum"}) default String adminClusterNodeArchitecture() { return "x86_64"; } // TODO: Cluster controllers only for now
+        @ModelFeatureFlag(owners = {"hmusum"}, removeAfter = "7.571") default String adminClusterNodeArchitecture() { return adminClusterArchitecture().name(); }
+        @ModelFeatureFlag(owners = {"hmusum"}) default Architecture adminClusterArchitecture() { return Architecture.getDefault(); }
     }
 
     /** Warning: As elsewhere in this package, do not make backwards incompatible changes that will break old config models! */

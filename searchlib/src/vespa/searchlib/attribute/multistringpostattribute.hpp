@@ -5,6 +5,7 @@
 #include "stringattribute.h"
 #include "multistringpostattribute.h"
 #include "multistringattribute.hpp"
+#include "multi_string_enum_search_context.h"
 #include <vespa/searchlib/query/query_term_simple.h>
 
 namespace search {
@@ -85,16 +86,16 @@ MultiValueStringPostingAttributeT<B, T>::onGenerationChange(generation_t generat
 
 
 template <typename B, typename T>
-AttributeVector::SearchContext::UP
+std::unique_ptr<attribute::SearchContext>
 MultiValueStringPostingAttributeT<B, T>::getSearch(QueryTermSimpleUP qTerm,
                                                    const attribute::SearchContextParams & params) const
 {
-    std::unique_ptr<search::AttributeVector::SearchContext> sc;
-    sc.reset(new typename std::conditional<T::_hasWeight,
-                                           StringSetPostingSearchContext,
-                                           StringArrayPostingSearchContext>::
-             type(std::move(qTerm), params.useBitVector(), *this));
-    return sc;
+    using BaseSC = attribute::MultiStringEnumSearchContext<T>;
+    using SC = attribute::StringPostingSearchContext<BaseSC, SelfType, int32_t>;
+    bool cased = this->get_match_is_cased();
+    auto doc_id_limit = this->getCommittedDocIdLimit();
+    BaseSC base_sc(std::move(qTerm), cased, *this, this->_mvMapping.make_read_view(doc_id_limit), this->_enumStore);
+    return std::make_unique<SC>(std::move(base_sc), params.useBitVector(), *this);
 }
 
 

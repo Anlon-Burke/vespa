@@ -268,11 +268,12 @@ TensorAttribute::RefCopyVector
 TensorAttribute::getRefCopy() const
 {
     uint32_t size = getCommittedDocIdLimit();
-    assert(size <= _refVector.size());
+    assert(size <= _refVector.get_size());          // Called from writer only
+    auto* ref_vector = &_refVector.get_elem_ref(0); // Called from writer only
     RefCopyVector result;
     result.reserve(size);
     for (uint32_t i = 0; i < size; ++i) {
-        result.push_back(_refVector[i].load_relaxed());
+        result.push_back(ref_vector[i].load_relaxed());
     }
     return result;
 }

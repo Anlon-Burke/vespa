@@ -7,7 +7,6 @@
 #include <vespa/document/fieldvalue/fieldvalues.h>
 #include <vespa/document/update/documentupdate.h>
 #include <vespa/document/update/assignvalueupdate.h>
-#include <vespa/document/datatype/documenttype.h>
 #include <vespa/document/fieldset/fieldsets.h>
 #include <vespa/persistence/spi/test.h>
 #include <vespa/persistence/spi/persistenceprovider.h>
@@ -19,6 +18,7 @@ using std::shared_ptr;
 
 using storage::spi::test::makeSpiBucket;
 using document::test::makeDocumentBucket;
+using document::StringFieldValue;
 using namespace ::testing;
 
 namespace storage {
@@ -29,29 +29,27 @@ struct TestAndSetTest : PersistenceTestUtils {
     static constexpr int RANDOM_SEED = 1234;
 
     const document::BucketId BUCKET_ID{16, 4};
-    const document::StringFieldValue MISMATCHING_HEADER{"Definitely nothing about loud canines"};
-    const document::StringFieldValue MATCHING_HEADER{"Some string with woofy dog as a substring"};
-    const document::StringFieldValue OLD_CONTENT{"Some old content"};
-    const document::StringFieldValue NEW_CONTENT{"Freshly pressed and squeezed content"};
+    const StringFieldValue MISMATCHING_HEADER{"Definitely nothing about loud canines"};
+    const StringFieldValue MATCHING_HEADER{"Some string with woofy dog as a substring"};
+    const StringFieldValue OLD_CONTENT{"Some old content"};
+    const StringFieldValue NEW_CONTENT{"Freshly pressed and squeezed content"};
     const document::Bucket BUCKET = makeDocumentBucket(BUCKET_ID);
 
     unique_ptr<PersistenceHandler> persistenceHandler;
     const AsyncHandler * asyncHandler;
     shared_ptr<document::Document> testDoc;
     document::DocumentId testDocId;
-    spi::Context context;
 
     TestAndSetTest()
         : persistenceHandler(),
-          asyncHandler(nullptr),
-          context(0, 0)
+          asyncHandler(nullptr)
     {}
 
     void SetUp() override {
         PersistenceTestUtils::SetUp();
 
         createBucket(BUCKET_ID);
-        getPersistenceProvider().createBucket(makeSpiBucket(BUCKET_ID),context);
+        getPersistenceProvider().createBucket(makeSpiBucket(BUCKET_ID));
 
         testDoc = createTestDocument();
         testDocId = testDoc->getId();
@@ -160,9 +158,7 @@ std::shared_ptr<api::UpdateCommand>
 TestAndSetTest::conditional_update_test(bool createIfMissing, api::Timestamp updateTimestamp)
 {
     auto docUpdate = std::make_shared<document::DocumentUpdate>(_env->_testDocMan.getTypeRepo(), testDoc->getType(), testDocId);
-    auto fieldUpdate = document::FieldUpdate(testDoc->getField("content"));
-    fieldUpdate.addUpdate(document::AssignValueUpdate(NEW_CONTENT));
-    docUpdate->addUpdate(fieldUpdate);
+    docUpdate->addUpdate(document::FieldUpdate(testDoc->getField("content")).addUpdate(std::make_unique<document::AssignValueUpdate>(std::make_unique<StringFieldValue>(NEW_CONTENT))));
     docUpdate->setCreateIfNonExistent(createIfMissing);
 
     auto updateUp = std::make_unique<api::UpdateCommand>(BUCKET, docUpdate, updateTimestamp);

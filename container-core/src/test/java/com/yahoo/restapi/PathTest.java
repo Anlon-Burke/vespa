@@ -4,28 +4,18 @@ package com.yahoo.restapi;
 import org.junit.Test;
 
 import java.net.URI;
+import java.util.List;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 /**
  * @author bratseth
  */
 public class PathTest {
-
-    @Test
-    public void testWithPrefix() {
-        // Test that a path with a prefix matches spec without the prefix
-        Path path = new Path(URI.create("/ball/a/1/bar/fuz"), "/ball");
-        assertTrue(path.matches("/a/{foo}/bar/{b}"));
-        assertEquals("1", path.get("foo"));
-        assertEquals("fuz", path.get("b"));
-
-        // Also test that prefix does not cause false matches
-        assertFalse(path.matches("/ball/a/{foo}/zoo/{b}"));
-    }
-
 
     @Test
     public void testPath() {
@@ -46,7 +36,7 @@ public class PathTest {
             assertTrue(path.matches("/a/{foo}/bar/{b}/{*}"));
             assertEquals("1", path.get("foo"));
             assertEquals("fuz", path.get("b"));
-            assertEquals("", path.getRest());
+            assertEquals(List.of(), path.getRest().segments());
         }
 
         {
@@ -54,7 +44,7 @@ public class PathTest {
             assertTrue(path.matches("/a/{foo}/bar/{b}/{*}"));
             assertEquals("1", path.get("foo"));
             assertEquals("fuz", path.get("b"));
-            assertEquals("kanoo", path.getRest());
+            assertEquals(List.of("kanoo"), path.getRest().segments());
         }
 
         {
@@ -62,7 +52,7 @@ public class PathTest {
             assertTrue(path.matches("/a/{foo}/bar/{b}/{*}"));
             assertEquals("1", path.get("foo"));
             assertEquals("fuz", path.get("b"));
-            assertEquals("kanoo/trips", path.getRest());
+            assertEquals(List.of("kanoo", "trips"), path.getRest().segments());
         }
 
         {
@@ -70,20 +60,47 @@ public class PathTest {
             assertTrue(path.matches("/a/{foo}/bar/{b}/{*}"));
             assertEquals("1", path.get("foo"));
             assertEquals("fuz", path.get("b"));
-            assertEquals("kanoo/trips/", path.getRest());
+            assertEquals(List.of("kanoo", "trips"), path.getRest().segments());
         }
     }
 
     @Test
     public void testUrlEncodedPath() {
         assertTrue(new Path(URI.create("/a/%62/c")).matches("/a/b/c"));
-        assertTrue(new Path(URI.create("/a/%2e%2e/c")).matches("/a/../c"));
-        assertFalse(new Path(URI.create("/a/b%2fc")).matches("/a/b/c"));
+        assertFalse(new Path(URI.create("/a/b%2fc"), __ -> { }).matches("/a/b/c"));
+        assertEquals("path segments cannot be \"\", \".\", or \"..\", but got: '..'",
+                     assertThrows(IllegalArgumentException.class,
+                                  () -> new Path(URI.create("/foo")).matches("/foo/bar/%2e%2e")).getMessage());
 
-        Path path = new Path(URI.create("/%61/%2f/%63"));
+        Path path = new Path(URI.create("/%61/%2f/%63"), __ -> { });
         assertTrue(path.matches("/a/{slash}/{c}"));
         assertEquals("/", path.get("slash"));
         assertEquals("c", path.get("c"));
+    }
+
+    @Test
+    public void testInvalidPaths() {
+        assertInvalid(URI.create("/foo/../bar"));
+        assertInvalid(URI.create("/foo/%2e%2e/bar"));
+        assertInvalidPathSpec(URI.create("/foo/bar"), "/foo/bar/..");
+        assertInvalidPathSpec(URI.create("/foo/bar"), "/foo/../bar");
+    }
+
+    private void assertInvalid(URI uri) {
+        try {
+            new Path(uri);
+            fail("Expected exception");
+        } catch (IllegalArgumentException ignored) {
+        }
+    }
+
+    private void assertInvalidPathSpec(URI uri, String pathSpec) {
+        try {
+            Path path = new Path(uri);
+            path.matches(pathSpec);
+            fail("Expected exception");
+        } catch (IllegalArgumentException ignored) {
+        }
     }
 
 }

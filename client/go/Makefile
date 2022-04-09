@@ -31,10 +31,12 @@ all: test checkfmt install
 #
 # Example:
 #
-# $ git checkout vX.Y.Z
 # $ make dist-homebrew
-dist-homebrew: dist-version
+--dist-homebrew: dist-version
 	brew bump-formula-pr --version $(VERSION) --no-browse vespa-cli
+
+dist-homebrew:
+	go run cond_make.go --dist-homebrew
 
 # Create a GitHub release draft for all platforms. Note that this only creates a
 # draft, which is not publicly visible until it's explicitly published.
@@ -45,12 +47,15 @@ dist-homebrew: dist-version
 #
 # Example:
 #
-# $ git checkout vX.Y.Z
 # $ make dist-github
-dist-github: dist
-	gh release create v$(VERSION) --repo vespa-engine/vespa --notes-file $(CURDIR)/README.md --draft --title "Vespa CLI $(VERSION)" \
+--dist-github: dist
+	gh release create v$(VERSION) --repo vespa-engine/vespa --notes-file $(CURDIR)/README.md --title "Vespa CLI $(VERSION)" \
 		$(DIST)/vespa-cli_$(VERSION)_sha256sums.txt \
-		$(DIST)/vespa-cli_$(VERSION)_*.{zip,tar.gz}
+		$(DIST)/vespa-cli_$(VERSION)_*.zip \
+		$(DIST)/vespa-cli_$(VERSION)_*.tar.gz
+
+dist-github:
+	go run cond_make.go --dist-github
 
 #
 # Cross-platform build targets
@@ -80,7 +85,7 @@ $(DIST_TARGETS): DIST_NAME=vespa-cli_$(VERSION)_$(GOOS)_$(GOARCH)
 $(DIST_TARGETS): dist-version ci manpages
 $(DIST_TARGETS):
 	mkdir -p $(DIST)/$(DIST_NAME)/bin
-	env GOOS=$(GOOS) GOARCH=$(GOARCH) $(GOPROXY_OVERRIDE) go build -o $(DIST)/$(DIST_NAME)/bin $(GO_FLAGS) ./...
+	env CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o $(DIST)/$(DIST_NAME)/bin $(GO_FLAGS) ./...
 	cp -a $(GIT_ROOT)/LICENSE $(DIST)/$(DIST_NAME)
 	if [ "$(GOOS)" = "windows" ]; then \
 		cd $(DIST) && zip -r $(DIST)/$(DIST_NAME).zip $(DIST_NAME); \
@@ -90,7 +95,7 @@ $(DIST_TARGETS):
 	fi
 
 dist-sha256sums:
-	cd $(DIST) && sha256sum vespa-cli_$(VERSION)_*.{zip,tar.gz} > vespa-cli_$(VERSION)_sha256sums.txt
+	sha256sum $(DIST)/vespa-cli_$(VERSION)_*.zip $(DIST)/vespa-cli_$(VERSION)_*.tar.gz | sed 's|$(DIST)/||' > $(DIST)/vespa-cli_$(VERSION)_sha256sums.txt
 
 dist-version:
 ifeq ($(VERSION),$(DEVEL_VERSION))
@@ -110,6 +115,9 @@ ifdef CI
 	go env
 endif
 
+install-brew:
+	brew install vespa-cli
+
 install: ci
 	env GOBIN=$(BIN) go install $(GO_FLAGS) ./...
 
@@ -120,8 +128,7 @@ manpages: install
 clean:
 	rm -rf $(DIST)
 	rm -f $(BIN)/vespa $(SHARE)/man/man1/vespa.1 $(SHARE)/man/man1/vespa-*.1
-	rmdir -p $(BIN) &> /dev/null || true
-	rmdir -p $(SHARE)/man/man1 &> /dev/null || true
+	rmdir -p $(BIN) $(SHARE)/man/man1 > /dev/null 2>&1 || true
 
 test: ci
 	go test ./...

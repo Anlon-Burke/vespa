@@ -16,22 +16,18 @@ using namespace vespalib::xml;
 
 namespace document {
 
-IMPLEMENT_IDENTIFIABLE(MapValueUpdate, ValueUpdate);
-
-MapValueUpdate::MapValueUpdate(const FieldValue& key, const ValueUpdate& update)
-    : ValueUpdate(),
-      _key(key.clone()),
-      _update(update.clone())
+MapValueUpdate::MapValueUpdate(std::unique_ptr<FieldValue> key, std::unique_ptr<ValueUpdate> update)
+    : ValueUpdate(Map),
+      _key(std::move(key)),
+      _update(std::move(update))
 {}
 
-MapValueUpdate::MapValueUpdate(const MapValueUpdate &) = default;
-MapValueUpdate & MapValueUpdate::operator = (const MapValueUpdate &) = default;
 MapValueUpdate::~MapValueUpdate() = default;
 
 bool
 MapValueUpdate::operator==(const ValueUpdate& other) const
 {
-    if (other.getClass().id() != MapValueUpdate::classId) return false;
+    if (other.getType() != Map) return false;
     const MapValueUpdate& o(static_cast<const MapValueUpdate&>(other));
     if (*_key != *o._key) return false;
     if (*_update != *o._update) return false;
@@ -44,7 +40,7 @@ MapValueUpdate::checkCompatibility(const Field& field) const
 {
     // Check compatibility of nested types.
     if (field.getDataType().isArray()) {
-	    if (_key->getClass().id() != IntFieldValue::classId) {
+        if ( !_key->isA(FieldValue::Type::INT)) {
             throw IllegalArgumentException(vespalib::make_string(
                     "Key for field '%s' is of wrong type (expected '%s', was '%s').",
                     field.getName().data(), DataType::INT->toString().c_str(),
@@ -60,7 +56,7 @@ MapValueUpdate::checkCompatibility(const Field& field) const
         }
     } else {
         throw IllegalArgumentException("MapValueUpdate does not support "
-                "datatype " + field.getDataType().toString() + ".", VESPA_STRLOC);
+                                       "datatype " + field.getDataType().toString() + ".", VESPA_STRLOC);
     }
 }
 
@@ -122,7 +118,9 @@ MapValueUpdate::printXml(XmlOutputStream& xos) const
 {
     xos << XmlTag("map")
         << XmlTag("value") << *_key << XmlEndTag()
-        << XmlTag("update") << *_update << XmlEndTag()
+        << XmlTag("update");
+    _update->printXml(xos);
+    xos << XmlEndTag()
         << XmlEndTag();
 }
 

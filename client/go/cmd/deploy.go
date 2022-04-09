@@ -12,13 +12,14 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/vespa-engine/vespa/client/go/version"
 	"github.com/vespa-engine/vespa/client/go/vespa"
 )
 
 func newDeployCmd(cli *CLI) *cobra.Command {
 	var (
-		zoneArg     string
 		logLevelArg string
+		versionArg  string
 	)
 	cmd := &cobra.Command{
 		Use:   "deploy [application-directory]",
@@ -33,7 +34,12 @@ If application directory is not specified, it defaults to working directory.
 
 When deploying to Vespa Cloud the system can be overridden by setting the
 environment variable VESPA_CLI_CLOUD_SYSTEM. This is intended for internal use
-only.`,
+only.
+
+In Vespa Cloud you may override the Vespa runtime version for your deployment.
+This option should only be used if you have a reason for using a specific
+version. By default Vespa Cloud chooses a suitable version for you.
+`,
 		Example: `$ vespa deploy .
 $ vespa deploy -t cloud
 $ vespa deploy -t cloud -z dev.aws-us-east-1c  # -z can be omitted here as this zone is the default
@@ -42,15 +48,25 @@ $ vespa deploy -t cloud -z perf.aws-us-east-1c`,
 		DisableAutoGenTag: true,
 		SilenceUsage:      true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pkg, err := vespa.FindApplicationPackage(applicationSource(args), true)
+			pkg, err := cli.applicationPackageFrom(args, true)
 			if err != nil {
 				return err
 			}
-			target, err := cli.target(targetOptions{zone: zoneArg, logLevel: logLevelArg})
+			target, err := cli.target(targetOptions{logLevel: logLevelArg})
 			if err != nil {
 				return err
 			}
-			opts := cli.createDeploymentOptions(pkg, target)
+			opts, err := cli.createDeploymentOptions(pkg, target)
+			if err != nil {
+				return err
+			}
+			if versionArg != "" {
+				version, err := version.Parse(versionArg)
+				if err != nil {
+					return err
+				}
+				opts.Version = version
+			}
 
 			var result vespa.PrepareResult
 			err = cli.spinner(cli.Stderr, "Uploading application package ...", func() error {
@@ -70,17 +86,17 @@ $ vespa deploy -t cloud -z perf.aws-us-east-1c`,
 			}
 			if opts.IsCloud() {
 				log.Printf("\nUse %s for deployment status, or follow this deployment at", color.CyanString("vespa status"))
-				log.Print(color.CyanString(fmt.Sprintf("%s/tenant/%s/application/%s/dev/instance/%s/job/%s-%s/run/%d",
+				log.Print(color.CyanString(fmt.Sprintf("%s/tenant/%s/application/%s/%s/instance/%s/job/%s-%s/run/%d",
 					opts.Target.Deployment().System.ConsoleURL,
-					opts.Target.Deployment().Application.Tenant, opts.Target.Deployment().Application.Application, opts.Target.Deployment().Application.Instance,
-					opts.Target.Deployment().Zone.Environment, opts.Target.Deployment().Zone.Region,
+					opts.Target.Deployment().Application.Tenant, opts.Target.Deployment().Application.Application, opts.Target.Deployment().Zone.Environment,
+					opts.Target.Deployment().Application.Instance, opts.Target.Deployment().Zone.Environment, opts.Target.Deployment().Zone.Region,
 					result.ID)))
 			}
-			return waitForQueryService(cli, result.ID)
+			return waitForQueryService(cli, target, result.ID)
 		},
 	}
-	cmd.PersistentFlags().StringVarP(&zoneArg, "zone", "z", "", "The zone to use for deployment. This defaults to a dev zone")
-	cmd.PersistentFlags().StringVarP(&logLevelArg, "log-level", "l", "error", `Log level for Vespa logs. Must be "error", "warning", "info" or "debug"`)
+	cmd.Flags().StringVarP(&logLevelArg, "log-level", "l", "error", `Log level for Vespa logs. Must be "error", "warning", "info" or "debug"`)
+	cmd.Flags().StringVarP(&versionArg, "version", "V", "", `Override the Vespa runtime version to use in Vespa Cloud`)
 	return cmd
 }
 
@@ -92,7 +108,7 @@ func newPrepareCmd(cli *CLI) *cobra.Command {
 		DisableAutoGenTag: true,
 		SilenceUsage:      true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pkg, err := vespa.FindApplicationPackage(applicationSource(args), true)
+			pkg, err := cli.applicationPackageFrom(args, true)
 			if err != nil {
 				return fmt.Errorf("could not find application package: %w", err)
 			}
@@ -100,7 +116,10 @@ func newPrepareCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			opts := cli.createDeploymentOptions(pkg, target)
+			opts, err := cli.createDeploymentOptions(pkg, target)
+			if err != nil {
+				return err
+			}
 			var result vespa.PrepareResult
 			err = cli.spinner(cli.Stderr, "Uploading application package ...", func() error {
 				result, err = vespa.Prepare(opts)
@@ -126,7 +145,7 @@ func newActivateCmd(cli *CLI) *cobra.Command {
 		DisableAutoGenTag: true,
 		SilenceUsage:      true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pkg, err := vespa.FindApplicationPackage(applicationSource(args), true)
+			pkg, err := cli.applicationPackageFrom(args, true)
 			if err != nil {
 				return fmt.Errorf("could not find application package: %w", err)
 			}
@@ -138,21 +157,28 @@ func newActivateCmd(cli *CLI) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			opts := cli.createDeploymentOptions(pkg, target)
+			opts, err := cli.createDeploymentOptions(pkg, target)
+			if err != nil {
+				return err
+			}
 			err = vespa.Activate(sessionID, opts)
 			if err != nil {
 				return err
 			}
 			cli.printSuccess("Activated ", color.CyanString(pkg.Path), " with session ", sessionID)
-			return waitForQueryService(cli, sessionID)
+			return waitForQueryService(cli, target, sessionID)
 		},
 	}
 }
 
-func waitForQueryService(cli *CLI, sessionOrRunID int64) error {
-	if cli.flags.waitSecs > 0 {
+func waitForQueryService(cli *CLI, target vespa.Target, sessionOrRunID int64) error {
+	timeout, err := cli.config.timeout()
+	if err != nil {
+		return err
+	}
+	if timeout > 0 {
 		log.Println()
-		_, err := cli.service(vespa.QueryService, sessionOrRunID, "")
+		_, err := cli.service(target, vespa.QueryService, sessionOrRunID, "")
 		return err
 	}
 	return nil
@@ -167,6 +193,6 @@ func printPrepareLog(stderr io.Writer, result vespa.PrepareResult) {
 		case "WARNING":
 			level = color.YellowString(level)
 		}
-		fmt.Fprintf(stderr, "%s %s", level, entry.Message)
+		fmt.Fprintf(stderr, "%s %s\n", level, entry.Message)
 	}
 }

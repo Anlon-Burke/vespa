@@ -7,11 +7,11 @@ import com.yahoo.component.Version;
 import com.yahoo.component.Vtag;
 import com.yahoo.concurrent.maintenance.JobControl;
 import com.yahoo.config.provision.CloudName;
-import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.zone.ZoneApi;
 import com.yahoo.container.jdisc.secretstore.SecretStore;
 import com.yahoo.jdisc.Metric;
+import com.yahoo.net.HostName;
 import com.yahoo.vespa.curator.Lock;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.hosted.controller.api.integration.ServiceRegistry;
@@ -23,6 +23,7 @@ import com.yahoo.vespa.hosted.controller.config.ControllerConfig;
 import com.yahoo.vespa.hosted.controller.deployment.JobController;
 import com.yahoo.vespa.hosted.controller.dns.NameServiceForwarder;
 import com.yahoo.vespa.hosted.controller.notification.NotificationsDb;
+import com.yahoo.vespa.hosted.controller.notify.Notifier;
 import com.yahoo.vespa.hosted.controller.persistence.CuratorDb;
 import com.yahoo.vespa.hosted.controller.persistence.JobControlFlags;
 import com.yahoo.vespa.hosted.controller.security.AccessControl;
@@ -88,6 +89,7 @@ public class Controller extends AbstractComponent {
     private final CuratorArchiveBucketDb archiveBucketDb;
     private final NotificationsDb notificationsDb;
     private final SupportAccessControl supportAccessControl;
+    private final Notifier notifier;
 
     /**
      * Creates a controller 
@@ -98,7 +100,7 @@ public class Controller extends AbstractComponent {
     public Controller(CuratorDb curator, RotationsConfig rotationsConfig, AccessControl accessControl, FlagSource flagSource,
                       MavenRepository mavenRepository, ServiceRegistry serviceRegistry, Metric metric, SecretStore secretStore,
                       ControllerConfig controllerConfig) {
-        this(curator, rotationsConfig, accessControl, com.yahoo.net.HostName::getLocalhost, flagSource,
+        this(curator, rotationsConfig, accessControl, HostName::getLocalhost, flagSource,
              mavenRepository, serviceRegistry, metric, secretStore, controllerConfig, Sleeper.DEFAULT);
     }
 
@@ -126,6 +128,7 @@ public class Controller extends AbstractComponent {
         auditLogger = new AuditLogger(curator, clock);
         jobControl = new JobControl(new JobControlFlags(curator, flagSource));
         archiveBucketDb = new CuratorArchiveBucketDb(this);
+        notifier = new Notifier(curator, serviceRegistry.mailer());
         notificationsDb = new NotificationsDb(this);
         supportAccessControl = new SupportAccessControl(this);
 
@@ -279,8 +282,8 @@ public class Controller extends AbstractComponent {
     }
 
     /** Returns the hostname of this controller */
-    public HostName hostname() {
-        return HostName.from(hostnameSupplier.get());
+    public com.yahoo.config.provision.HostName hostname() {
+        return com.yahoo.config.provision.HostName.of(hostnameSupplier.get());
     }
 
     public SystemName system() {
@@ -330,4 +333,7 @@ public class Controller extends AbstractComponent {
         return supportAccessControl;
     }
 
+    public Notifier notifier() {
+        return notifier;
+    }
 }

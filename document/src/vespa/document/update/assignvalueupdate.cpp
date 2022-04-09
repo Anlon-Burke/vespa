@@ -16,13 +16,14 @@ using namespace vespalib::xml;
 
 namespace document {
 
-IMPLEMENT_IDENTIFIABLE(AssignValueUpdate, ValueUpdate);
+AssignValueUpdate::AssignValueUpdate()
+    : ValueUpdate(Assign),
+      _value()
+{}
 
-AssignValueUpdate::AssignValueUpdate() = default;
-
-AssignValueUpdate::AssignValueUpdate(const FieldValue& value)
-    : ValueUpdate(),
-      _value(value.clone())
+AssignValueUpdate::AssignValueUpdate(std::unique_ptr<FieldValue> value)
+    : ValueUpdate(Assign),
+      _value(std::move(value))
 {
 }
 AssignValueUpdate::~AssignValueUpdate() = default;
@@ -33,9 +34,13 @@ static const unsigned char CONTENT_HASVALUE = 0x01;
 bool
 AssignValueUpdate::operator==(const ValueUpdate& other) const
 {
-    if (other.getClass().id() != AssignValueUpdate::classId) return false;
+    if (other.getType() != Assign) return false;
     const AssignValueUpdate& o(static_cast<const AssignValueUpdate&>(other));
-    return _value == o._value;
+    if (_value && o._value) {
+        return *_value == *o._value;
+    } else {
+        return bool(_value) == bool(o._value);
+    }
 }
 
 // Ensure that this update is compatible with given field.
@@ -71,7 +76,7 @@ AssignValueUpdate::applyTo(FieldValue& value) const
          !value.getDataType()->isValueType(*_value))) {
         vespalib::string err = vespalib::make_string(
                 "Unable to assign a \"%s\" value to a \"%s\" field value.",
-                _value->getClass().name(), value.getClass().name());
+                _value->className(), value.className());
         throw IllegalStateException(err, VESPA_STRLOC);	
     }
     if (_value) {

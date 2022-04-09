@@ -5,9 +5,9 @@
 #include "readerbase.h"
 #include "stringbase.h"
 #include "enum_store_loaders.h"
+#include <vespa/searchlib/common/sort.h>
 #include <vespa/document/fieldvalue/fieldvalue.h>
 #include <vespa/searchlib/query/query_term_ucs4.h>
-#include <vespa/searchlib/util/fileutil.hpp>
 #include <vespa/vespalib/locale/c.h>
 #include <vespa/vespalib/util/array.hpp>
 
@@ -16,125 +16,7 @@ LOG_SETUP(".searchlib.attribute.stringbase");
 
 namespace search {
 
-StringSearchHelper::StringSearchHelper(QueryTermUCS4 & term, bool cased)
-    : _regex(),
-      _term(),
-      _termLen(),
-      _isPrefix(term.isPrefix()),
-      _isRegex(term.isRegex()),
-      _isCased(cased)
-{
-    if (isRegex()) {
-        if (isCased()) {
-            _regex = vespalib::Regex::from_pattern(term.getTerm(), vespalib::Regex::Options::None);
-        } else {
-            _regex = vespalib::Regex::from_pattern(term.getTerm(), vespalib::Regex::Options::IgnoreCase);
-        }
-    } else if (isCased()) {
-        _term._char = term.getTerm();
-        _termLen = term.getTermLen();
-    } else {
-        term.term(_term._ucs4);
-    }
-}
-
-StringSearchHelper::~StringSearchHelper()
-{
-    if (isRegex()) {
-
-    }
-}
-
-bool
-StringSearchHelper::isMatch(const char *src) const {
-    if (__builtin_expect(isRegex(), false)) {
-        return getRegex().valid() ? getRegex().partial_match(std::string_view(src)) : false;
-    }
-    if (__builtin_expect(isCased(), false)) {
-        int res = strncmp(_term._char, src, _termLen);
-        return (res == 0) && (src[_termLen] == 0 || isPrefix());
-    }
-    vespalib::Utf8ReaderForZTS u8reader(src);
-    uint32_t j = 0;
-    uint32_t val;
-    for (;; ++j) {
-        val = u8reader.getChar();
-        val = vespalib::LowerCase::convert(val);
-        if (_term._ucs4[j] == 0 || _term._ucs4[j] != val) {
-            break;
-        }
-    }
-    return (_term._ucs4[j] == 0 && (val == 0 || isPrefix()));
-}
-
 IMPLEMENT_IDENTIFIABLE_ABSTRACT(StringAttribute, AttributeVector);
-
-class SortDataChar {
-public:
-    SortDataChar() { }
-    SortDataChar(const char *s) : _data(s), _pos(0) { }
-    operator const char * () const { return _data; }
-    bool operator != (const vespalib::string & b) const { return b != _data; }
-    const char * _data;
-    uint32_t     _pos;
-};
-
-class SortDataCharRadix
-{
-public:
-    uint32_t operator () (SortDataChar & a) const {
-        uint32_t r(0);
-        const uint8_t *u((const uint8_t *)(a._data));
-        if (u[a._pos]) {
-            r |= u[a._pos + 0] << 24;
-            if (u[a._pos + 1]) {
-                r |= u[a._pos + 1] << 16;
-                if (u[a._pos + 2]) {
-                    r |= u[a._pos + 2] << 8;
-                    if (u[a._pos + 3]) {
-                        r |= u[a._pos + 3];
-                        a._pos += 4;
-                    } else {
-                        a._pos += 3;
-                    }
-                } else {
-                    a._pos += 2;
-                }
-            } else {
-                a._pos += 1;
-            }
-        }
-        return r;
-    }
-};
-
-class StdSortDataCharCompare
-{
-public:
-    bool operator() (const SortDataChar & x, const SortDataChar & y) const {
-        return cmp(x, y) < 0;
-    }
-    int cmp(const SortDataChar & a, const SortDataChar & b) const {
-        int retval = strcmp(a._data, b._data);
-        return retval;
-    }
-};
-
-class SortDataCharEof
-{
-public:
-    bool operator () (const SortDataChar & a) const { return a._data[a._pos] == 0; }
-    static bool alwaysEofOnCheck() { return false; }
-};
-
-class StringSorter {
-public:
-    typedef const char * constcharp;
-    void operator() (SortDataChar * start, size_t sz) const {
-        vespalib::Array<uint32_t> radixScratchPad(sz);
-        search::radix_sort(SortDataCharRadix(), StdSortDataCharCompare(), SortDataCharEof(), 1, start, sz, &radixScratchPad[0], 0, 32);
-    }
-};
 
 size_t
 StringAttribute::countZero(const char * bt, size_t sz)
@@ -268,28 +150,6 @@ StringAttribute::onSerializeForDescendingSort(DocId doc, void * serTo, long avai
         return -1;
     }
     return buf.size();
-}
-
-StringAttribute::StringSearchContext::StringSearchContext(QueryTermSimple::UP qTerm,
-                                                          const StringAttribute & toBeSearched) :
-    SearchContext(toBeSearched),
-    _queryTerm(static_cast<QueryTermUCS4 *>(qTerm.release())),
-    _helper(*_queryTerm, toBeSearched.getConfig().get_match() == Config::Match::CASED)
-{
-}
-
-StringAttribute::StringSearchContext::~StringSearchContext() = default;
-
-bool
-StringAttribute::StringSearchContext::valid() const
-{
-    return (_queryTerm && (!_queryTerm->empty()));
-}
-
-const QueryTermUCS4 *
-StringAttribute::StringSearchContext::queryTerm() const
-{
-    return _queryTerm.get();
 }
 
 uint32_t

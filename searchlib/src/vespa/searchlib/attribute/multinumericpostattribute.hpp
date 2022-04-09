@@ -3,6 +3,7 @@
 #pragma once
 
 #include "multinumericpostattribute.h"
+#include "multi_numeric_enum_search_context.h"
 #include <charconv>
 
 namespace search {
@@ -71,16 +72,15 @@ MultiValueNumericPostingAttribute<B, M>::onGenerationChange(generation_t generat
 }
 
 template <typename B, typename M>
-AttributeVector::SearchContext::UP
+std::unique_ptr<attribute::SearchContext>
 MultiValueNumericPostingAttribute<B, M>::getSearch(QueryTermSimpleUP qTerm,
                                                    const attribute::SearchContextParams & params) const
 {
-    std::unique_ptr<search::AttributeVector::SearchContext> sc;
-    sc.reset(new typename std::conditional<M::_hasWeight,
-                                           SetPostingSearchContext,
-                                           ArrayPostingSearchContext>::
-             type(std::move(qTerm), params, *this));
-    return sc;
+    using BaseSC = attribute::MultiNumericEnumSearchContext<typename B::BaseClass::BaseType, M>;
+    using SC = attribute::NumericPostingSearchContext<BaseSC, SelfType, int32_t>;
+    auto doc_id_limit = this->getCommittedDocIdLimit();
+    BaseSC base_sc(std::move(qTerm), *this, this->_mvMapping.make_read_view(doc_id_limit), this->_enumStore);
+    return std::make_unique<SC>(std::move(base_sc), params, *this);
 }
 
 template <typename B, typename M>

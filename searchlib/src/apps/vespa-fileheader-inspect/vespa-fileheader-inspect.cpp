@@ -1,24 +1,25 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/fastos/app.h>
+#include <vespa/vespalib/util/signalhandler.h>
 #include <vespa/fastos/file.h>
 #include <iomanip>
 #include <iostream>
 #include <vespa/vespalib/data/fileheader.h>
 #include <vespa/vespalib/stllike/asciistream.h>
+#include <unistd.h>
 #include <vespa/log/log.h>
 LOG_SETUP("vespa-fileheader-inspect");
 
 using namespace vespalib;
 
-class Application : public FastOS_Application {
+class Application {
 private:
     vespalib::string _fileName;
     char        _delimiter;
     bool        _quiet;
 
-    int parseOpts();
-    void usage();
+    int parseOpts(int argc, char **argv);
+    void usage(const char *self);
     void printQuiet(FileHeader &header);
     void printVerbose(FileHeader &header);
     vespalib::string escape(const vespalib::string &str, char quote = '\0');
@@ -28,7 +29,7 @@ private:
 public:
     Application();
     ~Application();
-    int Main() override;
+    int main(int argc, char **argv);
 };
 
 Application::Application() :
@@ -41,10 +42,10 @@ Application::~Application() {}
 
 
 void
-Application::usage()
+Application::usage(const char *self)
 {
     printf("Tool for inspecting the headers of files used by Vespa.\n");
-    printf("Usage: %s [options] filename\n", _argv[0]);
+    printf("Usage: %s [options] filename\n", self);
     printf("\n");
     printf("The options are:\n");
     printf("-d delimiter   The delimiter to use to separate values in quiet output.\n");
@@ -55,32 +56,30 @@ Application::usage()
 
 
 int
-Application::parseOpts()
+Application::parseOpts(int argc, char **argv)
 {
     int c = '?';
-    const char *optArg = NULL;
-    int optInd = 0;
-    while ((c = GetOpt("d:f:qh", optArg, optInd)) != -1) {
+    while ((c = getopt(argc, argv, "d:f:qh")) != -1) {
         switch (c) {
         case 'd':
-            _delimiter = optArg[0];
+            _delimiter = optarg[0];
             break;
         case 'f':
-            _fileName = optArg;
+            _fileName = optarg;
             break;
         case 'q':
             _quiet = true;
             break;
         case 'h':
-            usage();
+            usage(argv[0]);
             return EXIT_SUCCESS;
         default:
-            usage();
+            usage(argv[0]);
             return EXIT_FAILURE;
         }
     }
-    if (_argc == optInd + 1) {
-        _fileName = _argv[optInd];
+    if (argc == optind + 1) {
+        _fileName = argv[optind];
     }
     if (_fileName.empty()) {
         std::cerr << "No filename given." << std::endl;
@@ -90,9 +89,9 @@ Application::parseOpts()
 }
 
 int
-Application::Main()
+Application::main(int argc, char **argv)
 {
-    int ret = parseOpts();
+    int ret = parseOpts(argc, argv);
     if (ret == EXIT_FAILURE || ret == EXIT_SUCCESS) {
         return ret;
     }
@@ -219,6 +218,7 @@ Application::getValueString(const FileHeader::Tag &tag)
 int
 main(int argc, char** argv)
 {
+    vespalib::SignalHandler::PIPE.ignore();
     Application app;
-    return app.Entry(argc, argv);
+    return app.main(argc, argv);
 }

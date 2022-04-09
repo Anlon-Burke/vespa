@@ -14,11 +14,13 @@ public:
     typedef std::vector<ResultPair> Results;
     typedef Results::iterator iterator;
     typedef Results::const_iterator const_iterator;
-    using const_reverse_iterator = Results::const_reverse_iterator;
+    using reverse_iterator = Results::reverse_iterator;
 
     ResultList();
-    ResultList(ResultList &&) = default;
-    ResultList & operator = (ResultList &&) = default;
+    ResultList(ResultList &&) noexcept;
+    ResultList & operator = (ResultList &&) noexcept;
+    ResultList(const ResultList &) = delete;
+    ResultList & operator = (const ResultList &) = delete;
     ~ResultList();
 
     /**
@@ -26,11 +28,11 @@ public:
     */
     explicit ResultList(const Result& result);
 
-    void add(const VariableMap& variables, const Result& result);
+    void add(VariableMap variables, const Result& result);
 
     ResultList operator&&(const ResultList& other) const;
     ResultList operator||(const ResultList& other) const;
-    ResultList operator!() const;
+    ResultList operator!() &&;
 
     void print(std::ostream& out, bool verbose, const std::string& indent) const override;
 
@@ -43,12 +45,12 @@ public:
     const Results& getResults() const { return _results; }
     const_iterator begin() const { return _results.begin(); }
     const_iterator end() const { return _results.end(); }
-    const_reverse_iterator rbegin() const { return _results.rbegin(); }
-    const_reverse_iterator rend() const { return _results.rend(); }
+    reverse_iterator rbegin() { return _results.rbegin(); }
+    reverse_iterator rend() { return _results.rend(); }
 
 private:
     Results _results;
-    bool combineVariables(VariableMap& output, const VariableMap& input) const;
+    static bool combineVariables(VariableMap & combination, const VariableMap& output, const VariableMap& input);
 };
 
 inline bool operator==(const ResultList& list, const Result& other) {

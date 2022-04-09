@@ -6,7 +6,7 @@
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/vespalib/util/size_literals.h>
 #include <vespa/fastlib/io/bufferedfile.h>
-#include <vespa/fastos/app.h>
+#include <vespa/vespalib/util/signalhandler.h>
 #include <iostream>
 #include <sstream>
 #include <openssl/evp.h>
@@ -14,6 +14,7 @@
 #include <getopt.h>
 #include <vector>
 #include <limits>
+#include <unistd.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("vespa-gen-testdocs");
@@ -587,28 +588,11 @@ DocumentGenerator::generate(uint32_t docMin, uint32_t docIdLimit,
 
 class SubApp
 {
-protected:
-    FastOS_Application &_app;
-
 public:
-    SubApp(FastOS_Application &app)
-        : _app(app)
-    {
-    }
-
-    virtual
-    ~SubApp()
-    {
-    }
-
-    virtual void
-    usage(bool showHeader) = 0;
-
-    virtual bool
-    getOptions() = 0;
-
-    virtual int
-    run() = 0;
+    virtual void usage(bool showHeader) = 0;
+    virtual bool getOptions(int argc, char **argv) = 0;
+    virtual int run() = 0;
+    virtual ~SubApp() = default;
 };
 
 class GenTestDocsApp : public SubApp
@@ -628,9 +612,8 @@ class GenTestDocsApp : public SubApp
     bool _json;
     
 public:
-    GenTestDocsApp(FastOS_Application &app)
-        : SubApp(app),
-          _baseDir(""),
+    GenTestDocsApp()
+        : _baseDir(""),
           _docType("testdoc"),
           _minDocId(0u),
           _docIdLimit(5u),
@@ -652,19 +635,13 @@ public:
         _rnd.srand48(42);
     }
 
-    virtual
-    ~GenTestDocsApp()
+    ~GenTestDocsApp() override
     {
     }
 
-    virtual void
-    usage(bool showHeader) override;
-
-    virtual bool
-    getOptions() override;
-
-    virtual int
-    run() override;
+    virtual void usage(bool showHeader) override;
+    virtual bool getOptions(int argc, char **argv) override;
+    virtual int run() override;
 };
 
 
@@ -693,10 +670,9 @@ GenTestDocsApp::usage(bool showHeader)
 }
 
 bool
-GenTestDocsApp::getOptions()
+GenTestDocsApp::getOptions(int argc, char **argv)
 {
     int c;
-    const char *optArgument = NULL;
     int longopt_index = 0;
     static struct option longopts[] = {
         { "basedir", 1, NULL, 0 },
@@ -729,28 +705,25 @@ GenTestDocsApp::getOptions()
         LONGOPT_HEADERS,
         LONGOPT_JSON
     };
-    int optIndex = 2;
-    _app.resetOptIndex(optIndex);
-    while ((c = _app.GetOptLong("v",
-                                optArgument,
-                                optIndex,
-                                longopts,
-                                &longopt_index)) != -1) {
+    optind = 2;
+    while ((c = getopt_long(argc, argv, "v",
+                            longopts,
+                            &longopt_index)) != -1) {
         FieldGenerator::SP g;
         switch (c) {
         case 0:
             switch (longopt_index) {
             case LONGOPT_BASEDIR:
-                _baseDir = optArgument;
+                _baseDir = optarg;
                 break;
             case LONGOPT_CONSTTEXTFIELD:
-                _fields.emplace_back(std::make_shared<ConstTextFieldGenerator>(splitArg(optArgument)));
+                _fields.emplace_back(std::make_shared<ConstTextFieldGenerator>(splitArg(optarg)));
                 break;
             case LONGOPT_PREFIXTEXTFIELD:
-                _fields.emplace_back(std::make_shared<PrefixTextFieldGenerator>(splitArg(optArgument)));
+                _fields.emplace_back(std::make_shared<PrefixTextFieldGenerator>(splitArg(optarg)));
                 break;
             case LONGOPT_RANDTEXTFIELD:
-                g.reset(new RandTextFieldGenerator(optArgument,
+                g.reset(new RandTextFieldGenerator(optarg,
                                                    _rnd,
                                                    _numWords,
                                                    20,
@@ -758,33 +731,33 @@ GenTestDocsApp::getOptions()
                 _fields.push_back(g);
                 break;
             case LONGOPT_MODTEXTFIELD:
-                g.reset(new ModTextFieldGenerator(optArgument,
+                g.reset(new ModTextFieldGenerator(optarg,
                                                   _rnd,
                                                   _mods));
                 _fields.push_back(g);
                 break;
             case LONGOPT_IDTEXTFIELD:
-                g.reset(new IdTextFieldGenerator(optArgument));
+                g.reset(new IdTextFieldGenerator(optarg));
                 _fields.push_back(g);
                 break;
             case LONGOPT_RANDINTFIELD:
-                g.reset(new RandIntFieldGenerator(optArgument,
+                g.reset(new RandIntFieldGenerator(optarg,
                                                   _rnd,
                                                   0,
                                                   100000));
                 _fields.push_back(g);
                 break;
             case LONGOPT_DOCIDLIMIT:
-                _docIdLimit = atoi(optArgument);
+                _docIdLimit = atoi(optarg);
                 break;
             case LONGOPT_MINDOCID:
-                _minDocId = atoi(optArgument);
+                _minDocId = atoi(optarg);
                 break;
             case LONGOPT_NUMWORDS:
-                _numWords = atoi(optArgument);
+                _numWords = atoi(optarg);
                 break;
             case LONGOPT_DOCTYPE:
-                _docType = optArgument;
+                _docType = optarg;
                 break;
             case LONGOPT_HEADERS:
                 _headers = true;
@@ -793,10 +766,10 @@ GenTestDocsApp::getOptions()
                 _json = true;
                 break;
             default:
-                if (optArgument != NULL) {
+                if (optarg != NULL) {
                     LOG(error,
                         "longopt %s with arg %s",
-                        longopts[longopt_index].name, optArgument);
+                        longopts[longopt_index].name, optarg);
                 } else {
                     LOG(error,
                         "longopt %s",
@@ -811,11 +784,11 @@ GenTestDocsApp::getOptions()
             return false;
         }
     }
-    _optIndex = optIndex;
-    if (_optIndex >= _app._argc) {
+    _optIndex = optind;
+    if (_optIndex >= argc) {
         return false;
     }
-    _outFile = _app._argv[optIndex];
+    _outFile = argv[optind];
     return true;
 }
 
@@ -837,35 +810,32 @@ GenTestDocsApp::run()
 }
 
 
-class App : public FastOS_Application
+class App
 {
 public:
-    void
-    usage();
-
-    int
-    Main() override;
+    void usage();
+    int main(int argc, char **argv);
 };
 
 
 void
 App::usage()
 {
-    GenTestDocsApp(*this).usage(true);
+    GenTestDocsApp().usage(true);
 }
 
 int
-App::Main()
+App::main(int argc, char **argv)
 {
-    if (_argc < 2) {
+    if (argc < 2) {
         usage();
         return 1;
     }
     std::unique_ptr<SubApp> subApp;
-    if (strcmp(_argv[1], "gentestdocs") == 0)
-        subApp.reset(new GenTestDocsApp(*this));
-    if (subApp.get() != NULL) {
-        if (!subApp->getOptions()) {
+    if (strcmp(argv[1], "gentestdocs") == 0)
+        subApp = std::make_unique<GenTestDocsApp>();
+    if (subApp.get() != nullptr) {
+        if (!subApp->getOptions(argc, argv)) {
             subApp->usage(true);
             return 1;
         }
@@ -876,9 +846,8 @@ App::Main()
 }
 
 
-int
-main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
+    vespalib::SignalHandler::PIPE.ignore();
     App app;
-    return app.Entry(argc, argv);
+    return app.main(argc, argv);
 }

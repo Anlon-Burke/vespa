@@ -18,7 +18,6 @@ public final class DefaultProperties extends Properties  {
     public static final CompoundName MAX_OFFSET = new CompoundName("maxOffset");
     public static final CompoundName MAX_HITS = new CompoundName("maxHits");
 
-
     public static final QueryProfileType argumentType = new QueryProfileType("DefaultProperties");
 
     static {

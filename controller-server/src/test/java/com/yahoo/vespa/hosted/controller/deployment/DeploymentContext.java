@@ -32,7 +32,6 @@ import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.EndpointId;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
-import com.yahoo.vespa.hosted.controller.application.pkg.ZipStreamReader;
 import com.yahoo.vespa.hosted.controller.integration.ConfigServerMock;
 import com.yahoo.vespa.hosted.controller.maintenance.JobRunner;
 import com.yahoo.vespa.hosted.controller.maintenance.NameServiceDispatcher;
@@ -41,8 +40,6 @@ import com.yahoo.vespa.hosted.controller.routing.RoutingPolicy;
 import com.yahoo.vespa.hosted.controller.routing.RoutingPolicyId;
 
 import javax.security.auth.x500.X500Principal;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.cert.X509Certificate;
@@ -250,7 +247,7 @@ public class DeploymentContext {
         var clusterId = "default-inactive";
         var id = new RoutingPolicyId(instanceId, ClusterSpec.Id.from(clusterId), zone);
         var policies = new LinkedHashMap<>(tester.controller().routing().policies().read(instanceId).asMap());
-        policies.put(id, new RoutingPolicy(id, HostName.from("lb-host"),
+        policies.put(id, new RoutingPolicy(id, HostName.of("lb-host"),
                                            Optional.empty(),
                                            Set.of(EndpointId.of("default")),
                                            Set.of(),

@@ -34,12 +34,17 @@ public class QueryProperties extends Properties {
 
     private Query query;
     private final CompiledQueryProfileRegistry profileRegistry;
-    private final Embedder embedder;
+    private final Map<String, Embedder> embedders;
 
+    @Deprecated  // TODO: Remove on Vespa 8
     public QueryProperties(Query query, CompiledQueryProfileRegistry profileRegistry, Embedder embedder) {
+        this(query, profileRegistry, Map.of(Embedder.defaultEmbedderId, embedder));
+    }
+
+    public QueryProperties(Query query, CompiledQueryProfileRegistry profileRegistry, Map<String, Embedder> embedders) {
         this.query = query;
         this.profileRegistry = profileRegistry;
-        this.embedder = embedder;
+        this.embedders = embedders;
     }
 
     public void setParentQuery(Query query) {
@@ -148,7 +153,6 @@ public class QueryProperties extends Properties {
             if (key.toString().equals(Model.MODEL)) return query.getModel();
             if (key.toString().equals(Ranking.RANKING)) return query.getRanking();
             if (key.toString().equals(Presentation.PRESENTATION)) return query.getPresentation();
-
         }
 
         return super.get(key, context, substitution);
@@ -216,7 +220,8 @@ public class QueryProperties extends Properties {
                             matchPhase.setMaxFilterCoverage(asDouble(value, 0.2));
                         else
                             throwIllegalParameter(key.rest().toString(), Ranking.MATCH_PHASE);
-                    } else if (key.size() > 3 && key.get(2).equals(Ranking.DIVERSITY)) {
+                    }
+                    else if (key.size() > 3 && key.get(2).equals(Ranking.DIVERSITY)) {
                         Diversity diversity = ranking.getMatchPhase().getDiversity();
                         if (key.last().equals(Diversity.ATTRIBUTE)) {
                             diversity.setAttribute(asString(value, null));
@@ -263,11 +268,12 @@ public class QueryProperties extends Properties {
                 }
                 else if (key.size() > 2) {
                     String restKey = key.rest().rest().toString();
+                    chained().requireSettable(key, value, context);
                     if (key.get(1).equals(Ranking.FEATURES))
-                        setRankingFeature(query, restKey, toSpecifiedType(restKey,
-                                                                          value,
-                                                                          profileRegistry.getTypeRegistry().getComponent("features"),
-                                                                          context));
+                        setRankFeature(query, restKey, toSpecifiedType(restKey,
+                                                                       value,
+                                                                       profileRegistry.getTypeRegistry().getComponent("features"),
+                                                                       context));
                     else if (key.get(1).equals(Ranking.PROPERTIES))
                         ranking.getProperties().put(restKey, toSpecifiedType(restKey,
                                                                              value,
@@ -317,17 +323,7 @@ public class QueryProperties extends Properties {
                     throwIllegalParameter(key.last(), Select.SELECT);
                 }
             }
-            else if (key.first().equals("rankfeature") || key.first().equals("featureoverride") ) { // featureoverride is deprecated
-                setRankingFeature(query, key.rest().toString(), toSpecifiedType(key.rest().toString(),
-                                                                                value,
-                                                                                profileRegistry.getTypeRegistry().getComponent("features"),
-                                                                                context));
-            } else if (key.first().equals("rankproperty")) {
-                query.getRanking().getProperties().put(key.rest().toString(), toSpecifiedType(key.rest().toString(),
-                                                                                              value,
-                                                                                              profileRegistry.getTypeRegistry().getComponent("properties"),
-                                                                                              context));
-            } else if (key.size()==1) {
+            else if (key.size() == 1) {
                 if (key.equals(Query.HITS))
                     query.setHits(asInteger(value,10));
                 else if (key.equals(Query.OFFSET))
@@ -344,8 +340,10 @@ public class QueryProperties extends Properties {
                     query.setGroupingSessionCache(asBoolean(value, true));
                 else
                     super.set(key,value,context);
-            } else
-                super.set(key,value,context);
+            }
+            else {
+                super.set(key, value, context);
+            }
         }
         catch (Exception e) { // Make sure error messages are informative. This should be moved out of this properties implementation
             if (e.getMessage() != null && e.getMessage().startsWith("Could not set"))
@@ -370,8 +368,7 @@ public class QueryProperties extends Properties {
         return properties;
     }
 
-    @SuppressWarnings("deprecation")
-    private void setRankingFeature(Query query, String key, Object value) {
+    private void setRankFeature(Query query, String key, Object value) {
         if (value instanceof Tensor) {
             query.getRanking().getFeatures().put(key, (Tensor) value);
         }
@@ -394,7 +391,7 @@ public class QueryProperties extends Properties {
         if (type == null) return value; // no type info -> keep as string
         FieldDescription field = type.getField(key);
         if (field == null) return value; // ditto
-        return field.getType().convertFrom(value, new ConversionContext(key, profileRegistry, embedder, context));
+        return field.getType().convertFrom(value, new ConversionContext(key, profileRegistry, embedders, context));
     }
 
     private void throwIllegalParameter(String key,String namespace) {

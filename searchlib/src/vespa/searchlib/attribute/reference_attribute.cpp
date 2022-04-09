@@ -5,6 +5,7 @@
 #include "readerbase.h"
 #include "reference_attribute.h"
 #include "reference_attribute_saver.h"
+#include "search_context.h"
 #include <vespa/document/base/documentid.h>
 #include <vespa/document/base/idstringexception.h>
 #include <vespa/searchlib/common/i_gid_to_lid_mapper.h>
@@ -336,11 +337,12 @@ ReferenceAttribute::getUniqueValueCount() const
 ReferenceAttribute::IndicesCopyVector
 ReferenceAttribute::getIndicesCopy(uint32_t size) const
 {
-    assert(size <= _indices.size());
+    assert(size <= _indices.get_size());       // Called from writer only
+    auto* indices = &_indices.get_elem_ref(0); // Called from writer only
     IndicesCopyVector result;
     result.reserve(size);
     for (uint32_t i = 0; i < size; ++i) {
-        result.push_back(_indices[i].load_relaxed());
+        result.push_back(indices[i].load_relaxed());
     }
     return result;
 }
@@ -457,14 +459,14 @@ ReferenceAttribute::onShrinkLidSpace()
 
 namespace {
 
-class ReferenceSearchContext : public AttributeVector::SearchContext {
+class ReferenceSearchContext : public attribute::SearchContext {
 private:
     const ReferenceAttribute& _ref_attr;
     GlobalId _term;
 
 public:
     ReferenceSearchContext(const ReferenceAttribute& ref_attr, const GlobalId& term)
-        : AttributeVector::SearchContext(ref_attr),
+        : attribute::SearchContext(ref_attr),
           _ref_attr(ref_attr),
           _term(term)
     {
@@ -491,7 +493,7 @@ public:
 
 }
 
-AttributeVector::SearchContext::UP
+std::unique_ptr<attribute::SearchContext>
 ReferenceAttribute::getSearch(QueryTermSimpleUP term, const attribute::SearchContextParams& params) const
 {
     (void) params;

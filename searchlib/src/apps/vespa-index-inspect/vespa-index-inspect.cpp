@@ -12,10 +12,11 @@
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
 #include <vespa/searchlib/queryeval/searchiterator.h>
 #include <vespa/searchlib/fef/termfieldmatchdata.h>
-#include <vespa/fastos/app.h>
+#include <vespa/vespalib/util/signalhandler.h>
 #include <iostream>
 #include <getopt.h>
 #include <cstdlib>
+#include <unistd.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("vespa-index-inspect");
@@ -166,18 +167,10 @@ FieldOptions::validateFields(const Schema &schema)
 
 class SubApp
 {
-protected:
-    FastOS_Application &_app;
-
 public:
-    SubApp(FastOS_Application &app)
-        : _app(app)
-    {
-    }
-
     virtual ~SubApp() { }
     virtual void  usage(bool showHeader) = 0;
-    virtual bool getOptions() = 0;
+    virtual bool getOptions(int argc, char **argv) = 0;
     virtual int run() = 0;
 };
 
@@ -201,10 +194,10 @@ class ShowPostingListSubApp : public SubApp
     static uint64_t noWordNumHigh() { return std::numeric_limits<uint64_t>::max(); }
     static uint64_t noWordNum() { return 0u; }
 public:
-    ShowPostingListSubApp(FastOS_Application &app);
+    ShowPostingListSubApp();
     virtual ~ShowPostingListSubApp();
     virtual void usage(bool showHeader) override;
-    virtual bool getOptions() override;
+    virtual bool getOptions(int argc, char **argv) override;
     virtual int run() override;
     void showPostingList();
     bool readDocIdLimit(const Schema &schema);
@@ -215,9 +208,8 @@ public:
 };
 
 
-ShowPostingListSubApp::ShowPostingListSubApp(FastOS_Application &app)
-    : SubApp(app),
-      _indexDir("."),
+ShowPostingListSubApp::ShowPostingListSubApp()
+    : _indexDir("."),
       _fieldOptions(),
       _word(),
       _verbose(false),
@@ -259,10 +251,9 @@ ShowPostingListSubApp::usage(bool showHeader)
 
 
 bool
-ShowPostingListSubApp::getOptions()
+ShowPostingListSubApp::getOptions(int argc, char **argv)
 {
     int c;
-    const char *optArgument = NULL;
     int longopt_index = 0;
     static struct option longopts[] = {
         { "indexdir", 1, NULL, 0 },
@@ -279,36 +270,33 @@ ShowPostingListSubApp::getOptions()
         LONGOPT_DOCIDLIMIT,
         LONGOPT_MINDOCID
     };
-    int optIndex = 2;
-    _app.resetOptIndex(optIndex);
-    while ((c = _app.GetOptLong("di:mv",
-                                optArgument,
-                                optIndex,
-                                longopts,
-                                &longopt_index)) != -1) {
+    optind = 2;
+    while ((c = getopt_long(argc, argv, "di:mv",
+                            longopts,
+                            &longopt_index)) != -1) {
         switch (c) {
         case 0:
             switch (longopt_index) {
             case LONGOPT_INDEXDIR:
-                _indexDir = optArgument;
+                _indexDir = optarg;
                 break;
             case LONGOPT_FIELD:
-                _fieldOptions.addField(optArgument);
+                _fieldOptions.addField(optarg);
                 break;
             case LONGOPT_TRANSPOSE:
                 _transpose = true;
                 break;
             case LONGOPT_DOCIDLIMIT:
-                _docIdLimit = atoi(optArgument);
+                _docIdLimit = atoi(optarg);
                 break;
             case LONGOPT_MINDOCID:
-                _minDocId = atoi(optArgument);
+                _minDocId = atoi(optarg);
                 break;
             default:
-                if (optArgument != NULL) {
+                if (optarg != NULL) {
                     LOG(error,
                         "longopt %s with arg %s",
-                        longopts[longopt_index].name, optArgument);
+                        longopts[longopt_index].name, optarg);
                 } else {
                     LOG(error,
                         "longopt %s",
@@ -320,7 +308,7 @@ ShowPostingListSubApp::getOptions()
             _directio = true;
             break;
         case 'i':
-            _indexDir = optArgument;
+            _indexDir = optarg;
             break;
         case 'm':
             _readmmap = true;
@@ -339,13 +327,13 @@ ShowPostingListSubApp::getOptions()
         if (_fieldOptions._fields.size() > 1)
             return false;
     }
-    _optIndex = optIndex;
+    _optIndex = optind;
     if (_transpose) {
     } else {
-        if (_optIndex >= _app._argc) {
+        if (_optIndex >= argc) {
             return false;
         }
-        _word = _app._argv[optIndex];
+        _word = argv[optind];
     }
     return true;
 }
@@ -676,18 +664,17 @@ class DumpWordsSubApp : public SubApp
     bool _showWordNum;
 
 public:
-    DumpWordsSubApp(FastOS_Application &app);
+    DumpWordsSubApp();
     virtual ~DumpWordsSubApp();
     virtual void usage(bool showHeader) override;
-    virtual bool getOptions() override;
+    virtual bool getOptions(int argc, char **argv) override;
     virtual int run() override;
     void dumpWords();
 };
 
 
-DumpWordsSubApp::DumpWordsSubApp(FastOS_Application &app)
-    : SubApp(app),
-      _indexDir("."),
+DumpWordsSubApp::DumpWordsSubApp()
+    : _indexDir("."),
       _fieldOptions(),
       _minNumDocs(0u),
       _verbose(false),
@@ -716,10 +703,9 @@ DumpWordsSubApp::usage(bool showHeader)
 
 
 bool
-DumpWordsSubApp::getOptions()
+DumpWordsSubApp::getOptions(int argc, char **argv)
 {
     int c;
-    const char *optArgument = NULL;
     int longopt_index = 0;
     static struct option longopts[] = {
         { "indexdir", 1, NULL, 0 },
@@ -736,24 +722,21 @@ DumpWordsSubApp::getOptions()
         LONGOPT_VERBOSE,
         LONGOPT_WORDNUM
     };
-    int optIndex = 2;
-    _app.resetOptIndex(optIndex);
-    while ((c = _app.GetOptLong("i:",
-                                optArgument,
-                                optIndex,
-                                longopts,
-                                &longopt_index)) != -1) {
+    optind = 2;
+    while ((c = getopt_long(argc, argv, "i:",
+                            longopts,
+                            &longopt_index)) != -1) {
         switch (c) {
         case 0:
             switch (longopt_index) {
             case LONGOPT_INDEXDIR:
-                _indexDir = optArgument;
+                _indexDir = optarg;
                 break;
             case LONGOPT_FIELD:
-                _fieldOptions.addField(optArgument);
+                _fieldOptions.addField(optarg);
                 break;
             case LONGOPT_MINNUMDOCS:
-                _minNumDocs = atol(optArgument);
+                _minNumDocs = atol(optarg);
                 break;
             case LONGOPT_VERBOSE:
                 _verbose = true;
@@ -762,10 +745,10 @@ DumpWordsSubApp::getOptions()
                 _showWordNum = true;
                 break;
             default:
-                if (optArgument != NULL) {
+                if (optarg != NULL) {
                     LOG(error,
                         "longopt %s with arg %s",
-                        longopts[longopt_index].name, optArgument);
+                        longopts[longopt_index].name, optarg);
                 } else {
                     LOG(error,
                         "longopt %s",
@@ -774,7 +757,7 @@ DumpWordsSubApp::getOptions()
             }
             break;
         case 'i':
-            _indexDir = optArgument;
+            _indexDir = optarg;
             break;
         default:
             return false;
@@ -842,43 +825,36 @@ DumpWordsSubApp::run()
 }
 
 
-class VespaIndexInspectApp : public FastOS_Application
+class VespaIndexInspectApp
 {
 public:
-    VespaIndexInspectApp();
     void usage();
-    int Main() override;
+    int main(int argc, char **argv);
 };
-
-
-VespaIndexInspectApp::VespaIndexInspectApp()
-    : FastOS_Application()
-{
-}
 
 
 void
 VespaIndexInspectApp::usage()
 {
-    ShowPostingListSubApp(*this).usage(true);
-    DumpWordsSubApp(*this).usage(false);
+    ShowPostingListSubApp().usage(true);
+    DumpWordsSubApp().usage(false);
 }
 
 
 int
-VespaIndexInspectApp::Main()
+VespaIndexInspectApp::main(int argc, char **argv)
 {
-    if (_argc < 2) {
+    if (argc < 2) {
         usage();
         return 1;
     }
     std::unique_ptr<SubApp> subApp;
-    if (strcmp(_argv[1], "showpostings") == 0)
-        subApp.reset(new ShowPostingListSubApp(*this));
-    else if (strcmp(_argv[1], "dumpwords") == 0)
-        subApp.reset(new DumpWordsSubApp(*this));
-    if (subApp.get() != NULL) {
-        if (!subApp->getOptions()) {
+    if (strcmp(argv[1], "showpostings") == 0)
+        subApp = std::make_unique<ShowPostingListSubApp>();
+    else if (strcmp(argv[1], "dumpwords") == 0)
+        subApp = std::make_unique<DumpWordsSubApp>();
+    if (subApp.get() != nullptr) {
+        if (!subApp->getOptions(argc, argv)) {
             subApp->usage(true);
             return 1;
         }
@@ -888,4 +864,8 @@ VespaIndexInspectApp::Main()
     return 1;
 }
 
-FASTOS_MAIN(VespaIndexInspectApp);
+int main(int argc, char **argv) {
+    vespalib::SignalHandler::PIPE.ignore();
+    VespaIndexInspectApp app;
+    return app.main(argc, argv);
+}

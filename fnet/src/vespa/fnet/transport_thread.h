@@ -13,6 +13,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
+#include <set>
 
 namespace fnet { struct TimeTools; }
 class FNET_Transport;
@@ -51,6 +52,7 @@ private:
     std::atomic<bool>        _started;        // event loop started ?
     std::atomic<bool>        _shutdown;       // should stop event loop ?
     std::atomic<bool>        _finished;       // event loop stopped ?
+    std::set<FNET_IServerAdapter*> _detaching; // server adapters being detached
 
     /**
      * Add an IOComponent to the list of components. This operation is
@@ -143,6 +145,8 @@ private:
 
     void handle_add_cmd(FNET_IOComponent *ioc);
     void handle_close_cmd(FNET_IOComponent *ioc);
+    void handle_detach_server_adapter_init_cmd(FNET_IServerAdapter *server_adapter);
+    void handle_detach_server_adapter_fini_cmd(FNET_IServerAdapter *server_adapter);
 
     /**
      * This method is called to initialize the transport thread event
@@ -240,25 +244,15 @@ public:
      * holds a host name (or IP address) and a port number. Example:
      * connect to www.fast.no on port 80 (using tcp/ip): spec =
      * 'tcp/www.fast.no:80'. The newly created connection will be
-     * serviced by this transport layer object. If the adminHandler
-     * parameter is given, an internal admin channel is created in the
-     * connection object. The admin channel will be used to deliver
-     * packets tagged with the reserved channel id (FNET_NOID) to the
-     * admin handler.
+     * serviced by this transport layer object.
      *
      * @return an object representing the new connection.
      * @param spec string specifying how and where to connect.
      * @param streamer custom packet streamer.
-     * @param adminHandler packet handler for incoming packets on the
-     *                     admin channel.
-     * @param adminContext application context to be used for incoming
-     *                     packets on the admin channel.
      * @param serverAdapter adapter used to support 2way channel creation.
      * @param connContext application context for the connection.
      **/
     FNET_Connection *Connect(const char *spec, FNET_IPacketStreamer *streamer,
-                             FNET_IPacketHandler *adminHandler = nullptr,
-                             FNET_Context adminContext = FNET_Context(),
                              FNET_IServerAdapter *serverAdapter = nullptr,
                              FNET_Context connContext = FNET_Context());
 
@@ -344,6 +338,17 @@ public:
      **/
     void Close(FNET_IOComponent *comp, bool needRef = true);
 
+    /**
+     * Start the operation of detaching a server adapter from this
+     * transport.
+     **/
+    void init_detach(FNET_IServerAdapter *server_adapter);
+
+    /**
+     * Complete the operation of detaching a server adapter from this
+     * transport.
+     **/
+    void fini_detach(FNET_IServerAdapter *server_adapter);
 
     /**
      * Post an execution event on the transport event queue. The return

@@ -1,10 +1,9 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.net;
 
 import java.util.Optional;
 
 /**
- * Utilities for getting the hostname of the system running the JVM.
+ * This class has utilities for getting the hostname of the system running the JVM.
  * Detection of the hostname is now done before starting any Vespa
  * programs and provided in the environment variable VESPA_HOSTNAME;
  * if that variable isn't set a default of "localhost" is always returned.
@@ -39,4 +38,5 @@ public class HostName {
     public static void setHostNameForTestingOnly(String hostName) {
         preferredHostName = hostName;
     }
+
 }

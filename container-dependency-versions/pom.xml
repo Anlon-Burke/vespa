@@ -29,6 +29,8 @@
     </scm>
 
     <dependencyManagement>
+        <!-- TODO Vespa 8: remove all artifacts that are no longer installed in jdisc.
+                           Those used in configserver/controller must be moved to parent/pom.xml  -->
         <dependencies>
             <dependency>
                 <groupId>aopalliance</groupId>
@@ -268,39 +270,14 @@
                 <version>${jersey2.version}</version>
             </dependency>
             <dependency>
-                <groupId>org.glassfish.jersey.ext</groupId>
-                <artifactId>jersey-entity-filtering</artifactId>
-                <version>${jersey2.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.glassfish.jersey.ext</groupId>
-                <artifactId>jersey-proxy-client</artifactId>
-                <version>${jersey2.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.glassfish.jersey.media</groupId>
-                <artifactId>jersey-media-json-jackson</artifactId>
-                <version>${jersey2.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.glassfish.jersey.media</groupId>
-                <artifactId>jersey-media-multipart</artifactId>
-                <version>${jersey2.version}</version>
-            </dependency>
-            <dependency>
                 <groupId>org.javassist</groupId>
                 <artifactId>javassist</artifactId>
                 <version>${javassist.version}</version>
             </dependency>
-	        <dependency> <!-- TODO Vespa 8: remove as provided dependency -->
+	        <dependency> <!-- TODO Vespa 8: remove as provided dependency and move to parent -->
                 <groupId>org.json</groupId>
                 <artifactId>json</artifactId>
                 <version>${org.json.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.jvnet.mimepull</groupId>
-                <artifactId>mimepull</artifactId>
-                <version>${mimepull.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.slf4j</groupId>
@@ -372,6 +349,12 @@
                                 <goals>
                                     <goal>sign</goal>
                                 </goals>
+                                <configuration>
+                                    <gpgArguments>
+                                        <arg>--pinentry-mode</arg>
+                                        <arg>loopback</arg>
+                                    </gpgArguments>
+                                </configuration>
                             </execution>
                         </executions>
                     </plugin>
@@ -411,7 +394,7 @@
         <javax.inject.version>1</javax.inject.version>
         <javax.servlet-api.version>3.1.0</javax.servlet-api.version>
         <jaxb.version>2.3.0</jaxb.version>
-        <jetty.version>9.4.45.v20220203</jetty.version>
+        <jetty.version>9.4.46.v20220331</jetty.version>
         <jetty-alpn.version>1.1.3.v20160715</jetty-alpn.version>
         <org.lz4.version>1.8.0</org.lz4.version>
         <org.json.version>20090211</org.json.version>
@@ -431,7 +414,6 @@
         <javax.validation-api.version>1.1.0.Final</javax.validation-api.version>
         <javax.ws.rs-api.version>2.0.1</javax.ws.rs-api.version>
         <jersey2.version>2.25</jersey2.version>
-        <mimepull.version>1.9.6</mimepull.version>
 
         <!-- Not a dependency. Only included to allow the versions-maven-plugin to check for updates of itself  -->
         <versions-maven-plugin.version>2.8.1</versions-maven-plugin.version>

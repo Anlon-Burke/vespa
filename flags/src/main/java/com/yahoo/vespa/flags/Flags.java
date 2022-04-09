@@ -202,14 +202,14 @@ public class Flags {
 
     public static final UnboundIntFlag AVAILABLE_PROCESSORS = defineIntFlag(
             "available-processors", 2,
-            List.of("balder"), "2022-01-18", "2022-04-01",
+            List.of("balder"), "2022-01-18", "2022-07-01",
             "Number of processors the jvm sees in non-application clusters",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag ENABLED_HORIZON_DASHBOARD = defineFeatureFlag(
             "enabled-horizon-dashboard", false,
-            List.of("olaa"), "2021-09-13", "2022-04-01",
+            List.of("olaa"), "2021-09-13", "2022-07-01",
             "Enable Horizon dashboard",
             "Takes effect immediately",
             TENANT_ID, CONSOLE_USER_EMAIL
@@ -224,7 +224,7 @@ public class Flags {
 
     public static final UnboundStringFlag JDK_VERSION = defineStringFlag(
             "jdk-version", "11",
-            List.of("hmusum"), "2021-10-25", "2022-04-01",
+            List.of("hmusum"), "2021-10-25", "2022-05-01",
             "JDK version to use on host and inside containers. Note application-id dimension only applies for container, " +
                     "while hostname and node type applies for host.",
             "Takes effect on restart for Docker container and on next host-admin tick for host",
@@ -248,7 +248,7 @@ public class Flags {
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag USE_V8_DOC_MANAGER_CFG = defineFeatureFlag(
-            "use-v8-doc-manager-cfg", false,
+            "use-v8-doc-manager-cfg", true,
             List.of("arnej", "baldersheim"), "2021-12-09", "2022-12-31",
             "Use new (preparing for Vespa 8) section in documentmanager.def",
             "Takes effect at redeployment",
@@ -263,7 +263,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag FAIL_DEPLOYMENT_WITH_INVALID_JVM_OPTIONS = defineFeatureFlag(
             "fail-deployment-with-invalid-jvm-options", false,
-            List.of("hmusum"), "2021-12-20", "2022-04-01",
+            List.of("hmusum"), "2021-12-20", "2022-05-01",
             "Whether to fail deployments with invalid JVM options in services.xml",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
@@ -277,7 +277,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag ENABLE_DATA_HIGHWAY_IN_AWS = defineFeatureFlag(
             "enable-data-highway-in-aws", false,
-            List.of("hmusum"), "2022-01-06", "2022-04-06",
+            List.of("hmusum"), "2022-01-06", "2022-06-01",
             "Enable Data Highway in AWS",
             "Takes effect on restart of Docker container",
             ZONE_ID, APPLICATION_ID);
@@ -370,7 +370,7 @@ public class Flags {
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag REUSE_NODE_INDEXES = defineFeatureFlag(
-            "reuse-node-indexes", false,
+            "reuse-node-indexes", true,
             List.of("bratseth"), "2022-02-25", "2022-04-25",
             "Whether we should reuse earlier indexes when allocating new nodes",
             "Takes effect immediately",
@@ -395,6 +395,20 @@ public class Flags {
             List.of("arnej"), "2022-03-04", "2022-12-31",
             "Parsed schema files via intermediate format",
             "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundStringFlag CONTROLLER_LOCK_SCHEME = defineStringFlag(
+            "controller-lock-scheme", "OLD",
+            List.of("hmusum"), "2022-04-07", "2022-05-07",
+            "Lock scheme to application-related controller locks (valid values: OLD, BOTH, NEW)",
+            "Takes effect immediately",
+            ZONE_ID);
+
+    public static final UnboundBooleanFlag USE_ZSTD_IN_FILE_DISTRIBUTION = defineFeatureFlag(
+            "use-zstd-in-file-distribution", false,
+            List.of("hmusum"), "2022-04-07", "2022-05-07",
+            "Whether to use zstd compression for data sent with file distribution",
+            "Takes effect immediately",
             ZONE_ID, APPLICATION_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */

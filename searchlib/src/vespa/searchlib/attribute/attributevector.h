@@ -59,6 +59,7 @@ namespace search {
         class IPostingListAttributeBase;
         class Interlock;
         class InterlockGuard;
+        class SearchContext;
         class MultiValueMappingBase;
     }
 
@@ -385,7 +386,7 @@ public:
 
     /** Return the fixed length of the attribute. If 0 then you must inquire each document. */
     size_t getFixedWidth() const override { return _config.basicType().fixedSize(); }
-    const Config &getConfig() const { return _config; }
+    const Config &getConfig() const noexcept { return _config; }
     void update_config(const Config& cfg);
     BasicType getInternalBasicType() const { return _config.basicType(); }
     CollectionType getInternalCollectionType() const { return _config.collectionType(); }
@@ -497,60 +498,12 @@ public:
     const IDocumentWeightAttribute *asDocumentWeightAttribute() const override;
 
     const tensor::ITensorAttribute *asTensorAttribute() const override;
+    const attribute::IMultiValueAttribute* as_multi_value_attribute() const override;
 
-    /**
-       - Search for equality
-       - Range search
-    */
-
-    class SearchContext : public attribute::ISearchContext
-    {
-        template <class SC> friend class AttributeIteratorT;
-        template <class SC> friend class FilterAttributeIteratorT;
-        template <class PL> friend class AttributePostingListIteratorT;
-        template <class PL> friend class FilterAttributePostingListIteratorT;
-    protected:
-        using QueryTermSimpleUP = std::unique_ptr<QueryTermSimple>;
-    public:
-        SearchContext(const SearchContext &) = delete;
-        SearchContext & operator = (const SearchContext &) = delete;
-
-        typedef std::unique_ptr<SearchContext> UP;
-        ~SearchContext();
-
-        unsigned int approximateHits() const override;
-        queryeval::SearchIterator::UP createIterator(fef::TermFieldMatchData *matchData, bool strict) override;
-        void fetchPostings(const queryeval::ExecuteInfo &execInfo) override;
-        bool valid() const override { return false; }
-        Int64Range getAsIntegerTerm() const override { return Int64Range(); }
-        const QueryTermUCS4 * queryTerm() const override {
-            return static_cast<const QueryTermUCS4 *>(nullptr);
-        }
-        const vespalib::string &attributeName() const override {
-            return _attr.getName();
-        }
-
-        const AttributeVector & attribute() const { return _attr; }
-
-    protected:
-        SearchContext(const AttributeVector &attr);
-        const AttributeVector & _attr;
-
-        attribute::IPostingListSearchContext *_plsc;
-
-        /**
-         * Creates an attribute search iterator associated with this
-         * search context. Postings lists are not used.
-         **/
-        virtual queryeval::SearchIterator::UP createFilterIterator(fef::TermFieldMatchData *matchData, bool strict);
-
-        bool getIsFilter() const { return _attr.getConfig().getIsFilter(); }
-    };
-
-    SearchContext::UP getSearch(QueryPacketT searchSpec, const attribute::SearchContextParams &params) const;
-    attribute::ISearchContext::UP createSearchContext(QueryTermSimpleUP term,
+    std::unique_ptr<attribute::SearchContext> getSearch(QueryPacketT searchSpec, const attribute::SearchContextParams &params) const;
+    std::unique_ptr<attribute::ISearchContext> createSearchContext(QueryTermSimpleUP term,
                                                       const attribute::SearchContextParams &params) const override;
-    virtual SearchContext::UP getSearch(QueryTermSimpleUP term, const attribute::SearchContextParams &params) const = 0;
+    virtual std::unique_ptr<attribute::SearchContext> getSearch(QueryTermSimpleUP term, const attribute::SearchContextParams &params) const = 0;
     virtual const IEnumStore* getEnumStoreBase() const;
     virtual IEnumStore* getEnumStoreBase();
     virtual const attribute::MultiValueMappingBase *getMultiValueBase() const;

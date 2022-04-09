@@ -3,10 +3,8 @@ package com.yahoo.vespa.hosted.controller.application.pkg;
 
 import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.application.api.ValidationId;
-import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -18,6 +16,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * @author valerijf
@@ -104,10 +103,32 @@ public class ApplicationPackageTest {
 
         try {
             new ApplicationPackage(zip, false).metaDataZip();
-            Assert.fail("Should fail on missing include file");
+            fail("Should fail on missing include file");
         }
         catch (RuntimeException e) {
             assertEquals("./jdisc.xml", e.getCause().getMessage());
+        }
+    }
+
+    @Test
+    public void testAbsoluteInclude() throws Exception {
+        try {
+            getApplicationZip("include-absolute.zip");
+            fail("Should fail on include file outside zip");
+        }
+        catch (RuntimeException e) {
+            assertEquals(IllegalArgumentException.class, e.getClass());
+        }
+    }
+
+    @Test
+    public void testParentInclude() throws Exception {
+        try {
+            getApplicationZip("include-parent.zip");
+            fail("Should fail on include file outside zip");
+        }
+        catch (RuntimeException e) {
+            assertEquals("./../not_found.xml is not a descendant of .", e.getMessage());
         }
     }
 
@@ -132,9 +153,9 @@ public class ApplicationPackageTest {
     }
 
     private static Map<String, String> unzip(byte[] zip) {
-        return new ZipStreamReader(new ByteArrayInputStream(zip), __ -> true, 1 << 10, true)
-                .entries().stream()
-                .collect(Collectors.toMap(entry -> entry.zipEntry().getName(),
+        return ZipEntries.from(zip, __ -> true, 1 << 10, true)
+                         .asList().stream()
+                         .collect(Collectors.toMap(ZipEntries.ZipEntryWithContent::name,
                                           entry -> new String(entry.contentOrThrow(), UTF_8)));
     }
 

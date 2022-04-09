@@ -3,12 +3,12 @@ package com.yahoo.vespa.config.server.http;
 
 import com.yahoo.config.application.api.ApplicationFile;
 import com.yahoo.container.jdisc.HttpResponse;
+import ai.vespa.http.HttpURL.Path;
 import com.yahoo.restapi.SlimeJsonResponse;
 import com.yahoo.slime.Cursor;
 import com.yahoo.slime.Slime;
 
 import java.io.InputStreamReader;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -32,7 +32,7 @@ public class ContentHandler {
 
     public HttpResponse put(ContentRequest request) {
         ApplicationFile file = request.getFile();
-        if (request.getPath().endsWith("/")) {
+        if (request.getPath().hasTrailingSlash()) {
             createDirectory(request, file);
         } else {
             createFile(request, file);
@@ -62,9 +62,9 @@ public class ContentHandler {
         return new SessionContentStatusResponse(file, urlBase);
     }
 
-    private static List<ApplicationFile> listSortedFiles(ApplicationFile file, String path, boolean recursive) {
-        if (!path.isEmpty() && !path.endsWith("/")) {
-            return Arrays.asList(file);
+    private static List<ApplicationFile> listSortedFiles(ApplicationFile file, Path path, boolean recursive) {
+        if (path.length() > 0 && ! path.hasTrailingSlash()) {
+            return List.of(file);
         }
         List<ApplicationFile> files = file.listFiles(recursive);
         Collections.sort(files);

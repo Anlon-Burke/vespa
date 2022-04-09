@@ -4,6 +4,8 @@
 
 #include "integerbase.h"
 #include "floatbase.h"
+#include "search_context.h"
+#include <vespa/vespalib/util/atomic.h>
 #include <vespa/vespalib/util/rcuvector.h>
 #include <limits>
 
@@ -31,47 +33,6 @@ private:
         (void) e;
         return T();
     }
-
-    /*
-     * Specialization of SearchContext
-     */
-    template <typename M>
-    class SingleSearchContext final : public M, public AttributeVector::SearchContext
-    {
-    private:
-        const T * _data;
-
-        int32_t onFind(DocId docId, int32_t elemId, int32_t & weight) const override {
-            return find(docId, elemId, weight);
-        }
-
-        int32_t onFind(DocId docId, int elemId) const override {
-            return find(docId, elemId);
-        }
-
-        bool valid() const override;
-
-    public:
-    SingleSearchContext(std::unique_ptr<QueryTermSimple> qTerm, const NumericAttribute & toBeSearched);
-        int32_t find(DocId docId, int32_t elemId, int32_t & weight) const {
-            if ( elemId != 0) return -1;
-            const T v = _data[docId];
-            weight = 1;
-            return this->match(v) ? 0 : -1;
-        }
-
-        int32_t find(DocId docId, int elemId) const {
-            if ( elemId != 0) return -1;
-            const T v = _data[docId];
-            return this->match(v) ? 0 : -1;
-        }
-
-        Int64Range getAsIntegerTerm() const override;
-
-        std::unique_ptr<queryeval::SearchIterator>
-        createFilterIterator(fef::TermFieldMatchData * matchData, bool strict) override;
-    };
-
 
 protected:
     bool findEnum(T value, EnumHandle & e) const override {
@@ -105,15 +66,15 @@ public:
 
     bool onLoadEnumerated(ReaderBase &attrReader);
 
-    AttributeVector::SearchContext::UP
+    std::unique_ptr<attribute::SearchContext>
     getSearch(std::unique_ptr<QueryTermSimple> term, const attribute::SearchContextParams & params) const override;
 
     void set(DocId doc, T v) {
-        _data[doc] = v;
+        vespalib::atomic::store_ref_relaxed(_data[doc], v);
     }
 
     T getFast(DocId doc) const {
-        return _data[doc];
+        return vespalib::atomic::load_ref_relaxed(_data.acquire_elem_ref(doc));
     }
 
     //-------------------------------------------------------------------------
@@ -126,7 +87,7 @@ public:
         return static_cast<largeint_t>(getFast(doc));
     }
     double getFloat(DocId doc) const override {
-        return static_cast<double>(_data[doc]);
+        return static_cast<double>(getFast(doc));
     }
     uint32_t getEnum(DocId doc) const override {
         (void) doc;
@@ -134,17 +95,17 @@ public:
     }
     uint32_t getAll(DocId doc, T * v, uint32_t sz) const override {
         (void) sz;
-        v[0] = _data[doc];
+        v[0] = getFast(doc);
         return 1;
     }
     uint32_t get(DocId doc, largeint_t * v, uint32_t sz) const override {
         (void) sz;
-        v[0] = static_cast<largeint_t>(_data[doc]);
+        v[0] = static_cast<largeint_t>(getFast(doc));
         return 1;
     }
     uint32_t get(DocId doc, double * v, uint32_t sz) const override {
         (void) sz;
-        v[0] = static_cast<double>(_data[doc]);
+        v[0] = static_cast<double>(getFast(doc));
         return 1;
     }
     uint32_t get(DocId doc, EnumHandle * e, uint32_t sz) const override {
@@ -158,12 +119,12 @@ public:
     }
     uint32_t get(DocId doc, WeightedInt * v, uint32_t sz) const override {
         (void) sz;
-        v[0] = WeightedInt(static_cast<largeint_t>(_data[doc]));
+        v[0] = WeightedInt(static_cast<largeint_t>(getFast(doc)));
         return 1;
     }
     uint32_t get(DocId doc, WeightedFloat * v, uint32_t sz) const override {
         (void) sz;
-        v[0] = WeightedFloat(static_cast<double>(_data[doc]));
+        v[0] = WeightedFloat(static_cast<double>(getFast(doc)));
         return 1;
     }
     uint32_t get(DocId doc, WeightedEnum * e, uint32_t sz) const override {

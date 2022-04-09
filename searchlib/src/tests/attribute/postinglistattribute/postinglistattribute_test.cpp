@@ -37,10 +37,11 @@ using attribute::BasicType;
 using attribute::Config;
 using queryeval::PostingInfo;
 using queryeval::MinMaxPostingInfo;
+using search::attribute::SearchContext;
 using search::fef::TermFieldMatchData;
 using search::queryeval::SearchIterator;
 
-typedef std::unique_ptr<AttributeVector::SearchContext> SearchContextPtr;
+using SearchContextPtr = std::unique_ptr<SearchContext>;
 typedef std::unique_ptr<search::queryeval::SearchIterator> SearchBasePtr;
 
 void
@@ -89,11 +90,11 @@ private:
     Int32PostingListAttribute;
     typedef MultiValueNumericPostingAttribute<
         EnumAttribute<IntegerAttributeTemplate<int32_t> >,
-        multivalue::Value<IEnumStore::Index> >
+        multivalue::Value<IEnumStore::AtomicIndex> >
     Int32ArrayPostingListAttribute;
     typedef MultiValueNumericPostingAttribute<
         EnumAttribute<IntegerAttributeTemplate<int32_t> >,
-        multivalue::WeightedValue<IEnumStore::Index> >
+        multivalue::WeightedValue<IEnumStore::AtomicIndex> >
     Int32WsetPostingListAttribute;
 
     typedef SingleValueNumericPostingAttribute<
@@ -101,11 +102,11 @@ private:
     FloatPostingListAttribute;
     typedef MultiValueNumericPostingAttribute<
         EnumAttribute<FloatingPointAttributeTemplate<float> >,
-        multivalue::Value<IEnumStore::Index> >
+        multivalue::Value<IEnumStore::AtomicIndex> >
     FloatArrayPostingListAttribute;
     typedef MultiValueNumericPostingAttribute<
         EnumAttribute<FloatingPointAttributeTemplate<float> >,
-        multivalue::WeightedValue<IEnumStore::Index> >
+        multivalue::WeightedValue<IEnumStore::AtomicIndex> >
     FloatWsetPostingListAttribute;
 
     typedef SingleValueStringPostingAttribute StringPostingListAttribute;

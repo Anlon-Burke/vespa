@@ -8,10 +8,8 @@
 #include <vespa/document/fieldvalue/document.h>
 #include <vespa/document/fieldvalue/tensorfieldvalue.h>
 #include <vespa/document/serialization/vespadocumentdeserializer.h>
-#include <vespa/document/util/serializableexceptions.h>
 #include <vespa/eval/eval/value.h>
 #include <vespa/eval/eval/fast_value.h>
-#include <vespa/vespalib/objects/nbostream.h>
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/util/xmlstream.h>
@@ -24,43 +22,26 @@ using vespalib::eval::FastValueBuilderFactory;
 
 namespace document {
 
-IMPLEMENT_IDENTIFIABLE(TensorAddUpdate, ValueUpdate);
-
 TensorAddUpdate::TensorAddUpdate()
-    : _tensor()
+    : ValueUpdate(TensorAdd),
+      TensorUpdate(),
+      _tensor()
 {
 }
 
-TensorAddUpdate::TensorAddUpdate(const TensorAddUpdate &rhs)
-    : _tensor(rhs._tensor->clone())
-{
-}
-
-TensorAddUpdate::TensorAddUpdate(std::unique_ptr<TensorFieldValue> &&tensor)
-    : _tensor(std::move(tensor))
+TensorAddUpdate::TensorAddUpdate(std::unique_ptr<TensorFieldValue> tensor)
+    : ValueUpdate(TensorAdd),
+      TensorUpdate(),
+      _tensor(std::move(tensor))
 {
 }
 
 TensorAddUpdate::~TensorAddUpdate() = default;
 
-TensorAddUpdate &
-TensorAddUpdate::operator=(const TensorAddUpdate &rhs)
-{
-    _tensor.reset(rhs._tensor->clone());
-    return *this;
-}
-
-TensorAddUpdate &
-TensorAddUpdate::operator=(TensorAddUpdate &&rhs)
-{
-    _tensor = std::move(rhs._tensor);
-    return *this;
-}
-
 bool
 TensorAddUpdate::operator==(const ValueUpdate &other) const
 {
-    if (other.getClass().id() != TensorAddUpdate::classId) {
+    if (other.getType() != TensorAdd) {
         return false;
     }
     const TensorAddUpdate& o(static_cast<const TensorAddUpdate&>(other));
@@ -99,7 +80,7 @@ TensorAddUpdate::apply_to(const Value &old_tensor,
 bool
 TensorAddUpdate::applyTo(FieldValue& value) const
 {
-    if (value.inherits(TensorFieldValue::classId)) {
+    if (value.isA(FieldValue::Type::TENSOR)) {
         TensorFieldValue &tensorFieldValue = static_cast<TensorFieldValue &>(value);
         tensorFieldValue.make_empty_if_not_existing();
         auto oldTensor = tensorFieldValue.getAsTensorPtr();
@@ -110,7 +91,7 @@ TensorAddUpdate::applyTo(FieldValue& value) const
         }
     } else {
         vespalib::string err = make_string("Unable to perform a tensor add update on a '%s' field value",
-                                           value.getClass().name());
+                                           value.className());
         throw IllegalStateException(err, VESPA_STRLOC);
     }
     return true;
@@ -136,21 +117,15 @@ void
 TensorAddUpdate::deserialize(const DocumentTypeRepo &repo, const DataType &type, nbostream & stream)
 {
     auto tensor = type.createFieldValue();
-    if (tensor->inherits(TensorFieldValue::classId)) {
+    if (tensor->isA(FieldValue::Type::TENSOR)) {
         _tensor.reset(static_cast<TensorFieldValue *>(tensor.release()));
     } else {
         vespalib::string err = make_string("Expected tensor field value, got a '%s' field value",
-                                           tensor->getClass().name());
+                                           tensor->className());
         throw IllegalStateException(err, VESPA_STRLOC);
     }
     VespaDocumentDeserializer deserializer(repo, stream, Document::getNewestSerializationVersion());
     deserializer.read(*_tensor);
-}
-
-TensorAddUpdate*
-TensorAddUpdate::clone() const
-{
-    return new TensorAddUpdate(*this);
 }
 
 }

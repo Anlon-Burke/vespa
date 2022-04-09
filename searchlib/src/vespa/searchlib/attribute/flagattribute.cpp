@@ -2,11 +2,9 @@
 
 #include "flagattribute.h"
 #include "load_utils.hpp"
-#include "attributeiterators.h"
 #include "multinumericattribute.hpp"
-
-#include <vespa/searchlib/queryeval/emptysearch.h>
-#include <vespa/searchlib/common/bitvectoriterator.h>
+#include "multi_numeric_flag_search_context.h"
+#include <vespa/searchlib/common/bitvector.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".searchlib.attribute.flag_attribute");
@@ -53,10 +51,10 @@ FlagAttributeT<B>::FlagAttributeT(const vespalib::string & baseFileName, const A
 }
 
 template <typename B>
-AttributeVector::SearchContext::UP
+std::unique_ptr<attribute::SearchContext>
 FlagAttributeT<B>::getSearch(QueryTermSimple::UP qTerm, const attribute::SearchContextParams &) const
 {
-    return std::make_unique<SearchContext>(std::move(qTerm), *this);
+    return std::make_unique<attribute::MultiNumericFlagSearchContext<typename B::BaseType, typename B::WType>>(std::move(qTerm), *this, this->_mvMapping.make_read_view(this->getCommittedDocIdLimit()), _bitVectors);
 }
 
 template <typename B>
@@ -230,38 +228,6 @@ FlagAttributeT<B>::removeOldGenerations(vespalib::GenerationHandler::generation_
 {
     B::removeOldGenerations(firstUsed);
     _bitVectorHolder.trimHoldLists(firstUsed);
-}
-
-template <typename B>
-FlagAttributeT<B>::SearchContext::SearchContext(QueryTermSimple::UP qTerm, const FlagAttributeT<B> & toBeSearched) :
-    BaseSC(std::move(qTerm), toBeSearched),
-    _zeroHits(false)
-{
-}
-
-template <typename B>
-SearchIterator::UP
-FlagAttributeT<B>::SearchContext::createIterator(fef::TermFieldMatchData * matchData, bool strict)
-{
-    if (valid()) {
-        if (_low == _high) {
-            const Attribute & attr(static_cast<const Attribute &>(attribute()));
-            const BitVector * bv(attr.getBitVector(_low));
-            if (bv != nullptr) {
-                return BitVectorIterator::create(bv, attr.getCommittedDocIdLimit(), *matchData, strict);
-            } else {
-                return std::make_unique<queryeval::EmptySearch>();
-            }
-        } else {
-            SearchIterator::UP flagIterator(
-              strict
-                 ? new FlagAttributeIteratorStrict<typename FlagAttributeT<B>::SearchContext>(*this, matchData)
-                 : new FlagAttributeIteratorT<typename FlagAttributeT<B>::SearchContext>(*this, matchData));
-            return flagIterator;
-        }
-    } else {
-        return std::make_unique<queryeval::EmptySearch>();
-    }
 }
 
 template class FlagAttributeT<FlagBaseImpl>;

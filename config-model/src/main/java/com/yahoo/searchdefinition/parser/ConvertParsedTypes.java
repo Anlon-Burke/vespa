@@ -4,11 +4,12 @@ package com.yahoo.searchdefinition.parser;
 import com.yahoo.document.DataType;
 import com.yahoo.document.DocumentType;
 import com.yahoo.document.DocumentTypeManager;
-import com.yahoo.documentmodel.NewDocumentReferenceDataType;
-import com.yahoo.document.StructDataType;
 import com.yahoo.document.PositionDataType;
+import com.yahoo.document.StructDataType;
 import com.yahoo.document.WeightedSetDataType;
 import com.yahoo.document.annotation.AnnotationReferenceDataType;
+import com.yahoo.documentmodel.NewDocumentReferenceDataType;
+import com.yahoo.documentmodel.OwnedStructDataType;
 import com.yahoo.searchdefinition.document.annotation.SDAnnotationType;
 
 import java.util.ArrayList;
@@ -58,7 +59,7 @@ public class ConvertParsedTypes {
             var doc = schema.getDocument();
             for (var struct : doc.getStructs()) {
                 String structId = doc.name() + "->" + struct.name();
-                var dt = new StructDataType(struct.name());
+                var dt = new OwnedStructDataType(struct.name(), doc.name());
                 structsFromSchemas.put(structId, dt);
             }
             for (var annotation : doc.getAnnotations()) {
@@ -72,7 +73,7 @@ public class ConvertParsedTypes {
                 if (withStruct.isPresent()) {
                     ParsedStruct struct = withStruct.get();
                     String structId = doc.name() + "->" + struct.name();
-                    var old = structsFromSchemas.put(structId, new StructDataType(struct.name()));
+                    var old = structsFromSchemas.put(structId, new OwnedStructDataType(struct.name(), doc.name()));
                     assert(old == null);
                 }
             }
@@ -247,11 +248,30 @@ public class ConvertParsedTypes {
         return new NewDocumentReferenceDataType(findDocFromSchemas(ref.name()));
     }
 
+    private DataType getBuiltinType(String name) {
+        switch (name) {
+        case "bool":      return DataType.BOOL;
+        case "byte":      return DataType.BYTE;
+        case "int":       return DataType.INT;
+        case "long":      return DataType.LONG;
+        case "string":    return DataType.STRING;
+        case "float":     return DataType.FLOAT;
+        case "double":    return DataType.DOUBLE;
+        case "uri":       return DataType.URI;
+        case "predicate": return DataType.PREDICATE;
+        case "raw":       return DataType.RAW;
+        case "tag":       return DataType.TAG;
+        case "float16":   return DataType.FLOAT16;
+        default:
+            throw new IllegalArgumentException("Unknown builtin type: "+name);
+        }
+    }
+
     private DataType resolveFromContext(ParsedType pType, ParsedDocument context) {
         String name = pType.name();
         switch (pType.getVariant()) {
         case NONE:     return DataType.NONE;
-        case BUILTIN:  return docMan.getDataType(name);
+        case BUILTIN:  return getBuiltinType(name);
         case POSITION: return PositionDataType.INSTANCE;
         case ARRAY:    return createArray(pType, context);
         case WSET:     return createWset(pType, context);
@@ -277,12 +297,13 @@ public class ConvertParsedTypes {
         throw new IllegalArgumentException("unknown type named '" + name + "' in context "+context);
     }
 
+    @SuppressWarnings("deprecation")
     private void registerDataTypes() {
         for (DataType t : structsFromSchemas.values()) {
             docMan.register(t);
         }
         for (DocumentType t : documentsFromSchemas.values()) {
-            docMan.register(t);
+            docMan.registerDocumentType(t);
         }
         for (SDAnnotationType t : annotationsFromSchemas.values()) {
             docMan.getAnnotationTypeRegistry().register(t);

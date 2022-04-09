@@ -43,6 +43,7 @@ import com.yahoo.search.query.properties.DefaultProperties;
 import com.yahoo.search.query.properties.PropertyMap;
 import com.yahoo.search.query.properties.QueryProperties;
 import com.yahoo.search.query.properties.QueryPropertyAliases;
+import com.yahoo.search.query.properties.RankProfileInputProperties;
 import com.yahoo.search.query.properties.RequestContextProperties;
 import com.yahoo.search.yql.NullItemException;
 import com.yahoo.search.yql.VespaSerializer;
@@ -56,6 +57,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
@@ -233,7 +235,7 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
     /** The aliases of query properties */
     private static final Map<String, CompoundName> propertyAliases;
     static {
-        Map<String,CompoundName> propertyAliasesBuilder = new HashMap<>();
+        Map<String, CompoundName> propertyAliasesBuilder = new HashMap<>();
         addAliases(Query.getArgumentType(), CompoundName.empty, propertyAliasesBuilder);
         propertyAliases = ImmutableMap.copyOf(propertyAliasesBuilder);
     }
@@ -337,7 +339,7 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
     public Query(HttpRequest request, Map<String, String> requestMap, CompiledQueryProfile queryProfile) {
         super(new QueryPropertyAliases(propertyAliases));
         this.httpRequest = request;
-        init(requestMap, queryProfile, Embedder.throwsOnUse, ZoneInfo.defaultInfo());
+        init(requestMap, queryProfile, Embedder.throwsOnUse.asMap(), ZoneInfo.defaultInfo());
     }
 
     // TODO: Deprecate most constructors above here
@@ -346,35 +348,38 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
         this(builder.getRequest(),
              builder.getRequestMap(),
              builder.getQueryProfile(),
-             builder.getEmbedder(),
+             builder.getEmbedders(),
              builder.getZoneInfo());
     }
 
-    private Query(HttpRequest request, Map<String, String> requestMap, CompiledQueryProfile queryProfile, Embedder embedder,
+    private Query(HttpRequest request,
+                  Map<String, String> requestMap,
+                  CompiledQueryProfile queryProfile,
+                  Map<String, Embedder> embedders,
                   ZoneInfo zoneInfo) {
         super(new QueryPropertyAliases(propertyAliases));
         this.httpRequest = request;
-        init(requestMap, queryProfile, embedder, zoneInfo);
+        init(requestMap, queryProfile, embedders, zoneInfo);
     }
 
     private void init(Map<String, String> requestMap,
                       CompiledQueryProfile queryProfile,
-                      Embedder embedder,
+                      Map<String, Embedder> embedders,
                       ZoneInfo zoneInfo) {
         startTime = httpRequest.getJDiscRequest().creationTime(TimeUnit.MILLISECONDS);
         if (queryProfile != null) {
-            // Move all request parameters to the query profile just to validate that the parameter settings are legal
-            Properties queryProfileProperties = new QueryProfileProperties(queryProfile, embedder);
+            // Move all request parameters to the query profile
+            Properties queryProfileProperties = new QueryProfileProperties(queryProfile, embedders);
             properties().chain(queryProfileProperties);
-            // TODO: Just checking legality rather than actually setting would be faster
-            setPropertiesFromRequestMap(requestMap, properties(), true); // Adds errors to the query for illegal set attempts
+            setPropertiesFromRequestMap(requestMap, properties(), true);
 
             // Create the full chain
-            properties().chain(new QueryProperties(this, queryProfile.getRegistry(), embedder)).
-                         chain(new ModelObjectMap()).
-                         chain(new RequestContextProperties(requestMap, zoneInfo)).
-                         chain(queryProfileProperties).
-                         chain(new DefaultProperties());
+            properties().chain(new RankProfileInputProperties(this))
+                        .chain(new QueryProperties(this, queryProfile.getRegistry(), embedders))
+                        .chain(new ModelObjectMap())
+                        .chain(new RequestContextProperties(requestMap, zoneInfo))
+                        .chain(queryProfileProperties)
+                        .chain(new DefaultProperties());
 
             // Pass the values from the query profile which maps through a field in the Query object model
             // through the property chain to cause those values to be set in the Query object model
@@ -389,7 +394,8 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
         }
         else { // bypass these complications if there is no query profile to get values from and validate against
             properties().
-                    chain(new QueryProperties(this, CompiledQueryProfileRegistry.empty, embedder)).
+                    chain(new RankProfileInputProperties(this)).
+                    chain(new QueryProperties(this, CompiledQueryProfileRegistry.empty, embedders)).
                     chain(new PropertyMap()).
                     chain(new DefaultProperties());
             setPropertiesFromRequestMap(requestMap, properties(), false);
@@ -455,6 +461,11 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
 
     /** Calls properties.set on all entries in requestMap */
     private void setPropertiesFromRequestMap(Map<String, String> requestMap, Properties properties, boolean ignoreSelect) {
+        // Set rank profile first because it contains type information in inputs which impacts other values set
+        String rankProfile = Ranking.lookupRankProfileIn(requestMap);
+        if (rankProfile != null)
+            properties.set(Ranking.RANKING + "." + Ranking.PROFILE, rankProfile, requestMap);
+
         for (var entry : requestMap.entrySet()) {
             if (ignoreSelect && entry.getKey().equals(Select.SELECT)) continue;
             properties.set(entry.getKey(), entry.getValue(), requestMap);
@@ -682,21 +693,18 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
 
     /** Returns a string describing this query in more detail */
     public String toDetailString() {
-        String queryTree;
-        // getQueryTree isn't exception safe
-        try {
-            queryTree = model.getQueryTree().toString();
-        } catch (Exception | StackOverflowError e) {
-            queryTree = "Could not parse user input: " + model.getQueryString();
-        }
-        return "query=[" + queryTree + "]" + " offset=" + getOffset() + " hits=" + getHits() + "]";
+        return "query=[" + new TextualQueryRepresentation(getModel().getQueryTree().getRoot()) + "]" +
+               " offset=" + getOffset() + " hits=" + getHits() +
+               " sources=" + getModel().getSources() +
+               " restrict= " + getModel().getRestrict() +
+               " rank profile=" + getRanking().getProfile();
     }
 
     /**
-     * Encodes this query onto the given buffer
+     * Encodes this query tree into the given buffer
      *
-     * @param buffer The buffer to encode the query to
-     * @return the number of encoded items
+     * @param buffer the buffer to encode the query to
+     * @return the number of encoded query tree items
      */
     public int encode(ByteBuffer buffer) {
         return model.getQueryTree().encode(buffer);
@@ -964,7 +972,7 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
     /** Returns a hash of this query based on (some of) its content. */
     @Override
     public int hashCode() {
-        return ranking.hashCode()+3*presentation.hashCode()+5* model.hashCode()+ 11*offset+ 13*hits;
+        return Objects.hash(ranking, presentation, model, offset, hits);
     }
 
     /** Returns whether the given query is equal to this */
@@ -997,7 +1005,7 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
     private void copyPropertiesTo(Query clone) {
         clone.model = model.cloneFor(clone);
         clone.select = select.cloneFor(clone);
-        clone.ranking = (Ranking) ranking.clone();
+        clone.ranking = ranking.cloneFor(clone);
         clone.presentation = (Presentation) presentation.clone();
         clone.context = getContext(true).cloneFor(clone);
 
@@ -1131,7 +1139,7 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
         private HttpRequest request = null;
         private Map<String, String> requestMap = null;
         private CompiledQueryProfile queryProfile = null;
-        private Embedder embedder = Embedder.throwsOnUse;
+        private Map<String, Embedder> embedders = Embedder.throwsOnUse.asMap();
         private ZoneInfo zoneInfo = ZoneInfo.defaultInfo();
 
         public Builder setRequest(String query) {
@@ -1171,11 +1179,22 @@ public class Query extends com.yahoo.processing.Request implements Cloneable {
         public CompiledQueryProfile getQueryProfile() { return queryProfile; }
 
         public Builder setEmbedder(Embedder embedder) {
-            this.embedder = embedder;
+            return setEmbedders(Map.of(Embedder.defaultEmbedderId, embedder));
+        }
+
+        public Builder setEmbedders(Map<String, Embedder> embedders) {
+            this.embedders = embedders;
             return this;
         }
 
-        public Embedder getEmbedder() { return embedder; }
+        public Embedder getEmbedder() {
+            if (embedders.size() != 1) {
+                throw new IllegalArgumentException("Attempt to get single embedder but multiple exists.");
+            }
+            return embedders.entrySet().stream().findFirst().get().getValue();
+        }
+
+        public Map<String, Embedder> getEmbedders() { return embedders; }
 
         public Builder setZoneInfo(ZoneInfo zoneInfo) {
             this.zoneInfo = zoneInfo;

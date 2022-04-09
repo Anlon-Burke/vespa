@@ -8,9 +8,9 @@ import com.yahoo.component.chain.ChainsConfigurer;
 import com.yahoo.component.chain.model.ChainsModel;
 import com.yahoo.component.chain.model.ChainsModelBuilder;
 import com.yahoo.component.provider.ComponentRegistry;
+import com.yahoo.concurrent.ThreadFactoryFactory;
 import com.yahoo.container.QrSearchersConfig;
 import com.yahoo.container.core.ChainsConfig;
-import com.yahoo.container.handler.threadpool.ContainerThreadPool;
 import com.yahoo.language.Linguistics;
 import com.yahoo.language.simple.SimpleLinguistics;
 import com.yahoo.prelude.IndexFacts;
@@ -24,6 +24,9 @@ import com.yahoo.vespa.configdefinition.SpecialtokensConfig;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Provides creation of fully configured query Execution instances.
@@ -38,8 +41,18 @@ public class ExecutionFactory extends AbstractComponent {
     private final IndexFacts indexFacts;
     private final SpecialTokenRegistry specialTokens;
     private final Linguistics linguistics;
+    private final ThreadPoolExecutor renderingExecutor;
     private final RendererRegistry rendererRegistry;
     private final Executor executor;
+
+    private static ThreadPoolExecutor createRenderingExecutor() {
+        int threadCount = Runtime.getRuntime().availableProcessors();
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(threadCount, threadCount, 1L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(),
+                ThreadFactoryFactory.getThreadFactory("common-rendering"));
+        executor.prestartAllCoreThreads();
+        return executor;
+    }
 
     @Inject
     public ExecutionFactory(ChainsConfig chainsConfig,
@@ -54,7 +67,8 @@ public class ExecutionFactory extends AbstractComponent {
         this.indexFacts = new IndexFacts(new IndexModel(indexInfo, clusters)).freeze();
         this.specialTokens = new SpecialTokenRegistry(specialTokens);
         this.linguistics = linguistics;
-        this.rendererRegistry = new RendererRegistry(renderers.allComponents());
+        this.renderingExecutor = createRenderingExecutor();
+        this.rendererRegistry = new RendererRegistry(renderers.allComponents(), renderingExecutor);
         this.executor = executor != null ? executor : Executors.newSingleThreadExecutor();
     }
 
@@ -67,7 +81,7 @@ public class ExecutionFactory extends AbstractComponent {
                             SpecialtokensConfig specialTokens,
                             Linguistics linguistics,
                             ComponentRegistry<Renderer> renderers) {
-        this(chainsConfig, indexInfo, clusters, searchers, specialTokens, linguistics, renderers, (Executor)null);
+        this(chainsConfig, indexInfo, clusters, searchers, specialTokens, linguistics, renderers, null);
     }
 
     private SearchChainRegistry createSearchChainRegistry(ComponentRegistry<Searcher> searchers, ChainsConfig chainsConfig) {
@@ -105,6 +119,14 @@ public class ExecutionFactory extends AbstractComponent {
     @Override
     public void deconstruct() {
         rendererRegistry.deconstruct();
+        renderingExecutor.shutdown();
+        try {
+            if ( ! renderingExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                renderingExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            renderingExecutor.shutdownNow();
+        }
     }
 
     public static ExecutionFactory empty() {
@@ -115,7 +137,7 @@ public class ExecutionFactory extends AbstractComponent {
                                     new SpecialtokensConfig.Builder().build(),
                                     new SimpleLinguistics(),
                                     new ComponentRegistry<>(),
-                                    (Executor)null);
+                                    null);
     }
 
 }

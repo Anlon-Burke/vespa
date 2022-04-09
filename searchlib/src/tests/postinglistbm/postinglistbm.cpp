@@ -1,7 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "stress_runner.h"
-#include <vespa/fastos/app.h>
+#include <vespa/vespalib/util/signalhandler.h>
 #include <vespa/searchlib/common/bitvector.h>
 #include <vespa/searchlib/common/resultset.h>
 #include <vespa/searchlib/index/docidandfeatures.h>
@@ -12,6 +12,7 @@
 #include <vespa/searchlib/test/fakedata/fpfactory.h>
 #include <vespa/vespalib/util/rand48.h>
 #include <vespa/vespalib/util/size_literals.h>
+#include <unistd.h>
 
 #include <vespa/log/log.h>
 
@@ -27,7 +28,7 @@ using namespace search::fakedata;
 
 namespace postinglistbm {
 
-class PostingListBM : public FastOS_Application {
+class PostingListBM {
 private:
     uint32_t _numDocs;
     uint32_t _commonDocFreq;
@@ -48,7 +49,7 @@ public:
 public:
     PostingListBM();
     ~PostingListBM();
-    int Main() override;
+    int main(int argc, char **argv);
 };
 
 void
@@ -107,54 +108,51 @@ PostingListBM::PostingListBM()
 PostingListBM::~PostingListBM() = default;
 
 int
-PostingListBM::Main()
+PostingListBM::main(int argc, char **argv)
 {
-    int argi;
     int c;
-    const char *optArg;
 
-    argi = 1;
     bool hasElements = false;
     bool hasElementWeights = false;
 
-    while ((c = GetOpt("C:c:m:r:d:l:s:t:o:uw:T:q", optArg, argi)) != -1) {
+    while ((c = getopt(argc, argv, "C:c:m:r:d:l:s:t:o:uw:T:q")) != -1) {
         switch(c) {
         case 'C':
-            _skipCommonPairsRate = atoi(optArg);
+            _skipCommonPairsRate = atoi(optarg);
             break;
         case 'T':
-            if (strcmp(optArg, "single") == 0) {
+            if (strcmp(optarg, "single") == 0) {
                 hasElements = false;
                 hasElementWeights = false;
-            } else if (strcmp(optArg, "array") == 0) {
+            } else if (strcmp(optarg, "array") == 0) {
                 hasElements = true;
                 hasElementWeights = false;
-            } else if (strcmp(optArg, "weightedSet") == 0) {
+            } else if (strcmp(optarg, "weightedSet") == 0) {
                 hasElements = true;
                 hasElementWeights = true;
             } else {
-                printf("Bad collection type: '%s'\n", optArg);
+                printf("Bad collection type: '%s'\n", optarg);
                 printf("Supported types: single, array, weightedSet\n");
                 return 1;
             }
             break;
         case 'c':
-            _commonDocFreq = atoi(optArg);
+            _commonDocFreq = atoi(optarg);
             break;
         case 'm':
-            _mediumDocFreq = atoi(optArg);
+            _mediumDocFreq = atoi(optarg);
             break;
         case 'r':
-            _rareDocFreq = atoi(optArg);
+            _rareDocFreq = atoi(optarg);
             break;
         case 'd':
-            _numDocs = atoi(optArg);
+            _numDocs = atoi(optarg);
             break;
         case 'l':
-            _loops = atoi(optArg);
+            _loops = atoi(optarg);
             break;
         case 's':
-            _stride = atoi(optArg);
+            _stride = atoi(optarg);
             break;
         case 't':
             do {
@@ -163,17 +161,17 @@ PostingListBM::Main()
                         DataType::STRING,
                         CollectionType::SINGLE);
                 schema.addIndexField(indexField);
-                std::unique_ptr<FPFactory> ff(getFPFactory(optArg, schema));
+                std::unique_ptr<FPFactory> ff(getFPFactory(optarg, schema));
                 if (ff.get() == nullptr) {
-                    badPostingType(optArg);
+                    badPostingType(optarg);
                     return 1;
                 }
             } while (0);
-            _postingTypes.push_back(optArg);
+            _postingTypes.push_back(optarg);
             break;
         case 'o':
         {
-           vespalib::string operatorType(optArg);
+           vespalib::string operatorType(optarg);
            if (operatorType == "direct") {
                _operatorType = StressRunner::OperatorType::Direct;
            } else if (operatorType == "and") {
@@ -191,7 +189,7 @@ PostingListBM::Main()
             _unpack = true;
             break;
         case 'w':
-            _numWordsPerClass = atoi(optArg);
+            _numWordsPerClass = atoi(optarg);
             break;
         default:
             usage();
@@ -228,12 +226,11 @@ PostingListBM::Main()
 
 }
 
-int
-main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
+    vespalib::SignalHandler::PIPE.ignore();
     postinglistbm::PostingListBM app;
 
     setvbuf(stdout, nullptr, _IOLBF, 32_Ki);
     app._rnd.srand48(32);
-    return app.Entry(argc, argv);
+    return app.main(argc, argv);
 }

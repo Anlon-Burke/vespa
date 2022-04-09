@@ -345,10 +345,7 @@ struct UpdateContext {
         } else {
             fieldValue->assign(document::StringFieldValue("new value"));
         }
-        document::AssignValueUpdate assignValueUpdate(*fieldValue);
-        document::FieldUpdate fieldUpdate(field);
-        fieldUpdate.addUpdate(assignValueUpdate);
-        update->addUpdate(fieldUpdate);
+        update->addUpdate(document::FieldUpdate(field).addUpdate(std::make_unique<document::AssignValueUpdate>(std::move(fieldValue))));
     }
 };
 
@@ -766,18 +763,18 @@ using namespace document;
 TEST_F("require that update with a fieldpath update will be rejected", SchemaContext) {
     const DocumentType *docType = f.getRepo()->getDocumentType(f.getDocType().getName());
     auto docUpdate = std::make_unique<DocumentUpdate>(*f.getRepo(), *docType, DocumentId("id:ns:" + docType->getName() + "::1"));
-    docUpdate->addFieldPathUpdate(FieldPathUpdate::CP(std::make_unique<RemoveFieldPathUpdate>()));
+    docUpdate->addFieldPathUpdate(std::make_unique<RemoveFieldPathUpdate>());
     EXPECT_TRUE(FeedRejectHelper::mustReject(*docUpdate));
 }
 
 TEST_F("require that all value updates will be inspected before rejected", SchemaContext) {
     const DocumentType *docType = f.getRepo()->getDocumentType(f.getDocType().getName());
     auto docUpdate = std::make_unique<DocumentUpdate>(*f.getRepo(), *docType, DocumentId("id:ns:" + docType->getName() + "::1"));
-    docUpdate->addUpdate(FieldUpdate(docType->getField("i1")).addUpdate(ClearValueUpdate()));
+    docUpdate->addUpdate(std::move(FieldUpdate(docType->getField("i1")).addUpdate(std::make_unique<ClearValueUpdate>())));
     EXPECT_FALSE(FeedRejectHelper::mustReject(*docUpdate));
-    docUpdate->addUpdate(FieldUpdate(docType->getField("i1")).addUpdate(ClearValueUpdate()));
+    docUpdate->addUpdate(std::move(FieldUpdate(docType->getField("i1")).addUpdate(std::make_unique<ClearValueUpdate>())));
     EXPECT_FALSE(FeedRejectHelper::mustReject(*docUpdate));
-    docUpdate->addUpdate(FieldUpdate(docType->getField("i1")).addUpdate(AssignValueUpdate(StringFieldValue())));
+    docUpdate->addUpdate(std::move(FieldUpdate(docType->getField("i1")).addUpdate(std::make_unique<AssignValueUpdate>(StringFieldValue::make()))));
     EXPECT_TRUE(FeedRejectHelper::mustReject(*docUpdate));
 }
 

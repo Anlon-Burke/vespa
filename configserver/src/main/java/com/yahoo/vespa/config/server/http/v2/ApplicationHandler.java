@@ -1,6 +1,9 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.http.v2;
 
+import ai.vespa.http.DomainName;
+import ai.vespa.http.HttpURL;
+import ai.vespa.http.HttpURL.Query;
 import com.google.inject.Inject;
 import com.yahoo.component.Version;
 import com.yahoo.config.application.api.ApplicationFile;
@@ -83,7 +86,8 @@ public class ApplicationHandler extends HttpHandler {
         if (path.matches("/application/v2/tenant/{tenant}/application/{application}/environment/{ignore}/region/{ignore}/instance/{instance}/metrics/deployment")) return deploymentMetrics(applicationId(path));
         if (path.matches("/application/v2/tenant/{tenant}/application/{application}/environment/{ignore}/region/{ignore}/instance/{instance}/metrics/proton")) return protonMetrics(applicationId(path));
         if (path.matches("/application/v2/tenant/{tenant}/application/{application}/environment/{ignore}/region/{ignore}/instance/{instance}/reindexing")) return getReindexingStatus(applicationId(path));
-        if (path.matches("/application/v2/tenant/{tenant}/application/{application}/environment/{ignore}/region/{ignore}/instance/{instance}/service/{service}/{hostname}/status/{*}")) return serviceStatusPage(applicationId(path), path.get("service"), path.get("hostname"), path.getRest());
+        if (path.matches("/application/v2/tenant/{tenant}/application/{application}/environment/{ignore}/region/{ignore}/instance/{instance}/service/{service}/{hostname}/status/{*}")) return serviceStatusPage(applicationId(path), path.get("service"), path.get("hostname"), path.getRest(), request);
+        if (path.matches("/application/v2/tenant/{tenant}/application/{application}/environment/{ignore}/region/{ignore}/instance/{instance}/service/{service}/{hostname}/state/v1/metrics")) return serviceStateV1metrics(applicationId(path), path.get("service"), path.get("hostname"));
         if (path.matches("/application/v2/tenant/{tenant}/application/{application}/environment/{ignore}/region/{ignore}/instance/{instance}/serviceconverge")) return listServiceConverge(applicationId(path), request);
         if (path.matches("/application/v2/tenant/{tenant}/application/{application}/environment/{ignore}/region/{ignore}/instance/{instance}/serviceconverge/{hostAndPort}")) return checkServiceConverge(applicationId(path), path.get("hostAndPort"), request);
         if (path.matches("/application/v2/tenant/{tenant}/application/{application}/environment/{ignore}/region/{ignore}/instance/{instance}/suspended")) return isSuspended(applicationId(path));
@@ -131,23 +135,38 @@ public class ApplicationHandler extends HttpHandler {
         return HttpServiceResponse.createResponse(response, hostAndPort, request.getUri());
     }
 
-    private HttpResponse serviceStatusPage(ApplicationId applicationId, String service, String hostname, String pathSuffix) {
-        return applicationRepository.serviceStatusPage(applicationId, hostname, service, pathSuffix);
+    private HttpResponse serviceStatusPage(ApplicationId applicationId, String service, String hostname, HttpURL.Path pathSuffix, HttpRequest request) {
+        HttpURL.Path pathPrefix = HttpURL.Path.empty();
+        switch (service) {
+            case "container-clustercontroller":
+                pathPrefix = pathPrefix.append("clustercontroller-status").append("v1");
+                break;
+            case "distributor":
+            case "storagenode":
+                break;
+            default:
+                throw new com.yahoo.vespa.config.server.NotFoundException("No status page for service: " + service);
+        }
+        return applicationRepository.proxyServiceHostnameRequest(applicationId, hostname, service, pathPrefix.append(pathSuffix), Query.empty().add(request.getJDiscRequest().parameters()));
     }
 
-    private HttpResponse content(ApplicationId applicationId, String contentPath, HttpRequest request) {
+    private HttpResponse serviceStateV1metrics(ApplicationId applicationId, String service, String hostname) {
+        return applicationRepository.proxyServiceHostnameRequest(applicationId, hostname, service, HttpURL.Path.parse("/state/v1/metrics"), Query.empty());
+    }
+
+    private HttpResponse content(ApplicationId applicationId, HttpURL.Path contentPath, HttpRequest request) {
         long sessionId = applicationRepository.getSessionIdForApplication(applicationId);
         ApplicationFile applicationFile =
                 applicationRepository.getApplicationFileFromSession(applicationId.tenant(),
-                        sessionId,
-                        contentPath,
-                        ContentRequest.getApplicationFileMode(request.getMethod()));
+                                                                    sessionId,
+                                                                    contentPath,
+                                                                    ContentRequest.getApplicationFileMode(request.getMethod()));
         ApplicationContentRequest contentRequest = new ApplicationContentRequest(request,
-                sessionId,
-                applicationId,
-                zone,
-                contentPath,
-                applicationFile);
+                                                                                 sessionId,
+                                                                                 applicationId,
+                                                                                 zone,
+                                                                                 contentPath,
+                                                                                 applicationFile);
         return new ContentHandler().get(contentRequest);
     }
 
@@ -156,7 +175,7 @@ public class ApplicationHandler extends HttpHandler {
     }
 
     private HttpResponse logs(ApplicationId applicationId, HttpRequest request) {
-        Optional<String> hostname = Optional.ofNullable(request.getProperty("hostname"));
+        Optional<DomainName> hostname = Optional.ofNullable(request.getProperty("hostname")).map(DomainName::of);
         String apiParams = Optional.ofNullable(request.getUri().getQuery()).map(q -> "?" + q).orElse("");
         return applicationRepository.getLogs(applicationId, hostname, apiParams);
     }

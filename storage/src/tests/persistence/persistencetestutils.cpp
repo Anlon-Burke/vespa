@@ -170,17 +170,13 @@ PersistenceTestUtils::getBucketStatus(const document::BucketId& id)
 }
 
 document::Document::SP
-PersistenceTestUtils::doPutOnDisk(
-        uint32_t location,
-        spi::Timestamp timestamp,
-        uint32_t minSize,
-        uint32_t maxSize)
+PersistenceTestUtils::doPutOnDisk(uint32_t location, spi::Timestamp timestamp, uint32_t minSize, uint32_t maxSize)
 {
     document::Document::SP doc(createRandomDocumentAtLocation(location, timestamp, minSize, maxSize));
     spi::Bucket b(makeSpiBucket(document::BucketId(16, location)));
     spi::Context context(spi::Priority(0), spi::Trace::TraceLevel(0));
-    getPersistenceProvider().createBucket(b, context);
-    getPersistenceProvider().put(spi::Bucket(b), timestamp, doc, context);
+    getPersistenceProvider().createBucket(b);
+    getPersistenceProvider().put(spi::Bucket(b), timestamp, doc);
     return doc;
 }
 
@@ -191,12 +187,11 @@ PersistenceTestUtils::doRemoveOnDisk(
         spi::Timestamp timestamp,
         bool persistRemove)
 {
-    spi::Context context(spi::Priority(0), spi::Trace::TraceLevel(0));
     if (persistRemove) {
-        spi::RemoveResult result = getPersistenceProvider().removeIfFound(makeSpiBucket(bucketId),timestamp, docId, context);
+        spi::RemoveResult result = getPersistenceProvider().removeIfFound(makeSpiBucket(bucketId),timestamp, docId);
         return result.wasFound();
     }
-    spi::RemoveResult result = getPersistenceProvider().remove(makeSpiBucket(bucketId), timestamp, docId, context);
+    spi::RemoveResult result = getPersistenceProvider().remove(makeSpiBucket(bucketId), timestamp, docId);
 
     return result.wasFound();
 }
@@ -207,8 +202,7 @@ PersistenceTestUtils::doUnrevertableRemoveOnDisk(
         const document::DocumentId& docId,
         spi::Timestamp timestamp)
 {
-    spi::Context context(spi::Priority(0),spi::Trace::TraceLevel(0));
-    spi::RemoveResult result = getPersistenceProvider().remove(makeSpiBucket(bucketId), timestamp, docId, context);
+    spi::RemoveResult result = getPersistenceProvider().remove(makeSpiBucket(bucketId), timestamp, docId);
     return result.wasFound();
 }
 
@@ -221,26 +215,20 @@ PersistenceTestUtils::doGetOnDisk(const document::BucketId& bucketId, const docu
 }
 
 document::DocumentUpdate::SP
-PersistenceTestUtils::createBodyUpdate(const document::DocumentId& docId, const document::FieldValue& updateValue)
+PersistenceTestUtils::createBodyUpdate(const document::DocumentId& docId, std::unique_ptr<document::FieldValue> updateValue)
 {
     const DocumentType* docType(getTypeRepo()->getDocumentType("testdoctype1"));
     auto update = std::make_shared<document::DocumentUpdate>(*getTypeRepo(), *docType, docId);
-    auto assignUpdate = std::make_shared<document::AssignValueUpdate>(updateValue);
-    document::FieldUpdate fieldUpdate(docType->getField("content"));
-    fieldUpdate.addUpdate(*assignUpdate);
-    update->addUpdate(fieldUpdate);
+    update->addUpdate(document::FieldUpdate(docType->getField("content")).addUpdate(std::make_unique<document::AssignValueUpdate>(std::move(updateValue))));
     return update;
 }
 
 document::DocumentUpdate::SP
-PersistenceTestUtils::createHeaderUpdate(const document::DocumentId& docId, const document::FieldValue& updateValue)
+PersistenceTestUtils::createHeaderUpdate(const document::DocumentId& docId, std::unique_ptr<document::FieldValue> updateValue)
 {
     const DocumentType* docType(getTypeRepo()->getDocumentType("testdoctype1"));
     auto update = std::make_shared<document::DocumentUpdate>(*getTypeRepo(), *docType, docId);
-    auto assignUpdate = std::make_shared<document::AssignValueUpdate>(updateValue);
-    document::FieldUpdate fieldUpdate(docType->getField("headerval"));
-    fieldUpdate.addUpdate(*assignUpdate);
-    update->addUpdate(fieldUpdate);
+    update->addUpdate(document::FieldUpdate(docType->getField("headerval")).addUpdate(std::make_unique<document::AssignValueUpdate>(std::move(updateValue))));
     return update;
 }
 
@@ -256,9 +244,8 @@ void
 PersistenceTestUtils::doPut(const document::Document::SP& doc, document::BucketId bid, spi::Timestamp time)
 {
     spi::Bucket b(makeSpiBucket(bid));
-    spi::Context context(spi::Priority(0), spi::Trace::TraceLevel(0));
-    getPersistenceProvider().createBucket(b, context);
-    getPersistenceProvider().put(b, time, std::move(doc), context);
+    getPersistenceProvider().createBucket(b);
+    getPersistenceProvider().put(b, time, std::move(doc));
 }
 
 spi::UpdateResult
@@ -267,7 +254,7 @@ PersistenceTestUtils::doUpdate(document::BucketId bid,
                                spi::Timestamp time)
 {
     spi::Context context(spi::Priority(0), spi::Trace::TraceLevel(0));
-    return getPersistenceProvider().update(makeSpiBucket(bid), time, update, context);
+    return getPersistenceProvider().update(makeSpiBucket(bid), time, update);
 }
 
 void
@@ -279,11 +266,9 @@ PersistenceTestUtils::doRemove(const document::DocumentId& id, spi::Timestamp ti
     bucket.setUsedBits(usedBits);
     spi::Context context(spi::Priority(0), spi::Trace::TraceLevel(0));
     if (unrevertableRemove) {
-        getPersistenceProvider().remove(
-                makeSpiBucket(bucket), time, id, context);
+        getPersistenceProvider().remove(makeSpiBucket(bucket), time, id);
     } else {
-        spi::RemoveResult result = getPersistenceProvider().removeIfFound(
-                makeSpiBucket(bucket), time, id, context);
+        spi::RemoveResult result = getPersistenceProvider().removeIfFound(makeSpiBucket(bucket), time, id);
         if (!result.wasFound()) {
             throw vespalib::IllegalStateException(
                     "Attempted to remove non-existing doc " + id.toString(),

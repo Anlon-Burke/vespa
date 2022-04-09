@@ -9,7 +9,6 @@
 
 // reserved in vespa/factory/doc/port-ranges.txt
 static const int PORT0 = 18570;
-static const int PORT1 = 18571;
 
 using vespalib::Process;
 using vespalib::make_string_short::fmt;
@@ -58,7 +57,6 @@ bool run_with_retry(const vespalib::string &cmd) {
 }
 
 TEST("usage") {
-    EXPECT_FALSE(Process::run("exec ../../examples/proxy/fnet_proxy_app"));
     EXPECT_FALSE(Process::run("exec ../../examples/ping/fnet_pingserver_app"));
     EXPECT_FALSE(Process::run("exec ../../examples/ping/fnet_pingclient_app"));
     EXPECT_FALSE(Process::run("exec ../../examples/frt/rpc/fnet_rpc_client_app"));
@@ -104,28 +102,6 @@ TEST_MT_F("ping times out", 2, pid_t(-1)) {
         EXPECT_TRUE(run_with_retry(fmt("exec ../../examples/ping/fnet_pingclient_app tcp/localhost:%d %f",
                                        PORT0, timeout_s)));
         kill(f1, SIGTERM);
-    }
-}
-
-TEST_MT_FF("ping with proxy", 3, pid_t(-1), pid_t(-1)) {
-    if (thread_id == 0) {
-        Process proc(fmt("exec ../../examples/ping/fnet_pingserver_app tcp/%d",
-                         PORT0), true);
-        f1 = proc.pid();
-        TEST_BARRIER();
-        TEST_DO(consume_result(proc));
-    } else if (thread_id == 1) {
-        Process proc(fmt("exec ../../examples/proxy/fnet_proxy_app tcp/%d tcp/localhost:%d",
-                         PORT1, PORT0), true);
-        f2 = proc.pid();
-        TEST_BARRIER();
-        TEST_DO(consume_result(proc));
-    } else {
-        TEST_BARRIER();
-        EXPECT_TRUE(run_with_retry(fmt("exec ../../examples/ping/fnet_pingclient_app tcp/localhost:%d",
-                                       PORT1)));
-        kill(f1, SIGTERM);
-        kill(f2, SIGTERM);
     }
 }
 

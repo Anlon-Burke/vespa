@@ -11,7 +11,6 @@
 #include <vespa/vespalib/util/md5.h>
 #include <vespa/document/util/stringutil.h>
 #include <vespa/vespalib/text/lowercase.h>
-#include <regex>
 #include <iomanip>
 #include <sys/time.h>
 
@@ -224,11 +223,10 @@ namespace {
 class IteratorHandler : public fieldvalue::IteratorHandler {
 public:
     IteratorHandler();
-    ~IteratorHandler();
+    ~IteratorHandler() override;
     bool hasSingleValue() const;
-    std::unique_ptr<Value> getSingleValue();
-    const std::vector<ArrayValue::VariableValue> &getValues();
-
+    std::unique_ptr<Value> stealSingleValue() &&;
+    std::vector<ArrayValue::VariableValue> stealValues() &&;
 private:
     std::unique_ptr<Value> _firstValue;
     std::vector<ArrayValue::VariableValue> _values;
@@ -242,21 +240,21 @@ IteratorHandler::~IteratorHandler() = default;
 
 bool
 IteratorHandler::hasSingleValue() const {
-    return _firstValue.get() && (_values.size() == 0);
+    return _firstValue && _values.empty();
 }
 
 std::unique_ptr<Value>
-IteratorHandler::getSingleValue() {
+IteratorHandler::stealSingleValue() && {
     return std::move(_firstValue);
 }
 
-const std::vector<ArrayValue::VariableValue>&
-IteratorHandler::getValues() {
-    if (_firstValue.get()) {
+std::vector<ArrayValue::VariableValue>
+IteratorHandler::stealValues() && {
+    if (_firstValue) {
         _values.insert(_values.begin(), ArrayValue::VariableValue(fieldvalue::VariableMap(), Value::SP(_firstValue.release())));
     }
 
-    return _values;
+    return std::move(_values);
 }
 
 void
@@ -265,50 +263,50 @@ IteratorHandler::onPrimitive(uint32_t fid, const Content& fv) {
     if (!_firstValue && getVariables().empty()) {
         _firstValue = getInternalValue(fv.getValue());
     } else {
-        _values.emplace_back(getVariables(), Value::SP(getInternalValue(fv.getValue()).release()));
+        _values.emplace_back(stealVariables(), Value::SP(getInternalValue(fv.getValue()).release()));
     }
 }
 
 std::unique_ptr<Value>
 IteratorHandler::getInternalValue(const FieldValue& fval) const
 {
-    switch(fval.getClass().id()) {
-        case document::BoolFieldValue::classId:
+    switch(fval.type()) {
+        case FieldValue::Type::BOOL:
         {
             const auto& val(dynamic_cast<const BoolFieldValue&>(fval));
             return std::make_unique<IntegerValue>(val.getAsInt(), false);
         }
-        case document::IntFieldValue::classId:
+        case FieldValue::Type::INT:
         {
             const auto& val(dynamic_cast<const IntFieldValue&>(fval));
             return std::make_unique<IntegerValue>(val.getAsInt(), false);
         }
-        case document::ByteFieldValue::classId:
+        case FieldValue::Type::BYTE:
         {
             const auto& val(dynamic_cast<const ByteFieldValue&>(fval));
             return std::make_unique<IntegerValue>(val.getAsByte(), false);
         }
-        case LongFieldValue::classId:
+        case FieldValue::Type::LONG:
         {
             const auto& val(dynamic_cast<const LongFieldValue&>(fval));
             return std::make_unique<IntegerValue>(val.getAsLong(), false);
         }
-        case FloatFieldValue::classId:
+        case FieldValue::Type::FLOAT:
         {
             const auto& val(dynamic_cast<const FloatFieldValue&>(fval));
             return std::make_unique<FloatValue>(val.getAsFloat());
         }
-        case DoubleFieldValue::classId:
+        case FieldValue::Type::DOUBLE:
         {
             const auto& val(dynamic_cast<const DoubleFieldValue&>(fval));
             return std::make_unique<FloatValue>(val.getAsDouble());
         }
-        case StringFieldValue::classId:
+        case FieldValue::Type::STRING:
         {
             const auto& val(dynamic_cast<const StringFieldValue&>(fval));
             return std::make_unique<StringValue>(val.getAsString());
         }
-        case ReferenceFieldValue::classId:
+        case FieldValue::Type::REFERENCE:
         {
             const auto& val(dynamic_cast<const ReferenceFieldValue&>(fval));
             if (val.hasValidDocumentId()) {
@@ -317,18 +315,17 @@ IteratorHandler::getInternalValue(const FieldValue& fval) const
                 return std::make_unique<InvalidValue>();
             }
         }
-        case ArrayFieldValue::classId:
+        case FieldValue::Type::ARRAY:
         {
             const auto& val(dynamic_cast<const ArrayFieldValue&>(fval));
             if (val.size() == 0) {
                 return std::make_unique<NullValue>();
             } else {
-                std::vector<ArrayValue::VariableValue> values;
                 // TODO: Array comparison.
-                return std::make_unique<ArrayValue>(values);
+                return std::make_unique<ArrayValue>(std::vector<ArrayValue::VariableValue>());
             }
         }
-        case StructFieldValue::classId:
+        case FieldValue::Type::STRUCT:
         {
             const auto& val(dynamic_cast<const StructFieldValue&>(fval));
             if (val.empty()) {
@@ -339,20 +336,21 @@ IteratorHandler::getInternalValue(const FieldValue& fval) const
                     FieldValue::UP fv(val.getValue(it.field()));
                     values[it.field().getName()] = Value::SP(getInternalValue(*fv).release());
                 }
-                return std::make_unique<StructValue>(values);
+                return std::make_unique<StructValue>(std::move(values));
             }
         }
-        case MapFieldValue::classId:
+        case FieldValue::Type::MAP:
         {
             const auto& val(static_cast<const MapFieldValue&>(fval));
             if (val.isEmpty()) {
                 return std::make_unique<NullValue>();
             } else {
-                std::vector<ArrayValue::VariableValue> values;
                 // TODO: Map comparison
-                return std::make_unique<ArrayValue>(values);
+                return std::make_unique<ArrayValue>(std::vector<ArrayValue::VariableValue>());
             }
         }
+        default:
+            break;
     }
     LOG(warning, "Tried to use unsupported datatype %s in field comparison",
         fval.getDataType()->toString().c_str());
@@ -421,14 +419,14 @@ FieldValueNode::getValue(const Context& context) const
         doc.iterateNested(_fieldPath.getFullRange(), handler);
 
         if (handler.hasSingleValue()) {
-            return handler.getSingleValue();
+            return std::move(handler).stealSingleValue();
         } else {
-            const std::vector<ArrayValue::VariableValue>& values = handler.getValues();
+            std::vector<ArrayValue::VariableValue> values = std::move(handler).stealValues();
 
             if (values.empty()) {
                 return std::make_unique<NullValue>();
             } else {
-                return std::make_unique<ArrayValue>(handler.getValues());
+                return std::make_unique<ArrayValue>(std::move(values));
             }
         }
     } catch (vespalib::IllegalArgumentException& e) {
@@ -482,14 +480,14 @@ FieldValueNode::traceValue(const Context &context, std::ostream& out) const
         doc.iterateNested(_fieldPath.getFullRange(), handler);
 
         if (handler.hasSingleValue()) {
-            return handler.getSingleValue();
+            return std::move(handler).stealSingleValue();
         } else {
-            const std::vector<ArrayValue::VariableValue>& values = handler.getValues();
+            std::vector<ArrayValue::VariableValue> values = std::move(handler).stealValues();
 
             if (values.size() == 0) {
                 return std::make_unique<NullValue>();
             } else {
-                return std::make_unique<ArrayValue>(handler.getValues());
+                return std::make_unique<ArrayValue>(std::move(values));
             }
         }
     } catch (FieldNotFoundException& e) {
