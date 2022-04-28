@@ -167,39 +167,6 @@ protected:
 
     void performCompactionWarning();
 
-    void getByType(DocId doc, const char *&v) const {
-        char tmp[1024]; v = getString(doc, tmp, sizeof(tmp));
-    }
-
-    void getByType(DocId doc, vespalib::string &v) const {
-        char tmp[1024]; v = getString(doc, tmp, sizeof(tmp));
-    }
-
-    void getByType(DocId doc, largeint_t & v) const {
-        v = getInt(doc);
-    }
-
-    void getByType(DocId doc, double &v) const {
-        v = getFloat(doc);
-    }
-
-    uint32_t getByType(DocId doc, const char **v, uint32_t sz) const {
-        return get(doc, v, sz);
-    }
-
-    uint32_t getByType(DocId doc, vespalib::string *v, uint32_t sz) const {
-        return get(doc, v, sz);
-    }
-
-    uint32_t getByType(DocId doc, largeint_t * v, uint32_t sz) const {
-        return get(doc, v, sz);
-    }
-
-    uint32_t getByType(DocId doc, double *v, uint32_t sz) const {
-        return get(doc, v, sz);
-    }
-
-
     AttributeVector(vespalib::stringref baseFileName, const Config & c);
 
     void checkSetMaxValueCount(int index) {
@@ -534,7 +501,7 @@ private:
     std::atomic<uint32_t>                 _committedDocIdLimit; // docid limit for search
     uint32_t                              _uncommittedDocIdLimit; // based on queued changes
     uint64_t                              _createSerialNum;
-    uint64_t                              _compactLidSpaceGeneration;
+    std::atomic<uint64_t>                 _compactLidSpaceGeneration;
     bool                                  _hasEnum;
     bool                                  _loaded;
     bool                                  _isUpdateableInMemoryOnly;

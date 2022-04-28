@@ -128,8 +128,7 @@ Matcher::getStats()
 {
     std::lock_guard<std::mutex> guard(_statsLock);
     MatchingStats stats = std::move(_stats);
-    _stats = MatchingStats();
-    _stats.softDoomFactor(stats.softDoomFactor());
+    _stats = MatchingStats(stats.softDoomFactor());
     return stats;
 }
 
@@ -176,7 +175,7 @@ namespace {
     void traceQuery(uint32_t traceLevel, Trace & trace, const Query & query) {
         if (traceLevel <= trace.getLevel()) {
             if (query.peekRoot()) {
-                vespalib::slime::ObjectInserter inserter(trace.createCursor("blueprint"), "optimized");
+                vespalib::slime::ObjectInserter inserter(trace.createCursor("query_execution_plan"), "optimized");
                 query.peekRoot()->asSlime(inserter);
             }
         }

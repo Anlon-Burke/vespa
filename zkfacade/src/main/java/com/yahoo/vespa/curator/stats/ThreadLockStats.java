@@ -5,6 +5,7 @@ import com.yahoo.vespa.curator.Lock;
 
 import java.time.Duration;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -97,7 +98,7 @@ public class ThreadLockStats {
     }
 
     /** Mutable method (see class doc) */
-    public void lockAcquired() {
+    public void lockAcquired(String debug) {
         withLastLockAttempt(lockAttempt -> {
             // Note on the order of lockAcquired() vs notifyOfThreadHoldingLock(): When the latter is
             // invoked, other threads may query e.g. isAcquired() on the lockAttempt, which would
@@ -105,19 +106,19 @@ public class ThreadLockStats {
             // but seems better to ensure LockAttempt is updated first.
             lockAttempt.lockAcquired();
 
-            if (!lockAttempt.getReentry()) {
-                LockStats.getGlobal().notifyOfThreadHoldingLock(thread, lockAttempt.getLockPath());
+            if (!lockAttempt.isReentry()) {
+                LockStats.getGlobal().notifyOfThreadHoldingLock(thread, lockAttempt.getLockPath(), debug);
             }
         });
     }
 
     /** Mutable method (see class doc) */
-    public void preRelease() {
-        withLastLockAttempt(lockAttempt -> {
+    public void preRelease(String path, String debug) {
+        withLastLockAttemptFor(path, lockAttempt -> {
             // Note on the order of these two statement: Same concerns apply here as in lockAcquired().
 
-            if (!lockAttempt.getReentry()) {
-                LockStats.getGlobal().notifyOfThreadReleasingLock(thread, lockAttempt.getLockPath());
+            if (!lockAttempt.isReentry()) {
+                LockStats.getGlobal().notifyOfThreadReleasingLock(thread, lockAttempt.getLockPath(), debug);
             }
 
             lockAttempt.preRelease();
@@ -125,13 +126,13 @@ public class ThreadLockStats {
     }
 
     /** Mutable method (see class doc) */
-    public void postRelease() {
-        removeLastLockAttempt(LockAttempt::postRelease);
+    public void postRelease(String lockPath) {
+        removeLastLockAttemptFor(lockPath, LockAttempt::postRelease);
     }
 
     /** Mutable method (see class doc) */
-    public void releaseFailed() {
-        removeLastLockAttempt(LockAttempt::releaseFailed);
+    public void releaseFailed(String lockPath) {
+        removeLastLockAttemptFor(lockPath, LockAttempt::releaseFailed);
     }
 
     /** Mutable method (see class doc) */
@@ -238,5 +239,33 @@ public class ThreadLockStats {
         completeLockAttempt.accept(lockAttempt);
 
         LockStats.getGlobal().maybeSample(lockAttempt);
+    }
+
+    private void withLastLockAttemptFor(String lockPath, Consumer<LockAttempt> consumer) {
+        Iterator<LockAttempt> lockAttemptIterator = lockAttemptsStack.descendingIterator();
+        while (lockAttemptIterator.hasNext()) {
+            LockAttempt lockAttempt = lockAttemptIterator.next();
+            if (lockAttempt.getLockPath().equals(lockPath)) {
+                consumer.accept(lockAttempt);
+                return;
+            }
+        }
+
+        logger.warning("Unable to find any lock attempts for " + lockPath);
+    }
+
+    private void removeLastLockAttemptFor(String lockPath, Consumer<LockAttempt> consumer) {
+        Iterator<LockAttempt> lockAttemptIterator = lockAttemptsStack.descendingIterator();
+        while (lockAttemptIterator.hasNext()) {
+            LockAttempt lockAttempt = lockAttemptIterator.next();
+            if (lockAttempt.getLockPath().equals(lockPath)) {
+                lockAttemptIterator.remove();
+                consumer.accept(lockAttempt);
+                LockStats.getGlobal().maybeSample(lockAttempt);
+                return;
+            }
+        }
+
+        logger.warning("Unable to remove last lock attempt as no locks were found for " + lockPath);
     }
 }
