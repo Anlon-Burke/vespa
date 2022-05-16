@@ -1,9 +1,5 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-// Duplicate Schema parser - work in progress
-// @author arnej27959
-// NOTE: When grammar is changed, also change integration/intellij/src/main/bnf/ai/vespa/intellij/schema/parser/sd.bnf
-
 options {
     UNICODE_INPUT = true;
     CACHE_TOKENS  = false;
@@ -28,7 +24,6 @@ import com.yahoo.searchdefinition.OnnxModel;
 import com.yahoo.searchdefinition.RankProfile.DiversitySettings;
 import com.yahoo.searchdefinition.RankProfile.MatchPhaseSettings;
 import com.yahoo.searchdefinition.RankProfile;
-import com.yahoo.searchdefinition.RankingConstant;
 import com.yahoo.searchdefinition.Schema;
 import com.yahoo.searchdefinition.document.Case;
 import com.yahoo.searchdefinition.document.MatchType;
@@ -37,13 +32,17 @@ import com.yahoo.searchdefinition.document.HnswIndexParams;
 import com.yahoo.searchdefinition.document.Sorting;
 import com.yahoo.searchdefinition.document.Stemming;
 import com.yahoo.searchdefinition.document.SDField;
+import com.yahoo.searchdefinition.FeatureNames;
 import com.yahoo.searchdefinition.fieldoperation.IndexingOperation;
 import com.yahoo.searchlib.rankingexpression.FeatureList;
 import com.yahoo.searchlib.rankingexpression.Reference;
 import com.yahoo.searchlib.rankingexpression.evaluation.TensorValue;
 import com.yahoo.searchlib.rankingexpression.evaluation.Value;
 import com.yahoo.tensor.Tensor;
+import com.yahoo.tensor.IndexedTensor;
+import com.yahoo.tensor.MixedTensor;
 import com.yahoo.tensor.TensorType;
+import com.yahoo.tensor.TensorAddress;
 
 import java.util.Optional;
 import java.util.Map;
@@ -55,6 +54,8 @@ import java.util.logging.Level;
 /**
  * The schema parser
  *
+ * NOTE: When this grammar is changed, also change integration/intellij/src/main/bnf/ai/vespa/intellij/schema/parser/sd.bnf
+ *
  * @author bratseth
  */
 public class IntermediateParser {
@@ -62,9 +63,7 @@ public class IntermediateParser {
     private DeployLogger deployLogger;
     private ModelContext.Properties properties;
 
-    /**
-     * Creates a parser
-     */
+    /** Creates a parser. */
     public IntermediateParser(SimpleCharStream stream,
                               DeployLogger deployLogger,
                               ModelContext.Properties properties)
@@ -266,7 +265,7 @@ TOKEN :
 | < FASTRANK: "fast-rank" >
 | < FASTSEARCH: "fast-search" >
 | < HUGE: "huge" >
-| < TENSOR_TYPE: "tensor" ("<" (~["<",">"])+ ">")? "(" (~["(",")"])+ ")" >
+| < TENSOR_TYPE: "tensor" ("<" (~["<",">"])+ ">")? "(" (~["(",")"])* ")" >
 | < TENSOR_VALUE_SL: "value" (" ")* ":" (" ")* ("{"<BRACE_SL_LEVEL_1>) ("\n")? >
 | < TENSOR_VALUE_ML: "value" (<SEARCHLIB_SKIP>)? "{" (["\n"," "])* ("{"<BRACE_ML_LEVEL_1>) (["\n"," "])* "}" ("\n")? >
 | < COMPRESSION: "compression" >
@@ -303,6 +302,7 @@ TOKEN :
 | < ENABLE_BM25: "enable-bm25" >
 | < HNSW: "hnsw" >
 | < MAXLINKSPERNODE: "max-links-per-node" >
+| < DOUBLE_KEYWORD: "double" >
 | < DISTANCEMETRIC: "distance-metric" >
 | < NEIGHBORSTOEXPLOREATINSERT: "neighbors-to-explore-at-insert" >
 | < MULTITHREADEDINDEXING: "multi-threaded-indexing" >
@@ -331,6 +331,8 @@ TOKEN :
 | < MINHITSPERTHREAD: "min-hits-per-thread" >
 | < NUMSEARCHPARTITIONS: "num-search-partitions" >
 | < TERMWISELIMIT: "termwise-limit" >
+| < POSTFILTERTHRESHOLD: "post-filter-threshold" >
+| < APPROXIMATETHRESHOLD: "approximate-threshold" >
 | < KEEPRANKCOUNT: "keep-rank-count" >
 | < RANKSCOREDROPLIMIT: "rank-score-drop-limit" >
 | < CONSTANTS: "constants" >
@@ -338,7 +340,8 @@ TOKEN :
 | < URI: "uri" >
 | < IDENTIFIER:           ["a"-"z","A"-"Z", "_"] (["a"-"z","A"-"Z","0"-"9","_"])* >
 | < IDENTIFIER_WITH_DASH: ["a"-"z","A"-"Z", "_"] (["a"-"z","A"-"Z","0"-"9","_","-"])* >
-| < QUOTEDSTRING: "\"" ( ~["\""] )* "\"" >
+| < DOUBLEQUOTEDSTRING: "\"" ( ~["\""] )* "\"" >
+| < SINGLEQUOTEDSTRING: "'" ( ~["'"] )* "'" >
 | < CONTEXT: ["a"-"z","A"-"Z"] (["a"-"z", "A"-"Z", "0"-"9"])* >
 | < DOUBLE: ("-")? (["0"-"9"])+ "." (["0"-"9"])+ >
 | < INTEGER: ("-")? (["0"-"9"])+ >
@@ -350,8 +353,8 @@ TOKEN :
 | < LESSTHAN: "<" >
 | < GREATERTHAN: ">" >
 | < VARIABLE: "$" <IDENTIFIER> >
-| < ONNX_INPUT_SL: "input" (" ")* (<IDENTIFIER>|<QUOTEDSTRING>) (" ")* ":" (" ")* (~["\n"])* ("\n")? >
-| < ONNX_OUTPUT_SL: "output" (" ")* (<IDENTIFIER>|<QUOTEDSTRING>) (" ")* ":" (" ")* (~["\n"])* ("\n")? >
+| < ONNX_INPUT_SL: "input" (" ")* (<IDENTIFIER>|<DOUBLEQUOTEDSTRING>) (" ")* ":" (" ")* (~["\n"])* ("\n")? >
+| < ONNX_OUTPUT_SL: "output" (" ")* (<IDENTIFIER>|<DOUBLEQUOTEDSTRING>) (" ")* ":" (" ")* (~["\n"])* ("\n")? >
 }
 
 // Declare a special skip token for comments.
@@ -415,7 +418,7 @@ void rootSchemaItem(ParsedSchema schema) : { }
       | rawAsBase64(schema)
       | searchStemming(schema)
       | importField(schema)
-      | rankingConstant(schema)
+      | rankingConstant(schema) // Deprecated: TODO: Emit warning when on Vespa 8
       | useDocument(schema)
       | rankProfile(schema)
       | documentSummary(schema)
@@ -424,7 +427,7 @@ void rootSchemaItem(ParsedSchema schema) : { }
       | structOutside(schema)
       | annotationOutside(schema)
       | fieldSet(schema)
-      | onnxModel(schema)
+      | onnxModelInSchema(schema) // Deprecated: TODO: Emit warning when on Vespa 8
  )
 }
 
@@ -1700,31 +1703,38 @@ void hnswIndexBody(HnswIndexParams.Builder params) :
       | <MULTITHREADEDINDEXING> <COLON> bool = bool() { params.setMultiThreadedIndexing(bool); } )
 }
 
-/**
- * Consumes a onnx-model block of a schema element.
- *
- * @param schema the schema object to add content to.
- */
-void onnxModel(ParsedSchema schema) :
+void onnxModelInSchema(ParsedSchema schema) :
+{
+    OnnxModel onnxModel;
+}
+{
+    onnxModel = onnxModel() { schema.add(onnxModel); }
+}
+
+void onnxModelInProfile(ParsedRankProfile profile) :
+{
+    OnnxModel onnxModel;
+}
+{
+    onnxModel = onnxModel() { profile.add(onnxModel); }
+}
+
+/** Consumes an onnx-model block. */
+OnnxModel onnxModel() :
 {
     String name;
     OnnxModel onnxModel;
 }
 {
-    ( <ONNXMODEL> name = identifier()
-        {
-            onnxModel = new OnnxModel(name);
-        }
+    ( <ONNXMODEL> name = identifier() { onnxModel = new OnnxModel(name); }
       lbrace() (onnxModelItem(onnxModel) (<NL>)*)+ <RBRACE> )
-    {
-        schema.addOnnxModel(onnxModel);
-    }
+    { return onnxModel; }
 }
 
 /**
- * This rule consumes an onnx-model block.
+ * Consumes an onnx-model block.
  *
- * @param onnxModel The onnxModel to modify.
+ * @param onnxModel the onnxModel to modify
  */
 void onnxModelItem(OnnxModel onnxModel) :
 {
@@ -1764,13 +1774,15 @@ void rankingConstant(ParsedSchema schema) :
 {
     ( <CONSTANT> name = identifier() lbrace()
       (path = fileItem() { pathType = DistributableResource.PathType.FILE; }
-       | path = uriItem() { pathType = DistributableResource.PathType.URI; }
+       | path = uriItem() { pathType = DistributableResource.PathType.URI; } // Undocumented. TODO: Remove on Vespa 8
        | type = tensorTypeWithPrefix(rankingConstantErrorMessage(name)) (<NL>)*
       )+
       <RBRACE>
     )
     {
-        schema.addRankingConstant(new RankingConstant(name, type, path, pathType));
+        if (type == null) throw new IllegalArgumentException("constant '" + name + "' must have a type");
+        if (path == null) throw new IllegalArgumentException("constant '" + name + "' must have a file");
+        schema.add(new RankProfile.Constant(FeatureNames.asConstantFeature(name), type, path, pathType));
     }
 }
 
@@ -1808,7 +1820,7 @@ void rankProfile(ParsedSchema schema) :
     ( <MODEL> | <RANKPROFILE> ) name = identifierWithDash()
     { profile = new ParsedRankProfile(name); }
     [inheritsRankProfile(profile)]
-    lbrace() (rankProfileItem(profile) (<NL>)*)* <RBRACE>
+    lbrace() (rankProfileItem(schema, profile) (<NL>)*)* <RBRACE>
     {
         schema.addRankProfile(profile);
     }
@@ -1820,7 +1832,7 @@ void rankProfile(ParsedSchema schema) :
  *
  * @param profile The rank profile to modify.
  */
-void rankProfileItem(ParsedRankProfile profile) : { }
+void rankProfileItem(ParsedSchema schema, ParsedRankProfile profile) : { }
 {
     ( fieldRankType(profile)
       | fieldWeight(profile)
@@ -1834,19 +1846,22 @@ void rankProfileItem(ParsedRankProfile profile) : { }
       | minHitsPerThread(profile)
       | numSearchPartitions(profile)
       | termwiseLimit(profile)
+      | postFilterThreshold(profile)
+      | approximateThreshold(profile)
       | rankFeatures(profile)
       | rankProperties(profile)
       | secondPhase(profile)
       | rankDegradation()
       | inputs(profile)
-      | constants(profile)
+      | constants(schema, profile)
       | matchFeatures(profile)
       | summaryFeatures(profile)
+      | onnxModelInProfile(profile)
       | strict(profile) )
 }
 
 /**
- * This rule consumes an inherits statement of a rank-profile.
+ * Consumes an inherits statement of a rank-profile.
  *
  * @param profile the profile to modify
  */
@@ -2063,23 +2078,53 @@ void inputs(ParsedRankProfile profile) :
 }
 {
     <INPUTS> <LBRACE> (<NL>)*
-      ( reference = queryFeature() type = tensorType("Type of " + reference) { profile.addInput(reference, type); } (<NL>)*) *
+      ( input(profile) (<NL>)*) *
     <RBRACE>
 }
 
-Reference queryFeature() :
+void input(ParsedRankProfile profile) :
 {
-    String argument;
+    Reference reference;
+    TensorType type = TensorType.empty;
+    Tensor defaultValue = null;
 }
 {
-    <QUERY> "(" argument = identifier() ")"
-    { return Reference.simple("query", argument); }
+    reference = inputName() ( type = valueType(reference))? ( <COLON> (<NL>)* defaultValue = tensorValue(type) )?
+    { profile.addInput(reference, new RankProfile.Input(reference, type, Optional.ofNullable(defaultValue))); }
+}
+
+/** Returns the reference "query(name)" for both "query(name)" and "name". */
+Reference inputName() :
+{
+    String name;
+}
+{
+    (
+        ( <QUERY> "(" name = identifier() ")" )
+        |
+        name = identifier()
+    )
+    { return FeatureNames.asQueryFeature(name); }
+}
+
+TensorType valueType(Reference reference) :
+{
+    TensorType type;
+
+}
+{
+    (
+      ( type = tensorType("Type of " + reference) )
+      |
+      ( <DOUBLE_KEYWORD> { type = TensorType.empty; } )
+    )
+    { return type; }
 }
 
 /**
- * This rule consumes a summary-features block of a rank profile.
+ * Consumes a summary-features block of a rank profile.
  *
- * @param profile The rank profile to modify.
+ * @param profile the rank profile to modify
  */
 void summaryFeatures(ParsedRankProfile profile) :
 {
@@ -2112,9 +2157,9 @@ void strict(ParsedRankProfile profile) :
 }
 
 /**
- * This rule consumes a match-features block of a rank profile.
+ * Consumes a match-features block of a rank profile.
  *
- * @param profile The rank profile to modify.
+ * @param profile the rank profile to modify
  */
 void matchFeatures(ParsedRankProfile profile) :
 {
@@ -2213,7 +2258,33 @@ void termwiseLimit(ParsedRankProfile profile) :
 }
 
 /**
- * This rule consumes a rank-properties block of a rank profile. There
+ * This rule consumes a post-filter-threshold statement for a rank profile.
+ *
+ * @param profile the rank profile to modify
+ */
+void postFilterThreshold(ParsedRankProfile profile) :
+{
+    double threshold;
+}
+{
+    (<POSTFILTERTHRESHOLD> <COLON> threshold = consumeFloat()) { profile.setPostFilterThreshold(threshold); }
+}
+
+/**
+ * This rule consumes an approximate-threshold statement for a rank profile.
+ *
+ * @param profile the rank profile to modify
+ */
+void approximateThreshold(ParsedRankProfile profile) :
+{
+    double threshold;
+}
+{
+    (<APPROXIMATETHRESHOLD> <COLON> threshold = consumeFloat()) { profile.setApproximateThreshold(threshold); }
+}
+
+/**
+ * Consumes a rank-properties block of a rank profile. There
  * is a little trick within this rule to allow the final rank property
  * to skip the terminating newline token.
  *
@@ -2226,7 +2297,7 @@ void rankProperties(ParsedRankProfile profile) : { }
 }
 
 /**
- * This rule consumes a single rank property pair for a rank profile.
+ * Consumes a single rank property pair for a rank profile.
  *
  * @param profile the rank profile to modify
  */
@@ -2240,25 +2311,28 @@ void rankProperty(ParsedRankProfile profile) :
 }
 
 /**
- * This rule consumes a single rank property for a rank-properties block.
+ * Consumes a single rank property for a rank-properties block.
  *
- * @return The token image of the consumed item.
+ * @return the token image of the consumed item
  */
 String rankPropertyItem() :
 {
-    String image, ret = "";
+    String image = null;
+    String ret = "";
+    Token dToken = null;
 }
 {
-    ( ( image = identifierWithDash()              { ret += image; }
+    ( ( image = identifierWithDash() { ret += image; }
+        | dToken = <DOUBLE> { ret += dToken.image; }
         | image = quotedString()                  { ret += image; }
         | ( "(" | ")" | <DOT> | <COMMA> )         { ret += token.image; } )+ )
     { return ret; }
 }
 
 /**
- * This rule consumes a field-weight statement of a rank profile.
+ * Consumes a field-weight statement of a rank profile.
  *
- * @param profile The rank profile to modify.
+ * @param profile the rank profile to modify
  */
 void fieldWeight(ParsedRankProfile profile) :
 {
@@ -2271,9 +2345,9 @@ void fieldWeight(ParsedRankProfile profile) :
 }
 
 /**
- * This rule consumes a rank-type statement of a rank profile.
+ * Consumes a rank-type statement of a rank profile.
  *
- * @param profile The rank profile to modify.
+ * @param profile the rank profile to modify
  */
 void fieldRankType(ParsedRankProfile profile) :
 {
@@ -2286,9 +2360,9 @@ void fieldRankType(ParsedRankProfile profile) :
 }
 
 /**
- * This rule consumes a rank filter statement of a rank profile.
+ * Consumes a rank filter statement of a rank profile.
  *
- * @param profile The rank profile to modify.
+ * @param profile the rank profile to modify
  */
 void fieldRankFilter(ParsedRankProfile profile) :
 {
@@ -2300,7 +2374,7 @@ void fieldRankFilter(ParsedRankProfile profile) :
 }
 
 /**
- * This rule consumes part of a rank-degradation statement of a rank profile.
+ * Consumes part of a rank-degradation statement of a rank profile.
  */
 void rankDegradationBinSize() :
 {
@@ -2313,7 +2387,7 @@ void rankDegradationBinSize() :
 
 
 /**
- * This rule consumes part of a rank-degradation statement of a rank profile.
+ * Consumes part of a rank-degradation statement of a rank profile.
  */
 void rankDegradationBinLow() :
 {
@@ -2324,9 +2398,8 @@ void rankDegradationBinLow() :
     { deployLogger.logApplicationPackage(Level.WARNING, "Specifying 'min-fullrank-docs' in 'rank-degradation' is deprecated and has no effect."); }
 }
 
-
 /**
- * This rule consumes part of a rank-degradation statement of a rank profile.
+ * Consumes part of a rank-degradation statement of a rank profile.
  */
 void rankDegradationPosbinSize() :
 {
@@ -2339,7 +2412,7 @@ void rankDegradationPosbinSize() :
 
 
 /**
- * This rule consumes part of a rank-degradation statement of a rank profile.
+ * Consumes part of a rank-degradation statement of a rank profile.
  */
 void rankDegradationItem() : { }
 {
@@ -2349,7 +2422,7 @@ void rankDegradationItem() : { }
 }
 
 /**
- * This rule consumes a rank-degradation statement of a rank profile.
+ * Consumes a rank-degradation statement of a rank profile.
  */
 void rankDegradation() :
 {
@@ -2365,49 +2438,223 @@ void rankDegradation() :
 /**
  * Consumes a set of constants available in ranking expressions in the enclosing profile.
  */
-void constants(ParsedRankProfile profile) :
+void constants(ParsedSchema schema, ParsedRankProfile profile) :
 {
     String name;
 }
 {
     <CONSTANTS> <LBRACE> (<NL>)*
-      ( name = identifier() ( constantValue(profile, name) |
-                              constantTensor(profile, name) ) (<NL>)* )*
+    ( constant(schema, profile) (<NL>)* )*
     <RBRACE>
 }
 
-void constantValue(ParsedRankProfile profile, String name) :
+void constant(ParsedSchema schema, ParsedRankProfile profile) :
 {
-    String value;
+    Reference name = null;
+    TensorType type = TensorType.empty;
+    Tensor value = null;
+    String valuePath = null;
 }
 {
-    <COLON> value = identifier() { profile.addConstant(name, Value.parse(value)); }
+    (
+      name = constantName()
+      (
+        LOOKAHEAD(4) ( ( type = valueType(name) )? <COLON> (<NL>)* ( value = tensorValue(type) | valuePath = fileItem())
+        {
+            if (value != null)
+                profile.add(new RankProfile.Constant(name, value));
+            else
+                profile.add(new RankProfile.Constant(name, type, valuePath));
+        }
+        )
+        | // Deprecated forms (TODO: Add warning on Vespa 8):
+        ( constantValue(profile, name) | constantTensor(profile, name) )
+      )
+    )
 }
 
-void constantTensor(ParsedRankProfile profile, String name) :
+/** Returns the reference "constant(name)" for both "constant(name)" and "name". */
+Reference constantName() :
+{
+    String name;
+}
+{
+    (
+        ( <CONSTANT> "(" name = identifier() ")" )
+        |
+        name = identifier()
+    )
+    { return FeatureNames.asConstantFeature(name); }
+}
+
+// Deprecated form
+void constantValue(ParsedRankProfile profile, Reference name) :
+{
+    Token value;
+}
+{
+    <COLON> ( value = <DOUBLE> | value = <INTEGER> | value = <IDENTIFIER> )
+    { profile.add(new RankProfile.Constant(name, Tensor.from(value.image))); }
+}
+
+// Deprecated form
+void constantTensor(ParsedRankProfile profile, Reference name) :
 {
     String tensorString = "";
-    TensorType tensorType = null;
+    TensorType type = null;
 }
 {
     <LBRACE> (<NL>)*
-      (( tensorString = tensorValue() |
-         tensorType = tensorTypeWithPrefix(constantTensorErrorMessage(profile.name(), name)) ) (<NL>)* )* <RBRACE>
-    {
-        if (tensorType != null) {
-            profile.addConstantTensor(name, new TensorValue(Tensor.from(tensorType, tensorString)));
-        } else {
-            profile.addConstantTensor(name, new TensorValue(Tensor.from(tensorString)));
-        }
+      (( tensorString = tensorValuePrefixedByValue() |
+         type = tensorTypeWithPrefix(constantTensorErrorMessage(profile.name(), name)) ) (<NL>)* )* <RBRACE>
+    { profile.add(new RankProfile.Constant(name, type != null ? Tensor.from(type, tensorString) : Tensor.from(tensorString)));
     }
 }
 
-String constantTensorErrorMessage(String rankProfileName, String constantTensorName) : {}
+String constantTensorErrorMessage(String rankProfileName, Reference name) : {}
 {
-    { return "For constant tensor '" + constantTensorName + "' in rank profile '" + rankProfileName + "'"; }
+    { return "For constant tensor '" + name + "' in rank profile '" + rankProfileName + "'"; }
 }
 
-String tensorValue() :
+/**
+ * Parses a tensor written in a tensor literal form,
+ * https://docs.vespa.ai/en/reference/tensor.html#tensor-literal-form
+ */
+Tensor tensorValue(TensorType type) :
+{
+    Tensor.Builder builder = Tensor.Builder.of(type);
+    Number doubleValue = null;
+}
+{
+    ( mappedTensorValue(builder) | indexedTensorValues(builder) |  doubleValue = consumeNumber() )
+    {
+        if (doubleValue != null) {
+            if (type.rank() > 0)
+                throw new IllegalArgumentException("A tensor of type " + type + " cannot be a number");
+            builder.cell(doubleValue.doubleValue());
+        }
+        return builder.build();
+    }
+}
+
+/** A mapped or mixed tensor value. */
+void mappedTensorValue(Tensor.Builder builder) : {}
+{
+    "{" ( mappedTensorBlock(builder) )* ( <COMMA> (<NL>)* mappedTensorBlock(builder) )* "}"
+}
+
+
+void mappedTensorBlock(Tensor.Builder builder) :
+{
+    TensorAddress mappedAddress;
+}
+{
+    mappedAddress = tensorAddress(builder.type().mappedSubtype()) <COLON> (<NL>)*
+    ( mappedTensorCellValue(mappedAddress, builder) | indexedTensorBlockValues(mappedAddress, builder) )
+}
+
+void indexedTensorBlockValues(TensorAddress sparseAddress, Tensor.Builder builder) :
+{
+    List<Double> values = new ArrayList<Double>();
+}
+{
+    arrayTensorValues(values)
+    {
+        MixedTensor.BoundBuilder boundBuilder = (MixedTensor.BoundBuilder)builder;
+        double[] arrayValues = new double[values.size()];
+        for (int i = 0; i < values.size(); i++ ) {
+            arrayValues[i] = values.get(i);
+        }
+        boundBuilder.block(sparseAddress, arrayValues);
+    }
+}
+
+void indexedTensorValues(Tensor.Builder builder) :
+{
+    List<Double> values = new ArrayList<Double>();
+}
+{
+    arrayTensorValues(values)
+    {
+        IndexedTensor.BoundBuilder boundBuilder = (IndexedTensor.BoundBuilder)builder;
+        double[] arrayValues = new double[values.size()];
+        for (int i = 0; i < values.size(); i++ ) {
+            arrayValues[i] = values.get(i);
+        }
+        boundBuilder.fill(arrayValues);
+    }
+}
+
+/** Tensor array values. Using sub-bracketing for multiple dimensions is optional and therefore ignored here. */
+void arrayTensorValues(List<Double> values) : {}
+{
+    "[" (                 ( indexedTensorValue(values) | arrayTensorValues(values)) )*
+        ( <COMMA> (<NL>)* ( indexedTensorValue(values) | arrayTensorValues(values)) )*
+    "]"
+}
+
+void indexedTensorValue(List<Double> values) :
+{
+    Number value;
+}
+{
+    value = consumeNumber()
+    { values.add(value.doubleValue()); }
+}
+
+void mappedTensorCellValue(TensorAddress address, Tensor.Builder builder) :
+{
+    double value;
+}
+{
+    value = tensorCellValue()
+    { builder.cell(address, value); }
+}
+
+TensorAddress tensorAddress(TensorType type) :
+{
+    TensorAddress.Builder builder = new TensorAddress.Builder(type);
+    String label;
+}
+{
+    (
+        label = tensorAddressLabel() { builder.add(label); }
+        |
+        ( "{" ( tensorAddressElement(builder) )* ( <COMMA> tensorAddressElement(builder) )* "}" )
+    )
+    { return builder.build(); }
+}
+
+void tensorAddressElement(TensorAddress.Builder builder) :
+{
+    String dimension;
+    String label;
+}
+{
+    dimension = identifier() <COLON> (<NL>)* label = tensorAddressLabel()
+    { builder.add(dimension, label); }
+}
+
+String tensorAddressLabel() :
+{
+    String label;
+}
+{
+    ( label = identifier() | label = quotedString() )
+    { return label; }
+}
+
+double tensorCellValue() :
+{
+    Number value;
+}
+{
+    value = consumeNumber()
+    { return value.doubleValue(); }
+}
+
+/** Undocumented syntax for supplying a tensor constant value by a string prefixed by "value" */
+String tensorValuePrefixedByValue() :
 {
     String tensor;
 }
@@ -2432,7 +2679,7 @@ TensorType tensorType(String errorMessage) :
     String tensorTypeString;
 }
 {
-    ( <TENSOR_TYPE> ) { tensorTypeString = token.image; }
+    <TENSOR_TYPE> { tensorTypeString = token.image; }
     {
         TensorType tensorType;
         try {
@@ -2525,7 +2772,7 @@ String identifier() : { }
       | <DIRECT>
       | <DOCUMENT>
       | <DOCUMENTSUMMARY>
-      | <DOUBLE>
+      | <DOUBLE_KEYWORD>
       | <DYNAMIC>
       | <ENABLEBITVECTORS>
       | <ENABLEONLYBITVECTOR>
@@ -2653,39 +2900,28 @@ String string() : { }
  * unescaping of the content, it simply removes the first and last character of the image. However, the token itself can
  * contain anything but a double quote.
  *
- * @return The unquoted token image.
+ * @return the unquoted token image
  */
 String quotedString() : { }
 {
-    <QUOTEDSTRING> { return token.image.substring(1, token.image.length() - 1); }
+    ( <DOUBLEQUOTEDSTRING> | <SINGLEQUOTEDSTRING> )
+    { return token.image.substring(1, token.image.length() - 1); }
 }
 
-/**
- * This rule consumes a boolean value.
- *
- * @return The consumed boolean value.
- */
+/** A boolean value. */
 Boolean bool() : { }
 {
     ( ( <ON>  | <TRUE> )  { return true; } |
       ( <OFF> | <FALSE> ) { return false; } )
 }
 
-/**
- * This rule consumes an integer token and returns its numeric value.
- *
- * @return The consumed integer value.
- */
+/** Consumes an integer token and returns its numeric value. */
 int integer() : { }
 {
     <INTEGER> { return Integer.parseInt(token.image); }
 }
 
-/**
- * This rule consumes a long or integer token and returns its numeric value.
- *
- * @return The consumed long value.
- */
+/** Consumes a long or integer token and returns its numeric value. */
 long consumeLong() : { }
 {
     ( <INTEGER> { return Long.parseLong(token.image); } |
@@ -2693,11 +2929,7 @@ long consumeLong() : { }
     )
 }
 
-/**
- * This rule consumes a floating-point token and returns its numeric value.
- *
- * @return The consumed value.
- */
+/** Consumes a floating-point token and returns its numeric value. */
 double consumeFloat() : { }
 {
     <DOUBLE> { return Double.valueOf(token.image); }
@@ -2711,9 +2943,7 @@ Number consumeNumber() :
     (num = consumeFloat() | num = consumeLong()) { return num; }
 }
 
-/**
- * This rule consumes an opening brace with leading and trailing newline tokens.
- */
+/** Consumes an opening brace with leading and trailing newline tokens. */
 void lbrace() : { }
 {
     (<NL>)* <LBRACE> (<NL>)*

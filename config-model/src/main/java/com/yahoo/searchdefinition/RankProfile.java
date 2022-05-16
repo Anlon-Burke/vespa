@@ -20,13 +20,11 @@ import com.yahoo.searchlib.rankingexpression.ExpressionFunction;
 import com.yahoo.searchlib.rankingexpression.FeatureList;
 import com.yahoo.searchlib.rankingexpression.RankingExpression;
 import com.yahoo.searchlib.rankingexpression.Reference;
-import com.yahoo.searchlib.rankingexpression.evaluation.TensorValue;
-import com.yahoo.searchlib.rankingexpression.evaluation.Value;
 import com.yahoo.searchlib.rankingexpression.rule.Arguments;
 import com.yahoo.searchlib.rankingexpression.rule.ReferenceNode;
+import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Serializable;
@@ -93,6 +91,8 @@ public class RankProfile implements Cloneable {
     private int numSearchPartitions = -1;
 
     private Double termwiseLimit = null;
+    private Double postFilterThreshold = null;
+    private Double approximateThreshold = null;
 
     /** The drop limit used to drop hits with rank score less than or equal to this value */
     private double rankScoreDropLimit = -Double.MAX_VALUE;
@@ -114,14 +114,15 @@ public class RankProfile implements Cloneable {
     // This cache must be invalidated every time modifications are done to 'functions'.
     private CachedFunctions allFunctionsCached = null;
 
-    private Map<Reference, TensorType> inputs = new LinkedHashMap<>();
+    private Map<Reference, Input> inputs = new LinkedHashMap<>();
+
+    private Map<Reference, Constant> constants = new LinkedHashMap<>();
+
+    private Map<String, OnnxModel> onnxModels = new LinkedHashMap<>();
 
     private Set<String> filterFields = new HashSet<>();
 
     private final RankProfileRegistry rankProfileRegistry;
-
-    /** Constants in ranking expressions */
-    private Map<String, Value> constants = new HashMap<>();
 
     private final TypeSettings attributeTypes = new TypeSettings();
 
@@ -129,25 +130,20 @@ public class RankProfile implements Cloneable {
 
     private Boolean strict;
 
-    /** Global onnx models not tied to a search definition */
-    private final OnnxModels onnxModels;
-    private final RankingConstants rankingConstants;
     private final ApplicationPackage applicationPackage;
     private final DeployLogger deployLogger;
 
     /**
-     * Creates a new rank profile for a particular search definition
+     * Creates a new rank profile for a particular schema
      *
      * @param name                the name of the new profile
-     * @param schema              the search definition owning this profile
+     * @param schema              the schema owning this profile
      * @param rankProfileRegistry the {@link com.yahoo.searchdefinition.RankProfileRegistry} to use for storing
      *                            and looking up rank profiles.
      */
-    public RankProfile(String name, Schema schema, RankProfileRegistry rankProfileRegistry, RankingConstants rankingConstants) {
+    public RankProfile(String name, Schema schema, RankProfileRegistry rankProfileRegistry) {
         this.name = Objects.requireNonNull(name, "name cannot be null");
-        this.schema = Objects.requireNonNull(schema, "search cannot be null");
-        this.onnxModels = null;
-        this.rankingConstants = rankingConstants;
+        this.schema = Objects.requireNonNull(schema, "schema cannot be null");
         this.rankProfileRegistry = rankProfileRegistry;
         this.applicationPackage = schema.applicationPackage();
         this.deployLogger = schema.getDeployLogger();
@@ -159,12 +155,10 @@ public class RankProfile implements Cloneable {
      * @param name  the name of the new profile
      */
     public RankProfile(String name, ApplicationPackage applicationPackage, DeployLogger deployLogger,
-                       RankProfileRegistry rankProfileRegistry, RankingConstants rankingConstants, OnnxModels onnxModels) {
+                       RankProfileRegistry rankProfileRegistry) {
         this.name = Objects.requireNonNull(name, "name cannot be null");
         this.schema = null;
         this.rankProfileRegistry = rankProfileRegistry;
-        this.rankingConstants = rankingConstants;
-        this.onnxModels = onnxModels;
         this.applicationPackage = applicationPackage;
         this.deployLogger = deployLogger;
     }
@@ -177,15 +171,6 @@ public class RankProfile implements Cloneable {
     /** Returns the application this is part of */
     public ApplicationPackage applicationPackage() {
         return applicationPackage;
-    }
-
-    /** Returns the ranking constants of the owner of this */
-    public RankingConstants rankingConstants() {
-        return rankingConstants;
-    }
-
-    public Map<String, OnnxModel> onnxModels() {
-        return schema != null ? schema.onnxModels().asMap() : onnxModels.asMap();
     }
 
     private Stream<ImmutableSDField> allFields() {
@@ -416,36 +401,56 @@ public class RankProfile implements Cloneable {
         return finalSettings;
     }
 
-    public void addConstant(String name, Value value) {
-        if (value instanceof TensorValue) {
-            TensorType type = value.type();
-            if (type.dimensions().stream().anyMatch(d -> d.isIndexed() && d.size().isEmpty()))
-                throw new IllegalArgumentException("Illegal type of constant " + name + " type " + type +
-                                                   ": Dense tensor dimensions must have a size");
-        }
-        constants.put(name, value.freeze());
+    public void add(Constant constant) {
+        constants.put(constant.name(), constant);
     }
 
-    public void addConstantTensor(String name, TensorValue value) {
-        addConstant(name, value);
-    }
+    /** Returns an unmodifiable view of the constants declared in this */
+    public Map<Reference, Constant> declaredConstants() { return Collections.unmodifiableMap(constants); }
 
     /** Returns an unmodifiable view of the constants available in this */
-    public Map<String, Value> getConstants() {
-        if (inherited().isEmpty()) return new HashMap<>(constants);
-
-        Map<String, Value> allConstants = new HashMap<>();
+    public Map<Reference, Constant> constants() {
+        Map<Reference, Constant> allConstants = new HashMap<>();
         for (var inheritedProfile : inherited()) {
-            for (var constant : inheritedProfile.getConstants().entrySet()) {
-                if (allConstants.containsKey(constant.getKey()))
-                    throw new IllegalArgumentException("Constant '" + constant.getKey() + "' is present in " +
+            for (var constant : inheritedProfile.constants().values()) {
+                if (allConstants.containsKey(constant.name()))
+                    throw new IllegalArgumentException(constant + "' is present in " +
                                                        inheritedProfile + " inherited by " +
                                                        this + ", but is also present in another profile inherited by it");
-                allConstants.put(constant.getKey(), constant.getValue());
+                allConstants.put(constant.name(), constant);
             }
         }
+
+        if (schema != null)
+            allConstants.putAll(schema.constants());
         allConstants.putAll(constants);
         return allConstants;
+    }
+
+    public void add(OnnxModel model) {
+        onnxModels.put(model.getName(), model);
+    }
+
+    /** Returns an unmodifiable map of the onnx models declared in this. */
+    public Map<String, OnnxModel> declaredOnnxModels() { return onnxModels; }
+
+    /** Returns an unmodifiable map of the onnx models available in this. */
+    public Map<String, OnnxModel> onnxModels() {
+        Map<String, OnnxModel> allModels = new HashMap<>();
+        for (var inheritedProfile : inherited()) {
+            for (var model : inheritedProfile.onnxModels().values()) {
+                if (allModels.containsKey(model.getName()))
+                    throw new IllegalArgumentException(model + "' is present in " +
+                                                       inheritedProfile + " inherited by " +
+                                                       this + ", but is also present in another profile inherited by it");
+                allModels.put(model.getName(), model);
+            }
+        }
+
+        if (schema != null)
+            allModels.putAll(schema.onnxModels());
+        allModels.putAll(onnxModels);
+        return allModels;
     }
 
     public void addAttributeType(String attributeName, String attributeType) {
@@ -688,11 +693,27 @@ public class RankProfile implements Cloneable {
     }
 
     public void setTermwiseLimit(double termwiseLimit) { this.termwiseLimit = termwiseLimit; }
+    public void setPostFilterThreshold(double threshold) { this.postFilterThreshold = threshold; }
+    public void setApproximateThreshold(double threshold) { this.approximateThreshold = threshold; }
 
     public OptionalDouble getTermwiseLimit() {
         if (termwiseLimit != null) return OptionalDouble.of(termwiseLimit);
         return uniquelyInherited(p -> p.getTermwiseLimit(), l -> l.isPresent(), "termwise-limit")
                 .orElse(OptionalDouble.empty());
+    }
+
+    public OptionalDouble getPostFilterThreshold() {
+        if (postFilterThreshold != null) {
+            return OptionalDouble.of(postFilterThreshold);
+        }
+        return uniquelyInherited(p -> p.getPostFilterThreshold(), l -> l.isPresent(), "post-filter-threshold").orElse(OptionalDouble.empty());
+    }
+
+    public OptionalDouble getApproximateThreshold() {
+        if (approximateThreshold != null) {
+            return OptionalDouble.of(approximateThreshold);
+        }
+        return uniquelyInherited(p -> p.getApproximateThreshold(), l -> l.isPresent(), "approximate-threshold").orElse(OptionalDouble.empty());
     }
 
     /** Whether we should ignore the default rank features. Set to null to use inherited */
@@ -746,33 +767,31 @@ public class RankProfile implements Cloneable {
      * All inputs must either be declared through this or in query profile types,
      * otherwise they are assumes to be scalars.
      */
-    public void addInput(Reference reference, TensorType declaredType) {
+    public void addInput(Reference reference, Input input) {
         if (inputs.containsKey(reference)) {
-            TensorType hadType = inputs().get(reference);
-            if (! declaredType.equals(hadType))
-                throw new IllegalArgumentException("Duplicate input '" + name + "' declared with both type " +
-                                                   hadType + " and " + declaredType);
+            Input existing = inputs().get(reference);
+            if (! input.equals(existing))
+                throw new IllegalArgumentException("Duplicate input: Has both " + input + " and existing");
         }
-        inputs.put(reference, declaredType);
+        inputs.put(reference, input);
     }
 
     /** Returns the inputs of this, which also includes all inputs of the parents of this. */
     // This is less restrictive than most other constructs in allowing inputs to be defined in all parent profiles
     // because inputs are tied closer to functions than the profile itself.
-    public Map<Reference, TensorType> inputs() {
+    public Map<Reference, Input> inputs() {
         if (inputs.isEmpty() && inherited().isEmpty()) return Map.of();
         if (inherited().isEmpty()) return Collections.unmodifiableMap(inputs);
 
         // Combine
-        Map<Reference, TensorType> allInputs = new LinkedHashMap<>();
+        Map<Reference, Input> allInputs = new LinkedHashMap<>();
         for (var inheritedProfile : inherited()) {
             for (var input : inheritedProfile.inputs().entrySet()) {
-                TensorType existingType = allInputs.get(input.getKey());
-                if (existingType != null && ! existingType.equals(input.getValue()))
+                Input existing = allInputs.get(input.getKey());
+                if (existing != null && ! existing.equals(input.getValue()))
                     throw new IllegalArgumentException(this + " inherits " + inheritedProfile + " which contains " +
-                                                       input.getValue() + ", with type " + input.getValue() + "" +
-                                                       " but this input is already defined with type " + existingType +
-                                                       " in another profile this inherits");
+                                                       input.getValue() + ", but this input is already defined as " +
+                                                       existing + " in another profile this inherits");
                 allInputs.put(input.getKey(), input.getValue());
             }
         }
@@ -939,7 +958,7 @@ public class RankProfile implements Cloneable {
     }
 
     private void compileThis(QueryProfileRegistry queryProfiles, ImportedMlModels importedModels) {
-        checkNameCollisions(getFunctions(), getConstants());
+        checkNameCollisions(getFunctions(), constants());
         ExpressionTransforms expressionTransforms = new ExpressionTransforms();
 
         Map<Reference, TensorType> featureTypes = featureTypes();
@@ -947,8 +966,8 @@ public class RankProfile implements Cloneable {
         Map<String, RankingExpressionFunction> inlineFunctions =
                 compileFunctions(this::getInlineFunctions, queryProfiles, featureTypes, importedModels, Collections.emptyMap(), expressionTransforms);
 
-        firstPhaseRanking = compile(this.getFirstPhase(), queryProfiles, featureTypes, importedModels, getConstants(), inlineFunctions, expressionTransforms);
-        secondPhaseRanking = compile(this.getSecondPhase(), queryProfiles, featureTypes, importedModels, getConstants(), inlineFunctions, expressionTransforms);
+        firstPhaseRanking = compile(this.getFirstPhase(), queryProfiles, featureTypes, importedModels, constants(), inlineFunctions, expressionTransforms);
+        secondPhaseRanking = compile(this.getSecondPhase(), queryProfiles, featureTypes, importedModels, constants(), inlineFunctions, expressionTransforms);
 
         // Function compiling second pass: compile all functions and insert previously compiled inline functions
         // TODO: This merges all functions from inherited profiles too and erases inheritance information. Not good.
@@ -956,9 +975,9 @@ public class RankProfile implements Cloneable {
         allFunctionsCached = null;
     }
 
-    private void checkNameCollisions(Map<String, RankingExpressionFunction> functions, Map<String, Value> constants) {
-        for (Map.Entry<String, RankingExpressionFunction> functionEntry : functions.entrySet()) {
-            if (constants.containsKey(functionEntry.getKey()))
+    private void checkNameCollisions(Map<String, RankingExpressionFunction> functions, Map<Reference, Constant> constants) {
+        for (var functionEntry : functions.entrySet()) {
+            if (constants.containsKey(FeatureNames.asConstantFeature(functionEntry.getKey())))
                 throw new IllegalArgumentException("Cannot have both a constant and function named '" +
                                                    functionEntry.getKey() + "'");
         }
@@ -983,7 +1002,7 @@ public class RankProfile implements Cloneable {
         while (null != (entry = findUncompiledFunction(functions.get(), compiledFunctions.keySet()))) {
             RankingExpressionFunction rankingExpressionFunction = entry.getValue();
             RankingExpressionFunction compiled = compile(rankingExpressionFunction, queryProfiles, featureTypes,
-                                                         importedModels, getConstants(), inlineFunctions,
+                                                         importedModels, constants(), inlineFunctions,
                                                          expressionTransforms);
             compiledFunctions.put(entry.getKey(), compiled);
         }
@@ -1003,7 +1022,7 @@ public class RankProfile implements Cloneable {
                                               QueryProfileRegistry queryProfiles,
                                               Map<Reference, TensorType> featureTypes,
                                               ImportedMlModels importedModels,
-                                              Map<String, Value> constants,
+                                              Map<Reference, Constant> constants,
                                               Map<String, RankingExpressionFunction> inlineFunctions,
                                               ExpressionTransforms expressionTransforms) {
         if (function == null) return null;
@@ -1032,7 +1051,8 @@ public class RankProfile implements Cloneable {
     public MapEvaluationTypeContext typeContext() { return typeContext(new QueryProfileRegistry()); }
 
     private Map<Reference, TensorType> featureTypes() {
-        Map<Reference, TensorType> featureTypes = new HashMap<>(inputs());
+        Map<Reference, TensorType> featureTypes = inputs().values().stream()
+                                                          .collect(Collectors.toMap(input -> input.name(), input -> input.type()));
         allFields().forEach(field -> addAttributeFeatureTypes(field, featureTypes));
         allImportedFields().forEach(field -> addAttributeFeatureTypes(field, featureTypes));
         return featureTypes;
@@ -1042,9 +1062,7 @@ public class RankProfile implements Cloneable {
                                                 Map<Reference, TensorType> featureTypes) {
         MapEvaluationTypeContext context = new MapEvaluationTypeContext(getExpressionFunctions(), featureTypes);
 
-        // Add small and large constants, respectively
-        getConstants().forEach((k, v) -> context.setType(FeatureNames.asConstantFeature(k), v.type()));
-        rankingConstants().asMap().forEach((k, v) -> context.setType(FeatureNames.asConstantFeature(k), v.getTensorType()));
+        constants().forEach((k, v) -> context.setType(k, v.type()));
 
         // Add query features from all rank profile types
         for (QueryProfileType queryProfileType : queryProfiles.getTypeRegistry().allComponents()) {
@@ -1052,7 +1070,7 @@ public class RankProfile implements Cloneable {
                 TensorType type = field.getType().asTensorType();
                 Optional<Reference> feature = Reference.simple(field.getName());
                 if ( feature.isEmpty() || ! feature.get().name().equals("query")) continue;
-                if (featureTypes.containsKey(feature)) continue; // Explicit feature types (from inputs) overrides
+                if (featureTypes.containsKey(feature.get())) continue; // Explicit feature types (from inputs) overrides
 
                 TensorType existingType = context.getType(feature.get());
                 if ( ! Objects.equals(existingType, context.defaultTypeOf(feature.get())))
@@ -1066,10 +1084,8 @@ public class RankProfile implements Cloneable {
         }
 
         // Add output types for ONNX models
-        for (Map.Entry<String, OnnxModel> entry : onnxModels().entrySet()) {
-            String modelName = entry.getKey();
-            OnnxModel model = entry.getValue();
-            Arguments args = new Arguments(new ReferenceNode(modelName));
+        for (var model : onnxModels().values()) {
+            Arguments args = new Arguments(new ReferenceNode(model.getName()));
             Map<String, TensorType> inputTypes = resolveOnnxInputTypes(model, context);
 
             TensorType defaultOutputType = model.getTensorType(model.getDefaultOutput(), inputTypes);
@@ -1370,6 +1386,121 @@ public class RankProfile implements Cloneable {
 
         public Map<String, String> getTypes() {
             return Collections.unmodifiableMap(types);
+        }
+
+    }
+
+    public static final class Input {
+
+        private final Reference name;
+        private final TensorType type;
+        private final Optional<Tensor> defaultValue;
+
+        public Input(Reference name, TensorType type, Optional<Tensor> defaultValue) {
+            this.name = name;
+            this.type = type;
+            this.defaultValue = defaultValue;
+        }
+
+        public Reference name() { return name; }
+        public TensorType type() { return type; }
+        public Optional<Tensor> defaultValue() { return defaultValue; }
+
+        @Override
+        public boolean equals(Object o) {
+            if (o == this) return true;
+            if ( ! (o instanceof Input)) return false;
+            Input other = (Input)o;
+            if ( ! other.name().equals(this.name())) return false;
+            if ( ! other.type().equals(this.type())) return false;
+            if ( ! other.defaultValue().equals(this.defaultValue())) return false;
+            return true;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(name, type, defaultValue);
+        }
+
+        @Override
+        public String toString() {
+            return "input '" + name + "' " + type +
+                   (defaultValue().isPresent() ? ":" + defaultValue.get().toAbbreviatedString() : "");
+        }
+
+    }
+
+    public static final class Constant {
+
+        private final Reference name;
+        private final TensorType type;
+
+        // One of these are non-empty
+        private final Optional<Tensor> value;
+        private final Optional<String> valuePath;
+
+        // Always set only if valuePath is set
+        private final Optional<DistributableResource.PathType> pathType;
+
+        public Constant(Reference name, Tensor value) {
+            this(name, value.type(), Optional.of(value), Optional.empty(), Optional.empty());
+        }
+
+        public Constant(Reference name, TensorType type, String valuePath) {
+            this(name, type, Optional.empty(), Optional.of(valuePath), Optional.of(DistributableResource.PathType.FILE));
+        }
+
+        public Constant(Reference name, TensorType type, String valuePath, DistributableResource.PathType pathType) {
+            this(name, type, Optional.empty(), Optional.of(valuePath), Optional.of(pathType));
+        }
+
+        private Constant(Reference name, TensorType type, Optional<Tensor> value,
+                         Optional<String> valuePath,  Optional<DistributableResource.PathType> pathType) {
+            this.name = Objects.requireNonNull(name);
+            this.type = Objects.requireNonNull(type);
+            this.value = Objects.requireNonNull(value);
+            this.valuePath = Objects.requireNonNull(valuePath);
+            this.pathType = Objects.requireNonNull(pathType);
+
+            if (type.dimensions().stream().anyMatch(d -> d.isIndexed() && d.size().isEmpty()))
+                throw new IllegalArgumentException("Illegal type of constant " + name + " type " + type +
+                                                   ": Dense tensor dimensions must have a size");
+        }
+
+        public Reference name() { return name; }
+        public TensorType type() { return type; }
+
+        /** Returns the value of this, if its path is empty. */
+        public Optional<Tensor> value() { return value; }
+
+        /** Returns the path to the value of this, if its value is empty. */
+        public Optional<String> valuePath() { return valuePath; }
+
+        /** Returns the path type, if valuePath is set. */
+        public Optional<DistributableResource.PathType> pathType() { return pathType; }
+
+        @Override
+        public boolean equals(Object o) {
+            if (o == this) return true;
+            if ( ! (o instanceof Constant)) return false;
+            Constant other = (Constant)o;
+            if ( ! other.name().equals(this.name())) return false;
+            if ( ! other.type().equals(this.type())) return false;
+            if ( ! other.value().equals(this.value())) return false;
+            if ( ! other.valuePath().equals(this.valuePath())) return false;
+            if ( ! other.pathType().equals(this.pathType())) return false;
+            return true;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(name, type, value, valuePath, pathType);
+        }
+
+        @Override
+        public String toString() {
+            return "constant '" + name + "' " + type + ":" +
+                   (value().isPresent() ? value.get().toAbbreviatedString() : " file:" + valuePath.get());
         }
 
     }

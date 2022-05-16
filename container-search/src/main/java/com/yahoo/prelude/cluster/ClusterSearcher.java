@@ -1,7 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.cluster;
 
-import com.google.inject.Inject;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.component.ComponentId;
 import com.yahoo.component.chain.dependencies.After;
 import com.yahoo.component.provider.ComponentRegistry;
@@ -18,9 +18,11 @@ import com.yahoo.search.Query;
 import com.yahoo.search.Result;
 import com.yahoo.search.Searcher;
 import com.yahoo.search.config.ClusterConfig;
+import com.yahoo.search.config.SchemaInfoConfig;
 import com.yahoo.search.dispatch.Dispatcher;
 import com.yahoo.search.query.ParameterParser;
 import com.yahoo.search.result.ErrorMessage;
+import com.yahoo.search.schema.SchemaInfo;
 import com.yahoo.search.searchchain.Execution;
 import com.yahoo.vespa.streamingvisitors.VdsStreamingSearcher;
 import com.yahoo.yolean.Exceptions;
@@ -39,6 +41,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.stream.Collectors;
 
 import static com.yahoo.container.QrSearchersConfig.Searchcluster.Indexingmode.STREAMING;
 
@@ -58,10 +61,10 @@ public class ClusterSearcher extends Searcher {
     private final String searchClusterName;
 
     // The set of document types contained in this search cluster
-    private final Set<String> documentTypes;
+    private final Set<String> schemas;
 
-    // Mapping from rank profile names to document types containing them
-    private final Map<String, Set<String>> rankProfiles = new HashMap<>();
+    // Mapping from rank profile names to schemas containing them
+    private final Map<String, Set<String>> rankProfilesz = new HashMap<>();
 
     private final long maxQueryTimeout; // in milliseconds
     private final long maxQueryCacheTimeout; // in milliseconds
@@ -75,6 +78,7 @@ public class ClusterSearcher extends Searcher {
                            QrSearchersConfig qrsConfig,
                            ClusterConfig clusterConfig,
                            DocumentdbInfoConfig documentDbConfig,
+                           SchemaInfo schemaInfo,
                            ComponentRegistry<Dispatcher> dispatchers,
                            VipStatus vipStatus,
                            VespaDocumentAccess access) {
@@ -83,7 +87,7 @@ public class ClusterSearcher extends Searcher {
         int searchClusterIndex = clusterConfig.clusterId();
         searchClusterName = clusterConfig.clusterName();
         QrSearchersConfig.Searchcluster searchClusterConfig = getSearchClusterConfigFromClusterName(qrsConfig, searchClusterName);
-        documentTypes = new LinkedHashSet<>();
+        schemas = new LinkedHashSet<>();
 
         maxQueryTimeout = ParameterParser.asMilliSeconds(clusterConfig.maxQueryTimeout(), DEFAULT_MAX_QUERY_TIMEOUT);
         maxQueryCacheTimeout = ParameterParser.asMilliSeconds(clusterConfig.maxQueryCacheTimeout(), DEFAULT_MAX_QUERY_CACHE_TIMEOUT);
@@ -92,23 +96,17 @@ public class ClusterSearcher extends Searcher {
                 .com().yahoo().prelude().fastsearch().FastSearcher().docsum()
                 .defaultclass());
 
-        for (DocumentdbInfoConfig.Documentdb docDb : documentDbConfig.documentdb()) {
-            String docTypeName = docDb.name();
-            documentTypes.add(docTypeName);
-
-            for (DocumentdbInfoConfig.Documentdb.Rankprofile profile : docDb.rankprofile()) {
-                addValidRankProfile(profile.name(), docTypeName);
-            }
-        }
+        for (DocumentdbInfoConfig.Documentdb docDb : documentDbConfig.documentdb())
+            schemas.add(docDb.name());
 
         String uniqueServerId = UUID.randomUUID().toString();
         if (searchClusterConfig.indexingmode() == STREAMING) {
             server = vdsCluster(uniqueServerId, searchClusterIndex,
-                                                       searchClusterConfig, docSumParams, documentDbConfig, access);
+                                searchClusterConfig, docSumParams, documentDbConfig, schemaInfo, access);
             vipStatus.addToRotation(server.getName());
         } else {
             server = searchDispatch(searchClusterIndex, searchClusterName, uniqueServerId,
-                                                   docSumParams, documentDbConfig, dispatchers);
+                                    docSumParams, documentDbConfig, schemaInfo, dispatchers);
         }
     }
 
@@ -130,6 +128,7 @@ public class ClusterSearcher extends Searcher {
                                                String serverId,
                                                SummaryParameters docSumParams,
                                                DocumentdbInfoConfig documentdbInfoConfig,
+                                               SchemaInfo schemaInfo,
                                                ComponentRegistry<Dispatcher> dispatchers) {
         ClusterParams clusterParams = makeClusterParams(searchclusterIndex);
         ComponentId dispatcherComponentId = new ComponentId("dispatcher." + searchClusterName);
@@ -137,7 +136,7 @@ public class ClusterSearcher extends Searcher {
         if (dispatcher == null)
             throw new IllegalArgumentException("Configuration error: No dispatcher " + dispatcherComponentId +
                                                " is configured");
-        return new FastSearcher(serverId, dispatcher, docSumParams, clusterParams, documentdbInfoConfig);
+        return new FastSearcher(serverId, dispatcher, docSumParams, clusterParams, documentdbInfoConfig, schemaInfo);
     }
 
     private static VdsStreamingSearcher vdsCluster(String serverId,
@@ -145,6 +144,7 @@ public class ClusterSearcher extends Searcher {
                                                    QrSearchersConfig.Searchcluster searchClusterConfig,
                                                    SummaryParameters docSumParams,
                                                    DocumentdbInfoConfig documentdbInfoConfig,
+                                                   SchemaInfo schemaInfo,
                                                    VespaDocumentAccess access) {
         if (searchClusterConfig.searchdef().size() != 1) {
             throw new IllegalArgumentException("Search clusters in streaming search shall only contain a single searchdefinition : " + searchClusterConfig.searchdef());
@@ -154,13 +154,13 @@ public class ClusterSearcher extends Searcher {
         searcher.setSearchClusterName(searchClusterConfig.rankprofiles().configid());
         searcher.setDocumentType(searchClusterConfig.searchdef(0));
         searcher.setStorageClusterRouteSpec(searchClusterConfig.storagecluster().routespec());
-        searcher.init(serverId, docSumParams, clusterParams, documentdbInfoConfig);
+        searcher.init(serverId, docSumParams, clusterParams, documentdbInfoConfig, schemaInfo);
         return searcher;
     }
 
     /** Do not use, for internal testing purposes only. **/
-    ClusterSearcher(Set<String> documentTypes, VespaBackEndSearcher searcher, Executor executor) {
-        this.documentTypes = documentTypes;
+    ClusterSearcher(Set<String> schemas, VespaBackEndSearcher searcher, Executor executor) {
+        this.schemas = schemas;
         searchClusterName = "testScenario";
         maxQueryTimeout = DEFAULT_MAX_QUERY_TIMEOUT;
         maxQueryCacheTimeout = DEFAULT_MAX_QUERY_CACHE_TIMEOUT;
@@ -168,19 +168,8 @@ public class ClusterSearcher extends Searcher {
         this.executor = executor;
     }
     /** Do not use, for internal testing purposes only. **/
-    ClusterSearcher(Set<String> documentTypes) {
-        this(documentTypes, null, null);
-    }
-
-    void addValidRankProfile(String profileName, String docTypeName) {
-        if (!rankProfiles.containsKey(profileName)) {
-            rankProfiles.put(profileName, new HashSet<>());
-        }
-        rankProfiles.get(profileName).add(docTypeName);
-    }
-
-    void setValidRankProfile(String profileName, Set<String> documentTypes) {
-        rankProfiles.put(profileName, documentTypes);
+    ClusterSearcher(Set<String> schemas) {
+        this(schemas, null, null);
     }
 
     /**
@@ -192,47 +181,52 @@ public class ClusterSearcher extends Searcher {
      * probably not reasonable.
      *
      * @param  query    query
-     * @param  docTypes set of requested doc types for this query
-     * @return          null if request rank profile is ok for the requested
-     *                  doc types, a result with error message if not.
+     * @param  schemas set of requested schemas for this query
+     * @return          null if requested rank profile is ok for the requested
+     *                  schemas, a result with error message if not.
      */
     // TODO: This should be in a separate searcher
-    private Result checkValidRankProfiles(Query query, Set<String> docTypes) {
+    // TODO Vespa 8: This should simply fail if the specified profile isn't present in all schemas
+    private Result checkValidRankProfiles(Query query, Set<String> schemas, Execution.Context context) {
         String rankProfile = query.getRanking().getProfile();
-        Set<String> invalidInDocTypes = null;
-        Set<String> rankDocTypes = rankProfiles.get(rankProfile);
+        Set<String> invalidInSchemas = null;
+        Set<String> schemasHavingProfile = schemasHavingProfile(rankProfile, context);
 
-        if (rankDocTypes == null) {
-            // rank profile does not exist in any document type
-            invalidInDocTypes = docTypes;
+        if (schemasHavingProfile.isEmpty()) {
+            invalidInSchemas = schemas;
         }
-        else if (docTypes.size() == 1) {
-            // one document type, fails if invalid rank profile
-            if (!rankDocTypes.contains(docTypes.iterator().next())) {
-                invalidInDocTypes = docTypes;
-            }
+        else if (schemas.size() == 1) {
+            if ( ! schemasHavingProfile.containsAll(schemas))
+                invalidInSchemas = schemas;
         }
         else {
-            // multiple document types, only fail when restricting doc types
+            // multiple schemas, only fail when restricting doc types
             Set<String> restrict = query.getModel().getRestrict();
             Set<String> sources = query.getModel().getSources();
             boolean validate = restrict != null && !restrict.isEmpty();
             validate = validate || sources != null && !sources.isEmpty();
-            if (validate && !rankDocTypes.containsAll(docTypes)) {
-                invalidInDocTypes = new HashSet<>(docTypes);
-                invalidInDocTypes.removeAll(rankDocTypes);
+            if (validate && !schemasHavingProfile.containsAll(schemas)) {
+                invalidInSchemas = new HashSet<>(schemas);
+                invalidInSchemas.removeAll(schemasHavingProfile);
             }
         }
 
-        if (invalidInDocTypes != null && !invalidInDocTypes.isEmpty()) {
-            String plural = invalidInDocTypes.size() > 1 ? "s" : "";
+        if (invalidInSchemas != null && !invalidInSchemas.isEmpty()) {
+            String plural = invalidInSchemas.size() > 1 ? "s" : "";
             return new Result(query,
                               ErrorMessage.createInvalidQueryParameter("Requested rank profile '" + rankProfile +
                                                                        "' is undefined for document type" + plural + " '" +
-                                                                       String.join(", ", invalidInDocTypes) + "'"));
+                                                                       String.join(", ", invalidInSchemas) + "'"));
         }
 
         return null;
+    }
+
+    private Set<String> schemasHavingProfile(String profile, Execution.Context context) {
+        return context.schemaInfo().schemas().values().stream()
+                                             .filter(schema -> schema.rankProfiles().containsKey(profile))
+                                             .map(schema -> schema.name())
+                                             .collect(Collectors.toSet());
     }
 
     @Override
@@ -245,7 +239,8 @@ public class ClusterSearcher extends Searcher {
                 searcher.fill(result, summaryClass, execution);
             } else {
                 if (result.hits().getErrorHit() == null) {
-                    result.hits().addError(ErrorMessage.createTimeout("No time left to get summaries, query timeout was " + query.getTimeout() + " ms"));
+                    result.hits().addError(ErrorMessage.createTimeout("No time left to get summaries, query timeout was " +
+                                                                      query.getTimeout() + " ms"));
                 }
             }
         } else {
@@ -292,12 +287,12 @@ public class ClusterSearcher extends Searcher {
     }
 
     private Result doSearch(Searcher searcher, Query query, Execution execution) {
-        if (documentTypes.size() > 1) {
+        if (schemas.size() > 1) {
             return searchMultipleDocumentTypes(searcher, query, execution);
         } else {
-            String docType = documentTypes.iterator().next();
+            String docType = schemas.iterator().next();
 
-            Result invalidRankProfile = checkValidRankProfiles(query, documentTypes);
+            Result invalidRankProfile = checkValidRankProfiles(query, schemas, execution.context());
             if (invalidRankProfile != null) {
                 return invalidRankProfile;
             }
@@ -320,12 +315,12 @@ public class ClusterSearcher extends Searcher {
     }
 
     private Result searchMultipleDocumentTypes(Searcher searcher, Query query, Execution execution) {
-        Set<String> docTypes = resolveDocumentTypes(query, execution.context().getIndexFacts());
+        Set<String> schemas = resolveSchemas(query, execution.context().getIndexFacts());
 
-        Result invalidRankProfile = checkValidRankProfiles(query, docTypes);
+        Result invalidRankProfile = checkValidRankProfiles(query, schemas, execution.context());
         if (invalidRankProfile != null) return invalidRankProfile;
 
-        List<Query> queries = createQueries(query, docTypes);
+        List<Query> queries = createQueries(query, schemas);
         if (queries.size() == 1) {
             return searcher.search(queries.get(0), execution);
         } else {
@@ -357,13 +352,13 @@ public class ClusterSearcher extends Searcher {
         }
     }
 
-    Set<String> resolveDocumentTypes(Query query, IndexFacts indexFacts) {
+    Set<String> resolveSchemas(Query query, IndexFacts indexFacts) {
         Set<String> restrict = query.getModel().getRestrict();
         if (restrict == null || restrict.isEmpty()) {
             Set<String> sources = query.getModel().getSources();
             return (sources == null || sources.isEmpty())
-                    ? documentTypes
-                    : new HashSet<>(indexFacts.newSession(sources, Collections.emptyList(), documentTypes).documentTypes());
+                    ? schemas
+                    : new HashSet<>(indexFacts.newSession(sources, Collections.emptyList(), schemas).documentTypes());
         } else {
             return filterValidDocumentTypes(restrict);
         }
@@ -372,7 +367,7 @@ public class ClusterSearcher extends Searcher {
     private Set<String> filterValidDocumentTypes(Collection<String> restrict) {
         Set<String> retval = new LinkedHashSet<>();
         for (String docType : restrict) {
-            if (docType != null && documentTypes.contains(docType)) {
+            if (docType != null && schemas.contains(docType)) {
                 retval.add(docType);
             }
         }

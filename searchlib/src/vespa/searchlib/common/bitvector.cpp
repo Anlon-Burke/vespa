@@ -2,7 +2,6 @@
 
 #include "bitvector.h"
 #include "allocatedbitvector.h"
-#include "growablebitvector.h"
 #include "partialbitvector.h"
 #include <vespa/searchlib/util/file_settings.h>
 #include <vespa/vespalib/hwaccelrated/iaccelrated.h>
@@ -42,9 +41,6 @@ constexpr size_t MMAP_LIMIT = 256_Mi;
 namespace search {
 
 using vespalib::nbostream;
-using vespalib::GenerationHeldBase;
-using vespalib::GenerationHeldAlloc;
-using vespalib::GenerationHolder;
 
 Alloc
 BitVector::allocatePaddedAndAligned(Index start, Index end, Index capacity, const Alloc* init_alloc)
@@ -106,13 +102,13 @@ BitVector::clearIntervalNoInvalidation(Range range_in)
     Index endw = wordNum(last);
 
     if (endw > startw) {
-        vespalib::atomic::store_ref_relaxed(_words[startw], _words[startw] & startBits(range.start()));
+        store(_words[startw], _words[startw] & startBits(range.start()));
         for (Index i = startw + 1; i < endw; ++i) {
-            vespalib::atomic::store_ref_relaxed(_words[i], 0);
+            store(_words[i], 0);
         }
-        vespalib::atomic::store_ref_relaxed(_words[endw], _words[endw] & endBits(last));
+        store(_words[endw], _words[endw] & endBits(last));
     } else {
-        vespalib::atomic::store_ref_relaxed(_words[startw], _words[startw] & (startBits(range.start()) | endBits(last)));
+        store(_words[startw], _words[startw] & (startBits(range.start()) | endBits(last)));
     }
 }
 
@@ -127,11 +123,13 @@ BitVector::setInterval(Index start_in, Index end_in)
     Index endw = wordNum(last);
 
     if (endw > startw) {
-        _words[startw++] |= checkTab(range.start());
-        memset(_words + startw, 0xff, sizeof(*_words)*(endw-startw));
-        _words[endw] |= ~endBits(last);
+        store(_words[startw], _words[startw] | checkTab(range.start()));
+        for (Index i = startw + 1; i < endw; ++i) {
+            store(_words[i], allBits());
+        }
+        store(_words[endw], _words[endw] | ~endBits(last));
     } else {
-        _words[startw] |= ~(startBits(range.start()) | endBits(last));
+        store(_words[startw], _words[startw] | ~(startBits(range.start()) | endBits(last)));
     }
 
     invalidateCachedCount();
@@ -156,17 +154,17 @@ BitVector::countInterval(Range range_in) const
     Word *bitValues = _words;
 
     if (startw == endw) {
-        return Optimized::popCount(bitValues[startw] & ~(startBits(range.start()) | endBits(last)));
+        return Optimized::popCount(load(bitValues[startw]) & ~(startBits(range.start()) | endBits(last)));
     }
     Index res = 0;
     // Limit to full words
     if ((range.start() & (WordLen - 1)) != 0) {
-        res += Optimized::popCount(bitValues[startw] & ~startBits(range.start()));
+        res += Optimized::popCount(load(bitValues[startw]) & ~startBits(range.start()));
         ++startw;
     }
     // Align start to 16 bytes
     while (startw < endw && (startw & 3) != 0) {
-        res += Optimized::popCount(bitValues[startw]);
+        res += Optimized::popCount(load(bitValues[startw]));
         ++startw;
     }
     bool partialEnd = (last & (WordLen - 1)) != (WordLen - 1);
@@ -177,7 +175,7 @@ BitVector::countInterval(Range range_in) const
         res += IAccelrated::getAccelerator().populationCount(bitValues + startw, endw - startw);
     }
     if (partialEnd) {
-        res += Optimized::popCount(bitValues[endw] & ~endBits(last));
+        res += Optimized::popCount(load(bitValues[endw]) & ~endBits(last));
     }
 
     return res;
@@ -195,7 +193,7 @@ BitVector::orWith(const BitVector & right)
                 IAccelrated::getAccelerator().orBit(getActiveStart(), right.getWordIndex(getStartIndex()), commonBytes);
             }
             Index last(right.size() - 1);
-            getWordIndex(last)[0] |= (right.getWordIndex(last)[0] & ~endBits(last));
+            store(getWordIndex(last)[0], getWordIndex(last)[0] | (load(right.getWordIndex(last)[0]) & ~endBits(last)));
         }
     } else {
         IAccelrated::getAccelerator().orBit(getActiveStart(), right.getWordIndex(getStartIndex()), getActiveBytes());
@@ -210,8 +208,8 @@ BitVector::repairEnds()
     if (size() != 0) {
         Index start(getStartIndex());
         Index last(size() - 1);
-        getWordIndex(start)[0] &= ~startBits(start);
-        getWordIndex(last)[0] &= ~endBits(last);
+        store(getWordIndex(start)[0], getWordIndex(start)[0] & ~startBits(start));
+        store(getWordIndex(last)[0], getWordIndex(last)[0] & ~endBits(last));
     }
     setGuardBit();
 }
@@ -245,7 +243,7 @@ BitVector::andNotWith(const BitVector& right)
                 IAccelrated::getAccelerator().andNotBit(getActiveStart(), right.getWordIndex(getStartIndex()), commonBytes);
             }
             Index last(right.size() - 1);
-            getWordIndex(last)[0] &= ~(right.getWordIndex(last)[0] & ~endBits(last));
+            store(getWordIndex(last)[0], getWordIndex(last)[0] & ~(load(right.getWordIndex(last)[0]) & ~endBits(last)));
         }
     } else {
         IAccelrated::getAccelerator().andNotBit(getActiveStart(), right.getWordIndex(getStartIndex()), getActiveBytes());
@@ -273,7 +271,7 @@ BitVector::operator==(const BitVector &rhs) const
     const Word *words = getActiveStart();
     const Word *oWords = rhs.getActiveStart();
     for (Index i = 0; i < bitVectorSize; i++) {
-        if (words[i] != oWords[i]) {
+        if (load(words[i]) != load(oWords[i])) {
             return false;
         }
     }
@@ -286,31 +284,19 @@ BitVector::hasTrueBitsInternal() const
     Index bitVectorSizeL1(numActiveWords() - 1);
     const Word *words(getActiveStart());
     for (Index i = 0; i < bitVectorSizeL1; i++) {
-        if (words[i] != 0) {
+        if (load(words[i]) != 0) {
             return true;
         }
     }
 
     // Ignore guard bit.
-    if ((words[bitVectorSizeL1] & ~mask(size())) != 0)
+    if ((load(words[bitVectorSizeL1]) & ~mask(size())) != 0)
         return true;
 
     return false;
 }
 
 //////////////////////////////////////////////////////////////////////
-// Set new length. Destruction of content
-//////////////////////////////////////////////////////////////////////
-void
-BitVector::resize(Index)
-{
-    LOG_ABORT("should not be reached");
-}
-GenerationHeldBase::UP
-BitVector::grow(Index, Index )
-{
-    LOG_ABORT("should not be reached");
-}
 
 size_t
 BitVector::getFileBytes(Index bits)
@@ -383,12 +369,6 @@ BitVector::create(const BitVector & rhs)
     return std::make_unique<AllocatedBitVector>(rhs);
 }
 
-BitVector::UP
-BitVector::create(Index numberOfElements, Index newCapacity, GenerationHolder &generationHolder)
-{
-    return std::make_unique<GrowableBitVector>(numberOfElements, newCapacity, generationHolder);
-}
-
 MMappedBitVector::MMappedBitVector(Index numberOfElements, FastOS_FileInterface &file,
                                    int64_t offset, Index doccount) :
     BitVector()
@@ -425,7 +405,7 @@ operator<<(nbostream &out, const BitVector &bv)
 
 
 nbostream &
-operator>>(nbostream &in, BitVector &bv)
+operator>>(nbostream &in, AllocatedBitVector &bv)
 {
     uint64_t size;
     uint64_t cachedHits;

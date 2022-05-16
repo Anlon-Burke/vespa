@@ -33,6 +33,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
+import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -52,14 +53,20 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
     private final String name;
     private final Compressor.Compression compressedProperties;
 
+    /**  The compiled profile this is created from. */
+    private final RankProfile compiled;
+
     /** Creates a raw rank profile from the given rank profile. */
     public RawRankProfile(RankProfile rankProfile, LargeRankExpressions largeExpressions,
                           QueryProfileRegistry queryProfiles, ImportedMlModels importedModels,
                           AttributeFields attributeFields, ModelContext.Properties deployProperties) {
         this.name = rankProfile.name();
-        compressedProperties = compress(new Deriver(rankProfile.compile(queryProfiles, importedModels), attributeFields, deployProperties, queryProfiles)
+        compiled = rankProfile.compile(queryProfiles, importedModels);
+        compressedProperties = compress(new Deriver(compiled, attributeFields, deployProperties, queryProfiles)
                                                 .derive(largeExpressions));
     }
+
+    public RankProfile compiled() { return compiled; }
 
     private Compressor.Compression compress(List<Pair<String, String>> properties) {
         StringBuilder b = new StringBuilder();
@@ -134,6 +141,8 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
         private final int minHitsPerThread;
         private final int numSearchPartitions;
         private final double termwiseLimit;
+        private final OptionalDouble postFilterThreshold;
+        private final OptionalDouble approximateThreshold;
         private final double rankScoreDropLimit;
         private final boolean mapBackRankingExpressionFeatures;
 
@@ -142,7 +151,7 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
          */
         private final NativeRankTypeDefinitionSet nativeRankTypeDefinitions = new NativeRankTypeDefinitionSet("default");
         private final Map<String, String> attributeTypes;
-        private final Map<Reference, TensorType> inputs;
+        private final Map<Reference, RankProfile.Input> inputs;
         private final Set<String> filterFields = new java.util.LinkedHashSet<>();
         private final String rankprofileName;
 
@@ -170,6 +179,8 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             minHitsPerThread = compiled.getMinHitsPerThread();
             numSearchPartitions = compiled.getNumSearchPartitions();
             termwiseLimit = compiled.getTermwiseLimit().orElse(deployProperties.featureFlags().defaultTermwiseLimit());
+            postFilterThreshold = compiled.getPostFilterThreshold();
+            approximateThreshold = compiled.getApproximateThreshold();
             keepRankCount = compiled.getKeepRankCount();
             rankScoreDropLimit = compiled.getRankScoreDropLimit();
             mapBackRankingExpressionFeatures = deployProperties.featureFlags().avoidRenamingSummaryFeatures();
@@ -382,6 +393,12 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             if (termwiseLimit < 1.0) {
                 properties.add(new Pair<>("vespa.matching.termwise_limit", termwiseLimit + ""));
             }
+            if (postFilterThreshold.isPresent()) {
+                properties.add(new Pair<>("vespa.matching.global_filter.upper_limit", String.valueOf(postFilterThreshold.getAsDouble())));
+            }
+            if (approximateThreshold.isPresent()) {
+                properties.add(new Pair<>("vespa.matching.global_filter.lower_limit", String.valueOf(approximateThreshold.getAsDouble())));
+            }
             if (matchPhaseSettings != null) {
                 properties.add(new Pair<>("vespa.matchphase.degradation.attribute", matchPhaseSettings.getAttribute()));
                 properties.add(new Pair<>("vespa.matchphase.degradation.ascendingorder", matchPhaseSettings.getAscending() + ""));
@@ -415,10 +432,16 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             for (Map.Entry<String, String> attributeType : attributeTypes.entrySet()) {
                 properties.add(new Pair<>("vespa.type.attribute." + attributeType.getKey(), attributeType.getValue()));
             }
-            for (Map.Entry<Reference, TensorType> input : inputs.entrySet()) {
-                if (FeatureNames.isQueryFeature(input.getKey()))
-                    properties.add(new Pair<>("vespa.type.query." + input.getKey().arguments().expressions().get(0),
-                                              input.getValue().toString()));
+            for (var input : inputs.values()) {
+                if (FeatureNames.isQueryFeature(input.name())) {
+                    properties.add(new Pair<>("vespa.type.query." + input.name().arguments().expressions().get(0),
+                                              input.type().toString()));
+                    if (input.defaultValue().isPresent())
+                        properties.add(new Pair<>(input.name().toString(),
+                                                  input.type().rank() == 0 ?
+                                                  String.valueOf(input.defaultValue().get().asDouble()) :
+                                                  input.defaultValue().get().toString(true, false)));
+                }
             }
             if (properties.size() >= 1000000) throw new IllegalArgumentException("Too many rank properties");
             distributeLargeExpressionsAsFiles(properties, largeRankExpressions);
@@ -460,7 +483,7 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
 
         private void deriveOnnxModelFunctionsAndFeatures(RankProfile rankProfile) {
             if (rankProfile.schema() == null) return;
-            if (rankProfile.schema().onnxModels().asMap().isEmpty()) return;
+            if (rankProfile.onnxModels().isEmpty()) return;
             replaceOnnxFunctionInputs(rankProfile);
             replaceImplicitOnnxConfigFeatures(summaryFeatures, rankProfile);
             replaceImplicitOnnxConfigFeatures(matchFeatures, rankProfile);
@@ -469,7 +492,7 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
         private void replaceOnnxFunctionInputs(RankProfile rankProfile) {
             Set<String> functionNames = rankProfile.getFunctions().keySet();
             if (functionNames.isEmpty()) return;
-            for (OnnxModel onnxModel: rankProfile.schema().onnxModels().asMap().values()) {
+            for (OnnxModel onnxModel: rankProfile.onnxModels().values()) {
                 for (Map.Entry<String, String> mapping : onnxModel.getInputMap().entrySet()) {
                     String source = mapping.getValue();
                     if (functionNames.contains(source)) {

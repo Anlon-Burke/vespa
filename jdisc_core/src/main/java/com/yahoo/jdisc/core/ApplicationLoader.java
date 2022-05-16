@@ -16,6 +16,7 @@ import com.yahoo.jdisc.application.OsgiHeader;
 import com.yahoo.jdisc.service.ContainerNotReadyException;
 import com.yahoo.jdisc.service.CurrentContainer;
 import com.yahoo.jdisc.statistics.ContainerWatchdogMetrics;
+import com.yahoo.log.LogSetup;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.BundleException;
@@ -46,6 +47,7 @@ public class ApplicationLoader implements BootstrapLoader, ContainerActivator, C
     private ApplicationInUseTracker applicationInUseTracker;
 
     public ApplicationLoader(OsgiFramework osgiFramework, Iterable<? extends Module> guiceModules) {
+        LogSetup.initVespaLogging("Container");
         this.osgiFramework = osgiFramework;
         this.guiceModules.install(new ApplicationEnvironmentModule(this));
         this.guiceModules.installAll(guiceModules);
@@ -198,6 +200,7 @@ public class ApplicationLoader implements BootstrapLoader, ContainerActivator, C
         try {
             watchdog.close();
             osgiFramework.stop();
+            LogSetup.cleanup();
         } catch (BundleException | InterruptedException e) {
             e.printStackTrace();
         }

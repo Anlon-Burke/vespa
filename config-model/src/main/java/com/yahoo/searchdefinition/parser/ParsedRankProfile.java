@@ -1,6 +1,8 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.searchdefinition.parser;
 
+import com.yahoo.searchdefinition.OnnxModel;
+import com.yahoo.searchdefinition.RankProfile;
 import com.yahoo.searchdefinition.RankProfile.MatchPhaseSettings;
 import com.yahoo.searchdefinition.RankProfile.MutateOperation;
 import com.yahoo.searchlib.rankingexpression.FeatureList;
@@ -28,6 +30,8 @@ class ParsedRankProfile extends ParsedBlock {
     private boolean ignoreDefaultRankFeatures = false;
     private Double rankScoreDropLimit = null;
     private Double termwiseLimit = null;
+    private Double postFilterThreshold = null;
+    private Double approximateThreshold = null;
     private final List<FeatureList> matchFeatures = new ArrayList<>();
     private final List<FeatureList> rankFeatures = new ArrayList<>();
     private final List<FeatureList> summaryFeatures = new ArrayList<>();
@@ -49,8 +53,9 @@ class ParsedRankProfile extends ParsedBlock {
     private final Map<String, ParsedRankFunction> functions = new LinkedHashMap<>();
     private final Map<String, String> fieldsRankType = new LinkedHashMap<>();
     private final Map<String, List<String>> rankProperties = new LinkedHashMap<>();
-    private final Map<String, Value> constants = new LinkedHashMap<>();
-    private final Map<Reference, TensorType> inputs = new LinkedHashMap<>();
+    private final Map<Reference, RankProfile.Constant> constants = new LinkedHashMap<>();
+    private final Map<Reference, RankProfile.Input> inputs = new LinkedHashMap<>();
+    private final List<OnnxModel> onnxModels = new ArrayList<>();
 
     ParsedRankProfile(String name) {
         super(name, "rank-profile");
@@ -59,6 +64,8 @@ class ParsedRankProfile extends ParsedBlock {
     boolean getIgnoreDefaultRankFeatures() { return this.ignoreDefaultRankFeatures; }
     Optional<Double> getRankScoreDropLimit() { return Optional.ofNullable(this.rankScoreDropLimit); }
     Optional<Double> getTermwiseLimit() { return Optional.ofNullable(this.termwiseLimit); }
+    Optional<Double> getPostFilterThreshold() { return Optional.ofNullable(this.postFilterThreshold); }
+    Optional<Double> getApproximateThreshold() { return Optional.ofNullable(this.approximateThreshold); }
     List<FeatureList> getMatchFeatures() { return List.copyOf(this.matchFeatures); }
     List<FeatureList> getRankFeatures() { return List.copyOf(this.rankFeatures); }
     List<FeatureList> getSummaryFeatures() { return List.copyOf(this.summaryFeatures); }
@@ -78,8 +85,9 @@ class ParsedRankProfile extends ParsedBlock {
     Map<String, Integer> getFieldsWithRankWeight() { return Collections.unmodifiableMap(fieldsRankWeight); }
     Map<String, String> getFieldsWithRankType() { return Collections.unmodifiableMap(fieldsRankType); }
     Map<String, List<String>> getRankProperties() { return Collections.unmodifiableMap(rankProperties); }
-    Map<String, Value> getConstants() { return Collections.unmodifiableMap(constants); }
-    Map<Reference, TensorType> getInputs() { return Collections.unmodifiableMap(inputs); }
+    Map<Reference, RankProfile.Constant> getConstants() { return Collections.unmodifiableMap(constants); }
+    Map<Reference, RankProfile.Input> getInputs() { return Collections.unmodifiableMap(inputs); }
+    List<OnnxModel> getOnnxModels() { return List.copyOf(onnxModels); }
 
     Optional<String> getInheritedSummaryFeatures() { return Optional.ofNullable(this.inheritedSummaryFeatures); }
     Optional<String> getSecondPhaseExpression() { return Optional.ofNullable(this.secondPhaseExpression); }
@@ -96,19 +104,18 @@ class ParsedRankProfile extends ParsedBlock {
         this.inheritedSummaryFeatures = other;
     }
 
-    void addConstant(String name, Value value) {
-        verifyThat(! constants.containsKey(name), "already has constant", name);
-        constants.put(name, value);
+    void add(RankProfile.Constant constant) {
+        verifyThat(! constants.containsKey(constant.name()), "already has constant", constant.name());
+        constants.put(constant.name(), constant);
     }
 
-    void addConstantTensor(String name, TensorValue value) {
-        verifyThat(! constants.containsKey(name), "already has constant", name);
-        constants.put(name, value);
-    }
-
-    void addInput(Reference name, TensorType type) {
+    void addInput(Reference name, RankProfile.Input input) {
         verifyThat(! inputs.containsKey(name), "already has input", name);
-        inputs.put(name, type);
+        inputs.put(name, input);
+    }
+
+    void add(OnnxModel model) {
+        onnxModels.add(model);
     }
 
     void addFieldRankFilter(String field, boolean filter) {
@@ -202,6 +209,15 @@ class ParsedRankProfile extends ParsedBlock {
         verifyThat(termwiseLimit == null, "already has termwise-limit");
         this.termwiseLimit = limit;
     }
-  
-    
+
+    void setPostFilterThreshold(double threshold) {
+        verifyThat(postFilterThreshold == null, "already has post-filter-threshold");
+        this.postFilterThreshold = threshold;
+    }
+
+    void setApproximateThreshold(double threshold) {
+        verifyThat(approximateThreshold == null, "already has approximate-threshold");
+        this.approximateThreshold = threshold;
+    }
+
 }

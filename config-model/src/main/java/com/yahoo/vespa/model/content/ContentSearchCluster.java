@@ -6,9 +6,9 @@ import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.AbstractConfigProducer;
 import com.yahoo.documentmodel.NewDocumentType;
 import com.yahoo.searchdefinition.Schema;
+import com.yahoo.searchdefinition.derived.SchemaInfo;
 import com.yahoo.vespa.config.search.DispatchConfig;
 import com.yahoo.vespa.config.search.core.ProtonConfig;
-import com.yahoo.vespa.model.builder.UserConfigBuilder;
 import com.yahoo.vespa.model.builder.xml.dom.DomSearchTuningBuilder;
 import com.yahoo.vespa.model.builder.xml.dom.ModelElement;
 import com.yahoo.vespa.model.builder.xml.dom.VespaDomBuilder;
@@ -243,10 +243,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
                 throw new IllegalArgumentException("Schema '" + schemaDefinitionXMLHandler.getName() + "' referenced in " +
                                                    this + " does not exist");
 
-            // TODO: remove explicit building of user configs when the complete content model is built using builders.
-            sc.add(new SearchCluster.SchemaInfo(schema,
-                                                UserConfigBuilder.build(e.getXml(), deployState, deployState.getDeployLogger()),
-                                                deployState.rankProfileRegistry()));
+            sc.add(new SchemaInfo(schema, deployState.rankProfileRegistry(), null, null));
         }
     }
 
@@ -276,8 +273,8 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
         Optional<Tuning> tuning = Optional.ofNullable(this.tuning);
         if (element == null) {
             searchNode = SearchNode.create(parent, "" + node.getDistributionKey(), node.getDistributionKey(), spec,
-                                           clusterName, node, flushOnShutdown, tuning, resourceLimits, parentGroup.isHosted(),
-                                           fractionOfMemoryReserved);
+                                           clusterName, node, flushOnShutdown, tuning, resourceLimits, deployState.isHosted(),
+                                           deployState.featureFlags().loadCodeAsHugePages(), fractionOfMemoryReserved);
             searchNode.setHostResource(node.getHostResource());
             searchNode.initService(deployState);
 

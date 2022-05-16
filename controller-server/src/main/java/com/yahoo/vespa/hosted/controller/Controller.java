@@ -1,7 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller;
 
-import com.google.inject.Inject;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.component.AbstractComponent;
 import com.yahoo.component.Version;
 import com.yahoo.component.Vtag;
@@ -23,7 +23,7 @@ import com.yahoo.vespa.hosted.controller.config.ControllerConfig;
 import com.yahoo.vespa.hosted.controller.deployment.JobController;
 import com.yahoo.vespa.hosted.controller.dns.NameServiceForwarder;
 import com.yahoo.vespa.hosted.controller.notification.NotificationsDb;
-import com.yahoo.vespa.hosted.controller.notify.Notifier;
+import com.yahoo.vespa.hosted.controller.notification.Notifier;
 import com.yahoo.vespa.hosted.controller.persistence.CuratorDb;
 import com.yahoo.vespa.hosted.controller.persistence.JobControlFlags;
 import com.yahoo.vespa.hosted.controller.security.AccessControl;
@@ -123,7 +123,7 @@ public class Controller extends AbstractComponent {
         auditLogger = new AuditLogger(curator, clock);
         jobControl = new JobControl(new JobControlFlags(curator, flagSource));
         archiveBucketDb = new CuratorArchiveBucketDb(this);
-        notifier = new Notifier(curator, serviceRegistry.zoneRegistry(), serviceRegistry.mailer());
+        notifier = new Notifier(curator, serviceRegistry.zoneRegistry(), serviceRegistry.mailer(), flagSource);
         notificationsDb = new NotificationsDb(this);
         supportAccessControl = new SupportAccessControl(this);
 

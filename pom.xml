@@ -49,7 +49,6 @@
         <module>config-provisioning</module>
         <module>config-proxy</module>
         <module>configserver</module>
-        <module>configserver-client</module>
         <module>configserver-flags</module>
         <module>config_test</module>
         <module>container</module>
@@ -83,10 +82,10 @@
         <module>hosted-api</module>
         <module>hosted-tenant-base</module>
         <module>hosted-zone-api</module>
+        <module>http-client</module>
         <module>http-utils</module>
         <module>indexinglanguage</module>
         <!--<module>integration/intellij</module>-->
-        <module>jaxrs_client_utils</module>
         <module>jaxrs_utils</module>
         <module>jdisc-cloud-aws</module>
         <module>jdisc-security-filters</module>
@@ -122,6 +121,7 @@
         <module>standalone-container</module>
         <module>statistics</module>
         <module>storage</module>
+        <module>streamingvisitors</module>
         <module>tenant-base</module>
         <module>tenant-cd-api</module>
         <module>tenant-cd-commons</module>
@@ -144,7 +144,6 @@
         <module>vespa_jersey2</module>
         <module>vespajlib</module>
         <module>vespalog</module>
-        <module>vsm</module>
         <module>yolean</module>
         <module>zkfacade</module>
         <module>zookeeper-client-common</module>

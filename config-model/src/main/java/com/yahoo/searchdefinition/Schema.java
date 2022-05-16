@@ -9,6 +9,7 @@ import com.yahoo.config.model.application.provider.BaseDeployLogger;
 import com.yahoo.config.model.deploy.TestProperties;
 import com.yahoo.document.DataTypeName;
 import com.yahoo.document.Field;
+import com.yahoo.searchdefinition.derived.FileDistributedOnnxModels;
 import com.yahoo.searchdefinition.derived.SummaryClass;
 import com.yahoo.searchdefinition.document.Attribute;
 import com.yahoo.searchdefinition.document.ImmutableSDField;
@@ -19,6 +20,7 @@ import com.yahoo.searchdefinition.document.SDField;
 import com.yahoo.searchdefinition.document.Stemming;
 import com.yahoo.searchdefinition.document.TemporaryImportedFields;
 import com.yahoo.searchdefinition.document.annotation.SDAnnotationType;
+import com.yahoo.searchlib.rankingexpression.Reference;
 import com.yahoo.vespa.documentmodel.DocumentSummary;
 import com.yahoo.vespa.documentmodel.SummaryField;
 
@@ -26,6 +28,7 @@ import java.io.Reader;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -85,9 +88,12 @@ public class Schema implements ImmutableSchema {
     /** External rank expression files of this */
     private final LargeRankExpressions largeRankExpressions;
 
-    private final RankingConstants rankingConstants;
+    /** Constants that will be available in all rank profiles. */
+    // TODO: Remove on Vespa 9: Should always be in a rank profile
+    private final Map<Reference, RankProfile.Constant> constants = new LinkedHashMap<>();
 
-    private final OnnxModels onnxModels;
+    // TODO: Remove on Vespa 9: Should always be in a rank profile
+    private final Map<String, OnnxModel> onnxModels = new LinkedHashMap<>();
 
     /** All imported fields of this (and parent schemas) */
     // TODO: Use empty, not optional
@@ -147,8 +153,6 @@ public class Schema implements ImmutableSchema {
         this.properties = properties;
         this.documentsOnly = documentsOnly;
         largeRankExpressions = new LargeRankExpressions(fileRegistry);
-        rankingConstants = new RankingConstants(fileRegistry, Optional.of(this));
-        onnxModels = new OnnxModels(fileRegistry, Optional.of(this));
     }
 
     /**
@@ -216,7 +220,7 @@ public class Schema implements ImmutableSchema {
      */
     public void addDocument(SDDocumentType document) {
         if (documentType != null) {
-            throw new IllegalArgumentException("Searchdefinition cannot have more than one document");
+            throw new IllegalArgumentException("Schema cannot have more than one document");
         }
         documentType = document;
     }
@@ -224,11 +228,41 @@ public class Schema implements ImmutableSchema {
     @Override
     public LargeRankExpressions rankExpressionFiles() { return largeRankExpressions; }
 
-    @Override
-    public RankingConstants rankingConstants() { return rankingConstants; }
+    public void add(RankProfile.Constant constant) {
+        constants.put(constant.name(), constant);
+    }
 
+    /** Returns an unmodifiable map of the constants declared in this. */
+    public Map<Reference, RankProfile.Constant> declaredConstants() { return constants; }
+
+    /** Returns an unmodifiable map of the constants available in this. */
     @Override
-    public OnnxModels onnxModels() { return onnxModels; }
+    public Map<Reference, RankProfile.Constant> constants() {
+        if (inherited().isEmpty()) return Collections.unmodifiableMap(constants);
+        if (constants.isEmpty()) return inherited().get().constants();
+
+        Map<Reference, RankProfile.Constant> allConstants = new LinkedHashMap<>(inherited().get().constants());
+        allConstants.putAll(constants);
+        return allConstants;
+    }
+
+    public void add(OnnxModel model) {
+        onnxModels.put(model.getName(), model);
+    }
+
+    /** Returns an unmodifiable map of the onnx models declared in this. */
+    public Map<String, OnnxModel> declaredOnnxModels() { return onnxModels; }
+
+    /** Returns an unmodifiable map of the onnx models available in this. */
+    @Override
+    public Map<String, OnnxModel> onnxModels() {
+        if (inherited().isEmpty()) return Collections.unmodifiableMap(onnxModels);
+        if (onnxModels.isEmpty()) return inherited().get().onnxModels();
+
+        Map<String, OnnxModel> allModels = new LinkedHashMap<>(inherited().get().onnxModels());
+        allModels.putAll(onnxModels);
+        return allModels;
+    }
 
     public Optional<TemporaryImportedFields> temporaryImportedFields() {
         return temporaryImportedFields;

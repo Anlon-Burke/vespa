@@ -13,14 +13,10 @@ import com.yahoo.path.Path;
 import com.yahoo.search.query.profile.QueryProfileRegistry;
 import com.yahoo.searchdefinition.FeatureNames;
 import com.yahoo.searchdefinition.RankProfile;
-import com.yahoo.searchdefinition.RankingConstant;
 import com.yahoo.searchdefinition.expressiontransforms.RankProfileTransformContext;
 import com.yahoo.searchlib.rankingexpression.ExpressionFunction;
 import com.yahoo.searchlib.rankingexpression.RankingExpression;
 import com.yahoo.searchlib.rankingexpression.Reference;
-import com.yahoo.searchlib.rankingexpression.evaluation.DoubleValue;
-import com.yahoo.searchlib.rankingexpression.evaluation.TensorValue;
-import com.yahoo.searchlib.rankingexpression.evaluation.Value;
 import com.yahoo.searchlib.rankingexpression.parser.ParseException;
 import com.yahoo.searchlib.rankingexpression.rule.CompositeNode;
 import com.yahoo.searchlib.rankingexpression.rule.ExpressionNode;
@@ -215,7 +211,8 @@ public class ConvertedModel {
         for (ImportedMlFunction outputFunction : model.outputExpressions()) {
             ExpressionFunction expression = asExpressionFunction(outputFunction);
             for (Map.Entry<String, TensorType> input : expression.argumentTypes().entrySet()) {
-                profile.addInput(Reference.fromIdentifier(input.getKey()), input.getValue());
+                Reference name = Reference.fromIdentifier(input.getKey());
+                profile.addInput(name, new RankProfile.Input(name, input.getValue(), Optional.empty()));
             }
             addExpression(expression, expression.getName(), constantsReplacedByFunctions,
                           store, profile, queryProfiles, expressions);
@@ -267,11 +264,12 @@ public class ConvertedModel {
 
     private static Map<String, ExpressionFunction> convertStored(ModelStore store, RankProfile profile) {
         for (Pair<String, Tensor> constant : store.readSmallConstants()) {
-            profile.addConstant(constant.getFirst(), asValue(constant.getSecond()));
+            var name = FeatureNames.asConstantFeature(constant.getFirst());
+            profile.add(new RankProfile.Constant(name, constant.getSecond()));
         }
 
-        for (RankingConstant constant : store.readLargeConstants()) {
-            profile.rankingConstants().putIfAbsent(constant);
+        for (RankProfile.Constant constant : store.readLargeConstants()) {
+            profile.add(constant);
         }
 
         for (Pair<String, RankingExpression> function : store.readFunctions()) {
@@ -283,7 +281,8 @@ public class ConvertedModel {
             String name = output.getFirst();
             ExpressionFunction expression = output.getSecond();
             for (Map.Entry<String, TensorType> input : expression.argumentTypes().entrySet()) {
-                profile.addInput(Reference.fromIdentifier(input.getKey()), input.getValue());
+                Reference inputName = Reference.fromIdentifier(input.getKey());
+                profile.addInput(inputName, new RankProfile.Input(inputName, input.getValue(), Optional.empty()));
             }
             TensorType type = expression.getBody().type(profile.typeContext());
             if (type != null) {
@@ -298,7 +297,8 @@ public class ConvertedModel {
                                                String constantValueString) {
         Tensor constantValue = Tensor.from(constantValueString);
         store.writeSmallConstant(constantName, constantValue);
-        profile.addConstant(constantName, asValue(constantValue));
+        Reference name = FeatureNames.asConstantFeature(constantName);
+        profile.add(new RankProfile.Constant(name, constantValue));
     }
 
     private static void transformLargeConstant(ModelStore store,
@@ -317,10 +317,11 @@ public class ConvertedModel {
             constantsReplacedByFunctions.add(constantName); // will replace constant(constantName) by constantName later
         }
         else {
-            profile.rankingConstants().computeIfAbsent(constantName, name -> {
-                Path constantPath = store.writeLargeConstant(name, constantValue);
-                return new RankingConstant(name, constantValue.type(), constantPath.toString());
-            });
+            var constantReference = FeatureNames.asConstantFeature(constantName);
+            if ( ! profile.constants().containsKey(constantReference)) {
+                Path constantPath = store.writeLargeConstant(constantName, constantValue);
+                profile.add(new RankProfile.Constant(constantReference, constantValue.type(), constantPath.toString()));
+            }
         }
     }
 
@@ -439,13 +440,6 @@ public class ConvertedModel {
         }
     }
 
-    private static Value asValue(Tensor tensor) {
-        if (tensor.type().rank() == 0)
-            return new DoubleValue(tensor.asDouble()); // the backend gets offended by dimensionless tensors
-        else
-            return new TensorValue(tensor);
-    }
-
     @Override
     public String toString() { return "model '" + modelName + "'"; }
 
@@ -554,15 +548,17 @@ public class ConvertedModel {
         }
 
         /**
-         * Reads the information about all the large (aka ranking) constants stored in the application package
+         * Reads the information about all the large constants stored in the application package
          * (the constant value itself is replicated with file distribution).
          */
-        List<RankingConstant> readLargeConstants() {
+        List<RankProfile.Constant> readLargeConstants() {
             try {
-                List<RankingConstant> constants = new ArrayList<>();
+                List<RankProfile.Constant> constants = new ArrayList<>();
                 for (ApplicationFile constantFile : application.getFile(modelFiles.largeConstantsInfoPath()).listFiles()) {
                     String[] parts = IOUtils.readAll(constantFile.createReader()).split(":");
-                    constants.add(new RankingConstant(parts[0], TensorType.fromSpec(parts[1]), parts[2]));
+                    constants.add(new RankProfile.Constant(FeatureNames.asConstantFeature(parts[0]),
+                                                           TensorType.fromSpec(parts[1]),
+                                                           parts[2]));
                 }
                 return constants;
             }

@@ -73,10 +73,10 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private int persistenceThrottlingWindowSize = -1;
     private double persistenceThrottlingWsResizeRate = 3.0;
     private boolean persistenceThrottlingOfMergeFeedOps = true;
-    private boolean useV8GeoPositions = false;
+    private boolean useV8GeoPositions = true;
     private List<String> environmentVariables = List.of();
-    private boolean avoidRenamingSummaryFeatures = false;
-    private boolean experimentalSdParsing = true;
+    private boolean avoidRenamingSummaryFeatures = true;
+    private boolean enableBitVectors = false;
     private Architecture adminClusterNodeResourcesArchitecture = Architecture.getDefault();
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
@@ -132,7 +132,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public boolean useV8GeoPositions() { return useV8GeoPositions; }
     @Override public List<String> environmentVariables() { return environmentVariables; }
     @Override public boolean avoidRenamingSummaryFeatures() { return this.avoidRenamingSummaryFeatures; }
-    @Override public boolean experimentalSdParsing() { return this.experimentalSdParsing; }
+    @Override public boolean enableBitVectors() { return this.enableBitVectors; }
     @Override public Architecture adminClusterArchitecture() { return adminClusterNodeResourcesArchitecture; }
 
     public TestProperties maxUnCommittedMemory(int maxUnCommittedMemory) {
@@ -349,8 +349,8 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
-    public TestProperties setExperimentalSdParsing(boolean value) {
-        this.experimentalSdParsing = value;
+    public TestProperties setEnableBitVectors(boolean value) {
+        this.enableBitVectors = value;
         return this;
     }
 

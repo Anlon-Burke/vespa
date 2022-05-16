@@ -42,7 +42,6 @@ import com.yahoo.jrt.Supervisor;
 import com.yahoo.jrt.Transport;
 import com.yahoo.jrt.slobrok.api.Register;
 import com.yahoo.jrt.slobrok.api.SlobrokList;
-import com.yahoo.log.LogSetup;
 import com.yahoo.messagebus.network.rpc.SlobrokConfigSubscriber;
 import com.yahoo.net.HostName;
 import com.yahoo.vespa.config.ConfigKey;
@@ -109,7 +108,6 @@ public final class ConfiguredApplication implements Application {
     private volatile boolean shutdownReconfiguration = false;
 
     static {
-        LogSetup.initVespaLogging("Container");
         log.log(Level.INFO, "Starting jdisc" + (Vtag.currentVersion.isEmpty() ? "" : " at version " + Vtag.currentVersion));
         installBouncyCastleSecurityProvider();
     }
@@ -460,7 +458,6 @@ public final class ConfiguredApplication implements Application {
         slobrokConfigSubscriber.ifPresent(SlobrokConfigSubscriber::shutdown);
         Container.get().shutdown();
         unregisterInSlobrok();
-        LogSetup.cleanup();
         shutdownDeadline.cancel();
         log.info("Destroy: Finished");
     }

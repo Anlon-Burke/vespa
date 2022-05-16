@@ -1,7 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.container.jdisc.messagebus;
 
-import com.google.inject.Inject;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.component.AbstractComponent;
 import com.yahoo.container.jdisc.ContainerMbusConfig;
 import com.yahoo.document.DocumentTypeManager;
@@ -29,6 +29,7 @@ import com.yahoo.messagebus.shared.SharedMessageBus;
 import com.yahoo.messagebus.shared.SharedSourceSession;
 import com.yahoo.vespa.config.content.DistributionConfig;
 import com.yahoo.vespa.config.content.LoadTypeConfig;
+import com.yahoo.yolean.concurrent.Memoized;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -54,9 +55,7 @@ public final class SessionCache extends AbstractComponent {
 
     private static final Logger log = Logger.getLogger(SessionCache.class.getName());
 
-    private final Object monitor = new Object();
-    private Supplier<SharedMessageBus> messageBuses;
-    private SharedMessageBus messageBus;
+    private final Memoized<SharedMessageBus, RuntimeException> messageBus;
 
     private final Object intermediateLock = new Object();
     private final Map<String, SharedIntermediateSession> intermediates = new HashMap<>();
@@ -96,24 +95,18 @@ public final class SessionCache extends AbstractComponent {
 
     public SessionCache(Supplier<NetworkMultiplexer> net, ContainerMbusConfig containerMbusConfig,
                         MessagebusConfig messagebusConfig, Protocol protocol) {
-        this.messageBuses = () -> createSharedMessageBus(net.get(), containerMbusConfig, messagebusConfig, protocol);
+        this.messageBus = new Memoized<>(() -> createSharedMessageBus(net.get(), containerMbusConfig, messagebusConfig, protocol),
+                                         SharedMessageBus::release);
     }
 
     @Override
     public void deconstruct() {
-        synchronized (monitor) {
-            messageBuses = () -> { throw new IllegalStateException("Session cache already deconstructed"); };
-
-            if (messageBus != null)
-                messageBus.release();
-        }
+        messageBus.close();
     }
 
     // Lazily create shared message bus.
     private SharedMessageBus bus() {
-        synchronized (monitor) {
-            return messageBus = messageBus != null ? messageBus : messageBuses.get();
-        }
+        return messageBus.get();
     }
 
     private static SharedMessageBus createSharedMessageBus(NetworkMultiplexer net,

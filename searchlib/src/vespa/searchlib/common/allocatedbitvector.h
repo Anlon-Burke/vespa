@@ -6,6 +6,7 @@
 
 namespace search {
 
+class GrowableBitVector;
 class BitVectorTest;
 
 /**
@@ -39,9 +40,7 @@ public:
 
     AllocatedBitVector(const BitVector &other);
     AllocatedBitVector(const AllocatedBitVector &other);
-    virtual ~AllocatedBitVector();
-    AllocatedBitVector &operator=(const AllocatedBitVector &other);
-    AllocatedBitVector &operator=(const BitVector &other);
+    ~AllocatedBitVector() override;
 
     /**
      * Query the size of the bit vector.
@@ -57,9 +56,7 @@ public:
      *
      * @param newLength the new length of the bit vector (in bits)
      */
-    void resize(Index newLength) override;
-
-    GenerationHeldBase::UP grow(Index newLength, Index newCapacity) override;
+    void resize(Index newLength);
 
 protected:
     Index          _capacityBits;
@@ -67,14 +64,9 @@ protected:
 
 private:
     friend class BitVectorTest;
-    void swap(AllocatedBitVector & rhs) {
-        std::swap(_capacityBits, rhs._capacityBits);
-        _alloc.swap(rhs._alloc);
-        BitVector::swap(rhs);
-    }
+    friend class GrowableBitVector;
 
     AllocatedBitVector(const BitVector &other, std::pair<Index, Index> size_capacity);
 };
 
 } // namespace search
-

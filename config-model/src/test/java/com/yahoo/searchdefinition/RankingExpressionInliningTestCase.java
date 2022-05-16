@@ -69,10 +69,10 @@ public class RankingExpressionInliningTestCase extends AbstractSchemaTestCase {
         Schema s = builder.getSchema();
 
         RankProfile parent = rankProfileRegistry.get(s, "parent").compile(new QueryProfileRegistry(), new ImportedMlModels());
-        assertEquals("7 * (3 + attribute(a) + attribute(b) * (attribute(a) * 3 + if (7 < attribute(a), 1, 2) == 0))",
+        assertEquals("7.0 * (3 + attribute(a) + attribute(b) * (attribute(a) * 3 + if (7.0 < attribute(a), 1, 2) == 0))",
                      parent.getFirstPhaseRanking().getRoot().toString());
         RankProfile child = rankProfileRegistry.get(s, "child").compile(new QueryProfileRegistry(), new ImportedMlModels());
-        assertEquals("7 * (9 + attribute(a))",
+        assertEquals("7.0 * (9 + attribute(a))",
                      child.getFirstPhaseRanking().getRoot().toString());
     }
 
@@ -192,17 +192,12 @@ public class RankingExpressionInliningTestCase extends AbstractSchemaTestCase {
 
     @Test
     public void testFunctionInliningWithReplacement() throws ParseException {
-        checkFunctionReplacement(false);
-        checkFunctionReplacement(true);
-    }
-
-    public void checkFunctionReplacement(boolean useXPP) throws ParseException {
         RankProfileRegistry rankProfileRegistry = new RankProfileRegistry();
         MockDeployLogger deployLogger = new MockDeployLogger();
         ApplicationBuilder builder = new ApplicationBuilder(MockApplicationPackage.createEmpty(),
                                                             new MockFileRegistry(),
                                                             deployLogger,
-                                                            new TestProperties().setExperimentalSdParsing(useXPP),
+                                                            new TestProperties(),
                                                             rankProfileRegistry,
                                                             new QueryProfileRegistry());
         builder.addSchema(

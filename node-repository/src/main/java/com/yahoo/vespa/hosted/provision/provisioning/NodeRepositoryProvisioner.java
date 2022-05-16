@@ -1,7 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.provisioning;
 
-import com.google.inject.Inject;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.config.provision.ActivationContext;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationTransaction;
@@ -119,7 +119,7 @@ public class NodeRepositoryProvisioner implements Provisioner {
 
     private NodeResources getNodeResources(ClusterSpec cluster, NodeResources nodeResources, ApplicationId applicationId) {
         return nodeResources.isUnspecified()
-                ? capacityPolicies.defaultNodeResources(cluster.type(), applicationId)
+                ? capacityPolicies.defaultNodeResources(cluster, applicationId)
                 : nodeResources;
     }
 
@@ -180,7 +180,7 @@ public class NodeRepositoryProvisioner implements Provisioner {
     private ClusterResources initialResourcesFrom(Capacity requested, ClusterSpec clusterSpec, ApplicationId applicationId) {
         var initial = requested.minResources();
         if (initial.nodeResources().isUnspecified())
-            initial = initial.with(capacityPolicies.defaultNodeResources(clusterSpec.type(), applicationId));
+            initial = initial.with(capacityPolicies.defaultNodeResources(clusterSpec, applicationId));
         return initial;
     }
 

@@ -8,11 +8,9 @@ import com.yahoo.io.IOUtils;
 import com.yahoo.io.reader.NamedReader;
 import com.yahoo.path.Path;
 import com.yahoo.search.query.profile.QueryProfileRegistry;
+import com.yahoo.searchdefinition.FeatureNames;
 import com.yahoo.searchdefinition.parser.ParseException;
-import com.yahoo.searchlib.rankingexpression.evaluation.Value;
 import com.yahoo.tensor.TensorType;
-import com.yahoo.vespa.model.VespaModel;
-import com.yahoo.vespa.model.ml.ImportedModelTester;
 import com.yahoo.yolean.Exceptions;
 import org.junit.After;
 import org.junit.Test;
@@ -22,9 +20,8 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -234,7 +231,7 @@ public class RankingExpressionWithOnnxTestCase {
         search.assertFirstPhaseExpression(vespaExpressionWithoutConstant, "my_profile_child");
 
         assertNull("Constant overridden by function is not added",
-                search.search().rankingConstants().get( name + "_Variable"));
+                search.search().constants().get(name + "_Variable"));
 
         // At this point the expression is stored - copy application to another location which do not have a models dir
         Path storedApplicationDirectory = applicationDir.getParentPath().append("copy");
@@ -249,7 +246,7 @@ public class RankingExpressionWithOnnxTestCase {
             searchFromStored.assertFirstPhaseExpression(vespaExpressionWithoutConstant, "my_profile");
             searchFromStored.assertFirstPhaseExpression(vespaExpressionWithoutConstant, "my_profile_child");
             assertNull("Constant overridden by function is not added",
-                       searchFromStored.search().rankingConstants().get( name + "_Variable"));
+                       searchFromStored.search().constants().get(name + "_Variable"));
         } finally {
             IOUtils.recursiveDeleteDir(storedApplicationDirectory.toFile());
         }
@@ -326,7 +323,7 @@ public class RankingExpressionWithOnnxTestCase {
     }
 
     private void assertSmallConstant(String name, TensorType type, RankProfileSearchFixture search) {
-        Value value = search.compiledRankProfile("my_profile").getConstants().get(name);
+        var value = search.compiledRankProfile("my_profile").constants().get(FeatureNames.asConstantFeature(name));
         assertNotNull(value);
         assertEquals(type, value.type());
     }
@@ -388,8 +385,8 @@ public class RankingExpressionWithOnnxTestCase {
 
         StoringApplicationPackage(Path applicationPackageWritableRoot, String queryProfile, String queryProfileType) {
             super(new File(applicationPackageWritableRoot.toString()),
-                    null, null, Collections.emptyList(), null,
-                    null, null, false, queryProfile, queryProfileType);
+                  null, null, List.of(), Map.of(), null,
+                  null, null, false, queryProfile, queryProfileType);
         }
 
         @Override

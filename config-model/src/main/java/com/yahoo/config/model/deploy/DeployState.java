@@ -28,6 +28,7 @@ import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.io.IOUtils;
+import com.yahoo.search.query.profile.QueryProfileRegistry;
 import com.yahoo.searchdefinition.Application;
 import com.yahoo.searchdefinition.RankProfileRegistry;
 import com.yahoo.searchdefinition.Schema;
@@ -40,6 +41,7 @@ import com.yahoo.vespa.model.container.search.QueryProfiles;
 import com.yahoo.vespa.model.container.search.QueryProfilesBuilder;
 import com.yahoo.vespa.model.container.search.SemanticRuleBuilder;
 import com.yahoo.vespa.model.container.search.SemanticRules;
+import com.yahoo.yolean.Exceptions;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -214,8 +216,9 @@ public class DeployState implements ConfigDefinitionStore {
         File importFrom = applicationPackage.getFileReference(ApplicationPackage.MODELS_DIR);
         ImportedMlModels importedModels = new ImportedMlModels(importFrom, executor, modelImporters);
         for (var entry : importedModels.getSkippedModels().entrySet()) {
+            // TODO: Vespa 8: Throw IllegalArgumentException instead
             deployLogger.logApplicationPackage(Level.WARNING, "Skipping import of model " + entry.getKey() + " as an exception " +
-                                                              "occurred during import. Error: " + entry.getValue());
+                                                              "occurred during import: " + entry.getValue());
         }
         return importedModels;
     }
@@ -333,6 +336,8 @@ public class DeployState implements ConfigDefinitionStore {
         private boolean accessLoggingEnabledByDefault = true;
         private Optional<DockerImage> wantedDockerImageRepo = Optional.empty();
         private Reindexing reindexing = null;
+        private RankProfileRegistry rankProfileRegistry = new RankProfileRegistry();
+        private QueryProfiles queryProfiles = null;
 
         public Builder() {}
 
@@ -430,6 +435,21 @@ public class DeployState implements ConfigDefinitionStore {
             return this;
         }
 
+        public Builder rankProfileRegistry(RankProfileRegistry rankProfileRegistry) {
+            this.rankProfileRegistry = rankProfileRegistry;
+            return this;
+        }
+
+        public Builder queryProfiles(QueryProfiles queryProfiles) {
+            this.queryProfiles = queryProfiles;
+            return this;
+        }
+
+        public Builder queryProfiles(QueryProfileRegistry queryProfileRegistry) {
+            this.queryProfiles = new QueryProfiles(queryProfileRegistry, logger);
+            return this;
+        }
+
         public Builder reindexing(Reindexing reindexing) { this.reindexing = Objects.requireNonNull(reindexing); return this; }
 
         public DeployState build() {
@@ -437,8 +457,8 @@ public class DeployState implements ConfigDefinitionStore {
         }
 
         public DeployState build(ValidationParameters validationParameters) {
-            RankProfileRegistry rankProfileRegistry = new RankProfileRegistry();
-            QueryProfiles queryProfiles = new QueryProfilesBuilder().build(applicationPackage, logger);
+            if (queryProfiles == null)
+                queryProfiles = new QueryProfilesBuilder().build(applicationPackage, logger);
             SemanticRules semanticRules = new SemanticRuleBuilder().build(applicationPackage);
             Application application = new ApplicationBuilder(applicationPackage, fileRegistry, logger, properties,
                                                              rankProfileRegistry, queryProfiles.getRegistry())

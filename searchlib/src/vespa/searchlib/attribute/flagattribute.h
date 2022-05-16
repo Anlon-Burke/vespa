@@ -3,6 +3,8 @@
 
 #include "multinumericattribute.h"
 #include "multi_numeric_search_context.h"
+#include <vespa/searchlib/common/growablebitvector.h>
+#include <vespa/vespalib/datastore/atomic_value_wrapper.h>
 
 namespace search {
 
@@ -34,10 +36,11 @@ private:
     void removeOldGenerations(vespalib::GenerationHandler::generation_t firstUsed) override;
     uint32_t getOffset(int8_t value) const { return value + 128; }
 
-    vespalib::GenerationHolder               _bitVectorHolder;
-    std::vector<std::shared_ptr<BitVector> > _bitVectorStore;
-    std::vector<BitVector *>                 _bitVectors;
-    uint32_t                                 _bitVectorSize;
+    using AtomicBitVectorPtr = vespalib::datastore::AtomicValueWrapper<BitVector *>;
+    vespalib::GenerationHolder                       _bitVectorHolder;
+    std::vector<std::shared_ptr<GrowableBitVector> > _bitVectorStore;
+    std::vector<AtomicBitVectorPtr>                  _bitVectors;
+    uint32_t                                         _bitVectorSize;
 };
 
 typedef FlagAttributeT<FlagBaseImpl> FlagAttribute;

@@ -136,7 +136,7 @@ WriteableFileChunk(vespalib::Executor &executor,
         if (_idxHeaderLen == 0) {
             _idxHeaderLen = writeIdxHeader(fileHeaderContext, _docIdLimit, *idxFile);
         }
-        _idxFileSize = idxFile->GetSize();
+        _idxFileSize.store(idxFile->GetSize(), std::memory_order_relaxed);
         if ( ! idxFile->Sync()) {
             throw SummaryException("Failed syncing idx file", *idxFile, VESPA_STRLOC);
         }
@@ -219,6 +219,18 @@ struct LidAndBuffer {
 
 }
 
+const Chunk&
+WriteableFileChunk::get_chunk(uint32_t chunk) const
+{
+    auto found = _chunkMap.find(chunk);
+    if (found != _chunkMap.end()) {
+        return *found->second;
+    } else {
+        assert(chunk == _active->getId());
+        return *_active;
+    }
+}
+
 void
 WriteableFileChunk::read(LidInfoWithLidV::const_iterator begin, size_t count, IBufferVisitor & visitor) const
 {
@@ -232,17 +244,8 @@ WriteableFileChunk::read(LidInfoWithLidV::const_iterator begin, size_t count, IB
                 const LidInfoWithLid & li = *(begin + i);
                 uint32_t chunk = li.getChunkId();
                 if ((chunk >= _chunkInfo.size()) || !_chunkInfo[chunk].valid()) {
-                    auto found = _chunkMap.find(chunk);
-                    vespalib::ConstBufferRef buffer;
-                    if (found != _chunkMap.end()) {
-                        buffer = found->second->getLid(li.getLid());
-                    } else {
-                        assert(chunk == _active->getId());
-                        buffer = _active->getLid(li.getLid());
-                    }
-                    auto copy = vespalib::alloc::Alloc::alloc(buffer.size());
-                    memcpy(copy.get(), buffer.data(), buffer.size());
-                    buffers.emplace_back(li.getLid(), buffer.size(), std::move(copy));
+                    auto copy = get_chunk(chunk).read(li.getLid());
+                    buffers.emplace_back(li.getLid(), copy.first, std::move(copy.second));
                 } else {
                     chunksOnFile[chunk] = _chunkInfo[chunk];
                 }
@@ -443,7 +446,7 @@ WriteableFileChunk::computeChunkMeta(ProcessedChunkQ & chunks, size_t startPos, 
 {
     ChunkMetaV cmetaV;
     cmetaV.reserve(chunks.size());
-    uint64_t lastSerial(_lastPersistedSerialNum);
+    uint64_t lastSerial(_lastPersistedSerialNum.load(std::memory_order_relaxed));
     std::unique_lock guard(_lock);
 
     if (!_pendingChunks.empty()) {
@@ -582,7 +585,7 @@ WriteableFileChunk::freeze(CpuUsage::Category cpu_category)
         {
             std::unique_lock guard(_lock);
             setDiskFootprint(getDiskFootprint(guard));
-            _frozen = true;
+            _frozen.store(true, std::memory_order_release);
         }
         bool sync_and_close_ok = _dataFile.Sync() && _dataFile.Close();
         assert(sync_and_close_ok);
@@ -626,6 +629,7 @@ WriteableFileChunk::getMemoryFootprint() const
 size_t
 WriteableFileChunk::getMemoryMetaFootprint() const
 {
+    std::lock_guard guard(_lock);
     constexpr size_t mySizeWithoutMyParent(sizeof(*this) - sizeof(FileChunk));
     return mySizeWithoutMyParent + FileChunk::getMemoryMetaFootprint();
 }
@@ -859,7 +863,7 @@ WriteableFileChunk::needFlushPendingChunks(const unique_lock & guard, uint64_t s
 
 void
 WriteableFileChunk::updateCurrentDiskFootprint() {
-    _currentDiskFootprint.store(_idxFileSize + _dataFile.getSize(), std::memory_order_relaxed);
+    _currentDiskFootprint.store(_idxFileSize.load(std::memory_order_relaxed) + _dataFile.getSize(), std::memory_order_relaxed);
 }
 
 /*
@@ -890,7 +894,7 @@ WriteableFileChunk::unconditionallyFlushPendingChunks(const unique_lock &flushGu
     uint64_t lastSerial = 0;
     {
         std::unique_lock guard(_lock);
-        lastSerial = _lastPersistedSerialNum;
+        lastSerial = _lastPersistedSerialNum.load(std::memory_order_relaxed);
         for (;;) {
             if (!needFlushPendingChunks(guard, serialNum, datFileLen))
                 break;
@@ -920,9 +924,9 @@ WriteableFileChunk::unconditionallyFlushPendingChunks(const unique_lock &flushGu
     if ( ! idxFile->Sync()) {
         throw SummaryException("Failed fsync of idx file", *idxFile, VESPA_STRLOC);
     }
-    _idxFileSize = idxFile->GetSize();
-    if (_lastPersistedSerialNum < lastSerial) {
-        _lastPersistedSerialNum = lastSerial;
+    _idxFileSize.store(idxFile->GetSize(), std::memory_order_relaxed);
+    if (_lastPersistedSerialNum.load(std::memory_order_relaxed) < lastSerial) {
+        _lastPersistedSerialNum.store(lastSerial, std::memory_order_relaxed);
     }
     return timeStamp;
 }

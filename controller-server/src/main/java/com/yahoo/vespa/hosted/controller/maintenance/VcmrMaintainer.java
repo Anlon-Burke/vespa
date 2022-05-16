@@ -44,7 +44,7 @@ import java.util.stream.Stream;
 public class VcmrMaintainer extends ControllerMaintainer {
 
     private static final Logger LOG = Logger.getLogger(VcmrMaintainer.class.getName());
-    private static final Duration ALLOWED_RETIREMENT_TIME = Duration.ofHours(60);
+    private static final int DAYS_TO_RETIRE = 2;
     private static final Duration ALLOWED_POSTPONEMENT_TIME = Duration.ofDays(7);
 
     private final CuratorDb curator;
@@ -214,6 +214,10 @@ public class VcmrMaintainer extends ControllerMaintainer {
             return hostAction.withState(State.PENDING_RETIREMENT);
         }
 
+        if (isFailed(node)) {
+            return hostAction.withState(State.NONE);
+        }
+
         return hostAction;
     }
 
@@ -240,8 +244,7 @@ public class VcmrMaintainer extends ControllerMaintainer {
 
     private boolean shouldRetire(VespaChangeRequest changeRequest, HostAction action) {
         return action.getState() == State.PENDING_RETIREMENT &&
-                changeRequest.getChangeRequestSource().getPlannedStartTime()
-                        .minus(ALLOWED_RETIREMENT_TIME)
+                getRetirementStartTime(changeRequest.getChangeRequestSource().getPlannedStartTime())
                         .isBefore(ZonedDateTime.now());
     }
 
@@ -259,6 +262,11 @@ public class VcmrMaintainer extends ControllerMaintainer {
     private boolean isOutOfSync(Node node, HostAction action) {
         return action.getState() == State.RETIRED && node.state() != Node.State.parked ||
                 action.getState() == State.RETIRING && !node.wantToRetire();
+    }
+
+    private boolean isFailed(Node node) {
+        return node.state() == Node.State.failed ||
+                node.state() == Node.State.breakfixed;
     }
 
     private Map<ZoneId, List<Node>> nodesByZone() {
@@ -335,6 +343,18 @@ public class VcmrMaintainer extends ControllerMaintainer {
     private void updateReport(ZoneId zoneId, Node node, VcmrReport report) {
         LOG.fine(() -> Text.format("Updating report for %s: %s", node.hostname(), report));
         nodeRepository.updateReports(zoneId, node.hostname().value(), report.toNodeReports());
+    }
+
+    // Calculate wanted retirement start time, ignoring weekends
+    // protected for testing
+    protected ZonedDateTime getRetirementStartTime(ZonedDateTime plannedStartTime) {
+        var time = plannedStartTime;
+        var days = 0;
+        while (days < DAYS_TO_RETIRE) {
+            time = time.minusDays(1);
+            if (time.getDayOfWeek().getValue() < 6) days++;
+        }
+        return time;
     }
 
 }

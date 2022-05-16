@@ -11,7 +11,6 @@ import com.yahoo.security.SslContextBuilder;
 import org.apache.hc.client5.http.ssl.NoopHostnameVerifier;
 import org.assertj.core.api.Assertions;
 import org.eclipse.jetty.client.HttpClient;
-import org.eclipse.jetty.client.ProxyProtocolClientConnectionFactory;
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.junit.jupiter.api.BeforeAll;
@@ -22,14 +21,20 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.concurrent.ExecutionException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static com.yahoo.jdisc.http.server.jetty.Utils.generatePrivateKeyAndCertificate;
+import static com.yahoo.yolean.Exceptions.uncheckInterrupted;
+import static org.eclipse.jetty.client.ProxyProtocolClientConnectionFactory.V1;
+import static org.eclipse.jetty.client.ProxyProtocolClientConnectionFactory.V2;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * @author bjorncs
@@ -42,7 +47,6 @@ class ProxyProtocolTest {
     private static Path certificateFile;
     private InMemoryConnectionLog connectionLog;
     private InMemoryRequestLog requestLogMock;
-    private JettyTestDriver driver;
 
     @BeforeAll
     static void generateCrypto(@TempDir Path tmpFolder) throws IOException {
@@ -55,18 +59,18 @@ class ProxyProtocolTest {
     void initializeServer() {
         requestLogMock = new InMemoryRequestLog();
         connectionLog = new InMemoryConnectionLog();
-        driver = createSslWithProxyProtocolTestDriver(certificateFile, privateKeyFile, requestLogMock, /*mixedMode*/connectionLog, false);
     }
 
     @Test
     void requireThatProxyProtocolIsAcceptedAndActualRemoteAddressStoredInAccessLog() throws Exception {
         String proxiedRemoteAddress = "192.168.0.100";
         int proxiedRemotePort = 12345;
-        sendJettyClientRequest(driver, certificateFile, new ProxyProtocolClientConnectionFactory.V1.Tag(proxiedRemoteAddress, proxiedRemotePort));
-        sendJettyClientRequest(driver, certificateFile, new ProxyProtocolClientConnectionFactory.V2.Tag(proxiedRemoteAddress, proxiedRemotePort));
+        JettyTestDriver driver = createSslWithProxyProtocolTestDriver(certificateFile, privateKeyFile, requestLogMock, connectionLog, false);
+        sendJettyClientRequest(driver, certificateFile, new V1.Tag(proxiedRemoteAddress, proxiedRemotePort));
+        sendJettyClientRequest(driver, certificateFile, new V2.Tag(proxiedRemoteAddress, proxiedRemotePort));
         assertTrue(driver.close());
 
-        assertEquals(2, requestLogMock.entries().size());
+        assertLogSize(2, requestLogMock.entries());
         assertLogEntryHasRemote(requestLogMock.entries().get(0), proxiedRemoteAddress, proxiedRemotePort);
         assertLogEntryHasRemote(requestLogMock.entries().get(1), proxiedRemoteAddress, proxiedRemotePort);
         Assertions.assertThat(connectionLog.logEntries()).hasSize(2);
@@ -78,18 +82,15 @@ class ProxyProtocolTest {
 
     @Test
     void requireThatConnectorWithProxyProtocolMixedEnabledAcceptsBothProxyProtocolAndHttps() throws Exception {
-        generatePrivateKeyAndCertificate(privateKeyFile, certificateFile);
-        InMemoryRequestLog requestLogMock = new InMemoryRequestLog();
-        InMemoryConnectionLog connectionLog = new InMemoryConnectionLog();
-        JettyTestDriver driver = createSslWithProxyProtocolTestDriver(certificateFile, privateKeyFile, requestLogMock, /*mixedMode*/connectionLog, true);
+        JettyTestDriver driver = createSslWithProxyProtocolTestDriver(certificateFile, privateKeyFile, requestLogMock, connectionLog, true);
 
         String proxiedRemoteAddress = "192.168.0.100";
         sendJettyClientRequest(driver, certificateFile, null);
-        sendJettyClientRequest(driver, certificateFile, new ProxyProtocolClientConnectionFactory.V1.Tag(proxiedRemoteAddress, 12345));
-        sendJettyClientRequest(driver, certificateFile, new ProxyProtocolClientConnectionFactory.V2.Tag(proxiedRemoteAddress, 12345));
+        sendJettyClientRequest(driver, certificateFile, new V1.Tag(proxiedRemoteAddress, 12345));
+        sendJettyClientRequest(driver, certificateFile, new V2.Tag(proxiedRemoteAddress, 12345));
         assertTrue(driver.close());
 
-        assertEquals(3, requestLogMock.entries().size());
+        assertLogSize(3, requestLogMock.entries());
         assertLogEntryHasRemote(requestLogMock.entries().get(0), "127.0.0.1", 0);
         assertLogEntryHasRemote(requestLogMock.entries().get(1), proxiedRemoteAddress, 0);
         assertLogEntryHasRemote(requestLogMock.entries().get(2), proxiedRemoteAddress, 0);
@@ -105,14 +106,31 @@ class ProxyProtocolTest {
         int proxiedRemotePort = 12345;
         String proxyLocalAddress = "10.0.0.10";
         int proxyLocalPort = 23456;
-        ProxyProtocolClientConnectionFactory.V2.Tag v2Tag = new ProxyProtocolClientConnectionFactory.V2.Tag(ProxyProtocolClientConnectionFactory.V2.Tag.Command.PROXY, null, ProxyProtocolClientConnectionFactory.V2.Tag.Protocol.STREAM,
-                proxiedRemoteAddress, proxiedRemotePort, proxyLocalAddress, proxyLocalPort, null);
+        JettyTestDriver driver = createSslWithProxyProtocolTestDriver(certificateFile, privateKeyFile, requestLogMock, connectionLog, false);
+        V2.Tag v2Tag = new V2.Tag(
+                V2.Tag.Command.PROXY, null, V2.Tag.Protocol.STREAM, proxiedRemoteAddress,
+                proxiedRemotePort, proxyLocalAddress, proxyLocalPort, null);
         ContentResponse response = sendJettyClientRequest(driver, certificateFile, v2Tag);
         assertTrue(driver.close());
 
         int clientPort = Integer.parseInt(response.getHeaders().get("Jdisc-Local-Port"));
         assertNotEquals(proxyLocalPort, clientPort);
+        assertLogSize(1, connectionLog.logEntries());
         assertNotEquals(proxyLocalPort, connectionLog.logEntries().get(0).localPort().get().intValue());
+    }
+
+    @Test
+    void requireThatSslConnectionFailsWhenMixedModeIsDisabled() throws Exception {
+        JettyTestDriver driver = createSslWithProxyProtocolTestDriver(
+                certificateFile, privateKeyFile, requestLogMock, connectionLog, false);
+        try {
+            sendJettyClientRequest(driver, certificateFile, null);
+            fail("Expected exception");
+        } catch (ExecutionException e) {
+            assertInstanceOf(IOException.class, e.getCause());
+        } finally {
+            assertTrue(driver.close());
+        }
     }
 
     private static JettyTestDriver createSslWithProxyProtocolTestDriver(
@@ -140,6 +158,7 @@ class ProxyProtocolTest {
     private ContentResponse sendJettyClientRequest(JettyTestDriver testDriver, Path certificateFile, Object tag)
             throws Exception {
         HttpClient client = createJettyHttpClient(certificateFile);
+        ExecutionException cause = null;
         try {
             int maxAttempts = 3;
             for (int attempt = 0; attempt < maxAttempts; attempt++) {
@@ -150,15 +169,17 @@ class ProxyProtocolTest {
                     assertEquals(200, response.getStatus());
                     return response;
                 } catch (ExecutionException e) {
-                    // Retry when the server closes the connection before the TLS handshake is completed. This have been observed in CI.
+                    // Retry when the server closes the connection before the TLS handshake is completed. This has been observed in CI.
                     // We have been unable to reproduce this locally. The cause is therefor currently unknown.
                     log.log(Level.WARNING, String.format("Attempt %d failed: %s", attempt, e.getMessage()), e);
                     Thread.sleep(10);
+                    cause = e;
                 }
             }
-            throw new AssertionError("Failed to send request, see log for details");
+            throw cause;
         } finally {
             client.stop();
+            client.destroy();
         }
     }
 
@@ -169,6 +190,9 @@ class ProxyProtocolTest {
         clientSslCtxFactory.setSslContext(new SslContextBuilder().withTrustStore(certificateFile).build());
 
         HttpClient client = new HttpClient(clientSslCtxFactory);
+        client.setConnectTimeout(60*1000);
+        client.setStopTimeout(60*1000);
+        client.setIdleTimeout(60*1000);
         client.start();
         return client;
     }
@@ -194,4 +218,11 @@ class ProxyProtocolTest {
     }
 
 
+    private static void assertLogSize(int expectedItems, Collection<?> items) {
+        for (int attempt = 0; attempt < 10; attempt++) {
+            if (items.size() >= expectedItems) break;
+            uncheckInterrupted(() -> Thread.sleep(200));
+        }
+        Assertions.assertThat(items).hasSize(expectedItems);
+    }
 }

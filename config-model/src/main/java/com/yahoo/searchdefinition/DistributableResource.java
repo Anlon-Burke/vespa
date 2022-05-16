@@ -8,13 +8,13 @@ import com.yahoo.path.Path;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
-public class DistributableResource {
+public class DistributableResource implements Comparable <DistributableResource> {
 
     public enum PathType { FILE, URI, BLOB }
 
     /** The search definition-unique name of this constant */
     private final String name;
-    //TODO Make path/pathType final
+    // TODO: Make path/pathType final
     private PathType pathType;
     private String path;
     private FileReference fileReference = new FileReference("");
@@ -35,14 +35,14 @@ public class DistributableResource {
         this.pathType = type;
     }
 
-    //TODO Remove and make path/pathType final
+    // TODO: Remove and make path/pathType final
     public void setFileName(String fileName) {
         Objects.requireNonNull(fileName, "Filename cannot be null");
         this.path = fileName;
         this.pathType = PathType.FILE;
     }
 
-    //TODO Remove and make path/pathType final
+    // TODO: Remove and make path/pathType final
     public void setUri(String uri) {
         Objects.requireNonNull(uri, "uri cannot be null");
         this.path = uri;
@@ -65,7 +65,7 @@ public class DistributableResource {
         }
     }
 
-    void register(FileRegistry fileRegistry) {
+    public void register(FileRegistry fileRegistry) {
         switch (pathType) {
             case FILE:
                 fileReference = fileRegistry.addFile(path);
@@ -85,6 +85,11 @@ public class DistributableResource {
     @Override
     public String toString() {
         return "resource '" + name + " of type '" + pathType + "' with ref '" + fileReference + "'";
+    }
+
+    @Override
+    public int compareTo(DistributableResource o) {
+        return name.compareTo(o.getName());
     }
 
 }

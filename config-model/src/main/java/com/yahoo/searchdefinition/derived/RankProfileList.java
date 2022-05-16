@@ -3,13 +3,12 @@ package com.yahoo.searchdefinition.derived;
 
 import ai.vespa.rankingexpression.importer.configmodelview.ImportedMlModels;
 import com.yahoo.config.model.api.ModelContext;
+import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.search.query.profile.QueryProfileRegistry;
-import com.yahoo.searchdefinition.OnnxModel;
-import com.yahoo.searchdefinition.OnnxModels;
 import com.yahoo.searchdefinition.LargeRankExpressions;
+import com.yahoo.searchdefinition.OnnxModel;
 import com.yahoo.searchdefinition.RankProfileRegistry;
-import com.yahoo.searchdefinition.RankingConstant;
-import com.yahoo.searchdefinition.RankingConstants;
+import com.yahoo.searchlib.rankingexpression.Reference;
 import com.yahoo.vespa.config.search.RankProfilesConfig;
 import com.yahoo.searchdefinition.RankProfile;
 import com.yahoo.searchdefinition.Schema;
@@ -18,14 +17,15 @@ import com.yahoo.vespa.config.search.core.RankingConstantsConfig;
 import com.yahoo.vespa.config.search.core.RankingExpressionsConfig;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-import java.util.logging.Logger;
 
 /**
  * The derived rank profiles of a schema
@@ -34,113 +34,156 @@ import java.util.logging.Logger;
  */
 public class RankProfileList extends Derived implements RankProfilesConfig.Producer {
 
-    private static final Logger log = Logger.getLogger(RankProfileList.class.getName());
-
-    private final Map<String, RawRankProfile> rankProfiles = new java.util.LinkedHashMap<>();
-    private final RankingConstants rankingConstants;
+    private final Map<String, RawRankProfile> rankProfiles;
+    private final FileDistributedConstants constants;
     private final LargeRankExpressions largeRankExpressions;
-    private final OnnxModels onnxModels;
+    private final FileDistributedOnnxModels onnxModels;
 
-    public static RankProfileList empty = new RankProfileList();
+    public static final RankProfileList empty = new RankProfileList();
 
     private RankProfileList() {
-        rankingConstants = new RankingConstants(null, Optional.empty());
+        constants = new FileDistributedConstants(null, List.of());
         largeRankExpressions = new LargeRankExpressions(null);
-        onnxModels = new OnnxModels(null, Optional.empty());
+        onnxModels = new FileDistributedOnnxModels(null, List.of());
+        rankProfiles = Map.of();
     }
 
     /**
-     * Creates a rank profile
+     * Creates a rank profile list
      *
      * @param schema the schema this is a rank profile from
      * @param attributeFields the attribute fields to create a ranking for
      */
     public RankProfileList(Schema schema,
-                           RankingConstants rankingConstants,
                            LargeRankExpressions largeRankExpressions,
-                           OnnxModels onnxModels,
                            AttributeFields attributeFields,
-                           RankProfileRegistry rankProfileRegistry,
-                           QueryProfileRegistry queryProfiles,
-                           ImportedMlModels importedModels,
-                           ModelContext.Properties deployProperties,
-                           ExecutorService executor) {
+                           DeployState deployState) {
         setName(schema == null ? "default" : schema.getName());
-        this.rankingConstants = rankingConstants;
         this.largeRankExpressions = largeRankExpressions;
-        this.onnxModels = onnxModels;  // as ONNX models come from parsing rank expressions
-        deriveRankProfiles(rankProfileRegistry, queryProfiles, importedModels, schema, attributeFields, deployProperties, executor);
+        this.rankProfiles = deriveRankProfiles(schema, attributeFields, deployState);
+        this.constants = deriveFileDistributedConstants(schema, rankProfiles.values(), deployState);
+        this.onnxModels = deriveFileDistributedOnnxModels(schema, rankProfiles.values(), deployState);
     }
 
-    private boolean areDependenciesReady(RankProfile rank, RankProfileRegistry registry) {
+    private boolean areDependenciesReady(RankProfile rank, RankProfileRegistry registry, Set<String> processedProfiles) {
         return rank.inheritedNames().isEmpty() ||
-               rankProfiles.keySet().containsAll(rank.inheritedNames()) ||
+               processedProfiles.containsAll(rank.inheritedNames()) ||
                (rank.schema() != null && rank.inheritedNames().stream().allMatch(name -> registry.resolve(rank.schema().getDocument(), name) != null));
     }
 
-    private void deriveRankProfiles(RankProfileRegistry rankProfileRegistry,
-                                    QueryProfileRegistry queryProfiles,
-                                    ImportedMlModels importedModels,
-                                    Schema schema,
-                                    AttributeFields attributeFields,
-                                    ModelContext.Properties deployProperties,
-                                    ExecutorService executor) {
-        if (schema != null) { // profiles belonging to a search have a default profile
-            RawRankProfile rawRank = new RawRankProfile(rankProfileRegistry.get(schema, "default"),
-                    largeRankExpressions, queryProfiles, importedModels, attributeFields, deployProperties);
-            rankProfiles.put(rawRank.getName(), rawRank);
+    private Map<String, RawRankProfile>  deriveRankProfiles(Schema schema,
+                                                            AttributeFields attributeFields,
+                                                            DeployState deployState) {
+        Map<String,  RawRankProfile> rawRankProfiles = new LinkedHashMap<>();
+        if (schema != null) { // profiles belonging to a schema have a default profile
+            RawRankProfile rawRank = new RawRankProfile(deployState.rankProfileRegistry().get(schema, "default"),
+                                                        largeRankExpressions,
+                                                        deployState.getQueryProfiles().getRegistry(),
+                                                        deployState.getImportedModels(),
+                                                        attributeFields,
+                                                        deployState.getProperties());
+            rawRankProfiles.put(rawRank.getName(), rawRank);
         }
 
         Map<String, RankProfile> remaining = new LinkedHashMap<>();
-        rankProfileRegistry.rankProfilesOf(schema).forEach(rank -> remaining.put(rank.name(), rank));
+        deployState.rankProfileRegistry().rankProfilesOf(schema).forEach(rank -> remaining.put(rank.name(), rank));
         remaining.remove("default");
         while (!remaining.isEmpty()) {
             List<RankProfile> ready = new ArrayList<>();
-            remaining.forEach((name, rank) -> {
-                if (areDependenciesReady(rank, rankProfileRegistry)) ready.add(rank);
+            remaining.forEach((name, profile) -> {
+                if (areDependenciesReady(profile, deployState.rankProfileRegistry(), rawRankProfiles.keySet()))
+                    ready.add(profile);
             });
-            processRankProfiles(ready, queryProfiles, importedModels, schema, attributeFields, deployProperties, executor);
+            rawRankProfiles.putAll(processRankProfiles(ready,
+                                                       deployState.getQueryProfiles().getRegistry(),
+                                                       deployState.getImportedModels(),
+                                                       attributeFields,
+                                                       deployState.getProperties(),
+                                                       deployState.getExecutor()));
             ready.forEach(rank -> remaining.remove(rank.name()));
         }
+        return rawRankProfiles;
     }
-    private void processRankProfiles(List<RankProfile> ready,
-                                     QueryProfileRegistry queryProfiles,
-                                     ImportedMlModels importedModels,
-                                     Schema schema,
-                                     AttributeFields attributeFields,
-                                     ModelContext.Properties deployProperties,
-                                     ExecutorService executor) {
-        Map<String, Future<RawRankProfile>> futureRawRankProfiles = new LinkedHashMap<>();
-        for (RankProfile rank : ready) {
-            if (schema == null) {
-                onnxModels.add(rank.onnxModels());
-            }
 
-            futureRawRankProfiles.put(rank.name(), executor.submit(() -> new RawRankProfile(rank, largeRankExpressions, queryProfiles, importedModels,
+    private Map<String, RawRankProfile> processRankProfiles(List<RankProfile> profiles,
+                                                            QueryProfileRegistry queryProfiles,
+                                                            ImportedMlModels importedModels,
+                                                            AttributeFields attributeFields,
+                                                            ModelContext.Properties deployProperties,
+                                                            ExecutorService executor) {
+        Map<String, Future<RawRankProfile>> futureRawRankProfiles = new LinkedHashMap<>();
+        for (RankProfile profile : profiles) {
+            futureRawRankProfiles.put(profile.name(), executor.submit(() -> new RawRankProfile(profile, largeRankExpressions, queryProfiles, importedModels,
                                                                                             attributeFields, deployProperties)));
         }
         try {
+            Map<String,  RawRankProfile> rawRankProfiles = new LinkedHashMap<>();
             for (Future<RawRankProfile> rawFuture : futureRawRankProfiles.values()) {
                 RawRankProfile rawRank = rawFuture.get();
-                rankProfiles.put(rawRank.getName(), rawRank);
+                rawRankProfiles.put(rawRank.getName(), rawRank);
             }
+            return rawRankProfiles;
         } catch (InterruptedException | ExecutionException e) {
             throw new IllegalStateException(e);
         }
     }
 
-    public OnnxModels getOnnxModels() {
-        return onnxModels;
+    private static FileDistributedConstants deriveFileDistributedConstants(Schema schema,
+                                                                           Collection<RawRankProfile> rankProfiles,
+                                                                           DeployState deployState) {
+        Map<Reference, RankProfile.Constant> allFileConstants = new HashMap<>();
+        addFileConstants(schema != null ? schema.constants().values() : List.of(),
+                         allFileConstants,
+                         schema != null ? schema.toString() : "[global]");
+        for (var profile : rankProfiles)
+            addFileConstants(profile.compiled().constants().values(), allFileConstants, profile.toString());
+        return new FileDistributedConstants(deployState.getFileRegistry(), allFileConstants.values());
     }
 
-    public Map<String, RawRankProfile> getRankProfiles() {
-        return rankProfiles;
+    private static void addFileConstants(Collection<RankProfile.Constant> source,
+                                         Map<Reference, RankProfile.Constant> destination,
+                                         String sourceName) {
+        for (var constant : source) {
+            if (constant.valuePath().isEmpty()) continue;
+            var existing = destination.get(constant.name());
+            if ( existing != null && ! constant.equals(existing)) {
+                throw new IllegalArgumentException("Duplicate constants: " + sourceName + " have " + constant +
+                                                   ", but we already have " + existing +
+                                                   ": Value reference constants must be unique across all rank profiles/models");
+            }
+            destination.put(constant.name(), constant);
+        }
     }
 
-    /** Returns the raw rank profile with the given name, or null if it is not present */
-    public RawRankProfile getRankProfile(String name) {
-        return rankProfiles.get(name);
+    private static FileDistributedOnnxModels deriveFileDistributedOnnxModels(Schema schema,
+                                                                             Collection<RawRankProfile> rankProfiles,
+                                                                             DeployState deployState) {
+        Map<String, OnnxModel> allModels = new LinkedHashMap<>();
+        addOnnxModels(schema != null ? schema.onnxModels().values() : List.of(),
+                      allModels,
+                      schema != null ? schema.toString() : "[global]");
+        for (var profile : rankProfiles)
+            addOnnxModels(profile.compiled().onnxModels().values(), allModels, profile.toString());
+        return new FileDistributedOnnxModels(deployState.getFileRegistry(), allModels.values());
     }
+
+    private static void addOnnxModels(Collection<OnnxModel> source,
+                                      Map<String, OnnxModel> destination,
+                                      String sourceName) {
+        for (var model : source) {
+            var existing = destination.get(model.getName());
+            if ( existing != null && ! model.equals(existing)) {
+                throw new IllegalArgumentException("Duplicate onnx model: " + sourceName + " have " + model +
+                                                   ", but we already have " + existing +
+                                                   ": Onnx models must be unique across all rank profiles/models");
+            }
+            destination.put(model.getName(), model);
+        }
+    }
+
+    public Map<String, RawRankProfile> getRankProfiles() { return rankProfiles; }
+    public FileDistributedConstants constants() { return constants; }
+    public FileDistributedOnnxModels getOnnxModels() { return onnxModels; }
 
     @Override
     public String getDerivedName() { return "rank-profiles"; }
@@ -153,41 +196,15 @@ public class RankProfileList extends Derived implements RankProfilesConfig.Produ
     }
 
     public void getConfig(RankingExpressionsConfig.Builder builder) {
-        largeRankExpressions.asMap().values().forEach((expr) -> builder.expression.add(new RankingExpressionsConfig.Expression.Builder().name(expr.getName()).fileref(expr.getFileReference())));
+        largeRankExpressions.expressions().forEach((expr) -> builder.expression.add(new RankingExpressionsConfig.Expression.Builder().name(expr.getName()).fileref(expr.getFileReference())));
     }
 
     public void getConfig(RankingConstantsConfig.Builder builder) {
-        for (RankingConstant constant : rankingConstants.asMap().values()) {
-            if ("".equals(constant.getFileReference()))
-                log.warning("Illegal file reference " + constant); // Let tests pass ... we should find a better way
-            else
-                builder.constant(new RankingConstantsConfig.Constant.Builder()
-                                         .name(constant.getName())
-                                         .fileref(constant.getFileReference())
-                                         .type(constant.getType()));
-        }
+        constants.getConfig(builder);
     }
 
     public void getConfig(OnnxModelsConfig.Builder builder) {
-        for (OnnxModel model : onnxModels.asMap().values()) {
-            if ("".equals(model.getFileReference()))
-                log.warning("Illegal file reference " + model); // Let tests pass ... we should find a better way
-            else {
-                OnnxModelsConfig.Model.Builder modelBuilder = new OnnxModelsConfig.Model.Builder();
-                modelBuilder.dry_run_on_setup(true);
-                modelBuilder.name(model.getName());
-                modelBuilder.fileref(model.getFileReference());
-                model.getInputMap().forEach((name, source) -> modelBuilder.input(new OnnxModelsConfig.Model.Input.Builder().name(name).source(source)));
-                model.getOutputMap().forEach((name, as) -> modelBuilder.output(new OnnxModelsConfig.Model.Output.Builder().name(name).as(as)));
-                if (model.getStatelessExecutionMode().isPresent())
-                    modelBuilder.stateless_execution_mode(model.getStatelessExecutionMode().get());
-                if (model.getStatelessInterOpThreads().isPresent())
-                    modelBuilder.stateless_interop_threads(model.getStatelessInterOpThreads().get());
-                if (model.getStatelessIntraOpThreads().isPresent())
-                    modelBuilder.stateless_intraop_threads(model.getStatelessIntraOpThreads().get());
-
-                builder.model(modelBuilder);
-            }
-        }
+        onnxModels.getConfig(builder);
     }
+
 }

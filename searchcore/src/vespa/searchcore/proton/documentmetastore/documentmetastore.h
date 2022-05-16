@@ -74,7 +74,7 @@ private:
     SerialNum           _gid_to_lid_map_write_itr_prepare_serial_num;
     documentmetastore::LidAllocator _lidAlloc;
     BucketDBOwnerSP     _bucketDB;
-    uint32_t            _shrinkLidSpaceBlockers;
+    std::atomic<uint32_t> _shrinkLidSpaceBlockers;
     const SubDbType     _subDbType;
     bool                _trackDocumentSizes;
     size_t              _changesSinceCommit;
@@ -137,6 +137,9 @@ private:
     UnboundMetaDataView acquire_unbound_meta_data_view() const noexcept { return &_metaDataStore.acquire_elem_ref(0); }
     UnboundMetaDataView get_unbound_meta_data_view() const noexcept { return &_metaDataStore.get_elem_ref(0); } // Called from writer only
 
+    uint32_t get_shrink_lid_space_blockers() const noexcept { return _shrinkLidSpaceBlockers.load(std::memory_order_relaxed); }
+    void set_shrink_lid_space_blockers(uint32_t value) noexcept { _shrinkLidSpaceBlockers.store(value, std::memory_order_relaxed); }
+
 public:
     typedef TreeType::Iterator Iterator;
     typedef TreeType::ConstIterator ConstIterator;
@@ -182,7 +185,7 @@ public:
     void move(DocId fromLid, DocId toLid, uint64_t prepare_serial_num) override;
     bool validButMaybeUnusedLid(DocId lid) const { return _lidAlloc.validButMaybeUnusedLid(lid); }
     bool validLidFast(DocId lid) const { return _lidAlloc.validLid(lid); }
-    bool validLidFastSafe(DocId lid, uint32_t limit) const { return _lidAlloc.validLidSafe(lid, limit); }
+    bool validLidFast(DocId lid, uint32_t limit) const { return _lidAlloc.validLid(lid, limit); }
     bool validLid(DocId lid) const override { return validLidFast(lid); }
     void removeBatch(const std::vector<DocId> &lidsToRemove, const DocId docIdLimit) override;
     const RawDocumentMetaData & getRawMetaData(DocId lid) const override { return _metaDataStore.acquire_elem_ref(lid); }
@@ -251,7 +254,7 @@ public:
         return AttributeVector::getGenerationHandler();
     }
 
-    const search::GrowableBitVector &getActiveLids() const { return _lidAlloc.getActiveLids(); }
+    const search::BitVector &getActiveLids() const { return _lidAlloc.getActiveLids(); }
 
     void clearDocs(DocId lidLow, DocId lidLimit, bool in_shrink_lid_space) override;
 

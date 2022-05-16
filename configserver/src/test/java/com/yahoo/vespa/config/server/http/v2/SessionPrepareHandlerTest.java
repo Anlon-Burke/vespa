@@ -3,6 +3,7 @@ package com.yahoo.vespa.config.server.http.v2;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.concurrent.UncheckedTimeoutException;
+import com.yahoo.config.model.application.provider.BaseDeployLogger;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationLockException;
 import com.yahoo.config.provision.ApplicationName;
@@ -29,6 +30,7 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -290,7 +292,7 @@ public class SessionPrepareHandlerTest extends SessionHandlerTest {
     @Test
     public void test_docker_image_repository() {
         long sessionId = createSession(applicationId());
-        String dockerImageRepository = "foo.bar.com:4443/baz";
+        String dockerImageRepository = "foo.bar.com:4443/baz/qux";
         request(HttpRequest.Method.PUT, sessionId, Map.of("dockerImageRepository", dockerImageRepository,
                                                           "applicationName", applicationId().application().value()));
         applicationRepository.activate(tenantRepository.getTenant(tenant), sessionId, timeoutBudget, false);
@@ -329,7 +331,7 @@ public class SessionPrepareHandlerTest extends SessionHandlerTest {
     }
 
     private long createSession(ApplicationId applicationId) {
-        return applicationRepository.createSession(applicationId, timeoutBudget, app);
+        return applicationRepository.createSession(applicationId, timeoutBudget, app, new BaseDeployLogger());
     }
 
     private static class FailingSessionPrepareHandler extends SessionPrepareHandler {

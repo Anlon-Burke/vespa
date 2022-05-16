@@ -84,7 +84,7 @@ public class CoredumpHandler {
 
 
     public void converge(NodeAgentContext context, Supplier<Map<String, Object>> nodeAttributesSupplier, boolean throwIfCoreBeingWritten) {
-        ContainerPath containerCrashPath = context.paths().of(crashPatchInContainer);
+        ContainerPath containerCrashPath = context.paths().of(crashPatchInContainer, context.users().vespa());
         ContainerPath containerProcessingPath = containerCrashPath.resolve(PROCESSING_DIRECTORY_NAME);
 
         updateMetrics(context, containerCrashPath);

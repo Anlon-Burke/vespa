@@ -8,6 +8,7 @@ import com.yahoo.io.IOUtils;
 import com.yahoo.path.Path;
 import com.yahoo.vespa.config.search.RankProfilesConfig;
 import com.yahoo.vespa.config.search.core.OnnxModelsConfig;
+import com.yahoo.vespa.config.search.core.RankingConstantsConfig;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.search.DocumentDatabase;
 import com.yahoo.vespa.model.search.IndexedSearchCluster;
@@ -57,6 +58,15 @@ public class RankingExpressionWithOnnxModelTestCase {
 
     private void assertGeneratedConfig(VespaModel vespaModel) {
         DocumentDatabase db = ((IndexedSearchCluster)vespaModel.getSearchClusters().get(0)).getDocumentDbs().get(0);
+
+        RankingConstantsConfig.Builder rankingConstantsConfigBuilder = new RankingConstantsConfig.Builder();
+        db.getConfig(rankingConstantsConfigBuilder);
+        var rankingConstantsConfig = rankingConstantsConfigBuilder.build();
+        assertEquals(1, rankingConstantsConfig.constant().size());
+        assertEquals("my_constant", rankingConstantsConfig.constant(0).name());
+        assertEquals("tensor(d0[2])", rankingConstantsConfig.constant(0).type());
+        assertEquals("files/constant.json", rankingConstantsConfig.constant(0).fileref().value());
+
         OnnxModelsConfig.Builder builder = new OnnxModelsConfig.Builder();
         ((OnnxModelsConfig.Producer) db).getConfig(builder);
         OnnxModelsConfig config = new OnnxModelsConfig(builder);
@@ -83,6 +93,18 @@ public class RankingExpressionWithOnnxModelTestCase {
         assertEquals("path_to_output_2", model.output(2).as());
 
         model = config.model(1);
+        assertEquals("dynamic_model", model.name());
+        assertEquals(1, model.input().size());
+        assertEquals(1, model.output().size());
+        assertEquals("rankingExpression(my_function)", model.input(0).source());
+
+        model = config.model(2);
+        assertEquals("unbound_model", model.name());
+        assertEquals(1, model.input().size());
+        assertEquals(1, model.output().size());
+        assertEquals("rankingExpression(my_function)", model.input(0).source());
+
+        model = config.model(3);
         assertEquals("files_model_onnx", model.name());
         assertEquals(3, model.input().size());
         assertEquals(3, model.output().size());
@@ -94,27 +116,15 @@ public class RankingExpressionWithOnnxModelTestCase {
         assertEquals("path_to_output_2", model.output(2).as());
         assertEquals("files_model_onnx", model.name());
 
-        model = config.model(2);
+        model = config.model(4);
         assertEquals("another_model", model.name());
         assertEquals("third_input", model.input(2).name());
         assertEquals("rankingExpression(another_function)", model.input(2).source());
 
-        model = config.model(3);
+        model = config.model(5);
         assertEquals("files_summary_model_onnx", model.name());
         assertEquals(3, model.input().size());
         assertEquals(3, model.output().size());
-
-        model = config.model(4);
-        assertEquals("unbound_model", model.name());
-        assertEquals(1, model.input().size());
-        assertEquals(1, model.output().size());
-        assertEquals("rankingExpression(my_function)", model.input(0).source());
-
-        model = config.model(5);
-        assertEquals("dynamic_model", model.name());
-        assertEquals(1, model.input().size());
-        assertEquals(1, model.output().size());
-        assertEquals("rankingExpression(my_function)", model.input(0).source());
     }
 
     private void assertTransformedFeature(VespaModel model) {

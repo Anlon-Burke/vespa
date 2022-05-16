@@ -77,7 +77,7 @@ private:
 
     typedef std::vector<ProcessedChunkUP> ProcessedChunkQ;
 
-    bool frozen() const override { return _frozen; }
+    bool frozen() const override { return _frozen.load(std::memory_order_acquire); }
     void waitForChunkFlushedToDisk(uint32_t chunkId) const;
     void waitForAllChunksFlushedToDisk() const;
     void fileWriter(const uint32_t firstChunkId);
@@ -104,10 +104,11 @@ private:
     void updateCurrentDiskFootprint();
     size_t getDiskFootprint(const unique_lock & guard) const;
     std::unique_ptr<FastOS_FileInterface> openIdx();
+    const Chunk& get_chunk(uint32_t chunk) const;
 
     Config            _config;
     SerialNum         _serialNum;
-    bool              _frozen;
+    std::atomic<bool> _frozen;
     // Lock order is _writeLock, _flushLock, _lock
     mutable std::mutex             _lock;
     mutable std::condition_variable _cond;
@@ -120,7 +121,7 @@ private:
     PendingChunks     _pendingChunks;
     uint64_t          _pendingIdx;
     uint64_t          _pendingDat;
-    uint64_t          _idxFileSize;
+    std::atomic<uint64_t> _idxFileSize;
     std::atomic<uint64_t> _currentDiskFootprint;
     uint32_t          _nextChunkId;
     Chunk::UP         _active;

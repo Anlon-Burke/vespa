@@ -6,10 +6,6 @@
 
 namespace search {
 
-using vespalib::GenerationHeldBase;
-using vespalib::GenerationHeldAlloc;
-using vespalib::GenerationHolder;
-
 namespace {
 
 size_t computeCapacity(size_t capacity, size_t allocatedBytes) {
@@ -110,51 +106,6 @@ AllocatedBitVector::resize(Index newLength)
     _capacityBits = computeCapacity(newLength, _alloc.size());
     init(_alloc.get(), 0, newLength);
     clear();
-}
-
-AllocatedBitVector &
-AllocatedBitVector::operator=(const AllocatedBitVector & rhs)
-{
-    AllocatedBitVector tmp(rhs);
-    swap(tmp);
-    assert(testBit(size()));
-
-    return *this;
-}
-AllocatedBitVector &
-AllocatedBitVector::operator=(const BitVector & rhs)
-{
-    AllocatedBitVector tmp(rhs);
-    swap(tmp);
-    assert(testBit(size()));
-
-    return *this;
-}
-
-GenerationHeldBase::UP
-AllocatedBitVector::grow(Index newSize, Index newCapacity)
-{
-    assert(newCapacity >= newSize);
-    GenerationHeldBase::UP ret;
-    if (newCapacity != capacity()) {
-        AllocatedBitVector tbv(newSize, newCapacity, _alloc.get(), size(), &_alloc);
-        if (newSize > size()) {
-            tbv.clearBitAndMaintainCount(size());  // Clear old guard bit.
-        }
-        ret = std::make_unique<GenerationHeldAlloc<Alloc>>(_alloc);
-        swap(tbv);
-    } else {
-        if (newSize > size()) {
-            Range clearRange(size(), newSize);
-            setSize(newSize);
-            clearIntervalNoInvalidation(clearRange);
-        } else {
-            clearIntervalNoInvalidation(Range(newSize, size()));
-            setSize(newSize);
-            updateCount();
-        }
-    }
-    return ret;
 }
 
 } // namespace search

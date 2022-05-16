@@ -53,15 +53,14 @@ public class OnnxModelTransformer extends ExpressionTransformer<RankProfileTrans
         return transformFeature(feature, context.rankProfile());
     }
 
-    public static ExpressionNode transformFeature(ReferenceNode feature, RankProfile rankProfile) {
-        ImmutableSchema search = rankProfile.schema();
-        final String featureName = feature.getName();
+    public static ExpressionNode transformFeature(ReferenceNode feature, RankProfile profile) {
+        String featureName = feature.getName();
         if ( ! featureName.equals("onnxModel") && ! featureName.equals("onnx")) return feature;
 
         Arguments arguments = feature.getArguments();
         if (arguments.isEmpty())
             throw new IllegalArgumentException("An " + featureName + " feature must take an argument referring to a " +
-                    "onnx-model config or an ONNX file.");
+                                               "onnx-model config or an ONNX file.");
         if (arguments.expressions().size() > 3)
             throw new IllegalArgumentException("An " + featureName + " feature can have at most 3 arguments.");
 
@@ -71,11 +70,11 @@ public class OnnxModelTransformer extends ExpressionTransformer<RankProfileTrans
         // ONNX file that was transformed to Vespa ranking expressions. We then assume it is in the model store.
 
         String modelConfigName = getModelConfigName(feature.reference());
-        OnnxModel onnxModel = search.onnxModels().get(modelConfigName);
+        OnnxModel onnxModel = profile.onnxModels().get(modelConfigName);
         if (onnxModel == null) {
             String path = asString(arguments.expressions().get(0));
             ModelName modelName = new ModelName(null, Path.fromString(path), true);
-            ConvertedModel convertedModel = ConvertedModel.fromStore(search.applicationPackage(), modelName, path, rankProfile);
+            ConvertedModel convertedModel = ConvertedModel.fromStore(profile.schema().applicationPackage(), modelName, path, profile);
             FeatureArguments featureArguments = new FeatureArguments(arguments);
             return convertedModel.expression(featureArguments, null);
         }
@@ -84,7 +83,7 @@ public class OnnxModelTransformer extends ExpressionTransformer<RankProfileTrans
         String output = getModelOutput(feature.reference(), defaultOutput);
         if (! onnxModel.getOutputMap().containsValue(output)) {
             throw new IllegalArgumentException(featureName + " argument '" + output +
-                    "' output not found in model '" + onnxModel.getFileName() + "'");
+                                               "' output not found in model '" + onnxModel.getFileName() + "'");
         }
         return new ReferenceNode("onnxModel", List.of(new ReferenceNode(modelConfigName)), output);
     }
@@ -95,7 +94,7 @@ public class OnnxModelTransformer extends ExpressionTransformer<RankProfileTrans
             if (expr instanceof ReferenceNode) {  // refers to onnx-model config
                 return expr.toString();
             }
-            if (expr instanceof ConstantNode) {  // refers to an file path
+            if (expr instanceof ConstantNode) {  // refers to a file path
                 return asValidIdentifier(expr);
             }
         }

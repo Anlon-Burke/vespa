@@ -1,7 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.maintenance;
 
-import com.google.inject.Inject;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.component.AbstractComponent;
 import com.yahoo.concurrent.maintenance.Maintainer;
 import com.yahoo.config.provision.SystemName;
@@ -63,7 +63,7 @@ public class ControllerMaintenance extends AbstractComponent {
         maintainers.add(new ResourceTagMaintainer(controller, intervals.resourceTagMaintainer, controller.serviceRegistry().resourceTagger()));
         maintainers.add(new SystemRoutingPolicyMaintainer(controller, intervals.systemRoutingPolicyMaintainer));
         maintainers.add(new ApplicationMetaDataGarbageCollector(controller, intervals.applicationMetaDataGarbageCollector));
-        maintainers.add(new ContainerImageExpirer(controller, intervals.containerImageExpirer));
+        maintainers.add(new ArtifactExpirer(controller, intervals.containerImageExpirer));
         maintainers.add(new HostInfoUpdater(controller, intervals.hostInfoUpdater));
         maintainers.add(new ReindexingTriggerer(controller, intervals.reindexingTriggerer));
         maintainers.add(new EndpointCertificateMaintainer(controller, intervals.endpointCertificateMaintainer));

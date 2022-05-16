@@ -9,6 +9,9 @@ import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.path.Path;
 import com.yahoo.test.ManualClock;
+import com.yahoo.vespa.flags.FlagSource;
+import com.yahoo.vespa.flags.Flags;
+import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.ClusterMetrics;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
@@ -16,7 +19,6 @@ import com.yahoo.vespa.hosted.controller.api.integration.stubs.MockMailer;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentContext;
 import com.yahoo.vespa.hosted.controller.integration.ZoneRegistryMock;
-import com.yahoo.vespa.hosted.controller.notify.Notifier;
 import com.yahoo.vespa.hosted.controller.persistence.MockCuratorDb;
 import com.yahoo.vespa.hosted.controller.tenant.CloudTenant;
 import com.yahoo.vespa.hosted.controller.tenant.LastLoginInfo;
@@ -70,7 +72,8 @@ public class NotificationsDbTest {
     private final ManualClock clock = new ManualClock(Instant.ofEpochSecond(12345));
     private final MockCuratorDb curatorDb = new MockCuratorDb(SystemName.Public);
     private final MockMailer mailer = new MockMailer();
-    private final NotificationsDb notificationsDb = new NotificationsDb(clock, curatorDb, new Notifier(curatorDb, new ZoneRegistryMock(SystemName.cd), mailer));
+    private final FlagSource flagSource = new InMemoryFlagSource().withBooleanFlag(Flags.NOTIFICATION_DISPATCH_FLAG.id(), true);
+    private final NotificationsDb notificationsDb = new NotificationsDb(clock, curatorDb, new Notifier(curatorDb, new ZoneRegistryMock(SystemName.cd), mailer, flagSource));
 
     @Test
     public void list_test() {
@@ -101,9 +104,9 @@ public class NotificationsDbTest {
     @Test
     public void notifier_test() {
         Notification notification1 = notification(12345, Type.deployment, Level.warning, NotificationSource.from(ApplicationId.from(tenant.value(), "app2", "instance2")), "instance msg #2");
-        Notification notification2 = notification(12345, Type.deployment, Level.error,   NotificationSource.from(ApplicationId.from(tenant.value(), "app3", "instance2")), "instance msg #3");
-        Notification notification3 = notification(12345, Type.reindex, Level.warning, NotificationSource.from(ApplicationId.from(tenant.value(), "app2", "instance2")), "instance msg #2");
-
+        Notification notification2 = notification(12345, Type.applicationPackage, Level.error,   NotificationSource.from(ApplicationId.from(tenant.value(), "app3", "instance2")), "instance msg #3");
+        Notification notification3 = notification(12345, Type.reindex, Level.warning, NotificationSource.from(new DeploymentId(ApplicationId.from(tenant.value(), "app2", "instance2"), ZoneId.defaultId()), new ClusterSpec.Id("content")), "instance msg #2");
+;
         var a = notifications.get(0);
         notificationsDb.setNotification(a.source(), a.type(), a.level(), a.messages());
         assertEquals(0, mailer.inbox(email).size());

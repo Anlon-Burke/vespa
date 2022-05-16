@@ -16,6 +16,7 @@ import com.yahoo.searchlib.aggregation.Grouping;
 import com.yahoo.searchlib.aggregation.GroupingLevel;
 import com.yahoo.searchlib.aggregation.HitsAggregationResult;
 import com.yahoo.searchlib.expression.ExpressionNode;
+import com.yahoo.searchlib.expression.RangeBucketPreDefFunctionNode;
 
 import java.util.ArrayList;
 import java.util.LinkedList;
@@ -411,7 +412,7 @@ class RequestBuilder {
         for (Grouping grp : requestList) {
             int levelMultiplier = 1;
             for (GroupingLevel lvl : grp.getLevels()) {
-                totalGroupsAndSummaries += (levelMultiplier *= validateSummaryMax(lvl));
+                totalGroupsAndSummaries += (levelMultiplier *= validateGroupMax(lvl));
                 var hars = hitsAggregationResult(lvl);
                 for (HitsAggregationResult har : hars) {
                     totalGroupsAndSummaries += (levelMultiplier * validateSummaryMax(har));
@@ -428,8 +429,12 @@ class RequestBuilder {
         this.totalGroupsAndSummaries = totalGroupsAndSummaries;
     }
 
-    private int validateSummaryMax(GroupingLevel lvl) {
+    private int validateGroupMax(GroupingLevel lvl) {
         int max = transform.getMax(lvl.getGroupPrototype().getTag());
+        if (lvl.getExpression() instanceof RangeBucketPreDefFunctionNode) {
+            int maxBuckets = ((RangeBucketPreDefFunctionNode) lvl.getExpression()).getBucketList().size() + 1; // +1 for "null" bucket
+            if (maxBuckets < max || max <= 0) max = maxBuckets;
+        }
         if (max <= 0) throw new IllegalInputException(
                 "Cannot return unbounded number of groups when 'grouping.globalMaxGroups' is enabled. " +
                         "Either restrict group count with max() or disable 'grouping.globalMaxGroups'. " +

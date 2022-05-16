@@ -6,7 +6,6 @@
 #include <memory>
 #include <vespa/vespalib/util/alloc.h>
 #include <vespa/vespalib/util/atomic.h>
-#include <vespa/vespalib/util/generationholder.h>
 #include <vespa/fastos/types.h>
 
 namespace vespalib {
@@ -18,13 +17,12 @@ class FastOS_FileInterface;
 namespace search {
 
 class PartialBitVector;
+class AllocatedBitVector;
 
 class BitVector : protected BitWord
 {
 public:
     using Index = BitWord::Index;
-    using GenerationHolder = vespalib::GenerationHolder;
-    using GenerationHeldBase = vespalib::GenerationHeldBase;
     using UP = std::unique_ptr<BitVector>;
     class Range {
     public:
@@ -42,14 +40,16 @@ public:
     bool operator == (const BitVector &right) const;
     const void * getStart() const { return _words; }
     void * getStart() { return _words; }
-    Index size() const { return _sz; }
+    Index size() const { return vespalib::atomic::load_ref_relaxed(_sz); }
     Index sizeBytes() const { return numBytes(getActiveSize()); }
     bool testBit(Index idx) const {
-        return ((_words[wordNum(idx)] & mask(idx)) != 0);
+        return ((load(_words[wordNum(idx)]) & mask(idx)) != 0);
     }
-    bool testBitSafe(Index idx) const {
-        auto my_words = vespalib::atomic::load_ref_acquire(_words);
-        auto my_word = vespalib::atomic::load_ref_acquire(my_words[wordNum(idx)]);
+    Index getSizeAcquire() const {
+        return vespalib::atomic::load_ref_acquire(_sz);
+    }
+    bool testBitAcquire(Index idx) const {
+        auto my_word = vespalib::atomic::load_ref_acquire(_words[wordNum(idx)]);
         return (my_word & mask(idx)) != 0;
     }
     bool hasTrueBits() const {
@@ -121,10 +121,10 @@ public:
     Index getPrevTrueBit(Index start) const {
         Index index(wordNum(start));
         const Word *words(_words);
-        Word t(words[index] & ~endBits(start));
+        Word t(load(words[index]) & ~endBits(start));
 
         while(t == 0 && index > getStartWordNum()) {
-           t = words[--index];
+            t = load(words[--index]);
         }
 
         return (t != 0)
@@ -139,16 +139,16 @@ public:
             // Can only remove the old stopsign if it is ahead of the new.
             clearBit(_sz);
         }
-        _sz = sz;
+        vespalib::atomic::store_ref_release(_sz, sz);
     }
     void setBit(Index idx) {
-        vespalib::atomic::store_ref_relaxed(_words[wordNum(idx)], _words[wordNum(idx)] | mask(idx));
+        store(_words[wordNum(idx)], _words[wordNum(idx)] | mask(idx));
     }
     void clearBit(Index idx) {
-        vespalib::atomic::store_ref_relaxed(_words[wordNum(idx)], _words[wordNum(idx)] & ~ mask(idx));
+        store(_words[wordNum(idx)], _words[wordNum(idx)] & ~ mask(idx));
     }
     void flipBit(Index idx) {
-        _words[wordNum(idx)] ^= mask(idx);
+        store(_words[wordNum(idx)], _words[wordNum(idx)] ^ mask(idx));
     }
 
     void andWith(const BitVector &right);
@@ -205,17 +205,6 @@ public:
         _numTrueBits.store(invalidCount(), std::memory_order_relaxed);
     }
 
-    void swap(BitVector & rhs) {
-        auto my_words = _words;
-        vespalib::atomic::store_ref_release(_words, rhs._words);
-        vespalib::atomic::store_ref_release(rhs._words, my_words);
-        std::swap(_startOffset, rhs._startOffset);
-        std::swap(_sz, rhs._sz);
-        Index tmp = rhs._numTrueBits;
-        rhs._numTrueBits = _numTrueBits.load(std::memory_order_relaxed);
-        _numTrueBits.store(tmp, std::memory_order_relaxed);
-    }
-
     /**
      * Count bits in partial bitvector [..>.
      *
@@ -248,11 +237,6 @@ public:
         return getFileBytes(size());
     }
 
-    virtual void resize(Index newLength);
-
-    virtual GenerationHeldBase::UP grow(Index newLength, Index newCapacity);
-    GenerationHeldBase::UP grow(Index newLength) { return grow(newLength, newLength); }
-
     /**
      * This will create the appropriate vector.
      *
@@ -266,7 +250,6 @@ public:
     static UP create(const BitVector & org, Index start, Index end);
     static UP create(Index numberOfElements);
     static UP create(const BitVector & rhs);
-    static UP create(Index newSize, Index newCapacity, GenerationHolder &generationHolder);
 protected:
     using Alloc = vespalib::alloc::Alloc;
     VESPA_DLL_LOCAL BitVector(void * buf, Index start, Index end);
@@ -292,6 +275,8 @@ protected:
     static Alloc allocatePaddedAndAligned(Index start, Index end, Index capacity, const Alloc* init_alloc = nullptr);
 
 private:
+    Word load(const Word &word) const { return vespalib::atomic::load_ref_relaxed(word); }
+    void store(Word &word, Word value) { return vespalib::atomic::store_ref_relaxed(word, value); }
     friend PartialBitVector;
     const Word * getWordIndex(Index index) const { return static_cast<const Word *>(getStart()) + wordNum(index); }
     Word * getWordIndex(Index index) { return static_cast<Word *>(getStart()) + wordNum(index); }
@@ -334,8 +319,8 @@ private:
 
         Index index(wordNum(start));
         Index lastIndex(wordNum(last));
-        Word word(conv(_words[index]) & checkTab(start));
-        for ( ; index < lastIndex; word = conv(_words[++index])) {
+        Word word(conv(load(_words[index])) & checkTab(start));
+        for ( ; index < lastIndex; word = conv(load(_words[++index]))) {
             foreach_bit(func, word, index << numWordBits());
         }
         foreach_bit(func, word & ~endBits(last), lastIndex << numWordBits());
@@ -344,14 +329,14 @@ private:
     Index getNextBit(WordConverter conv, Index start) const {
         Index index(wordNum(start));
         const Word *words(_words);
-        Word t(conv(words[index]) & checkTab(start));
+        Word t(conv(load(words[index])) & checkTab(start));
 
         // In order to avoid a test an extra guard bit is added
         // after the bitvector as a termination.
         // Also bitvector will normally at least 1 bit set per 32 bits.
         // So that is what we should expect.
         while (__builtin_expect(t == 0, false)) {
-            t = conv(words[++index]);
+            t = conv(load(words[++index]));
         }
 
         return (index << numWordBits()) + vespalib::Optimized::lsbIdx(t);
@@ -379,14 +364,14 @@ protected:
     friend vespalib::nbostream &
     operator<<(vespalib::nbostream &out, const BitVector &bv);
     friend vespalib::nbostream &
-    operator>>(vespalib::nbostream &in, BitVector &bv);
+    operator>>(vespalib::nbostream &in, AllocatedBitVector &bv);
 };
 
 vespalib::nbostream &
 operator<<(vespalib::nbostream &out, const BitVector &bv);
 
 vespalib::nbostream &
-operator>>(vespalib::nbostream &in, BitVector &bv);
+operator>>(vespalib::nbostream &in, AllocatedBitVector &bv);
 
 template <typename T>
 void BitVector::andNotWithT(T it) {
@@ -397,4 +382,3 @@ void BitVector::andNotWithT(T it) {
 }
 
 } // namespace search
-

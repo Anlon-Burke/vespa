@@ -31,44 +31,44 @@ public class SummaryMapTestCase extends AbstractSchemaTestCase {
     @Test
     public void testDeriving() throws IOException, ParseException {
         Schema schema = ApplicationBuilder.buildFromFile("src/test/examples/simple.sd");
-        SummaryMap summaryMap=new SummaryMap(schema);
+        SummaryMap summaryMap = new SummaryMap(schema);
 
-        Iterator transforms=summaryMap.resultTransformIterator();
-        FieldResultTransform transform = (FieldResultTransform)transforms.next();
+        Iterator<FieldResultTransform> transforms = summaryMap.resultTransforms().values().iterator();
+        FieldResultTransform transform = transforms.next();
         assertEquals("dyndesc", transform.getFieldName());
-        assertEquals(SummaryTransform.DYNAMICTEASER,transform.getTransform());
+        assertEquals(SummaryTransform.DYNAMICTEASER, transform.getTransform());
 
-        transform = (FieldResultTransform)transforms.next();
+        transform = transforms.next();
         assertEquals("dynlong", transform.getFieldName());
-        assertEquals(SummaryTransform.DYNAMICTEASER,transform.getTransform());
+        assertEquals(SummaryTransform.DYNAMICTEASER, transform.getTransform());
 
-        transform = (FieldResultTransform)transforms.next();
+        transform = transforms.next();
         assertEquals("dyndesc2", transform.getFieldName());
-        assertEquals(SummaryTransform.DYNAMICTEASER,transform.getTransform());
+        assertEquals(SummaryTransform.DYNAMICTEASER, transform.getTransform());
 
-        transform = (FieldResultTransform)transforms.next();
+        transform = transforms.next();
         assertEquals("measurement", transform.getFieldName());
-        assertEquals(SummaryTransform.ATTRIBUTE,transform.getTransform());
+        assertEquals(SummaryTransform.ATTRIBUTE, transform.getTransform());
 
-        transform = (FieldResultTransform)transforms.next();
+        transform = transforms.next();
         assertEquals("rankfeatures", transform.getFieldName());
         assertEquals(SummaryTransform.RANKFEATURES, transform.getTransform());
 
-        transform = (FieldResultTransform)transforms.next();
+        transform = transforms.next();
         assertEquals("summaryfeatures", transform.getFieldName());
         assertEquals(SummaryTransform.SUMMARYFEATURES, transform.getTransform());
 
-        transform = (FieldResultTransform)transforms.next();
+        transform = transforms.next();
         assertEquals("popsiness", transform.getFieldName());
-        assertEquals(SummaryTransform.ATTRIBUTE,transform.getTransform());
+        assertEquals(SummaryTransform.ATTRIBUTE, transform.getTransform());
 
-        transform = (FieldResultTransform)transforms.next();
+        transform = transforms.next();
         assertEquals("popularity", transform.getFieldName());
-        assertEquals(SummaryTransform.ATTRIBUTE,transform.getTransform());
+        assertEquals(SummaryTransform.ATTRIBUTE, transform.getTransform());
 
-        transform = (FieldResultTransform)transforms.next();
+        transform = transforms.next();
         assertEquals("access", transform.getFieldName());
-        assertEquals(SummaryTransform.ATTRIBUTE,transform.getTransform());
+        assertEquals(SummaryTransform.ATTRIBUTE, transform.getTransform());
 
         assertFalse(transforms.hasNext());
     }
@@ -84,30 +84,22 @@ public class SummaryMapTestCase extends AbstractSchemaTestCase {
                                  true, false, Set.of());
         SummaryMap summaryMap = new SummaryMap(schema);
 
-        Iterator transforms = summaryMap.resultTransformIterator();
+        Iterator<FieldResultTransform> transforms = summaryMap.resultTransforms().values().iterator();
 
-        FieldResultTransform transform = (FieldResultTransform)transforms.next();
+        FieldResultTransform transform = transforms.next();
 
         assertEquals(fieldName, transform.getFieldName());
         assertEquals(SummaryTransform.GEOPOS, transform.getTransform());
 
-        transform = (FieldResultTransform)transforms.next();
-        assertEquals(PositionDataType.getPositionSummaryFieldName(fieldName), transform.getFieldName());
-        assertEquals(SummaryTransform.POSITIONS, transform.getTransform());
-
-        transform = (FieldResultTransform)transforms.next();
-        assertEquals(PositionDataType.getDistanceSummaryFieldName(fieldName), transform.getFieldName());
-        assertEquals(SummaryTransform.DISTANCE,transform.getTransform());
-
-        transform = (FieldResultTransform)transforms.next();
+        transform = transforms.next();
         assertEquals("rankfeatures", transform.getFieldName());
         assertEquals(SummaryTransform.RANKFEATURES, transform.getTransform());
 
-        transform = (FieldResultTransform)transforms.next();
+        transform = transforms.next();
         assertEquals("summaryfeatures", transform.getFieldName());
         assertEquals(SummaryTransform.SUMMARYFEATURES, transform.getTransform());
 
-        transform = (FieldResultTransform)transforms.next();
+        transform = transforms.next();
         assertEquals("location_zcurve", transform.getFieldName());
         assertEquals(SummaryTransform.ATTRIBUTE,transform.getTransform());
 
@@ -118,31 +110,23 @@ public class SummaryMapTestCase extends AbstractSchemaTestCase {
         SummarymapConfig c = scb.build();
         
         assertEquals(-1, c.defaultoutputclass());
-        assertEquals(c.override().size(), 6);
+        assertEquals(c.override().size(), 4);
 
         assertEquals(c.override(0).field(), fieldName);
         assertEquals(c.override(0).command(), "geopos");
         assertEquals(c.override(0).arguments(), PositionDataType.getZCurveFieldName(fieldName));
 
-        assertEquals(c.override(1).field(), PositionDataType.getPositionSummaryFieldName(fieldName));
-        assertEquals(c.override(1).command(), "positions");
-        assertEquals(c.override(1).arguments(), PositionDataType.getZCurveFieldName(fieldName));
-
-        assertEquals(c.override(2).field(), PositionDataType.getDistanceSummaryFieldName(fieldName));
-        assertEquals(c.override(2).command(), "absdist");
-        assertEquals(c.override(2).arguments(), PositionDataType.getZCurveFieldName(fieldName));
-
-        assertEquals(c.override(3).field(), "rankfeatures");
-        assertEquals(c.override(3).command(), "rankfeatures");
-        assertEquals(c.override(3).arguments(), "");
+        assertEquals(c.override(1).field(), "rankfeatures");
+        assertEquals(c.override(1).command(), "rankfeatures");
+        assertEquals(c.override(1).arguments(), "");
         
-        assertEquals(c.override(4).field(), "summaryfeatures");
-        assertEquals(c.override(4).command(), "summaryfeatures");
-        assertEquals(c.override(4).arguments(), "");
+        assertEquals(c.override(2).field(), "summaryfeatures");
+        assertEquals(c.override(2).command(), "summaryfeatures");
+        assertEquals(c.override(2).arguments(), "");
 
-        assertEquals(c.override(5).field(), "location_zcurve");
-        assertEquals(c.override(5).command(), "attribute");
-        assertEquals(c.override(5).arguments(), "location_zcurve");
+        assertEquals(c.override(3).field(), "location_zcurve");
+        assertEquals(c.override(3).command(), "attribute");
+        assertEquals(c.override(3).arguments(), "location_zcurve");
     }
 
     @Test

@@ -10,7 +10,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableSet;
-import com.google.inject.Inject;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.component.Version;
 import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.provision.ApplicationId;
@@ -29,6 +29,7 @@ import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
 import com.yahoo.io.IOUtils;
+import com.yahoo.jdisc.http.filter.security.misc.User;
 import com.yahoo.restapi.ByteArrayResponse;
 import com.yahoo.restapi.ErrorResponse;
 import com.yahoo.restapi.MessageResponse;
@@ -72,7 +73,6 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.SourceRevision;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartFilter;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
-import com.yahoo.jdisc.http.filter.security.misc.User;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
 import com.yahoo.vespa.hosted.controller.api.role.RoleDefinition;
 import com.yahoo.vespa.hosted.controller.api.role.SecurityContext;
@@ -1120,6 +1120,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             nodeObject.setBool("restarting", node.wantedRestartGeneration() > node.restartGeneration());
             nodeObject.setBool("rebooting", node.wantedRebootGeneration() > node.rebootGeneration());
             nodeObject.setString("group", node.group());
+            nodeObject.setLong("index", node.index());
         }
         return new SlimeJsonResponse(slime);
     }
@@ -2159,6 +2160,9 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                                            requireZone(environment, region));
         // Attempt to deactivate application even if the deployment is not known by the controller
         controller.applications().deactivate(id.applicationId(), id.zoneId());
+        controller.jobController().last(id.applicationId(), JobType.deploymentTo(id.zoneId()))
+                  .filter(run -> ! run.hasEnded())
+                  .ifPresent(last -> controller.jobController().abort(last.id(), "deployment deactivated by " + request.getJDiscRequest().getUserPrincipal().getName()));
         return new MessageResponse("Deactivated " + id);
     }
 
@@ -2801,7 +2805,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     private static String routingMethodString(RoutingMethod method) {
         switch (method) {
             case exclusive: return "exclusive";
-            case shared: return "shared";
             case sharedLayer4: return "sharedLayer4";
         }
         throw new IllegalArgumentException("Unknown routing method " + method);

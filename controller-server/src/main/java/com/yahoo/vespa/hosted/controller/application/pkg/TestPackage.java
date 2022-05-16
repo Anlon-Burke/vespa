@@ -141,8 +141,10 @@ public class TestPackage {
                                       try {
                                           byte[] testsJar = ZipEntries.readFile(testPackage, "components/" + path, 1 << 30);
                                           Manifest manifest = new JarInputStream(new ByteArrayInputStream(testsJar)).getManifest();
-                                          for (String suite : manifest.getMainAttributes().getValue("X-JDisc-Test-Bundle-Categories").split(","))
-                                              switch (suite.trim()) {
+                                          String bundleCategoriesHeader = manifest.getMainAttributes().getValue("X-JDisc-Test-Bundle-Categories");
+                                          if (bundleCategoriesHeader == null) continue;
+                                          for (String suite : bundleCategoriesHeader.split(","))
+                                              if ( ! suite.isBlank()) switch (suite.trim()) {
                                                   case "SystemTest": suites.add(system); break;
                                                   case "StagingSetup": suites.add(staging_setup); break;
                                                   case "StagingTest": suites.add(staging); break;

@@ -28,7 +28,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.logging.Level;
 
 /**
  * Class converting a collection of schemas from the intermediate format.
@@ -80,7 +79,7 @@ public class ConvertParsedSchemas {
         this.typeConverter = new ConvertParsedTypes(orderedInput, docMan);
     }
 
-    private Map<String, SDDocumentType> convertedDocuments = new LinkedHashMap();
+    private final Map<String, SDDocumentType> convertedDocuments = new LinkedHashMap<>();
 
     public List<Schema> convertToSchemas() {
         typeConverter.convert(false);
@@ -208,14 +207,12 @@ public class ConvertParsedSchemas {
         if (documentsOnly) {
             return; // skip ranking-only content, not used for document type generation
         }
-        for (var rankingConstant : parsed.getRankingConstants()) {
-            schema.rankingConstants().add(rankingConstant);
-        }
-        for (var onnxModel : parsed.getOnnxModels()) {
-            schema.onnxModels().add(onnxModel);
-        }
-        rankProfileRegistry.add(new DefaultRankProfile(schema, rankProfileRegistry, schema.rankingConstants()));
-        rankProfileRegistry.add(new UnrankedRankProfile(schema, rankProfileRegistry, schema.rankingConstants()));
+        for (var constant : parsed.getConstants())
+            schema.add(constant);
+        for (var onnxModel : parsed.getOnnxModels())
+            schema.add(onnxModel);
+        rankProfileRegistry.add(new DefaultRankProfile(schema, rankProfileRegistry));
+        rankProfileRegistry.add(new UnrankedRankProfile(schema, rankProfileRegistry));
         var rankConverter = new ConvertParsedRanking(rankProfileRegistry);
         for (var rankProfile : parsed.getRankProfiles()) {
             rankConverter.convertRankProfile(schema, rankProfile);

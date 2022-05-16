@@ -422,8 +422,13 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     protected void addAccessLogs(DeployState deployState, ApplicationContainerCluster cluster, Element spec) {
         List<Element> accessLogElements = getAccessLogElements(spec);
 
-        for (Element accessLog : accessLogElements) {
-            AccessLogBuilder.buildIfNotDisabled(deployState, cluster, accessLog).ifPresent(cluster::addComponent);
+        if (cluster.isHostedVespa() && !accessLogElements.isEmpty()) {
+            log.logApplicationPackage(
+                    Level.WARNING, "Applications are not allowed to override the 'accesslog' element");
+        } else {
+            for (Element accessLog : accessLogElements) {
+                AccessLogBuilder.buildIfNotDisabled(deployState, cluster, accessLog).ifPresent(cluster::addComponent);
+            }
         }
 
         if (accessLogElements.isEmpty() && deployState.getAccessLoggingEnabledByDefault())
@@ -431,7 +436,12 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
         // Add connection log if access log is configured
         if (cluster.getAllComponents().stream().anyMatch(component -> component instanceof AccessLogComponent)) {
-            cluster.addComponent(new ConnectionLogComponent(cluster, FileConnectionLog.class, "qrs"));
+            // TODO: clean up after Vespa 8
+            if (cluster.isHostedVespa() || deployState.getVespaVersion().getMajor() == 8) {
+                cluster.addComponent(new ConnectionLogComponent(cluster, FileConnectionLog.class, "access"));
+            } else {
+                cluster.addComponent(new ConnectionLogComponent(cluster, FileConnectionLog.class, "qrs"));
+            }
         }
     }
 
@@ -465,6 +475,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         // If the deployment contains certificate/private key reference, setup TLS port
         HostedSslConnectorFactory connectorFactory;
         Collection<String> tlsCiphersOverride = deployState.getProperties().tlsCiphersOverride();
+        boolean proxyProtocolMixedMode = deployState.getProperties().featureFlags().enableProxyProtocolMixedMode();
         if (deployState.endpointCertificateSecrets().isPresent()) {
             boolean authorizeClient = deployState.zone().system().isPublic();
             if (authorizeClient && deployState.tlsClientAuthority().isEmpty()) {
@@ -480,11 +491,11 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
             connectorFactory = authorizeClient
                     ? HostedSslConnectorFactory.withProvidedCertificateAndTruststore(
-                            serverName, endpointCertificateSecrets,  getTlsClientAuthorities(deployState), tlsCiphersOverride)
+                            serverName, endpointCertificateSecrets,  getTlsClientAuthorities(deployState), tlsCiphersOverride, proxyProtocolMixedMode)
                     : HostedSslConnectorFactory.withProvidedCertificate(
-                            serverName, endpointCertificateSecrets, enforceHandshakeClientAuth, tlsCiphersOverride);
+                            serverName, endpointCertificateSecrets, enforceHandshakeClientAuth, tlsCiphersOverride, proxyProtocolMixedMode);
         } else {
-            connectorFactory = HostedSslConnectorFactory.withDefaultCertificateAndTruststore(serverName, tlsCiphersOverride);
+            connectorFactory = HostedSslConnectorFactory.withDefaultCertificateAndTruststore(serverName, tlsCiphersOverride, proxyProtocolMixedMode);
         }
         cluster.getHttp().getAccessControl().ifPresent(accessControl -> accessControl.configureHostedConnector(connectorFactory));
         server.addConnector(connectorFactory);
@@ -587,7 +598,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         Element onnxElement = XML.getChild(modelEvaluationElement, "onnx");
         Element modelsElement = XML.getChild(onnxElement, "models");
         for (Element modelElement : XML.getChildren(modelsElement, "model") ) {
-            OnnxModel onnxModel = profiles.getOnnxModels().get(modelElement.getAttribute("name"));
+            OnnxModel onnxModel = profiles.getOnnxModels().asMap().get(modelElement.getAttribute("name"));
             if (onnxModel == null)
                 continue; // Skip if model is not found
             onnxModel.setStatelessExecutionMode(getStringValue(modelElement, "execution-mode", null));

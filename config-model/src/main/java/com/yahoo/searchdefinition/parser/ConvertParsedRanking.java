@@ -5,8 +5,6 @@ import com.yahoo.searchdefinition.RankProfile;
 import com.yahoo.searchdefinition.RankProfileRegistry;
 import com.yahoo.searchdefinition.Schema;
 import com.yahoo.searchdefinition.document.RankType;
-import com.yahoo.searchlib.rankingexpression.evaluation.TensorValue;
-import com.yahoo.searchlib.rankingexpression.evaluation.Value;
 
 import java.util.List;
 
@@ -14,7 +12,7 @@ import java.util.List;
  * Helper for converting ParsedRankProfile etc to RankProfile with settings
  *
  * @author arnej27959
- **/
+ */
 public class ConvertParsedRanking {
 
     private final RankProfileRegistry rankProfileRegistry;
@@ -32,31 +30,24 @@ public class ConvertParsedRanking {
         if (name.equals("default")) {
             return rankProfileRegistry.get(schema, "default");
         }
-        return new RankProfile(name, schema, rankProfileRegistry, schema.rankingConstants());
+        return new RankProfile(name, schema, rankProfileRegistry);
     }
 
     void convertRankProfile(Schema schema, ParsedRankProfile parsed) {
-        final RankProfile profile = makeRankProfile(schema, parsed.name());
-        assert(profile != null);
-        for (String name : parsed.getInherited()) {
+        RankProfile profile = makeRankProfile(schema, parsed.name());
+        for (String name : parsed.getInherited())
             profile.inherit(name);
-        }
+
         parsed.isStrict().ifPresent(value -> profile.setStrict(value));
 
-        for (var entry : parsed.getConstants().entrySet()) {
-            String name = entry.getKey();
-            Value value = entry.getValue();
-            if (value instanceof TensorValue) {
-                var tensor = (TensorValue) value;
-                profile.addConstantTensor(name, tensor);
-            } else {
-                profile.addConstant(name, value);
-            }
-        }
+        for (var constant : parsed.getConstants().values())
+            profile.add(constant);
 
-        for (var input : parsed.getInputs().entrySet()) {
+        for (var onnxModel : parsed.getOnnxModels())
+            profile.add(onnxModel);
+
+        for (var input : parsed.getInputs().entrySet())
             profile.addInput(input.getKey(), input.getValue());
-        }
 
         for (var func : parsed.getFunctions()) {
             String name = func.name();
@@ -70,6 +61,10 @@ public class ConvertParsedRanking {
             (value -> profile.setRankScoreDropLimit(value));
         parsed.getTermwiseLimit().ifPresent
             (value -> profile.setTermwiseLimit(value));
+        parsed.getPostFilterThreshold().ifPresent
+                (value -> profile.setPostFilterThreshold(value));
+        parsed.getApproximateThreshold().ifPresent
+                (value -> profile.setApproximateThreshold(value));
         parsed.getKeepRankCount().ifPresent
             (value -> profile.setKeepRankCount(value));
         parsed.getMinHitsPerThread().ifPresent
