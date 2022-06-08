@@ -4,13 +4,11 @@ vespa_define_module(
     vespalog
     vespalib
     configdefinitions
-    fastlib_fast
     document
-    searchcommon
     searchlib
-    juniper
 
     LIBS
+    src/vespa/juniper
     src/vespa/searchsummary
     src/vespa/searchsummary/config
     src/vespa/searchsummary/docsummary
@@ -24,4 +22,5 @@ vespa_define_module(
     src/tests/docsummary/matched_elements_filter
     src/tests/docsummary/slime_summary
     src/tests/extractkeywords
+    src/tests/juniper
 )

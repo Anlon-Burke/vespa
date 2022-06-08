@@ -34,8 +34,8 @@ import com.yahoo.config.provision.Zone;
 import com.yahoo.container.logging.FileConnectionLog;
 import com.yahoo.osgi.provider.model.ComponentModel;
 import com.yahoo.search.rendering.RendererRegistry;
-import com.yahoo.searchdefinition.OnnxModel;
-import com.yahoo.searchdefinition.derived.RankProfileList;
+import com.yahoo.schema.OnnxModel;
+import com.yahoo.schema.derived.RankProfileList;
 import com.yahoo.security.X509CertificateUtils;
 import com.yahoo.text.XML;
 import com.yahoo.vespa.defaults.Defaults;
@@ -86,6 +86,7 @@ import com.yahoo.vespa.model.container.search.GUIHandler;
 import com.yahoo.vespa.model.container.search.PageTemplates;
 import com.yahoo.vespa.model.container.search.searchchain.SearchChains;
 import com.yahoo.vespa.model.container.xml.document.DocumentFactoryBuilder;
+import com.yahoo.vespa.model.container.xml.embedder.EmbedderConfig;
 import com.yahoo.vespa.model.content.StorageGroup;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -197,9 +198,11 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     private void addClusterContent(ApplicationContainerCluster cluster, Element spec, ConfigModelContext context) {
         DeployState deployState = context.getDeployState();
         DocumentFactoryBuilder.buildDocumentFactories(cluster, spec);
+
         addConfiguredComponents(deployState, cluster, spec);
         addSecretStore(cluster, spec, deployState);
 
+        addEmbedderComponents(deployState, cluster, spec);
         addModelEvaluation(spec, cluster, context);
         addModelEvaluationBundles(cluster);
 
@@ -382,6 +385,13 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         }
     }
 
+    private static void addEmbedderComponents(DeployState deployState, ApplicationContainerCluster cluster, Element spec) {
+        for (Element node : XML.getChildren(spec, "embedder")) {
+            Element transformed = EmbedderConfig.transform(deployState, node);
+            cluster.addComponent(new DomComponentBuilder().build(deployState, cluster, transformed));
+        }
+    }
+
     private void addConfiguredComponents(DeployState deployState, ApplicationContainerCluster cluster, Element spec) {
         for (Element components : XML.getChildren(spec, "components")) {
             addIncludes(components);
@@ -423,6 +433,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         List<Element> accessLogElements = getAccessLogElements(spec);
 
         if (cluster.isHostedVespa() && !accessLogElements.isEmpty()) {
+            accessLogElements.clear();
             log.logApplicationPackage(
                     Level.WARNING, "Applications are not allowed to override the 'accesslog' element");
         } else {
@@ -1115,7 +1126,6 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         private final Element nodesElement;
         private final DeployLogger logger;
         private final boolean legacyOptions;
-        private final boolean failDeploymentWithInvalidJvmOptions;
         private final boolean isHosted;
 
         public JvmOptions(ContainerCluster<?> cluster, Element nodesElement, DeployState deployState, boolean legacyOptions) {
@@ -1123,7 +1133,6 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             this.nodesElement = nodesElement;
             this.logger = deployState.getDeployLogger();
             this.legacyOptions = legacyOptions;
-            this.failDeploymentWithInvalidJvmOptions = deployState.featureFlags().failDeploymentWithInvalidJvmOptions();
             this.isHosted = deployState.isHosted();
         }
 
@@ -1195,7 +1204,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             String message = "Invalid or misplaced JVM options in services.xml: " +
                     String.join(",", invalidOptions) + "." +
                     " See https://docs.vespa.ai/en/reference/services-container.html#jvm";
-            if (failDeploymentWithInvalidJvmOptions && isHosted)
+            if (isHosted)
                 throw new IllegalArgumentException(message);
             else
                 logger.logApplicationPackage(WARNING, message);
@@ -1216,14 +1225,12 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         private final String jvmGcOptions;
         private final DeployLogger logger;
         private final boolean isHosted;
-        private final boolean failDeploymentWithInvalidJvmOptions;
 
         public JvmGcOptions(DeployState deployState, String jvmGcOptions) {
             this.deployState = deployState;
             this.jvmGcOptions = jvmGcOptions;
             this.logger = deployState.getDeployLogger();
             this.isHosted = deployState.isHosted();
-            this.failDeploymentWithInvalidJvmOptions = deployState.featureFlags().failDeploymentWithInvalidJvmOptions();
         }
 
         private String build() {
@@ -1261,7 +1268,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             String message = "Invalid or misplaced JVM GC options in services.xml: " +
                     String.join(",", options) + "." +
                     " See https://docs.vespa.ai/en/reference/services-container.html#jvm";
-            if (failDeploymentWithInvalidJvmOptions && isHosted)
+            if (isHosted)
                 throw new IllegalArgumentException(message);
             else
                 logger.logApplicationPackage(WARNING, message);

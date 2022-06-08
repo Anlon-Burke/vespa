@@ -5,10 +5,13 @@ import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.Cloud;
+import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.ClusterResources;
+import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.Flavor;
+import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
@@ -540,6 +543,54 @@ public class DynamicProvisioningMaintainerTest {
         tester.prepareAndActivateInfraApplication(configSrvApp, hostType.childNodeType());
         NodeList nodesAfter = tester.nodeRepository().nodes().list().nodeType(hostType.childNodeType());
         assertEquals(nodesBefore, nodesAfter);
+    }
+
+    @Test
+    public void custom_cloud_account() {
+        DynamicProvisioningTester tester = new DynamicProvisioningTester(Cloud.builder().dynamicProvisioning(true).build(),
+                                                                         new MockNameResolver().mockAnyLookup());
+        ProvisioningTester provisioningTester = tester.provisioningTester;
+        ApplicationId applicationId = ApplicationId.from("t1", "a1", "i1");
+
+        // Deployment requests capacity in custom account
+        ClusterSpec spec = ProvisioningTester.contentClusterSpec();
+        ClusterResources resources = new ClusterResources(2, 1, new NodeResources(16, 24, 100, 1));
+        CloudAccount cloudAccount = new CloudAccount("012345678912");
+        Capacity capacity = Capacity.from(resources, resources, false, true, Optional.of(cloudAccount));
+        List<HostSpec> prepared = provisioningTester.prepare(applicationId, spec, capacity);
+
+        // Hosts are provisioned in requested account
+        tester.maintainer.maintain();
+        List<ProvisionedHost> newHosts = tester.hostProvisioner.provisionedHosts();
+        assertEquals(2, newHosts.size());
+        assertTrue(newHosts.stream().allMatch(host -> host.cloudAccount().get().equals(cloudAccount)));
+        for (var host : newHosts) {
+            provisioningTester.nodeRepository().nodes().setReady(host.hostHostname(), Agent.operator, getClass().getSimpleName());
+        }
+        provisioningTester.prepareAndActivateInfraApplication(DynamicProvisioningTester.tenantHostApp, NodeType.host);
+        NodeList activeHosts = provisioningTester.nodeRepository().nodes().list(Node.State.active).nodeType(NodeType.host);
+        assertEquals(2, activeHosts.size());
+        assertTrue(activeHosts.stream().allMatch(host -> host.cloudAccount().get().equals(cloudAccount)));
+        assertEquals(2, provisioningTester.activate(applicationId, prepared).size());
+    }
+
+    @Test
+    public void deprovision_parked_node_with_allocation() {
+        var tester = new DynamicProvisioningTester();
+        tester.hostProvisioner.with(Behaviour.failProvisioning);
+        Node host4 = tester.addNode("host4", Optional.empty(), NodeType.host, Node.State.parked);
+        Node host41 = tester.addNode("host4-1", Optional.of("host4"), NodeType.tenant, Node.State.parked, DynamicProvisioningTester.tenantApp);
+        tester.nodeRepository.nodes().deprovision("host4", Agent.operator, Instant.now());
+
+        assertEquals(Optional.of(true), tester.nodeRepository.nodes().node("host4").map(n -> n.status().wantToDeprovision()));
+        assertEquals(Optional.of(Node.State.parked), tester.nodeRepository.nodes().node("host4").map(Node::state));
+        assertEquals(Optional.of(true), tester.nodeRepository.nodes().node("host4-1").map(n -> n.status().wantToDeprovision()));
+        assertEquals(Optional.of(Node.State.parked), tester.nodeRepository.nodes().node("host4-1").map(Node::state));
+
+        tester.maintainer.maintain();
+
+        assertEquals(Optional.empty(), tester.nodeRepository.nodes().node("host4"));
+        assertEquals(Optional.empty(), tester.nodeRepository.nodes().node("host4-1"));
     }
 
     private void assertCfghost3IsActive(DynamicProvisioningTester tester) {

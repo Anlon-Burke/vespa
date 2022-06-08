@@ -156,6 +156,7 @@
       "public static final com.yahoo.path.Path SECURITY_DIR",
       "public static final java.lang.String SD_NAME_SUFFIX",
       "public static final java.lang.String RANKEXPRESSION_NAME_SUFFIX",
+      "public static final java.lang.String RANKPROFILE_NAME_SUFFIX",
       "public static final java.lang.String RULES_NAME_SUFFIX",
       "public static final java.lang.String EXT_DIR",
       "public static final java.lang.String PERMANENT_SERVICES"
@@ -296,7 +297,8 @@
       "public"
     ],
     "methods": [
-      "public void <init>(java.lang.String, java.util.List, java.lang.String)",
+      "public void <init>(int, java.lang.String, java.util.List, java.lang.String)",
+      "public int majorVersion()",
       "public java.lang.String humanReadableString()",
       "public java.lang.String toString()"
     ],

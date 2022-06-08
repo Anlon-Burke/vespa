@@ -15,6 +15,7 @@
 #include "resource_usage_explorer.h"
 #include "searchhandlerproxy.h"
 #include "simpleflush.h"
+#include "documentdbconfig.h"
 
 #include <vespa/document/base/exceptions.h>
 #include <vespa/document/datatype/documenttype.h>
@@ -37,7 +38,7 @@
 #include <vespa/searchlib/transactionlog/translogserverapp.h>
 #include <vespa/searchlib/util/fileheadertk.h>
 #include <vespa/vespalib/io/fileutil.h>
-#include <vespa/vespalib/net/state_server.h>
+#include <vespa/vespalib/net/http/state_server.h>
 #include <vespa/vespalib/util/blockingthreadstackexecutor.h>
 #include <vespa/vespalib/util/cpu_usage.h>
 #include <vespa/vespalib/util/host_name.h>
@@ -46,6 +47,7 @@
 #include <vespa/vespalib/util/random.h>
 #include <vespa/vespalib/util/sequencedtaskexecutor.h>
 #include <vespa/vespalib/util/size_literals.h>
+#include <vespa/fastos/file.h>
 #ifdef __linux__
 #include <malloc.h>
 #endif
@@ -398,7 +400,7 @@ Proton::addDocumentDB(const DocTypeName &docTypeName,
                       document::BucketSpace bucketSpace,
                       const vespalib::string &configId,
                       const BootstrapConfig::SP &bootstrapConfig,
-                      const DocumentDBConfig::SP &documentDBConfig,
+                      const std::shared_ptr<DocumentDBConfig> &documentDBConfig,
                       InitializeThreads initializeThreads)
 {
     try {
@@ -586,7 +588,7 @@ DocumentDB::SP
 Proton::addDocumentDB(const document::DocumentType &docType,
                       document::BucketSpace bucketSpace,
                       const BootstrapConfig::SP &bootstrapConfig,
-                      const DocumentDBConfig::SP &documentDBConfig,
+                      const std::shared_ptr<DocumentDBConfig> &documentDBConfig,
                       InitializeThreads initializeThreads)
 {
     const ProtonConfig &config(bootstrapConfig->getProtonConfig());
@@ -599,7 +601,7 @@ Proton::addDocumentDB(const document::DocumentType &docType,
     }
 
     vespalib::string db_dir = config.basedir + "/documents/" + docTypeName.toString();
-    vespalib::mkdir(db_dir, false); // Assume parent is created.
+    std::filesystem::create_directory(std::filesystem::path(db_dir)); // Assume parent is created.
     auto config_store = std::make_unique<FileConfigManager>(_transport, db_dir + "/config",
                                                             documentDBConfig->getConfigId(), docTypeName.getName());
     config_store->setProtonConfig(bootstrapConfig->getProtonConfigSP());
@@ -809,9 +811,7 @@ Proton::updateMetrics(const metrics::MetricLockGuard &)
         if (_shared_service) {
             metrics.shared.update(_shared_service->shared().getStats());
             metrics.warmup.update(_shared_service->warmup().getStats());
-            if (_shared_service->field_writer()) {
-                metrics.field_writer.update(_shared_service->field_writer()->getStats());
-            }
+            metrics.field_writer.update(_shared_service->field_writer().getStats());
         }
     }
 }
@@ -970,7 +970,7 @@ Proton::get_child(vespalib::stringref name) const
                                                            (_flushEngine) ? &_flushEngine->get_executor() : nullptr,
                                                            &_executor,
                                                            (_shared_service) ? &_shared_service->warmup() : nullptr,
-                                                           (_shared_service) ? _shared_service->field_writer() : nullptr);
+                                                           (_shared_service) ? &_shared_service->field_writer() : nullptr);
 
     } else if (name == HW_INFO) {
         return std::make_unique<HwInfoExplorer>(_hw_info);

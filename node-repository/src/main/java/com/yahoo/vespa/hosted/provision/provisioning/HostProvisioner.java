@@ -3,7 +3,9 @@ package com.yahoo.vespa.hosted.provision.provisioning;
 
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.ClusterSpec;
+import com.yahoo.config.provision.HostEvent;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.vespa.hosted.provision.Node;
@@ -13,7 +15,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Service for provisioning physical docker tenant hosts inside the zone.
+ * A service which supports provisioning container hosts dynamically.
  *
  * @author freva
  */
@@ -41,6 +43,8 @@ public interface HostProvisioner {
      * @param osVersion the OS version to use. If this version does not exist, implementations may choose a suitable
      *                  fallback version.
      * @param sharing puts requirements on sharing or exclusivity of the host to be provisioned.
+     * @param clusterType provision host exclusively for this cluster type
+     * @param cloudAccount the cloud account to use
      * @return list of {@link ProvisionedHost} describing the provisioned nodes
      */
     List<ProvisionedHost> provisionHosts(List<Integer> provisionIndices,
@@ -49,7 +53,8 @@ public interface HostProvisioner {
                                          ApplicationId applicationId,
                                          Version osVersion,
                                          HostSharing sharing,
-                                         Optional<ClusterSpec.Type> clusterType);
+                                         Optional<ClusterSpec.Type> clusterType,
+                                         Optional<CloudAccount> cloudAccount);
 
     /**
      * Continue provisioning of given list of Nodes.
@@ -73,5 +78,11 @@ public interface HostProvisioner {
      * @param host host to deprovision.
      */
     void deprovision(Node host);
+
+    /**
+     * Returns the maintenance events scheduled for hosts in this zone, in given cloud accounts. Host events in the
+     * zone's default cloud account are always included.
+     */
+    List<HostEvent> hostEventsIn(List<CloudAccount> cloudAccounts);
 
 }

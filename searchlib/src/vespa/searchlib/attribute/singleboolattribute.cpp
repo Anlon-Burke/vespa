@@ -6,10 +6,12 @@
 #include "ipostinglistsearchcontext.h"
 #include "primitivereader.h"
 #include "search_context.h"
+#include "valuemodifier.h"
 #include <vespa/searchlib/common/bitvectoriterator.h>
 #include <vespa/searchlib/query/query_term_simple.h>
 #include <vespa/searchlib/queryeval/emptysearch.h>
 #include <vespa/searchlib/util/file_settings.h>
+#include <vespa/searchcommon/attribute/config.h>
 #include <vespa/vespalib/data/databuffer.h>
 #include <vespa/vespalib/util/size_literals.h>
 
@@ -34,7 +36,7 @@ void
 SingleBoolAttribute::ensureRoom(DocId docIdLimit) {
     if (_bv.writer().capacity() < docIdLimit) {
         const GrowStrategy & gs = this->getConfig().getGrowStrategy();
-        uint32_t newSize = docIdLimit + (docIdLimit * gs.getDocsGrowFactor()) + gs.getDocsGrowDelta();
+        uint32_t newSize = docIdLimit + (docIdLimit * gs.getGrowFactor()) + gs.getGrowDelta();
         bool incGen = _bv.reserve(newSize);
         if (incGen) {
             incGeneration();
@@ -104,6 +106,7 @@ namespace {
 class BitVectorSearchContext : public attribute::SearchContext, public attribute::IPostingListSearchContext
 {
 private:
+    uint32_t _doc_id_limit;
     const BitVector & _bv;
     bool _invert;
     bool _valid;
@@ -122,7 +125,7 @@ private:
     }
 
 public:
-    BitVectorSearchContext(std::unique_ptr<QueryTermSimple> qTerm, const SingleBoolAttribute & bv);
+    BitVectorSearchContext(std::unique_ptr<QueryTermSimple> qTerm, const SingleBoolAttribute & attr);
 
     std::unique_ptr<queryeval::SearchIterator>
     createFilterIterator(fef::TermFieldMatchData * matchData, bool strict) override;
@@ -133,6 +136,7 @@ public:
 
 BitVectorSearchContext::BitVectorSearchContext(std::unique_ptr<QueryTermSimple> qTerm, const SingleBoolAttribute & attr)
     : SearchContext(attr),
+      _doc_id_limit(attr.getCommittedDocIdLimit()),
       _bv(attr.getBitVector()),
       _invert(false),
       _valid(qTerm->isValid())
@@ -152,7 +156,7 @@ BitVectorSearchContext::createFilterIterator(fef::TermFieldMatchData * matchData
     if (!valid()) {
         return std::make_unique<queryeval::EmptySearch>();
     }
-    return BitVectorIterator::create(&_bv, _attr.getCommittedDocIdLimit(), *matchData, strict, _invert);
+    return BitVectorIterator::create(&_bv, _doc_id_limit, *matchData, strict, _invert);
 }
 
 void

@@ -7,9 +7,9 @@ import com.yahoo.config.model.producer.AbstractConfigProducer;
 import com.yahoo.prelude.fastsearch.DocumentdbInfoConfig;
 import com.yahoo.search.config.IndexInfoConfig;
 import com.yahoo.search.config.SchemaInfoConfig;
-import com.yahoo.searchdefinition.DocumentOnlySchema;
-import com.yahoo.searchdefinition.derived.DerivedConfiguration;
-import com.yahoo.searchdefinition.derived.SchemaInfo;
+import com.yahoo.schema.DocumentOnlySchema;
+import com.yahoo.schema.derived.DerivedConfiguration;
+import com.yahoo.schema.derived.SchemaInfo;
 import com.yahoo.vespa.config.search.AttributesConfig;
 import com.yahoo.vespa.config.search.DispatchConfig;
 import com.yahoo.vespa.config.search.DispatchConfig.DistributionPolicy;
@@ -222,9 +222,6 @@ public class IndexedSearchCluster extends SearchCluster
     }
 
     @Override
-    public DerivedConfiguration getSchemaConfig() { return null; }
-
-    @Override
     public void getConfig(IndexInfoConfig.Builder builder) {
         documentDbsConfigProducer.getConfig(builder);
     }
@@ -239,12 +236,10 @@ public class IndexedSearchCluster extends SearchCluster
         documentDbsConfigProducer.getConfig(builder);
     }
 
-    @Override
     public void getConfig(AttributesConfig.Builder builder) {
         documentDbsConfigProducer.getConfig(builder);
     }
 
-    @Override
     public void getConfig(RankProfilesConfig.Builder builder) {
         documentDbsConfigProducer.getConfig(builder);
     }

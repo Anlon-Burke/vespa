@@ -5,8 +5,8 @@ import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.AbstractConfigProducer;
 import com.yahoo.documentmodel.NewDocumentType;
-import com.yahoo.searchdefinition.Schema;
-import com.yahoo.searchdefinition.derived.SchemaInfo;
+import com.yahoo.schema.Schema;
+import com.yahoo.schema.derived.SchemaInfo;
 import com.yahoo.vespa.config.search.DispatchConfig;
 import com.yahoo.vespa.config.search.core.ProtonConfig;
 import com.yahoo.vespa.model.builder.xml.dom.DomSearchTuningBuilder;
@@ -329,7 +329,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
         return getClusters().values().stream()
                 .filter(StreamingSearchCluster.class::isInstance)
                 .map(StreamingSearchCluster.class::cast)
-                .filter(ssc -> ssc.getSchemaConfig().getSchema().getName().equals(docType))
+                .filter(ssc -> ssc.schemas().get(docType) != null)
                 .findFirst();
     }
 
@@ -381,18 +381,11 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
                 hasAnyNonIndexedCluster = true;
                 ddbB.inputdoctypename(type.getFullName().getName())
                         .configid(findStreamingCluster(docTypeName).get().getDocumentDBConfigId())
-                        .mode(ProtonConfig.Documentdb.Mode.Enum.STREAMING)
-                        .feeding.concurrency(0.0);
+                        .mode(ProtonConfig.Documentdb.Mode.Enum.STREAMING);
             } else if (hasIndexingModeIndexed(type)) {
                 getIndexed().fillDocumentDBConfig(type.getFullName().getName(), ddbB);
-                if (tuning != null && tuning.searchNode != null && tuning.searchNode.feeding != null) {
-                    ddbB.feeding.concurrency(tuning.searchNode.feeding.concurrency);
-                } else {
-                    ddbB.feeding.concurrency(defaultFeedConcurrency);
-                }
             } else {
                 hasAnyNonIndexedCluster = true;
-                ddbB.feeding.concurrency(0.0);
                 ddbB.mode(ProtonConfig.Documentdb.Mode.Enum.STORE_ONLY);
             }
             if (globalDocType) {

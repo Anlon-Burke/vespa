@@ -6,8 +6,8 @@ import com.yahoo.config.model.api.ConfigChangeAction;
 import com.yahoo.config.model.api.ServiceInfo;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.documentmodel.NewDocumentType;
-import com.yahoo.searchdefinition.derived.AttributeFields;
-import com.yahoo.searchdefinition.document.Attribute;
+import com.yahoo.schema.derived.AttributeFields;
+import com.yahoo.schema.document.Attribute;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.application.validation.change.search.ChangeMessageBuilder;
 import com.yahoo.vespa.model.application.validation.change.search.DocumentTypeChangeValidator;
@@ -64,11 +64,11 @@ public class StreamingSearchClusterChangeValidator implements ChangeValidator {
                                                   getDocumentType(currentCluster, currentStreamingCluster),
                                                   getDocumentType(nextCluster, nextStreamingCluster), overrides, now));
         result.addAll(validateAttributeFastAccessAdded(currentCluster.id(),
-                                                       currentStreamingCluster.getSchemaConfig().getAttributeFields(),
-                                                       nextStreamingCluster.getSchemaConfig().getAttributeFields()));
+                                                       currentStreamingCluster.derived().getAttributeFields(),
+                                                       nextStreamingCluster.derived().getAttributeFields()));
         result.addAll(validateAttributeFastAccessRemoved(currentCluster.id(),
-                                                         currentStreamingCluster.getSchemaConfig().getAttributeFields(),
-                                                         nextStreamingCluster.getSchemaConfig().getAttributeFields()));
+                                                         currentStreamingCluster.derived().getAttributeFields(),
+                                                         nextStreamingCluster.derived().getAttributeFields()));
 
         return modifyActions(result, getSearchNodeServices(nextCluster), nextStreamingCluster.getDocTypeName());
     }

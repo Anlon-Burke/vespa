@@ -5,8 +5,6 @@
 #include "operation_listener.h"
 #include "search_context.h"
 #include "document_meta_store_versions.h"
-#include <vespa/fastos/file.h>
-#include <vespa/persistence/spi/bucket_limits.h>
 #include <vespa/searchcore/proton/bucketdb/bucketsessionbase.h>
 #include <vespa/searchcore/proton/bucketdb/joinbucketssession.h>
 #include <vespa/searchcore/proton/bucketdb/remove_batch_entry.h>
@@ -16,6 +14,8 @@
 #include <vespa/searchlib/common/i_gid_to_lid_mapper.h>
 #include <vespa/searchlib/query/query_term_simple.h>
 #include <vespa/searchlib/util/bufferwriter.h>
+#include <vespa/searchcommon/attribute/config.h>
+#include <vespa/persistence/spi/bucket_limits.h>
 #include <vespa/vespalib/btree/btree.hpp>
 #include <vespa/vespalib/btree/btreebuilder.hpp>
 #include <vespa/vespalib/btree/btreenodeallocator.hpp>
@@ -24,6 +24,7 @@
 #include <vespa/vespalib/datastore/buffer_type.hpp>
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/util/rcuvector.hpp>
+#include <vespa/fastos/file.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".proton.documentmetastore");
@@ -403,22 +404,23 @@ DocumentMetaStore::unload()
     unloadBucket(*_bucketDB, prev, prevDelta);
 }
 
+DocumentMetaStore::DocumentMetaStore(BucketDBOwnerSP bucketDB)
+    : DocumentMetaStore(std::move(bucketDB), getFixedName())
+{}
 
+DocumentMetaStore::DocumentMetaStore(BucketDBOwnerSP bucketDB, const vespalib::string &name)
+    : DocumentMetaStore(std::move(bucketDB), name, search::GrowStrategy())
+{}
 DocumentMetaStore::DocumentMetaStore(BucketDBOwnerSP bucketDB,
                                      const vespalib::string &name,
                                      const GrowStrategy &grow,
                                      SubDbType subDbType)
     : DocumentMetaStoreAttribute(name),
-      _metaDataStore(grow.getDocsInitialCapacity(),
-                     grow.getDocsGrowPercent(),
-                     grow.getDocsGrowDelta(),
-                     getGenerationHolder()),
+      _metaDataStore(grow, getGenerationHolder()),
       _gidToLidMap(),
       _gid_to_lid_map_write_itr(vespalib::datastore::EntryRef(), _gidToLidMap.getAllocator()),
       _gid_to_lid_map_write_itr_prepare_serial_num(0u),
-      _lidAlloc(_metaDataStore.size(),
-                _metaDataStore.capacity(),
-                getGenerationHolder()),
+      _lidAlloc(_metaDataStore.size(), _metaDataStore.capacity(), getGenerationHolder()),
       _bucketDB(std::move(bucketDB)),
       _shrinkLidSpaceBlockers(0),
       _subDbType(subDbType),
@@ -486,15 +488,11 @@ DocumentMetaStore::inspect(const GlobalId &gid, uint64_t prepare_serial_num)
 }
 
 DocumentMetaStore::Result
-DocumentMetaStore::put(const GlobalId &gid,
-                       const BucketId &bucketId,
-                       const Timestamp &timestamp,
-                       uint32_t docSize,
-                       DocId lid,
-                       uint64_t prepare_serial_num)
+DocumentMetaStore::put(const GlobalId &gid, const BucketId &bucketId, Timestamp timestamp,
+                       uint32_t docSize, DocId lid, uint64_t prepare_serial_num)
 {
     Result res;
-    RawDocumentMetaData metaData(gid, bucketId, timestamp, docSize);
+    RawDocumentMetaData metaData(gid, bucketId, storage::spi::Timestamp(timestamp), docSize);
     KeyComp comp(metaData, get_unbound_meta_data_view());
     auto find_key = GidToLidMapKey::make_find_key(gid);
     auto& itr = _gid_to_lid_map_write_itr;
@@ -545,9 +543,7 @@ DocumentMetaStore::put(const GlobalId &gid,
 }
 
 bool
-DocumentMetaStore::updateMetaData(DocId lid,
-                                  const BucketId &bucketId,
-                                  const Timestamp &timestamp)
+DocumentMetaStore::updateMetaData(DocId lid, const BucketId &bucketId, Timestamp timestamp)
 {
     if (!validLid(lid)) {
         return false;
@@ -558,12 +554,12 @@ DocumentMetaStore::updateMetaData(DocId lid,
                      metaData.getTimestamp(),
                      metaData.getDocSize(),
                      bucketId.stripUnused(),
-                     timestamp,
+                     storage::spi::Timestamp(timestamp),
                      metaData.getDocSize(),
                      _subDbType);
     metaData.setBucketId(bucketId);
     std::atomic_thread_fence(std::memory_order_release);
-    metaData.setTimestamp(timestamp);
+    metaData.setTimestamp(storage::spi::Timestamp(timestamp));
     return true;
 }
 

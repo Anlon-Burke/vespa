@@ -84,9 +84,10 @@ BuildRequires: python36-devel
 BuildRequires: glibc-langpack-en
 %endif
 %if 0%{?el9}
+%global _centos_stream %(grep -qs '^NAME="CentOS Stream"' /etc/os-release && echo 1 || echo 0)
 BuildRequires: gcc-c++
 BuildRequires: libatomic
-BuildRequires: vespa-pybind11-devel
+BuildRequires: pybind11-devel
 BuildRequires: python3-pytest
 BuildRequires: python3-devel
 BuildRequires: glibc-langpack-en
@@ -124,13 +125,9 @@ BuildRequires: libarchive
 %endif
 %define _command_cmake cmake
 %if 0%{?_centos_stream}
-BuildRequires: (llvm-devel >= 13.0.0 and llvm-devel < 14)
+BuildRequires: (llvm-devel >= 14.0.0 and llvm-devel < 15)
 %else
-%if 0%{?almalinux}
 BuildRequires: (llvm-devel >= 13.0.1 and llvm-devel < 14)
-%else
-BuildRequires: (llvm-devel >= 12.0.1 and llvm-devel < 13)
-%endif
 %endif
 %else
 BuildRequires: (llvm-devel >= 12.0.1 and llvm-devel < 13)
@@ -153,7 +150,11 @@ BuildRequires: vespa-lz4-devel >= 1.9.2-2
 BuildRequires: vespa-onnxruntime-devel = 1.11.0
 BuildRequires: vespa-libzstd-devel >= 1.4.5-2
 BuildRequires: protobuf-devel
+%if 0%{?_centos_stream}
+BuildRequires: (llvm-devel >= 14.0.0 and llvm-devel < 15)
+%else
 BuildRequires: (llvm-devel >= 13.0.0 and llvm-devel < 14)
+%endif
 BuildRequires: boost-devel >= 1.75
 BuildRequires: gtest-devel
 BuildRequires: gmock-devel
@@ -206,19 +207,14 @@ BuildRequires: vespa-openblas-devel = 0.3.18
 BuildRequires: vespa-re2-devel = 20210801
 %define _use_vespa_re2 1
 %else
-%if 0%{?el9}
-BuildRequires: vespa-xxhash-devel = 0.8.0
-%define _use_vespa_xxhash 1
-%else
 BuildRequires: xxhash-devel >= 0.8.0
-%endif
 %if 0%{?el7} || 0%{?el8}
 BuildRequires: vespa-openblas-devel = 0.3.18
 %define _use_vespa_openblas 1
 %else
 BuildRequires: openblas-devel
 %endif
-%if 0%{?amzn2022} || 0%{?el9}
+%if 0%{?amzn2022}
 BuildRequires: vespa-re2-devel = 20210801
 %define _use_vespa_re2 1
 %else
@@ -275,7 +271,7 @@ Requires: perl-URI
 %if ! 0%{?el7}
 Requires: valgrind
 %endif
-%if (0%{?el7} && 0%{?amzn2}) || 0%{?el9}
+%if (0%{?el7} && 0%{?amzn2})
 Requires: vespa-xxhash = 0.8.0
 %else
 Requires: xxhash
@@ -303,13 +299,9 @@ Requires: vespa-gtest = 1.11.0
 %if 0%{?el8}
 %if 0%{?centos} || 0%{?rocky}
 %if 0%{?_centos_stream}
-%define _vespa_llvm_version 13
+%define _vespa_llvm_version 14
 %else
-%if 0%{?almalinux}
 %define _vespa_llvm_version 13
-%else
-%define _vespa_llvm_version 12
-%endif
 %endif
 %else
 %define _vespa_llvm_version 12
@@ -319,7 +311,11 @@ Requires: vespa-gtest = 1.11.0
 %define _extra_include_directory %{_vespa_deps_prefix}/include
 %endif
 %if 0%{?el9}
+%if 0%{?_centos_stream}
+%define _vespa_llvm_version 14
+%else
 %define _vespa_llvm_version 13
+%endif
 Requires: gtest
 %define _extra_link_directory %{_vespa_deps_prefix}/lib64
 %define _extra_include_directory %{_vespa_deps_prefix}/include;/usr/include/openblas
@@ -388,7 +384,7 @@ Summary: Vespa - The open big data serving engine - base C++ libraries
 %if 0%{?centos} || 0%{?rocky}
 Requires: epel-release
 %endif
-%if 0%{?amzn2} || 0%{?el9}
+%if 0%{?amzn2}
 Requires: vespa-xxhash = 0.8.0
 %else
 Requires: xxhash-libs >= 0.8.0
@@ -405,7 +401,7 @@ Requires: vespa-openblas = 0.3.18
 %else
 Requires: openblas-serial
 %endif
-%if 0%{?amzn2} || 0%{?amzn2022} || 0%{?el9}
+%if 0%{?amzn2} || 0%{?amzn2022}
 Requires: vespa-re2 = 20210801
 %else
 Requires: re2
@@ -438,13 +434,9 @@ Requires: openssl-libs
 %if 0%{?el8}
 %if 0%{?centos} || 0%{?rocky}
 %if 0%{?_centos_stream}
-Requires: (llvm-libs >= 13.0.0 and llvm-libs < 14)
+Requires: (llvm-libs >= 14.0.0 and llvm-libs < 15)
 %else
-%if 0%{?almalinux}
 Requires: (llvm-libs >= 13.0.1 and llvm-libs < 14)
-%else
-Requires: (llvm-libs >= 12.0.1 and llvm-libs < 13)
-%endif
 %endif
 %else
 Requires: (llvm-libs >= 12.0.1 and llvm-libs < 13)
@@ -452,7 +444,11 @@ Requires: (llvm-libs >= 12.0.1 and llvm-libs < 13)
 Requires: vespa-protobuf = 3.19.1
 %endif
 %if 0%{?el9}
+%if 0%{?_centos_stream}
+Requires: (llvm-libs >= 14.0.0 and llvm-libs < 15)
+%else
 Requires: (llvm-libs >= 13.0.0 and llvm-libs < 14)
+%endif
 Requires: protobuf
 %endif
 %if 0%{?fedora}
@@ -632,7 +628,7 @@ rm -rf %{buildroot}
 %if 0%{?installdir:1}
 cp -r %{installdir} %{buildroot}
 %if 0%{?source_base:1} && ! (0%{?amzn2} || 0%{?el7})
-find %{buildroot} -iname '*.so' -print0 | xargs --no-run-if-empty -0 -n1 /usr/lib/rpm/debugedit -b %{source_base} -d %{_builddir}/%{name}-%{version}
+find %{buildroot} -exec file {} \; | grep ': ELF ' | cut -d: -f1 | xargs --no-run-if-empty -n1 /usr/lib/rpm/debugedit -b %{source_base} -d %{_builddir}/%{name}-%{version}
 %endif
 %else
 make install DESTDIR=%{buildroot}
@@ -834,7 +830,6 @@ fi
 %dir %{_prefix}/lib64
 %{_prefix}/lib64/libfastos.so
 %{_prefix}/lib64/libfnet.so
-%{_prefix}/lib64/libstaging_vespalib.so
 %{_prefix}/lib64/libvespadefaults.so
 %{_prefix}/lib64/libvespalib.so
 %{_prefix}/lib64/libvespalog.so
@@ -847,7 +842,6 @@ fi
 %{_prefix}/lib64
 %exclude %{_prefix}/lib64/libfastos.so
 %exclude %{_prefix}/lib64/libfnet.so
-%exclude %{_prefix}/lib64/libstaging_vespalib.so
 %exclude %{_prefix}/lib64/libvespadefaults.so
 %exclude %{_prefix}/lib64/libvespalib.so
 %exclude %{_prefix}/lib64/libvespalog.so

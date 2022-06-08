@@ -24,6 +24,7 @@
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/util/lambdatask.h>
 #include <cassert>
+#include <thread>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".proton.server.feedhandler");
@@ -33,7 +34,6 @@ using document::Document;
 using document::DocumentTypeRepo;
 using storage::spi::RemoveResult;
 using storage::spi::Result;
-using storage::spi::Timestamp;
 using storage::spi::Timestamp;
 using storage::spi::UpdateResult;
 using vespalib::Executor;
@@ -208,7 +208,7 @@ FeedHandler::performInternalUpdate(FeedToken token, UpdateOperation &op)
 {
     appendOperation(op, token);
     if (token) {
-        token->setResult(make_unique<UpdateResult>(op.getPrevTimestamp()), true);
+        token->setResult(make_unique<UpdateResult>(Timestamp(op.getPrevTimestamp())), true);
     }
     _activeFeedView->handleUpdate(std::move(token), op);
 }
@@ -225,7 +225,7 @@ FeedHandler::createNonExistingDocument(FeedToken token, const UpdateOperation &o
     _activeFeedView->preparePut(putOp);
     appendOperation(putOp, token);
     if (token) {
-        token->setResult(make_unique<UpdateResult>(putOp.getTimestamp()), true);
+        token->setResult(make_unique<UpdateResult>(Timestamp(putOp.getTimestamp())), true);
     }
 
     _activeFeedView->handlePut(feedtoken::make(std::make_unique<DaisyChainedFeedToken>(std::move(token))), putOp);

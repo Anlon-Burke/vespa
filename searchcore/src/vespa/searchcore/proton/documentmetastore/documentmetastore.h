@@ -9,9 +9,9 @@
 #include "lid_hold_list.h"
 #include "raw_document_meta_data.h"
 #include <vespa/searchcore/proton/common/subdbtype.h>
-#include <vespa/searchlib/attribute/singlesmallnumericattribute.h>
 #include <vespa/searchlib/queryeval/blueprint.h>
 #include <vespa/searchlib/docstore/ibucketizer.h>
+#include <vespa/searchcommon/common/growstrategy.h>
 #include <vespa/vespalib/util/rcuvector.h>
 
 namespace proton::bucketdb {
@@ -146,11 +146,13 @@ public:
     static constexpr size_t minHeaderLen = 0x1000;
     static constexpr size_t entrySize =
         sizeof(uint32_t) + GlobalId::LENGTH + sizeof(uint8_t) +
-        sizeof(Timestamp::Type);
+        sizeof(Timestamp);
 
+    DocumentMetaStore(BucketDBOwnerSP bucketDB);
+    DocumentMetaStore(BucketDBOwnerSP bucketDB, const vespalib::string & name);
     DocumentMetaStore(BucketDBOwnerSP bucketDB,
-                      const vespalib::string & name=getFixedName(),
-                      const search::GrowStrategy & grow=search::GrowStrategy(),
+                      const vespalib::string & name,
+                      const search::GrowStrategy & grow,
                       SubDbType subDbType = SubDbType::READY);
     ~DocumentMetaStore();
 
@@ -167,9 +169,9 @@ public:
      * map is then re-built the same way it was originally where add()
      * was used to create the <lid, gid> pairs.
      **/
-    Result put(const GlobalId &gid, const BucketId &bucketId,
-               const Timestamp &timestamp, uint32_t docSize, DocId lid, uint64_t prepare_serial_num) override;
-    bool updateMetaData(DocId lid, const BucketId &bucketId, const Timestamp &timestamp) override;
+    Result put(const GlobalId &gid, const BucketId &bucketId, Timestamp timestamp,
+               uint32_t docSize, DocId lid, uint64_t prepare_serial_num) override;
+    bool updateMetaData(DocId lid, const BucketId &bucketId, Timestamp timestamp) override;
     bool remove(DocId lid, uint64_t prepare_serial_num) override;
 
     BucketId getBucketOf(const vespalib::GenerationHandler::Guard & guard, uint32_t lid) const override;

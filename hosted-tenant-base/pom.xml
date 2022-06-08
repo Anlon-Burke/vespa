@@ -222,6 +222,26 @@
                                     </rules>
                                 </configuration>
                             </execution>
+                            <execution>
+                                <id>enforce-just-our-jupiter</id>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <bannedDependencies>
+                                            <!-- Fail validation for apps with junit-jupiter-api in compile scope, or on wrong version. -->
+                                            <excludes>
+                                                <exclude>org.junit.jupiter:junit-jupiter-api:*:jar:compile</exclude>
+                                                <exclude>org.junit.jupiter:junit-jupiter-api:*:jar:provided</exclude>
+                                                <exclude>org.junit.jupiter:junit-jupiter-api:*:jar:runtime</exclude>
+                                                <exclude>org.junit.jupiter:junit-jupiter-api:(,${junit.version}):jar:*</exclude>
+                                                <exclude>org.junit.jupiter:junit-jupiter-api:(${junit.version},):jar:*</exclude>
+                                            </excludes>
+                                        </bannedDependencies>
+                                    </rules>
+                                </configuration>
+                            </execution>
                         </executions>
                     </plugin>
 
@@ -235,13 +255,12 @@
                             <!-- note: ordering affects how overrides are evaluated! -->
                             <testBundleScopeOverrides>
                                 ${extraTestBundleScopeOverrides},
-                                com.yahoo.vespa:application:test,
-                                com.yahoo.vespa:container-test:runtime,
                                 org.junit.jupiter:junit-jupiter-api:provided,
-                                org.opentest4j:opentest4j:test,
                                 org.junit.jupiter:junit-jupiter-engine:test,
                                 org.junit.vintage:junit-vintage-engine:test,
-                                com.yahoo.vespa:vespa-feed-client:runtime, <!-- prevent effective compile scope of vespa-feed-client in test bundle -->
+                                com.yahoo.vespa:application:test,
+                                com.yahoo.vespa:container-test:test,
+                                com.yahoo.vespa:vespa-feed-client:test, <!-- prevent effective compile scope of vespa-feed-client in test bundle -->
                                 com.yahoo.vespa:vespa-feed-client-api:provided,
                                 com.yahoo.vespa:tenant-cd-api:provided
                             </testBundleScopeOverrides>

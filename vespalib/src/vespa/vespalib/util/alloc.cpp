@@ -228,14 +228,22 @@ getDefaultAutoAllocator(AutoAllocatorsMap & map) {
 }
 
 AutoAllocatorsMapWithDefault
+createAutoAllocatorsWithDefault() __attribute__((noinline));
+
+AutoAllocatorsMapWithDefault
 createAutoAllocatorsWithDefault() {
     AutoAllocatorsMapWithDefault tmp(createAutoAllocators(), nullptr);
     tmp.second = &getDefaultAutoAllocator(tmp.first);
     return tmp;
 }
 
+AutoAllocatorsMapWithDefault &
+availableAutoAllocators() {
+    static AutoAllocatorsMapWithDefault  S_availableAutoAllocators = createAutoAllocatorsWithDefault();
+    return S_availableAutoAllocators;
+}
 
-AutoAllocatorsMapWithDefault  _G_availableAutoAllocators = createAutoAllocatorsWithDefault();
+
 alloc::HeapAllocator _G_heapAllocatorDefault;
 alloc::AlignedHeapAllocator _G_512BalignedHeapAllocator(512);
 alloc::AlignedHeapAllocator _G_1KalignedHeapAllocator(1_Ki);
@@ -268,12 +276,12 @@ MMapAllocator::getDefault() {
 
 MemoryAllocator &
 AutoAllocator::getDefault() {
-    return *_G_availableAutoAllocators.second;
+    return *availableAutoAllocators().second;
 }
 
 MemoryAllocator &
 AutoAllocator::getAllocator(size_t mmapLimit, size_t alignment) {
-    return getAutoAllocator(_G_availableAutoAllocators.first, mmapLimit, alignment);
+    return getAutoAllocator(availableAutoAllocators().first, mmapLimit, alignment);
 }
 
 MemoryAllocator::PtrAndSize
@@ -449,33 +457,33 @@ AutoAllocator::resize_inplace(PtrAndSize current, size_t newSize) const {
 
 MMapAllocator::PtrAndSize
 AutoAllocator::alloc(size_t sz) const {
-    if (useMMap(sz)) {
-        sz = roundUpToHugePages(sz);
-        return MMapAllocator::salloc(sz, nullptr);
-    } else {
+    if ( ! useMMap(sz)) {
         if (_alignment == 0) {
             return HeapAllocator::salloc(sz);
         } else {
             return AlignedHeapAllocator(_alignment).alloc(sz);
         }
+    } else {
+        sz = roundUpToHugePages(sz);
+        return MMapAllocator::salloc(sz, nullptr);
     }
 }
 
 void
 AutoAllocator::free(PtrAndSize alloc) const {
-    if (isMMapped(alloc.second)) {
-        return MMapAllocator::sfree(alloc);
-    } else {
+    if ( ! isMMapped(alloc.second)) {
         return HeapAllocator::sfree(alloc);
+    } else {
+        return MMapAllocator::sfree(alloc);
     }
 }
 
 void
 AutoAllocator::free(void * ptr, size_t sz) const {
-    if (useMMap(sz)) {
-        return MMapAllocator::sfree(PtrAndSize(ptr, roundUpToHugePages(sz)));
-    } else {
+    if ( ! useMMap(sz)) {
         return HeapAllocator::sfree(PtrAndSize(ptr, sz));
+    } else {
+        return MMapAllocator::sfree(PtrAndSize(ptr, roundUpToHugePages(sz)));
     }
 }
 
@@ -484,6 +492,11 @@ AutoAllocator::free(void * ptr, size_t sz) const {
 const MemoryAllocator *
 MemoryAllocator::select_allocator(size_t mmapLimit, size_t alignment) {
     return & AutoAllocator::getAllocator(mmapLimit, alignment);
+}
+
+const MemoryAllocator *
+MemoryAllocator::select_allocator() {
+    return & AutoAllocator::getDefault();
 }
 
 Alloc

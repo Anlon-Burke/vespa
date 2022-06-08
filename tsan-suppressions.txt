@@ -34,9 +34,21 @@ deadlock:proton::ImportedAttributesContext::getAttributeStableEnum
 race:llvm::sys::MutexImpl
 race:llvm::sys::SmartMutex<false>::lock
 race:llvm::sys::SmartMutex<true>::lock
+race:llvm::sys::DynamicLibrary::getPermanentLibrary
+race:(anonymous namespace)::GDBJITRegistrationListener::notifyObjectLoaded
 
 # This is external code that we do not control. Complains that mutex
 # creation and locking is not strictly enough ordered.
 
 race:re2::Prog::GetDFA
 race:re2::DFA::DFA
+
+# Non-TSAN instrumented OpenSSL may trigger warnings when many threads are attempting
+# to create TLS connections at once in a newly started process. This appears to be related
+# to implicit init-once semantics of internal OpenSSL datastructures, though the TSAN report
+# stack frames are truncated and don't show the full picture.
+# When a TSAN-instrumented OpenSSL build is used, the error does not manifest itself.
+# This implies that it's likely caused by a lack of instrumentation of atomic operations
+# (acquire-load in double-checked locking etc).
+race:ASN1_STRING_cmp
+race:ASN1_STRING_set

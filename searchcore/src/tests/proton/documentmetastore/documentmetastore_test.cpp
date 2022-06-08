@@ -11,6 +11,7 @@
 #include <vespa/searchcore/proton/flushengine/shrink_lid_space_flush_target.h>
 #include <vespa/searchcore/proton/server/itlssyncer.h>
 #include <vespa/searchlib/attribute/attributefilesavetarget.h>
+#include <vespa/searchlib/attribute/search_context.h>
 #include <vespa/searchlib/common/flush_token.h>
 #include <vespa/searchlib/common/tunefileinfo.h>
 #include <vespa/searchlib/fef/matchdatalayout.h>
@@ -102,7 +103,7 @@ createBucketDB()
 
 void
 assertPut(const BucketId &bucketId,
-          const Timestamp &timestamp,
+          uint64_t timestamp,
           uint32_t lid,
           const GlobalId &gid,
           DocumentMetaStore &dms)

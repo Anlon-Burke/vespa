@@ -11,7 +11,7 @@
 #include <vespa/searchlib/util/dirtraverse.h>
 #include <vespa/searchlib/common/serialnumfileheadercontext.h>
 #include <vespa/searchlib/util/filekit.h>
-#include <vespa/vespalib/io/fileutil.h>
+#include <filesystem>
 #include <fstream>
 
 #include <vespa/log/log.h>
@@ -70,7 +70,7 @@ DocumentMetaStoreFlushTarget::Flusher::~Flusher() = default;
 bool
 DocumentMetaStoreFlushTarget::Flusher::saveDocumentMetaStore()
 {
-    vespalib::mkdir(_flushDir, false);
+    std::filesystem::create_directory(std::filesystem::path(_flushDir));
     SerialNumFileHeaderContext fileHeaderContext(_dmsft._fileHeaderContext, _syncToken);
     bool saveSuccess = false;
     if (_dmsft._hwInfo.disk().slow()) {
@@ -223,6 +223,7 @@ DocumentMetaStoreFlushTarget::initFlush(SerialNum currentSerial, std::shared_ptr
 uint64_t
 DocumentMetaStoreFlushTarget::getApproxBytesToWriteToDisk() const
 {
+    auto guard = _dms->getGuard();
     return _dms->getEstimatedSaveByteSize();
 }
 

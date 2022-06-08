@@ -147,7 +147,10 @@ public class ApplicationPackageBuilder {
     }
 
     public ApplicationPackageBuilder region(String regionName) {
-        return region(RegionName.from(regionName), true);
+        prodBody.append("      <region>")
+                .append(regionName)
+                .append("</region>\n");
+        return this;
     }
 
     public ApplicationPackageBuilder region(RegionName regionName, boolean active) {
@@ -266,8 +269,13 @@ public class ApplicationPackageBuilder {
         StringBuilder xml = new StringBuilder();
         xml.append("<deployment version='1.0' ");
         majorVersion.ifPresent(v -> xml.append("major-version='").append(v).append("' "));
-        if(athenzIdentityAttributes != null) {
+        if (athenzIdentityAttributes != null) {
             xml.append(athenzIdentityAttributes);
+        }
+        if (cloudAccount != null) {
+            xml.append(" cloud-account='");
+            xml.append(cloudAccount);
+            xml.append("'");
         }
         xml.append(">\n");
         for (String instance : instances.split(",")) {
@@ -290,11 +298,6 @@ public class ApplicationPackageBuilder {
             if (globalServiceId != null) {
                 xml.append(" global-service-id='");
                 xml.append(globalServiceId);
-                xml.append("'");
-            }
-            if (cloudAccount != null) {
-                xml.append(" cloud-account='");
-                xml.append(cloudAccount);
                 xml.append("'");
             }
             xml.append(">\n");

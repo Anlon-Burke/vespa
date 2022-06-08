@@ -489,18 +489,19 @@ PersistenceEngine::get(const Bucket& b, const document::FieldSet& fields, const 
         for (size_t i = 0; i < retrievers->size(); ++i) {
             IDocumentRetriever &retriever = *(*retrievers)[i];
             search::DocumentMetaData meta = retriever.getDocumentMetaData(did);
-            if (meta.timestamp != 0 && meta.bucketId == b.getBucketId()) {
+            storage::spi::Timestamp timestamp(meta.timestamp);
+            if (timestamp != 0 && meta.bucketId == b.getBucketId()) {
                 if (meta.removed) {
-                    return GetResult::make_for_tombstone(meta.timestamp);
+                    return GetResult::make_for_tombstone(timestamp);
                 }
                 if (document::FieldSet::Type::NONE == fields.getType()) {
-                    return GetResult::make_for_metadata_only(meta.timestamp);
+                    return GetResult::make_for_metadata_only(timestamp);
                 }
                 document::Document::UP doc = retriever.getPartialDocument(meta.lid, did, fields);
                 if (!doc || doc->getId().getGlobalId() != meta.gid) {
                     return GetResult();
                 }
-                return GetResult(std::move(doc), meta.timestamp);
+                return GetResult(std::move(doc), timestamp);
             }
         }
     }
@@ -526,7 +527,7 @@ PersistenceEngine::createIterator(const Bucket &bucket, FieldSetSP fields, const
     entry->handler_sequence = HandlerSnapshot::release(std::move(snapshot));
 
     std::lock_guard<std::mutex> guard(_iterators_lock);
-    static IteratorId id_counter(0);
+    static std::atomic<IteratorId::Type> id_counter(0);
     IteratorId id(++id_counter);
     _iterators[id] = entry.release();
     return CreateIteratorResult(id);

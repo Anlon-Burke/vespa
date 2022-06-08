@@ -181,6 +181,7 @@ public class DeploymentSpecXmlReader {
         int maxIdleHours = getWithFallback(instanceTag, parentTag, upgradeTag, "max-idle-hours", Integer::parseInt, 8);
         List<DeploymentSpec.ChangeBlocker> changeBlockers = readChangeBlockers(instanceTag, parentTag);
         Optional<AthenzService> athenzService = mostSpecificAttribute(instanceTag, athenzServiceAttribute).map(AthenzService::from);
+        Optional<CloudAccount> cloudAccount = mostSpecificAttribute(instanceTag, cloudAccountAttribute).map(CloudAccount::new);
         Notifications notifications = readNotifications(instanceTag, parentTag);
 
         // Values where there is no default
@@ -203,8 +204,7 @@ public class DeploymentSpecXmlReader {
                                                              changeBlockers,
                                                              Optional.ofNullable(prodAttributes.get(globalServiceIdAttribute)),
                                                              athenzService,
-                                                             Optional.ofNullable(prodAttributes.get(cloudAccountAttribute))
-                                                                     .map(CloudAccount::new),
+                                                             cloudAccount,
                                                              notifications,
                                                              endpoints,
                                                              now))
@@ -226,10 +226,8 @@ public class DeploymentSpecXmlReader {
 
         if (prodTag.equals(stepTag.getTagName())) {
             readGlobalServiceId(stepTag).ifPresent(id -> prodAttributes.put(globalServiceIdAttribute, id));
-            readCloudAccount(stepTag).ifPresent(account -> prodAttributes.put(cloudAccountAttribute, account));
         } else {
             if (readGlobalServiceId(stepTag).isPresent()) illegal("Attribute '" + globalServiceIdAttribute + "' is only valid on 'prod' tag");
-            if (!regionTag.equals(stepTag.getTagName()) && readCloudAccount(stepTag).isPresent()) illegal("Attribute '" + cloudAccountAttribute + "' is only valid on 'prod' or 'region' tag");
         }
 
         switch (stepTag.getTagName()) {
@@ -435,18 +433,13 @@ public class DeploymentSpecXmlReader {
                                           Optional<String> testerFlavor, Element regionTag) {
         return new DeclaredZone(environment, Optional.of(RegionName.from(XML.getValue(regionTag).trim())),
                                 readActive(regionTag), athenzService, testerFlavor,
-                                readCloudAccount(regionTag).map(CloudAccount::new));
-    }
-
-    private Optional<String> readCloudAccount(Element tag) {
-        return Optional.of(tag.getAttribute(cloudAccountAttribute))
-                       .filter(account -> !account.isEmpty());
+                                stringAttribute(cloudAccountAttribute, regionTag).map(CloudAccount::new));
     }
 
     private Optional<String> readGlobalServiceId(Element environmentTag) {
         String globalServiceId = environmentTag.getAttribute(globalServiceIdAttribute);
         if (globalServiceId.isEmpty()) return Optional.empty();
-        deprecate(environmentTag, List.of(globalServiceIdAttribute), "See https://cloud.vespa.ai/en/reference/routing#deprecated-syntax");
+        deprecate(environmentTag, List.of(globalServiceIdAttribute), 7, "See https://cloud.vespa.ai/en/reference/routing#deprecated-syntax");
         return Optional.of(globalServiceId);
     }
 
@@ -531,15 +524,15 @@ public class DeploymentSpecXmlReader {
     private boolean readActive(Element regionTag) {
         String activeValue = regionTag.getAttribute("active");
         if ("".equals(activeValue)) return true; // Default to active
-        deprecate(regionTag, List.of("active"), "See https://cloud.vespa.ai/en/reference/routing#deprecated-syntax");
+        deprecate(regionTag, List.of("active"), 7, "See https://cloud.vespa.ai/en/reference/routing#deprecated-syntax");
         if ("true".equals(activeValue)) return true;
         if ("false".equals(activeValue)) return false;
         throw new IllegalArgumentException("Value of 'active' attribute in region tag must be 'true' or 'false' " +
                                            "to control whether this region should receive traffic from the global endpoint of this application");
     }
 
-    private void deprecate(Element element, List<String> attributes, String message) {
-        deprecatedElements.add(new DeprecatedElement(element.getTagName(), attributes, message));
+    private void deprecate(Element element, List<String> attributes, int majorVersion, String message) {
+        deprecatedElements.add(new DeprecatedElement(majorVersion, element.getTagName(), attributes, message));
     }
 
     private static boolean isEmptySpec(Element root) {
