@@ -31,6 +31,7 @@ vespa_add_library(eval_instruction OBJECT
     inplace_map_function.cpp
     join_with_number_function.cpp
     l2_distance.cpp
+    mixed_112_dot_product.cpp
     mixed_inner_product_function.cpp
     mixed_simple_join_function.cpp
     pow_as_map_optimizer.cpp
@@ -41,6 +42,7 @@ vespa_add_library(eval_instruction OBJECT
     sparse_full_overlap_join_function.cpp
     sparse_merge_function.cpp
     sparse_no_overlap_join_function.cpp
+    sparse_singledim_lookup.cpp
     sum_max_dot_product_function.cpp
     unpack_bits_function.cpp
     vector_from_doubles_function.cpp

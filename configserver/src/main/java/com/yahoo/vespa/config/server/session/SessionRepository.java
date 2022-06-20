@@ -235,7 +235,7 @@ public class SessionRepository {
     public ConfigChangeActions prepareLocalSession(Session session, DeployLogger logger, PrepareParams params, Instant now) {
         params.vespaVersion().ifPresent(version -> {
             if ( ! params.isBootstrap() && ! modelFactoryRegistry.allVersions().contains(version))
-                throw new UnknownVespaVersionException("Vespa version '" + version + "' not known by this configserver");
+                throw new UnknownVespaVersionException("Vespa version '" + version + "' not known by this config server");
         });
 
         applicationRepo.createApplication(params.getApplicationId()); // TODO jvenstad: This is wrong, but it has to be done now, since preparation can change the application ID of a session :(
@@ -782,7 +782,7 @@ public class SessionRepository {
         }
     }
 
-    // TODO: Remove in Vespa 8 (when we don't allow files in SEARCH_DEFINITIONS_DIR)
+    // TODO: Remove on Vespa 9 (when we don't allow files in SEARCH_DEFINITIONS_DIR)
     // Copies schemas from searchdefinitions/ to schemas/ if searchdefinitions/ exists
     private void moveSearchDefinitionsToSchemasDir(java.nio.file.Path applicationDir) throws IOException {
         File schemasDir = applicationDir.resolve(ApplicationPackage.SCHEMAS_DIR.getRelative()).toFile();

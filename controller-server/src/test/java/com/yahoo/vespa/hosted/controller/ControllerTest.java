@@ -748,15 +748,15 @@ public class ControllerTest {
             fail("Should fail when specifying a major that does not yet exist");
         }
         catch (IllegalArgumentException e) {
-            assertEquals("major 8 specified in deployment.xml, but no version on this major was found", e.getMessage());
+            assertEquals("no platforms were found for major version 8 specified in deployment.xml", e.getMessage());
         }
 
         try {
             context.runJob(zone, new ApplicationPackageBuilder().compileVersion(version3).build());
-            fail("Should fail when compiled against a version which does not yet exist");
+            fail("Should fail when compiled against a version which is only compatible with not-yet-existent versions");
         }
         catch (IllegalArgumentException e) {
-            assertEquals("no suitable platform version found for package compiled against 8", e.getMessage());
+            assertEquals("no platforms are compatible with compile version 8", e.getMessage());
         }
 
         tester.controllerTester().upgradeSystem(version3);
@@ -765,7 +765,7 @@ public class ControllerTest {
             fail("Should fail when specifying a major which is incompatible with compile version");
         }
         catch (IllegalArgumentException e) {
-            assertEquals("Will not start a job with incompatible platform version (8) and compile versions (7)", e.getMessage());
+            assertEquals("no platforms on major version 8 specified in deployment.xml are compatible with compile version 7", e.getMessage());
         }
 
         context.runJob(zone, new ApplicationPackageBuilder().compileVersion(version3).majorVersion(8).build());
@@ -808,14 +808,6 @@ public class ControllerTest {
         context.submit(applicationPackage).runJob(zone, applicationPackage);
         tester.controller().applications().deactivate(context.instanceId(), zone);
         tester.controller().applications().deactivate(context.instanceId(), zone);
-    }
-
-    @Test
-    public void testDeployApplicationPackageWithApplicationDir() {
-        ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
-                .region("us-west-1")
-                .build(true);
-        tester.newDeploymentContext().submit(applicationPackage);
     }
 
     @Test

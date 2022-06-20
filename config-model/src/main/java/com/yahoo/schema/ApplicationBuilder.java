@@ -132,8 +132,11 @@ public class ApplicationBuilder {
         this.deployLogger = deployLogger;
         this.properties = properties;
         this.documentsOnly = documentsOnly;
-        for (NamedReader reader : applicationPackage.getSchemas())
+        var list = new ArrayList<>(applicationPackage.getSchemas());
+        list.sort((a, b) -> a.getName().compareTo(b.getName()));
+        for (NamedReader reader : list) {
             addSchema(reader);
+        }
     }
 
     /**
@@ -198,7 +201,6 @@ public class ApplicationBuilder {
 
         Path rankProfilePath = ApplicationPackage.SCHEMAS_DIR.append(schemaName);
         for (NamedReader reader : applicationPackage.getFiles(rankProfilePath, ".profile", true)) {
-            System.out.println("Got " + reader);
             mediator.addRankProfileFile(schemaName, reader);
         }
     }
@@ -408,8 +410,13 @@ public class ApplicationBuilder {
                                                             properties,
                                                             rankProfileRegistry,
                                                             queryProfileRegistry);
-        for (var i = Files.list(new File(dir).toPath()).filter(p -> p.getFileName().toString().endsWith(".sd")).iterator(); i.hasNext(); ) {
-            builder.addSchemaFile(i.next().toString());
+
+        var fnli = Files.list(new File(dir).toPath())
+            .map(p -> p.toString())
+            .filter(fn -> fn.endsWith(".sd"))
+            .sorted();
+        for (var i = fnli.iterator(); i.hasNext(); ) {
+            builder.addSchemaFile(i.next());
         }
         builder.build(true);
         return builder;
