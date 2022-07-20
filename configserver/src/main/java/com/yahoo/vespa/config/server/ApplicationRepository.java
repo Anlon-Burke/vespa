@@ -96,6 +96,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -631,15 +632,7 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
                 .stream()
                 .filter(fileReference -> ! fileReferencesInUse.contains(fileReference))
                 .filter(fileReference -> isLastFileAccessBefore(new File(fileReferencesPath, fileReference), instant))
-                .sorted((a, b) -> {
-                    if (a.equals(b))
-                        return 0;
-                    else if (lastAccessed(new File(fileReferencesPath, a))
-                            .isBefore(lastAccessed(new File(fileReferencesPath, b))))
-                        return -1;
-                    else
-                        return 1;
-                })
+                .sorted(Comparator.comparing(a -> lastAccessed(new File(fileReferencesPath, a))))
                 .collect(Collectors.toList());
     }
 
@@ -804,7 +797,8 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
                                                                                  .map(lock -> new ApplicationTransaction(lock, transaction));
         try (var sessionLock = tenant.getApplicationRepo().lock(applicationId)) {
             Optional<Session> activeSession = getActiveSession(applicationId);
-            CompletionWaiter waiter = session.getSessionZooKeeperClient().createActiveWaiter();
+            var sessionZooKeeperClient = tenant.getSessionRepository().createSessionZooKeeperClient(session.getSessionId());
+            CompletionWaiter waiter = sessionZooKeeperClient.createActiveWaiter();
 
             transaction.add(deactivateCurrentActivateNew(activeSession, session, force));
             if (applicationTransaction.isPresent()) {
@@ -911,14 +905,10 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         sessionsPerTenant.keySet().forEach(tenant -> tenant.getSessionRepository().deleteExpiredSessions(activeSessions));
     }
 
-    public int deleteExpiredRemoteSessions(Duration expiryTime) {
-        return deleteExpiredRemoteSessions(clock, expiryTime);
-    }
-
-    public int deleteExpiredRemoteSessions(Clock clock, Duration expiryTime) {
+    public int deleteExpiredRemoteSessions(Clock clock) {
         return tenantRepository.getAllTenants()
                 .stream()
-                .map(tenant -> tenant.getSessionRepository().deleteExpiredRemoteSessions(clock, expiryTime))
+                .map(tenant -> tenant.getSessionRepository().deleteExpiredRemoteSessions(clock))
                 .mapToInt(i -> i)
                 .sum();
     }

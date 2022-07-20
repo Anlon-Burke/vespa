@@ -38,37 +38,18 @@ mbus.tcp_no_delay bool default=true restart
 ## Number of threads for network.
 mbus.num_network_threads int default=1 restart
 
-## Number of workers threads for messagebus
-## Any value below 1 will be 1.
-mbus.num_threads int default=4 restart
-
-mbus.optimize_for enum {LATENCY, THROUGHPUT, ADAPTIVE} default = LATENCY
+## The number of events in the queue of a network (FNET) thread before it is woken up.
+mbus.events_before_wakeup int default=1 restart
 
 ## Enable to use above thread pool for encoding replies
 ## False will use network(fnet) thread
+## Deprecated and void
 mbus.dispatch_on_encode bool default=true restart
 
 ## Enable to use above thread pool for decoding replies
 ## False will use network(fnet) thread
-## Todo: Change default once verified in large scale deployment.
-mbus.dispatch_on_decode bool default=false restart
-
-## Skip messenger thread on reply
-## Experimental
-mbus.skip_reply_thread bool default=false restart
-
-## Skip messenger thread on reply
-## Experimental
-mbus.skip_request_thread bool default=false restart
-
-## Skip communication manager thread on mbus requests
-## Experimental
-skip_thread bool default=false
-
-## Whether to use direct P2P RPC protocol for all StorageAPI communication
-## instead of going via MessageBus.
-## Deprecated, and will soon be gone as it is default on.
-use_direct_storageapi_rpc bool default=true
+## Deprecated and void
+mbus.dispatch_on_decode bool default=true restart
 
 ## The number of network (FNET) threads used by the shared rpc resource.
 rpc.num_network_threads int default=2 restart

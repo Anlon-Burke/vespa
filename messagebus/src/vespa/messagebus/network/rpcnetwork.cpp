@@ -1,7 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include "rpcnetwork.h"
 #include "rpcservicepool.h"
-#include "rpcsendv1.h"
 #include "rpcsendv2.h"
 #include "rpctargetpool.h"
 #include "rpcnetworkparams.h"
@@ -18,7 +17,7 @@
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/vespalib/util/size_literals.h>
 #include <vespa/vespalib/util/stringfmt.h>
-#include <vespa/vespalib/util/threadstackexecutor.h>
+#include <vespa/vespalib/util/gate.h>
 #include <vespa/fastos/thread.h>
 #include <thread>
 
@@ -85,7 +84,8 @@ toFNETConfig(const RPCNetworkParams & params) {
     return fnet::TransportConfig(params.getNumNetworkThreads())
               .maxInputBufferSize(params.getMaxInputBufferSize())
               .maxOutputBufferSize(params.getMaxOutputBufferSize())
-              .tcpNoDelay(params.getTcpNoDelay());
+              .tcpNoDelay(params.getTcpNoDelay())
+              .events_before_wakeup(params.events_before_wakeup());
 }
 
 }
@@ -136,13 +136,9 @@ RPCNetwork::RPCNetwork(const RPCNetworkParams &params) :
     _targetPool(std::make_unique<RPCTargetPool>(params.getConnectionExpireSecs(), params.getNumRpcTargets())),
     _targetPoolTask(std::make_unique<TargetPoolTask>(_scheduler, *_targetPool)),
     _servicePool(std::make_unique<RPCServicePool>(*_mirror, 4_Ki)),
-    _executor(std::make_unique<vespalib::ThreadStackExecutor>(params.getNumThreads(), 64_Ki)),
-    _sendV1(std::make_unique<RPCSendV1>()),
     _sendV2(std::make_unique<RPCSendV2>()),
     _sendAdapters(),
-    _compressionConfig(params.getCompressionConfig()),
-    _allowDispatchForEncode(params.getDispatchOnEncode()),
-    _allowDispatchForDecode(params.getDispatchOnDecode())
+    _compressionConfig(params.getCompressionConfig())
 {
 }
 
@@ -195,9 +191,7 @@ RPCNetwork::attach(INetworkOwner &owner)
     LOG_ASSERT(_owner == nullptr);
     _owner = &owner;
 
-    _sendV1->attach(*this);
     _sendV2->attach(*this);
-    _sendAdapters[vespalib::Version(5)] = _sendV1.get();
     _sendAdapters[vespalib::Version(6, 149)] = _sendV2.get();
 
     FRT_ReflectionBuilder builder(_orb.get());
@@ -416,7 +410,6 @@ void
 RPCNetwork::sync()
 {
     SyncTask task(_scheduler);
-    _executor->sync();
     task.await();
 }
 
@@ -427,7 +420,6 @@ RPCNetwork::shutdown()
     _scheduler.Kill(_targetPoolTask.get());
     _transport->ShutDown(true);
     _threadPool->Close();
-    _executor->shutdown().sync();
 }
 
 void

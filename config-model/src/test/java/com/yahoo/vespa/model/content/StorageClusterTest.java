@@ -101,13 +101,7 @@ public class StorageClusterTest {
         StorCommunicationmanagerConfig.Builder builder = new StorCommunicationmanagerConfig.Builder();
         storage.getChildren().get("0").getConfig(builder);
         StorCommunicationmanagerConfig config = new StorCommunicationmanagerConfig(builder);
-        assertFalse(config.mbus().dispatch_on_encode());
-        assertFalse(config.mbus().dispatch_on_decode());
-        assertEquals(4, config.mbus().num_threads());
-        assertEquals(StorCommunicationmanagerConfig.Mbus.Optimize_for.LATENCY, config.mbus().optimize_for());
-        assertFalse(config.skip_thread());
-        assertFalse(config.mbus().skip_request_thread());
-        assertFalse(config.mbus().skip_reply_thread());
+        assertEquals(1, config.mbus().num_network_threads());
     }
 
     @Test
@@ -142,14 +136,41 @@ public class StorageClusterTest {
         return new StorServerConfig(builder);
     }
 
+    private StorCommunicationmanagerConfig communicationmanagerConfigFromProperties(TestProperties properties) {
+        StorCommunicationmanagerConfig.Builder builder = new StorCommunicationmanagerConfig.Builder();
+        parse(cluster("foofighters", ""), properties).getChildren().values().iterator().next().getConfig(builder);
+        return new StorCommunicationmanagerConfig(builder);
+    }
+
     private StorFilestorConfig filestorConfigFromProducer(StorFilestorConfig.Producer producer) {
         var builder = new StorFilestorConfig.Builder();
         producer.getConfig(builder);
         return new StorFilestorConfig(builder);
     }
 
-    private StorFilestorConfig filestorConfigFromProperties(TestProperties properties) {
-        return filestorConfigFromProducer(parse(cluster("foo", ""), properties));
+    @Test
+    public void verifyDefaultMbusConfig() {
+        var confg = communicationmanagerConfigFromProperties(new TestProperties());
+        assertEquals(1, confg.mbus().num_network_threads());
+        assertEquals(1, confg.mbus().num_rpc_targets());
+        assertEquals(1, confg.mbus().events_before_wakeup());
+        assertEquals(1, confg.rpc().num_targets_per_node());
+        assertEquals(1, confg.rpc().events_before_wakeup());
+    }
+
+    @Test
+    public void verifyDefaultMbusConfigControl() {
+        var confg = communicationmanagerConfigFromProperties(new TestProperties()
+                .setMbusNetworkThreads(7)
+                .setRpcNumTargets(11)
+                .setRpcEventsBeforeWakeup(12)
+                .setMbusCppRpcNumTargets(8)
+                .setMbusCppEventsBeforeWakeup(9));
+        assertEquals(7, confg.mbus().num_network_threads());
+        assertEquals(8, confg.mbus().num_rpc_targets());
+        assertEquals(9, confg.mbus().events_before_wakeup());
+        assertEquals(11, confg.rpc().num_targets_per_node());
+        assertEquals(12, confg.rpc().events_before_wakeup());
     }
 
     @Test

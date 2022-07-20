@@ -1,22 +1,22 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.security.tls.policy;
 
-import java.util.Collections;
-import java.util.Objects;
 import java.util.Set;
 
 /**
  * @author bjorncs
  */
-public class AuthorizedPeers {
+public record AuthorizedPeers(Set<PeerPolicy> peerPolicies) {
 
-    private final Set<PeerPolicy> peerPolicies;
+    private static final AuthorizedPeers EMPTY = new AuthorizedPeers(Set.of());
 
-    public AuthorizedPeers(Set<PeerPolicy> peerPolicies) {
-        this.peerPolicies = verifyPeerPolicies(peerPolicies);
+    public AuthorizedPeers {
+        peerPolicies = verifyPeerPolicies(peerPolicies);
     }
 
-    private Set<PeerPolicy> verifyPeerPolicies(Set<PeerPolicy> peerPolicies) {
+    public static AuthorizedPeers empty() { return EMPTY; }
+
+    private static Set<PeerPolicy> verifyPeerPolicies(Set<PeerPolicy> peerPolicies) {
         long distinctNames = peerPolicies.stream()
                 .map(PeerPolicy::policyName)
                 .distinct()
@@ -24,30 +24,9 @@ public class AuthorizedPeers {
         if (distinctNames != peerPolicies.size()) {
             throw new IllegalArgumentException("'authorized-peers' contains entries with duplicate names");
         }
-        return Collections.unmodifiableSet(peerPolicies);
+        return Set.copyOf(peerPolicies);
     }
 
-    public Set<PeerPolicy> peerPolicies() {
-        return peerPolicies;
-    }
+    public boolean isEmpty() { return peerPolicies.isEmpty(); }
 
-    @Override
-    public String toString() {
-        return "AuthorizedPeers{" +
-                "peerPolicies=" + peerPolicies +
-                '}';
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        AuthorizedPeers that = (AuthorizedPeers) o;
-        return Objects.equals(peerPolicies, that.peerPolicies);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(peerPolicies);
-    }
 }

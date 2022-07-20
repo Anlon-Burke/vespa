@@ -1,9 +1,11 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "closenessfeature.h"
+#include "distance_calculator_bundle.h"
 #include "utils.h"
 #include <vespa/searchcommon/common/schema.h>
 #include <vespa/searchlib/fef/properties.h>
+#include <vespa/searchlib/tensor/distance_calculator.h>
 #include <vespa/vespalib/util/stash.h>
 
 #include <vespa/log/log.h>
@@ -16,8 +18,8 @@ namespace search::features {
 /** Implements the executor for converting NNS rawscore to a closeness feature. */
 class ConvertRawScoreToCloseness : public fef::FeatureExecutor {
 private:
-    std::vector<fef::TermFieldHandle> _handles;
-    const fef::MatchData             *_md;
+    DistanceCalculatorBundle _bundle;
+    const fef::MatchData    *_md;
     void handle_bind_match_data(const fef::MatchData &md) override {
         _md = &md;
     }
@@ -28,32 +30,15 @@ public:
 };
 
 ConvertRawScoreToCloseness::ConvertRawScoreToCloseness(const fef::IQueryEnvironment &env, uint32_t fieldId)
-  : _handles(),
+  : _bundle(env, fieldId, "closeness"),
     _md(nullptr)
 {
-    _handles.reserve(env.getNumTerms());
-    for (uint32_t i = 0; i < env.getNumTerms(); ++i) {
-        search::fef::TermFieldHandle handle = util::getTermFieldHandle(env, i, fieldId);
-        if (handle != search::fef::IllegalHandle) {
-            _handles.push_back(handle);
-        }
-    }
 }
 
 ConvertRawScoreToCloseness::ConvertRawScoreToCloseness(const fef::IQueryEnvironment &env, const vespalib::string &label)
-  : _handles(),
+  : _bundle(env, label, "closeness"),
     _md(nullptr)
 {
-    const ITermData *term = util::getTermByLabel(env, label);
-    if (term != nullptr) {
-        // expect numFields() == 1
-        for (uint32_t i = 0; i < term->numFields(); ++i) {
-            TermFieldHandle handle = term->field(i).getHandle();
-            if (handle != IllegalHandle) {
-                _handles.push_back(handle);
-            }
-        }
-    }
 }
 
 void
@@ -61,10 +46,13 @@ ConvertRawScoreToCloseness::execute(uint32_t docId)
 {
     feature_t max_closeness = 0.0;
     assert(_md);
-    for (auto handle : _handles) {
-        const TermFieldMatchData *tfmd = _md->resolveTermField(handle);
+    for (const auto& elem : _bundle.elements()) {
+        const TermFieldMatchData *tfmd = _md->resolveTermField(elem.handle);
         if (tfmd->getDocId() == docId) {
             feature_t converted = tfmd->getRawScore();
+            max_closeness = std::max(max_closeness, converted);
+        } else if (elem.calc) {
+            feature_t converted = elem.calc->calc_raw_score(docId);
             max_closeness = std::max(max_closeness, converted);
         }
     }
@@ -201,14 +189,25 @@ ClosenessBlueprint::createInstance() const
     return std::make_unique<ClosenessBlueprint>();
 }
 
+void
+ClosenessBlueprint::prepareSharedState(const fef::IQueryEnvironment& env, fef::IObjectStore& store) const
+{
+    if (_use_nns_tensor) {
+        DistanceCalculatorBundle::prepare_shared_state(env, store, _attr_id, "closeness");
+    }
+    if (_use_item_label) {
+        DistanceCalculatorBundle::prepare_shared_state(env, store, _arg_string, "closeness");
+    }
+}
+
 FeatureExecutor &
 ClosenessBlueprint::createExecutor(const IQueryEnvironment &env, vespalib::Stash &stash) const
 {
-    if (_use_item_label) {
-        return stash.create<ConvertRawScoreToCloseness>(env, _arg_string);
-    }
     if (_use_nns_tensor) {
         return stash.create<ConvertRawScoreToCloseness>(env, _attr_id);
+    }
+    if (_use_item_label) {
+        return stash.create<ConvertRawScoreToCloseness>(env, _arg_string);
     }
     assert(_use_geo_pos);
     return stash.create<ClosenessExecutor>(_maxDistance, _scaleDistance);

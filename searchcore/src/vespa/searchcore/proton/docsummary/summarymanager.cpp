@@ -93,7 +93,22 @@ SummarySetup(const vespalib::string & baseDir, const DocTypeName & docTypeName, 
       _repo(repo),
       _markupFields()
 {
-    auto resultConfig = std::make_unique<ResultConfig>();
+    DocsumBlobEntryFilter docsum_blob_entry_filter;
+    docsum_blob_entry_filter.add_skip(RES_INT);
+    docsum_blob_entry_filter.add_skip(RES_SHORT);
+    docsum_blob_entry_filter.add_skip(RES_BOOL);
+    docsum_blob_entry_filter.add_skip(RES_BYTE);
+    docsum_blob_entry_filter.add_skip(RES_FLOAT);
+    docsum_blob_entry_filter.add_skip(RES_DOUBLE);
+    docsum_blob_entry_filter.add_skip(RES_INT64);
+    docsum_blob_entry_filter.add_skip(RES_STRING);
+    docsum_blob_entry_filter.add_skip(RES_DATA);
+    docsum_blob_entry_filter.add_skip(RES_LONG_STRING);
+    docsum_blob_entry_filter.add_skip(RES_LONG_DATA);
+    docsum_blob_entry_filter.add_skip(RES_JSONSTRING);
+    docsum_blob_entry_filter.add_skip(RES_TENSOR);
+    docsum_blob_entry_filter.add_skip(RES_FEATUREDATA);
+    auto resultConfig = std::make_unique<ResultConfig>(docsum_blob_entry_filter);
     if (!resultConfig->ReadConfig(summaryCfg, make_string("SummaryManager(%s)", baseDir.c_str()).c_str())) {
         std::ostringstream oss;
         ::config::OstreamConfigWriter writer(oss);
@@ -108,7 +123,7 @@ SummarySetup(const vespalib::string & baseDir, const DocTypeName & docTypeName, 
     DynamicDocsumConfig dynCfg(this, _docsumWriter.get());
     dynCfg.configure(summarymapCfg);
     for (const auto & o : summarymapCfg.override) {
-        if (o.command == "dynamicteaser" || o.command == "textextractor") {
+        if (o.command == "dynamicteaser") {
             vespalib::string markupField = o.arguments;
             if (markupField.empty())
                 continue;

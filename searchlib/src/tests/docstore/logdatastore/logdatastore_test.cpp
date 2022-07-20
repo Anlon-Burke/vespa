@@ -18,6 +18,8 @@
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/util/threadstackexecutor.h>
 #include <vespa/vespalib/util/size_literals.h>
+#include <vespa/vespalib/util/memory.h>
+#include <filesystem>
 #include <iomanip>
 
 using document::BucketId;
@@ -275,7 +277,7 @@ void fetchAndTest(IDataStore & datastore, uint32_t lid, const void *a, size_t sz
     vespalib::DataBuffer buf;
     EXPECT_EQUAL(static_cast<ssize_t>(sz), datastore.read(lid, buf));
     EXPECT_EQUAL(buf.getDataLen(), sz);
-    EXPECT_TRUE(memcmp(a, buf.getData(), sz) == 0);
+    EXPECT_TRUE(vespalib::memcmp_safe(a, buf.getData(), sz) == 0);
 }
 
 TEST("testTruncatedIdxFile"){
@@ -291,8 +293,7 @@ TEST("testTruncatedIdxFile"){
     }
     const char * magic = "mumbo jumbo";
     {
-        int truncate_result = truncate("bug-7257706-truncated/1422358701368384000.idx", 3830);
-        EXPECT_EQUAL(0, truncate_result);
+        std::filesystem::resize_file(std::filesystem::path("bug-7257706-truncated/1422358701368384000.idx"), 3830);
         LogDataStore datastore(executor, "bug-7257706-truncated", config, GrowStrategy(),
                                TuneFileSummary(), fileHeaderContext, tlSyncer, nullptr);
         EXPECT_EQUAL(331ul, datastore.lastSyncToken());
@@ -666,13 +667,13 @@ TEST("test that the integrated visit cache works.") {
 }
 
 TEST("testWriteRead") {
-    FastOS_File::RemoveDirectory("empty");
+    std::filesystem::remove_all(std::filesystem::path("empty"));
     const char * bufA = "aaaaaaaaaaaaaaaaaaaaa";
     const char * bufB = "bbbbbbbbbbbbbbbb";
     const vespalib::ConstBufferRef a[2] = { vespalib::ConstBufferRef(bufA, strlen(bufA)), vespalib::ConstBufferRef(bufB, strlen(bufB))};
     LogDataStore::Config config;
     {
-        EXPECT_TRUE(FastOS_File::MakeDirectory("empty"));
+        std::filesystem::create_directory(std::filesystem::path("empty"));
         DummyFileHeaderContext fileHeaderContext;
         vespalib::ThreadStackExecutor executor(1, 128_Ki);
         MyTlSyncer tlSyncer;
@@ -736,7 +737,7 @@ TEST("testWriteRead") {
         EXPECT_EQUAL(0ul, datastore.getDiskBloat());
         EXPECT_EQUAL(0ul, datastore.getMaxSpreadAsBloat());
     }
-    FastOS_File::EmptyAndRemoveDirectory("empty");
+    std::filesystem::remove_all(std::filesystem::path("empty"));
 }
 
 TEST("requireThatSyncTokenIsUpdatedAfterFlush") {

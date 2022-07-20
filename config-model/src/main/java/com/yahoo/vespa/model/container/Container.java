@@ -1,7 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container;
 
-import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.api.container.ContainerServiceType;
 import com.yahoo.config.model.deploy.DeployState;
@@ -77,7 +76,7 @@ public abstract class Container extends AbstractService implements
     private final boolean dumpHeapOnShutdownTimeout;
     private final double shutdownTimeoutS;
 
-    private final ComponentGroup<Handler<?>> handlers = new ComponentGroup<>(this, "handler");
+    private final ComponentGroup<Handler> handlers = new ComponentGroup<>(this, "handler");
     private final ComponentGroup<Component<?, ?>> components = new ComponentGroup<>(this, "components");
 
     private final JettyHttpServer defaultHttpServer;
@@ -114,7 +113,7 @@ public abstract class Container extends AbstractService implements
     /** True if this container is retired (slated for removal) */
     public boolean isRetired() { return retired; }
 
-    public ComponentGroup<Handler<?>> getHandlers() {
+    public ComponentGroup<Handler> getHandlers() {
         return handlers;
     }
 
@@ -130,7 +129,7 @@ public abstract class Container extends AbstractService implements
         addComponent(new SimpleComponent(new ComponentModel(idSpec, classSpec, bundleSpec)));
     }
 
-    public final void addHandler(Handler<?> h) {
+    public final void addHandler(Handler h) {
         handlers.addComponent(h);
     }
     
@@ -148,17 +147,9 @@ public abstract class Container extends AbstractService implements
         return (parent instanceof ContainerCluster) ? ((ContainerCluster<?>) parent).getHttp() : null;
     }
 
+    @SuppressWarnings("unused") // used by amenders
     public JettyHttpServer getDefaultHttpServer() {
         return defaultHttpServer;
-    }
-
-    public JettyHttpServer getHttpServer() {
-        Http http = getHttp();
-        if (http == null) {
-            return defaultHttpServer;
-        } else {
-            return http.getHttpServer().orElse(null);
-        }
     }
 
     /** Returns the index of this node. The index of a given node is stable through changes with best effort. */
@@ -381,7 +372,7 @@ public abstract class Container extends AbstractService implements
 
     @Override
     public void getConfig(ContainerMbusConfig.Builder builder) {
-        builder.enabled(messageBusEnabled()).port(getMessagingPort());
+        builder.port(getMessagingPort());
     }
 
     @Override

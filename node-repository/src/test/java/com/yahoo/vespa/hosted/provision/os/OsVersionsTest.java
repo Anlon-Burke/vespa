@@ -172,6 +172,7 @@ public class OsVersionsTest {
         Supplier<NodeList> hostNodes = () -> tester.nodeRepository().nodes().list()
                                                    .hosts()
                                                    .not().state(Node.State.deprovisioned);
+        tester.clock().advance(RetiringOsUpgrader.GRACE_PERIOD.plusDays(1));
 
         // Target is set and upgrade started
         var version1 = Version.fromString("7.1");
@@ -233,6 +234,7 @@ public class OsVersionsTest {
         Supplier<NodeList> hostNodes = () -> tester.nodeRepository().nodes().list()
                                                    .nodeType(NodeType.confighost)
                                                    .not().state(Node.State.deprovisioned);
+        tester.clock().advance(RetiringOsUpgrader.GRACE_PERIOD.plusDays(1));
 
         // Target is set with zero budget and upgrade started
         var version1 = Version.fromString("7.1");
@@ -469,7 +471,7 @@ public class OsVersionsTest {
         deployApplication(application);
         List<Node> retired = tester.nodeRepository().nodes().list().owner(application).retired().asList();
         assertFalse("At least one node is retired", retired.isEmpty());
-        tester.nodeRepository().nodes().setRemovable(application, retired);
+        tester.nodeRepository().nodes().setRemovable(application, retired, false);
 
         // Redeploy to deactivate removable nodes and allocate new ones
         deployApplication(application);

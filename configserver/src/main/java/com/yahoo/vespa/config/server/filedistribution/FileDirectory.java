@@ -60,16 +60,13 @@ public class FileDirectory  {
     public File getFile(FileReference reference) {
         ensureRootExist();
         File dir = new File(getPath(reference));
-        if (!dir.exists()) {
+        if (!dir.exists())
             throw new IllegalArgumentException("File reference '" + reference.value() + "' with absolute path '" + dir.getAbsolutePath() + "' does not exist.");
-        }
-        if (!dir.isDirectory()) {
+        if (!dir.isDirectory())
             throw new IllegalArgumentException("File reference '" + reference.value() + "' with absolute path '" + dir.getAbsolutePath() + "' is not a directory.");
-        }
         File [] files = dir.listFiles(new Filter());
-        if (files == null || files.length == 0) {
+        if (files == null || files.length == 0)
             throw new IllegalArgumentException("File reference '" + reference.value() + "' with absolute path '" + dir.getAbsolutePath() + " does not contain any files");
-        }
         return files[0];
     }
 
@@ -82,7 +79,7 @@ public class FileDirectory  {
         if (file.isDirectory()) {
             return Files.walk(file.toPath(), 100).map(path -> {
                 try {
-                    log.log(Level.FINE, () -> "Calculating hash for '" + path + "'");
+                    log.log(Level.FINEST, () -> "Calculating hash for '" + path + "'");
                     return hash(path.toFile(), hasher);
                 } catch (IOException e) {
                     log.log(Level.WARNING, "Failed getting hash from '" + path + "'");
@@ -144,7 +141,7 @@ public class FileDirectory  {
             File destination = new File(tempDestinationDir.toFile(), source.getName());
             if (!destinationDir.exists()) {
                 destinationDir.mkdir();
-                log.log(Level.FINE, () -> "file reference ' " + reference.value() + "', source: " + source.getAbsolutePath() );
+                log.log(Level.FINE, () -> "file reference '" + reference.value() + "', source: " + source.getAbsolutePath() );
                 if (source.isDirectory()) {
                     log.log(Level.FINE, () -> "Copying source " + source.getAbsolutePath() + " to " + destination.getAbsolutePath());
                     IOUtils.copyDirectory(source, destination, -1);

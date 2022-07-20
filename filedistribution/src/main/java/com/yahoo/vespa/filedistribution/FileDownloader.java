@@ -6,11 +6,11 @@ import com.yahoo.jrt.Supervisor;
 import com.yahoo.vespa.config.Connection;
 import com.yahoo.vespa.config.ConnectionPool;
 import com.yahoo.vespa.defaults.Defaults;
-
 import java.io.File;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -18,6 +18,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import static com.yahoo.vespa.filedistribution.FileReferenceData.CompressionType;
 
 /**
  * Handles downloads of files (file references only for now)
@@ -29,6 +31,7 @@ public class FileDownloader implements AutoCloseable {
     private static final Logger log = Logger.getLogger(FileDownloader.class.getName());
     private static final Duration defaultSleepBetweenRetries = Duration.ofSeconds(5);
     public static final File defaultDownloadDirectory = new File(Defaults.getDefaults().underVespaHome("var/db/vespa/filedistribution"));
+    private static final boolean forceDownload = Boolean.parseBoolean(System.getenv("VESPA_CONFIG_PROXY_FORCE_DOWNLOAD_OF_FILE_REFERENCES"));
 
     private final ConnectionPool connectionPool;
     private final Supervisor supervisor;
@@ -37,19 +40,20 @@ public class FileDownloader implements AutoCloseable {
     private final FileReferenceDownloader fileReferenceDownloader;
     private final Downloads downloads = new Downloads();
 
-    public FileDownloader(ConnectionPool connectionPool, Supervisor supervisor, Duration timeout) {
-        this(connectionPool, supervisor, defaultDownloadDirectory, timeout, defaultSleepBetweenRetries);
+    public FileDownloader(ConnectionPool connectionPool, Supervisor supervisor, Duration timeout, Set<CompressionType> acceptedCompressionTypes) {
+        this(connectionPool, supervisor, defaultDownloadDirectory, timeout, defaultSleepBetweenRetries, acceptedCompressionTypes);
     }
 
-    public FileDownloader(ConnectionPool connectionPool, Supervisor supervisor, File downloadDirectory, Duration timeout) {
-        this(connectionPool, supervisor, downloadDirectory, timeout, defaultSleepBetweenRetries);
+    public FileDownloader(ConnectionPool connectionPool, Supervisor supervisor, File downloadDirectory, Duration timeout, Set<CompressionType> acceptedCompressionTypes) {
+        this(connectionPool, supervisor, downloadDirectory, timeout, defaultSleepBetweenRetries, acceptedCompressionTypes);
     }
 
     public FileDownloader(ConnectionPool connectionPool,
                           Supervisor supervisor,
                           File downloadDirectory,
                           Duration timeout,
-                          Duration sleepBetweenRetries) {
+                          Duration sleepBetweenRetries,
+                          Set<CompressionType> acceptedCompressionTypes) {
         this.connectionPool = connectionPool;
         this.supervisor = supervisor;
         this.downloadDirectory = downloadDirectory;
@@ -60,7 +64,10 @@ public class FileDownloader implements AutoCloseable {
                                                                    downloads,
                                                                    timeout,
                                                                    sleepBetweenRetries,
-                                                                   downloadDirectory);
+                                                                   downloadDirectory,
+                                                                   acceptedCompressionTypes);
+        if (forceDownload)
+            log.log(Level.INFO, "Force download of file references (download even if file reference exists on disk)");
     }
 
     public Optional<File> getFile(FileReferenceDownload fileReferenceDownload) {
@@ -99,6 +106,8 @@ public class FileDownloader implements AutoCloseable {
     }
 
     private static Optional<File> getFileFromFileSystem(FileReference fileReference, File downloadDirectory) {
+        if (forceDownload) return Optional.empty();
+
         File[] files = new File(downloadDirectory, fileReference.value()).listFiles();
         if (files == null) return Optional.empty();
         if (files.length == 0) return Optional.empty();

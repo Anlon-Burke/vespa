@@ -15,6 +15,7 @@ import java.util.TreeMap;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.CONSOLE_USER_EMAIL;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.HOSTNAME;
+import static com.yahoo.vespa.flags.FetchVector.Dimension.NODE_TYPE;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.TENANT_ID;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.VESPA_VERSION;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.ZONE_ID;
@@ -44,6 +45,15 @@ public class Flags {
 
     private static volatile TreeMap<FlagId, FlagDefinition> flags = new TreeMap<>();
 
+    public static final UnboundBooleanFlag MAIN_CHAIN_GRAPH = defineFeatureFlag(
+            "main-chain-graph", false,
+            List.of("hakonhall"), "2022-07-06", "2022-09-05",
+            "Whether to run all tasks in the main task chain up to the one failing to converge (false), or " +
+            "run all tasks in the main task chain whose dependencies have converged (true).  And when suspending, " +
+            "whether to run the tasks in sequence (false) or in reverse sequence (true).",
+            "On first tick of the main chain after (re)start of host admin.",
+            ZONE_ID, NODE_TYPE, HOSTNAME);
+
     public static final UnboundDoubleFlag DEFAULT_TERM_WISE_LIMIT = defineDoubleFlag(
             "default-term-wise-limit", 1.0,
             List.of("baldersheim"), "2020-12-02", "2023-01-01",
@@ -58,6 +68,12 @@ public class Flags {
             "Takes effect at redeployment (requires restart)",
             ZONE_ID, APPLICATION_ID);
 
+    public static final UnboundBooleanFlag KEEP_STORAGE_NODE_UP = defineFeatureFlag(
+            "keep-storage-node-up", true,
+            List.of("hakonhall"), "2022-07-07", "2022-08-07",
+            "Whether to leave the storage node (with wanted state) UP while the node is permanently down.",
+            "Takes effect immediately for nodes transitioning to permanently down.",
+            ZONE_ID, APPLICATION_ID);
 
     public static final UnboundIntFlag MAX_UNCOMMITTED_MEMORY = defineIntFlag(
             "max-uncommitted-memory", 130000,
@@ -119,6 +135,78 @@ public class Flags {
             "feed-concurrency", 0.5,
             List.of("baldersheim"), "2020-12-02", "2023-01-01",
             "How much concurrency should be allowed for feed",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundDoubleFlag FEED_NICENESS = defineDoubleFlag(
+            "feed-niceness", 0.0,
+            List.of("baldersheim"), "2022-06-24", "2023-01-01",
+            "How nice feeding shall be",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag MBUS_DISPATCH_ON_ENCODE = defineFeatureFlag(
+            "mbus-dispatch-on-encode", true,
+            List.of("baldersheim"), "2022-07-01", "2023-01-01",
+            "Should we use mbus threadpool on encode",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag MBUS_DISPATCH_ON_DECODE = defineFeatureFlag(
+            "mbus-dispatch-on-decode", true,
+            List.of("baldersheim"), "2022-07-01", "2023-01-01",
+            "Should we use mbus threadpool on decode",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundIntFlag MBUS_JAVA_NUM_TARGETS = defineIntFlag(
+            "mbus-java-num-targets", 1,
+            List.of("baldersheim"), "2022-07-05", "2023-01-01",
+            "Number of rpc targets per service",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+    public static final UnboundIntFlag MBUS_CPP_NUM_TARGETS = defineIntFlag(
+            "mbus-cpp-num-targets", 1,
+            List.of("baldersheim"), "2022-07-05", "2023-01-01",
+            "Number of rpc targets per service",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+    public static final UnboundIntFlag RPC_NUM_TARGETS = defineIntFlag(
+            "rpc-num-targets", 1,
+            List.of("baldersheim"), "2022-07-05", "2023-01-01",
+            "Number of rpc targets per content node",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+    public static final UnboundIntFlag MBUS_JAVA_EVENTS_BEFORE_WAKEUP = defineIntFlag(
+            "mbus-java-events-before-wakeup", 1,
+            List.of("baldersheim"), "2022-07-05", "2023-01-01",
+            "Number write events before waking up transport thread",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+    public static final UnboundIntFlag MBUS_CPP_EVENTS_BEFORE_WAKEUP = defineIntFlag(
+            "mbus-cpp-events-before-wakeup", 1,
+            List.of("baldersheim"), "2022-07-05", "2023-01-01",
+            "Number write events before waking up transport thread",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+    public static final UnboundIntFlag RPC_EVENTS_BEFORE_WAKEUP = defineIntFlag(
+            "rpc-events-before-wakeup", 1,
+            List.of("baldersheim"), "2022-07-05", "2023-01-01",
+            "Number write events before waking up transport thread",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundIntFlag MBUS_NUM_THREADS = defineIntFlag(
+            "mbus-num-threads", 4,
+            List.of("baldersheim"), "2022-07-01", "2023-01-01",
+            "Number of threads used for mbus threadpool",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundIntFlag MBUS_NUM_NETWORK_THREADS = defineIntFlag(
+            "mbus-num-network-threads", 1,
+            List.of("baldersheim"), "2022-07-01", "2023-01-01",
+            "Number of threads used for mbus network",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
@@ -200,7 +288,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag ENABLED_HORIZON_DASHBOARD = defineFeatureFlag(
             "enabled-horizon-dashboard", false,
-            List.of("olaa"), "2021-09-13", "2022-07-01",
+            List.of("olaa"), "2021-09-13", "2022-10-01",
             "Enable Horizon dashboard",
             "Takes effect immediately",
             TENANT_ID, CONSOLE_USER_EMAIL
@@ -235,13 +323,6 @@ public class Flags {
                 "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundBooleanFlag FAIL_DEPLOYMENT_WITH_INVALID_JVM_OPTIONS = defineFeatureFlag(
-            "fail-deployment-with-invalid-jvm-options", true,
-            List.of("hmusum"), "2021-12-20", "2022-07-01",
-            "Whether to fail deployments with invalid JVM options in services.xml",
-            "Takes effect at redeployment",
-            ZONE_ID, APPLICATION_ID);
-
     public static final UnboundBooleanFlag ENABLE_SERVER_OCSP_STAPLING = defineFeatureFlag(
             "enable-server-ocsp-stapling", false,
             List.of("bjorncs"), "2021-12-17", "2022-09-01",
@@ -251,7 +332,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag ENABLE_DATA_HIGHWAY_IN_AWS = defineFeatureFlag(
             "enable-data-highway-in-aws", false,
-            List.of("hmusum"), "2022-01-06", "2022-08-01",
+            List.of("hmusum"), "2022-01-06", "2022-09-01",
             "Enable Data Highway in AWS",
             "Takes effect on restart of Docker container",
             ZONE_ID, APPLICATION_ID);
@@ -328,9 +409,9 @@ public class Flags {
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundStringFlag APPLICATION_FILES_WITH_UNKNOWN_EXTENSION = defineStringFlag(
-            "fail-deployment-for-files-with-unknown-extension", "NOOP",
-            List.of("hmusum"), "2022-04-27", "2022-06-27",
-            "Whether to log, fail or do nothing for  deployments when app has a file with unknown extension (valid values LOG, FAIL, NOOP)",
+            "fail-deployment-for-files-with-unknown-extension", "LOG",
+            List.of("hmusum"), "2022-04-27", "2022-09-01",
+            "Whether to log, fail or do nothing for deployments when app has a file with unknown extension (valid values LOG, FAIL, NOOP)",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
@@ -341,37 +422,30 @@ public class Flags {
             "Takes effect immediately",
             TENANT_ID);
 
-    public static final UnboundStringFlag PROVISION_IN_EXTERNAL_ACCOUNT = defineStringFlag(
-            "provision-in-external-account", "",
-            List.of("mpolden"), "2022-05-02", "2022-09-01",
-            "The 12-digit AWS account ID where resources belonging to an application should be provisioned",
-            "Takes effect immediately",
-            APPLICATION_ID);
-
     public static final UnboundBooleanFlag ENABLE_PROXY_PROTOCOL_MIXED_MODE = defineFeatureFlag(
             "enable-proxy-protocol-mixed-mode", true,
-            List.of("tokle"), "2022-05-09", "2022-07-01",
+            List.of("tokle"), "2022-05-09", "2022-09-01",
             "Enable or disable proxy protocol mixed mode",
             "Takes effect on redeployment",
             APPLICATION_ID);
 
-    public static final UnboundStringFlag FILE_DISTRIBUTION_COMPRESSION_ALGORITHM = defineStringFlag(
-            "file-distribution-compression-algorithm", "gzip",
-            List.of("hmusum"), "2022-05-24", "2022-06-24",
-            "Which algorithm to use for compressing file references when distributing files. Valid values: none, gzip",
-            "Takes effect immediately",
+    public static final UnboundListFlag<String> FILE_DISTRIBUTION_ACCEPTED_COMPRESSION_TYPES = defineListFlag(
+            "file-distribution-accepted-compression-types", List.of("gzip", "lz4"), String.class,
+            List.of("hmusum"), "2022-07-05", "2022-09-05",
+            "´List of accepted compression types used when asking for a file reference. Valid values: gzip, lz4",
+            "Takes effect on restart of service",
             APPLICATION_ID);
 
-    public static final UnboundBooleanFlag FILE_DISTRIBUTION_COMPRESS_SINGLE_FILES = defineFeatureFlag(
-            "file-distribution-compress-single-files", false,
-            List.of("hmusum"), "2022-05-24", "2022-06-24",
-            "Whether to compress a file references that is a single file (directories are compressed by default).",
-            "Takes effect immediately",
+    public static final UnboundListFlag<String> FILE_DISTRIBUTION_COMPRESSION_TYPES_TO_SERVE = defineListFlag(
+            "file-distribution-compression-types-to-use", List.of("lz4", "gzip"), String.class,
+            List.of("hmusum"), "2022-07-05", "2022-09-05",
+            "List of compression types to use (in preferred order), matched with accepted compression types when serving file references. Valid values: gzip, lz4",
+            "Takes effect on restart of service",
             APPLICATION_ID);
 
     public static final UnboundBooleanFlag USE_YUM_PROXY_V2 = defineFeatureFlag(
             "use-yumproxy-v2", false,
-            List.of("tokle"), "2022-05-05", "2022-07-01",
+            List.of("tokle"), "2022-05-05", "2022-09-01",
             "Use yumproxy-v2",
             "Takes effect on host admin restart",
             HOSTNAME);
@@ -382,6 +456,20 @@ public class Flags {
             "Which algorithm to use for compressing log files. Valid values: empty string (default), gzip, zstd",
             "Takes effect immediately",
             ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag FIX_IPV6_GATEWAY = defineFeatureFlag(
+            "fix-ipv6-gateway", true,
+            List.of("mpolden"), "2022-07-04", "2022-09-01",
+            "Fix a misconfigured IPv6 gateway automatically",
+            "Takes effect on first host admin resume",
+            HOSTNAME);
+
+    public static final UnboundBooleanFlag SEPARATE_METRIC_CHECK_CONFIG = defineFeatureFlag(
+            "separate-metric-check-config", false,
+            List.of("olaa"), "2022-07-04", "2022-09-01",
+            "Determines whether one metrics config check should be written per Vespa node",
+            "Takes effect on next tick",
+            HOSTNAME);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

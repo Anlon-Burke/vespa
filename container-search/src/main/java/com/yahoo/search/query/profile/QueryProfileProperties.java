@@ -31,9 +31,13 @@ import java.util.Map;
  */
 public class QueryProfileProperties extends Properties {
 
+    private static final String ENVIRONMENT = "environment";
+    private static final String REGION = "region";
+    private static final String INSTANCE = "instance";
     private final CompiledQueryProfile profile;
     private final Map<String, Embedder> embedders;
     private final ZoneInfo zoneInfo;
+    private final Map<String, String> zoneContext;
 
     // Note: The priority order is: values has precedence over references
 
@@ -68,6 +72,11 @@ public class QueryProfileProperties extends Properties {
         this.profile = profile;
         this.embedders = embedders;
         this.zoneInfo = zoneInfo;
+        this.zoneContext = Map.of(
+                ENVIRONMENT, zoneInfo.zone().environment().name(),
+                REGION, zoneInfo.zone().region(),
+                INSTANCE, zoneInfo.application().instance());
+
     }
 
     /** Returns the query profile backing this, or null if none */
@@ -289,12 +298,9 @@ public class QueryProfileProperties extends Properties {
 
     private Map<String, String> contextWithZoneInfo(Map<String, String> context) {
         if (zoneInfo == ZoneInfo.defaultInfo()) return context;
-
-        Map<String, String> contextWithZoneInfo = context == null ? new HashMap<>() : new HashMap<>(context);
-        contextWithZoneInfo.putIfAbsent("environment", zoneInfo.zone().environment().name());
-        contextWithZoneInfo.putIfAbsent("region", zoneInfo.zone().region());
-        contextWithZoneInfo.putIfAbsent("instance", zoneInfo.application().instance());
-        return Collections.unmodifiableMap(contextWithZoneInfo);
+        if (context == null || context.isEmpty()) return zoneContext;
+        if (context == zoneContext) return context;
+        return new ChainedMap(context, zoneContext);
     }
 
     private boolean reachableTypesAreComplete(CompoundName prefix, CompiledQueryProfile profile, StringBuilder firstMissingName, Map<String,String> context) {

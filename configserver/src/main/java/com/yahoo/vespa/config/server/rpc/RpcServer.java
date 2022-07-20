@@ -1,9 +1,9 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.rpc;
 
-import com.yahoo.component.annotation.Inject;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.Version;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.concurrent.ThreadFactoryFactory;
 import com.yahoo.config.FileReference;
 import com.yahoo.config.provision.ApplicationId;
@@ -28,7 +28,7 @@ import com.yahoo.vespa.config.protocol.JRTServerConfigRequest;
 import com.yahoo.vespa.config.protocol.JRTServerConfigRequestV3;
 import com.yahoo.vespa.config.protocol.Trace;
 import com.yahoo.vespa.config.server.GetConfigContext;
-import com.yahoo.vespa.config.server.ReloadListener;
+import com.yahoo.vespa.config.server.ConfigActivationListener;
 import com.yahoo.vespa.config.server.RequestHandler;
 import com.yahoo.vespa.config.server.SuperModelRequestHandler;
 import com.yahoo.vespa.config.server.application.ApplicationSet;
@@ -44,13 +44,14 @@ import com.yahoo.vespa.filedistribution.FileDownloader;
 import com.yahoo.vespa.filedistribution.FileReceiver;
 import com.yahoo.vespa.filedistribution.FileReferenceData;
 import com.yahoo.vespa.filedistribution.FileReferenceDownload;
-
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletionService;
 import java.util.concurrent.ConcurrentHashMap;
@@ -62,7 +63,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static com.yahoo.vespa.filedistribution.FileReferenceData.CompressionType;
 
 /**
  * An RPC server class that handles the config protocol RPC method "getConfigV3".
@@ -71,7 +75,7 @@ import java.util.stream.Stream;
  * @author hmusum
  */
 // TODO: Split business logic out of this
-public class RpcServer implements Runnable, ReloadListener, TenantListener {
+public class RpcServer implements Runnable, ConfigActivationListener, TenantListener {
 
     static final String getConfigMethodName = "getConfigV3";
     
@@ -221,7 +225,7 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
         getSupervisor().addMethod(new Method("printStatistics", "", "s", this::printStatistics)
                                   .methodDesc("printStatistics")
                                   .returnDesc(0, "statistics", "Statistics for server"));
-        getSupervisor().addMethod(new Method("filedistribution.serveFile", "si", "is", this::serveFile));
+        getSupervisor().addMethod(new Method("filedistribution.serveFile", "si*", "is", this::serveFile));
         getSupervisor().addMethod(new Method("filedistribution.setFileReferencesToDownload", "S", "i", this::setFileReferencesToDownload)
                                      .methodDesc("set which file references to download")
                                      .paramDesc(0, "file references", "file reference to download")
@@ -252,7 +256,7 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
 
     /**
      * Checks all delayed responses for config changes and waits until all has been answered.
-     * This method should be called when config is reloaded in the server.
+     * This method should be called when config is activated in the server.
      */
     @Override
     public void configActivated(ApplicationSet applicationSet) {
@@ -260,19 +264,19 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
         ApplicationState state = getState(applicationId);
         state.setActiveGeneration(applicationSet.getApplicationGeneration());
         reloadSuperModel(applicationSet);
-        configReloaded(applicationId);
+        configActivated(applicationId);
     }
 
     private void reloadSuperModel(ApplicationSet applicationSet) {
-        superModelRequestHandler.reloadConfig(applicationSet);
-        configReloaded(ApplicationId.global());
+        superModelRequestHandler.activateConfig(applicationSet);
+        configActivated(ApplicationId.global());
     }
 
-    void configReloaded(ApplicationId applicationId) {
+    void configActivated(ApplicationId applicationId) {
         List<DelayedConfigResponses.DelayedConfigResponse> responses = delayedConfigResponses.drainQueue(applicationId);
         String logPre = TenantRepository.logPre(applicationId);
         if (log.isLoggable(Level.FINE)) {
-            log.log(Level.FINE, logPre + "Start of configReload: " + responses.size() + " requests on delayed requests queue");
+            log.log(Level.FINE, logPre + "Start of configActivated: " + responses.size() + " requests on delayed requests queue");
         }
         int responsesSent = 0;
         CompletionService<Boolean> completionService = new ExecutorCompletionService<>(executorService);
@@ -303,7 +307,7 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
         }
 
         if (log.isLoggable(Level.FINE))
-            log.log(Level.FINE, logPre + "Finished reloading " + responsesSent + " requests");
+            log.log(Level.FINE, logPre + "Finished activating " + responsesSent + " requests");
     }
 
     private void logRequestDebug(Level level, String message, JRTServerConfigRequest request) {
@@ -326,8 +330,8 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
     @Override
     public void applicationRemoved(ApplicationId applicationId) {
         superModelRequestHandler.removeApplication(applicationId);
-        configReloaded(applicationId);
-        configReloaded(ApplicationId.global());
+        configActivated(applicationId);
+        configActivated(ApplicationId.global());
     }
 
     public void respond(JRTServerConfigRequest request) {
@@ -487,6 +491,7 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
             sendParts(session, fileData);
             sendEof(session, fileData, status);
         }
+
         private void sendParts(int session, FileReferenceData fileData) {
             ByteBuffer bb = ByteBuffer.allocate(0x100000);
             for (int partId = 0, read = fileData.nextContent(bb); read >= 0; partId++, read = fileData.nextContent(bb)) {
@@ -500,12 +505,9 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
                 bb.clear();
             }
         }
+
         private int sendMeta(FileReferenceData fileData) {
-            Request request = new Request(FileReceiver.RECEIVE_META_METHOD);
-            request.parameters().add(new StringValue(fileData.fileReference().value()));
-            request.parameters().add(new StringValue(fileData.filename()));
-            request.parameters().add(new StringValue(fileData.type().name()));
-            request.parameters().add(new Int64Value(fileData.size()));
+            Request request = createMetaRequest(fileData);
             invokeRpcIfValidConnection(request);
             if (request.isError()) {
                 log.warning("Failed delivering meta for reference '" + fileData.fileReference().value() + "' with file '" + fileData.filename() + "' to " +
@@ -518,6 +520,20 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
                 return request.returnValues().get(1).asInt32();
             }
         }
+
+        // non-private for testing
+        static Request createMetaRequest(FileReferenceData fileData) {
+            Request request = new Request(FileReceiver.RECEIVE_META_METHOD);
+            request.parameters().add(new StringValue(fileData.fileReference().value()));
+            request.parameters().add(new StringValue(fileData.filename()));
+            request.parameters().add(new StringValue(fileData.type().name()));
+            request.parameters().add(new Int64Value(fileData.size()));
+            // Only add paramter if not gzip, this is default and old clients will not handle the extra parameter
+            if (fileData.compressionType() != CompressionType.gzip)
+                request.parameters().add(new StringValue(fileData.compressionType().name()));
+            return request;
+        }
+
         private void sendPart(int session, FileReference ref, int partId, byte [] buf) {
             Request request = new Request(FileReceiver.RECEIVE_PART_METHOD);
             request.parameters().add(new StringValue(ref.value()));
@@ -534,6 +550,7 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
                 }
             }
         }
+
         private void sendEof(int session, FileReferenceData fileData, FileServer.ReplayStatus status) {
             Request request = new Request(FileReceiver.RECEIVE_EOF_METHOD);
             request.parameters().add(new StringValue(fileData.fileReference().value()));
@@ -566,7 +583,18 @@ public class RpcServer implements Runnable, ReloadListener, TenantListener {
         rpcAuthorizer.authorizeFileRequest(request)
                 .thenRun(() -> { // okay to do in authorizer thread as serveFile is async
                     FileServer.Receiver receiver = new ChunkedFileReceiver(request.target());
-                    fileServer.serveFile(request.parameters().get(0).asString(), request.parameters().get(1).asInt32() == 0, request, receiver);
+
+                    FileReference reference = new FileReference(request.parameters().get(0).asString());
+                    boolean downloadFromOtherSourceIfNotFound = request.parameters().get(1).asInt32() == 0;
+                    Set<FileReferenceData.CompressionType> acceptedCompressionTypes = Set.of(CompressionType.gzip);
+                    // Newer clients specify accepted compression types in request
+                    if (request.parameters().size() > 2)
+                        acceptedCompressionTypes = Arrays.stream(request.parameters().get(2).asStringArray())
+                                                         .map(CompressionType::valueOf)
+                                                         .collect(Collectors.toSet());
+                    log.log(Level.FINE, "acceptedCompressionTypes=" + acceptedCompressionTypes);
+
+                    fileServer.serveFile(reference, downloadFromOtherSourceIfNotFound, acceptedCompressionTypes, request, receiver);
                 });
     }
 

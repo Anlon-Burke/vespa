@@ -10,8 +10,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableSet;
-import com.yahoo.component.annotation.Inject;
 import com.yahoo.component.Version;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.config.application.api.DeploymentInstanceSpec;
 import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.provision.ApplicationId;
@@ -75,6 +75,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.SourceRevision;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartFilter;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
+import com.yahoo.vespa.hosted.controller.api.integration.zone.ZoneRegistry;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
 import com.yahoo.vespa.hosted.controller.api.role.RoleDefinition;
 import com.yahoo.vespa.hosted.controller.api.role.SecurityContext;
@@ -283,6 +284,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/logs")) return logs(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request.propertyMap());
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/access/support")) return supportAccess(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request.propertyMap());
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/node/{node}/service-dump")) return getServiceDump(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("node"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/scaling")) return scaling(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/metrics")) return metrics(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/global-rotation")) return rotationStatus(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), Optional.ofNullable(request.getProperty("endpointId")));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/global-rotation/override")) return getGlobalRotationOverride(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
@@ -952,19 +954,24 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private HttpResponse applicationPackage(String tenantName, String applicationName, HttpRequest request) {
         TenantAndApplicationId tenantAndApplication = TenantAndApplicationId.from(tenantName, applicationName);
-        long build;
-        String parameter = request.getProperty("build");
-        if (parameter != null)
-        try {
-            build = Validation.requireAtLeast(Long.parseLong(request.getProperty("build")), "build number", 1L);
-        }
-        catch (NumberFormatException e) {
-            throw new IllegalArgumentException("invalid value for request parameter 'build'", e);
-        }
-        else {
+        final long build;
+        String requestedBuild = request.getProperty("build");
+        if (requestedBuild != null) {
+            if (requestedBuild.equals("latestDeployed")) {
+                build = controller.applications().requireApplication(tenantAndApplication).latestDeployedRevision()
+                                  .map(RevisionId::number)
+                                  .orElseThrow(() -> new NotExistsException("no application package has been deployed in production for " + tenantAndApplication));
+            } else {
+                try {
+                    build = Validation.requireAtLeast(Long.parseLong(request.getProperty("build")), "build number", 1L);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("invalid value for request parameter 'build'", e);
+                }
+            }
+        } else {
             build = controller.applications().requireApplication(tenantAndApplication).revisions().last()
-                    .map(version -> version.id().number())
-                    .orElseThrow(() -> new NotExistsException("no application package has been submitted for " + tenantAndApplication));
+                              .map(version -> version.id().number())
+                              .orElseThrow(() -> new NotExistsException("no application package has been submitted for " + tenantAndApplication));
         }
         RevisionId revision = RevisionId.forProduction(build);
         boolean tests = request.getBooleanProperty("tests");
@@ -1426,6 +1433,29 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         return buildResponseFromProtonMetrics(protonMetrics);
     }
 
+    private HttpResponse scaling(String tenantName, String applicationName, String instanceName, String environment, String region, HttpRequest request) {
+        var from = Optional.ofNullable(request.getProperty("from"))
+                .map(Long::valueOf)
+                .map(Instant::ofEpochSecond)
+                .orElse(Instant.EPOCH);
+        var until = Optional.ofNullable(request.getProperty("until"))
+                .map(Long::valueOf)
+                .map(Instant::ofEpochSecond)
+                .orElse(Instant.now(controller.clock()));
+
+        var application = ApplicationId.from(tenantName, applicationName, instanceName);
+        var zone = requireZone(environment, region);
+        var deployment = new DeploymentId(application, zone);
+        var events = controller.serviceRegistry().resourceDatabase().scalingEvents(from, until, deployment);
+        var slime = new Slime();
+        var root = slime.setObject();
+        for (var entry : events.entrySet()) {
+            var serviceRoot = root.setArray(entry.getKey().clusterId().value());
+            scalingEventsToSlime(entry.getValue(), serviceRoot);
+        }
+        return new SlimeJsonResponse(slime);
+    }
+
     private JsonResponse buildResponseFromProtonMetrics(List<ProtonMetrics> protonMetrics) {
         try {
             var jsonObject = jsonMapper.createObjectNode();
@@ -1444,6 +1474,15 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
 
     private HttpResponse trigger(ApplicationId id, JobType type, HttpRequest request) {
+        // JobType.fromJobName doesn't properly initiate test jobs. Triggering these without context isn't _really_
+        // necessary, but triggering a test in the default cloud is better than failing with a weird error.
+        ZoneRegistry zones = controller.zoneRegistry();
+        type = switch (type.environment()) {
+            case test -> JobType.systemTest(zones, zones.systemZone().getCloudName());
+            case staging -> JobType.stagingTest(zones, zones.systemZone().getCloudName());
+            default -> type;
+        };
+
         Inspector requestObject = toSlime(request.getData()).get();
         boolean requireTests = ! requestObject.field("skipTests").asBool();
         boolean reTrigger = requestObject.field("reTrigger").asBool();

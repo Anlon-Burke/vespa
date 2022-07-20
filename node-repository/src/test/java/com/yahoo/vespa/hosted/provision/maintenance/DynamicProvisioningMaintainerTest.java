@@ -457,7 +457,7 @@ public class DynamicProvisioningMaintainerTest {
         // Initial config server hosts are provisioned manually
         List<Node> provisionedHosts = tester.makeReadyNodes(3, "default", hostType, 1).stream()
                                             .sorted(Comparator.comparing(Node::hostname))
-                                            .collect(Collectors.toList());
+                                            .toList();
         tester.prepareAndActivateInfraApplication(hostApp, hostType);
 
         // Provision config servers
@@ -485,18 +485,14 @@ public class DynamicProvisioningMaintainerTest {
         assertTrue("Redeployment retires node", nodeToRemove.get().allocation().get().membership().retired());
 
         // Config server becomes removable (done by RetiredExpirer in a real system) and redeployment moves it
-        // to inactive
-        tester.nodeRepository().nodes().setRemovable(configSrvApp, List.of(nodeToRemove.get()));
-        tester.prepareAndActivateInfraApplication(configSrvApp, hostType.childNodeType());
-        assertEquals("Node moves to inactive", Node.State.inactive, nodeToRemove.get().state());
-
-        // Node is parked (done by InactiveExpirer and host-admin in a real system)
+        // to parked
         int removedIndex = nodeToRemove.get().allocation().get().membership().index();
-        Node parkedConfigServer = tester.nodeRepository().nodes().deallocate(nodeToRemove.get(), Agent.system, getClass().getSimpleName());
-        assertSame("Node moves to parked", Node.State.parked, parkedConfigServer.state());
+        tester.nodeRepository().nodes().setRemovable(configSrvApp, List.of(nodeToRemove.get()), true);
+        tester.prepareAndActivateInfraApplication(configSrvApp, hostType.childNodeType());
+        assertSame("Node moves to expected state", Node.State.parked, nodeToRemove.get().state());
         assertEquals(2, tester.nodeRepository().nodes().list().nodeType(hostType.childNodeType()).state(Node.State.active).size());
 
-        // ... same for host
+        // Host is parked (done by DynamicProvisioningMaintainer in a real system)
         tester.nodeRepository().nodes().deallocate(hostToRemove.get(), Agent.system, getClass().getSimpleName());
         assertSame("Host moves to parked", Node.State.parked, hostToRemove.get().state());
 
@@ -572,6 +568,39 @@ public class DynamicProvisioningMaintainerTest {
         assertEquals(2, activeHosts.size());
         assertTrue(activeHosts.stream().allMatch(host -> host.cloudAccount().get().equals(cloudAccount)));
         assertEquals(2, provisioningTester.activate(applicationId, prepared).size());
+    }
+
+    @Test
+    public void deprovision_parked_node_with_allocation() {
+        var tester = new DynamicProvisioningTester();
+        tester.hostProvisioner.with(Behaviour.failProvisioning);
+        Node host4 = tester.addNode("host4", Optional.empty(), NodeType.host, Node.State.parked);
+        Node host41 = tester.addNode("host4-1", Optional.of("host4"), NodeType.tenant, Node.State.parked, DynamicProvisioningTester.tenantApp);
+        Node host42 = tester.addNode("host4-2", Optional.of("host4"), NodeType.tenant, Node.State.active, DynamicProvisioningTester.tenantApp);
+        Node host43 = tester.addNode("host4-3", Optional.of("host4"), NodeType.tenant, Node.State.failed, DynamicProvisioningTester.tenantApp);
+
+        // Host and children are marked for deprovisioning
+        tester.nodeRepository.nodes().deprovision("host4", Agent.operator, Instant.now());
+        for (var node : List.of(host4, host41, host42, host43)) {
+            assertTrue(tester.nodeRepository.nodes().node(node.hostname()).map(n -> n.status().wantToDeprovision()).get());
+        }
+
+        // Host and children remain parked because one child is still active
+        tester.maintainer.maintain();
+        for (var node : List.of(host4, host41)) {
+            assertEquals(Node.State.parked, tester.nodeRepository.nodes().node(node.hostname()).get().state());
+        }
+        assertEquals(Node.State.active, tester.nodeRepository.nodes().node(host42.hostname()).get().state());
+        assertEquals(Node.State.failed, tester.nodeRepository.nodes().node(host43.hostname()).get().state());
+
+        // Last child is parked
+        tester.nodeRepository.nodes().park(host42.hostname(), true, Agent.system, getClass().getSimpleName());
+
+        // Host and children can now be removed
+        tester.maintainer.maintain();
+        for (var node : List.of(host4, host41, host42, host43)) {
+            assertTrue(node.hostname() + " removed", tester.nodeRepository.nodes().node(node.hostname()).isEmpty());
+        }
     }
 
     private void assertCfghost3IsActive(DynamicProvisioningTester tester) {

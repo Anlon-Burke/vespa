@@ -2,36 +2,13 @@
 
 #pragma once
 
+#include "docsum_blob_entry_filter.h"
 #include <vespa/searchlib/util/rawbuf.h>
 #include <vespa/vespalib/stllike/string.h>
 #include <vespa/vespalib/stllike/hash_map.h>
 #include <vespa/searchlib/util/stringenum.h>
 
 namespace search::docsummary {
-
-/**
- * This enumeration contains values denoting the different types of
- * docsum fields. NOTE: The internal implementation depends on RES_INT
- * having the value 0. All types < RES_STRING must be fixed size and
- * all types > RES_STRING must be variable size.
- **/
-enum ResType {
-    RES_INT = 0,
-    RES_SHORT,
-    RES_BOOL,
-    RES_BYTE,
-    RES_FLOAT,
-    RES_DOUBLE,
-    RES_INT64,
-    RES_STRING,
-    RES_DATA,
-    RES_LONG_STRING,
-    RES_LONG_DATA,
-    RES_JSONSTRING,
-    RES_TENSOR,
-    RES_FEATUREDATA
-};
-
 
 /**
  * This struct describes a single docsum field (name and type). A
@@ -41,6 +18,7 @@ enum ResType {
  **/
 struct ResConfigEntry {
     ResType          _type;
+    bool             _not_present; // Entry not present in docsum blob when _not_present is set
     vespalib::string _bindname;
     int              _enumValue;
 };
@@ -57,6 +35,7 @@ struct ResConfigEntry {
 struct ResEntry
 {
     ResType _type;
+    bool    _not_present; // Entry not present in docsum blob when _not_present is set
     union {
         uint32_t _intval;
         uint32_t _stringlen;
@@ -71,15 +50,6 @@ struct ResEntry
         void *_pt;
     };
 
-    uint32_t _get_length() const { return _len; }
-    uint32_t _get_real_length() const
-    {
-        // precond: IsVariableSize(_type) && _len >= sizeof(uint32_t)
-
-        uint32_t rlen;
-        memcpy(&rlen, _pt, sizeof(rlen));
-        return rlen;
-    }
     void _resolve_field(const char **buf, uint32_t *buflen) const
     {
         // precond: IsVariableSize(_type)
@@ -122,6 +92,7 @@ private:
     // Whether or not summary features should be omitted when filling this summary class.
     // As default, summary features are always included.
     bool                       _omit_summary_features;
+    DocsumBlobEntryFilter      _docsum_blob_entry_filter;
 
 public:
     typedef std::unique_ptr<ResultClass> UP;
@@ -134,7 +105,7 @@ public:
      * @param id the numeric id of this result class.
      * @param fieldEnum shared object used to enumerate field names.
      **/
-    ResultClass(const char *name, uint32_t id, util::StringEnum & fieldEnum);
+    ResultClass(const char *name, uint32_t id, util::StringEnum & fieldEnum, const DocsumBlobEntryFilter& docsum_blob_entry_filter);
 
     /**
      * Destructor. Delete internal structures.
@@ -225,7 +196,7 @@ public:
      * GeneralResult::GetEntry(string) method; no need to call it
      * directly.
      *
-     * @return field index or -1 if not found.
+     * @return field index or -1 if not found
      **/
     int GetIndexFromName(const char* name) const;
 
@@ -242,7 +213,7 @@ public:
      * call it directly. NOTE3: You need to call the CreateEnumMap
      * method before calling this one.
      *
-     * @return field index or -1 if not found.
+     * @return field index or -1 if not found
      **/
     int GetIndexFromEnumValue(uint32_t value) const
     {

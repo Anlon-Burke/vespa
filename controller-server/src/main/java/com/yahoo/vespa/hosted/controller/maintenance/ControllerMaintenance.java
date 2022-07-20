@@ -58,7 +58,7 @@ public class ControllerMaintenance extends AbstractComponent {
         maintainers.add(new ContactInformationMaintainer(controller, intervals.contactInformationMaintainer));
         maintainers.add(new NameServiceDispatcher(controller, intervals.nameServiceDispatcher));
         maintainers.add(new CostReportMaintainer(controller, intervals.costReportMaintainer, controller.serviceRegistry().costReportConsumer()));
-        maintainers.add(new ResourceMeterMaintainer(controller, intervals.resourceMeterMaintainer, metric, controller.serviceRegistry().meteringService()));
+        maintainers.add(new ResourceMeterMaintainer(controller, intervals.resourceMeterMaintainer, metric, controller.serviceRegistry().resourceDatabase()));
         maintainers.add(new ResourceTagMaintainer(controller, intervals.resourceTagMaintainer, controller.serviceRegistry().resourceTagger()));
         maintainers.add(new ApplicationMetaDataGarbageCollector(controller, intervals.applicationMetaDataGarbageCollector));
         maintainers.add(new ArtifactExpirer(controller, intervals.containerImageExpirer));
@@ -70,11 +70,12 @@ public class ControllerMaintenance extends AbstractComponent {
         maintainers.add(new ArchiveAccessMaintainer(controller, metric, intervals.archiveAccessMaintainer));
         maintainers.add(new TenantRoleMaintainer(controller, intervals.tenantRoleMaintainer));
         maintainers.add(new ChangeRequestMaintainer(controller, intervals.changeRequestMaintainer));
-        maintainers.add(new VcmrMaintainer(controller, intervals.vcmrMaintainer));
+        maintainers.add(new VcmrMaintainer(controller, intervals.vcmrMaintainer, metric));
         maintainers.add(new CloudTrialExpirer(controller, intervals.defaultInterval));
         maintainers.add(new RetriggerMaintainer(controller, intervals.retriggerMaintainer));
         maintainers.add(new UserManagementMaintainer(controller, intervals.userManagementMaintainer, controller.serviceRegistry().roleMaintainer()));
         maintainers.add(new BillingDatabaseMaintainer(controller, intervals.billingDatabaseMaintainer));
+        maintainers.add(new MeteringMonitorMaintainer(controller, intervals.meteringMonitorMaintainer, controller.serviceRegistry().resourceDatabase(), metric));
     }
 
     public Upgrader upgrader() { return upgrader; }
@@ -131,6 +132,7 @@ public class ControllerMaintenance extends AbstractComponent {
         private final Duration retriggerMaintainer;
         private final Duration userManagementMaintainer;
         private final Duration billingDatabaseMaintainer;
+        private final Duration meteringMonitorMaintainer;
 
         public Intervals(SystemName system) {
             this.system = Objects.requireNonNull(system);
@@ -164,6 +166,7 @@ public class ControllerMaintenance extends AbstractComponent {
             this.retriggerMaintainer = duration(1, MINUTES);
             this.userManagementMaintainer = duration(12, HOURS);
             this.billingDatabaseMaintainer = duration(5, MINUTES);
+            this.meteringMonitorMaintainer = duration(30, MINUTES);
         }
 
         private Duration duration(long amount, TemporalUnit unit) {

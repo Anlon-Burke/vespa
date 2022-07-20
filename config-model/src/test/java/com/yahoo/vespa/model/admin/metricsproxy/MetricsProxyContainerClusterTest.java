@@ -64,13 +64,12 @@ public class MetricsProxyContainerClusterTest {
         ApplicationMetadataConfig config = builder.build();
         assertEquals(MockApplicationPackage.APPLICATION_GENERATION, config.generation());
         assertEquals(MockApplicationPackage.APPLICATION_NAME, config.name());
-        assertEquals(MockApplicationPackage.DEPLOYED_BY_USER, config.user());
     }
 
     @Test
     public void http_handlers_are_set_up() {
         VespaModel model = getModel(servicesWithAdminOnly(), self_hosted);
-        Collection<Handler<?>> handlers = model.getAdmin().getMetricsProxyCluster().getHandlers();
+        Collection<Handler> handlers = model.getAdmin().getMetricsProxyCluster().getHandlers();
         Collection<ComponentSpecification> handlerClasses = handlers.stream().map(Component::getClassId).collect(toList());
 
         assertTrue(handlerClasses.contains(ComponentSpecification.fromString(MetricsV1Handler.class.getName())));

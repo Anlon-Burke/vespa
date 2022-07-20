@@ -12,7 +12,6 @@ import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.jdisc.Metric;
 import com.yahoo.lang.MutableInteger;
-import com.yahoo.transaction.Mutex;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.JacksonFlag;
 import com.yahoo.vespa.flags.ListFlag;
@@ -77,16 +76,14 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
 
     @Override
     protected double maintain() {
-        try (Mutex lock = nodeRepository().nodes().lockUnallocated()) {
-            NodeList nodes = nodeRepository().nodes().list();
-            resumeProvisioning(nodes, lock);
-            convergeToCapacity(nodes);
-        }
+        NodeList nodes = nodeRepository().nodes().list();
+        resumeProvisioning(nodes);
+        convergeToCapacity(nodes);
         return 1.0;
     }
 
     /** Resume provisioning of already provisioned hosts and their children */
-    private void resumeProvisioning(NodeList nodes, Mutex lock) {
+    private void resumeProvisioning(NodeList nodes) {
         Map<String, Set<Node>> nodesByProvisionedParentHostname =
                 nodes.nodeType(NodeType.tenant, NodeType.config, NodeType.controller)
                      .asList()
@@ -97,9 +94,11 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
         nodes.state(Node.State.provisioned).nodeType(NodeType.host, NodeType.confighost, NodeType.controllerhost).forEach(host -> {
             Set<Node> children = nodesByProvisionedParentHostname.getOrDefault(host.hostname(), Set.of());
             try {
-                List<Node> updatedNodes = hostProvisioner.provision(host, children);
-                verifyDns(updatedNodes);
-                nodeRepository().nodes().write(updatedNodes, lock);
+                try (var lock = nodeRepository().nodes().lockUnallocated()) {
+                    List<Node> updatedNodes = hostProvisioner.provision(host, children);
+                    verifyDns(updatedNodes);
+                    nodeRepository().nodes().write(updatedNodes, lock);
+                }
             } catch (IllegalArgumentException | IllegalStateException e) {
                 log.log(Level.INFO, "Could not provision " + host.hostname() + " with " + children.size() + " children, will retry in " +
                                     interval() + ": " + Exceptions.toMessageString(e));
@@ -108,7 +107,7 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
                                       " children, failing out the host recursively", e);
                 // Fail out as operator to force a quick redeployment
                 nodeRepository().nodes().failOrMarkRecursively(
-                        host.hostname(), Agent.operator, "Failed by HostProvisioner due to provisioning failure");
+                        host.hostname(), Agent.DynamicProvisioningMaintainer, "Failed by HostProvisioner due to provisioning failure");
             } catch (RuntimeException e) {
                 if (e.getCause() instanceof NameNotFoundException)
                     log.log(Level.INFO, "Could not provision " + host.hostname() + ", will retry in " + interval() + ": " + Exceptions.toMessageString(e));
@@ -187,29 +186,38 @@ public class DynamicProvisioningMaintainer extends NodeRepositoryMaintainer {
                 .collect(Collectors.toList());
     }
 
-    private List<Node> candidatesForRemoval(List<Node> nodes) {
-        Map<String, Node> hostsByHostname = new HashMap<>(nodes.stream()
-                .filter(node -> {
-                    switch (node.type()) {
-                        case host:
-                            // TODO: Mark empty tenant hosts as wanttoretire & wanttodeprovision elsewhere, then handle as confighost here
-                            return node.state() != Node.State.parked || node.status().wantToDeprovision();
-                        case confighost:
-                        case controllerhost:
-                            return node.state() == Node.State.parked && node.status().wantToDeprovision();
-                        default:
-                            return false;
-                    }
-                })
-                .collect(Collectors.toMap(Node::hostname, Function.identity())));
+    private static List<Node> candidatesForRemoval(List<Node> nodes) {
+        Map<String, Node> removableHostsByHostname = new HashMap<>();
+        for (var node : nodes) {
+            if (canRemoveHost(node)) {
+                removableHostsByHostname.put(node.hostname(), node);
+            }
+        }
+        for (var node : nodes) {
+            if (node.parentHostname().isPresent() && !canRemoveNode(node)) {
+                removableHostsByHostname.remove(node.parentHostname().get());
+            }
+        }
+        return List.copyOf(removableHostsByHostname.values());
+    }
 
-        nodes.stream()
-             .filter(node -> node.allocation().isPresent())
-             .flatMap(node -> node.parentHostname().stream())
-             .distinct()
-             .forEach(hostsByHostname::remove);
+    private static boolean canRemoveHost(Node host) {
+        return switch (host.type()) {
+            // TODO: Mark empty tenant hosts as wanttoretire & wanttodeprovision elsewhere, then handle as confighost here
+            case host -> host.state() != Node.State.parked || host.status().wantToDeprovision();
+            case confighost, controllerhost -> canDeprovision(host);
+            default -> false;
+        };
+    }
 
-        return List.copyOf(hostsByHostname.values());
+    private static boolean canRemoveNode(Node node) {
+        if (node.type().isHost()) throw new IllegalArgumentException("Node " + node + " is not a child");
+        return node.allocation().isEmpty() || canDeprovision(node);
+    }
+
+    private static boolean canDeprovision(Node node) {
+        return node.status().wantToDeprovision() && (node.state() == Node.State.parked ||
+                                                     node.state() == Node.State.failed);
     }
 
     private Map<String, Node> findSharedHosts(NodeList nodeList) {

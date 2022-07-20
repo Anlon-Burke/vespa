@@ -68,7 +68,18 @@ public interface ZtsClient extends AutoCloseable {
      * @param domain Target domain
      * @return A role token
      */
-    ZToken getRoleToken(AthenzDomain domain);
+    default ZToken getRoleToken(AthenzDomain domain) {
+        return getRoleToken(domain, Duration.ofHours(1));
+    }
+
+    /**
+     * Fetch a role token for the target domain
+     *
+     * @param domain Target domain
+     * @param tokenExpiry Token expiry
+     * @return A role token
+     */
+    ZToken getRoleToken(AthenzDomain domain, Duration tokenExpiry);
 
     /**
      * Fetch a role token for the target role
@@ -76,7 +87,18 @@ public interface ZtsClient extends AutoCloseable {
      * @param athenzRole Target role
      * @return A role token
      */
-    ZToken getRoleToken(AthenzRole athenzRole);
+    default ZToken getRoleToken(AthenzRole athenzRole) {
+        return getRoleToken(athenzRole, Duration.ofHours(1));
+    }
+
+    /**
+     * Fetch a role token for the target role
+     *
+     * @param athenzRole Target role
+     * @param tokenExpiry Token expiry
+     * @return A role token
+     */
+    ZToken getRoleToken(AthenzRole athenzRole, Duration tokenExpiry);
 
     /**
      * Fetch an access token for the target domain
@@ -84,7 +106,18 @@ public interface ZtsClient extends AutoCloseable {
      * @param domain Target domain
      * @return An Athenz access token
      */
-    AthenzAccessToken getAccessToken(AthenzDomain domain);
+    default AthenzAccessToken getAccessToken(AthenzDomain domain) {
+        return getAccessToken(domain, List.of());
+    }
+
+    /**
+     * Fetch an access token for the target domain
+     *
+     * @param domain Target domain
+     * @param proxyPrincipals List of principals to allow proxying token
+     * @return An Athenz access token
+     */
+    AthenzAccessToken getAccessToken(AthenzDomain domain, List<AthenzIdentity> proxyPrincipals);
 
     /**
      * Fetch an access token for the target roles

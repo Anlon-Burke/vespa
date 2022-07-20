@@ -35,6 +35,7 @@ import java.security.Principal;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Scanner;
 import java.util.function.Function;
 import java.util.logging.Level;
@@ -60,13 +61,13 @@ public class ControllerApiHandler extends AuditLoggingRequestHandler {
     @Override
     public HttpResponse auditAndHandle(HttpRequest request) {
         try {
-            switch (request.getMethod()) {
-                case GET: return get(request);
-                case POST: return post(request);
-                case DELETE: return delete(request);
-                case PATCH: return patch(request);
-                default: return ErrorResponse.methodNotAllowed("Method '" + request.getMethod() + "' is not supported");
-            }
+            return switch (request.getMethod()) {
+                case GET -> get(request);
+                case POST -> post(request);
+                case DELETE -> delete(request);
+                case PATCH -> patch(request);
+                default -> ErrorResponse.methodNotAllowed("Method '" + request.getMethod() + "' is not supported");
+            };
         }
         catch (IllegalArgumentException e) {
             return ErrorResponse.badRequest(Exceptions.toMessageString(e));
@@ -84,7 +85,7 @@ public class ControllerApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/controller/v1/maintenance/")) return new JobsResponse(controller.jobControl());
         if (path.matches("/controller/v1/stats")) return new StatsResponse(controller);
         if (path.matches("/controller/v1/jobs/upgrader")) return new UpgraderResponse(maintenance.upgrader());
-        if (path.matches("/controller/v1/metering/tenant/{tenant}/month/{month}")) return new MeteringResponse(controller.serviceRegistry().meteringService(), path.get("tenant"), path.get("month"));
+        if (path.matches("/controller/v1/metering/tenant/{tenant}/month/{month}")) return new MeteringResponse(controller.serviceRegistry().resourceDatabase(), path.get("tenant"), path.get("month"));
         return notFound(path);
     }
 
@@ -165,8 +166,8 @@ public class ControllerApiHandler extends AuditLoggingRequestHandler {
         if (inspect.field(upgradesPerMinuteField).valid()) {
             upgrader.setUpgradesPerMinute(inspect.field(upgradesPerMinuteField).asDouble());
         } else if (inspect.field(targetMajorVersionField).valid()) {
-            int target = (int)inspect.field(targetMajorVersionField).asLong();
-            upgrader.setTargetMajorVersion(Optional.ofNullable(target == 0 ? null : target)); // 0 is the default value
+            int target = (int) inspect.field(targetMajorVersionField).asLong();
+            upgrader.setTargetMajorVersion(target == 0 ? OptionalInt.empty() : OptionalInt.of(target)); // 0 is the default value
         } else {
             return ErrorResponse.badRequest("No such modifiable field(s)");
         }

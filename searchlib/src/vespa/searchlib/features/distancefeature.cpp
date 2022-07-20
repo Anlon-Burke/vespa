@@ -1,16 +1,18 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
+#include "distance_calculator_bundle.h"
 #include "distancefeature.h"
+#include "utils.h"
+#include <vespa/document/datatype/positiondatatype.h>
 #include <vespa/searchcommon/common/schema.h>
 #include <vespa/searchlib/common/geo_location_spec.h>
 #include <vespa/searchlib/fef/matchdata.h>
-#include <vespa/document/datatype/positiondatatype.h>
+#include <vespa/searchlib/tensor/distance_calculator.h>
 #include <vespa/vespalib/geo/zcurve.h>
 #include <vespa/vespalib/util/issue.h>
 #include <vespa/vespalib/util/stash.h>
 #include <cmath>
 #include <limits>
-#include "utils.h"
 
 #include <vespa/log/log.h>
 LOG_SETUP(".features.distancefeature");
@@ -24,8 +26,8 @@ namespace search::features {
 /** Implements the executor for converting NNS rawscore to a distance feature. */
 class ConvertRawscoreToDistance : public fef::FeatureExecutor {
 private:
-    std::vector<fef::TermFieldHandle> _handles;
-    const fef::MatchData             *_md;
+    DistanceCalculatorBundle _bundle;
+    const fef::MatchData    *_md;
     void handle_bind_match_data(const fef::MatchData &md) override {
         _md = &md;
     }
@@ -36,32 +38,15 @@ public:
 };
 
 ConvertRawscoreToDistance::ConvertRawscoreToDistance(const fef::IQueryEnvironment &env, uint32_t fieldId)
-  : _handles(),
+  : _bundle(env, fieldId, "distance"),
     _md(nullptr)
 {
-    _handles.reserve(env.getNumTerms());
-    for (uint32_t i = 0; i < env.getNumTerms(); ++i) {
-        search::fef::TermFieldHandle handle = util::getTermFieldHandle(env, i, fieldId);
-        if (handle != search::fef::IllegalHandle) {
-            _handles.push_back(handle);
-        }
-    }
 }
 
 ConvertRawscoreToDistance::ConvertRawscoreToDistance(const fef::IQueryEnvironment &env, const vespalib::string &label)
-  : _handles(),
+  : _bundle(env, label, "distance"),
     _md(nullptr)
 {
-    const ITermData *term = util::getTermByLabel(env, label);
-    if (term != nullptr) {
-        // expect numFields() == 1
-        for (uint32_t i = 0; i < term->numFields(); ++i) {
-            TermFieldHandle handle = term->field(i).getHandle();
-            if (handle != IllegalHandle) {
-                _handles.push_back(handle);
-            }
-        }
-    }
 }
 
 void
@@ -69,10 +54,14 @@ ConvertRawscoreToDistance::execute(uint32_t docId)
 {
     feature_t min_distance = std::numeric_limits<feature_t>::max();
     assert(_md);
-    for (auto handle : _handles) {
-        const TermFieldMatchData *tfmd = _md->resolveTermField(handle);
+    for (const auto& elem : _bundle.elements()) {
+        const TermFieldMatchData *tfmd = _md->resolveTermField(elem.handle);
         if (tfmd->getDocId() == docId) {
             feature_t invdist = tfmd->getRawScore();
+            feature_t converted = (1.0 / invdist) - 1.0;
+            min_distance = std::min(min_distance, converted);
+        } else if (elem.calc) {
+            feature_t invdist = elem.calc->calc_raw_score(docId);
             feature_t converted = (1.0 / invdist) - 1.0;
             min_distance = std::min(min_distance, converted);
         }
@@ -247,6 +236,17 @@ DistanceBlueprint::setup(const IIndexEnvironment & env,
         LOG(error, "field '%s' must be an attribute for rank feature %s\n", arg.c_str(), getName().c_str());
     }
     return false;
+}
+
+void
+DistanceBlueprint::prepareSharedState(const fef::IQueryEnvironment& env, fef::IObjectStore& store) const
+{
+    if (_use_nns_tensor) {
+        DistanceCalculatorBundle::prepare_shared_state(env, store, _attr_id, "distance");
+    }
+    if (_use_item_label) {
+        DistanceCalculatorBundle::prepare_shared_state(env, store, _arg_string, "distance");
+    }
 }
 
 FeatureExecutor &

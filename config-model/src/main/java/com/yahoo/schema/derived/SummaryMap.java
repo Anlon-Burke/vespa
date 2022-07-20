@@ -30,6 +30,7 @@ public class SummaryMap extends Derived implements SummarymapConfig.Producer {
         for (DocumentSummary documentSummary : schema.getSummaries().values()) {
             derive(documentSummary);
         }
+        addSummaryTransformForDocumentId();
         super.derive(schema);
     }
 
@@ -37,11 +38,22 @@ public class SummaryMap extends Derived implements SummarymapConfig.Producer {
     protected void derive(ImmutableSDField field, Schema schema) {
     }
 
+    private void addSummaryTransformForDocumentId() {
+        // The 'documentid' field is added to the 'default' summary class in SummaryClass.deriveImplicitFields().
+        // This ensures the corresponding transform is added as well.
+        if (!resultTransforms.containsKey(SummaryClass.DOCUMENT_ID_FIELD)) {
+            resultTransforms.put(SummaryClass.DOCUMENT_ID_FIELD,
+                    new FieldResultTransform(SummaryClass.DOCUMENT_ID_FIELD, SummaryTransform.DOCUMENT_ID, ""));
+        }
+    }
+
     private void derive(DocumentSummary documentSummary) {
         for (SummaryField summaryField : documentSummary.getSummaryFields().values()) {
             if (summaryField.getTransform()== SummaryTransform.NONE) continue;
 
             if (summaryField.getTransform()==SummaryTransform.ATTRIBUTE ||
+                (summaryField.getTransform()==SummaryTransform.ATTRIBUTECOMBINER && summaryField.hasExplicitSingleSource()) ||
+                summaryField.getTransform()==SummaryTransform.COPY ||
                 summaryField.getTransform()==SummaryTransform.DISTANCE ||
                 summaryField.getTransform()==SummaryTransform.GEOPOS ||
                 summaryField.getTransform()==SummaryTransform.POSITIONS ||
@@ -57,9 +69,10 @@ public class SummaryMap extends Derived implements SummarymapConfig.Producer {
                 // This works, but is suboptimal. We could consolidate to a minimal set and
                 // use the right value from the minimal set as the third parameter here,
                 // and add "override" commands to multiple static values
+                boolean useFieldNameAsArgument = summaryField.getTransform().isDynamic();
                 resultTransforms.put(summaryField.getName(), new FieldResultTransform(summaryField.getName(),
                                                                                       summaryField.getTransform(),
-                                                                                      summaryField.getName()));
+                                                                                      useFieldNameAsArgument ? summaryField.getName() : ""));
             }
         }
     }
@@ -99,20 +112,8 @@ public class SummaryMap extends Derived implements SummarymapConfig.Producer {
         for (FieldResultTransform frt : resultTransforms.values()) {
             SummarymapConfig.Override.Builder oB = new SummarymapConfig.Override.Builder()
                 .field(frt.getFieldName())
-                .command(getCommand(frt.getTransform()));
-            if (frt.getTransform().isDynamic() ||
-                    frt.getTransform().equals(SummaryTransform.ATTRIBUTE) ||
-                    frt.getTransform().equals(SummaryTransform.DISTANCE) ||
-                    frt.getTransform().equals(SummaryTransform.GEOPOS) ||
-                    frt.getTransform().equals(SummaryTransform.POSITIONS) ||
-                    frt.getTransform().equals(SummaryTransform.TEXTEXTRACTOR) ||
-                    frt.getTransform().equals(SummaryTransform.MATCHED_ELEMENTS_FILTER) ||
-                    frt.getTransform().equals(SummaryTransform.MATCHED_ATTRIBUTE_ELEMENTS_FILTER))
-                {
-                    oB.arguments(frt.getArgument());
-                } else {
-                    oB.arguments("");
-                }
+                .command(getCommand(frt.getTransform()))
+                .arguments(frt.getArgument());
             builder.override(oB);
         }
     }

@@ -31,9 +31,13 @@ public class NodeRepoStatsTest {
     @Test
     public void testEmpty() {
         var tester = new NodeRepositoryTester();
-        assertLoad(Load.zero(), tester.nodeRepository().computeStats().load());
-        assertLoad(Load.zero(), tester.nodeRepository().computeStats().activeLoad());
-        assertTrue(tester.nodeRepository().computeStats().applicationStats().isEmpty());
+        var stats = tester.nodeRepository().computeStats();
+
+        assertEquals(0, stats.totalCost(), delta);
+        assertEquals(0, stats.totalAllocatedCost(), delta);
+        assertLoad(Load.zero(), stats.load());
+        assertLoad(Load.zero(), stats.activeLoad());
+        assertTrue(stats.applicationStats().isEmpty());
     }
 
     @Test
@@ -42,9 +46,13 @@ public class NodeRepoStatsTest {
         tester.addHost("host1", "default");
         tester.addHost("host2", "default");
         tester.addHost("host3", "small");
-        assertLoad(Load.zero(), tester.nodeRepository().computeStats().load());
-        assertLoad(Load.zero(), tester.nodeRepository().computeStats().activeLoad());
-        assertTrue(tester.nodeRepository().computeStats().applicationStats().isEmpty());
+        var stats = tester.nodeRepository().computeStats();
+
+        assertEquals(0.76, stats.totalCost(), delta);
+        assertEquals(0, stats.totalAllocatedCost(), delta);
+        assertLoad(Load.zero(), stats.load());
+        assertLoad(Load.zero(), stats.activeLoad());
+        assertTrue(stats.applicationStats().isEmpty());
     }
 
     @Test
@@ -97,6 +105,9 @@ public class NodeRepoStatsTest {
 
         var stats = tester.nodeRepository().computeStats();
 
+        assertEquals(26, stats.totalCost(), delta);
+        assertEquals(8.319999999999999, stats.totalAllocatedCost(), delta);
+
         assertLoad(new Load(0.6180,0.5562,0.4944), stats.load());
         assertLoad(new Load(0.4682,0.4214,0.3745), stats.activeLoad());
 
@@ -105,21 +116,21 @@ public class NodeRepoStatsTest {
         var app3Stats = stats.applicationStats().get(1);
 
         assertEquals(app1, app1Stats.id());
-        assertEquals(2.940, app1Stats.cost(), delta);
-        assertEquals(0.702, app1Stats.utilizedCost(), delta);
-        assertEquals(2.238, app1Stats.unutilizedCost(), delta);
+        assertEquals(3.6400, app1Stats.cost(), delta);
+        assertEquals(0.8676, app1Stats.utilizedCost(), delta);
+        assertEquals(2.7724, app1Stats.unutilizedCost(), delta);
         assertLoad(new Load(0.2571, 0.2314, 0.2057), app1Stats.load());
 
         assertEquals(app2, app2Stats.id());
-        assertEquals(1.680, app2Stats.cost(), delta);
-        assertEquals(0.624, app2Stats.utilizedCost(), delta);
-        assertEquals(1.056, app2Stats.unutilizedCost(), delta);
+        assertEquals(2.0799, app2Stats.cost(), delta);
+        assertEquals(0.7712, app2Stats.utilizedCost(), delta);
+        assertEquals(1.3087, app2Stats.unutilizedCost(), delta);
         assertLoad(new Load(.40, 0.36, 0.32), app2Stats.load());
 
         assertEquals(app3, app3Stats.id());
-        assertEquals(2.100, app3Stats.cost(), delta);
-        assertEquals(0.975, app3Stats.utilizedCost(), delta);
-        assertEquals(1.125, app3Stats.unutilizedCost(), delta);
+        assertEquals(2.6000, app3Stats.cost(), delta);
+        assertEquals(1.2049, app3Stats.utilizedCost(), delta);
+        assertEquals(1.3950, app3Stats.unutilizedCost(), delta);
         assertLoad(new Load(0.5, 0.45, 0.40), app3Stats.load());
     }
 

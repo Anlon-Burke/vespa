@@ -1,14 +1,17 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/vsm/vsm/docsumconfig.h>
-#include <vespa/searchsummary/docsummary/docsumfieldwriter.h>
+#include <vespa/searchsummary/docsummary/copy_dfw.h>
+#include <vespa/searchsummary/docsummary/empty_dfw.h>
 #include <vespa/searchsummary/docsummary/matched_elements_filter_dfw.h>
+#include <vespa/searchsummary/docsummary/resultconfig.h>
 #include <vespa/searchlib/common/matching_elements_fields.h>
 #include <vespa/vsm/config/config-vsmfields.h>
 #include <vespa/vsm/config/config-vsmsummary.h>
 
 using search::MatchingElementsFields;
-using search::docsummary::IDocsumFieldWriter;
+using search::docsummary::DocsumFieldWriter;
+using search::docsummary::CopyDFW;
 using search::docsummary::EmptyDFW;
 using search::docsummary::MatchedElementsFilterDFW;
 using search::docsummary::ResultConfig;
@@ -40,10 +43,10 @@ DynamicDocsumConfig::DynamicDocsumConfig(search::docsummary::IDocsumEnvironment*
 {
 }
 
-IDocsumFieldWriter::UP
+std::unique_ptr<DocsumFieldWriter>
 DynamicDocsumConfig::createFieldWriter(const string & fieldName, const string & overrideName, const string & argument, bool & rc, std::shared_ptr<search::MatchingElementsFields> matching_elems_fields)
 {
-    IDocsumFieldWriter::UP fieldWriter;
+    std::unique_ptr<DocsumFieldWriter> fieldWriter;
     if ((overrideName == "staticrank") ||
         (overrideName == "ranklog") ||
         (overrideName == "label") ||
@@ -55,8 +58,16 @@ DynamicDocsumConfig::createFieldWriter(const string & fieldName, const string & 
         fieldWriter = std::make_unique<EmptyDFW>();
         rc = true;
     } else if ((overrideName == "attribute") ||
-            (overrideName == "attributecombiner") ||
-            (overrideName == "geopos")) {
+               (overrideName == "attributecombiner")) {
+        if (!argument.empty() && argument != fieldName) {
+            auto fw = std::make_unique<CopyDFW>();
+            const ResultConfig& resultConfig = getResultConfig();
+            if (fw->Init(resultConfig, argument.c_str())) {
+                fieldWriter = std::move(fw);
+            }
+        }
+        rc = true;
+    } else if (overrideName == "geopos") {
         rc = true;
     } else if ((overrideName == "matchedattributeelementsfilter") ||
                (overrideName == "matchedelementsfilter")) {

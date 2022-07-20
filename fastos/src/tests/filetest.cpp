@@ -5,38 +5,7 @@
 #include <memory>
 #include <cassert>
 #include <sys/mman.h>
-
-namespace {
-
-// Create the named file, and write it's filename into it.
-// Return true on success
-bool createFile(const char* fileName) {
-    FastOS_StatInfo statInfo;
-    FastOS_File cf(fileName);
-    return ( cf.OpenWriteOnly() &&
-            cf.CheckedWrite(fileName, strlen(fileName)) &&
-            cf.Close() &&
-            FastOS_File::Stat(fileName, &statInfo) &&
-            statInfo._isRegular );
-}
-
-bool createFile(const char* fileName,
-                const unsigned int size) {
-    FastOS_File cf(fileName);
-    bool success = false;
-    if (cf.OpenWriteOnlyTruncate()) {
-        auto buf = std::make_unique<char[]>(size); // Could be dangerous..
-        if (buf) {
-            memset(buf.get(), 0, size); // dont write uninitialized bytes since valgrind will complain
-            if (cf.CheckedWrite(buf.get(), size)) {
-                success = true;
-            }
-        }
-    }
-    return success;
-}
-} // namespace <unnamed>
-
+#include <filesystem>
 
 class FileTest : public BaseTest
 {
@@ -45,176 +14,6 @@ public:
     const std::string roFilename = srcDir + "/hello.txt";
     const std::string woFilename = "generated/writeonlytest.txt";
     const std::string rwFilename = "generated/readwritetest.txt";
-
-    void DirectoryTest()
-    {
-        TestHeader ("Directory management (remove & empty) test");
-
-        const char *dirName = "tmpTestDir";
-        char file1[1024];
-        char file2[1024];
-        char file3[1024];
-        char file4[1024];
-        char file5[1024];
-        char subdir1[512];
-        char subdir2[512];
-        sprintf(file1, "%s%sfile1", dirName, FastOS_File::GetPathSeparator());
-        sprintf(file2, "%s%sfile2", dirName, FastOS_File::GetPathSeparator());
-        sprintf(file3, "%s%sfile2", dirName, FastOS_File::GetPathSeparator());
-        sprintf(subdir1, "%s%sdir1", dirName, FastOS_File::GetPathSeparator());
-        sprintf(subdir2, "%s%sdir2", dirName, FastOS_File::GetPathSeparator());
-        sprintf(file4, "%s%sfile4", subdir2, FastOS_File::GetPathSeparator());
-        sprintf(file5, "%s%sfile5", subdir2, FastOS_File::GetPathSeparator());
-
-        FastOS_StatInfo statInfo;
-
-        bool success = false;
-
-        // Don't run at all if the directory already exists
-        assert(!FastOS_File::Stat(dirName, &statInfo));
-
-        FastOS_File::MakeDirectory(dirName);
-
-        // Verify that we succeed with an empty directory
-        FastOS_File::EmptyDirectory(dirName);
-        success = FastOS_File::Stat(dirName, &statInfo);
-        Progress(success, "Removing empty directory.");
-
-        // Verify that we can empty a directory with files in it
-        createFile(file1);
-        createFile(file2);
-        createFile(file3);
-        FastOS_File::EmptyDirectory(dirName);
-        success =
-            !FastOS_File::Stat(file1, &statInfo) &&
-            !FastOS_File::Stat(file2, &statInfo) &&
-            !FastOS_File::Stat(file3, &statInfo) &&
-            FastOS_File::Stat(dirName, &statInfo);
-        Progress(success, "Deleting dir with files in it.");
-
-        // Verify that we can empty a directory with files and directories in it
-        createFile(file1);
-        createFile(file2);
-        createFile(file3);
-        FastOS_File::MakeDirectory(subdir1);
-        FastOS_File::MakeDirectory(subdir2);
-        createFile(file4);
-        createFile(file5);
-        FastOS_File::EmptyDirectory(dirName);
-        success =  FastOS_File::Stat(dirName, &statInfo) &&
-                   !FastOS_File::Stat(file1, &statInfo) &&
-                   !FastOS_File::Stat(file2, &statInfo) &&
-                   !FastOS_File::Stat(file3, &statInfo) &&
-                   !FastOS_File::Stat(file4, &statInfo) &&
-                   !FastOS_File::Stat(file5, &statInfo) &&
-                   !FastOS_File::Stat(subdir1, &statInfo) &&
-                   !FastOS_File::Stat(subdir2, &statInfo);
-        Progress(success, "Emptying directory with files and folders in it.");
-
-        // Verify that we don't empty the directory if we find a file to keep
-        createFile(file1);
-        createFile(file2);
-        createFile(file3);
-        FastOS_File::MakeDirectory(subdir1);
-        FastOS_File::MakeDirectory(subdir2);
-        createFile(file4);
-        createFile(file5);
-        FastOS_File::EmptyDirectory(dirName, "file1");
-        success = FastOS_File::Stat(dirName, &statInfo);
-        Progress(success, "Emptying dir with keepfile in it.");
-        // Verify that all but the file to keep are removed
-        success = FastOS_File::Stat(file1, &statInfo) &&
-                  !FastOS_File::Stat(file2, &statInfo) &&
-                  !FastOS_File::Stat(file3, &statInfo) &&
-                  !FastOS_File::Stat(file4, &statInfo) &&
-                  !FastOS_File::Stat(file5, &statInfo) &&
-                  !FastOS_File::Stat(subdir1, &statInfo) &&
-                  !FastOS_File::Stat(subdir2, &statInfo);
-        Progress(success, "Looking for keepfile.");
-
-        // Verify that we don't empty the sub-directory if we find a file to keep
-        createFile(file1);
-        createFile(file2);
-        createFile(file3);
-        FastOS_File::MakeDirectory(subdir1);
-        FastOS_File::MakeDirectory(subdir2);
-        createFile(file4);
-        createFile(file5);
-        FastOS_File::EmptyDirectory(dirName, "file4");
-        success = FastOS_File::Stat(dirName, &statInfo);
-        Progress(success, "Emptying file with nested keepfile.");
-        // Verify that all but the file to keep are removed
-        success = !FastOS_File::Stat(file1, &statInfo) &&
-                  !FastOS_File::Stat(file2, &statInfo) &&
-                  !FastOS_File::Stat(file3, &statInfo) &&
-                  FastOS_File::Stat(file4, &statInfo) &&
-                  !FastOS_File::Stat(file5, &statInfo) &&
-                  !FastOS_File::Stat(subdir1, &statInfo) &&
-                  FastOS_File::Stat(subdir2, &statInfo);
-        // Progress(success, "Looking for nested keepfile."); // Unsupported for now.
-
-
-        FastOS_File::EmptyAndRemoveDirectory(dirName);
-
-        FastOS_File::MakeDirectory(dirName);
-
-        // Verify that we can remove an empty directory
-        FastOS_File::EmptyAndRemoveDirectory(dirName);
-        success = !FastOS_File::Stat(dirName, &statInfo);
-        Progress(success, "Deleting empty directory.");
-
-        // Verify that we can remove a directory with files in it
-        FastOS_File::MakeDirectory(dirName);
-        createFile(file1);
-        createFile(file2);
-        createFile(file3);
-        FastOS_File::EmptyAndRemoveDirectory(dirName);
-        success = !FastOS_File::Stat(dirName, &statInfo);
-        Progress(success, "Deleting a directory with files in it.");
-
-        // Verify that we can remove a directory with files and directories in it
-        FastOS_File::MakeDirectory(dirName);
-        createFile(file1);
-        createFile(file2);
-        createFile(file3);
-        FastOS_File::MakeDirectory(subdir1);
-        FastOS_File::MakeDirectory(subdir2);
-        createFile(file4);
-        createFile(file5);
-        FastOS_File::EmptyAndRemoveDirectory(dirName);
-        success = !FastOS_File::Stat(dirName, &statInfo);
-        Progress(success, "Deleting directory with files and directories in it.");
-
-    }
-
-    void MoveFileTest() {
-        TestHeader ("Moving files (across volumes too) test");
-
-        const char *dirName = "tmpTestDir";
-        char file1[1024];
-        char file2[1024];
-        char file3[1024];
-        sprintf(file1, "%s%sfile1", dirName, FastOS_File::GetPathSeparator());
-        sprintf(file2, "%s%sfile2", dirName, FastOS_File::GetPathSeparator());
-        sprintf(file3, "%stmp%sfile3", FastOS_File::GetPathSeparator(),
-                FastOS_File::GetPathSeparator());
-
-        FastOS_File::MakeDirectory(dirName);
-        createFile(file1);
-
-        FastOS_StatInfo statInfo;
-        // Move file to new name in same dir.
-        FastOS_File::MoveFile(file1, file2);
-        Progress(FastOS_File::Stat(file2, &statInfo), "Moving one within a directory.");
-
-        // Move file to /tmp.
-        FastOS_File::MoveFile(file2, file3);
-        Progress(FastOS_File::Stat(file3, &statInfo), "Moving to /tmp/");
-
-        // Clean up
-        FastOS_File::Delete(file3);
-        FastOS_File::EmptyAndRemoveDirectory(dirName);
-    }
 
     void GetCurrentDirTest ()
     {
@@ -252,7 +51,7 @@ public:
         int i;
         const int bufSize = 1000;
 
-        FastOS_File::MakeDirectory("generated");
+        std::filesystem::create_directory(std::filesystem::path("generated"));
         FastOS_File file("generated/memorymaptest");
 
         bool rc = file.OpenReadWrite();
@@ -294,7 +93,7 @@ public:
             }
             delete [] buffer;
         }
-        FastOS_File::EmptyAndRemoveDirectory("generated");
+        std::filesystem::remove_all(std::filesystem::path("generated"));
         PrintSeparator();
     }
 
@@ -305,7 +104,7 @@ public:
         int i;
         const int bufSize = 40000;
 
-        FastOS_File::MakeDirectory("generated");
+        std::filesystem::create_directory(std::filesystem::path("generated"));
         FastOS_File file("generated/diotest");
 
         bool rc = file.OpenWriteOnly();
@@ -429,7 +228,7 @@ public:
             delete [] buffer;
         }
 
-        FastOS_File::EmptyAndRemoveDirectory("generated");
+        std::filesystem::remove_all(std::filesystem::path("generated"));
         PrintSeparator();
     }
 
@@ -483,7 +282,7 @@ public:
     void WriteOnlyTest ()
     {
         TestHeader("Write-Only Test");
-        FastOS_File::MakeDirectory("generated");
+        std::filesystem::create_directory(std::filesystem::path("generated"));
 
         FastOS_File *myFile = new FastOS_File(woFilename.c_str());
 
@@ -541,14 +340,14 @@ public:
         Progress(deleteResult, "Delete file '%s'.", woFilename.c_str());
 
         delete(myFile);
-        FastOS_File::EmptyAndRemoveDirectory("generated");
+        std::filesystem::remove_all(std::filesystem::path("generated"));
         PrintSeparator();
     }
 
     void ReadWriteTest ()
     {
         TestHeader("Read/Write Test");
-        FastOS_File::MakeDirectory("generated");
+        std::filesystem::create_directory(std::filesystem::path("generated"));
 
         FastOS_File *myFile = new FastOS_File(rwFilename.c_str());
 
@@ -637,7 +436,7 @@ public:
         Progress(deleteResult, "Delete file '%s'.", rwFilename.c_str());
 
         delete(myFile);
-        FastOS_File::EmptyAndRemoveDirectory("generated");
+        std::filesystem::remove_all(std::filesystem::path("generated"));
         PrintSeparator();
     }
 
@@ -715,92 +514,11 @@ public:
         PrintSeparator();
     }
 
-    void CopyFileTest ()
-    {
-        FastOS_StatInfo statInfo;
-        TestHeader("CopyFile Test");
-        const char *dirName = "tmpDir";
-        char file1[1024];
-        char file2[1024];
-        char file3[1024];
-        char file4[1024];
-        char file5[1024];
-        sprintf(file1, "%s%sfile1", dirName, FastOS_File::GetPathSeparator());
-        sprintf(file2, "%s%sfile2", dirName, FastOS_File::GetPathSeparator());
-        sprintf(file3, "%s%sfile3", dirName, FastOS_File::GetPathSeparator());
-        sprintf(file4, "%s%sfile4", dirName, FastOS_File::GetPathSeparator());
-        sprintf(file5, "%s%sfile5", dirName, FastOS_File::GetPathSeparator());
-
-        FastOS_File::EmptyAndRemoveDirectory(dirName);
-        FastOS_File::MakeDirectory(dirName);
-        printf("Creating files to copy. Some of them are quite large...\n\n");
-        createFile(file1);
-        createFile(file3, 20*1024*1024); // 20MB file.
-        createFile(file4, 1024*1024); // 1MB file, i.e. exact size of buffer.
-        createFile(file5, 1024*1024 + 100); // 1.001MB file
-
-        FastOS_File::Stat(file4, &statInfo);
-        unsigned int sizeOfFile4 = statInfo._size;
-
-        FastOS_File::Stat(file5, &statInfo);
-        unsigned int sizeOfFile5 = statInfo._size;
-
-        // Tests start here.
-        bool copyOK = FastOS_File::CopyFile(file1, file2);
-        Progress(copyOK,
-                 "File copy from %s to %s.", file1, file2);
-
-        FastOS_File::Delete(file2);
-        copyOK = FastOS_File::CopyFile(file3, file2);
-        Progress(copyOK,
-                 "File copy from %s to %s.", file3, file2);
-        FastOS_File::Stat(file2, &statInfo);
-        Progress(statInfo._size == 20*1024*1024,
-                 "Size of copied file is 20MB.");
-
-        copyOK = FastOS_File::CopyFile(file3, file3);
-        Progress(!copyOK,
-                 "File copy onto itself should fail.");
-
-        FastOS_File::Delete(file1);
-        copyOK = FastOS_File::CopyFile(file1, file2);
-        Progress(!copyOK,
-                 "File copy of a missing file should fail.");
-
-        copyOK = FastOS_File::CopyFile(file4, file2);
-        Progress(copyOK,
-                 "Copying a smaller file onto a larger one.");
-        FastOS_File::Stat(file2, &statInfo);
-        Progress(statInfo._size == sizeOfFile4,
-                 "Size of copied file should be %u bytes.", sizeOfFile4);
-
-        copyOK = FastOS_File::CopyFile(file4, file1);
-        Progress(copyOK,
-                 "Copying a file with exact size of buffer.");
-        FastOS_File::Stat(file1, &statInfo);
-        Progress(statInfo._size == sizeOfFile4,
-                 "Size of copied file should be %u bytes.", sizeOfFile4);
-
-        copyOK = FastOS_File::CopyFile(file5, file1);
-        Progress(copyOK,
-                 "Copying a file with size %u bytes.", sizeOfFile5);
-        FastOS_File::Stat(file1, &statInfo);
-        Progress(statInfo._size == sizeOfFile5,
-                 "Size of copied file should be %u bytes.", sizeOfFile5);
-
-
-        FastOS_File::EmptyAndRemoveDirectory("./tmpDir");
-        PrintSeparator();
-    }
-
     int Main () override
     {
         printf("This test should be run in the 'tests' directory.\n\n");
         printf("grep for the string '%s' to detect failures.\n\n", failString);
 
-        DirectoryTest();
-        MoveFileTest();
-        CopyFileTest();
         GetCurrentDirTest();
         DirectIOTest();
         MaxLengthTest();

@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "resultconfig.h"
+#include "resultclass.h"
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/stllike/hash_map.hpp>
 #include <atomic>
@@ -25,9 +26,15 @@ ResultConfig::Init()
 
 
 ResultConfig::ResultConfig()
+    : ResultConfig(DocsumBlobEntryFilter())
+{
+}
+
+ResultConfig::ResultConfig(const DocsumBlobEntryFilter& docsum_blob_entry_filter)
     : _defaultSummaryId(-1),
       _classLookup(),
-      _nameLookup()
+      _nameLookup(),
+      _docsum_blob_entry_filter(docsum_blob_entry_filter)
 {
     Init();
 }
@@ -38,28 +45,6 @@ ResultConfig::~ResultConfig()
     Clean();
 }
 
-
-const char *
-ResultConfig::GetResTypeName(ResType type)
-{
-    switch (type) {
-    case RES_INT:         return "integer";
-    case RES_SHORT:       return "short";
-    case RES_BYTE:        return "byte";
-    case RES_BOOL:        return "bool";
-    case RES_FLOAT:       return "float";
-    case RES_DOUBLE:      return "double";
-    case RES_INT64:       return "int64";
-    case RES_STRING:      return "string";
-    case RES_DATA:        return "data";
-    case RES_LONG_STRING: return "longstring";
-    case RES_LONG_DATA:   return "longdata";
-    case RES_JSONSTRING:  return "jsonstring";
-    case RES_TENSOR:  return "tensor";
-    case RES_FEATUREDATA: return "featuredata";
-    }
-    return "unknown-type";
-}
 
 void
 ResultConfig::Reset()
@@ -77,7 +62,7 @@ ResultConfig::AddResultClass(const char *name, uint32_t id)
     ResultClass *ret = nullptr;
 
     if (id != NoClassID() && (_classLookup.find(id) == _classLookup.end())) {
-        ResultClass::UP rc(new ResultClass(name, id, _fieldEnum));
+        ResultClass::UP rc(new ResultClass(name, id, _fieldEnum, _docsum_blob_entry_filter));
         ret = rc.get();
         _classLookup[id] = std::move(rc);
         if (_nameLookup.find(name) != _nameLookup.end()) {

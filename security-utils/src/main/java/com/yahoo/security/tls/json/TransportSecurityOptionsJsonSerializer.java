@@ -8,9 +8,9 @@ import com.yahoo.security.tls.json.TransportSecurityOptionsEntity.CredentialFiel
 import com.yahoo.security.tls.json.TransportSecurityOptionsEntity.Files;
 import com.yahoo.security.tls.json.TransportSecurityOptionsEntity.RequiredCredential;
 import com.yahoo.security.tls.policy.AuthorizedPeers;
+import com.yahoo.security.tls.policy.CapabilitySet;
 import com.yahoo.security.tls.policy.PeerPolicy;
 import com.yahoo.security.tls.policy.RequiredPeerCredential;
-import com.yahoo.security.tls.policy.Role;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,9 +18,9 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static java.util.stream.Collectors.toList;
@@ -101,14 +101,16 @@ public class TransportSecurityOptionsJsonSerializer {
         if (authorizedPeer.requiredCredentials == null) {
             throw missingFieldException("required-credentials");
         }
-        return new PeerPolicy(authorizedPeer.name, authorizedPeer.description, toRoles(authorizedPeer.roles), toRequestPeerCredentials(authorizedPeer.requiredCredentials));
+        return new PeerPolicy(authorizedPeer.name, Optional.ofNullable(authorizedPeer.description),
+                toCapabilities(authorizedPeer.capabilities), toRequestPeerCredentials(authorizedPeer.requiredCredentials));
     }
 
-    private static Set<Role> toRoles(List<String> roles) {
-        if (roles == null) return Collections.emptySet();
-        return roles.stream()
-                .map(Role::new)
-                .collect(toSet());
+    private static CapabilitySet toCapabilities(List<String> capabilities) {
+        if (capabilities == null) return CapabilitySet.all();
+        if (capabilities.isEmpty())
+            throw new IllegalArgumentException("\"capabilities\" array must either be not present " +
+                    "(implies all capabilities) or contain at least one capability name");
+        return CapabilitySet.fromNames(capabilities);
     }
 
     private static List<RequiredPeerCredential> toRequestPeerCredentials(List<RequiredCredential> requiredCredentials) {
@@ -142,29 +144,27 @@ public class TransportSecurityOptionsJsonSerializer {
         options.getCaCertificatesFile().ifPresent(value -> entity.files.caCertificatesFile = value.toString());
         options.getCertificatesFile().ifPresent(value -> entity.files.certificatesFile = value.toString());
         options.getPrivateKeyFile().ifPresent(value -> entity.files.privateKeyFile = value.toString());
-        options.getAuthorizedPeers().ifPresent( authorizedPeers -> entity.authorizedPeers =
-                authorizedPeers.peerPolicies().stream()
-                        // Makes tests stable
-                        .sorted(Comparator.comparing(PeerPolicy::policyName))
-                        .map(peerPolicy -> {
-                            AuthorizedPeer authorizedPeer = new AuthorizedPeer();
-                            authorizedPeer.name = peerPolicy.policyName();
-                            authorizedPeer.requiredCredentials = new ArrayList<>();
-                            authorizedPeer.description = peerPolicy.description().orElse(null);
-                            for (RequiredPeerCredential requiredPeerCredential : peerPolicy.requiredCredentials()) {
-                                RequiredCredential requiredCredential = new RequiredCredential();
-                                requiredCredential.field = toField(requiredPeerCredential.field());
-                                requiredCredential.matchExpression = requiredPeerCredential.pattern().asString();
-                                authorizedPeer.requiredCredentials.add(requiredCredential);
-                            }
-                            if (!peerPolicy.assumedRoles().isEmpty()) {
-                                authorizedPeer.roles = new ArrayList<>();
-                                peerPolicy.assumedRoles().forEach(role -> authorizedPeer.roles.add(role.name()));
-                            }
-
-                            return authorizedPeer;
-                        })
-                        .collect(toList()));
+        entity.authorizedPeers = options.getAuthorizedPeers().peerPolicies().stream()
+                // Makes tests stable
+                .sorted(Comparator.comparing(PeerPolicy::policyName))
+                .map(peerPolicy -> {
+                    AuthorizedPeer authorizedPeer = new AuthorizedPeer();
+                    authorizedPeer.name = peerPolicy.policyName();
+                    authorizedPeer.requiredCredentials = new ArrayList<>();
+                    authorizedPeer.description = peerPolicy.description().orElse(null);
+                    CapabilitySet caps = peerPolicy.capabilities();
+                    if (!caps.hasAll()) {
+                        authorizedPeer.capabilities = List.copyOf(caps.toNames());
+                    }
+                    for (RequiredPeerCredential requiredPeerCredential : peerPolicy.requiredCredentials()) {
+                        RequiredCredential requiredCredential = new RequiredCredential();
+                        requiredCredential.field = toField(requiredPeerCredential.field());
+                        requiredCredential.matchExpression = requiredPeerCredential.pattern().asString();
+                        authorizedPeer.requiredCredentials.add(requiredCredential);
+                    }
+                    return authorizedPeer;
+                })
+                .toList();
         if (!options.getAcceptedCiphers().isEmpty()) {
             entity.acceptedCiphers = options.getAcceptedCiphers();
         }

@@ -6,11 +6,12 @@
 #include "docsumstorevalue.h"
 
 namespace document {
-class Document;
 class FieldValue;
 }
 
 namespace search::docsummary {
+
+class DocsumStoreDocument;
 
 class GeneralResult
 {
@@ -21,16 +22,9 @@ private:
     const ResultClass      *_resClass;
     uint32_t                _entrycnt;
     ResEntry               *_entries;
-    char                   *_buf;     // allocated in same chunk as _entries
-    char                   *_bufEnd;  // first byte after _buf
-    const document::Document* _document;
+    const IDocsumStoreDocument* _document;
 
-    bool InBuf(const void *pt) const {
-        return ((const char *)pt >= _buf &&
-                (const char *)pt < _bufEnd);
-    }
-
-    void AllocEntries(uint32_t buflen, bool inplace = false);
+    void AllocEntries();
     void FreeEntries();
 
 public:
@@ -38,9 +32,16 @@ public:
     ~GeneralResult();
 
     const ResultClass *GetClass() const { return _resClass; }
-    ResEntry *GetEntry(uint32_t idx);
-    ResEntry *GetEntry(const char *name);
-    ResEntry *GetEntryFromEnumValue(uint32_t val);
+    ResEntry *GetEntry(uint32_t idx) { return (idx < _entrycnt) ? &_entries[idx] : nullptr; }
+    ResEntry *GetPresentEntry(uint32_t idx) {
+        if (idx >= _entrycnt) {
+            return nullptr;
+        }
+        ResEntry* entry = &_entries[idx];
+        return entry->_not_present ? nullptr : entry;
+    }
+    ResEntry *GetPresentEntry(const char *name);
+    ResEntry *GetPresentEntryFromEnumValue(uint32_t val);
     std::unique_ptr<document::FieldValue> get_field_value(const vespalib::string& field_name) const;
     bool unpack(const char *buf, const size_t buflen);
 
@@ -52,6 +53,8 @@ public:
             return false;
         }
     }
+
+    const IDocsumStoreDocument *get_document() const noexcept { return _document; }
 };
 
 }

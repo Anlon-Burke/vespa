@@ -158,7 +158,7 @@ public class JobController {
     /** Stores the given log entries for the given run and step. */
     public void log(RunId id, Step step, List<LogEntry> entries) {
         locked(id, __ -> {
-            logs.append(id.application(), id.type(), step, entries);
+            logs.append(id.application(), id.type(), step, entries, true);
             return __;
         });
     }
@@ -211,7 +211,7 @@ public class JobController {
             if (log.isEmpty())
                 return run;
 
-            logs.append(id.application(), id.type(), Step.copyVespaLogs, log);
+            logs.append(id.application(), id.type(), Step.copyVespaLogs, log, false);
             return run.with(log.get(log.size() - 1).at());
         });
     }
@@ -230,7 +230,7 @@ public class JobController {
             if (entries.isEmpty())
                 return run;
 
-            logs.append(id.application(), id.type(), step.get(), entries);
+            logs.append(id.application(), id.type(), step.get(), entries, false);
             return run.with(entries.stream().mapToLong(LogEntry::id).max().getAsLong());
         });
     }
@@ -406,11 +406,6 @@ public class JobController {
     /** Changes the status of the given step, for the given run, provided it is still active. */
     public void update(RunId id, RunStatus status, LockedStep step) {
         locked(id, run -> run.with(status, step));
-    }
-
-    /** Invoked when starting the step */
-    public void setStartTimestamp(RunId id, Instant timestamp, LockedStep step) {
-        locked(id, run -> run.with(timestamp, step));
     }
 
     /**
@@ -774,7 +769,8 @@ public class JobController {
     public void locked(RunId id, UnaryOperator<Run> modifications) {
         try (Mutex __ = curator.lock(id.application(), id.type())) {
             active(id).ifPresent(run -> {
-                curator.writeLastRun(modifications.apply(run));
+                Run modified = modifications.apply(run);
+                if (modified != null) curator.writeLastRun(modified);
             });
         }
     }

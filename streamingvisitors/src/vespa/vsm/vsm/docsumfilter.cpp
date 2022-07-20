@@ -2,6 +2,8 @@
 
 #include "docsumfilter.h"
 #include "slimefieldwriter.h"
+#include <vespa/searchsummary/docsummary/check_undefined_value_visitor.h>
+#include <vespa/searchsummary/docsummary/i_docsum_store_document.h>
 #include <vespa/searchsummary/docsummary/summaryfieldconverter.h>
 #include <vespa/document/base/exceptions.h>
 #include <vespa/document/fieldvalue/iteratorhandler.h>
@@ -117,6 +119,67 @@ public:
 
 
 namespace vsm {
+
+namespace {
+
+/**
+ * Class providing access to a document retrieved from an IDocsumStore
+ * (vsm::DocsumFilter). VSM specific transforms might be applied when
+ * accessing some fields.
+ **/
+class DocsumStoreVsmDocument : public IDocsumStoreDocument
+{
+    const document::Document* _document;
+public:
+    DocsumStoreVsmDocument(const document::Document* document);
+    ~DocsumStoreVsmDocument() override;
+    std::unique_ptr<document::FieldValue> get_field_value(const vespalib::string& field_name) const override;
+    void insert_summary_field(const vespalib::string& field_name, vespalib::slime::Inserter& inserter) const override;
+    void insert_document_id(vespalib::slime::Inserter& inserter) const override;
+};
+
+DocsumStoreVsmDocument::DocsumStoreVsmDocument(const document::Document* document)
+    : _document(document)
+{
+}
+
+DocsumStoreVsmDocument::~DocsumStoreVsmDocument() = default;
+
+std::unique_ptr<document::FieldValue>
+DocsumStoreVsmDocument::get_field_value(const vespalib::string& field_name) const
+{
+    if (_document != nullptr) {
+        const document::Field & field = _document->getField(field_name);
+        auto value(field.getDataType().createFieldValue());
+        if (value) {
+            if (_document->getValue(field, *value)) {
+                return value;
+            }
+        }
+    }
+    return {};
+}
+
+void
+DocsumStoreVsmDocument::insert_summary_field(const vespalib::string& field_name, vespalib::slime::Inserter& inserter) const
+{
+    auto field_value = get_field_value(field_name);
+    if (field_value) {
+        SummaryFieldConverter::insert_summary_field(*field_value, inserter);
+    }
+}
+
+void
+DocsumStoreVsmDocument::insert_document_id(vespalib::slime::Inserter& inserter) const
+{
+    if (_document) {
+        auto id = _document->getId().toString();
+        vespalib::Memory id_view(id.data(), id.size());
+        inserter.insertString(id_view);
+    }
+}
+
+}
 
 FieldPath
 copyPathButFirst(const FieldPath & rhs) {
@@ -320,12 +383,19 @@ DocsumFilter::writeSlimeField(const DocsumFieldSpec & fieldSpec,
             LOG(debug, "writeSlimeField: About to write field '%d' as Slime: field value = '%s'",
                 fieldId.getId(), fv->toString().c_str());
             SlimeFieldWriter writer;
+            CheckUndefinedValueVisitor check_undefined;
             if (! fieldSpec.hasIdentityMapping()) {
                 writer.setInputFields(fieldSpec.getInputFields());
+            } else {
+                fv->accept(check_undefined);
             }
-            writer.convert(*fv);
-            const vespalib::stringref out = writer.out();
-            packer.AddLongString(out.data(), out.size());
+            if (!check_undefined.is_undefined()) {
+                writer.convert(*fv);
+                const vespalib::stringref out = writer.out();
+                packer.AddLongString(out.data(), out.size());
+            } else {
+                packer.AddEmpty();
+            }
         } else {
             LOG(debug, "writeSlimeField: Field value not set for field '%d'", fieldId.getId());
             packer.AddEmpty();
@@ -407,7 +477,7 @@ DocsumFilter::writeEmpty(ResType type, ResultPacker & packer)
         packer.AddShort(std::numeric_limits<int16_t>::min());
         break;
     case RES_BYTE:
-        packer.AddByte(0); // byte fields are unsigned so we have no 'notdefined' value.
+        packer.AddByte(std::numeric_limits<int8_t>::min());
         break;
     case RES_FLOAT:
         packer.AddFloat(std::numeric_limits<float>::quiet_NaN());
@@ -441,7 +511,12 @@ DocsumFilter::getMappedDocsum(uint32_t id)
     const Document & doc = _docsumCache->getDocSum(id);
 
     _packer.Init(resClass->GetClassID());
-    for (FieldSpecList::iterator it(_fields.begin()), end = _fields.end(); it != end; ++it) {
+    uint32_t entry_idx = 0;
+    for (FieldSpecList::iterator it(_fields.begin()), end = _fields.end(); it != end; ++it, ++entry_idx) {
+        if (entry_idx != _packer.get_entry_idx()) {
+            // Entry is not present in docsum blob
+            continue;
+        }
         ResType type = it->getResultType();
         if (type == RES_JSONSTRING) {
             // this really means 'structured data'
@@ -451,7 +526,13 @@ DocsumFilter::getMappedDocsum(uint32_t id)
                 const DocsumFieldSpec::FieldIdentifier & fieldId = it->getInputFields()[0];
                 const document::FieldValue * field = doc.getField(fieldId.getId());
                 if (field != nullptr) {
-                    writeField(*field, fieldId.getPath(), type, _packer);
+                    CheckUndefinedValueVisitor check_undefined;
+                    field->accept(check_undefined);
+                    if (!check_undefined.is_undefined()) {
+                        writeField(*field, fieldId.getPath(), type, _packer);
+                    } else {
+                        writeEmpty(type, _packer); // void input
+                    }
                 } else {
                     writeEmpty(type, _packer); // void input
                 }
@@ -468,7 +549,9 @@ DocsumFilter::getMappedDocsum(uint32_t id)
     uint32_t buflen;
     bool ok = _packer.GetDocsumBlob(&buf, &buflen);
     if (ok) {
-        return DocsumStoreValue(buf, buflen);
+        const auto* storage_doc = dynamic_cast<const StorageDocument *>(&doc);
+        const document::Document *doc_doc = (storage_doc != nullptr && storage_doc->valid()) ? &storage_doc->docDoc() : nullptr;
+        return DocsumStoreValue(buf, buflen, std::make_unique<DocsumStoreVsmDocument>(doc_doc));
     } else {
         return DocsumStoreValue(nullptr, 0);
     }

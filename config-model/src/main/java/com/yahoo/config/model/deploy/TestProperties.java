@@ -50,6 +50,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private Quota quota = Quota.unlimited();
     private boolean useAsyncMessageHandlingOnSchedule = false;
     private double feedConcurrency = 0.5;
+    private double feedNiceness = 0.0;
     private int maxActivationInhibitedOutOfSyncGroups = 0;
     private List<TenantSecretStore> tenantSecretStores = Collections.emptyList();
     private String jvmOmitStackTraceInFastThrowOption;
@@ -74,10 +75,16 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private boolean persistenceThrottlingOfMergeFeedOps = true;
     private boolean useV8GeoPositions = true;
     private List<String> environmentVariables = List.of();
-    private boolean avoidRenamingSummaryFeatures = true;
     private boolean enableBitVectors = false;
     private boolean loadCodeAsHugePages = false;
     private boolean sharedStringRepoNoReclaim = false;
+    private int mbus_java_num_targets = 1;
+    private int mbus_java_events_before_wakeup = 1;
+    private int mbus_cpp_num_targets = 1;
+    private int mbus_cpp_events_before_wakeup = 1;
+    private int rpc_num_targets = 1;
+    private int rpc_events_before_wakeup = 1;
+    private int mbus_network_threads = 1;
     private Architecture adminClusterNodeResourcesArchitecture = Architecture.getDefault();
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
@@ -101,12 +108,10 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public Optional<AthenzDomain> athenzDomain() { return Optional.ofNullable(athenzDomain); }
     @Override public String responseSequencerType() { return responseSequencerType; }
     @Override public int defaultNumResponseThreads() { return responseNumThreads; }
-    @Override public boolean skipCommunicationManagerThread() { return false; }
-    @Override public boolean skipMbusRequestThread() { return false; }
-    @Override public boolean skipMbusReplyThread() { return false; }
     @Override public Quota quota() { return quota; }
     @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
     @Override public double feedConcurrency() { return feedConcurrency; }
+    @Override public double feedNiceness() { return feedNiceness; }
     @Override public int maxActivationInhibitedOutOfSyncGroups() { return maxActivationInhibitedOutOfSyncGroups; }
     @Override public List<TenantSecretStore> tenantSecretStores() { return tenantSecretStores; }
     @Override public String jvmOmitStackTraceInFastThrowOption(ClusterSpec.Type type) { return jvmOmitStackTraceInFastThrowOption; }
@@ -131,11 +136,18 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public boolean persistenceThrottlingOfMergeFeedOps() { return persistenceThrottlingOfMergeFeedOps; }
     @Override public boolean useV8GeoPositions() { return useV8GeoPositions; }
     @Override public List<String> environmentVariables() { return environmentVariables; }
-    @Override public boolean avoidRenamingSummaryFeatures() { return this.avoidRenamingSummaryFeatures; }
     @Override public boolean enableBitVectors() { return this.enableBitVectors; }
     @Override public Architecture adminClusterArchitecture() { return adminClusterNodeResourcesArchitecture; }
     @Override public boolean sharedStringRepoNoReclaim() { return sharedStringRepoNoReclaim; }
     @Override public boolean loadCodeAsHugePages() { return loadCodeAsHugePages; }
+    @Override public int mbusNetworkThreads() { return mbus_network_threads; }
+    @Override public int mbusJavaRpcNumTargets() { return mbus_java_num_targets; }
+    @Override public int mbusJavaEventsBeforeWakeup() { return mbus_java_events_before_wakeup; }
+    @Override public int mbusCppRpcNumTargets() { return mbus_cpp_num_targets; }
+    @Override public int mbusCppEventsBeforeWakeup() { return mbus_cpp_events_before_wakeup; }
+    @Override public int rpcNumTargets() { return rpc_num_targets; }
+    @Override public int rpcEventsBeforeWakeup() { return rpc_events_before_wakeup; }
+
 
     public TestProperties sharedStringRepoNoReclaim(boolean sharedStringRepoNoReclaim) {
         this.sharedStringRepoNoReclaim = sharedStringRepoNoReclaim;
@@ -163,6 +175,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setFeedConcurrency(double feedConcurrency) {
         this.feedConcurrency = feedConcurrency;
+        return this;
+    }
+
+    public TestProperties setFeedNiceness(double feedNiceness) {
+        this.feedNiceness = feedNiceness;
         return this;
     }
 
@@ -351,13 +368,37 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
-    public TestProperties setAvoidRenamingSummaryFeatures(boolean value) {
-        this.avoidRenamingSummaryFeatures = value;
+    public TestProperties setEnableBitVectors(boolean value) {
+        this.enableBitVectors = value;
         return this;
     }
 
-    public TestProperties setEnableBitVectors(boolean value) {
-        this.enableBitVectors = value;
+    public TestProperties setMbusNetworkThreads(int value) {
+        this.mbus_network_threads = value;
+        return this;
+    }
+    public TestProperties setMbusJavaRpcNumTargets(int value) {
+        this.mbus_java_num_targets = value;
+        return this;
+    }
+    public TestProperties setMbusJavaEventsBeforeWakeup(int value) {
+        this.mbus_java_events_before_wakeup = value;
+        return this;
+    }
+    public TestProperties setMbusCppEventsBeforeWakeup(int value) {
+        this.mbus_cpp_events_before_wakeup = value;
+        return this;
+    }
+    public TestProperties setMbusCppRpcNumTargets(int value) {
+        this.mbus_cpp_num_targets = value;
+        return this;
+    }
+    public TestProperties setRpcNumTargets(int value) {
+        this.rpc_num_targets = value;
+        return this;
+    }
+    public TestProperties setRpcEventsBeforeWakeup(int value) {
+        this.rpc_events_before_wakeup = value;
         return this;
     }
 
@@ -386,12 +427,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
         @Override
         public boolean equals(Object o) {
-            if (o instanceof ConfigServerSpec) {
-                ConfigServerSpec other = (ConfigServerSpec)o;
+            if (o instanceof ConfigServerSpec rhsSpec) {
 
-                return hostName.equals(other.getHostName()) &&
-                        configServerPort == other.getConfigServerPort() &&
-                        zooKeeperPort == other.getZooKeeperPort();
+                return hostName.equals(rhsSpec.getHostName()) &&
+                        configServerPort == rhsSpec.getConfigServerPort() &&
+                        zooKeeperPort == rhsSpec.getZooKeeperPort();
             } else {
                 return false;
             }

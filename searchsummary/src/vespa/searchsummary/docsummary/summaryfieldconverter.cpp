@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "summaryfieldconverter.h"
+#include "check_undefined_value_visitor.h"
 #include "linguisticsannotation.h"
 #include "resultconfig.h"
 #include "searchdatatype.h"
@@ -462,7 +463,7 @@ private:
     }
 
     void visit(const PredicateFieldValue &value) override {
-        vespalib::slime::inject(value.getSlime().get(), _inserter);
+        _inserter.insertString(value.toString());
     }
 
     void visit(const RawFieldValue &value) override {
@@ -593,5 +594,15 @@ SummaryFieldConverter::convert_field_with_filter(bool markup,
     return SummaryFieldValueConverter(markup, sub_conv).convert(value);
 }
 
+void
+SummaryFieldConverter::insert_summary_field(const FieldValue& value, vespalib::slime::Inserter& inserter)
+{
+    CheckUndefinedValueVisitor check_undefined;
+    value.accept(check_undefined);
+    if (!check_undefined.is_undefined()) {
+        SlimeFiller visitor(inserter, false);
+        value.accept(visitor);
+    }
+}
 
 }

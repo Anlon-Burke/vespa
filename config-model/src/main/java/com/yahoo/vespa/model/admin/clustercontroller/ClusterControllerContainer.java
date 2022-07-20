@@ -49,7 +49,7 @@ public class ClusterControllerContainer extends Container implements
     private static final int DEFAULT_NETTY_NUM_DIRECT_ARENAS = 1; // Reduced from nettys default of 2*cores
     private static final int DEFAULT_NETTY_NUM_HEAP_ARENAS = 1; // Reduced from nettys default of 2*cores
 
-    private final Set<String> bundles = new TreeSet<>();
+    private final Set<String> bundles = new TreeSet<>(); // Ensure stable ordering
 
     public ClusterControllerContainer(AbstractConfigProducer<?> parent,
                                       int index,
@@ -118,7 +118,7 @@ public class ClusterControllerContainer extends Container implements
                          ZOOKEEPER_SERVER_BUNDLE);
     }
 
-    private void addHandler(Handler<?> h, String path) {
+    private void addHandler(Handler h, String path) {
         h.addServerBindings(SystemBindingPattern.fromHttpPath(path));
         super.addHandler(h);
     }
@@ -138,7 +138,7 @@ public class ClusterControllerContainer extends Container implements
     }
 
     private void addHandler(String id, String className, String path, ComponentSpecification bundle) {
-        addHandler(new Handler<>(createComponentModel(id, className, bundle)), path);
+        addHandler(new Handler(createComponentModel(id, className, bundle)), path);
     }
 
     private ReindexingContext reindexingContext() {

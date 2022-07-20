@@ -1,15 +1,18 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include "attribute_combiner_dfw.h"
 #include "docsumconfig.h"
+#include "attribute_combiner_dfw.h"
+#include "copy_dfw.h"
 #include "docsumwriter.h"
+#include "document_id_dfw.h"
+#include "empty_dfw.h"
 #include "geoposdfw.h"
 #include "idocsumenvironment.h"
 #include "juniperdfw.h"
 #include "matched_elements_filter_dfw.h"
 #include "positionsdfw.h"
 #include "rankfeaturesdfw.h"
-#include "textextractordfw.h"
+#include "summaryfeaturesdfw.h"
 #include <vespa/searchlib/common/matching_elements_fields.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/util/exceptions.h>
@@ -24,12 +27,12 @@ DynamicDocsumConfig::getResultConfig() const {
     return *_writer->GetResultConfig();
 }
 
-IDocsumFieldWriter::UP
+std::unique_ptr<DocsumFieldWriter>
 DynamicDocsumConfig::createFieldWriter(const string & fieldName, const string & overrideName, const string & argument, bool & rc, std::shared_ptr<MatchingElementsFields> matching_elems_fields)
 {
     const ResultConfig & resultConfig = getResultConfig();
     rc = false;
-    IDocsumFieldWriter::UP fieldWriter;
+    std::unique_ptr<DocsumFieldWriter> fieldWriter;
     if (overrideName == "dynamicteaser") {
         if ( ! argument.empty() ) {
             const char *langFieldName = "something unused";
@@ -39,27 +42,14 @@ DynamicDocsumConfig::createFieldWriter(const string & fieldName, const string & 
         } else {
             throw IllegalArgumentException("Missing argument");
         }
-    } else if (overrideName == "textextractor") {
-        if ( ! argument.empty() ) {
-            TextExtractorDFW * fw = new TextExtractorDFW();
-            fieldWriter.reset(fw);
-            rc = fw->init(fieldName, argument, resultConfig);
-        } else {
-            throw IllegalArgumentException("Missing argument");
-        }
     } else if (overrideName == "summaryfeatures") {
-        SummaryFeaturesDFW *fw = new SummaryFeaturesDFW();
-        fieldWriter.reset(fw);
-        fw->init(getEnvironment());
+        fieldWriter = std::make_unique<SummaryFeaturesDFW>(getEnvironment());
         rc = true;
     } else if (overrideName == "rankfeatures") {
-        RankFeaturesDFW * fw = new RankFeaturesDFW();
-        fw->init(getEnvironment());
-        fieldWriter.reset(fw);
+        fieldWriter = std::make_unique<RankFeaturesDFW>(getEnvironment());
         rc = true;
     } else if (overrideName == "empty") {
-        EmptyDFW *fw = new EmptyDFW();
-        fieldWriter.reset(fw);
+        fieldWriter = std::make_unique<EmptyDFW>();
         rc = true;
     } else if (overrideName == "copy") {
         if ( ! argument.empty() ) {
@@ -71,21 +61,18 @@ DynamicDocsumConfig::createFieldWriter(const string & fieldName, const string & 
         }
     } else if (overrideName == "absdist") {
         if (getEnvironment()) {
-            IAttributeManager *am = getEnvironment()->getAttributeManager();
-            fieldWriter = AbsDistanceDFW::create(argument.c_str(), am);
-            rc = fieldWriter.get();
+            fieldWriter = AbsDistanceDFW::create(argument.c_str(), getEnvironment()->getAttributeManager());
+            rc = static_cast<bool>(fieldWriter);
         }
     } else if (overrideName == "positions") {
         if (getEnvironment()) {
-            IAttributeManager *am = getEnvironment()->getAttributeManager();
-            fieldWriter = PositionsDFW::create(argument.c_str(), am, resultConfig.useV8geoPositions());
-            rc = fieldWriter.get();
+            fieldWriter = PositionsDFW::create(argument.c_str(), getEnvironment()->getAttributeManager(), resultConfig.useV8geoPositions());
+            rc = static_cast<bool>(fieldWriter);
         }
     } else if (overrideName == "geopos") {
         if (getEnvironment()) {
-            IAttributeManager *am = getEnvironment()->getAttributeManager();
-            fieldWriter = GeoPositionDFW::create(argument.c_str(), am, resultConfig.useV8geoPositions());
-            rc = fieldWriter.get();
+            fieldWriter = GeoPositionDFW::create(argument.c_str(), getEnvironment()->getAttributeManager(), resultConfig.useV8geoPositions());
+            rc = static_cast<bool>(fieldWriter);
         }
     } else if (overrideName == "attribute") {
         if (getEnvironment() && getEnvironment()->getAttributeManager()) {
@@ -95,11 +82,12 @@ DynamicDocsumConfig::createFieldWriter(const string & fieldName, const string & 
     } else if (overrideName == "attributecombiner") {
         if (getEnvironment() && getEnvironment()->getAttributeManager()) {
             auto attr_ctx = getEnvironment()->getAttributeManager()->createContext();
-            fieldWriter = AttributeCombinerDFW::create(fieldName, *attr_ctx, false, std::shared_ptr<MatchingElementsFields>());
+            const string& source_field = argument.empty() ? fieldName : argument;
+            fieldWriter = AttributeCombinerDFW::create(source_field, *attr_ctx, false, std::shared_ptr<MatchingElementsFields>());
             rc = static_cast<bool>(fieldWriter);
         }
     } else if (overrideName == "matchedattributeelementsfilter") {
-        string source_field = argument.empty() ? fieldName : argument;
+        const string& source_field = argument.empty() ? fieldName : argument;
         if (getEnvironment() && getEnvironment()->getAttributeManager()) {
             auto attr_ctx = getEnvironment()->getAttributeManager()->createContext();
             if (attr_ctx->getAttribute(source_field) != nullptr) {
@@ -110,13 +98,16 @@ DynamicDocsumConfig::createFieldWriter(const string & fieldName, const string & 
             rc = static_cast<bool>(fieldWriter);
         }
     } else if (overrideName == "matchedelementsfilter") {
-        string source_field = argument.empty() ? fieldName : argument;
+        const string& source_field = argument.empty() ? fieldName : argument;
         if (getEnvironment() && getEnvironment()->getAttributeManager()) {
             auto attr_ctx = getEnvironment()->getAttributeManager()->createContext();
             fieldWriter = MatchedElementsFilterDFW::create(source_field, resultConfig.GetFieldNameEnum().Lookup(source_field.c_str()),
                                                            *attr_ctx, matching_elems_fields);
             rc = static_cast<bool>(fieldWriter);
         }
+    } else if (overrideName == "documentid") {
+        fieldWriter = std::make_unique<DocumentIdDFW>();
+        rc = true;
     } else {
         throw IllegalArgumentException("unknown override operation '" + overrideName + "' for field '" + fieldName + "'.");
     }
@@ -134,8 +125,8 @@ DynamicDocsumConfig::configure(const vespa::config::search::SummarymapConfig &cf
     for (size_t i = 0; i < cfg.override.size(); ++i) {
         const vespa::config::search::SummarymapConfig::Override & o = cfg.override[i];
         bool rc(false);
-        IDocsumFieldWriter::UP fieldWriter = createFieldWriter(o.field, o.command, o.arguments, rc, matching_elems_fields);
-        if (rc && fieldWriter.get() != NULL) {
+        std::unique_ptr<DocsumFieldWriter> fieldWriter = createFieldWriter(o.field, o.command, o.arguments, rc, matching_elems_fields);
+        if (rc && fieldWriter) {
             rc = _writer->Override(o.field.c_str(), fieldWriter.release()); // OBJECT HAND-OVER
         }
         if (!rc) {

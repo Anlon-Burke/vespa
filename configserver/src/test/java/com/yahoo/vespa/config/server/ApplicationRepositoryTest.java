@@ -233,7 +233,6 @@ public class ApplicationRepositoryTest {
         assertEquals(originalApplicationMetaData.getApplicationId(), applicationMetaData.getApplicationId());
         assertEquals(originalApplicationMetaData.getGeneration().longValue(), applicationMetaData.getPreviousActiveGeneration());
         assertNotEquals(originalApplicationMetaData.getGeneration(), applicationMetaData.getGeneration());
-        assertEquals(originalApplicationMetaData.getDeployedByUser(), applicationMetaData.getDeployedByUser());
     }
 
     @Test
@@ -446,7 +445,7 @@ public class ApplicationRepositoryTest {
         assertEquals(3, localSession.getSessionId());
 
         // All sessions except 3 should be removed after the call to deleteExpiredRemoteSessions
-        assertEquals(2, tester.applicationRepository().deleteExpiredRemoteSessions(clock, Duration.ofSeconds(0)));
+        assertEquals(2, tester.applicationRepository().deleteExpiredRemoteSessions(clock));
         ArrayList<Long> remoteSessions = new ArrayList<>(sessionRepository.getRemoteSessionsFromZooKeeper());
         Session remoteSession = sessionRepository.getRemoteSession(remoteSessions.get(0));
         assertEquals(3, remoteSession.getSessionId());
@@ -464,7 +463,8 @@ public class ApplicationRepositoryTest {
         // and check that expiring local sessions still works
         int sessionId = 6;
         TenantName tenantName = tester.tenant().getName();
-        java.nio.file.Path dir = Files.createDirectory(new TenantFileSystemDirs(serverdb, tenantName).getUserApplicationDir(sessionId).toPath());
+        Instant session6CreateTime = clock.instant();
+        Files.createDirectory(new TenantFileSystemDirs(serverdb, tenantName).getUserApplicationDir(sessionId).toPath());
         LocalSession localSession2 = new LocalSession(tenant1,
                                                       sessionId,
                                                       FilesApplicationPackage.fromFile(testApp),
@@ -479,7 +479,7 @@ public class ApplicationRepositoryTest {
         // so will be candidate for expiry)
         Session session = sessionRepository.createRemoteSession(7);
         sessionRepository.createSetStatusTransaction(session, Session.Status.UNKNOWN);
-        assertEquals(2, sessionRepository.getLocalSessions().size());  // Still 2, no new local session
+        assertEquals(2, sessionRepository.getLocalSessions().size()); // Still 2, no new local session
 
         // Check that trying to expire local session when there exists a local session without any data in zookeeper
         // should not delete session if this is a new file ...
@@ -489,8 +489,11 @@ public class ApplicationRepositoryTest {
         clock.advance(Duration.ofSeconds(60));
         deleteExpiredLocalSessionsAndAssertNumberOfSessions(1, tester, sessionRepository);
 
-        // Set older created timestamp for session dir for local session without any data in zookeeper, should be deleted
-        setCreatedTime(dir, Instant.now().minus(Duration.ofDays(31)));
+        // Reset clock to the time session was created, session should NOT be deleted
+        clock.setInstant(session6CreateTime);
+        deleteExpiredLocalSessionsAndAssertNumberOfSessions(1, tester, sessionRepository);
+        // Advance time, session SHOULD be deleted
+        clock.advance(Duration.ofHours(configserverConfig.keepSessionsWithUnknownStatusHours()).plus(Duration.ofMinutes(1)));
         deleteExpiredLocalSessionsAndAssertNumberOfSessions(0, tester, sessionRepository);
     }
 

@@ -2,11 +2,9 @@
 
 #pragma once
 
-#include <vespa/searchlib/util/rawbuf.h>
-#include <vespa/searchsummary/docsummary/getdocsumargs.h>
+#include "getdocsumargs.h"
 #include <vespa/searchlib/common/featureset.h>
 #include <vespa/searchlib/common/geo_location_spec.h>
-#include <vespa/vespalib/util/jsonwriter.h>
 #include <vespa/vespalib/util/stash.h>
 
 namespace juniper {
@@ -53,12 +51,8 @@ public:
     const search::attribute::IAttributeVector * getAttribute(size_t index) const { return _attributes[index]; }
 
     GetDocsumArgs               _args;      // from getdocsums request
-
-    uint32_t                   *_docsumbuf; // from getdocsums request
-    uint32_t                    _docsumcnt; // from getdocsums request
-
+    std::vector<uint32_t>       _docsumbuf; // from getdocsums request
     KeywordExtractor           *_kwExtractor;
-    char                       *_keywords;  // list of keywords from query
 
     GetDocsumsStateCallback    &_callback;
 
@@ -85,12 +79,12 @@ public:
     void parse_locations();
 
     // used by SummaryFeaturesDFW
-    FeatureSet::SP _summaryFeatures;
+    std::shared_ptr<FeatureSet> _summaryFeatures;
     bool           _summaryFeaturesCached;
     bool           _omit_summary_features;
 
     // used by RankFeaturesDFW
-    FeatureSet::SP _rankFeatures;
+    std::shared_ptr<FeatureSet> _rankFeatures;
 
     // Used by AttributeCombinerDFW and MultiAttrDFW when filtering is enabled
     std::unique_ptr<search::MatchingElements> _matching_elements;
@@ -101,11 +95,7 @@ public:
     ~GetDocsumsState();
 
     const MatchingElements &get_matching_elements(const MatchingElementsFields &matching_elems_fields);
-    vespalib::JSONStringer & jsonStringer();
     vespalib::Stash& get_stash() noexcept { return _stash; }
-private:
-    // Only used by rank/summary features, so make it lazy
-    std::unique_ptr<vespalib::JSONStringer>   _jsonStringer;
 };
 
 }

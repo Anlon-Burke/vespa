@@ -46,8 +46,8 @@ using search::queryeval::NearestNeighborBlueprint;
 using search::tensor::DefaultNearestNeighborIndexFactory;
 using search::tensor::DenseTensorAttribute;
 using search::tensor::DirectTensorAttribute;
+using search::tensor::DistanceCalculator;
 using search::tensor::DocVectorAccess;
-using search::tensor::SerializedFastValueAttribute;
 using search::tensor::HnswIndex;
 using search::tensor::HnswNode;
 using search::tensor::NearestNeighborIndex;
@@ -55,13 +55,14 @@ using search::tensor::NearestNeighborIndexFactory;
 using search::tensor::NearestNeighborIndexLoader;
 using search::tensor::NearestNeighborIndexSaver;
 using search::tensor::PrepareResult;
+using search::tensor::SerializedFastValueAttribute;
 using search::tensor::TensorAttribute;
 using vespalib::datastore::CompactionStrategy;
-using vespalib::eval::TensorSpec;
 using vespalib::eval::CellType;
-using vespalib::eval::ValueType;
-using vespalib::eval::Value;
 using vespalib::eval::SimpleValue;
+using vespalib::eval::TensorSpec;
+using vespalib::eval::Value;
+using vespalib::eval::ValueType;
 
 using DoubleVector = std::vector<double>;
 using generation_t = vespalib::GenerationHandler::generation_t;
@@ -156,6 +157,12 @@ public:
     }
     void expect_empty_add() const {
         EXPECT_TRUE(_adds.empty());
+    }
+    void expect_empty_prepare_add() const {
+        EXPECT_TRUE(_prepare_adds.empty());
+    }
+    void expect_empty_complete_add() const {
+        EXPECT_TRUE(_complete_adds.empty());
     }
     void expect_entry(uint32_t exp_docid, const DoubleVector& exp_vector, const EntryVector& entries) const {
         EXPECT_EQUAL(1u, entries.size());
@@ -881,6 +888,30 @@ TEST_F("nearest neighbor index can be updated in two phases", DenseTensorAttribu
     }
 }
 
+TEST_F("nearest neighbor index is NOT updated when tensor value is unchanged", DenseTensorAttributeMockIndex)
+{
+    auto& index = f.mock_index();
+    {
+        auto vec_a = vec_2d(3, 5);
+        auto prepare_result = f.prepare_set_tensor(1, vec_a);
+        index.expect_prepare_add(1, {3, 5});
+        f.complete_set_tensor(1, vec_a, std::move(prepare_result));
+        f.assertGetTensor(vec_a, 1);
+        index.expect_complete_add(1, {3, 5});
+    }
+    index.clear();
+    {
+        // Replaces previous value with the same value
+        auto vec_b = vec_2d(3, 5);
+        auto prepare_result = f.prepare_set_tensor(1, vec_b);
+        EXPECT_TRUE(prepare_result.get() == nullptr);
+        index.expect_empty_prepare_add();
+        f.complete_set_tensor(1, vec_b, std::move(prepare_result));
+        f.assertGetTensor(vec_b, 1);
+        index.expect_empty_complete_add();
+    }
+}
+
 TEST_F("clearDoc() updates nearest neighbor index", DenseTensorAttributeMockIndex)
 {
     auto& index = f.mock_index();
@@ -1014,8 +1045,13 @@ TEST_F("Nearest neighbor index type is added to attribute file header", DenseTen
 
 template <typename ParentT>
 class NearestNeighborBlueprintFixtureBase : public ParentT {
+private:
+    std::unique_ptr<Value> _query_tensor;
+
 public:
-    NearestNeighborBlueprintFixtureBase() {
+    NearestNeighborBlueprintFixtureBase()
+        : _query_tensor()
+    {
         this->set_tensor(1, vec_2d(1, 1));
         this->set_tensor(2, vec_2d(2, 2));
         this->set_tensor(3, vec_2d(3, 3));
@@ -1028,16 +1064,17 @@ public:
         this->set_tensor(10, vec_2d(0, 0));
     }
 
-    std::unique_ptr<Value> createDenseTensor(const TensorSpec &spec) {
-        return SimpleValue::from_spec(spec);
+    const Value& create_query_tensor(const TensorSpec& spec) {
+        _query_tensor = SimpleValue::from_spec(spec);
+        return *_query_tensor;
     }
 
     std::unique_ptr<NearestNeighborBlueprint> make_blueprint(bool approximate = true, double global_filter_lower_limit = 0.05) {
         search::queryeval::FieldSpec field("foo", 0, 0);
         auto bp = std::make_unique<NearestNeighborBlueprint>(
             field,
-            this->as_dense_tensor(),
-            createDenseTensor(vec_2d(17, 42)),
+            std::make_unique<DistanceCalculator>(this->as_dense_tensor(),
+                                                 create_query_tensor(vec_2d(17, 42))),
             3, approximate, 5,
             100100.25,
             global_filter_lower_limit, 1.0);

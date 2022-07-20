@@ -1153,7 +1153,7 @@ public class ControllerTest {
         assertEquals(version2, tester.applications().compileVersion(application, OptionalInt.of(8)));
 
         // Default major version is set to 8.
-        tester.applications().setTargetMajorVersion(Optional.of(8));
+        tester.applications().setTargetMajorVersion(OptionalInt.of(8));
         assertEquals(version1, tester.applications().compileVersion(application, OptionalInt.of(7)));
         assertEquals(version2, tester.applications().compileVersion(application, OptionalInt.empty()));
 
@@ -1164,6 +1164,23 @@ public class ControllerTest {
 
         // Application sets target major to 8.
         tester.applications().lockApplicationOrThrow(application, locked -> tester.applications().store(locked.withMajorVersion(8)));
+        assertEquals(version1, tester.applications().compileVersion(application, OptionalInt.of(7)));
+        assertEquals(version2, tester.applications().compileVersion(application, OptionalInt.empty()));
+
+        // Application upgrades to major 8; only major version from deployment spec should cause a downgrade.
+        context.submit(new ApplicationPackageBuilder().region("us-west-1").compileVersion(version2).build()).deploy();
+        tester.applications().setTargetMajorVersion(OptionalInt.empty());
+        tester.applications().lockApplicationOrThrow(application, locked -> tester.applications().store(locked.withMajorVersion(null)));
+        assertEquals(version1, tester.applications().compileVersion(application, OptionalInt.of(7)));
+        assertEquals(version2, tester.applications().compileVersion(application, OptionalInt.empty()));
+
+        // Default major version across all apps should not cause a downgrade.
+        tester.applications().setTargetMajorVersion(OptionalInt.of(7));
+        assertEquals(version1, tester.applications().compileVersion(application, OptionalInt.of(7)));
+        assertEquals(version2, tester.applications().compileVersion(application, OptionalInt.empty()));
+
+        // Default major version for specific app should not cause a downgrade.
+        tester.applications().lockApplicationOrThrow(application, locked -> tester.applications().store(locked.withMajorVersion(7)));
         assertEquals(version1, tester.applications().compileVersion(application, OptionalInt.of(7)));
         assertEquals(version2, tester.applications().compileVersion(application, OptionalInt.empty()));
     }

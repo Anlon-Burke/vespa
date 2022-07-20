@@ -115,6 +115,7 @@ class JobControllerApiHandlerHelper {
         Run run = jobController.run(runId);
         detailsObject.setBool("active", ! run.hasEnded());
         detailsObject.setString("status", nameOf(run.status()));
+        run.reason().ifPresent(reason -> detailsObject.setString("reason", reason));
         try {
             jobController.updateTestLog(runId);
             jobController.updateVespaLog(runId);
@@ -151,13 +152,7 @@ class JobControllerApiHandlerHelper {
         Optional<String> testReport = jobController.getTestReports(runId);
         testReport.map(SlimeUtils::jsonToSlime)
                   .map(Slime::get)
-                  .ifPresent(reportArrayCursor -> {
-                      reportArrayCursor.traverse((ArrayTraverser) (i, reportCursor) -> {
-                          if (i > 0) return;
-                          SlimeUtils.copyObject(reportCursor, detailsObject.setObject("testReport"));
-                      });
-                      SlimeUtils.copyArray(reportArrayCursor, detailsObject.setArray("testReports"));
-                  });
+                  .ifPresent(reportArrayCursor -> SlimeUtils.copyArray(reportArrayCursor, detailsObject.setArray("testReports")));
 
         return new SlimeJsonResponse(slime);
     }
@@ -331,7 +326,7 @@ class JobControllerApiHandlerHelper {
                                                                      "/job/" + job.type().jobName()).normalize();
                 stepObject.setString("url", baseUriForJob.toString());
                 stepObject.setString("environment", job.type().environment().value());
-                stepObject.setString("region", job.type().zone().value());
+                if ( ! job.type().environment().isTest()) stepObject.setString("region", job.type().zone().value());
 
                 if (job.type().isProduction() && job.type().isDeployment()) {
                     status.deploymentFor(job).ifPresent(deployment -> {
@@ -427,6 +422,7 @@ class JobControllerApiHandlerHelper {
             runObject.setLong("start", run.start().toEpochMilli());
             run.end().ifPresent(end -> runObject.setLong("end", end.toEpochMilli()));
             runObject.setString("status", run.status().name());
+            run.reason().ifPresent(reason -> runObject.setString("reason", reason));
             toSlime(runObject.setObject("versions"), run.versions(), application);
             Cursor runStepsArray = runObject.setArray("steps");
             run.steps().forEach((step, info) -> {

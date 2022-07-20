@@ -1,6 +1,8 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.testrunner;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.yahoo.component.annotation.Inject;
 import com.yahoo.component.provider.ComponentRegistry;
 import com.yahoo.container.jdisc.EmptyResponse;
@@ -9,11 +11,8 @@ import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
 import com.yahoo.exception.ExceptionUtils;
 import com.yahoo.restapi.MessageResponse;
-import com.yahoo.restapi.SlimeJsonResponse;
-import com.yahoo.slime.Cursor;
-import com.yahoo.slime.Slime;
-import com.yahoo.vespa.testrunner.TestReport.ContainerNode;
 import com.yahoo.vespa.testrunner.TestReport.FailureNode;
+import com.yahoo.vespa.testrunner.TestReport.NamedNode;
 import com.yahoo.vespa.testrunner.TestReport.Node;
 import com.yahoo.vespa.testrunner.TestReport.OutputNode;
 import com.yahoo.vespa.testrunner.TestReport.TestNode;
@@ -21,6 +20,7 @@ import com.yahoo.yolean.Exceptions;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.PrintStream;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -42,6 +42,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 public class TestRunnerHandler extends ThreadedHttpRequestHandler {
 
     private static final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
+    private static final JsonFactory factory = new JsonFactory();
 
     private final TestRunner testRunner;
 
@@ -79,15 +80,13 @@ public class TestRunnerHandler extends ThreadedHttpRequestHandler {
                 long fetchRecordsAfter = Optional.ofNullable(request.getProperty("after"))
                                                  .map(Long::parseLong)
                                                  .orElse(-1L);
-                return new SlimeJsonResponse(logToSlime(testRunner.getLog(fetchRecordsAfter)));
+                return new CustomJsonResponse(out -> render(out, testRunner.getLog(fetchRecordsAfter)));
             case "/tester/v1/status":
                 return new MessageResponse(testRunner.getStatus().name());
             case "/tester/v1/report":
                 TestReport report = testRunner.getReport();
-                if (report == null)
-                    return new EmptyResponse(200);
-
-                return new SlimeJsonResponse(toSlime(report));
+                if (report == null) return new EmptyResponse(204);
+                else return new CustomJsonResponse(out -> render(out, report));
         }
         return new MessageResponse(Status.NOT_FOUND, "Not found: " + request.getUri().getPath());
     }
@@ -113,31 +112,30 @@ public class TestRunnerHandler extends ThreadedHttpRequestHandler {
         return path.substring(lastSlash + 1);
     }
 
-    static Slime logToSlime(Collection<LogRecord> log) {
-        Slime slime = new Slime();
-        Cursor root = slime.setObject();
-        Cursor recordArray = root.setArray("logRecords");
-        logArrayToSlime(recordArray, log);
-        return slime;
-    }
-
-    static void logArrayToSlime(Cursor recordArray, Collection<LogRecord> log) {
-        log.forEach(record -> {
-            Cursor recordObject = recordArray.addObject();
-            recordObject.setLong("id", record.getSequenceNumber());
-            recordObject.setLong("at", record.getMillis());
-            recordObject.setString("type", typeOf(record.getLevel()));
-            String message = record.getMessage();
+    private static void render(OutputStream out, Collection<LogRecord> log) throws IOException {
+        var json = factory.createGenerator(out);
+        json.writeStartObject();
+        json.writeArrayFieldStart("logRecords");
+        for (LogRecord record : log) {
+            String message = record.getMessage() == null ? "" : record.getMessage();
             if (record.getThrown() != null) {
                 ByteArrayOutputStream buffer = new ByteArrayOutputStream();
                 record.getThrown().printStackTrace(new PrintStream(buffer));
-                message += "\n" + buffer;
+                message += (message.isEmpty() ? "" : "\n") + buffer;
             }
-            recordObject.setString("message", message);
-        });
+            json.writeStartObject();
+            json.writeNumberField("id", record.getSequenceNumber());
+            json.writeNumberField("at", record.getMillis());
+            json.writeStringField("type", typeOf(record.getLevel()));
+            json.writeStringField("message", message);
+            json.writeEndObject();
+        }
+        json.writeEndArray();
+        json.writeEndObject();
+        json.close();
     }
 
-    public static String typeOf(Level level) {
+    private static String typeOf(Level level) {
         return    level.getName().equals("html") ? "html"
                 : level.intValue() < Level.INFO.intValue() ? "debug"
                 : level.intValue() < Level.WARNING.intValue() ? "info"
@@ -145,91 +143,143 @@ public class TestRunnerHandler extends ThreadedHttpRequestHandler {
                 : "error";
     }
 
-    private static Slime toSlime(TestReport report) {
-        var slime = new Slime();
-        var root = slime.setObject();
+    private static void render(OutputStream out, TestReport report) throws IOException {
+        JsonGenerator json = factory.createGenerator(out);
+        json.writeStartObject();
 
-        toSlime(root.setObject("report"), (Node) report.root());
+        json.writeFieldName("report");
+        render(json, (Node) report.root());
 
         // TODO jonmv: remove
-        Map<TestReport.Status, Long> tally = report.root().tally();
-        var summary = root.setObject("summary");
-        summary.setLong("success", tally.getOrDefault(TestReport.Status.successful, 0L));
-        summary.setLong("failed", tally.getOrDefault(TestReport.Status.failed, 0L) + tally.getOrDefault(TestReport.Status.error, 0L));
-        summary.setLong("ignored", tally.getOrDefault(TestReport.Status.skipped, 0L));
-        summary.setLong("aborted", tally.getOrDefault(TestReport.Status.aborted, 0L));
-        summary.setLong("inconclusive", tally.getOrDefault(TestReport.Status.inconclusive, 0L));
-        toSlime(summary.setArray("failures"), root.setArray("output"), report.root());
+        json.writeObjectFieldStart("summary");
 
-        return slime;
+        renderSummary(json, report);
+
+        json.writeArrayFieldStart("failures");
+        renderFailures(json, report.root());
+        json.writeEndArray();
+
+        json.writeEndObject();
+
+        // TODO jonmv: remove
+        json.writeArrayFieldStart("output");
+        renderOutput(json, report.root());
+        json.writeEndArray();
+
+        json.writeEndObject();
+        json.close();
     }
 
-    static void toSlime(Cursor failuresArray, Cursor outputArray, Node node) {
-        for (Node child : node.children())
-            TestRunnerHandler.toSlime(failuresArray, outputArray, child);
+    private static void renderSummary(JsonGenerator json, TestReport report) throws IOException {
+        Map<TestReport.Status, Long> tally =  report.root().tally();
+        json.writeNumberField("success", tally.getOrDefault(TestReport.Status.successful, 0L));
+        json.writeNumberField("failed", tally.getOrDefault(TestReport.Status.failed, 0L) + tally.getOrDefault(TestReport.Status.error, 0L));
+        json.writeNumberField("ignored", tally.getOrDefault(TestReport.Status.skipped, 0L));
+        json.writeNumberField("aborted", tally.getOrDefault(TestReport.Status.aborted, 0L));
+        json.writeNumberField("inconclusive", tally.getOrDefault(TestReport.Status.inconclusive, 0L));
+    }
 
+    private static void renderFailures(JsonGenerator json, Node node) throws IOException {
         if (node instanceof FailureNode) {
-            Cursor failureObject = failuresArray.addObject();
-            failureObject.setString("testName", node.parent.name());
-            failureObject.setString("testError", ((FailureNode) node).thrown().getMessage());
-            failureObject.setString("exception", ExceptionUtils.getStackTraceAsString(((FailureNode) node).thrown()));
+            json.writeStartObject();
+            json.writeStringField("testName", node.parent.name());
+            json.writeStringField("testError", ((FailureNode) node).thrown().getMessage());
+            json.writeStringField("exception", ExceptionUtils.getStackTraceAsString(((FailureNode) node).thrown()));
+            json.writeEndObject();
         }
-        if (node instanceof OutputNode)
-            for (LogRecord record : ((OutputNode) node).log())
-                outputArray.addString(formatter.format(record.getInstant().atOffset(ZoneOffset.UTC)) + " " + record.getMessage());
+        else {
+            for (Node child : node.children())
+                renderFailures(json, child);
+        }
     }
 
-    static void toSlime(Cursor nodeObject, Node node) {
-        if (node instanceof ContainerNode) toSlime(nodeObject, (ContainerNode) node);
-        if (node instanceof TestNode) toSlime(nodeObject, (TestNode) node);
-        if (node instanceof OutputNode) toSlime(nodeObject, (OutputNode) node);
-        if (node instanceof FailureNode) toSlime(nodeObject, (FailureNode) node);
+    private static void renderOutput(JsonGenerator json, Node node) throws IOException {
+        if (node instanceof OutputNode) {
+            for (LogRecord record : ((OutputNode) node).log())
+                if (record.getMessage() != null)
+                    json.writeString(formatter.format(record.getInstant().atOffset(ZoneOffset.UTC)) + " " + record.getMessage());
+        }
+        else {
+            for (Node child : node.children())
+                renderOutput(json, child);
+        }
+    }
+
+    private static void render(JsonGenerator json, Node node) throws IOException {
+        json.writeStartObject();
+        if (node instanceof NamedNode) render(json, (NamedNode) node);
+        if (node instanceof OutputNode) render(json, (OutputNode) node);
 
         if ( ! node.children().isEmpty()) {
-            Cursor childrenArray = nodeObject.setArray("children");
-            for (Node child : node.children)
-                toSlime(childrenArray.addObject(), child);
+            json.writeArrayFieldStart("children");
+            for (Node child : node.children) {
+                render(json, child);
+            }
+            json.writeEndArray();
         }
+        json.writeEndObject();
     }
 
-    static void toSlime(Cursor nodeObject, ContainerNode node) {
-        nodeObject.setString("type", "container");
-        nodeObject.setString("name", node.name());
-        nodeObject.setString("status", node.status().name());
-        nodeObject.setLong("start", node.start().toEpochMilli());
-        nodeObject.setLong("end", node.duration().toMillis());
+    private static void render(JsonGenerator json, NamedNode node) throws IOException {
+        String type = node instanceof FailureNode ? "failure" : node instanceof TestNode ? "test" : "container";
+        json.writeStringField("type", type);
+        json.writeStringField("name", node.name());
+        json.writeStringField("status", node.status().name());
+        json.writeNumberField("start", node.start().toEpochMilli());
+        json.writeNumberField("duration", node.duration().toMillis());
     }
 
-    static void toSlime(Cursor nodeObject, TestNode node) {
-        nodeObject.setString("type", "test");
-        nodeObject.setString("name", node.name());
-        nodeObject.setString("status", node.status().name());
-        nodeObject.setLong("start", node.start().toEpochMilli());
-        nodeObject.setLong("end", node.duration().toMillis());
-    }
-
-    static void toSlime(Cursor nodeObject, OutputNode node) {
-        nodeObject.setString("type", "output");
-        Cursor childrenArray = nodeObject.setArray("children");
+    private static void render(JsonGenerator json, OutputNode node) throws IOException {
+        json.writeStringField("type", "output");
+        json.writeArrayFieldStart("children");
         for (LogRecord record : node.log()) {
-            Cursor recordObject = childrenArray.addObject();
-            recordObject.setString("message", (record.getLoggerName() == null ? "" : record.getLoggerName() + ": ") + record.getMessage());
-            recordObject.setLong("at", record.getInstant().toEpochMilli());
-            recordObject.setString("level", typeOf(record.getLevel()));
-            if (record.getThrown() != null) recordObject.setString("trace", traceToString(record.getThrown()));
+            json.writeStartObject();
+            json.writeStringField("message", (record.getLoggerName() == null ? "" : record.getLoggerName() + ": ") +
+                                             (record.getMessage() != null ? record.getMessage() : "") +
+                                             (record.getThrown() != null ? (record.getMessage() != null ? "\n" : "") + traceToString(record.getThrown()) : ""));
+            json.writeNumberField("at", record.getInstant().toEpochMilli());
+            json.writeStringField("level", typeOf(record.getLevel()));
+            json.writeEndObject();
         }
-    }
-
-    static void toSlime(Cursor nodeObject, FailureNode node) {
-        nodeObject.setString("type", "failure");
-        nodeObject.setString("status", node.status().name());
-        nodeObject.setString("trace", traceToString(node.thrown()));
+        json.writeEndArray();
     }
 
     private static String traceToString(Throwable thrown) {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         thrown.printStackTrace(new PrintStream(buffer));
         return buffer.toString(UTF_8);
+    }
+
+    private interface Renderer {
+
+        void render(OutputStream out) throws IOException;
+
+    }
+
+    private static class CustomJsonResponse extends HttpResponse {
+
+        private final Renderer renderer;
+
+        private CustomJsonResponse(Renderer renderer) {
+            super(200);
+            this.renderer = renderer;
+        }
+
+        @Override
+        public void render(OutputStream outputStream) throws IOException {
+            renderer.render(outputStream);
+        }
+
+        @Override
+        public String getContentType() {
+            return "application/json";
+        }
+
+        @Override
+        public long maxPendingBytes() {
+            return 1 << 25; // 32MB
+        }
+
     }
 
 }

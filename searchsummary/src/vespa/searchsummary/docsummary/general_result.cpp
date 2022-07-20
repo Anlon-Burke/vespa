@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "general_result.h"
+#include "i_docsum_store_document.h"
 #include "resultconfig.h"
 #include <vespa/document/fieldvalue/document.h>
 #include <vespa/document/datatype/datatype.h>
@@ -12,55 +13,32 @@ LOG_SETUP(".searchlib.docsummary.urlresult");
 namespace search::docsummary {
 
 void
-GeneralResult::AllocEntries(uint32_t buflen, bool inplace)
+GeneralResult::AllocEntries()
 {
     uint32_t cnt = _resClass->GetNumEntries();
-    uint32_t needMem = (inplace)
-                       ? cnt * sizeof(ResEntry)
-                       : cnt * sizeof(ResEntry) + buflen + 1;
+    uint32_t needMem = cnt * sizeof(ResEntry);
 
     if (cnt > 0) {
         _entrycnt = cnt;
         _entries = (ResEntry *) malloc(needMem);
         assert(_entries != nullptr);
-        if (inplace) {
-            _buf = nullptr;
-            _bufEnd = nullptr;
-        } else {
-            _buf = ((char *)_entries) + cnt * sizeof(ResEntry);
-            _bufEnd = _buf + buflen + 1;
-        }
         memset(_entries, 0, cnt * sizeof(ResEntry));
     } else {
         _entrycnt = 0;
         _entries  = nullptr;
-        _buf      = nullptr;
-        _bufEnd   = nullptr;
     }
 }
 
 void
 GeneralResult::FreeEntries()
 {
-    uint32_t cnt = _entrycnt;
-
-    // (_buf == nullptr) <=> (_inplace_unpack() || (cnt == 0))
-    if (_buf != nullptr) {
-        for (uint32_t i = 0; i < cnt; i++) {
-            if (ResultConfig::IsVariableSize(_entries[i]._type) &&
-                !InBuf(_entries[i]._stringval))
-                delete [] (_entries[i]._stringval);
-        }
-    }
-    free(_entries); // free '_entries'/'_buf' chunk
+    free(_entries); // free '_entries' chunk
 }
 
 GeneralResult::GeneralResult(const ResultClass *resClass)
     : _resClass(resClass),
       _entrycnt(0),
       _entries(nullptr),
-      _buf(nullptr),
-      _bufEnd(nullptr),
       _document()
 {
 }
@@ -71,40 +49,26 @@ GeneralResult::~GeneralResult()
 }
 
 ResEntry *
-GeneralResult::GetEntry(uint32_t idx)
-{
-    return (idx < _entrycnt) ? &_entries[idx] : nullptr;
-}
-
-ResEntry *
-GeneralResult::GetEntry(const char *name)
+GeneralResult::GetPresentEntry(const char *name)
 {
     int idx = _resClass->GetIndexFromName(name);
-
-    return (idx >= 0 && (uint32_t)idx < _entrycnt) ? &_entries[idx] : nullptr;
+    return GetPresentEntry(idx);
 }
 
-
 ResEntry *
-GeneralResult::GetEntryFromEnumValue(uint32_t value)
+GeneralResult::GetPresentEntryFromEnumValue(uint32_t value)
 {
     int idx = _resClass->GetIndexFromEnumValue(value);
-    return (idx >= 0 && (uint32_t)idx < _entrycnt) ? &_entries[idx] : nullptr;
+    return GetPresentEntry(idx);
 }
 
 std::unique_ptr<document::FieldValue>
 GeneralResult::get_field_value(const vespalib::string& field_name) const
 {
     if (_document != nullptr) {
-        const document::Field & field = _document->getField(field_name);
-        auto value(field.getDataType().createFieldValue());
-        if (value) {
-            if (_document->getValue(field, *value)) {
-                return value;
-            }
-        }
+        return _document->get_field_value(field_name);
     }
-    return std::unique_ptr<document::FieldValue>();
+    return {};
 }
 
 bool
@@ -117,11 +81,17 @@ GeneralResult::unpack(const char *buf, const size_t buflen)
     if (_entries != nullptr)
         FreeEntries();
 
-    AllocEntries(buflen, true);
+    AllocEntries();
 
     for (uint32_t i = 0; rc && i < _entrycnt; i++) {
         const ResConfigEntry *entry = _resClass->GetEntry(i);
 
+        _entries[i]._not_present = entry->_not_present;
+        if (entry->_not_present) {
+            // Entry is not present in docsum blob
+            _entries[i]._type = entry->_type;
+            continue;
+        }
         switch (entry->_type) {
 
         case RES_INT: {
@@ -331,8 +301,6 @@ GeneralResult::unpack(const char *buf, const size_t buflen)
     FreeEntries();
     _entrycnt = 0;
     _entries  = nullptr;
-    _buf      = nullptr;
-    _bufEnd   = nullptr;
 
     return false;   // FAIL
 }

@@ -162,6 +162,9 @@ class NodesResponse extends SlimeJsonResponse {
         object.setLong("currentRebootGeneration", node.status().reboot().current());
         node.status().osVersion().current().ifPresent(version -> object.setString("currentOsVersion", version.toFullString()));
         node.status().osVersion().wanted().ifPresent(version -> object.setString("wantedOsVersion", version.toFullString()));
+        if (node.type().isHost()) {
+            object.setBool("deferOsUpgrade", !nodeRepository.osVersions().canUpgrade(node));
+        }
         node.status().firmwareVerifiedAt().ifPresent(instant -> object.setLong("currentFirmwareCheck", instant.toEpochMilli()));
         if (node.type().isHost())
             nodeRepository.firmwareChecks().requiredAfter().ifPresent(after -> object.setLong("wantedFirmwareCheck", after.toEpochMilli()));

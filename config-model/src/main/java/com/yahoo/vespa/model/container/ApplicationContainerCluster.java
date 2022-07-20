@@ -36,7 +36,6 @@ import com.yahoo.vespa.model.container.component.Component;
 import com.yahoo.vespa.model.container.component.Handler;
 import com.yahoo.vespa.model.container.component.SystemBindingPattern;
 import com.yahoo.vespa.model.container.configserver.ConfigserverCluster;
-import com.yahoo.vespa.model.container.docproc.DocprocChains;
 import com.yahoo.vespa.model.utils.FileSender;
 
 import java.util.ArrayList;
@@ -79,7 +78,6 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
     public static final int heapSizePercentageOfTotalNodeMemory = 70;
     public static final int heapSizePercentageOfTotalNodeMemoryWhenCombinedCluster = 18;
 
-
     private final Set<FileReference> applicationBundles = new LinkedHashSet<>();
 
     private final Set<String> previousHosts;
@@ -90,6 +88,8 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
 
     private MbusParams mbusParams;
     private boolean messageBusEnabled = true;
+    private final int transport_events_before_wakeup;
+    private final int transport_connections_per_target;
 
     private Integer memoryPercentage = null;
 
@@ -115,6 +115,8 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
 
         addMetricsHandlers();
         addTestrunnerComponentsIfTester(deployState);
+        transport_connections_per_target = deployState.featureFlags().mbusJavaRpcNumTargets();
+        transport_events_before_wakeup = deployState.featureFlags().mbusJavaEventsBeforeWakeup();
     }
 
     @Override
@@ -145,7 +147,7 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
    }
 
     private void addMetricsHandler(String handlerClass, BindingPattern rootBinding, BindingPattern innerBinding) {
-        Handler<AbstractConfigProducer<?>> handler = new Handler<>(
+        Handler handler = new Handler(
                 new ComponentModel(handlerClass, null, null, null));
         handler.addServerBindings(rootBinding, innerBinding);
         addComponent(handler);
@@ -262,6 +264,8 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
         }
         if (getDocproc() != null)
             getDocproc().getConfig(builder);
+        builder.transport_events_before_wakeup(transport_events_before_wakeup);
+        builder.numconnectionspertarget(transport_connections_per_target);
     }
 
     @Override

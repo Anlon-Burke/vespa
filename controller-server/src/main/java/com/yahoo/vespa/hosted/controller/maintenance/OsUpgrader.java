@@ -62,7 +62,7 @@ public class OsUpgrader extends InfrastructureUpgrader<OsVersionTarget> {
     protected boolean expectUpgradeOf(Node node, SystemApplication application, ZoneApi zone) {
         return cloud.equals(zone.getCloudName()) && // Cloud is managed by this upgrader
                application.shouldUpgradeOs() &&     // Application should upgrade in this cloud
-               canUpgrade(node);                    // Node is in an upgradable state
+               canUpgrade(node, false);
     }
 
     @Override
@@ -98,14 +98,12 @@ public class OsUpgrader extends InfrastructureUpgrader<OsVersionTarget> {
 
     /** Returns whether to spend upgrade budget on given zone */
     private boolean spendBudgetOn(ZoneApi zone) {
-        if (!zone.getEnvironment().isProduction()) return false;
-        if (controller().zoneRegistry().systemZone().getVirtualId().equals(zone.getVirtualId())) return false; // Controller zone
-        return true;
+        return !controller().zoneRegistry().systemZone().getVirtualId().equals(zone.getVirtualId()); // Do not spend budget on controller zone
     }
 
-    /** Returns whether node is in a state where it can be upgraded */
-    public static boolean canUpgrade(Node node) {
-        return upgradableNodeStates.contains(node.state());
+    /** Returns whether node currently allows upgrades */
+    public static boolean canUpgrade(Node node, boolean includeDeferring) {
+        return (includeDeferring || !node.deferOsUpgrade()) && upgradableNodeStates.contains(node.state());
     }
 
     private static String name(CloudName cloud) {

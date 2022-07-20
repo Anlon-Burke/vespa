@@ -4,7 +4,6 @@ package com.yahoo.vespa.hosted.controller.deployment;
 import com.yahoo.collections.AbstractFilteringList;
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.InstanceName;
-import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationVersion;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
@@ -74,6 +73,14 @@ public class JobList extends AbstractFilteringList<JobStatus, JobList> {
         return matching(JobList::failingApplicationChange);
     }
 
+    /** Returns the subset of jobs which are failing because of an application change, and have been since the threshold, on the given revision. */
+    public JobList failingWithBrokenRevisionSince(RevisionId broken, Instant threshold) {
+        return failingApplicationChange().matching(job -> job.runs().values().stream()
+                                                             .anyMatch(run ->    run.versions().targetRevision().equals(broken)
+                                                                              && run.hasFailed()
+                                                                              && run.start().isBefore(threshold)));
+    }
+
     /** Returns the subset of jobs which are failing with the given run status. */
     public JobList withStatus(RunStatus status) {
         return matching(job -> job.lastStatus().map(status::equals).orElse(false));
@@ -119,8 +126,12 @@ public class JobList extends AbstractFilteringList<JobStatus, JobList> {
     }
 
     /** Returns the jobs with successful runs matching the given versions — targets only for system test, everything present otherwise. */
-    public JobList successOn(Versions versions) {
-        return matching(job -> ! RunList.from(job).matching(Run::hasSucceeded).on(versions).isEmpty());
+    public JobList successOn(JobType type, Versions versions) {
+        return matching(job ->      job.id().type().equals(type)
+                               && ! RunList.from(job)
+                                           .matching(run -> run.hasSucceeded() && run.id().type().zone().equals(type.zone()))
+                                           .on(versions)
+                                           .isEmpty());
     }
 
     // ----------------------------------- JobRun filtering

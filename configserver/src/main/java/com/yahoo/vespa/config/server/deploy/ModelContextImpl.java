@@ -176,6 +176,7 @@ public class ModelContextImpl implements ModelContext {
         private final boolean skipMbusReplyThread;
         private final boolean useAsyncMessageHandlingOnSchedule;
         private final double feedConcurrency;
+        private final double feedNiceness;
         private final List<String> allowedAthenzProxyIdentities;
         private final int maxActivationInhibitedOutOfSyncGroups;
         private final ToIntFunction<ClusterSpec.Type> jvmOmitStackTraceInFastThrow;
@@ -196,7 +197,6 @@ public class ModelContextImpl implements ModelContext {
         private final boolean useV8GeoPositions;
         private final int maxCompactBuffers;
         private final List<String> ignoredHttpUserAgents;
-        private final boolean enableServerOcspStapling;
         private final String mergeThrottlingPolicy;
         private final double persistenceThrottlingWsDecrementFactor;
         private final double persistenceThrottlingWsBackoff;
@@ -210,6 +210,16 @@ public class ModelContextImpl implements ModelContext {
         private final boolean enableProxyProtocolMixedMode;
         private final boolean sharedStringRepoNoReclaim;
         private final String logFileCompressionAlgorithm;
+        private final boolean mbus_dispatch_on_decode;
+        private final boolean mbus_dispatch_on_encode;
+        private final int mbus_threads;
+        private final int mbus_network_threads;
+        private int mbus_java_num_targets;
+        private int mbus_java_events_before_wakeup;
+        private int mbus_cpp_num_targets;
+        private int mbus_cpp_events_before_wakeup;
+        private int rpc_num_targets;
+        private int rpc_events_before_wakeup;
 
         public FeatureFlags(FlagSource source, ApplicationId appId, Version version) {
             this.defaultTermwiseLimit = flagValue(source, appId, version, Flags.DEFAULT_TERM_WISE_LIMIT);
@@ -222,6 +232,11 @@ public class ModelContextImpl implements ModelContext {
             this.skipMbusReplyThread = flagValue(source, appId, version, Flags.SKIP_MBUS_REPLY_THREAD);
             this.useAsyncMessageHandlingOnSchedule = flagValue(source, appId, version, Flags.USE_ASYNC_MESSAGE_HANDLING_ON_SCHEDULE);
             this.feedConcurrency = flagValue(source, appId, version, Flags.FEED_CONCURRENCY);
+            this.feedNiceness = flagValue(source, appId, version, Flags.FEED_NICENESS);
+            this.mbus_dispatch_on_decode = flagValue(source, appId, version, Flags.MBUS_DISPATCH_ON_DECODE);
+            this.mbus_dispatch_on_encode = flagValue(source, appId, version, Flags.MBUS_DISPATCH_ON_ENCODE);
+            this.mbus_threads = flagValue(source, appId, version, Flags.MBUS_NUM_THREADS);
+            this.mbus_network_threads = flagValue(source, appId, version, Flags.MBUS_NUM_NETWORK_THREADS);
             this.allowedAthenzProxyIdentities = flagValue(source, appId, version, Flags.ALLOWED_ATHENZ_PROXY_IDENTITIES);
             this.maxActivationInhibitedOutOfSyncGroups = flagValue(source, appId, version, Flags.MAX_ACTIVATION_INHIBITED_OUT_OF_SYNC_GROUPS);
             this.jvmOmitStackTraceInFastThrow = type -> flagValueAsInt(source, appId, version, type, PermanentFlags.JVM_OMIT_STACK_TRACE_IN_FAST_THROW);
@@ -242,7 +257,6 @@ public class ModelContextImpl implements ModelContext {
             this.useV8GeoPositions = flagValue(source, appId, version, Flags.USE_V8_GEO_POSITIONS);
             this.maxCompactBuffers = flagValue(source, appId, version, Flags.MAX_COMPACT_BUFFERS);
             this.ignoredHttpUserAgents = flagValue(source, appId, version, PermanentFlags.IGNORED_HTTP_USER_AGENTS);
-            this.enableServerOcspStapling = flagValue(source, appId, version, Flags.ENABLE_SERVER_OCSP_STAPLING);
             this.mergeThrottlingPolicy = flagValue(source, appId, version, Flags.MERGE_THROTTLING_POLICY);
             this.persistenceThrottlingWsDecrementFactor = flagValue(source, appId, version, Flags.PERSISTENCE_THROTTLING_WS_DECREMENT_FACTOR);
             this.persistenceThrottlingWsBackoff = flagValue(source, appId, version, Flags.PERSISTENCE_THROTTLING_WS_BACKOFF);
@@ -256,6 +270,12 @@ public class ModelContextImpl implements ModelContext {
             this.enableProxyProtocolMixedMode = flagValue(source, appId, version, Flags.ENABLE_PROXY_PROTOCOL_MIXED_MODE);
             this.sharedStringRepoNoReclaim = flagValue(source, appId, version, Flags.SHARED_STRING_REPO_NO_RECLAIM);
             this.logFileCompressionAlgorithm = flagValue(source, appId, version, Flags.LOG_FILE_COMPRESSION_ALGORITHM);
+            this.mbus_java_num_targets = flagValue(source, appId, version, Flags.MBUS_JAVA_NUM_TARGETS);
+            this.mbus_java_events_before_wakeup = flagValue(source, appId, version, Flags.MBUS_JAVA_EVENTS_BEFORE_WAKEUP);
+            this.mbus_cpp_num_targets = flagValue(source, appId, version, Flags.MBUS_CPP_NUM_TARGETS);
+            this.mbus_cpp_events_before_wakeup = flagValue(source, appId, version, Flags.MBUS_CPP_EVENTS_BEFORE_WAKEUP);
+            this.rpc_num_targets = flagValue(source, appId, version, Flags.RPC_NUM_TARGETS);
+            this.rpc_events_before_wakeup = flagValue(source, appId, version, Flags.RPC_EVENTS_BEFORE_WAKEUP);
         }
 
         @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
@@ -268,6 +288,11 @@ public class ModelContextImpl implements ModelContext {
         @Override public boolean skipMbusReplyThread() { return skipMbusReplyThread; }
         @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
         @Override public double feedConcurrency() { return feedConcurrency; }
+        @Override public double feedNiceness() { return feedNiceness; }
+        @Override public boolean mbusDispatchOnDecode() { return mbus_dispatch_on_decode; }
+        @Override public boolean mbusDispatchOnEncode() { return mbus_dispatch_on_encode; }
+        @Override public int mbusNetworkThreads() { return mbus_network_threads; }
+        @Override public int mbusThreads() { return mbus_threads; }
         @Override public List<String> allowedAthenzProxyIdentities() { return allowedAthenzProxyIdentities; }
         @Override public int maxActivationInhibitedOutOfSyncGroups() { return maxActivationInhibitedOutOfSyncGroups; }
         @Override public String jvmOmitStackTraceInFastThrowOption(ClusterSpec.Type type) {
@@ -290,7 +315,6 @@ public class ModelContextImpl implements ModelContext {
         @Override public boolean useV8GeoPositions() { return useV8GeoPositions; }
         @Override public int maxCompactBuffers() { return maxCompactBuffers; }
         @Override public List<String> ignoredHttpUserAgents() { return ignoredHttpUserAgents; }
-        @Override public boolean enableServerOcspStapling() { return enableServerOcspStapling; }
         @Override public String mergeThrottlingPolicy() { return mergeThrottlingPolicy; }
         @Override public double persistenceThrottlingWsDecrementFactor() { return persistenceThrottlingWsDecrementFactor; }
         @Override public double persistenceThrottlingWsBackoff() { return persistenceThrottlingWsBackoff; }
@@ -303,6 +327,12 @@ public class ModelContextImpl implements ModelContext {
         @Override public Architecture adminClusterArchitecture() { return adminClusterArchitecture; }
         @Override public boolean enableProxyProtocolMixedMode() { return enableProxyProtocolMixedMode; }
         @Override public boolean sharedStringRepoNoReclaim() { return sharedStringRepoNoReclaim; }
+        @Override public int mbusJavaRpcNumTargets() { return mbus_java_num_targets; }
+        @Override public int mbusJavaEventsBeforeWakeup() { return mbus_java_events_before_wakeup; }
+        @Override public int mbusCppRpcNumTargets() { return mbus_cpp_num_targets; }
+        @Override public int mbusCppEventsBeforeWakeup() { return mbus_cpp_events_before_wakeup; }
+        @Override public int rpcNumTargets() { return rpc_num_targets; }
+        @Override public int rpcEventsBeforeWakeup() { return rpc_events_before_wakeup; }
         @Override public String logFileCompressionAlgorithm(String defVal) {
             var fflag = this.logFileCompressionAlgorithm;
             if (fflag != null && ! fflag.equals("")) {

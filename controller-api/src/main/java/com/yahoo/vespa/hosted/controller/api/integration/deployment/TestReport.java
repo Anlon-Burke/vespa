@@ -5,6 +5,7 @@ package com.yahoo.vespa.hosted.controller.api.integration.deployment;
  * @author mortent
  */
 public class TestReport {
+
     private final String report;
 
     private TestReport(String report) {
@@ -18,4 +19,5 @@ public class TestReport {
     public static TestReport fromJson(String report) {
         return new TestReport(report);
     }
+
 }

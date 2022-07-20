@@ -100,6 +100,11 @@
       {
         "at": 0,
         "type": "info",
+        "message": "Using CA signed certificate version 0"
+      },
+      {
+        "at": 0,
+        "type": "info",
         "message": "Deployment successful."
       },
       {
@@ -349,7 +354,7 @@
       }
     ]
   },
-  "lastId": 66,
+  "lastId": 67,
   "steps": {
     "deployTester": {
       "status": "succeeded",
@@ -390,12 +395,6 @@
     "report": {
       "status": "succeeded",
       "startMillis": 0
-    }
-  },
-  "testReport": {
-    "summary": {
-      "success": 1,
-      "failed": 0
     }
   },
   "testReports": [

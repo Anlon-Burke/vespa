@@ -18,11 +18,12 @@ public enum SummaryTransform {
     POSITIONS("positions"),
     RANKFEATURES("rankfeatures"),
     SUMMARYFEATURES("summaryfeatures"),
-    TEXTEXTRACTOR("textextractor"),
     GEOPOS("geopos"),
     ATTRIBUTECOMBINER("attributecombiner"),
     MATCHED_ELEMENTS_FILTER("matchedelementsfilter"),
-    MATCHED_ATTRIBUTE_ELEMENTS_FILTER("matchedattributeelementsfilter");
+    MATCHED_ATTRIBUTE_ELEMENTS_FILTER("matchedattributeelementsfilter"),
+    COPY("copy"),
+    DOCUMENT_ID("documentid");
 
     private final String name;
 

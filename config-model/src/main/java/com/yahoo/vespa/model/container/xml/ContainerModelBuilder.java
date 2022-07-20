@@ -62,13 +62,13 @@ import com.yahoo.vespa.model.container.PlatformBundles;
 import com.yahoo.vespa.model.container.SecretStore;
 import com.yahoo.vespa.model.container.component.AccessLogComponent;
 import com.yahoo.vespa.model.container.component.BindingPattern;
+import com.yahoo.vespa.model.container.component.Component;
 import com.yahoo.vespa.model.container.component.ConnectionLogComponent;
 import com.yahoo.vespa.model.container.component.FileStatusHandlerComponent;
 import com.yahoo.vespa.model.container.component.Handler;
 import com.yahoo.vespa.model.container.component.SimpleComponent;
 import com.yahoo.vespa.model.container.component.SystemBindingPattern;
 import com.yahoo.vespa.model.container.component.UserBindingPattern;
-import com.yahoo.vespa.model.container.component.chain.ProcessingHandler;
 import com.yahoo.vespa.model.container.docproc.ContainerDocproc;
 import com.yahoo.vespa.model.container.docproc.DocprocChains;
 import com.yahoo.vespa.model.container.http.AccessControl;
@@ -88,6 +88,7 @@ import com.yahoo.vespa.model.container.xml.embedder.EmbedderConfig;
 import com.yahoo.vespa.model.content.StorageGroup;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
+
 import java.net.URI;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -205,6 +206,8 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
         addServerProviders(deployState, spec, cluster);
 
+        if (!standaloneBuilder) cluster.addAllPlatformBundles();
+
         // Must be added after nodes:
         addDeploymentSpecConfig(cluster, context, deployState.getDeployLogger());
         addZooKeeper(cluster, spec);
@@ -220,7 +223,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         }
         if (deployState.zone().system().isPublic()) {
             BindingPattern bindingPattern = SystemBindingPattern.fromHttpPath("/validate-secret-store");
-            Handler<AbstractConfigProducer<?>> handler = new Handler<>(
+            Handler handler = new Handler(
                     new ComponentModel("com.yahoo.jdisc.cloud.aws.AwsParameterStoreValidationHandler", null, "jdisc-cloud-aws", null));
             handler.addServerBindings(bindingPattern);
             cluster.addComponent(handler);
@@ -595,6 +598,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         Element processingElement = XML.getChild(spec, "processing");
         if (processingElement == null) return;
 
+        cluster.addSearchAndDocprocBundles();
         addIncludes(processingElement);
         cluster.setProcessingChains(new DomProcessingBuilder(null).build(deployState, cluster, processingElement),
                                     serverBindings(processingElement, ProcessingChains.defaultBindings).toArray(BindingPattern[]::new));
@@ -732,9 +736,14 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     private List<ApplicationContainer> createNodes(ApplicationContainerCluster cluster, Element containerElement, Element nodesElement, ConfigModelContext context) {
         if (nodesElement.hasAttribute("type")) // internal use for hosted system infrastructure nodes
             return createNodesFromNodeType(cluster, nodesElement, context);
-        else if (nodesElement.hasAttribute("of")) // hosted node spec referencing a content cluster
-            return createNodesFromContentServiceReference(cluster, nodesElement, context);
-        else if (nodesElement.hasAttribute("count")) // regular, hosted node spec
+        else if (nodesElement.hasAttribute("of")) {// hosted node spec referencing a content cluster
+            // TODO: Remove support for combined clusters in Vespa 9
+            List<ApplicationContainer> containers = createNodesFromContentServiceReference(cluster, nodesElement, context);
+            log.logApplicationPackage(WARNING, "Declaring combined cluster with <nodes of=\"...\"> is deprecated without " +
+                                               "replacement, and the feature will be removed in Vespa 9. Use separate container and " +
+                                               "content clusters instead");
+            return containers;
+        } else if (nodesElement.hasAttribute("count")) // regular, hosted node spec
             return createNodesFromNodeCount(cluster, containerElement, nodesElement, context);
         else if (cluster.isHostedVespa() && cluster.getZone().environment().isManuallyDeployed()) // default to 1 in manual zones
             return createNodesFromNodeCount(cluster, containerElement, nodesElement, context);
@@ -877,19 +886,17 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     }
 
     private void addSearchHandler(ApplicationContainerCluster cluster, Element searchElement) {
-        // Magic spell is needed to receive the chains config :-|
-        cluster.addComponent(new ProcessingHandler<>(cluster.getSearch().getChains(),
-                                                     "com.yahoo.search.searchchain.ExecutionFactory"));
+        SearchHandler searchHandler = new SearchHandler(cluster,
+                                                        serverBindings(searchElement, SearchHandler.DEFAULT_BINDING),
+                                                        ContainerThreadpool.UserOptions.fromXml(searchElement).orElse(null));
+        cluster.addComponent(searchHandler);
 
-        cluster.addComponent(
-                new SearchHandler(
-                        cluster,
-                        serverBindings(searchElement, SearchHandler.DEFAULT_BINDING),
-                        ContainerThreadpool.UserOptions.fromXml(searchElement).orElse(null)));
+        // Add as child to SearchHandler to get the correct chains config.
+        searchHandler.addComponent(Component.fromClassAndBundle(SearchHandler.EXECUTION_FACTORY_CLASS, PlatformBundles.SEARCH_AND_DOCPROC_BUNDLE));
     }
 
     private void addGUIHandler(ApplicationContainerCluster cluster) {
-        Handler<?> guiHandler = new GUIHandler();
+        Handler guiHandler = new GUIHandler();
         guiHandler.addServerBindings(SystemBindingPattern.fromHttpPath(GUIHandler.BINDING_PATH));
         cluster.addComponent(guiHandler);
     }
@@ -919,8 +926,10 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         Element documentApiElement = XML.getChild(spec, "document-api");
         if (documentApiElement == null) return null;
 
-        ContainerDocumentApi.Options documentApiOptions = DocumentApiOptionsBuilder.build(documentApiElement);
-        return new ContainerDocumentApi(cluster, documentApiOptions);
+        ContainerDocumentApi.HandlerOptions documentApiOptions = DocumentApiOptionsBuilder.build(documentApiElement);
+        Element ignoreUndefinedFields = XML.getChild(documentApiElement, "ignore-undefined-fields");
+        return new ContainerDocumentApi(cluster, documentApiOptions,
+                                        "true".equals(XML.getValue(ignoreUndefinedFields)));
     }
 
     private ContainerDocproc buildDocproc(DeployState deployState, ApplicationContainerCluster cluster, Element spec) {
@@ -931,7 +940,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         addIncludes(docprocElement);
         DocprocChains chains = new DomDocprocChainsBuilder(null, false).build(deployState, cluster, docprocElement);
 
-        ContainerDocproc.Options docprocOptions = DocprocOptionsBuilder.build(docprocElement);
+        ContainerDocproc.Options docprocOptions = DocprocOptionsBuilder.build(docprocElement, deployState.getDeployLogger());
         return new ContainerDocproc(cluster, chains, docprocOptions, !standaloneBuilder);
      }
 

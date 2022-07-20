@@ -53,23 +53,6 @@ case $SHOULD_BUILD in
 esac
 
 if [[ $SHOULD_BUILD == systemtest ]]; then
-  dnf module enable -y ruby:2.7
-  dnf install -y \
-      gcc-toolset-11-annobin \
-      gcc-toolset-11-annobin-plugin-gcc \
-      gcc-toolset-11-binutils \
-      gcc-toolset-11-gcc-c++ \
-      gcc-toolset-11-libatomic-devel \
-      libxml2-devel \
-      ruby \
-      ruby-devel \
-      rubygems-devel \
-      rubygem-net-telnet \
-      zstd
-
-  source /opt/rh/gcc-toolset-11/enable
-  gem install libxml-ruby gnuplot distribution test-unit builder concurrent-ruby bigdecimal ffi parallel
-  
   cd $HOME
   git clone https://github.com/vespa-engine/system-test
   export SYSTEM_TEST_DIR=$(pwd)/system-test

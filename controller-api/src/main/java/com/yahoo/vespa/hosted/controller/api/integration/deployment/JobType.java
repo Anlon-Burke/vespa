@@ -1,14 +1,14 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.api.integration.deployment;
 
+import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.zone.ZoneId;
+import com.yahoo.config.provision.zone.ZoneList;
 import com.yahoo.vespa.hosted.controller.api.integration.zone.ZoneRegistry;
 
-import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static ai.vespa.validation.Validation.require;
@@ -18,7 +18,6 @@ import static com.yahoo.config.provision.Environment.prod;
 import static com.yahoo.config.provision.Environment.staging;
 import static com.yahoo.config.provision.Environment.test;
 import static java.util.Comparator.naturalOrder;
-import static java.util.stream.Collectors.toUnmodifiableList;
 
 /**
  * Specification for a deployment and/or test job to run: what zone, and whether it is a production test.
@@ -26,6 +25,8 @@ import static java.util.stream.Collectors.toUnmodifiableList;
  * @author jonmv
  */
 public final class JobType implements Comparable<JobType> {
+
+    private static final RegionName unknown = RegionName.from("unknown");
 
     private final String jobName;
     private final ZoneId zone;
@@ -38,18 +39,28 @@ public final class JobType implements Comparable<JobType> {
     }
 
     /** A system test in a test zone, or throws if no test zones are present.. */
-    public static JobType systemTest(ZoneRegistry zones) {
-        return testIn(test, zones);
+    public static JobType systemTest(ZoneRegistry zones, CloudName cloud) {
+        return testIn(test, zones, cloud);
     }
 
     /** A staging test in a staging zone, or throws if no staging zones are present. */
-    public static JobType stagingTest(ZoneRegistry zones){
-        return testIn(staging, zones);
+    public static JobType stagingTest(ZoneRegistry zones, CloudName cloud){
+        return testIn(staging, zones, cloud);
     }
 
-    private static JobType testIn(Environment environment, ZoneRegistry zones) {
-        return zones.zones().controllerUpgraded().in(environment).zones().stream().map(zone -> deploymentTo(zone.getId()))
-                    .findFirst().orElseThrow(() -> new IllegalArgumentException("no zones in " + environment + " among " + zones.zones().controllerUpgraded().zones()));
+    /** Returns a test job in the given environment, preferring the given cloud, is possible; using the system cloud otherwise. */
+    private static JobType testIn(Environment environment, ZoneRegistry zones, CloudName cloud) {
+        if (cloud == null)
+            return deploymentTo(ZoneId.from(environment, unknown));
+
+        ZoneList candidates = zones.zones().controllerUpgraded().in(environment);
+        if (candidates.in(cloud).zones().isEmpty())
+            cloud = zones.systemZone().getCloudName();
+
+        return candidates.in(cloud).zones().stream().findFirst()
+                         .map(zone -> deploymentTo(zone.getId()))
+                         .orElseThrow(() -> new IllegalArgumentException("no zones in " + environment + " among " +
+                                                                                     zones.zones().controllerUpgraded().zones()));
     }
 
     /** A deployment to the given dev region. */
@@ -118,32 +129,39 @@ public final class JobType implements Comparable<JobType> {
         throw new IllegalArgumentException("illegal serialized job type '" + raw + "'");
     }
 
-    /** Creates a new job type from a job name, and a zone registry for looking up zones for the special system and staging test types. */
+    /**
+     * Creates a new job type from a job name, and a zone registry for looking up zones for the special system and staging test types.
+     * Note: system and staging tests retrieved by job name always use the default cloud for the system!
+     */
     public static JobType fromJobName(String jobName, ZoneRegistry zones) {
-        String[] parts = jobName.split("-", 2);
-        if (parts.length != 2) throw new IllegalArgumentException("job names must be 'system-test', 'staging-test', or environment and region parts, separated by '-', but got: " + jobName);
-        switch (parts[0]) {
-            case "system": return systemTest(zones);
-            case "staging": return stagingTest(zones);
-            case "production": return prod(parts[1]);
-            case "test": return test(parts[1]);
-            case "dev": return dev(parts[1]);
-            case "perf": return perf(parts[1]);
-            default: throw new IllegalArgumentException("job names must begin with one of: system, staging, production, test, dev, perf; but got: " + jobName);
+        switch (jobName) {
+            case "system-test": return systemTest(zones, null);
+            case "staging-test": return stagingTest(zones, null);
         }
+        String[] parts = jobName.split("-", 2);
+        if (parts.length == 2)
+            switch (parts[0]) {
+                case "production": return prod(parts[1]);
+                case "test": return test(parts[1]);
+                case "dev": return dev(parts[1]);
+                case "perf": return perf(parts[1]);
+            }
+        throw new IllegalArgumentException("job names must be 'system-test', 'staging-test', or <test|environment>-<region>, but got: " + jobName);
     }
 
     public static List<JobType> allIn(ZoneRegistry zones) {
         return zones.zones().reachable().zones().stream()
                     .flatMap(zone -> zone.getEnvironment().isProduction() ? Stream.of(deploymentTo(zone.getId()), productionTestOf(zone.getId()))
-                                                                          : Stream.of(deploymentTo(zone.getId())))
+                                                                          : zone.getEnvironment().isTest() ? Stream.of(deploymentTo(ZoneId.from(zone.getEnvironment(), unknown)))
+                                                                                                           : Stream.of(deploymentTo(zone.getId())))
+                    .distinct()
                     .sorted(naturalOrder())
-                    .collect(toUnmodifiableList());
+                    .toList();
     }
 
     /** A serialized form of this: {@code &lt;environment&gt;.&lt;region&gt;[.test]}; the inverse of {@link #ofSerialized(String)} */
     public String serialized() {
-        return zone.environment().value() + "." + zone.region().value() + (isProductionTest ? ".test" : "");
+        return zone().value() + (isProductionTest ? ".test" : "");
     }
 
     public String jobName() {
@@ -152,6 +170,10 @@ public final class JobType implements Comparable<JobType> {
 
     /** Returns the zone for this job. */
     public ZoneId zone() {
+        // sigh ... but the alternative is worse.
+        if (zone.region() == unknown)
+            throw new IllegalStateException("this job type was not initiated with a proper zone, programming error");
+
         return zone;
     }
 
@@ -186,7 +208,7 @@ public final class JobType implements Comparable<JobType> {
     @Override
     public int compareTo(JobType other) {
         int result;
-        if (0 != (result = environment().compareTo(other.environment()))) return -result;
+        if (0 != (result = environment().compareTo(other.environment())) || environment().isTest()) return -result;
         if (0 != (result = zone.region().compareTo(other.zone.region()))) return result;
         return Boolean.compare(isProductionTest, other.isProductionTest);
     }

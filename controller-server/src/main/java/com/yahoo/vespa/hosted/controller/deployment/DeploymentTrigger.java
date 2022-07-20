@@ -7,6 +7,7 @@ import com.yahoo.config.application.api.DeploymentInstanceSpec;
 import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.InstanceName;
+import com.yahoo.config.provision.TenantName;
 import com.yahoo.transaction.Mutex;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.ApplicationController;
@@ -24,6 +25,7 @@ import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.versions.VersionStatus;
 import com.yahoo.vespa.hosted.controller.versions.VespaVersion;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -59,6 +61,7 @@ import static java.util.stream.Collectors.toMap;
 public class DeploymentTrigger {
 
     public static final Duration maxPause = Duration.ofDays(3);
+    public static final Duration maxFailingRevisionTime = Duration.ofDays(5);
     private final static Logger log = Logger.getLogger(DeploymentTrigger.class.getName());
 
     private final Controller controller;
@@ -104,8 +107,9 @@ public class DeploymentTrigger {
         // If the outstanding revision requires a certain platform for compatibility, add that here.
         VersionCompatibility compatibility = applications().versionCompatibility(status.application().id().instance(instance));
         Predicate<Version> compatibleWithCompileVersion = version -> compileVersion.map(compiled -> compatibility.accept(version, compiled)).orElse(true);
-        if (status.application().productionDeployments().getOrDefault(instance, List.of()).stream()
-                  .anyMatch(deployment -> ! compatibleWithCompileVersion.test(deployment.version()))) {
+        if (   status.application().productionDeployments().isEmpty()
+            || status.application().productionDeployments().getOrDefault(instance, List.of()).stream()
+                     .anyMatch(deployment -> ! compatibleWithCompileVersion.test(deployment.version()))) {
             return targetsForPolicy(controller.readVersionStatus(), status.application().deploymentSpec().requireInstance(instance).upgradePolicy())
                     .stream() // Pick the latest platform which is compatible with the compile version, and is ready for this instance.
                     .filter(compatibleWithCompileVersion)
@@ -224,10 +228,9 @@ public class DeploymentTrigger {
         Instance instance = application.require(applicationId.instance());
         JobId job = new JobId(instance.id(), jobType);
         JobStatus jobStatus = jobs.jobStatus(new JobId(applicationId, jobType));
-        Versions versions = jobStatus.lastTriggered()
-                                     .orElseThrow(() -> new IllegalArgumentException(job + " has never been triggered"))
-                                     .versions();
-        trigger(deploymentJob(instance, versions, jobType, jobStatus, clock.instant()), reason);
+        Run last = jobStatus.lastTriggered()
+                            .orElseThrow(() -> new IllegalArgumentException(job + " has never been triggered"));
+        trigger(deploymentJob(instance, last.versions(), last.id().type(), jobStatus.isNodeAllocationFailure(), clock.instant()), reason);
         return job;
     }
 
@@ -255,7 +258,12 @@ public class DeploymentTrigger {
                                                                 .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
 
         jobs.forEach((jobId, versionsList) -> {
-            trigger(deploymentJob(application.require(job.application().instance()), versionsList.get(0).versions(), jobId.type(), status.jobs().get(jobId).get(), clock.instant()), reason);
+            trigger(deploymentJob(application.require(job.application().instance()),
+                                  versionsList.get(0).versions(),
+                                  jobId.type(),
+                                  status.jobs().get(jobId).get().isNodeAllocationFailure(),
+                                  clock.instant()),
+                    reason);
         });
         return List.copyOf(jobs.keySet());
     }
@@ -365,6 +373,7 @@ public class DeploymentTrigger {
                                                       .withDeploymentSpec())
                    .withChanges()
                    .asList().stream()
+                   .filter(status -> ! hasExceededQuota(status.application().id().tenant()))
                    .map(this::computeReadyJobs)
                    .flatMap(Collection::stream)
                    .collect(toList());
@@ -374,19 +383,23 @@ public class DeploymentTrigger {
     private List<Job> computeReadyJobs(DeploymentStatus status) {
         List<Job> jobs = new ArrayList<>();
         Map<JobId, List<DeploymentStatus.Job>> jobsToRun = status.jobsToRun();
-        jobsToRun.forEach((job, versionsList) -> {
-            versionsList.get(0).readyAt()
-                        .filter(readyAt -> ! clock.instant().isBefore(readyAt))
-                        .filter(__ -> ! (job.type().isProduction() && isUnhealthyInAnotherZone(status.application(), job)))
-                        .filter(__ -> abortIfRunning(status, jobsToRun, job)) // Abort and trigger this later if running with outdated parameters.
-                        .map(readyAt -> deploymentJob(status.application().require(job.application().instance()),
-                                                      versionsList.get(0).versions(),
-                                                      job.type(),
-                                                      status.instanceJobs(job.application().instance()).get(job.type()),
-                                                      readyAt))
-                        .ifPresent(jobs::add);
+        jobsToRun.forEach((jobId, jobsList) -> {
+            DeploymentStatus.Job job = jobsList.get(0);
+            if (     job.readyAt().isPresent()
+                && ! clock.instant().isBefore(job.readyAt().get())
+                && ! (jobId.type().isProduction() && isUnhealthyInAnotherZone(status.application(), jobId))
+                &&   abortIfRunning(status, jobsToRun, jobId)) // Abort and trigger this later if running with outdated parameters.
+                jobs.add(deploymentJob(status.application().require(jobId.application().instance()),
+                                       job.versions(),
+                                       job.type(),
+                                       status.instanceJobs(jobId.application().instance()).get(jobId.type()).isNodeAllocationFailure(),
+                                       job.readyAt().get()));
         });
         return Collections.unmodifiableList(jobs);
+    }
+
+    private boolean hasExceededQuota(TenantName tenant) {
+        return controller.serviceRegistry().billingController().getQuota(tenant).budget().equals(Optional.of(BigDecimal.ZERO));
     }
 
     /** Returns whether the application is healthy in all other production zones. */
@@ -440,6 +453,8 @@ public class DeploymentTrigger {
 
     private boolean acceptNewRevision(DeploymentStatus status, InstanceName instance, RevisionId revision) {
         if (status.application().deploymentSpec().instance(instance).isEmpty()) return false; // Unknown instance.
+        if ( ! status.jobs().failingWithBrokenRevisionSince(revision, clock.instant().minus(maxFailingRevisionTime))
+                     .isEmpty()) return false; // Don't deploy a broken revision.
         boolean isChangingRevision = status.application().require(instance).change().revision().isPresent();
         DeploymentInstanceSpec spec = status.application().deploymentSpec().requireInstance(instance);
         Predicate<RevisionId> revisionFilter = spec.revisionTarget() == DeploymentSpec.RevisionTarget.next
@@ -464,8 +479,8 @@ public class DeploymentTrigger {
 
     // ---------- Version and job helpers ----------
 
-    private Job deploymentJob(Instance instance, Versions versions, JobType jobType, JobStatus jobStatus, Instant availableSince) {
-        return new Job(instance, versions, jobType, availableSince, jobStatus.isNodeAllocationFailure(), instance.change().revision().isPresent());
+    private Job deploymentJob(Instance instance, Versions versions, JobType jobType, boolean isNodeAllocationFailure, Instant availableSince) {
+        return new Job(instance, versions, jobType, availableSince, isNodeAllocationFailure, instance.change().revision().isPresent());
     }
 
     // ---------- Data containers ----------

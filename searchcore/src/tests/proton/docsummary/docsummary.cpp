@@ -42,6 +42,7 @@
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/util/destructor_callbacks.h>
 #include <vespa/vespalib/util/size_literals.h>
+#include <filesystem>
 #include <regex>
 
 #include <vespa/log/log.h>
@@ -82,11 +83,11 @@ public:
     DirMaker(const vespalib::string & dir) :
         _dir(dir)
     {
-        FastOS_File::MakeDirectory(dir.c_str());
+        std::filesystem::create_directory(std::filesystem::path(dir));
     }
     ~DirMaker()
     {
-        FastOS_File::EmptyAndRemoveDirectory(_dir.c_str());
+        std::filesystem::remove_all(std::filesystem::path(_dir));
     }
 private:
     vespalib::string _dir;
@@ -180,7 +181,7 @@ public:
     vespalib::ThreadStackExecutor _summaryExecutor;
     MockSharedThreadingService    _shared_service;
     TransLogServer                _tls;
-    bool _mkdirOk;
+    bool _made_dir;
     matching::QueryLimiter _queryLimiter;
     DummyWireService _dummy;
     ::config::DirSpec _spec;
@@ -199,7 +200,7 @@ public:
           _summaryExecutor(8, 128_Ki),
           _shared_service(_summaryExecutor, _summaryExecutor),
           _tls(_shared_service.transport(), "tmp", 9013, ".", _fileHeaderContext),
-          _mkdirOk(FastOS_File::MakeDirectory("tmpdb")),
+          _made_dir(std::filesystem::create_directory(std::filesystem::path("tmpdb"))),
           _queryLimiter(),
           _dummy(),
           _spec(TEST_PATH("")),
@@ -212,7 +213,7 @@ public:
           _aw(),
           _sa()
     {
-        assert(_mkdirOk);
+        (void) _made_dir;
         auto b = std::make_shared<BootstrapConfig>(1, _documenttypesConfig, _repo,
                                                    std::make_shared<ProtonConfig>(),
                                                    std::make_shared<FiledistributorrpcConfig>(),
@@ -220,9 +221,7 @@ public:
                                                    _tuneFileDocumentDB, _hwInfo);
         _configMgr.forwardConfig(b);
         _configMgr.nextGeneration(_shared_service.transport(), 0ms);
-        if (! FastOS_File::MakeDirectory((std::string("tmpdb/") + docTypeName).c_str())) {
-            LOG_ABORT("should not be reached");
-        }
+        std::filesystem::create_directory(std::filesystem::path(std::string("tmpdb/") + docTypeName));
         _ddb = DocumentDB::create("tmpdb", _configMgr.getConfig(), "tcp/localhost:9013", _queryLimiter,
                                   DocTypeName(docTypeName), makeBucketSpace(), *b->getProtonConfigSP(), *this,
                                   _shared_service, _tls, _dummy, _fileHeaderContext,
@@ -239,8 +238,8 @@ public:
         _sa.reset();
         _aw.reset();
         _ddb.reset();
-        FastOS_File::EmptyAndRemoveDirectory("tmp");
-        FastOS_File::EmptyAndRemoveDirectory("tmpdb");
+        std::filesystem::remove_all(std::filesystem::path("tmp"));
+        std::filesystem::remove_all(std::filesystem::path("tmpdb"));
     }
 
     void
@@ -323,8 +322,8 @@ assertString(const std::string & exp, const std::string & fieldName,
              DocumentStoreAdapter &dsa, uint32_t id)
 {
     GeneralResultPtr res = getResult(dsa, id);
-    return EXPECT_EQUAL(exp, std::string(res->GetEntry(fieldName.c_str())->_stringval,
-                                         res->GetEntry(fieldName.c_str())->_stringlen));
+    return EXPECT_EQUAL(exp, std::string(res->GetPresentEntry(fieldName.c_str())->_stringval,
+                                         res->GetPresentEntry(fieldName.c_str())->_stringlen));
 }
 
 void
@@ -393,24 +392,24 @@ TEST_F("requireThatAdapterHandlesAllFieldTypes", Fixture)
                              bc.createFieldCacheRepo(f.getResultConfig())->getFieldCache("class0"),
                              f.getMarkupFields());
     GeneralResultPtr res = getResult(dsa, 0);
-    EXPECT_EQUAL(255u,        res->GetEntry("a")->_intval);
-    EXPECT_EQUAL(32767u,      res->GetEntry("b")->_intval);
-    EXPECT_EQUAL(2147483647u, res->GetEntry("c")->_intval);
-    EXPECT_EQUAL(2147483648u, res->GetEntry("d")->_int64val);
-    EXPECT_APPROX(1234.56,    res->GetEntry("e")->_doubleval, 10e-5);
-    EXPECT_APPROX(9876.54,    res->GetEntry("f")->_doubleval, 10e-5);
-    EXPECT_EQUAL("foo",       std::string(res->GetEntry("g")->_stringval,
-                                          res->GetEntry("g")->_stringlen));
-    EXPECT_EQUAL("bar",       std::string(res->GetEntry("h")->_stringval,
-                                          res->GetEntry("h")->_stringlen));
-    EXPECT_EQUAL("baz",       std::string(res->GetEntry("i")->_dataval,
-                                          res->GetEntry("i")->_datalen));
-    EXPECT_EQUAL("qux",       std::string(res->GetEntry("j")->_dataval,
-                                          res->GetEntry("j")->_datalen));
-    EXPECT_EQUAL("<foo>",     std::string(res->GetEntry("k")->_stringval,
-                                          res->GetEntry("k")->_stringlen));
-    EXPECT_EQUAL("{foo:10}",  std::string(res->GetEntry("l")->_stringval,
-                                          res->GetEntry("l")->_stringlen));
+    EXPECT_EQUAL(255u,        res->GetPresentEntry("a")->_intval);
+    EXPECT_EQUAL(32767u,      res->GetPresentEntry("b")->_intval);
+    EXPECT_EQUAL(2147483647u, res->GetPresentEntry("c")->_intval);
+    EXPECT_EQUAL(2147483648u, res->GetPresentEntry("d")->_int64val);
+    EXPECT_APPROX(1234.56,    res->GetPresentEntry("e")->_doubleval, 10e-5);
+    EXPECT_APPROX(9876.54,    res->GetPresentEntry("f")->_doubleval, 10e-5);
+    EXPECT_EQUAL("foo",       std::string(res->GetPresentEntry("g")->_stringval,
+                                          res->GetPresentEntry("g")->_stringlen));
+    EXPECT_EQUAL("bar",       std::string(res->GetPresentEntry("h")->_stringval,
+                                          res->GetPresentEntry("h")->_stringlen));
+    EXPECT_EQUAL("baz",       std::string(res->GetPresentEntry("i")->_dataval,
+                                          res->GetPresentEntry("i")->_datalen));
+    EXPECT_EQUAL("qux",       std::string(res->GetPresentEntry("j")->_dataval,
+                                          res->GetPresentEntry("j")->_datalen));
+    EXPECT_EQUAL("<foo>",     std::string(res->GetPresentEntry("k")->_stringval,
+                                          res->GetPresentEntry("k")->_stringlen));
+    EXPECT_EQUAL("{foo:10}",  std::string(res->GetPresentEntry("l")->_stringval,
+                                          res->GetPresentEntry("l")->_stringlen));
 }
 
 TEST_F("requireThatAdapterHandlesMultipleDocuments", Fixture)
@@ -434,11 +433,11 @@ TEST_F("requireThatAdapterHandlesMultipleDocuments", Fixture)
                              f.getMarkupFields());
     { // doc 0
         GeneralResultPtr res = getResult(dsa, 0);
-        EXPECT_EQUAL(1000u, res->GetEntry("a")->_intval);
+        EXPECT_EQUAL(1000u, res->GetPresentEntry("a")->_intval);
     }
     { // doc 1
         GeneralResultPtr res = getResult(dsa, 1);
-        EXPECT_EQUAL(2000u, res->GetEntry("a")->_intval);
+        EXPECT_EQUAL(2000u, res->GetPresentEntry("a")->_intval);
     }
     { // doc 2
         DocsumStoreValue docsum = dsa.getMappedDocsum(2);
@@ -446,7 +445,7 @@ TEST_F("requireThatAdapterHandlesMultipleDocuments", Fixture)
     }
     { // doc 0 (again)
         GeneralResultPtr res = getResult(dsa, 0);
-        EXPECT_EQUAL(1000u, res->GetEntry("a")->_intval);
+        EXPECT_EQUAL(1000u, res->GetPresentEntry("a")->_intval);
     }
     EXPECT_EQUAL(0u, bc._str.lastSyncToken());
     uint64_t flushToken = bc._str.initFlush(bc._serialNum - 1);
@@ -467,8 +466,8 @@ TEST_F("requireThatAdapterHandlesDocumentIdField", Fixture)
                              bc.createFieldCacheRepo(f.getResultConfig())->getFieldCache("class4"),
                              f.getMarkupFields());
     GeneralResultPtr res = getResult(dsa, 0);
-    EXPECT_EQUAL("id:ns:searchdocument::0", std::string(res->GetEntry("documentid")->_stringval,
-                                                        res->GetEntry("documentid")->_stringlen));
+    EXPECT_EQUAL("id:ns:searchdocument::0", std::string(res->GetPresentEntry("documentid")->_stringval,
+                                                        res->GetPresentEntry("documentid")->_stringlen));
 }
 
 GlobalId gid1 = DocumentId("id:ns:searchdocument::1").getGlobalId(); // lid 1
@@ -961,14 +960,14 @@ TEST_F("requireThatUrisAreUsed", Fixture)
     GeneralResultPtr res = getResult(dsa, 1);
     {
         vespalib::Slime slime;
-        decode(res->GetEntry("uriarray"), slime);
+        decode(res->GetPresentEntry("uriarray"), slime);
         EXPECT_TRUE(slime.get().valid());
         EXPECT_EQUAL("http://www.example.com:82/fluke?ab=2#8",  asVstring(slime.get()[0]));
         EXPECT_EQUAL("http://www.flickr.com:82/fluke?ab=2#9", asVstring(slime.get()[1]));
     }
     {
         vespalib::Slime slime;
-        decode(res->GetEntry("uriwset"), slime);
+        decode(res->GetPresentEntry("uriwset"), slime);
         EXPECT_TRUE(slime.get().valid());
         EXPECT_EQUAL(4L, slime.get()[0]["weight"].asLong());
         EXPECT_EQUAL(7L, slime.get()[1]["weight"].asLong());
@@ -1013,7 +1012,7 @@ TEST("requireThatPositionsAreUsed")
     req.hits.push_back(DocsumRequest::Hit(gid1));
     DocsumReply::UP rep = dc._ddb->getDocsums(req);
     EXPECT_TRUE(assertSlime("{docsums:["
-                            "{docsum:{sp2:'1047758'"
+                            "{docsum:{sp2:1047758"
                             ",sp2x:{x:1002, y:1003, latlong:'N0.001003;E0.001002'}"
                             ",ap2:[1047806,1048322]"
                             ",ap2x:[{x:1006, y:1007, latlong:'N0.001007;E0.001006'},"
@@ -1090,14 +1089,14 @@ TEST_F("requireThatRawFieldsWorks", Fixture)
     GeneralResultPtr res = getResult(dsa, 1);
     {
         vespalib::Slime slime;
-        decode(res->GetEntry("araw"), slime);
+        decode(res->GetPresentEntry("araw"), slime);
         EXPECT_TRUE(slime.get().valid());
         EXPECT_EQUAL(vespalib::Base64::encode(raw1a0), b64encode(slime.get()[0]));
         EXPECT_EQUAL(vespalib::Base64::encode(raw1a1), b64encode(slime.get()[1]));
     }
     {
         vespalib::Slime slime;
-        decode(res->GetEntry("wraw"), slime);
+        decode(res->GetPresentEntry("wraw"), slime);
         EXPECT_TRUE(slime.get().valid());
         EXPECT_EQUAL(46L, slime.get()[0]["weight"].asLong());
         EXPECT_EQUAL(45L, slime.get()[1]["weight"].asLong());

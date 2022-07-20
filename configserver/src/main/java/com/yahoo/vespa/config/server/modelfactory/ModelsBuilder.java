@@ -92,9 +92,6 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
         Instant start = Instant.now();
         log.log(Level.FINE, () -> "Will build models for " + applicationId);
         Set<Version> versions = modelFactoryRegistry.allVersions();
-        if (applicationPackage.getMajorVersion().isPresent() && applicationPackage.getMajorVersion().get() != wantedNodeVespaVersion.getMajor())
-            throw new IllegalArgumentException("requested node version (" + wantedNodeVespaVersion + ") has a different major version " +
-                                               "than specified in deployment.xml (" + applicationPackage.getMajorVersion().get() + ")");
 
         // If the application specifies a major, skip models on a newer major
         Optional<Integer> requestedMajorVersion = applicationPackage.getMajorVersion();
@@ -133,7 +130,7 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
             }
             catch (RuntimeException e) {
                 if (shouldSkipCreatingMajorVersionOnError(majorVersions, majorVersion, wantedNodeVespaVersion, allocatedHosts)) {
-                    log.log(Level.INFO, applicationId + ": Skipping major version " + majorVersion, e);
+                    log.log(Level.FINE, applicationId + ": Skipping major version " + majorVersion, e);
                 }
                 else {
                     if (e instanceof IllegalArgumentException) {

@@ -17,7 +17,6 @@ import net.jpountz.xxhash.XXHashFactory;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -26,12 +25,14 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import static com.yahoo.jrt.ErrorCode.CONNECTION;
+import static com.yahoo.vespa.filedistribution.FileReferenceData.CompressionType.gzip;
 import static com.yahoo.vespa.filedistribution.FileReferenceData.Type.compressed;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -40,6 +41,7 @@ import static org.junit.Assert.fail;
 
 public class FileDownloaderTest {
     private static final Duration sleepBetweenRetries = Duration.ofMillis(10);
+    private static final Set<FileReferenceData.CompressionType> acceptedCompressionTypes = Set.of(gzip);
 
     private MockConnection connection;
     private FileDownloader fileDownloader;
@@ -52,7 +54,7 @@ public class FileDownloaderTest {
             downloadDir = Files.createTempDirectory("filedistribution").toFile();
             connection = new MockConnection();
             supervisor = new Supervisor(new Transport()).setDropEmptyBuffers(true);
-            fileDownloader = new FileDownloader(connection, supervisor, downloadDir, Duration.ofSeconds(1), sleepBetweenRetries);
+            fileDownloader = createDownloader(connection, Duration.ofSeconds(1));
         } catch (IOException e) {
             e.printStackTrace();
             fail(e.getMessage());
@@ -148,7 +150,7 @@ public class FileDownloaderTest {
             File barFile = new File(subdir, "really-long-filename-over-100-bytes-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
             IOUtils.writeFile(barFile, "bar", false);
 
-            File tarFile = new FileReferenceCompressor(compressed).compress(tempPath.toFile(), Arrays.asList(fooFile, barFile), new File(tempPath.toFile(), filename));
+            File tarFile = new FileReferenceCompressor(compressed, gzip).compress(tempPath.toFile(), Arrays.asList(fooFile, barFile), new File(tempPath.toFile(), filename));
             byte[] tarredContent = IOUtils.readFileBytes(tarFile);
             receiveFile(fileReference, filename, compressed, tarredContent);
             Optional<File> downloadedFile = getFile(fileReference);
@@ -166,7 +168,7 @@ public class FileDownloaderTest {
 
     @Test
     public void getFileWhenConnectionError() throws IOException {
-        fileDownloader = new FileDownloader(connection, supervisor, downloadDir, Duration.ofSeconds(2), sleepBetweenRetries);
+        fileDownloader = createDownloader(connection, Duration.ofSeconds(2));
         File downloadDir = fileDownloader.downloadDirectory();
 
         int timesToFail = 2;
@@ -200,7 +202,7 @@ public class FileDownloaderTest {
     public void getFileWhenDownloadInProgress() throws IOException, ExecutionException, InterruptedException {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         String filename = "abc.jar";
-        fileDownloader = new FileDownloader(connection, supervisor, downloadDir, Duration.ofSeconds(3), sleepBetweenRetries);
+        fileDownloader = createDownloader(connection, Duration.ofSeconds(3));
         File downloadDir = fileDownloader.downloadDirectory();
 
         // Delay response so that we can make a second request while downloading the file from the first request
@@ -240,7 +242,7 @@ public class FileDownloaderTest {
         Duration timeout = Duration.ofMillis(200);
         MockConnection connectionPool = new MockConnection();
         connectionPool.setResponseHandler(new MockConnection.WaitResponseHandler(timeout.plus(Duration.ofMillis(1000))));
-        FileDownloader fileDownloader = new FileDownloader(connectionPool, supervisor, downloadDir, timeout, sleepBetweenRetries);
+        FileDownloader fileDownloader = createDownloader(connectionPool, timeout);
         FileReference xyzzy = new FileReference("xyzzy");
         // Should download since we do not have the file on disk
         fileDownloader.downloadIfNeeded(new FileReferenceDownload(xyzzy, "test"));
@@ -261,6 +263,16 @@ public class FileDownloaderTest {
         receiveFile(foobar, filename, FileReferenceData.Type.file, "content");
         File downloadedFile = new File(fileReferenceFullPath(downloadDir, foobar), filename);
         assertEquals("content", IOUtils.readFile(downloadedFile));
+    }
+
+    @Test
+    public void testCompressionTypes() {
+        try {
+            createDownloader(connection, Duration.ofSeconds(1), Set.of());
+            fail("expected to fail when set is empty");
+        } catch (IllegalArgumentException e) {
+            // ignore
+        }
     }
 
     private void writeFileReference(File dir, String fileReferenceString, String fileName) throws IOException {
@@ -291,7 +303,7 @@ public class FileDownloaderTest {
                              FileReferenceData.Type type, byte[] content) {
         XXHash64 hasher = XXHashFactory.fastestInstance().hash64();
         FileReceiver.Session session =
-                new FileReceiver.Session(downloadDir, 1, fileReference, type, filename, content.length);
+                new FileReceiver.Session(downloadDir, 1, fileReference, type, gzip, filename, content.length);
         session.addPart(0, content);
         File file = session.close(hasher.hash(ByteBuffer.wrap(content), 0));
         fileDownloader.downloads().completedDownloading(fileReference, file);
@@ -299,6 +311,14 @@ public class FileDownloaderTest {
 
     private Optional<File> getFile(FileReference fileReference) {
         return fileDownloader.getFile(new FileReferenceDownload(fileReference, "test"));
+    }
+
+    private FileDownloader createDownloader(MockConnection connection, Duration timeout) {
+        return  createDownloader(connection, timeout, acceptedCompressionTypes);
+    }
+
+    private FileDownloader createDownloader(MockConnection connection, Duration timeout, Set<FileReferenceData.CompressionType> acceptedCompressionTypes) {
+        return new FileDownloader(connection, supervisor, downloadDir, timeout, sleepBetweenRetries, acceptedCompressionTypes);
     }
 
     private static class MockConnection implements ConnectionPool, com.yahoo.vespa.config.Connection {

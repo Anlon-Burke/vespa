@@ -19,7 +19,9 @@ import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -52,18 +54,19 @@ public class OsUpgraderTest {
         OsUpgrader osUpgrader = osUpgrader(upgradePolicy, cloud1, false);
 
         // Bootstrap system
-        List<ZoneId> nonControllerZones = List.of(zone1, zone2, zone3, zone4, zone5).stream()
-                                              .map(ZoneApi::getVirtualId)
-                                              .collect(Collectors.toList());
+        List<ZoneId> nonControllerZones = Stream.of(zone1, zone2, zone3, zone4, zone5)
+                                                .map(ZoneApi::getVirtualId)
+                                                .collect(Collectors.toList());
         tester.configServer().bootstrap(nonControllerZones, List.of(SystemApplication.tenantHost));
         tester.configServer().addNodes(List.of(zone0.getVirtualId()), List.of(SystemApplication.controllerHost));
 
         // Add system application that exists in a real system, but isn't eligible for OS upgrades
         tester.configServer().addNodes(nonControllerZones, List.of(SystemApplication.configServer));
 
-        // Fail a few nodes. Failed nodes should not affect versions
+        // Change state of a few nodes. These should not affect convergence
         failNodeIn(zone1, SystemApplication.tenantHost);
         failNodeIn(zone3, SystemApplication.tenantHost);
+        Node nodeDeferringOsUpgrade = deferOsUpgradeIn(zone2, SystemApplication.tenantHost);
 
         // New OS version released
         Version version1 = Version.fromString("7.1");
@@ -102,6 +105,10 @@ public class OsUpgraderTest {
 
         // zone 2 and 3: completes upgrade
         completeUpgrade(version1, SystemApplication.tenantHost, zone2, zone3);
+        assertEquals("Current version is unchanged for node deferring OS upgrade", Version.emptyVersion,
+                     nodeRepository().list(zone2.getVirtualId(), NodeFilter.all().hostnames(nodeDeferringOsUpgrade.hostname()))
+                                     .get(0)
+                                     .currentOsVersion());
 
         // zone 4: begins upgrading
         osUpgrader.maintain();
@@ -114,8 +121,10 @@ public class OsUpgraderTest {
         osUpgrader.maintain();
         assertWanted(version1, SystemApplication.tenantHost, zone1, zone2, zone3, zone4);
         statusUpdater.maintain();
-        assertTrue("All nodes on target version", tester.controller().osVersionStatus().nodesIn(cloud1).stream()
-                                                        .allMatch(node -> node.currentVersion().equals(version1)));
+        assertTrue("All non-deferring nodes are on target version",
+                   tester.controller().osVersionStatus().nodesIn(cloud1).stream()
+                         .filter(node -> !node.hostname().equals(nodeDeferringOsUpgrade.hostname()))
+                         .allMatch(node -> node.currentVersion().equals(version1)));
     }
 
     @Test
@@ -158,15 +167,15 @@ public class OsUpgraderTest {
         // First zone upgrades
         osUpgrader.maintain();
         for (var nodeType : nodeTypes) {
-            assertEquals("Dev zone gets a zero budget", Duration.ZERO, upgradeBudget(zone1, nodeType, version));
+            assertEquals(Duration.ofHours(4), upgradeBudget(zone1, nodeType, version));
             completeUpgrade(version, nodeType, zone1);
         }
 
         // Next set of zones upgrade
         osUpgrader.maintain();
-        for (var zone : List.of(zone2, zone3)) {
+        for (var zone : List.of(zone1, zone2, zone3)) {
             for (var nodeType : nodeTypes) {
-                assertEquals("Parallel prod zones share the budget of a single zone", Duration.ofHours(6),
+                assertEquals("Parallel prod zones share the budget of a single zone", Duration.ofHours(4),
                              upgradeBudget(zone, nodeType, version));
                 completeUpgrade(version, nodeType, zone);
             }
@@ -175,7 +184,7 @@ public class OsUpgraderTest {
         // Last zone upgrades
         osUpgrader.maintain();
         for (var nodeType : nodeTypes) {
-            assertEquals(nodeType + " in last prod zone gets the budget of a single zone", Duration.ofHours(6),
+            assertEquals(nodeType + " in last prod zone gets the budget of a single zone", Duration.ofHours(4),
                          upgradeBudget(zone4, nodeType, version));
             completeUpgrade(version, nodeType, zone4);
         }
@@ -267,17 +276,27 @@ public class OsUpgraderTest {
     private List<Node> nodesRequiredToUpgrade(ZoneApi zone, SystemApplication application) {
         return nodeRepository().list(zone.getVirtualId(), NodeFilter.all().applications(application.id()))
                                .stream()
-                               .filter(OsUpgrader::canUpgrade)
+                               .filter(node -> OsUpgrader.canUpgrade(node, false))
                                .collect(Collectors.toList());
     }
 
-    private void failNodeIn(ZoneApi zone, SystemApplication application) {
+    private Node failNodeIn(ZoneApi zone, SystemApplication application) {
+        return patchOneNodeIn(zone, application, (node) -> Node.builder(node).state(Node.State.failed).build());
+    }
+
+    private Node deferOsUpgradeIn(ZoneApi zone, SystemApplication application) {
+        return patchOneNodeIn(zone, application, (node) -> Node.builder(node).deferOsUpgrade(true).build());
+    }
+
+    private Node patchOneNodeIn(ZoneApi zone, SystemApplication application, UnaryOperator<Node> patcher) {
         List<Node> nodes = nodeRepository().list(zone.getVirtualId(), NodeFilter.all().applications(application.id()));
         if (nodes.isEmpty()) {
             throw new IllegalArgumentException("No nodes allocated to " + application.id());
         }
         Node node = nodes.get(0);
-        nodeRepository().putNodes(zone.getVirtualId(), Node.builder(node).state(Node.State.failed).build());
+        Node newNode = patcher.apply(node);
+        nodeRepository().putNodes(zone.getVirtualId(), newNode);
+        return newNode;
     }
 
     /** Simulate OS upgrade of nodes allocated to application. In a real system this is done by the node itself */

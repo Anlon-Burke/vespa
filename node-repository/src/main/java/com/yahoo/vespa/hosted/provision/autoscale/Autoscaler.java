@@ -26,7 +26,7 @@ public class Autoscaler {
     /** What cost difference is worth a reallocation? */
     private static final double costDifferenceWorthReallocation = 0.1;
     /** What resource difference is worth a reallocation? */
-    private static final double resourceDifferenceWorthReallocation = 0.1;
+    private static final double resourceDifferenceWorthReallocation = 0.03;
 
     private final NodeRepository nodeRepository;
     private final AllocationOptimizer allocationOptimizer;
@@ -61,8 +61,8 @@ public class Autoscaler {
 
     private Advice autoscale(Application application, Cluster cluster, NodeList clusterNodes, Limits limits) {
         ClusterModel clusterModel = new ClusterModel(application,
-                                                     cluster,
                                                      clusterNodes.clusterSpec(),
+                                                     cluster,
                                                      clusterNodes,
                                                      nodeRepository.metricsDb(),
                                                      nodeRepository.clock());
@@ -115,7 +115,7 @@ public class Autoscaler {
         // The cluster is processing recent changes
         if (clusterNodes.stream().anyMatch(node -> node.status().wantToRetire() ||
                                                    node.allocation().get().membership().retired() ||
-                                                   node.allocation().get().isRemovable()))
+                                                   node.allocation().get().removable()))
             return false;
 
         // A deployment is ongoing
