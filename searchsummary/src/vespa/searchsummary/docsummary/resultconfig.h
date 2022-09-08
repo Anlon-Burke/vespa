@@ -2,13 +2,15 @@
 
 #pragma once
 
-#include "docsum_blob_entry_filter.h"
 #include "res_type_utils.h"
-#include <vespa/config-summary.h>
-#include <vespa/searchlib/util/stringenum.h>
+#include <vespa/vespalib/stllike/hash_map.h>
 
+namespace vespa::config::search::internal {
+    class InternalSummaryType;
+}
 namespace search::docsummary {
 
+class IDocsumFieldWriterFactory;
 class ResultClass;
 
 /**
@@ -28,23 +30,16 @@ class ResultClass;
 class ResultConfig
 {
 private:
-    ResultConfig(const ResultConfig &);
-    ResultConfig& operator=(const ResultConfig &);
-
-    typedef vespalib::hash_map<vespalib::string, uint32_t> NameMap;
-    typedef vespalib::hash_map<uint32_t, std::unique_ptr<ResultClass>> IdMap;
+    using NameMap = vespalib::hash_map<vespalib::string, uint32_t>;
+    using IdMap = vespalib::hash_map<uint32_t, std::unique_ptr<ResultClass>>;
     uint32_t                    _defaultSummaryId;
-    bool                        _useV8geoPositions;
-    search::util::StringEnum    _fieldEnum;
     IdMap                       _classLookup;
     NameMap                     _nameLookup; // name -> class id
-    DocsumBlobEntryFilter       _docsum_blob_entry_filter;
 
     void Clean();
-    void Init();
 
 public:
-    bool useV8geoPositions() const { return _useV8geoPositions; }
+    using SummaryConfig = const vespa::config::search::internal::InternalSummaryType;
     class iterator {
     public:
         iterator(IdMap::iterator it) : _it(it) { }
@@ -71,17 +66,18 @@ public:
         IdMap::const_iterator _it;
     };
 
-    iterator begin() { return iterator(_classLookup.begin()); }
-    iterator   end() { return iterator(_classLookup.end()); }
-    const_iterator begin() const { return const_iterator(_classLookup.begin()); }
-    const_iterator   end() const { return const_iterator(_classLookup.end()); }
+    iterator begin() { return { _classLookup.begin() }; }
+    iterator   end() { return { _classLookup.end() }; }
+    const_iterator begin() const { return { _classLookup.begin() }; }
+    const_iterator   end() const { return { _classLookup.end() }; }
 
     /**
      * Constructor. Create an initially empty result configuration.
      * NOTE: This method simply calls the Init method.
      **/
     ResultConfig();
-    ResultConfig(const DocsumBlobEntryFilter& docsum_blob_entry_filter);
+    ResultConfig(const ResultConfig &) = delete;
+    ResultConfig& operator=(const ResultConfig &) = delete;
 
     /**
      * Destructor. Delete all internal structures. NOTE: This method
@@ -94,11 +90,6 @@ public:
      * @return value denoting an undefined class id.
      **/
     static uint32_t NoClassID() { return static_cast<uint32_t>(-1); }
-
-
-    static bool IsVariableSize(ResType t) { return ResTypeUtils::IsVariableSize(t); }
-    static bool IsBinaryCompatible(ResType a, ResType b) { return ResTypeUtils::IsBinaryCompatible(a, b); }
-    static bool IsRuntimeCompatible(ResType a, ResType b) { return ResTypeUtils::IsRuntimeCompatible(a, b); }
 
     // whether last config seen wanted useV8geoPositions = true
     static bool wantedV8geoPositions();
@@ -130,6 +121,10 @@ public:
      **/
     ResultClass *AddResultClass(const char *name, uint32_t classID);
 
+    /*
+     * Set default result class id.
+     */
+    void set_default_result_class_id(uint32_t id);
 
     /**
      * Obtain result class from the result class id. This method is used
@@ -144,45 +139,10 @@ public:
     /**
      * Obtain result class id from the result class name.
      *
-     * @return result class id or 'def' if not found
-     * @param name the name of the result class
-     * @param def default return value if not found
-     **/
-    uint32_t LookupResultClassId(const vespalib::string &name, uint32_t def) const;
-
-    /**
-     * Obtain result class id from the result class name.
-     *
      * @return result class id or configured default if empty or "default".
      * @param name the name of the result class, NoClassId(-1) meaning undefined
      **/
     uint32_t LookupResultClassId(const vespalib::string &name) const;
-
-
-    /**
-     * Obtain the number of result classes held by this result
-     * configuration.
-     *
-     * @return number of result classes.
-     **/
-    uint32_t GetNumResultClasses() const { return _classLookup.size(); }
-
-
-    /**
-     * Obtain the string enumeration object that holds the mapping from
-     * field name to field name enumerated value.
-     *
-     * @return field name enumeration.
-     **/
-    const search::util::StringEnum & GetFieldNameEnum() const { return _fieldEnum; }
-
-
-    /**
-     * This method calls the CreateEnumMap on all result classes held by
-     * this object. This is needed in order to look up fields by field
-     * name enumerated value.
-     **/
-    void CreateEnumMaps();
 
     /**
      * Read config that has been fetched from configserver.
@@ -190,18 +150,7 @@ public:
      * @return true(success)/false(fail)
      * @param configId reference on server
      **/
-    bool ReadConfig(const vespa::config::search::SummaryConfig &cfg, const char *configId);
-
-    /**
-     * Inspect a docsum blob and return the class id of the docsum
-     * contained within it. This method is useful if you want to know
-     * what it is before deciding whether to unpack it.
-     *
-     * @return docsum blob class id.
-     * @param buf docsum blob.
-     * @param buflen length of docsum blob.
-     **/
-    uint32_t GetClassID(const char *buf, uint32_t buflen);
+    bool ReadConfig(const SummaryConfig &cfg, const char *configId, IDocsumFieldWriterFactory& docsum_field_writer_factory);
 };
 
 }

@@ -2,16 +2,19 @@
 package com.yahoo.vespa.clustercontroller.core;
 
 import com.yahoo.vdslib.state.State;
-import org.junit.Test;
-import static org.junit.Assert.assertEquals;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+@ExtendWith(CleanupZookeeperLogsOnSuccess.class)
 public class WantedStateTest extends FleetControllerTest {
 
     @Test
-    public void testSettingStorageNodeMaintenanceAndBack() throws Exception {
+    void testSettingStorageNodeMaintenanceAndBack() throws Exception {
         startingTest("WantedStateTest::testSettingStorageNodeMaintenanceAndBack()");
         setUpFleetController(true, defaultOptions("mycluster"));
-        setUpVdsNodes(true, new DummyVdsNodeOptions());
+        setUpVdsNodes(true);
         waitForStableSystem();
 
         setWantedState(nodes.get(1), State.MAINTENANCE, null);
@@ -22,10 +25,10 @@ public class WantedStateTest extends FleetControllerTest {
     }
 
     @Test
-    public void testOverridingWantedStateOtherReason() throws Exception {
+    void testOverridingWantedStateOtherReason() throws Exception {
         startingTest("WantedStateTest::testOverridingWantedStateOtherReason()");
         setUpFleetController(true, defaultOptions("mycluster"));
-        setUpVdsNodes(true, new DummyVdsNodeOptions());
+        setUpVdsNodes(true);
         waitForStableSystem();
 
         setWantedState(nodes.get(1), State.MAINTENANCE, "Foo");

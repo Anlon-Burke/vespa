@@ -29,12 +29,6 @@ AttributeCombinerDFW::AttributeCombinerDFW(const vespalib::string &fieldName, bo
 AttributeCombinerDFW::~AttributeCombinerDFW() = default;
 
 bool
-AttributeCombinerDFW::IsGenerated() const
-{
-    return true;
-}
-
-bool
 AttributeCombinerDFW::setFieldWriterStateIndex(uint32_t fieldWriterStateIndex)
 {
     _stateIndex = fieldWriterStateIndex;
@@ -55,7 +49,7 @@ AttributeCombinerDFW::create(const vespalib::string &fieldName, IAttributeContex
 }
 
 void
-AttributeCombinerDFW::insertField(uint32_t docid, GetDocsumsState *state, ResType, vespalib::slime::Inserter &target)
+AttributeCombinerDFW::insertField(uint32_t docid, GetDocsumsState *state, ResType, vespalib::slime::Inserter &target) const
 {
     auto& fieldWriterState = state->_fieldWriterStates[_stateIndex];
     if (!fieldWriterState) {

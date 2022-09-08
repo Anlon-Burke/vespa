@@ -3,8 +3,11 @@
 #include <vespa/searchcore/proton/matching/match_phase_limiter.h>
 #include <vespa/searchlib/queryeval/termasstring.h>
 #include <vespa/searchlib/queryeval/andsearchstrict.h>
+#include <vespa/searchlib/queryeval/searchable.h>
 #include <vespa/searchlib/queryeval/fake_requestcontext.h>
+#include <vespa/searchlib/queryeval/blueprint.h>
 #include <vespa/searchlib/fef/termfieldmatchdataarray.h>
+#include <vespa/searchlib/fef/termfieldmatchdata.h>
 #include <vespa/searchlib/engine/trace.h>
 #include <vespa/vespalib/data/slime/slime.h>
 
@@ -14,6 +17,7 @@ using search::queryeval::SearchIterator;
 using search::queryeval::Searchable;
 using search::queryeval::Blueprint;
 using search::queryeval::SimpleLeafBlueprint;
+using search::queryeval::IRequestContext;
 using search::queryeval::FieldSpec;
 using search::queryeval::FieldSpecBaseList;
 using search::queryeval::AndSearchStrict;
@@ -37,7 +41,7 @@ struct MockSearch : SearchIterator {
     bool postings_fetched;
     uint32_t last_seek = beginId();
     uint32_t last_unpack = beginId();
-    MockSearch(const vespalib::string &term_in)
+    explicit MockSearch(const vespalib::string &term_in)
         : spec("", 0, 0), term(term_in), _strict(vespalib::Trinary::True), tfmda(), postings_fetched(false) {}
     MockSearch(const FieldSpec &spec_in, const vespalib::string &term_in, bool strict_in,
                const TermFieldMatchDataArray &tfmda_in, bool postings_fetched_in)
@@ -61,16 +65,14 @@ struct MockBlueprint : SimpleLeafBlueprint {
     {
         setEstimate(HitEstimate(756, false));
     }    
-    virtual SearchIterator::UP createLeafSearch(const TermFieldMatchDataArray &tfmda,
-                                                bool strict) const override
+    SearchIterator::UP createLeafSearch(const TermFieldMatchDataArray &tfmda, bool strict) const override
     {
         if (postings_fetched) {
             EXPECT_EQUAL(postings_strict.isStrict(), strict);
         }
-        return SearchIterator::UP(new MockSearch(spec, term, strict, tfmda,
-                                                 postings_fetched));
+        return std::make_unique<MockSearch>(spec, term, strict, tfmda, postings_fetched);
     }
-    virtual void fetchPostings(const search::queryeval::ExecuteInfo &execInfo) override {
+    void fetchPostings(const search::queryeval::ExecuteInfo &execInfo) override {
         postings_strict = execInfo;
         postings_fetched = true;
     }
@@ -78,13 +80,13 @@ struct MockBlueprint : SimpleLeafBlueprint {
 
 struct MockSearchable : Searchable {
     size_t create_cnt = 0;
-    virtual Blueprint::UP createBlueprint(const search::queryeval::IRequestContext & requestContext,
-                                          const FieldSpec &field,
-                                          const search::query::Node &term) override
+    Blueprint::UP createBlueprint(const IRequestContext & requestContext,
+                                  const FieldSpec &field,
+                                  const search::query::Node &term) override
     {
         (void) requestContext;
         ++create_cnt;
-        return Blueprint::UP(new MockBlueprint(field, termAsString(term)));
+        return std::make_unique<MockBlueprint>(field, termAsString(term));
     }
 };
 
@@ -171,7 +173,7 @@ TEST("require that the attribute limiter works correctly") {
         EXPECT_EQUAL(1u, searchable.create_cnt);
         SearchIterator::UP s2 = limiter.create_search(42, diverse ? 3 : 42, strict);
         EXPECT_EQUAL(1u, searchable.create_cnt);
-        MockSearch *ms = dynamic_cast<MockSearch*>(s1.get());
+        auto *ms = dynamic_cast<MockSearch*>(s1.get());
         ASSERT_TRUE(ms != nullptr);
         EXPECT_EQUAL("limiter_attribute", ms->spec.getName());
         EXPECT_EQUAL(0u, ms->spec.getFieldId());
@@ -204,7 +206,7 @@ TEST("require that no limiter has no behavior") {
     SearchIterator::UP search = limiter.maybe_limit(prepare(new MockSearch("search")), 1.0, 100000000, nullptr);
     limiter.updateDocIdSpaceEstimate(1000, 9000);
     EXPECT_EQUAL(std::numeric_limits<size_t>::max(), limiter.getDocIdSpaceEstimate());
-    MockSearch *ms = dynamic_cast<MockSearch*>(search.get());
+    auto *ms = dynamic_cast<MockSearch*>(search.get());
     ASSERT_TRUE(ms != nullptr);
     EXPECT_EQUAL("search", ms->term);
     EXPECT_FALSE(limiter.was_limited());
@@ -222,7 +224,7 @@ TEST("require that the match phase limiter may chose not to limit the query") {
     SearchIterator::UP search = limiter.maybe_limit(prepare(new MockSearch("search")), 0.005, 100000, nullptr);
     limiter.updateDocIdSpaceEstimate(1000, 9000);
     EXPECT_EQUAL(10000u, limiter.getDocIdSpaceEstimate());
-    MockSearch *ms = dynamic_cast<MockSearch*>(search.get());
+    auto *ms = dynamic_cast<MockSearch*>(search.get());
     ASSERT_TRUE(ms != nullptr);
     EXPECT_EQUAL("search", ms->term);
     EXPECT_FALSE(limiter.was_limited());
@@ -250,7 +252,7 @@ TEST_F("require that the match phase limiter may chose not to limit the query wh
     SearchIterator::UP search = limiter.maybe_limit(prepare(new MockSearch("search")), 0.10, 1900000, nullptr);
     limiter.updateDocIdSpaceEstimate(1000, 1899000);
     EXPECT_EQUAL(1900000u, limiter.getDocIdSpaceEstimate());
-    MockSearch *ms = dynamic_cast<MockSearch *>(search.get());
+    auto *ms = dynamic_cast<MockSearch *>(search.get());
     ASSERT_TRUE(ms != nullptr);
     EXPECT_EQUAL("search", ms->term);
     EXPECT_FALSE(limiter.was_limited());
@@ -262,11 +264,11 @@ TEST_F("require that the match phase limiter may chose to limit the query even w
     SearchIterator::UP search = limiter.maybe_limit(prepare(new MockSearch("search")), 0.10, 2100000, nullptr);
     limiter.updateDocIdSpaceEstimate(1000, 2099000);
     EXPECT_EQUAL(159684u, limiter.getDocIdSpaceEstimate());
-    LimitedSearch *strict_and = dynamic_cast<LimitedSearch*>(search.get());
+    auto *strict_and = dynamic_cast<LimitedSearch*>(search.get());
     ASSERT_TRUE(strict_and != nullptr);
-    const MockSearch *ms1 = dynamic_cast<const MockSearch*>(&strict_and->getFirst());
+    const auto *ms1 = dynamic_cast<const MockSearch*>(&strict_and->getFirst());
     ASSERT_TRUE(ms1 != nullptr);
-    const MockSearch *ms2 = dynamic_cast<const MockSearch*>(&strict_and->getSecond());
+    const auto *ms2 = dynamic_cast<const MockSearch*>(&strict_and->getSecond());
     ASSERT_TRUE(ms2 != nullptr);
     EXPECT_EQUAL("[;;-100000]", ms1->term);
     EXPECT_EQUAL("search", ms2->term);
@@ -291,16 +293,16 @@ TEST("require that the match phase limiter is able to pre-limit the query") {
     EXPECT_TRUE(limiter.is_enabled());
     EXPECT_EQUAL(12u, limiter.sample_hits_per_thread(10));
     RelativeTime clock(std::make_unique<CountingClock>(vespalib::count_ns(10000000s), 1700000L));
-    Trace trace(clock, 7);
+    Trace trace(clock, 7, 0);
     trace.start(4, false);
     SearchIterator::UP search = limiter.maybe_limit(prepare(new MockSearch("search")), 0.1, 100000, trace.maybeCreateCursor(7, "limit"));
     limiter.updateDocIdSpaceEstimate(1000, 9000);
     EXPECT_EQUAL(1680u, limiter.getDocIdSpaceEstimate());
-    LimitedSearch *strict_and = dynamic_cast<LimitedSearch*>(search.get());
+    auto *strict_and = dynamic_cast<LimitedSearch*>(search.get());
     ASSERT_TRUE(strict_and != nullptr);
-    const MockSearch *ms1 = dynamic_cast<const MockSearch*>(&strict_and->getFirst());
+    const auto *ms1 = dynamic_cast<const MockSearch*>(&strict_and->getFirst());
     ASSERT_TRUE(ms1 != nullptr);
-    const MockSearch *ms2 = dynamic_cast<const MockSearch*>(&strict_and->getSecond());
+    const auto *ms2 = dynamic_cast<const MockSearch*>(&strict_and->getSecond());
     ASSERT_TRUE(ms2 != nullptr);
     EXPECT_EQUAL("[;;-5000]", ms1->term);
     EXPECT_EQUAL("search", ms2->term);
@@ -348,11 +350,11 @@ TEST("require that the match phase limiter is able to post-limit the query") {
     SearchIterator::UP search = limiter.maybe_limit(prepare(new MockSearch("search")), 0.1, 100000, nullptr);
     limiter.updateDocIdSpaceEstimate(1000, 9000);
     EXPECT_EQUAL(1680u, limiter.getDocIdSpaceEstimate());
-    LimitedSearch *strict_and = dynamic_cast<LimitedSearch*>(search.get());
+    auto *strict_and = dynamic_cast<LimitedSearch*>(search.get());
     ASSERT_TRUE(strict_and != nullptr);
-    const MockSearch *ms1 = dynamic_cast<const MockSearch*>(&strict_and->getFirst());
+    const auto *ms1 = dynamic_cast<const MockSearch*>(&strict_and->getFirst());
     ASSERT_TRUE(ms1 != nullptr);
-    const MockSearch *ms2 = dynamic_cast<const MockSearch*>(&strict_and->getSecond());
+    const auto *ms2 = dynamic_cast<const MockSearch*>(&strict_and->getSecond());
     ASSERT_TRUE(ms2 != nullptr);
     EXPECT_EQUAL("search", ms1->term);
     EXPECT_EQUAL("[;;-15000]", ms2->term);
@@ -378,9 +380,9 @@ void verifyDiversity(AttributeLimiter::DiversityCutoffStrategy strategy)
     SearchIterator::UP search = limiter.maybe_limit(prepare(new MockSearch("search")), 0.1, 100000, nullptr);
     limiter.updateDocIdSpaceEstimate(1000, 9000);
     EXPECT_EQUAL(1680u, limiter.getDocIdSpaceEstimate());
-    LimitedSearch *strict_and = dynamic_cast<LimitedSearch*>(search.get());
+    auto *strict_and = dynamic_cast<LimitedSearch*>(search.get());
     ASSERT_TRUE(strict_and != nullptr);
-    const MockSearch *ms1 = dynamic_cast<const MockSearch*>(&strict_and->getFirst());
+    const auto *ms1 = dynamic_cast<const MockSearch*>(&strict_and->getFirst());
     ASSERT_TRUE(ms1 != nullptr);
     if (strategy == AttributeLimiter::LOOSE) {
         EXPECT_EQUAL("[;;-5000;category;500;131;loose]", ms1->term);

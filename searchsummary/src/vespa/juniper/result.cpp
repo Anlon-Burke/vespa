@@ -8,6 +8,7 @@
 #include "Matcher.h"
 #include "config.h"
 #include "appender.h"
+#include <vespa/vespalib/util/size_literals.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".juniper.result");
@@ -18,23 +19,23 @@ namespace juniper {
 class SummaryImpl : public Summary
 {
 public:
-    explicit SummaryImpl() : _text("") {}
+    explicit SummaryImpl() : _text() {}
     explicit SummaryImpl(const std::string& t) : _text(t) {}
-    ~SummaryImpl() {}
+    ~SummaryImpl() override = default;
     const char* Text() const override { return _text.c_str(); }
     size_t Length() const override { return _text.size(); }
     std::string _text;
 };
 
 
-Result::Result(Config* config, QueryHandle* qhandle,
+Result::Result(const Config& config, QueryHandle& qhandle,
                const char* docsum, size_t docsum_len, uint32_t langid) :
-    _qhandle(qhandle),
-    _mo(qhandle->MatchObj(langid)),
+    _qhandle(&qhandle),
+    _mo(qhandle.MatchObj(langid)),
     _docsum(docsum),
     _docsum_len(docsum_len),
     _langid(langid),
-    _config(config),
+    _config(&config),
     _matcher(),
     _tokenizer(),
     _summaries(),
@@ -50,8 +51,8 @@ Result::Result(Config* config, QueryHandle* qhandle,
 {
     if (!_mo) return; // The empty result..
 
-    MatcherParams& mp = _config->_matcherparams;
-    Fast_WordFolder* wordfolder = mp.WordFolder();
+    const MatcherParams& mp = _config->_matcherparams;
+    const Fast_WordFolder* wordfolder = mp.WordFolder();
 
     if (_qhandle->_stem_min < 0)
         _stem_min = mp.StemMinLength();
@@ -87,8 +88,8 @@ Result::Result(Config* config, QueryHandle* qhandle,
 
     _registry = std::make_unique<SpecialTokenRegistry>(_matcher->getQuery());
 
-    if (qhandle->_log_mask)
-        _matcher->set_log(qhandle->_log_mask);
+    if (qhandle._log_mask)
+        _matcher->set_log(qhandle._log_mask);
 
     _tokenizer->SetSuccessor(_matcher.get());
     if (!_registry->getSpecialTokens().empty()) {
@@ -96,10 +97,7 @@ Result::Result(Config* config, QueryHandle* qhandle,
     }
 }
 
-Result::~Result()
-{
-    delete_all(_summaries);
-}
+Result::~Result() = default;
 
 
 long Result::GetRelevancy()
@@ -121,7 +119,7 @@ Summary* Result::GetTeaser(const Config* alt_config)
         _dynsum_len = dsp.Length();
     else
         _dynsum_len = _qhandle->_dynsum_len;
-    SummaryImpl *sum = NULL;
+    std::unique_ptr<SummaryImpl> sum;
     // Avoid overhead when being called with an empty stack
     if (_mo && _mo->Query()) {
         Scan();
@@ -139,13 +137,13 @@ Summary* Result::GetTeaser(const Config* alt_config)
 
         if (sdesc) {
             size_t char_size;
-            sum = new SummaryImpl(BuildSummary(_docsum, _docsum_len, sdesc, cfg->_sumconf, char_size));
+            sum = std::make_unique<SummaryImpl>(BuildSummary(_docsum, _docsum_len, sdesc, cfg->_sumconf, char_size));
             DeleteSummaryDesc(sdesc);
         }
     }
 
-    if (sum == NULL) {
-        sum = new SummaryImpl();
+    if (!sum) {
+        sum = std::make_unique<SummaryImpl>();
     }
 
     if (sum->_text.empty() && dsp.Fallback() == DocsumParams::FALLBACK_PREFIX)
@@ -157,15 +155,14 @@ Summary* Result::GetTeaser(const Config* alt_config)
         const char      *src_end  = _docsum + _docsum_len;
         ucs4_t          *dst      = buf;
         ucs4_t          *dst_end  = dst + TOKEN_DSTLEN;
-        Fast_WordFolder *folder   = _config->_matcherparams.WordFolder();
+        const Fast_WordFolder *folder   = _config->_matcherparams.WordFolder();
 
-        text.reserve(_dynsum_len*2);
+        text.reserve(std::min(4_Ki, size_t(_dynsum_len*2)));
         if (src_end - src <= _dynsum_len) {
             a.append(text, src, src_end - src);
             src = src_end; // ensure while loop not run
         }
-        while (src < src_end)
-        {
+        while (src < src_end) {
             const char *startpos;
             size_t tokenLen;
             const char *old_src = src;
@@ -186,25 +183,26 @@ Summary* Result::GetTeaser(const Config* alt_config)
         }
         sum->_text = std::string(&text[0], text.size());
     }
-    _summaries.push_back(sum);
-    return sum;
+    _summaries.emplace_back(std::move(sum));
+    return _summaries.back().get();
 }
 
 
 Summary* Result::GetLog()
 {
     // Avoid overhead when being called with an empty stack
-    Summary* sum = NULL;
+    std::unique_ptr<Summary> sum;
     if (_mo && _mo->Query())
     {
         LOG(debug, "juniper::GetLog");
         Scan();
-        sum = new SummaryImpl(_matcher->GetLog());
+        sum = std::make_unique<SummaryImpl>(_matcher->GetLog());
     }
-    else
-        sum = new SummaryImpl();
-    _summaries.push_back(sum);
-    return sum;
+    else {
+        sum = std::make_unique<SummaryImpl>();
+    }
+    _summaries.emplace_back(std::move(sum));
+    return _summaries.back().get();
 }
 
 

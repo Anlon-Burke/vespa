@@ -80,11 +80,6 @@ func (d DeploymentOptions) String() string {
 	return fmt.Sprintf("%s to %s", d.Target.Deployment(), d.Target.Type())
 }
 
-// IsCloud returns whether this is a deployment to Vespa Cloud or hosted Vespa
-func (d *DeploymentOptions) IsCloud() bool {
-	return d.Target.Type() == TargetCloud || d.Target.Type() == TargetHosted
-}
-
 func (d *DeploymentOptions) url(path string) (*url.URL, error) {
 	service, err := d.Target.Service(DeployService, 0, 0, "")
 	if err != nil {
@@ -115,7 +110,7 @@ func ZoneFromString(s string) (ZoneID, error) {
 
 // Prepare deployment and return the session ID
 func Prepare(deployment DeploymentOptions) (PrepareResult, error) {
-	if deployment.IsCloud() {
+	if deployment.Target.IsCloud() {
 		return PrepareResult{}, fmt.Errorf("prepare is not supported with %s target", deployment.Target.Type())
 	}
 	sessionURL, err := deployment.url("/application/v2/tenant/default/session")
@@ -143,12 +138,28 @@ func Prepare(deployment DeploymentOptions) (PrepareResult, error) {
 	if err := checkResponse(req, response, serviceDescription); err != nil {
 		return PrepareResult{}, err
 	}
-	return result, nil
+	var jsonResponse struct {
+		SessionID string                   `json:"session-id"`
+		Log       []LogLinePrepareResponse `json:"log"`
+	}
+	jsonDec := json.NewDecoder(response.Body)
+	if err := jsonDec.Decode(&jsonResponse); err != nil {
+		return PrepareResult{}, err
+	}
+	var id int64
+	id, err = strconv.ParseInt(jsonResponse.SessionID, 10, 64)
+	if err != nil {
+		return PrepareResult{}, err
+	}
+	return PrepareResult{
+		ID:       id,
+		LogLines: jsonResponse.Log,
+	}, err
 }
 
 // Activate deployment with sessionID from a past prepare
 func Activate(sessionID int64, deployment DeploymentOptions) error {
-	if deployment.IsCloud() {
+	if deployment.Target.IsCloud() {
 		return fmt.Errorf("activate is not supported with %s target", deployment.Target.Type())
 	}
 	u, err := deployment.url(fmt.Sprintf("/application/v2/tenant/default/session/%d/active", sessionID))
@@ -170,7 +181,7 @@ func Activate(sessionID int64, deployment DeploymentOptions) error {
 
 func Deploy(opts DeploymentOptions) (PrepareResult, error) {
 	path := "/application/v2/tenant/default/prepareandactivate"
-	if opts.IsCloud() {
+	if opts.Target.IsCloud() {
 		if err := checkDeploymentOpts(opts); err != nil {
 			return PrepareResult{}, err
 		}
@@ -209,7 +220,7 @@ func copyToPart(dst *multipart.Writer, src io.Reader, fieldname, filename string
 }
 
 func Submit(opts DeploymentOptions) error {
-	if !opts.IsCloud() {
+	if !opts.Target.IsCloud() {
 		return fmt.Errorf("%s: submit is unsupported by %s target", opts, opts.Target.Type())
 	}
 	if err := checkDeploymentOpts(opts); err != nil {
@@ -266,7 +277,7 @@ func checkDeploymentOpts(opts DeploymentOptions) error {
 	if opts.Target.Type() == TargetCloud && !opts.ApplicationPackage.HasCertificate() {
 		return fmt.Errorf("%s: missing certificate in package", opts)
 	}
-	if !opts.IsCloud() && !opts.Version.IsZero() {
+	if !opts.Target.IsCloud() && !opts.Version.IsZero() {
 		return fmt.Errorf("%s: custom runtime version is not supported by %s target", opts, opts.Target.Type())
 	}
 	return nil
@@ -279,7 +290,7 @@ func newDeploymentRequest(url *url.URL, opts DeploymentOptions) (*http.Request, 
 	}
 	var body io.Reader
 	header := http.Header{}
-	if opts.IsCloud() {
+	if opts.Target.IsCloud() {
 		var buf bytes.Buffer
 		form := multipart.NewWriter(&buf)
 		formFile, err := form.CreateFormFile("applicationZip", filepath.Base(opts.ApplicationPackage.Path))

@@ -8,6 +8,7 @@ import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
 import com.yahoo.io.IOUtils;
+import com.yahoo.jdisc.http.filter.security.misc.User;
 import com.yahoo.restapi.ErrorResponse;
 import com.yahoo.restapi.MessageResponse;
 import com.yahoo.restapi.Path;
@@ -27,7 +28,6 @@ import com.yahoo.vespa.hosted.controller.LockedTenant;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.Plan;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.PlanId;
 import com.yahoo.vespa.hosted.controller.api.integration.user.Roles;
-import com.yahoo.jdisc.http.filter.security.misc.User;
 import com.yahoo.vespa.hosted.controller.api.integration.user.UserId;
 import com.yahoo.vespa.hosted.controller.api.integration.user.UserManagement;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
@@ -35,6 +35,7 @@ import com.yahoo.vespa.hosted.controller.api.role.RoleDefinition;
 import com.yahoo.vespa.hosted.controller.api.role.SecurityContext;
 import com.yahoo.vespa.hosted.controller.api.role.SimplePrincipal;
 import com.yahoo.vespa.hosted.controller.api.role.TenantRole;
+import com.yahoo.vespa.hosted.controller.restapi.ErrorResponses;
 import com.yahoo.vespa.hosted.controller.restapi.application.EmptyResponse;
 import com.yahoo.vespa.hosted.controller.tenant.Tenant;
 import com.yahoo.yolean.Exceptions;
@@ -51,7 +52,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -95,13 +95,13 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
             return ErrorResponse.badRequest(Exceptions.toMessageString(e));
         }
         catch (RuntimeException e) {
-            log.log(Level.WARNING, "Unexpected error handling '" + request.getUri() + "'", e);
-            return ErrorResponse.internalServerError(Exceptions.toMessageString(e));
+            return ErrorResponses.logThrowing(request, log, e);
         }
     }
 
     private HttpResponse handleGET(Path path, HttpRequest request) {
         if (path.matches("/user/v1/user")) return userMetadata(request);
+        if (path.matches("/user/v1/find")) return userMetadataFromUserId(request.getProperty("email"));
         if (path.matches("/user/v1/tenant/{tenant}")) return listTenantRoleMembers(path.get("tenant"));
         if (path.matches("/user/v1/tenant/{tenant}/application/{application}")) return listApplicationRoleMembers(path.get("tenant"), path.get("application"));
 
@@ -111,7 +111,6 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
 
     private HttpResponse handlePOST(Path path, HttpRequest request) {
         if (path.matches("/user/v1/tenant/{tenant}")) return addTenantRoleMember(path.get("tenant"), request);
-        if (path.matches("/user/v1/tenant/{tenant}/application/{application}")) return addApplicationRoleMember(path.get("tenant"), path.get("application"), request);
 
         return ErrorResponse.notFoundError(Text.format("No '%s' handler at '%s'", request.getMethod(),
                                                          request.getUri().getPath()));
@@ -119,7 +118,6 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
 
     private HttpResponse handleDELETE(Path path, HttpRequest request) {
         if (path.matches("/user/v1/tenant/{tenant}")) return removeTenantRoleMember(path.get("tenant"), request);
-        if (path.matches("/user/v1/tenant/{tenant}/application/{application}")) return removeApplicationRoleMember(path.get("tenant"), path.get("application"), request);
 
         return ErrorResponse.notFoundError(Text.format("No '%s' handler at '%s'", request.getMethod(),
                                                          request.getUri().getPath()));
@@ -136,6 +134,18 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
             RoleDefinition.hostedSupporter,
             RoleDefinition.hostedAccountant);
 
+    private HttpResponse userMetadataFromUserId(String email) {
+        var maybeUser = users.findUser(email);
+
+        if (maybeUser.isPresent()) {
+            var user = maybeUser.get();
+            var roles = users.listRoles(new UserId(user.email()));
+            return renderUserMetaData(user, Set.copyOf(roles));
+        }
+
+        return ErrorResponse.notFoundError("Could not find user: " + email);
+    }
+
     private HttpResponse userMetadata(HttpRequest request) {
         User user;
         if (request.getJDiscRequest().context().get(User.ATTRIBUTE_NAME) instanceof User) {
@@ -149,6 +159,10 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
 
         Set<Role> roles = getAttribute(request, SecurityContext.ATTRIBUTE_NAME, SecurityContext.class).roles();
 
+        return renderUserMetaData(user, roles);
+    }
+
+    private HttpResponse renderUserMetaData(User user, Set<Role> roles) {
         Map<TenantName, List<TenantRole>> tenantRolesByTenantName = roles.stream()
                 .flatMap(role -> filterTenantRoles(role).stream())
                 .distinct()
@@ -159,7 +173,7 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
         List<Role> operatorRoles = roles.stream()
                 .filter(role -> hostedOperators.contains(role.definition()))
                 .sorted(Comparator.comparing(Role::definition))
-                .collect(Collectors.toList());
+                .toList();
 
         Slime slime = new Slime();
         Cursor root = slime.setObject();
@@ -255,21 +269,6 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
 
     private HttpResponse addTenantRoleMember(String tenantName, HttpRequest request) {
         Inspector requestObject = bodyInspector(request);
-        if (requestObject.field("roles").valid()) {
-            return addMultipleTenantRoleMembers(tenantName, requestObject);
-        }
-        return addTenantRoleMember(tenantName, requestObject);
-    }
-
-    private HttpResponse addTenantRoleMember(String tenantName, Inspector requestObject) {
-        String roleName = require("roleName", Inspector::asString, requestObject);
-        UserId user = new UserId(require("user", Inspector::asString, requestObject));
-        Role role = Roles.toRole(TenantName.from(tenantName), roleName);
-        users.addUsers(role, List.of(user));
-        return new MessageResponse(user + " is now a member of " + role);
-    }
-
-    private HttpResponse addMultipleTenantRoleMembers(String tenantName, Inspector requestObject) {
         var tenant = TenantName.from(tenantName);
         var user = new UserId(require("user", Inspector::asString, requestObject));
         var roles = SlimeStream.fromArray(requestObject.field("roles"), Inspector::asString)
@@ -280,37 +279,8 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
         return new MessageResponse(user + " is now a member of " + roles.stream().map(Role::toString).collect(Collectors.joining(", ")));
     }
 
-    private HttpResponse addApplicationRoleMember(String tenantName, String applicationName, HttpRequest request) {
-        Inspector requestObject = bodyInspector(request);
-        String roleName = require("roleName", Inspector::asString, requestObject);
-        UserId user = new UserId(require("user", Inspector::asString, requestObject));
-        Role role = Roles.toRole(TenantName.from(tenantName), ApplicationName.from(applicationName), roleName);
-        users.addUsers(role, List.of(user));
-        return new MessageResponse(user + " is now a member of " + role);
-    }
-
     private HttpResponse removeTenantRoleMember(String tenantName, HttpRequest request) {
         Inspector requestObject = bodyInspector(request);
-        if (requestObject.field("roles").valid()) {
-            return removeMultipleTenantRoleMembers(tenantName, requestObject);
-        }
-        return removeTenantRoleMember(tenantName, requestObject);
-    }
-
-    private HttpResponse removeTenantRoleMember(String tenantName, Inspector requestObject) {
-        TenantName tenant = TenantName.from(tenantName);
-        String roleName = require("roleName", Inspector::asString, requestObject);
-        UserId user = new UserId(require("user", Inspector::asString, requestObject));
-        List<Role> roles = Collections.singletonList(Roles.toRole(tenant, roleName));
-
-        enforceLastAdminOfTenant(tenant, user, roles);
-        removeDeveloperKey(tenant, user, roles);
-        users.removeFromRoles(user, roles);
-
-        return new MessageResponse(user + " is no longer a member of " + roles.stream().map(Role::toString).collect(Collectors.joining(", ")));
-    }
-
-    private HttpResponse removeMultipleTenantRoleMembers(String tenantName, Inspector requestObject) {
         var tenant = TenantName.from(tenantName);
         var user = new UserId(require("user", Inspector::asString, requestObject));
         var roles = SlimeStream.fromArray(requestObject.field("roles"), Inspector::asString)
@@ -320,6 +290,11 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
         enforceLastAdminOfTenant(tenant, user, roles);
         removeDeveloperKey(tenant, user, roles);
         users.removeFromRoles(user, roles);
+
+        controller.tenants().lockIfPresent(tenant, LockedTenant.class, lockedTenant -> {
+            if (lockedTenant instanceof LockedTenant.Cloud cloudTenant)
+                controller.tenants().store(cloudTenant.withInvalidateUserSessionsBefore(controller.clock().instant()));
+        });
 
         return new MessageResponse(user + " is no longer a member of " + roles.stream().map(Role::toString).collect(Collectors.joining(", ")));
     }
@@ -346,15 +321,6 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
                 break;
             }
         }
-    }
-
-    private HttpResponse removeApplicationRoleMember(String tenantName, String applicationName, HttpRequest request) {
-        Inspector requestObject = bodyInspector(request);
-        String roleName = require("roleName", Inspector::asString, requestObject);
-        UserId user = new UserId(require("user", Inspector::asString, requestObject));
-        Role role = Roles.toRole(TenantName.from(tenantName), ApplicationName.from(applicationName), roleName);
-        users.removeUsers(role, List.of(user));
-        return new MessageResponse(user + " is no longer a member of " + role);
     }
 
     private boolean hasTrialCapacity() {

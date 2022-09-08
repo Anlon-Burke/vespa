@@ -166,6 +166,8 @@ public class ModelContextImpl implements ModelContext {
 
     public static class FeatureFlags implements ModelContext.FeatureFlags {
 
+        private final String queryDispatchPolicy;
+        private final String phraseOptimization;
         private final double defaultTermwiseLimit;
         private final boolean useThreePhaseUpdates;
         private final String feedSequencer;
@@ -210,16 +212,18 @@ public class ModelContextImpl implements ModelContext {
         private final boolean enableProxyProtocolMixedMode;
         private final boolean sharedStringRepoNoReclaim;
         private final String logFileCompressionAlgorithm;
+        private final boolean useTwoPhaseDocumentGc;
         private final boolean mbus_dispatch_on_decode;
         private final boolean mbus_dispatch_on_encode;
         private final int mbus_threads;
         private final int mbus_network_threads;
-        private int mbus_java_num_targets;
-        private int mbus_java_events_before_wakeup;
-        private int mbus_cpp_num_targets;
-        private int mbus_cpp_events_before_wakeup;
-        private int rpc_num_targets;
-        private int rpc_events_before_wakeup;
+        private final int mbus_java_num_targets;
+        private final int mbus_java_events_before_wakeup;
+        private final int mbus_cpp_num_targets;
+        private final int mbus_cpp_events_before_wakeup;
+        private final int rpc_num_targets;
+        private final int rpc_events_before_wakeup;
+        private final int clusterControllerStateGatherCount;
 
         public FeatureFlags(FlagSource source, ApplicationId appId, Version version) {
             this.defaultTermwiseLimit = flagValue(source, appId, version, Flags.DEFAULT_TERM_WISE_LIMIT);
@@ -270,14 +274,20 @@ public class ModelContextImpl implements ModelContext {
             this.enableProxyProtocolMixedMode = flagValue(source, appId, version, Flags.ENABLE_PROXY_PROTOCOL_MIXED_MODE);
             this.sharedStringRepoNoReclaim = flagValue(source, appId, version, Flags.SHARED_STRING_REPO_NO_RECLAIM);
             this.logFileCompressionAlgorithm = flagValue(source, appId, version, Flags.LOG_FILE_COMPRESSION_ALGORITHM);
+            this.useTwoPhaseDocumentGc = flagValue(source, appId, version, Flags.USE_TWO_PHASE_DOCUMENT_GC);
             this.mbus_java_num_targets = flagValue(source, appId, version, Flags.MBUS_JAVA_NUM_TARGETS);
             this.mbus_java_events_before_wakeup = flagValue(source, appId, version, Flags.MBUS_JAVA_EVENTS_BEFORE_WAKEUP);
             this.mbus_cpp_num_targets = flagValue(source, appId, version, Flags.MBUS_CPP_NUM_TARGETS);
             this.mbus_cpp_events_before_wakeup = flagValue(source, appId, version, Flags.MBUS_CPP_EVENTS_BEFORE_WAKEUP);
             this.rpc_num_targets = flagValue(source, appId, version, Flags.RPC_NUM_TARGETS);
             this.rpc_events_before_wakeup = flagValue(source, appId, version, Flags.RPC_EVENTS_BEFORE_WAKEUP);
+            this.queryDispatchPolicy = flagValue(source, appId, version, Flags.QUERY_DISPATCH_POLICY);
+            this.phraseOptimization = flagValue(source, appId, version, Flags.PHRASE_OPTIMIZATION);
+            this.clusterControllerStateGatherCount = flagValue(source, appId, version, Flags.CLUSTER_CONTROLLER_STATE_GATHER_COUNT);
         }
 
+        @Override public String queryDispatchPolicy() { return queryDispatchPolicy; }
+        @Override public String phraseOptimization() { return phraseOptimization; }
         @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
         @Override public boolean useThreePhaseUpdates() { return useThreePhaseUpdates; }
         @Override public String feedSequencerType() { return feedSequencer; }
@@ -340,6 +350,8 @@ public class ModelContextImpl implements ModelContext {
             }
             return defVal;
         }
+        @Override public boolean useTwoPhaseDocumentGc() { return useTwoPhaseDocumentGc; }
+        @Override public int clusterControllerStateGatherCount() { return clusterControllerStateGatherCount; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, Version vespaVersion, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)

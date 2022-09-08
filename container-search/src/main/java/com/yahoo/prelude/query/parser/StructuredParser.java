@@ -1,8 +1,26 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query.parser;
 
+import com.yahoo.collections.Pair;
 import com.yahoo.prelude.IndexFacts;
-import com.yahoo.prelude.query.*;
+import com.yahoo.prelude.query.AndItem;
+import com.yahoo.prelude.query.AndSegmentItem;
+import com.yahoo.prelude.query.BlockItem;
+import com.yahoo.prelude.query.CompositeItem;
+import com.yahoo.prelude.query.IntItem;
+import com.yahoo.prelude.query.Item;
+import com.yahoo.prelude.query.MarkerWordItem;
+import com.yahoo.prelude.query.PhraseItem;
+import com.yahoo.prelude.query.PhraseSegmentItem;
+import com.yahoo.prelude.query.PrefixItem;
+import com.yahoo.prelude.query.SegmentItem;
+import com.yahoo.prelude.query.Substring;
+import com.yahoo.prelude.query.SubstringItem;
+import com.yahoo.prelude.query.SuffixItem;
+import com.yahoo.prelude.query.TaggableItem;
+import com.yahoo.prelude.query.TermItem;
+import com.yahoo.prelude.query.UriItem;
+import com.yahoo.prelude.query.WordItem;
 import com.yahoo.search.query.parser.ParserEnvironment;
 
 import java.util.ArrayList;
@@ -51,12 +69,22 @@ abstract class StructuredParser extends AbstractParser {
         submodes.setFromIndex(indexName, indexFacts);
     }
 
-    protected Item indexableItem() {
+    /**
+     * Returns an item and whether it had an explicit index ('indexname:' prefix).
+     *
+     * @return an item and whether it has an explicit index, or a Pair with the first element null if none
+     */
+    protected Pair<Item, Boolean> indexableItem() {
         int position = tokens.getPosition();
         Item item = null;
 
         try {
+            boolean explicitIndex = false;
             String indexName = indexPrefix();
+            if (indexName != null)
+                explicitIndex = true;
+            else
+                indexName = this.defaultIndex;
             setSubmodeFromIndex(indexName, indexFacts);
 
             item = number();
@@ -78,7 +106,6 @@ abstract class StructuredParser extends AbstractParser {
             if (item != null) {
                 weight = weightSuffix();
             }
-
             if (indexName != null && item != null) {
                 item.setIndexName(indexName);
             }
@@ -87,7 +114,7 @@ abstract class StructuredParser extends AbstractParser {
                 item.setWeight(weight);
             }
 
-            return item;
+            return new Pair<>(item, explicitIndex);
         } finally {
             if (item == null) {
                 tokens.setPosition(position);
@@ -101,8 +128,7 @@ abstract class StructuredParser extends AbstractParser {
             if (tokens.currentIsNoIgnore(SPACE)) {
                 return false;
             }
-            if (tokens.currentIsNoIgnore(NUMBER)
-                    || tokens.currentIsNoIgnore(WORD)) {
+            if (tokens.currentIsNoIgnore(NUMBER) || tokens.currentIsNoIgnore(WORD)) {
                 return true;
             }
             tokens.skipNoIgnore();
@@ -193,7 +219,6 @@ abstract class StructuredParser extends AbstractParser {
                     item = indexPrefix();
                 }
             }
-
             return item;
         } finally {
             if (item == null) {
@@ -278,7 +303,6 @@ abstract class StructuredParser extends AbstractParser {
             tokens.skip(LSQUAREBRACKET);
             if (item == null)
                 tokens.skipNoIgnore(SPACE);
-
             // TODO: Better definition of start and end of numeric items
             if (item == null && tokens.currentIsNoIgnore(MINUS) && (tokens.currentNoIgnore(1).kind == NUMBER)) {
                 tokens.skipNoIgnore();
@@ -333,6 +357,7 @@ abstract class StructuredParser extends AbstractParser {
             if (tokens.currentIs(NUMBER)) {
                 rangeEnd = (negative ? "-" : "") + tokens.next().toString() + decimalPart();
             }
+            if (rangeStart.isBlank() && rangeEnd.isBlank()) return null;
 
 
             String range = "[" + rangeStart + ";" + rangeEnd;
@@ -583,7 +608,7 @@ abstract class StructuredParser extends AbstractParser {
                 if (firstWord instanceof IntItem) {
                     IntItem asInt = (IntItem) firstWord;
                     firstWord = new WordItem(asInt.stringValue(), asInt.getIndexName(),
-                            true, asInt.getOrigin());
+                                             true, asInt.getOrigin());
                 }
                 composite.addItem(firstWord);
                 composite.addItem(word);

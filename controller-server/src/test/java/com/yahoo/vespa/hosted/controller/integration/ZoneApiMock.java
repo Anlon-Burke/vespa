@@ -76,12 +76,17 @@ public class ZoneApiMock implements ZoneApi {
         return Objects.hash(id);
     }
 
+    @Override
+    public String toString() {
+        return id.toString();
+    }
+
     public static class Builder {
 
         private SystemName systemName = SystemName.defaultSystem();
         private ZoneId id = ZoneId.defaultId();
         private ZoneId virtualId = null;
-        private CloudName cloudName = CloudName.defaultName();
+        private CloudName cloudName = CloudName.DEFAULT;
         private String cloudNativeRegionName = id.region().value();
 
         public Builder with(ZoneId id) {

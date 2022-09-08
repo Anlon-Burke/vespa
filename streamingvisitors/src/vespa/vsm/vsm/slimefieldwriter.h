@@ -4,8 +4,8 @@
 #include "docsumfieldspec.h"
 #include <vespa/vsm/common/storagedocument.h>
 #include <vespa/document/fieldvalue/fieldvalues.h>
-#include <vespa/vespalib/data/slime/slime.h>
-#include <vespa/searchlib/util/rawbuf.h>
+
+namespace vespalib::slime { class Inserter; }
 
 namespace vsm {
 
@@ -17,8 +17,6 @@ namespace vsm {
 class SlimeFieldWriter
 {
 private:
-    search::RawBuf  _rbuf;
-    vespalib::Slime _slime;
     const DocsumFieldSpec::FieldIdentifierVector * _inputFields;
     std::vector<vespalib::string> _currPath;
 
@@ -29,26 +27,17 @@ public:
     SlimeFieldWriter();
     ~SlimeFieldWriter();
 
-
     /**
      * Specifies the subset of the field value that should be written.
      **/
     void setInputFields(const DocsumFieldSpec::FieldIdentifierVector & inputFields) { _inputFields = &inputFields; }
 
     /**
-     * Convert the given field value
+     * Insert the given field value
      **/
-    void convert(const document::FieldValue & fv);
-
-    /**
-     * Return a reference to the output binary data
-     **/
-    vespalib::stringref out() const {
-        return vespalib::stringref(_rbuf.GetDrainPos(), _rbuf.GetUsedLen());
-    }
+    void insert(const document::FieldValue & fv, vespalib::slime::Inserter& inserter);
 
     void clear() {
-        _rbuf.Reuse();
         _inputFields = nullptr;
         _currPath.clear();
     }

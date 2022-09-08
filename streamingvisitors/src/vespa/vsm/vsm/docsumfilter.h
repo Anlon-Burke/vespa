@@ -8,13 +8,11 @@
 #include <vespa/vsm/vsm/fieldsearchspec.h>
 #include <vespa/vsm/vsm/flattendocsumwriter.h>
 #include <vespa/vsm/vsm/vsm-adapter.h>
-#include <vespa/searchsummary/docsummary/resultpacker.h>
 #include <vespa/searchsummary/docsummary/docsumstore.h>
+#include <vespa/searchsummary/docsummary/docsum_store_field_value.h>
 
 using search::docsummary::IDocsumStore;
-using search::docsummary::DocsumStoreValue;
 using search::docsummary::ResType;
-using search::docsummary::ResultPacker;
 
 namespace vsm {
 
@@ -34,7 +32,6 @@ private:
     DocsumToolsPtr        _tools;
     FieldSpecList         _fields;        // list of summary fields to generate
     size_t                _highestFieldNo;
-    ResultPacker          _packer;
     FlattenDocsumWriter   _flattenWriter;
     const FieldModifierMap * _snippetModifiers;
     document::FieldValue::UP _cachedValue;
@@ -47,11 +44,12 @@ private:
     const document::FieldValue * getFieldValue(const DocsumFieldSpec::FieldIdentifier & fieldId,
                                                VsmsummaryConfig::Fieldmap::Command command,
                                                const Document & docsum, bool & modified);
-    void writeField(const document::FieldValue & fv, const FieldPath & path, ResType type, ResultPacker & packer);
-    void writeSlimeField(const DocsumFieldSpec & fieldSpec, const Document & docsum, ResultPacker & packer);
-    void writeFlattenField(const DocsumFieldSpec & fieldSpec, const Document & docsum, ResultPacker & packer);
-    void writeEmpty(ResType type, ResultPacker & packer);
+    bool write_flatten_field(const DocsumFieldSpec& field_spec, const Document & docsum);
 
+    search::docsummary::DocsumStoreFieldValue get_struct_or_multivalue_summary_field(const DocsumFieldSpec& field_spec, const Document& doc);
+    search::docsummary::DocsumStoreFieldValue get_flattened_summary_field(const DocsumFieldSpec& field_spec, const Document& doc);
+    void insert_struct_or_multivalue_summary_field(const DocsumFieldSpec& field_spec, const Document& doc, vespalib::slime::Inserter& inserter);
+    void insert_flattened_summary_field(const DocsumFieldSpec& field_spec, const Document& doc, vespalib::slime::Inserter& inserter);
 public:
     DocsumFilter(const DocsumToolsPtr & tools, const IDocSumCache & docsumCache);
     ~DocsumFilter() override;
@@ -81,9 +79,11 @@ public:
     void setDocSumStore(const IDocSumCache & docsumCache) { _docsumCache = &docsumCache; }
 
     // Inherit doc from IDocsumStore
-    DocsumStoreValue getMappedDocsum(uint32_t id) override;
+    std::unique_ptr<const search::docsummary::IDocsumStoreDocument> getMappedDocsum(uint32_t id) override;
     uint32_t getNumDocs() const override;
-    uint32_t getSummaryClassId() const override;
+
+    search::docsummary::DocsumStoreFieldValue get_summary_field(uint32_t entry_idx, const Document& doc);
+    void insert_summary_field(uint32_t entry_idx, const Document& doc, vespalib::slime::Inserter& inserter);
 };
 
 }

@@ -14,7 +14,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -32,23 +34,24 @@ public class OsUpgradeScheduler extends ControllerMaintainer {
     @Override
     protected double maintain() {
         Instant now = controller().clock().instant();
-        if (!canTriggerAt(now)) return 1.0;
         for (var cloud : controller().clouds()) {
-            Release release = releaseIn(cloud);
-            upgradeTo(release, cloud, now);
+            Optional<Change> change = changeIn(cloud);
+            if (change.isEmpty()) continue;
+            if (!change.get().scheduleAt(now)) continue;
+            controller().upgradeOsIn(cloud, change.get().version(), change.get().upgradeBudget(), false);
         }
         return 1.0;
     }
 
-    /** Upgrade to given release in cloud */
-    private void upgradeTo(Release release, CloudName cloud, Instant now) {
+    /** Returns the wanted change for given cloud, if any */
+    public Optional<Change> changeIn(CloudName cloud) {
         Optional<OsVersionTarget> currentTarget = controller().osVersionTarget(cloud);
-        if (currentTarget.isEmpty()) return;
-        if (upgradingToNewMajor(cloud)) return; // Skip further upgrades until major version upgrade is complete
+        if (currentTarget.isEmpty()) return Optional.empty();
+        if (upgradingToNewMajor(cloud)) return Optional.empty(); // Skip further upgrades until major version upgrade is complete
 
-        Version version = release.version(currentTarget.get(), now);
-        if (!version.isAfter(currentTarget.get().osVersion().version())) return;
-        controller().upgradeOsIn(cloud, version, release.upgradeBudget(), false);
+        Release release = releaseIn(cloud);
+        Instant now = controller().clock().instant();
+        return release.change(currentTarget.get().version(), now);
     }
 
     private boolean upgradingToNewMajor(CloudName cloud) {
@@ -58,30 +61,59 @@ public class OsUpgradeScheduler extends ControllerMaintainer {
                            .count() > 1;
     }
 
-    private boolean canTriggerAt(Instant instant) {
-        int hourOfDay = instant.atZone(ZoneOffset.UTC).getHour();
-        int dayOfWeek = instant.atZone(ZoneOffset.UTC).getDayOfWeek().getValue();
-        // Upgrade can only be scheduled between 07:00 (02:00 in CD systems) and 12:59 UTC, Monday-Thursday
-        int startHour = controller().system().isCd() ? 2 : 7;
-        return hourOfDay >= startHour && hourOfDay <= 12 && dayOfWeek < 5;
-    }
-
     private Release releaseIn(CloudName cloud) {
         boolean useTaggedRelease = controller().zoneRegistry().zones().all().reprovisionToUpgradeOs().in(cloud)
-                                               .zones().isEmpty();
+                                             .zones().isEmpty();
         if (useTaggedRelease) {
             return new TaggedRelease(controller().system(), controller().serviceRegistry().artifactRepository());
         }
         return new CalendarVersionedRelease(controller().system());
     }
 
+    private static boolean canTriggerAt(Instant instant, boolean isCd) {
+        ZonedDateTime dateTime = instant.atZone(ZoneOffset.UTC);
+        int hourOfDay = dateTime.getHour();
+        int dayOfWeek = dateTime.getDayOfWeek().getValue();
+        // Upgrade can only be scheduled between 07:00 (02:00 in CD systems) and 12:59 UTC, Monday-Thursday
+        int startHour = isCd ? 2 : 7;
+        return hourOfDay >= startHour && hourOfDay <= 12 && dayOfWeek < 5;
+    }
+
+    /** Returns the earliest time, at or after instant, an upgrade can be scheduled */
+    private static Instant schedulingInstant(Instant instant, SystemName system) {
+        ChronoUnit schedulingResolution = ChronoUnit.HOURS;
+        while (!canTriggerAt(instant, system.isCd())) {
+            instant = instant.truncatedTo(schedulingResolution)
+                             .plus(schedulingResolution.getDuration());
+        }
+        return instant;
+    }
+
+    /** Returns the remaining cool-down period relative to releaseAge */
+    private static Duration remainingCooldownOf(Duration cooldown, Duration releaseAge) {
+        return releaseAge.compareTo(cooldown) < 0 ? cooldown.minus(releaseAge) : Duration.ZERO;
+    }
+
     private interface Release {
 
-        /** The version number of this */
-        Version version(OsVersionTarget currentTarget, Instant now);
+        /** The pending change for this release at given instant, if any */
+        Optional<Change> change(Version currentVersion, Instant instant);
 
-        /** The budget to use when upgrading to this */
-        Duration upgradeBudget();
+    }
+
+    /** OS version change, its budget and the earliest time it can be scheduled */
+    public record Change(Version version, Duration upgradeBudget, Instant scheduleAt) {
+
+        public Change {
+            Objects.requireNonNull(version);
+            Objects.requireNonNull(upgradeBudget);
+            Objects.requireNonNull(scheduleAt);
+        }
+
+        /** Returns whether this can be scheduled at given instant */
+        public boolean scheduleAt(Instant instant) {
+            return !instant.isBefore(scheduleAt);
+        }
 
     }
 
@@ -94,15 +126,12 @@ public class OsUpgradeScheduler extends ControllerMaintainer {
         }
 
         @Override
-        public Version version(OsVersionTarget currentTarget, Instant now) {
-            OsRelease release = artifactRepository.osRelease(currentTarget.osVersion().version().getMajor(), tag());
-            boolean cooldownPassed = !release.taggedAt().plus(cooldown()).isAfter(now);
-            return cooldownPassed ? release.version() : currentTarget.osVersion().version();
-        }
-
-        @Override
-        public Duration upgradeBudget() {
-            return Duration.ZERO; // Upgrades to tagged releases happen in-place so no budget is required
+        public Optional<Change> change(Version currentVersion, Instant instant) {
+            OsRelease release = artifactRepository.osRelease(currentVersion.getMajor(), tag());
+            if (!release.version().isAfter(currentVersion)) return Optional.empty();
+            Duration cooldown = remainingCooldownOf(cooldown(), release.age(instant));
+            Instant scheduleAt = schedulingInstant(instant.plus(cooldown), system);
+            return Optional.of(new Change(release.version(), Duration.ZERO, scheduleAt));
         }
 
         /** Returns the release tag tracked by this system */
@@ -125,54 +154,70 @@ public class OsUpgradeScheduler extends ControllerMaintainer {
                                                                   .atStartOfDay()
                                                                   .toInstant(ZoneOffset.UTC);
 
-        /** The time that should elapse between versions */
+        /** The approximate time that should elapse between versions */
         private static final Duration SCHEDULING_STEP = Duration.ofDays(60);
 
         /** The day of week new releases are published */
-        private static final DayOfWeek RELEASE_DAY = DayOfWeek.MONDAY;
-
-        private static final DateTimeFormatter CALENDAR_VERSION_PATTERN = DateTimeFormatter.ofPattern("yyyyMMdd");
+        private static final DayOfWeek RELEASE_DAY = DayOfWeek.TUESDAY;
 
         public CalendarVersionedRelease {
             Objects.requireNonNull(system);
         }
 
         @Override
-        public Version version(OsVersionTarget currentTarget, Instant now) {
-            Version currentVersion = currentTarget.osVersion().version();
-            Version wantedVersion = asVersion(dateOfWantedVersion(now), currentVersion);
-            return wantedVersion.isAfter(currentVersion) ? wantedVersion : currentVersion;
+        public Optional<Change> change(Version currentVersion, Instant instant) {
+            CalendarVersion version = findVersion(instant, currentVersion);
+            Instant predicatedInstant = instant;
+            while (!version.version().isAfter(currentVersion)) {
+                predicatedInstant = predicatedInstant.plus(Duration.ofDays(1));
+                version = findVersion(predicatedInstant, currentVersion);
+            }
+            Duration cooldown = remainingCooldownOf(cooldown(), version.age(instant));
+            Instant schedulingInstant = schedulingInstant(instant.plus(cooldown), system);
+            return Optional.of(new Change(version.version(), upgradeBudget(), schedulingInstant));
         }
 
-        @Override
-        public Duration upgradeBudget() {
+        private Duration cooldown() {
+            return system.isCd()
+                    ? Duration.ofDays(1)                          // CD: Give new releases some time to propagate
+                    : Duration.ofDays(7 - RELEASE_DAY.ordinal()); // non-CD: Wait until start of the following week
+        }
+
+        private Duration upgradeBudget() {
             return system.isCd() ? Duration.ZERO : Duration.ofDays(14);
         }
 
-        /**
-         * Calculate the date of the wanted version relative to now. A given zone will choose the oldest release
-         * available which is not older than this date.
-         */
-        static LocalDate dateOfWantedVersion(Instant now) {
+        /** Find the most recent version available according to the scheduling step, relative to now */
+        static CalendarVersion findVersion(Instant now, Version currentVersion) {
             Instant candidate = START_OF_SCHEDULE;
             while (!candidate.plus(SCHEDULING_STEP).isAfter(now)) {
                 candidate = candidate.plus(SCHEDULING_STEP);
             }
             LocalDate date = LocalDate.ofInstant(candidate, ZoneOffset.UTC);
-            return releaseDayOf(date);
+            while (date.getDayOfWeek() != RELEASE_DAY) {
+                date = date.minusDays(1);
+            }
+            return CalendarVersion.from(date, currentVersion);
         }
 
-        private static LocalDate releaseDayOf(LocalDate date) {
-            int releaseDayDelta = RELEASE_DAY.getValue() - date.getDayOfWeek().getValue();
-            return date.plusDays(releaseDayDelta);
-        }
+        record CalendarVersion(Version version, LocalDate date) {
 
-        private static Version asVersion(LocalDate dateOfVersion, Version currentVersion) {
-            String calendarVersion = dateOfVersion.format(CALENDAR_VERSION_PATTERN);
-            return new Version(currentVersion.getMajor(),
-                               currentVersion.getMinor(),
-                               currentVersion.getMicro(),
-                               calendarVersion);
+            private static final DateTimeFormatter CALENDAR_VERSION_PATTERN = DateTimeFormatter.ofPattern("yyyyMMdd");
+
+            private static CalendarVersion from(LocalDate date, Version currentVersion) {
+                String qualifier = date.format(CALENDAR_VERSION_PATTERN);
+                return new CalendarVersion(new Version(currentVersion.getMajor(),
+                                                       currentVersion.getMinor(),
+                                                       currentVersion.getMicro(),
+                                                       qualifier),
+                                           date);
+            }
+
+            /** Returns the age of this at given instant */
+            private Duration age(Instant instant) {
+                return Duration.between(date.atStartOfDay().toInstant(ZoneOffset.UTC), instant);
+            }
+
         }
 
     }

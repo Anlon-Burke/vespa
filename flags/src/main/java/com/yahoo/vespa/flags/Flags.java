@@ -11,6 +11,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.function.Predicate;
 
 import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.CONSOLE_USER_EMAIL;
@@ -46,8 +47,8 @@ public class Flags {
     private static volatile TreeMap<FlagId, FlagDefinition> flags = new TreeMap<>();
 
     public static final UnboundBooleanFlag MAIN_CHAIN_GRAPH = defineFeatureFlag(
-            "main-chain-graph", false,
-            List.of("hakonhall"), "2022-07-06", "2022-09-05",
+            "main-chain-graph", true,
+            List.of("hakonhall"), "2022-07-06", "2022-10-05",
             "Whether to run all tasks in the main task chain up to the one failing to converge (false), or " +
             "run all tasks in the main task chain whose dependencies have converged (true).  And when suspending, " +
             "whether to run the tasks in sequence (false) or in reverse sequence (true).",
@@ -61,6 +62,21 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
+    public static final UnboundStringFlag QUERY_DISPATCH_POLICY = defineStringFlag(
+            "query-dispatch-policy", "adaptive",
+            List.of("baldersheim"), "2022-08-20", "2023-01-01",
+            "Select query dispatch policy, valid values are adaptive, round-robin, best-of-random-2," +
+                    " latency-amortized-over-requests, latency-amortized-over-time",
+            "Takes effect at redeployment (requires restart)",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundStringFlag PHRASE_OPTIMIZATION = defineStringFlag(
+            "phrase-optimization", "split",
+            List.of("baldersheim"), "2022-08-28", "2023-01-01",
+            "Select phase optimization, valid values are 'split', 'off'.",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
     public static final UnboundStringFlag FEED_SEQUENCER_TYPE = defineStringFlag(
             "feed-sequencer-type", "THROUGHPUT",
             List.of("baldersheim"), "2020-12-02", "2023-01-01",
@@ -70,7 +86,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag KEEP_STORAGE_NODE_UP = defineFeatureFlag(
             "keep-storage-node-up", true,
-            List.of("hakonhall"), "2022-07-07", "2022-08-07",
+            List.of("hakonhall"), "2022-07-07", "2022-10-07",
             "Whether to leave the storage node (with wanted state) UP while the node is permanently down.",
             "Takes effect immediately for nodes transitioning to permanently down.",
             ZONE_ID, APPLICATION_ID);
@@ -118,8 +134,8 @@ public class Flags {
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag USE_THREE_PHASE_UPDATES = defineFeatureFlag(
-            "use-three-phase-updates", false,
-            List.of("vekterli"), "2020-12-02", "2022-08-01",
+            "use-three-phase-updates", true,
+            List.of("vekterli"), "2020-12-02", "2022-10-01",
             "Whether to enable the use of three-phase updates when bucket replicas are out of sync.",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
@@ -239,13 +255,13 @@ public class Flags {
 
     public static final UnboundListFlag<String> ALLOWED_ATHENZ_PROXY_IDENTITIES = defineListFlag(
             "allowed-athenz-proxy-identities", List.of(), String.class,
-            List.of("bjorncs", "tokle"), "2021-02-10", "2022-09-01",
+            List.of("bjorncs", "tokle"), "2021-02-10", "2022-11-01",
             "Allowed Athenz proxy identities",
             "takes effect at redeployment");
 
     public static final UnboundIntFlag MAX_ACTIVATION_INHIBITED_OUT_OF_SYNC_GROUPS = defineIntFlag(
             "max-activation-inhibited-out-of-sync-groups", 0,
-            List.of("vekterli"), "2021-02-19", "2022-08-01",
+            List.of("vekterli"), "2021-02-19", "2022-10-01",
             "Allows replicas in up to N content groups to not be activated " +
             "for query visibility if they are out of sync with a majority of other replicas",
             "Takes effect at redeployment",
@@ -253,21 +269,21 @@ public class Flags {
 
     public static final UnboundIntFlag MAX_CONCURRENT_MERGES_PER_NODE = defineIntFlag(
             "max-concurrent-merges-per-node", 16,
-            List.of("balder", "vekterli"), "2021-06-06", "2022-08-01",
+            List.of("balder", "vekterli"), "2021-06-06", "2022-10-01",
             "Specifies max concurrent merges per content node.",
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundIntFlag MAX_MERGE_QUEUE_SIZE = defineIntFlag(
             "max-merge-queue-size", 100,
-            List.of("balder", "vekterli"), "2021-06-06", "2022-08-01",
+            List.of("balder", "vekterli"), "2021-06-06", "2022-10-01",
             "Specifies max size of merge queue.",
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundDoubleFlag MIN_NODE_RATIO_PER_GROUP = defineDoubleFlag(
             "min-node-ratio-per-group", 0.0,
-            List.of("geirst", "vekterli"), "2021-07-16", "2022-09-01",
+            List.of("geirst", "vekterli"), "2021-07-16", "2022-11-01",
             "Minimum ratio of nodes that have to be available (i.e. not Down) in any hierarchic content cluster group for the group to be Up",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
@@ -296,7 +312,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag UNORDERED_MERGE_CHAINING = defineFeatureFlag(
             "unordered-merge-chaining", true,
-            List.of("vekterli", "geirst"), "2021-11-15", "2022-09-01",
+            List.of("vekterli", "geirst"), "2021-11-15", "2022-11-01",
             "Enables the use of unordered merge chains for data merge operations",
             "Takes effect at redeploy",
             ZONE_ID, APPLICATION_ID);
@@ -323,23 +339,16 @@ public class Flags {
                 "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundBooleanFlag ENABLE_SERVER_OCSP_STAPLING = defineFeatureFlag(
-            "enable-server-ocsp-stapling", false,
-            List.of("bjorncs"), "2021-12-17", "2022-09-01",
-            "Enable server OCSP stapling for jdisc containers",
-            "Takes effect on redeployment",
-            ZONE_ID, APPLICATION_ID);
-
     public static final UnboundBooleanFlag ENABLE_DATA_HIGHWAY_IN_AWS = defineFeatureFlag(
             "enable-data-highway-in-aws", false,
-            List.of("hmusum"), "2022-01-06", "2022-09-01",
+            List.of("hmusum"), "2022-01-06", "2022-10-01",
             "Enable Data Highway in AWS",
             "Takes effect on restart of Docker container",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundStringFlag MERGE_THROTTLING_POLICY = defineStringFlag(
             "merge-throttling-policy", "STATIC",
-            List.of("vekterli"), "2022-01-25", "2022-08-01",
+            List.of("vekterli"), "2022-01-25", "2022-10-01",
             "Sets the policy used for merge throttling on the content nodes. " +
             "Valid values: STATIC, DYNAMIC",
             "Takes effect at redeployment",
@@ -347,7 +356,7 @@ public class Flags {
 
     public static final UnboundDoubleFlag PERSISTENCE_THROTTLING_WS_DECREMENT_FACTOR = defineDoubleFlag(
             "persistence-throttling-ws-decrement-factor", 1.2,
-            List.of("vekterli"), "2022-01-27", "2022-08-01",
+            List.of("vekterli"), "2022-01-27", "2022-10-01",
             "Sets the dynamic throttle policy window size decrement factor for persistence " +
             "async throttling. Only applies if DYNAMIC policy is used.",
             "Takes effect on redeployment",
@@ -355,7 +364,7 @@ public class Flags {
 
     public static final UnboundDoubleFlag PERSISTENCE_THROTTLING_WS_BACKOFF = defineDoubleFlag(
             "persistence-throttling-ws-backoff", 0.95,
-            List.of("vekterli"), "2022-01-27", "2022-08-01",
+            List.of("vekterli"), "2022-01-27", "2022-10-01",
             "Sets the dynamic throttle policy window size backoff for persistence " +
             "async throttling. Only applies if DYNAMIC policy is used. Valid range [0, 1]",
             "Takes effect on redeployment",
@@ -363,7 +372,7 @@ public class Flags {
 
     public static final UnboundIntFlag PERSISTENCE_THROTTLING_WINDOW_SIZE = defineIntFlag(
             "persistence-throttling-window-size", -1,
-            List.of("vekterli"), "2022-02-23", "2022-09-01",
+            List.of("vekterli"), "2022-02-23", "2022-11-01",
             "If greater than zero, sets both min and max window size to the given number, effectively " +
             "turning dynamic throttling into a static throttling policy. " +
             "Only applies if DYNAMIC policy is used.",
@@ -372,14 +381,14 @@ public class Flags {
 
     public static final UnboundDoubleFlag PERSISTENCE_THROTTLING_WS_RESIZE_RATE = defineDoubleFlag(
             "persistence-throttling-ws-resize-rate", 3.0,
-            List.of("vekterli"), "2022-02-23", "2022-09-01",
+            List.of("vekterli"), "2022-02-23", "2022-11-01",
             "Sets the dynamic throttle policy resize rate. Only applies if DYNAMIC policy is used.",
             "Takes effect on redeployment",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag PERSISTENCE_THROTTLING_OF_MERGE_FEED_OPS = defineFeatureFlag(
             "persistence-throttling-of-merge-feed-ops", true,
-            List.of("vekterli"), "2022-02-24", "2022-09-01",
+            List.of("vekterli"), "2022-02-24", "2022-11-01",
             "If true, each put/remove contained within a merge is individually throttled as if it " +
             "were a put/remove from a client. If false, merges are throttled at a persistence thread " +
             "level, i.e. per ApplyBucketDiff message, regardless of how many document operations " +
@@ -409,9 +418,9 @@ public class Flags {
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundStringFlag APPLICATION_FILES_WITH_UNKNOWN_EXTENSION = defineStringFlag(
-            "fail-deployment-for-files-with-unknown-extension", "LOG",
-            List.of("hmusum"), "2022-04-27", "2022-09-01",
-            "Whether to log, fail or do nothing for deployments when app has a file with unknown extension (valid values LOG, FAIL, NOOP)",
+            "fail-deployment-for-files-with-unknown-extension", "FAIL",
+            List.of("hmusum"), "2022-04-27", "2022-10-01",
+            "Whether to log or fail for deployments when app has a file with unknown extension (valid values: LOG, FAIL)",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
@@ -424,28 +433,28 @@ public class Flags {
 
     public static final UnboundBooleanFlag ENABLE_PROXY_PROTOCOL_MIXED_MODE = defineFeatureFlag(
             "enable-proxy-protocol-mixed-mode", true,
-            List.of("tokle"), "2022-05-09", "2022-09-01",
+            List.of("tokle"), "2022-05-09", "2022-11-01",
             "Enable or disable proxy protocol mixed mode",
             "Takes effect on redeployment",
             APPLICATION_ID);
 
     public static final UnboundListFlag<String> FILE_DISTRIBUTION_ACCEPTED_COMPRESSION_TYPES = defineListFlag(
             "file-distribution-accepted-compression-types", List.of("gzip", "lz4"), String.class,
-            List.of("hmusum"), "2022-07-05", "2022-09-05",
+            List.of("hmusum"), "2022-07-05", "2022-10-01",
             "´List of accepted compression types used when asking for a file reference. Valid values: gzip, lz4",
             "Takes effect on restart of service",
             APPLICATION_ID);
 
     public static final UnboundListFlag<String> FILE_DISTRIBUTION_COMPRESSION_TYPES_TO_SERVE = defineListFlag(
             "file-distribution-compression-types-to-use", List.of("lz4", "gzip"), String.class,
-            List.of("hmusum"), "2022-07-05", "2022-09-05",
+            List.of("hmusum"), "2022-07-05", "2022-10-01",
             "List of compression types to use (in preferred order), matched with accepted compression types when serving file references. Valid values: gzip, lz4",
             "Takes effect on restart of service",
             APPLICATION_ID);
 
     public static final UnboundBooleanFlag USE_YUM_PROXY_V2 = defineFeatureFlag(
             "use-yumproxy-v2", false,
-            List.of("tokle"), "2022-05-05", "2022-09-01",
+            List.of("tokle"), "2022-05-05", "2022-11-01",
             "Use yumproxy-v2",
             "Takes effect on host admin restart",
             HOSTNAME);
@@ -457,19 +466,41 @@ public class Flags {
             "Takes effect immediately",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundBooleanFlag FIX_IPV6_GATEWAY = defineFeatureFlag(
-            "fix-ipv6-gateway", true,
-            List.of("mpolden"), "2022-07-04", "2022-09-01",
-            "Fix a misconfigured IPv6 gateway automatically",
-            "Takes effect on first host admin resume",
-            HOSTNAME);
-
     public static final UnboundBooleanFlag SEPARATE_METRIC_CHECK_CONFIG = defineFeatureFlag(
             "separate-metric-check-config", false,
-            List.of("olaa"), "2022-07-04", "2022-09-01",
+            List.of("olaa"), "2022-07-04", "2022-11-01",
             "Determines whether one metrics config check should be written per Vespa node",
             "Takes effect on next tick",
             HOSTNAME);
+
+    public static final UnboundStringFlag TLS_CAPABILITIES_ENFORCEMENT_MODE = defineStringFlag(
+            "tls-capabilities-enforcement-mode", "disable",
+            List.of("bjorncs", "vekterli"), "2022-07-21", "2024-01-01",
+            "Configure Vespa TLS capability enforcement mode",
+            "Takes effect on restart of Docker container",
+            APPLICATION_ID,HOSTNAME,NODE_TYPE,TENANT_ID,VESPA_VERSION
+    );
+
+    public static final UnboundBooleanFlag CLEANUP_TENANT_ROLES = defineFeatureFlag(
+            "cleanup-tenant-roles", false,
+            List.of("olaa"), "2022-08-10", "2022-10-01",
+            "Determines whether old tenant roles should be deleted",
+            "Takes effect next maintenance run"
+    );
+
+    public static final UnboundBooleanFlag USE_TWO_PHASE_DOCUMENT_GC = defineFeatureFlag(
+            "use-two-phase-document-gc", false,
+            List.of("vekterli"), "2022-08-24", "2022-11-01",
+            "Use two-phase document GC in content clusters",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundIntFlag CLUSTER_CONTROLLER_STATE_GATHER_COUNT = defineIntFlag(
+            "cluster-controller-state-gather-count", 2,
+            List.of("hmusum"), "2022-09-05", "2022-11-01",
+            "Count of how many cluster controllers should gather node state (range: [1, # of cluster controllers])",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,
@@ -482,7 +513,19 @@ public class Flags {
     public static UnboundStringFlag defineStringFlag(String flagId, String defaultValue, List<String> owners,
                                                      String createdAt, String expiresAt, String description,
                                                      String modificationEffect, FetchVector.Dimension... dimensions) {
-        return define(UnboundStringFlag::new, flagId, defaultValue, owners, createdAt, expiresAt, description, modificationEffect, dimensions);
+        return defineStringFlag(flagId, defaultValue, owners,
+                                createdAt, expiresAt, description,
+                                modificationEffect, value -> true,
+                                dimensions);
+    }
+
+    /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
+    public static UnboundStringFlag defineStringFlag(String flagId, String defaultValue, List<String> owners,
+                                                     String createdAt, String expiresAt, String description,
+                                                     String modificationEffect, Predicate<String> validator,
+                                                     FetchVector.Dimension... dimensions) {
+        return define((i, d, v) -> new UnboundStringFlag(i, d, v, validator),
+                      flagId, defaultValue, owners, createdAt, expiresAt, description, modificationEffect, dimensions);
     }
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
@@ -524,7 +567,7 @@ public class Flags {
 
     @FunctionalInterface
     private interface TypedUnboundFlagFactory<T, U extends UnboundFlag<?, ?, ?>> {
-        U create(FlagId id, T defaultVale, FetchVector defaultFetchVector);
+        U create(FlagId id, T defaultValue, FetchVector defaultFetchVector);
     }
 
     /**

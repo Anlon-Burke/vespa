@@ -4,11 +4,14 @@
 #include "docsumwriter.h"
 #include "docsumstate.h"
 #include "i_docsum_store_document.h"
-#include <vespa/document/fieldvalue/fieldvalue.h>
+#include "keywordextractor.h"
 #include <vespa/searchlib/parsequery/stackdumpiterator.h>
 #include <vespa/searchlib/queryeval/split_float.h>
 #include <vespa/vespalib/objects/hexdump.h>
 #include <vespa/juniper/config.h>
+#include <vespa/juniper/queryhandle.h>
+#include <vespa/juniper/result.h>
+#include <vespa/vespalib/data/slime/inserter.h>
 #include <sstream>
 
 #include <vespa/log/log.h>
@@ -39,11 +42,10 @@ struct QueryItem
     search::SimpleQueryStackDumpIterator *_si;
     const ExplicitItemData *_data;
     QueryItem() : _si(nullptr), _data(nullptr) {}
-    QueryItem(search::SimpleQueryStackDumpIterator *si) : _si(si), _data(nullptr) {}
-    QueryItem(ExplicitItemData *data) : _si(nullptr), _data(data) {}
-private:
-    QueryItem(const QueryItem&);
-    QueryItem& operator= (const QueryItem&);
+    explicit QueryItem(search::SimpleQueryStackDumpIterator *si) : _si(si), _data(nullptr) {}
+    explicit QueryItem(ExplicitItemData *data) : _si(nullptr), _data(data) {}
+    QueryItem(const QueryItem&) = delete;
+    QueryItem& operator= (const QueryItem&) = delete;
 };
 }
 
@@ -54,10 +56,11 @@ public:
     juniper::IQueryVisitor *_visitor;
     juniper::QueryItem _item;
 
-    TermVisitor(juniper::IQueryVisitor *visitor) :
-        _visitor(visitor), _item() {}
-
-    virtual void visitProperty(const Property::Value &key, const Property &values) override;
+    explicit TermVisitor(juniper::IQueryVisitor *visitor)
+        : _visitor(visitor),
+          _item()
+    {}
+    void visitProperty(const Property::Value &key, const Property &values) override;
 
 };
 
@@ -283,11 +286,9 @@ JuniperQueryAdapter::Traverse(juniper::IQueryVisitor *v) const
     return rc;
 }
 
-JuniperDFW::JuniperDFW(juniper::Juniper * juniper)
-    : _inputFieldEnumValue(static_cast<uint32_t>(-1)),
-      _input_field_name(),
+JuniperDFW::JuniperDFW(const juniper::Juniper * juniper)
+    : _input_field_name(),
       _juniperConfig(),
-      _langFieldEnumValue(static_cast<uint32_t>(-1)),
       _juniper(juniper)
 {
 }
@@ -298,121 +299,59 @@ JuniperDFW::~JuniperDFW() = default;
 bool
 JuniperDFW::Init(
         const char *fieldName,
-        const char *langFieldName,
-        const ResultConfig & config,
-        const char *inputField)
+        const vespalib::string& inputField)
 {
     bool rc = true;
-    const util::StringEnum & enums(config.GetFieldNameEnum());
-    if (langFieldName != nullptr)
-        _langFieldEnumValue = enums.Lookup(langFieldName);
     _juniperConfig = _juniper->CreateConfig(fieldName);
-    if (_juniperConfig.get() == nullptr) {
+    if ( ! _juniperConfig) {
         LOG(warning, "could not create juniper config for field '%s'", fieldName);
         rc = false;
     }
 
-    _inputFieldEnumValue = enums.Lookup(inputField);
     _input_field_name = inputField;
-
-    if (_inputFieldEnumValue >= enums.GetNumEntries()) {
-        LOG(warning, "no docsum format contains field '%s'; dynamic teasers will be empty",
-            inputField);
-    }
     return rc;
 }
 
 bool
 JuniperTeaserDFW::Init(
         const char *fieldName,
-        const char *langFieldName,
-        const ResultConfig & config,
-        const char *inputField)
+        const vespalib::string& inputField)
 {
-    bool rc = JuniperDFW::Init(fieldName, langFieldName, config, inputField);
-
-    for (ResultConfig::const_iterator it(config.begin()), mt(config.end()); rc && it != mt; it++) {
-
-        const ResConfigEntry *entry =
-            it->GetEntry(it->GetIndexFromEnumValue(_inputFieldEnumValue));
-
-        if (entry != nullptr && !entry->_not_present &&
-            !IsRuntimeCompatible(entry->_type, RES_STRING) &&
-            !IsRuntimeCompatible(entry->_type, RES_DATA))
-        {
-            LOG(warning, "cannot use docsum field '%s' as input to dynamicteaser; bad type in result class %d (%s)",
-                inputField, it->GetClassID(), it->GetClassName());
-            rc = false;
-        }
-    }
-    return rc;
-}
-
-JuniperInput
-DynamicTeaserDFW::getJuniperInput(GeneralResult *gres) {
-    int idx = gres->GetClass()->GetIndexFromEnumValue(_inputFieldEnumValue);
-    ResEntry *entry = gres->GetPresentEntry(idx);
-    if (entry != nullptr) {
-        const char *buf;
-        uint32_t    buflen;
-        entry->_resolve_field(&buf, &buflen);
-        return JuniperInput(vespalib::stringref(buf, buflen));
-    }
-    const auto* document = gres->get_document();
-    if (document != nullptr) {
-        return JuniperInput(document->get_field_value(_input_field_name).get());
-    }
-    return JuniperInput(vespalib::stringref());
+    return JuniperDFW::Init(fieldName, inputField);
 }
 
 vespalib::string
-DynamicTeaserDFW::makeDynamicTeaser(uint32_t docid, vespalib::stringref input, GetDocsumsState *state)
+DynamicTeaserDFW::makeDynamicTeaser(uint32_t docid, vespalib::stringref input, GetDocsumsState *state) const
 {
-    if (state->_dynteaser._query == nullptr) {
+    if (!state->_dynteaser._query) {
         JuniperQueryAdapter iq(state->_kwExtractor,
                                state->_args.getStackDump(),
                                &state->_args.highlightTerms());
         state->_dynteaser._query = _juniper->CreateQueryHandle(iq, nullptr);
     }
 
-    if (docid != state->_dynteaser._docid ||
-        _inputFieldEnumValue != state->_dynteaser._input ||
-        _langFieldEnumValue != state->_dynteaser._lang ||
-        !juniper::AnalyseCompatible(_juniperConfig.get(), state->_dynteaser._config)) {
-        LOG(debug, "makeDynamicTeaser: docid (%d,%d), fieldenum (%d,%d), lang (%d,%d) analyse %s",
-                docid, state->_dynteaser._docid,
-                _inputFieldEnumValue, state->_dynteaser._input,
-                _langFieldEnumValue, state->_dynteaser._lang,
-                (juniper::AnalyseCompatible(_juniperConfig.get(), state->_dynteaser._config) ? "no" : "yes"));
+    LOG(debug, "makeDynamicTeaser: docid (%d)",
+        docid);
 
-        if (state->_dynteaser._result != nullptr)
-            juniper::ReleaseResult(state->_dynteaser._result);
+    std::unique_ptr<juniper::Result> result;
 
-        state->_dynteaser._docid  = docid;
-        state->_dynteaser._input  = _inputFieldEnumValue;
-        state->_dynteaser._lang   = _langFieldEnumValue;
-        state->_dynteaser._config = _juniperConfig.get();
-        state->_dynteaser._result = nullptr;
+    if (state->_dynteaser._query != nullptr) {
 
-        if (state->_dynteaser._query != nullptr) {
-
-            if (LOG_WOULD_LOG(spam)) {
-                std::ostringstream hexDump;
-                hexDump << vespalib::HexDump(input.data(), input.length());
-                LOG(spam, "makeDynamicTeaser: docid=%d, input='%s', hexdump:\n%s",
-                        docid, std::string(input.data(), input.length()).c_str(), hexDump.str().c_str());
-            }
-
-            auto langid = static_cast<uint32_t>(-1);
-
-            state->_dynteaser._result =
-                juniper::Analyse(_juniperConfig.get(), state->_dynteaser._query,
-                                 input.data(), input.length(), docid, _inputFieldEnumValue,  langid);
+        if (LOG_WOULD_LOG(spam)) {
+            std::ostringstream hexDump;
+            hexDump << vespalib::HexDump(input.data(), input.length());
+            LOG(spam, "makeDynamicTeaser: docid=%d, input='%s', hexdump:\n%s",
+                docid, std::string(input.data(), input.length()).c_str(), hexDump.str().c_str());
         }
+
+        auto langid = static_cast<uint32_t>(-1);
+
+        result = juniper::Analyse(*_juniperConfig, *state->_dynteaser._query,
+                                  input.data(), input.length(), docid, langid);
     }
 
-    juniper::Summary *teaser = (state->_dynteaser._result != nullptr)
-                               ? juniper::GetTeaser(state->_dynteaser._result, _juniperConfig.get())
+    juniper::Summary *teaser = result
+                               ? juniper::GetTeaser(*result, _juniperConfig.get())
                                : nullptr;
 
     if (LOG_WOULD_LOG(debug)) {
@@ -426,21 +365,23 @@ DynamicTeaserDFW::makeDynamicTeaser(uint32_t docid, vespalib::stringref input, G
     }
 
     if (teaser != nullptr) {
-        return vespalib::string(teaser->Text(), teaser->Length());
+        return {teaser->Text(), teaser->Length()};
     } else {
-        return vespalib::string();
+        return {};
     }
 }
 
 void
-DynamicTeaserDFW::insertField(uint32_t docid, GeneralResult *gres, GetDocsumsState *state, ResType,
-                              vespalib::slime::Inserter &target)
+DynamicTeaserDFW::insertField(uint32_t docid, const IDocsumStoreDocument* doc, GetDocsumsState *state, ResType,
+                              vespalib::slime::Inserter &target) const
 {
-    auto input = getJuniperInput(gres);
-    if (!input.empty()) {
-        vespalib::string teaser = makeDynamicTeaser(docid, input.get_value(), state);
-        vespalib::Memory value(teaser.c_str(), teaser.size());
-        target.insertString(value);
+    if (doc != nullptr) {
+        auto input = doc->get_juniper_input(_input_field_name);
+        if (!input.empty()) {
+            vespalib::string teaser = makeDynamicTeaser(docid, input.get_value(), state);
+            vespalib::Memory value(teaser.c_str(), teaser.size());
+            target.insertString(value);
+        }
     }
 }
 

@@ -45,7 +45,7 @@ public class WebParser extends AllParser {
 
             current = positiveItem();
             if (current == null)
-                current = indexableItem();
+                current = indexableItem().getFirst();
 
             if (current != null) {
                 if (and != null && (current instanceof WordItem) && "OR".equals(((WordItem)current).getRawWord())) {

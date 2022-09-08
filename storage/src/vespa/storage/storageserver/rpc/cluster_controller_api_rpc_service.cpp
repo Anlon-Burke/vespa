@@ -7,6 +7,7 @@
 #include <vespa/storage/storageserver/rpcrequestwrapper.h>
 #include <vespa/vdslib/state/clusterstate.h>
 #include <vespa/fnet/frt/supervisor.h>
+#include <vespa/fnet/frt/require_capabilities.h>
 #include <vespa/fnet/frt/rpcrequest.h>
 #include <vespa/storageapi/message/state.h>
 #include <vespa/vespalib/util/host_name.h>
@@ -32,10 +33,19 @@ void ClusterControllerApiRpcService::close() {
     _closed.store(true);
 }
 
+namespace {
+
+std::unique_ptr<FRT_RequireCapabilities> make_cc_api_capability_filter() {
+    return FRT_RequireCapabilities::of(vespalib::net::tls::Capability::content_cluster_controller_internal_state_api());
+}
+
+}
+
 void ClusterControllerApiRpcService::register_server_methods(SharedRpcResources& rpc_resources) {
     FRT_ReflectionBuilder rb(&rpc_resources.supervisor());
 
     rb.DefineMethod("getnodestate3", "sii", "ss", FRT_METHOD(ClusterControllerApiRpcService::RPC_getNodeState2), this);
+    rb.RequestAccessFilter(make_cc_api_capability_filter());
     rb.MethodDesc("Get state of this node");
     rb.ParamDesc("nodestate", "Expected state of given node. If correct, the "
                               "request will be queued on target until it changes. To not give "
@@ -45,6 +55,7 @@ void ClusterControllerApiRpcService::register_server_methods(SharedRpcResources&
     rb.ReturnDesc("hostinfo", "Information about host this node is running on");
     //-------------------------------------------------------------------------
     rb.DefineMethod("getnodestate2", "si", "s", FRT_METHOD(ClusterControllerApiRpcService::RPC_getNodeState2), this);
+    rb.RequestAccessFilter(make_cc_api_capability_filter());
     rb.MethodDesc("Get state of this node");
     rb.ParamDesc("nodestate", "Expected state of given node. If correct, the "
                               "request will be queued on target until it changes. To not give "
@@ -53,42 +64,22 @@ void ClusterControllerApiRpcService::register_server_methods(SharedRpcResources&
     rb.ReturnDesc("nodestate", "State string for this node");
     //-------------------------------------------------------------------------
     rb.DefineMethod("setsystemstate2", "s", "", FRT_METHOD(ClusterControllerApiRpcService::RPC_setSystemState2), this);
+    rb.RequestAccessFilter(make_cc_api_capability_filter());
     rb.MethodDesc("Set systemstate on this node");
     rb.ParamDesc("systemstate", "New systemstate to set");
     //-------------------------------------------------------------------------
     rb.DefineMethod("setdistributionstates", "bix", "", FRT_METHOD(ClusterControllerApiRpcService::RPC_setDistributionStates), this);
+    rb.RequestAccessFilter(make_cc_api_capability_filter());
     rb.MethodDesc("Set distribution states for cluster and bucket spaces");
     rb.ParamDesc("compressionType", "Compression type for payload");
     rb.ParamDesc("uncompressedSize", "Uncompressed size for payload");
     rb.ParamDesc("payload", "Binary Slime format payload");
     //-------------------------------------------------------------------------
     rb.DefineMethod("activate_cluster_state_version", "i", "i", FRT_METHOD(ClusterControllerApiRpcService::RPC_activateClusterStateVersion), this);
+    rb.RequestAccessFilter(make_cc_api_capability_filter());
     rb.MethodDesc("Explicitly activates an already prepared cluster state version");
     rb.ParamDesc("activate_version", "Expected cluster state version to activate");
     rb.ReturnDesc("actual_version", "Cluster state version that was prepared on the node prior to receiving RPC");
-    //-------------------------------------------------------------------------
-    rb.DefineMethod("getcurrenttime", "", "lis", FRT_METHOD(ClusterControllerApiRpcService::RPC_getCurrentTime), this);
-    rb.MethodDesc("Get current time on this node");
-    rb.ReturnDesc("seconds", "Current time in seconds since epoch");
-    rb.ReturnDesc("nanoseconds", "additional nanoseconds since epoch");
-    rb.ReturnDesc("hostname", "Host name");
-}
-
-// TODO remove? is this used by anyone?
-void ClusterControllerApiRpcService::RPC_getCurrentTime(FRT_RPCRequest* req) {
-    if (_closed) {
-        LOG(debug, "Not handling RPC call getCurrentTime() as we have closed");
-        req->SetError(RPCRequestWrapper::ERR_NODE_SHUTTING_DOWN, "Node shutting down");
-        return;
-    }
-    //TODO Should we unify on std::chrono here too ?
-    struct timespec t;
-    clock_gettime(CLOCK_REALTIME, &t);
-    req->GetReturn()->AddInt64(t.tv_sec);
-    req->GetReturn()->AddInt32(t.tv_nsec);
-    vespalib::string hostname = vespalib::HostName::get();
-    req->GetReturn()->AddString(hostname.c_str());
-    // all handled, will return immediately
 }
 
 void ClusterControllerApiRpcService::detach_and_forward_to_enqueuer(

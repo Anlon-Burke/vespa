@@ -2,19 +2,18 @@
 package com.yahoo.container.di;
 
 import com.google.inject.Guice;
-import com.yahoo.component.ComponentSpecification;
-import com.yahoo.config.FileReference;
-import com.yahoo.container.bundle.BundleInstantiationSpecification;
+import com.yahoo.container.core.config.BundleTestUtil;
+import com.yahoo.container.core.config.TestOsgi;
 import com.yahoo.container.di.ContainerTest.ComponentTakingConfig;
 import com.yahoo.container.di.componentgraph.core.ComponentGraph;
-import org.junit.After;
-import org.junit.Before;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.io.TempDir;
 import org.osgi.framework.Bundle;
 
+import java.io.File;
 import java.util.Collection;
-import java.util.Set;
-
-import static java.util.Collections.emptySet;
+import java.util.List;
 
 /**
  * @author Tony Vaagenes
@@ -25,56 +24,58 @@ public class ContainerTestBase {
 
     private ComponentGraph componentGraph;
     protected DirConfigSource dirConfigSource = null;
+    protected TestOsgi osgi;
 
-    @Before
+    @TempDir
+    File tmpDir;
+
+    @BeforeEach
     public void setup() {
-        dirConfigSource = new DirConfigSource("ContainerTest-");
+        dirConfigSource = new DirConfigSource(tmpDir, "ContainerTest-");
+        componentGraph = new ComponentGraph(0);
+        osgi = new TestOsgi(BundleTestUtil.testBundles());
     }
 
-    @After
+    @AfterEach
     public void cleanup() {
         dirConfigSource.cleanup();
     }
 
-    @Before
-    public void createGraph() {
-        componentGraph = new ComponentGraph(0);
+
+    protected Container newContainer(DirConfigSource dirConfigSource,
+                                            ComponentDeconstructor deconstructor) {
+        return new Container(new CloudSubscriberFactory(dirConfigSource.configSource),
+                             dirConfigSource.configId(),
+                             deconstructor,
+                             osgi);
     }
 
-    public void complete() {
-        try {
-            Container container = new Container(new CloudSubscriberFactory(dirConfigSource.configSource()), dirConfigSource.configId(),
-                    new ContainerTest.TestDeconstructor(), new Osgi() {
-                        @SuppressWarnings("unchecked")
-                        @Override
-                        public Class<Object> resolveClass(BundleInstantiationSpecification spec) {
-                            try {
-                                return (Class<Object>) Class.forName(spec.classId.getName());
-                            } catch (ClassNotFoundException e) {
-                                throw new RuntimeException(e);
-                            }
-                        }
-
-                        @Override
-                        public Set<Bundle> useApplicationBundles(Collection<FileReference> bundles) {
-                            return emptySet();
-                        }
-
-                        @Override
-                        public Bundle getBundle(ComponentSpecification spec) {
-                            throw new UnsupportedOperationException("getBundle not supported.");
-                        }
-                    });
-            Container.ComponentGraphResult result = container.waitForNextGraphGeneration(this.componentGraph, Guice.createInjector(), true);
-            result.oldComponentsCleanupTask().run();
-            this.componentGraph = result.newGraph();
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+    protected Container newContainer(DirConfigSource dirConfigSource) {
+        return newContainer(dirConfigSource, new TestDeconstructor(osgi));
     }
+
+    ComponentGraph getNewComponentGraph(Container container, ComponentGraph oldGraph) {
+        Container.ComponentGraphResult result = container.waitForNextGraphGeneration(oldGraph, Guice.createInjector(), true);
+        result.oldComponentsCleanupTask().run();
+        return result.newGraph();
+    }
+
+    ComponentGraph getNewComponentGraph(Container container) {
+        return container.waitForNextGraphGeneration(new ComponentGraph(), Guice.createInjector(), true).newGraph();
+    }
+
 
     public <T> T getInstance(Class<T> componentClass) {
         return componentGraph.getInstance(componentClass);
+    }
+
+    protected void writeBootstrapConfigsWithBundles(List<String> applicationBundles, List<ComponentEntry> components) {
+        writeBootstrapConfigs(components.toArray(new ComponentEntry[0]));
+        StringBuilder bundles = new StringBuilder();
+        for (int i = 0; i < applicationBundles.size(); i++) {
+            bundles.append("bundles[" + i + "] \"" + applicationBundles.get(i) + "\"\n");
+        }
+        dirConfigSource.writeConfig("application-bundles", String.format("bundles[%s]\n%s", applicationBundles.size(), bundles));
     }
 
     protected void writeBootstrapConfigs(ComponentEntry... componentEntries) {
@@ -110,11 +111,29 @@ public class ContainerTestBase {
         }
 
         String asConfig(int position) {
-            return "<config>\n" + //
-                    "components[" + position + "].id \"" + componentId + "\"\n" + //
-                    "components[" + position + "].classId \"" + classId.getName() + "\"\n" + //
-                    "components[" + position + "].configId \"" + dirConfigSource.configId() + "\"\n" + //
-                    "</config>";
+            return  "components[" + position + "].id \"" + componentId + "\"\n" +
+                    "components[" + position + "].classId \"" + classId.getName() + "\"\n" +
+                    "components[" + position + "].configId \"" + dirConfigSource.configId() + "\"\n" ;
+        }
+    }
+
+
+    public static class TestDeconstructor implements ComponentDeconstructor {
+
+        final TestOsgi osgi;
+
+        public TestDeconstructor(TestOsgi osgi) {
+            this.osgi = osgi;
+        }
+
+        @Override
+        public void deconstruct(long generation, List<Object> components, Collection<Bundle> bundles) {
+            components.forEach(component -> {
+                if (component instanceof ContainerTest.DestructableComponent vespaComponent) {
+                    vespaComponent.deconstruct();
+                }
+            });
+            bundles.forEach(osgi::removeBundle);
         }
     }
 

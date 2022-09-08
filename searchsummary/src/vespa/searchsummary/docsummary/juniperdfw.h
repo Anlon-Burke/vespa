@@ -2,13 +2,14 @@
 
 #pragma once
 
-#include "general_result.h"
-#include "resultconfig.h"
 #include "docsum_field_writer.h"
-#include "juniper_input.h"
-#include <vespa/searchlib/util/rawbuf.h>
-#include <vespa/vespalib/data/slime/inserter.h>
-#include <vespa/juniper/rpinterface.h>
+#include <memory>
+
+namespace juniper {
+class Config;
+class Juniper;
+}
+namespace vespalib::slime { struct Inserter; }
 
 namespace search::docsummary {
 
@@ -17,18 +18,14 @@ class JuniperDFW : public DocsumFieldWriter
 public:
     virtual bool Init(
             const char *fieldName,
-            const char *langFieldName,
-            const ResultConfig & config,
-            const char *inputField);
+            const vespalib::string& inputField);
 protected:
-    JuniperDFW(juniper::Juniper * juniper);
+    explicit JuniperDFW(const juniper::Juniper * juniper);
     ~JuniperDFW() override;
 
-    uint32_t                         _inputFieldEnumValue;
     vespalib::string                 _input_field_name;
     std::unique_ptr<juniper::Config> _juniperConfig;
-    uint32_t                         _langFieldEnumValue;
-    juniper::Juniper                *_juniper;
+    const juniper::Juniper          *_juniper;
 private:
     bool IsGenerated() const override { return false; }
     JuniperDFW(const JuniperDFW &);
@@ -39,24 +36,23 @@ private:
 class JuniperTeaserDFW : public JuniperDFW
 {
 public:
-    bool Init(const char *fieldName, const char *langFieldName,
-              const ResultConfig & config, const char *inputField) override;
+    bool Init(const char *fieldName,
+              const vespalib::string& inputField) override;
 protected:
-    JuniperTeaserDFW(juniper::Juniper * juniper) : JuniperDFW(juniper) { }
+    explicit JuniperTeaserDFW(const juniper::Juniper * juniper) : JuniperDFW(juniper) { }
 };
 
 
 class DynamicTeaserDFW : public JuniperTeaserDFW
 {
-    JuniperInput getJuniperInput(GeneralResult *gres);
     vespalib::string makeDynamicTeaser(uint32_t docid,
                                        vespalib::stringref input,
-                                       GetDocsumsState *state);
+                                       GetDocsumsState *state) const;
 public:
-    DynamicTeaserDFW(juniper::Juniper * juniper) : JuniperTeaserDFW(juniper) { }
+    explicit DynamicTeaserDFW(const juniper::Juniper * juniper) : JuniperTeaserDFW(juniper) { }
 
-    void insertField(uint32_t docid, GeneralResult *gres, GetDocsumsState *state,
-                     ResType type, vespalib::slime::Inserter &target) override;
+    void insertField(uint32_t docid, const IDocsumStoreDocument* doc, GetDocsumsState *state,
+                     ResType type, vespalib::slime::Inserter &target) const override;
 };
 
 }

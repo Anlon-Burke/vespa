@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.node.admin.nodeagent;
 
+import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.Environment;
@@ -212,15 +213,15 @@ public class NodeAgentImpl implements NodeAgent {
             changed = true;
         }
 
-        Optional<DockerImage> actualDockerImage = context.node().wantedDockerImage().filter(n -> containerState == UNKNOWN);
-        if (!Objects.equals(context.node().currentDockerImage(), actualDockerImage)) {
+        Optional<DockerImage> wantedDockerImage = context.node().wantedDockerImage().filter(n -> containerState == UNKNOWN);
+        if (!Objects.equals(context.node().currentDockerImage(), wantedDockerImage)) {
             DockerImage currentImage = context.node().currentDockerImage().orElse(DockerImage.EMPTY);
-            DockerImage newImage = actualDockerImage.orElse(DockerImage.EMPTY);
+            DockerImage newImage = wantedDockerImage.orElse(DockerImage.EMPTY);
 
             currentNodeAttributes.withDockerImage(currentImage);
-            currentNodeAttributes.withVespaVersion(currentImage.tagAsVersion());
+            currentNodeAttributes.withVespaVersion(context.node().currentVespaVersion().orElse(Version.emptyVersion));
             newNodeAttributes.withDockerImage(newImage);
-            newNodeAttributes.withVespaVersion(newImage.tagAsVersion());
+            newNodeAttributes.withVespaVersion(context.node().wantedVespaVersion().orElse(Version.emptyVersion));
             changed = true;
         }
 
@@ -244,7 +245,7 @@ public class NodeAgentImpl implements NodeAgent {
         hasResumedNode = false;
         context.log(logger, "Container successfully started, new containerState is " + containerState);
         return containerOperations.getContainer(context).orElseThrow(() ->
-                new ConvergenceException("Did not find container that was just started"));
+                ConvergenceException.ofError("Did not find container that was just started"));
     }
 
     private Optional<Container> removeContainerIfNeededUpdateContainerState(
@@ -399,7 +400,7 @@ public class NodeAgentImpl implements NodeAgent {
         // Only update CPU resources
         containerOperations.updateContainer(context, existingContainer.id(), wantedContainerResources.withMemoryBytes(existingContainer.resources().memoryBytes()));
         return containerOperations.getContainer(context).orElseThrow(() ->
-                new ConvergenceException("Did not find container that was just updated"));
+                ConvergenceException.ofError("Did not find container that was just updated"));
     }
 
     private ContainerResources getContainerResources(NodeAgentContext context) {
@@ -435,6 +436,8 @@ public class NodeAgentImpl implements NodeAgent {
             context.log(logger, Level.INFO, "Converged");
         } catch (ConvergenceException e) {
             context.log(logger, e.getMessage());
+            if (e.isError())
+                numberOfUnhandledException++;
         } catch (Throwable e) {
             numberOfUnhandledException++;
             context.log(logger, Level.SEVERE, "Unhandled exception, ignoring", e);
@@ -501,7 +504,7 @@ public class NodeAgentImpl implements NodeAgent {
 
                     Duration timeLeft = Duration.between(clock.instant(), firstSuccessfulHealthCheckInstant.get().plus(warmUpDuration(context)));
                     if (!container.get().resources().equalsCpu(getContainerResources(context)))
-                        throw new ConvergenceException("Refusing to resume until warm up period ends (" +
+                        throw ConvergenceException.ofTransient("Refusing to resume until warm up period ends (" +
                                 (timeLeft.isNegative() ? "next tick" : "in " + timeLeft) + ")");
                 }
                 serviceDumper.processServiceDumpRequest(context);
@@ -536,7 +539,7 @@ public class NodeAgentImpl implements NodeAgent {
                 nodeRepository.setNodeState(context.hostname().value(), NodeState.ready);
                 break;
             default:
-                throw new ConvergenceException("UNKNOWN STATE " + node.state().name());
+                throw ConvergenceException.ofError("UNKNOWN STATE " + node.state().name());
         }
     }
 
@@ -544,7 +547,7 @@ public class NodeAgentImpl implements NodeAgent {
         StringBuilder builder = new StringBuilder();
         appendIfDifferent(builder, "state", lastNode, node, NodeSpec::state);
         if (builder.length() > 0) {
-            context.log(logger, Level.INFO, "Changes to node: " + builder.toString());
+            context.log(logger, Level.INFO, "Changes to node: " + builder);
         }
     }
 

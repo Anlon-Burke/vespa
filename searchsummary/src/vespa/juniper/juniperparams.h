@@ -48,8 +48,10 @@ class MatcherParams
 {
 public:
     MatcherParams();
-    MatcherParams(MatcherParams &) = delete;
-    MatcherParams &operator=(MatcherParams &) = delete;
+    MatcherParams(const MatcherParams&) = delete;
+    MatcherParams(MatcherParams&&) = delete;
+    MatcherParams &operator=(const MatcherParams&) = delete;
+    MatcherParams &operator=(MatcherParams&&) = delete;
 
     MatcherParams& SetMatchWindowSize(size_t winsize);
     size_t MatchWindowSize() const;
@@ -65,11 +67,11 @@ public:
     MatcherParams& SetStemMaxExtend(size_t stem_extend);
     size_t StemMaxExtend() const;
 
-    MatcherParams& SetWordFolder(Fast_WordFolder* wordfolder);
-    Fast_WordFolder* WordFolder();
+    MatcherParams& SetWordFolder(const Fast_WordFolder* wordfolder);
+    const Fast_WordFolder* WordFolder() const noexcept { return _wordfolder; }
 
     MatcherParams& SetProximityFactor(double factor);
-    double ProximityFactor();
+    double ProximityFactor() const noexcept { return _proximity_factor; };
 
 private:
     size_t _match_winsize;
@@ -77,7 +79,7 @@ private:
     size_t _max_match_candidates;
     size_t _stem_min;
     size_t _stem_extend;
-    Fast_WordFolder* _wordfolder; // The wordfolder object needed as 1st parameter to folderfun
+    const Fast_WordFolder* _wordfolder; // The wordfolder object needed as 1st parameter to folderfun
     double _proximity_factor;
 };
 

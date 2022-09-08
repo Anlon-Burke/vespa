@@ -14,15 +14,12 @@
 #include <vespa/vespalib/data/slime/inserter.h>
 #include <vespa/vespalib/util/issue.h>
 
-using search::attribute::IAttributeContext;
-using search::queryeval::IRequestContext;
 using search::queryeval::IDiversifier;
 using search::attribute::diversity::DiversityFilter;
 using search::attribute::BasicType;
 using search::attribute::AttributeBlueprintParams;
 using vespalib::Issue;
 
-using namespace search::fef;
 using namespace search::fef::indexproperties::matchphase;
 using namespace search::fef::indexproperties::matching;
 using namespace search::fef::indexproperties;
@@ -32,6 +29,9 @@ using search::StringStringMap;
 namespace proton::matching {
 
 namespace {
+
+using search::fef::Properties;
+using search::fef::RankSetup;
 
 bool contains_all(const HandleRecorder::HandleMap &old_map,
                   const HandleRecorder::HandleMap &new_map)
@@ -49,28 +49,28 @@ bool contains_all(const HandleRecorder::HandleMap &old_map,
 DegradationParams
 extractDegradationParams(const RankSetup &rankSetup, const Properties &rankProperties)
 {
-    return DegradationParams(DegradationAttribute::lookup(rankProperties, rankSetup.getDegradationAttribute()),
-                             DegradationMaxHits::lookup(rankProperties, rankSetup.getDegradationMaxHits()),
-                             !DegradationAscendingOrder::lookup(rankProperties, rankSetup.isDegradationOrderAscending()),
-                             DegradationMaxFilterCoverage::lookup(rankProperties, rankSetup.getDegradationMaxFilterCoverage()),
-                             DegradationSamplePercentage::lookup(rankProperties, rankSetup.getDegradationSamplePercentage()),
-                             DegradationPostFilterMultiplier::lookup(rankProperties, rankSetup.getDegradationPostFilterMultiplier()));
+    return { DegradationAttribute::lookup(rankProperties, rankSetup.getDegradationAttribute()),
+             DegradationMaxHits::lookup(rankProperties, rankSetup.getDegradationMaxHits()),
+             !DegradationAscendingOrder::lookup(rankProperties, rankSetup.isDegradationOrderAscending()),
+             DegradationMaxFilterCoverage::lookup(rankProperties, rankSetup.getDegradationMaxFilterCoverage()),
+             DegradationSamplePercentage::lookup(rankProperties, rankSetup.getDegradationSamplePercentage()),
+             DegradationPostFilterMultiplier::lookup(rankProperties, rankSetup.getDegradationPostFilterMultiplier())};
 
 }
 
 DiversityParams
 extractDiversityParams(const RankSetup &rankSetup, const Properties &rankProperties)
 {
-    return DiversityParams(DiversityAttribute::lookup(rankProperties, rankSetup.getDiversityAttribute()),
-                           DiversityMinGroups::lookup(rankProperties, rankSetup.getDiversityMinGroups()),
-                           DiversityCutoffFactor::lookup(rankProperties, rankSetup.getDiversityCutoffFactor()),
-                           AttributeLimiter::toDiversityCutoffStrategy(DiversityCutoffStrategy::lookup(rankProperties, rankSetup.getDiversityCutoffStrategy())));
+    return { DiversityAttribute::lookup(rankProperties, rankSetup.getDiversityAttribute()),
+             DiversityMinGroups::lookup(rankProperties, rankSetup.getDiversityMinGroups()),
+             DiversityCutoffFactor::lookup(rankProperties, rankSetup.getDiversityCutoffFactor()),
+             AttributeLimiter::toDiversityCutoffStrategy(DiversityCutoffStrategy::lookup(rankProperties, rankSetup.getDiversityCutoffStrategy())) };
 }
 
 } // namespace proton::matching::<unnamed>
 
 void
-MatchTools::setup(search::fef::RankProgram::UP rank_program, double termwise_limit)
+MatchTools::setup(std::unique_ptr<RankProgram> rank_program, ExecutionProfiler *profiler, double termwise_limit)
 {
     if (_search) {
         _match_data->soft_reset();
@@ -79,7 +79,7 @@ MatchTools::setup(search::fef::RankProgram::UP rank_program, double termwise_lim
     HandleRecorder recorder;
     {
         HandleRecorder::Binder bind(recorder);
-        _rank_program->setup(*_match_data, _queryEnv, _featureOverrides);
+        _rank_program->setup(*_match_data, _queryEnv, _featureOverrides, profiler);
     }
     bool can_reuse_search = (_search && !_search_has_changed &&
             contains_all(_used_handles, recorder.get_handles()));
@@ -123,34 +123,34 @@ MatchTools::has_second_phase_rank() const {
 }
 
 void
-MatchTools::setup_first_phase()
+MatchTools::setup_first_phase(ExecutionProfiler *profiler)
 {
-    setup(_rankSetup.create_first_phase_program(),
+    setup(_rankSetup.create_first_phase_program(), profiler,
           TermwiseLimit::lookup(_queryEnv.getProperties(), _rankSetup.get_termwise_limit()));
 }
 
 void
-MatchTools::setup_second_phase()
+MatchTools::setup_second_phase(ExecutionProfiler *profiler)
 {
-    setup(_rankSetup.create_second_phase_program());
+    setup(_rankSetup.create_second_phase_program(), profiler);
 }
 
 void
 MatchTools::setup_match_features()
 {
-    setup(_rankSetup.create_match_program());
+    setup(_rankSetup.create_match_program(), nullptr);
 }
 
 void
 MatchTools::setup_summary()
 {
-    setup(_rankSetup.create_summary_program());
+    setup(_rankSetup.create_summary_program(), nullptr);
 }
 
 void
 MatchTools::setup_dump()
 {
-    setup(_rankSetup.create_dump_program());
+    setup(_rankSetup.create_dump_program(), nullptr);
 }
 
 //-----------------------------------------------------------------------------
@@ -182,13 +182,12 @@ MatchToolsFactory(QueryLimiter               & queryLimiter,
       _diversityParams(),
       _valid(false)
 {
-    search::engine::Trace trace(root_trace.getRelativeTime(), root_trace.getLevel());
+    search::engine::Trace trace(root_trace.getRelativeTime(), root_trace.getLevel(), root_trace.getProfileDepth());
     trace.addEvent(4, "Start query setup");
     _query.setWhiteListBlueprint(metaStore.createWhiteListBlueprint());
     trace.addEvent(5, "Deserialize and build query tree");
     _valid = _query.buildTree(queryStack, location, viewResolver, indexEnv,
-                              rankSetup.split_unpacking_iterators(),
-                              rankSetup.delay_unpacking_iterators());
+                              SplitUnpackingIterators::check(_queryEnv.getProperties(), rankSetup.split_unpacking_iterators()));
     if (_valid) {
         _query.extractTerms(_queryEnv.terms());
         _query.extractLocations(_queryEnv.locations());
@@ -240,12 +239,12 @@ std::unique_ptr<IDiversifier>
 MatchToolsFactory::createDiversifier(uint32_t heapSize) const
 {
     if ( !_diversityParams.enabled() ) {
-        return std::unique_ptr<IDiversifier>();
+        return {};
     }
     auto attr = _requestContext.getAttribute(_diversityParams.attribute);
     if ( !attr) {
         Issue::report("Skipping diversity due to no %s attribute.", _diversityParams.attribute.c_str());
-        return std::unique_ptr<IDiversifier>();
+        return {};
     }
     size_t max_per_group = heapSize/_diversityParams.min_groups;
     return DiversityFilter::create(*attr, heapSize, max_per_group, _diversityParams.min_groups,
@@ -268,20 +267,37 @@ MatchToolsFactory::createOnFirstPhaseTask() const {
     const auto & op = _rankSetup.getMutateOnFirstPhase();
     // Note that combining onmatch in query with first-phase is not a bug.
     // It is intentional, as the semantics of onmatch in query are identical to on-first-phase.
-    return createTask(execute::onmatch::Attribute::lookup(_queryEnv.getProperties(), op._attribute),
-                      execute::onmatch::Operation::lookup(_queryEnv.getProperties(), op._operation));
+    if (_rankSetup.allowMutateQueryOverride()) {
+        return createTask(execute::onmatch::Attribute::lookup(_queryEnv.getProperties(), op._attribute),
+                          execute::onmatch::Operation::lookup(_queryEnv.getProperties(), op._operation));
+    } else {
+        return createTask(op._attribute, op._operation);
+    }
 }
 std::unique_ptr<AttributeOperationTask>
 MatchToolsFactory::createOnSecondPhaseTask() const {
     const auto & op = _rankSetup.getMutateOnSecondPhase();
-    return createTask(execute::onrerank::Attribute::lookup(_queryEnv.getProperties(), op._attribute),
-                      execute::onrerank::Operation::lookup(_queryEnv.getProperties(), op._operation));
+    if (_rankSetup.allowMutateQueryOverride()) {
+        return createTask(execute::onrerank::Attribute::lookup(_queryEnv.getProperties(), op._attribute),
+                          execute::onrerank::Operation::lookup(_queryEnv.getProperties(), op._operation));
+    } else {
+        return createTask(op._attribute, op._operation);
+    }
 }
 std::unique_ptr<AttributeOperationTask>
 MatchToolsFactory::createOnSummaryTask() const {
     const auto & op = _rankSetup.getMutateOnSummary();
-    return createTask(execute::onsummary::Attribute::lookup(_queryEnv.getProperties(), op._attribute),
-                      execute::onsummary::Operation::lookup(_queryEnv.getProperties(), op._operation));
+    if (_rankSetup.allowMutateQueryOverride()) {
+        return createTask(execute::onsummary::Attribute::lookup(_queryEnv.getProperties(), op._attribute),
+                          execute::onsummary::Operation::lookup(_queryEnv.getProperties(), op._operation));
+    } else {
+        return createTask(op._attribute, op._operation);
+    }
+}
+
+bool
+MatchToolsFactory::hasOnMatchTask() const {
+    return _rankSetup.getMutateOnMatch().enabled();
 }
 
 bool
@@ -302,10 +318,8 @@ MatchToolsFactory::get_feature_rename_map() const
 }
 
 AttributeBlueprintParams
-MatchToolsFactory::extract_global_filter_params(const search::fef::RankSetup& rank_setup,
-                                                const search::fef::Properties& rank_properties,
-                                                uint32_t active_docids,
-                                                uint32_t docid_limit)
+MatchToolsFactory::extract_global_filter_params(const RankSetup& rank_setup, const Properties& rank_properties,
+                                                uint32_t active_docids, uint32_t docid_limit)
 {
     double lower_limit = GlobalFilterLowerLimit::lookup(rank_properties, rank_setup.get_global_filter_lower_limit());
     double upper_limit = GlobalFilterUpperLimit::lookup(rank_properties, rank_setup.get_global_filter_upper_limit());

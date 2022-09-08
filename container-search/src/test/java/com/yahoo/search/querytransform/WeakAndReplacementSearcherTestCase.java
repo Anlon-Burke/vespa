@@ -2,21 +2,30 @@
 package com.yahoo.search.querytransform;
 
 import com.yahoo.component.chain.Chain;
-import com.yahoo.prelude.query.*;
-import com.yahoo.processing.request.CompoundName;
+import com.yahoo.prelude.query.AndItem;
+import com.yahoo.prelude.query.CompositeItem;
+import com.yahoo.prelude.query.IntItem;
+import com.yahoo.prelude.query.Item;
+import com.yahoo.prelude.query.NotItem;
+import com.yahoo.prelude.query.OrItem;
+import com.yahoo.prelude.query.WeakAndItem;
+import com.yahoo.prelude.query.WordItem;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
 import com.yahoo.search.Searcher;
 import com.yahoo.search.searchchain.Execution;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.stream.IntStream;
 
-import static org.junit.Assert.*;
+import static com.yahoo.search.querytransform.WeakAndReplacementSearcher.WEAKAND_REPLACE;
+import static com.yahoo.search.querytransform.WeakAndReplacementSearcher.WAND_HITS;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class WeakAndReplacementSearcherTestCase {
-
-    private static final CompoundName WEAKAND_REPLACE = new CompoundName("weakAnd.replace");
     private static final int N = 99;
 
 
@@ -27,7 +36,7 @@ public class WeakAndReplacementSearcherTestCase {
 
     private Query buildDefaultQuery(boolean searcherEnabled) {
         Query query = new Query();
-        query.properties().set("wand.hits", N);
+        query.properties().set(WAND_HITS, N);
         query.properties().set(WEAKAND_REPLACE, searcherEnabled);
         OrItem root = new OrItem();
         root.addItem(new WordItem("text"));
@@ -42,20 +51,18 @@ public class WeakAndReplacementSearcherTestCase {
     }
 
 
-
-
     @Test
-    public void requireOrItemsToBeReplaced() {
+    void requireOrItemsToBeReplaced() {
         Query query = buildDefaultQuery(true);
         Result result = buildExec().search(query);
         Item root = TestUtils.getQueryTreeRoot(result);
         assertFalse(orItemsExist(root));
         assertTrue(root instanceof WeakAndItem);
-        assertEquals(N, ((WeakAndItem)root).getN());
+        assertEquals(N, ((WeakAndItem) root).getN());
     }
 
     @Test
-    public void requireQueryPropertyToWork() {
+    void requireQueryPropertyToWork() {
         Query query = buildDefaultQuery(false);
         Item preRoot = query.getModel().getQueryTree().getRoot();
         Result result = buildExec().search(query);
@@ -65,7 +72,7 @@ public class WeakAndReplacementSearcherTestCase {
     }
 
     @Test
-    public void requireDoNothingOnNoOrItems() {
+    void requireDoNothingOnNoOrItems() {
         Query query = new Query();
         query.properties().set(WEAKAND_REPLACE, true);
         AndItem andItem = new AndItem();
@@ -78,7 +85,7 @@ public class WeakAndReplacementSearcherTestCase {
     }
 
     @Test
-    public void requireChildrenAreTheSame() {
+    void requireChildrenAreTheSame() {
         Query query = new Query();
         query.properties().set(WEAKAND_REPLACE, true);
         OrItem preRoot = new OrItem();
@@ -87,7 +94,7 @@ public class WeakAndReplacementSearcherTestCase {
 
         query.getModel().getQueryTree().setRoot(preRoot);
         Result result = buildExec().search(query);
-        WeakAndItem root = (WeakAndItem)TestUtils.getQueryTreeRoot(result);
+        WeakAndItem root = (WeakAndItem) TestUtils.getQueryTreeRoot(result);
         assertEquals(preRoot.getItem(0), root.getItem(0));
         assertEquals(preRoot.getItem(1), root.getItem(1));
     }

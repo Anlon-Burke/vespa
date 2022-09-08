@@ -17,8 +17,8 @@ import com.yahoo.vespa.hosted.controller.auditlog.AuditLogger;
 import com.yahoo.vespa.hosted.controller.integration.NodeRepositoryMock;
 import com.yahoo.vespa.hosted.controller.restapi.ContainerTester;
 import com.yahoo.vespa.hosted.controller.restapi.ControllerContainerTest;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -27,7 +27,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
-import static org.junit.Assert.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
  * @author bratseth
@@ -38,42 +38,42 @@ public class ControllerApiTest extends ControllerContainerTest {
 
     private ContainerTester tester;
 
-    @Before
+    @BeforeEach
     public void before() {
         tester = new ContainerTester(container, responseFiles);
     }
 
     @Test
-    public void testControllerApi() {
+    void testControllerApi() {
         tester.assertResponse(authenticatedRequest("http://localhost:8080/controller/v1/", "", Request.Method.GET), new File("root.json"));
 
         ((InMemoryFlagSource) tester.controller().flagSource()).withListFlag(PermanentFlags.INACTIVE_MAINTENANCE_JOBS.id(), List.of("DeploymentExpirer"), String.class);
 
         // GET a list of all maintenance jobs
         tester.assertResponse(authenticatedRequest("http://localhost:8080/controller/v1/maintenance/", "", Request.Method.GET),
-                              new File("maintenance.json"));
+                new File("maintenance.json"));
     }
 
     @Test
-    public void testStats() {
-        var mock = (NodeRepositoryMock)tester.controller().serviceRegistry().configServer().nodeRepository();
+    void testStats() {
+        var mock = (NodeRepositoryMock) tester.controller().serviceRegistry().configServer().nodeRepository();
         mock.putApplication(ZoneId.from("prod", "us-west-1"),
-                            new Application(ApplicationId.fromFullString("t1.a1.i1"), List.of()));
+                new Application(ApplicationId.fromFullString("t1.a1.i1"), List.of()));
         mock.putApplication(ZoneId.from("prod", "us-west-1"),
-                            new Application(ApplicationId.fromFullString("t2.a2.i2"), List.of()));
+                new Application(ApplicationId.fromFullString("t2.a2.i2"), List.of()));
         mock.putApplication(ZoneId.from("prod", "us-east-3"),
-                            new Application(ApplicationId.fromFullString("t1.a1.i1"), List.of()));
+                new Application(ApplicationId.fromFullString("t1.a1.i1"), List.of()));
 
         tester.assertResponse(authenticatedRequest("http://localhost:8080/controller/v1/stats", "", Request.Method.GET),
-                              new File("stats.json"));
+                new File("stats.json"));
     }
 
     @Test
-    public void testUpgraderApi() {
+    void testUpgraderApi() {
         // Get current configuration
         tester.assertResponse(authenticatedRequest("http://localhost:8080/controller/v1/jobs/upgrader", "", Request.Method.GET),
-                              "{\"upgradesPerMinute\":0.125,\"confidenceOverrides\":[]}",
-                              200);
+                "{\"upgradesPerMinute\":0.125,\"confidenceOverrides\":[]}",
+                200);
 
         // Set invalid configuration
         tester.assertResponse(
@@ -90,18 +90,6 @@ public class ControllerApiTest extends ControllerContainerTest {
         // Set upgrades per minute
         tester.assertResponse(
                 operatorRequest("http://localhost:8080/controller/v1/jobs/upgrader", "{\"upgradesPerMinute\":42.0}", Request.Method.PATCH),
-                "{\"upgradesPerMinute\":42.0,\"confidenceOverrides\":[]}",
-                200);
-
-        // Set target major version
-        tester.assertResponse(
-                operatorRequest("http://localhost:8080/controller/v1/jobs/upgrader", "{\"targetMajorVersion\":6}", Request.Method.PATCH),
-                "{\"upgradesPerMinute\":42.0,\"targetMajorVersion\":6,\"confidenceOverrides\":[]}",
-                200);
-
-        // Clear target major version
-        tester.assertResponse(
-                operatorRequest("http://localhost:8080/controller/v1/jobs/upgrader", "{\"targetMajorVersion\":null}", Request.Method.PATCH),
                 "{\"upgradesPerMinute\":42.0,\"confidenceOverrides\":[]}",
                 200);
 
@@ -123,11 +111,11 @@ public class ControllerApiTest extends ControllerContainerTest {
                 "{\"upgradesPerMinute\":42.0,\"confidenceOverrides\":[{\"6.43\":\"broken\"}]}",
                 200);
 
-        assertFalse("Actions are logged to audit log", tester.controller().auditLogger().readLog().entries().isEmpty());
+        assertFalse(tester.controller().auditLogger().readLog().entries().isEmpty(), "Actions are logged to audit log");
     }
 
     @Test
-    public void testAuditLogApi() {
+    void testAuditLogApi() {
         ManualClock clock = new ManualClock(Instant.parse("2019-03-01T12:13:14.00Z"));
         AuditLogger logger = new AuditLogger(tester.controller().curator(), clock);
 
@@ -153,13 +141,13 @@ public class ControllerApiTest extends ControllerContainerTest {
     }
 
     @Test
-    public void testMeteringApi() {
+    void testMeteringApi() {
         ApplicationId applicationId = ApplicationId.from("tenant", "app", "instance");
         Instant timestamp = Instant.ofEpochMilli(123456789);
         ZoneId zoneId = ZoneId.defaultId();
         List<ResourceSnapshot> snapshots = List.of(
-                new ResourceSnapshot(applicationId, 12,48,1200, NodeResources.Architecture.arm64, timestamp, zoneId),
-                new ResourceSnapshot(applicationId, 24, 96,2400,  NodeResources.Architecture.x86_64, timestamp, zoneId)
+                new ResourceSnapshot(applicationId, 12, 48, 1200, NodeResources.Architecture.arm64, timestamp, zoneId),
+                new ResourceSnapshot(applicationId, 24, 96, 2400,  NodeResources.Architecture.x86_64, timestamp, zoneId)
         );
         tester.controller().serviceRegistry().resourceDatabase().writeResourceSnapshots(snapshots);
         tester.assertResponse(
@@ -169,24 +157,24 @@ public class ControllerApiTest extends ControllerContainerTest {
     }
 
     @Test
-    public void testApproveMembership() {
+    void testApproveMembership() {
         ApplicationId applicationId = ApplicationId.from("tenant", "app", "instance");
         DeploymentId deployment = new DeploymentId(applicationId, ZoneId.defaultId());
         String requestBody = "{\n" +
-                             " \"applicationId\": \"" + deployment.applicationId().serializedForm() + "\",\n" +
-                             " \"zone\": \"" + deployment.zoneId().value() + "\"\n" +
-                             "}";
+                " \"applicationId\": \"" + deployment.applicationId().serializedForm() + "\",\n" +
+                " \"zone\": \"" + deployment.zoneId().value() + "\"\n" +
+                "}";
 
         MockAccessControlService accessControlService = (MockAccessControlService) tester.serviceRegistry().accessControlService();
-        tester.assertResponse(operatorRequest("http://localhost:8080/controller/v1/access/requests/"+hostedOperator.getName(), requestBody, Request.Method.POST),
-                              "{\"message\":\"Unable to approve membership request\"}", 400);
+        tester.assertResponse(operatorRequest("http://localhost:8080/controller/v1/access/requests/" + hostedOperator.getName(), requestBody, Request.Method.POST),
+                "{\"message\":\"Unable to approve membership request\"}", 400);
 
         accessControlService.addPendingMember(hostedOperator);
-        tester.assertResponse(operatorRequest("http://localhost:8080/controller/v1/access/requests/"+hostedOperator.getName(), requestBody, Request.Method.POST),
-                              "{\"message\":\"Unable to approve membership request\"}", 400);
+        tester.assertResponse(operatorRequest("http://localhost:8080/controller/v1/access/requests/" + hostedOperator.getName(), requestBody, Request.Method.POST),
+                "{\"message\":\"Unable to approve membership request\"}", 400);
 
         tester.controller().supportAccess().allow(deployment, tester.controller().clock().instant().plus(Duration.ofHours(1)), "tenantx");
-        tester.assertResponse(operatorRequest("http://localhost:8080/controller/v1/access/requests/"+hostedOperator.getName(), requestBody, Request.Method.POST),
-                              "{\"members\":[\"user.alice\"]}");
+        tester.assertResponse(operatorRequest("http://localhost:8080/controller/v1/access/requests/" + hostedOperator.getName(), requestBody, Request.Method.POST),
+                "{\"members\":[\"user.alice\"]}");
     }
 }

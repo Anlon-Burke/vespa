@@ -41,6 +41,8 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private boolean useThreePhaseUpdates = false;
     private double defaultTermwiseLimit = 1.0;
     private String jvmGCOptions = null;
+    private String queryDispatchPolicy = "adaptive";
+    private String phraseOptimization = "";
     private String sequencerType = "THROUGHPUT";
     private boolean firstTimeDeployment = false;
     private String responseSequencerType = "ADAPTIVE";
@@ -78,6 +80,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private boolean enableBitVectors = false;
     private boolean loadCodeAsHugePages = false;
     private boolean sharedStringRepoNoReclaim = false;
+    private boolean useTwoPhaseDocumentGc = false;
     private int mbus_java_num_targets = 1;
     private int mbus_java_events_before_wakeup = 1;
     private int mbus_cpp_num_targets = 1;
@@ -147,7 +150,9 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public int mbusCppEventsBeforeWakeup() { return mbus_cpp_events_before_wakeup; }
     @Override public int rpcNumTargets() { return rpc_num_targets; }
     @Override public int rpcEventsBeforeWakeup() { return rpc_events_before_wakeup; }
-
+    @Override public String queryDispatchPolicy() { return queryDispatchPolicy; }
+    @Override public boolean useTwoPhaseDocumentGc() { return useTwoPhaseDocumentGc; }
+    @Override public String phraseOptimization() { return phraseOptimization; }
 
     public TestProperties sharedStringRepoNoReclaim(boolean sharedStringRepoNoReclaim) {
         this.sharedStringRepoNoReclaim = sharedStringRepoNoReclaim;
@@ -190,6 +195,14 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setJvmGCOptions(String gcOptions) {
         jvmGCOptions = gcOptions;
+        return this;
+    }
+    public TestProperties setQueryDispatchPolicy(String policy) {
+        queryDispatchPolicy = policy;
+        return this;
+    }
+    public TestProperties setPhraseOptimization(String value) {
+        phraseOptimization = value;
         return this;
     }
     public TestProperties setFeedSequencerType(String type) {
@@ -404,6 +417,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setAdminClusterNodeResourcesArchitecture(Architecture architecture) {
         this.adminClusterNodeResourcesArchitecture = architecture;
+        return this;
+    }
+
+    public TestProperties setUseTwoPhaseDocumentGc(boolean useTwoPhase) {
+        this.useTwoPhaseDocumentGc = useTwoPhase;
         return this;
     }
 

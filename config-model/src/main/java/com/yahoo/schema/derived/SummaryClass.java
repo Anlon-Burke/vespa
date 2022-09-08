@@ -59,7 +59,7 @@ public class SummaryClass extends Derived {
     /** MUST be called after all other fields are added */
     private void deriveImplicitFields(DocumentSummary summary, Map<String, SummaryClassField> fields) {
         if (summary.getName().equals("default")) {
-            addField(SummaryClass.DOCUMENT_ID_FIELD, DataType.STRING, SummaryTransform.DOCUMENT_ID, fields);
+            addField(SummaryClass.DOCUMENT_ID_FIELD, DataType.STRING, SummaryTransform.DOCUMENT_ID, "", fields);
         }
     }
 
@@ -68,12 +68,14 @@ public class SummaryClass extends Derived {
             if (!accessingDiskSummary && schema.isAccessingDiskSummary(summaryField)) {
                 accessingDiskSummary = true;
             }
-            addField(summaryField.getName(), summaryField.getDataType(), summaryField.getTransform(), fields);
+            addField(summaryField.getName(), summaryField.getDataType(), summaryField.getTransform(),
+                    getSource(summaryField), fields);
         }
     }
 
     private void addField(String name, DataType type,
                           SummaryTransform transform,
+                          String source,
                           Map<String, SummaryClassField> fields) {
         if (fields.containsKey(name)) {
             SummaryClassField sf = fields.get(name);
@@ -82,7 +84,7 @@ public class SummaryClass extends Derived {
                                                                   ". " + "Declared as type " + sf.getType() + " and " + type);
             }
         } else {
-            fields.put(name, new SummaryClassField(name, type, transform, rawAsBase64));
+            fields.put(name, new SummaryClassField(name, type, transform, source, rawAsBase64));
         }
     }
 
@@ -110,7 +112,9 @@ public class SummaryClass extends Derived {
         for (SummaryClassField field : fields.values() ) {
             classBuilder.fields(new SummaryConfig.Classes.Fields.Builder().
                     name(field.getName()).
-                    type(field.getType().getName()));
+                    type(field.getType().getName()).
+                    command(field.getCommand()).
+                    source(field.getSource()));
         }
         return classBuilder;
     }
@@ -124,6 +128,55 @@ public class SummaryClass extends Derived {
     @Override
     public String toString() {
         return "summary class '" + getName() + "'";
+    }
+
+    /** Returns the command name of a transform */
+    static String getCommand(SummaryTransform transform) {
+        if (transform == SummaryTransform.NONE) {
+            return "";
+        } else if (transform == SummaryTransform.DISTANCE) {
+            return "absdist";
+        } else if (transform.isDynamic()) {
+            return "dynamicteaser";
+        } else {
+            return transform.getName();
+        }
+    }
+
+    static String getSource(SummaryField summaryField) {
+        if (summaryField.getTransform() == SummaryTransform.NONE) {
+            return "";
+        }
+
+        if (summaryField.getTransform() == SummaryTransform.ATTRIBUTE ||
+                (summaryField.getTransform() == SummaryTransform.ATTRIBUTECOMBINER && summaryField.hasExplicitSingleSource()) ||
+                summaryField.getTransform() == SummaryTransform.COPY ||
+                summaryField.getTransform() == SummaryTransform.DISTANCE ||
+                summaryField.getTransform() == SummaryTransform.GEOPOS ||
+                summaryField.getTransform() == SummaryTransform.POSITIONS ||
+                summaryField.getTransform() == SummaryTransform.MATCHED_ELEMENTS_FILTER ||
+                summaryField.getTransform() == SummaryTransform.MATCHED_ATTRIBUTE_ELEMENTS_FILTER)
+        {
+            return summaryField.getSingleSource();
+        } else {
+            // Note: Currently source mapping is handled in the indexing statement,
+            // by creating a summary field for each of the values
+            // This works, but is suboptimal. We could consolidate to a minimal set and
+            // use the right value from the minimal set as the third parameter here,
+            // and add "override" commands to multiple static values
+            boolean useFieldNameAsArgument = summaryField.getTransform().isDynamic();
+            return useFieldNameAsArgument ? summaryField.getName() : "";
+        }
+    }
+
+    /**
+     * A dynamic transform that needs the query to perform its computations.
+     * We need this because some model information is shared through configs instead of model - see usage
+     */
+    static boolean commandRequiringQuery(String commandName) {
+        return (commandName.equals("dynamicteaser") ||
+                commandName.equals(SummaryTransform.MATCHED_ELEMENTS_FILTER.getName()) ||
+                commandName.equals(SummaryTransform.MATCHED_ATTRIBUTE_ELEMENTS_FILTER.getName()));
     }
 
 }

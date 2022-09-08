@@ -70,6 +70,7 @@ vespa_define_module(
     src/tests/encoding/base64
     src/tests/eventbarrier
     src/tests/exception_classes
+    src/tests/execution_profiler
     src/tests/executor
     src/tests/executor_idle_tracking
     src/tests/explore_modern_cpp
@@ -188,6 +189,7 @@ vespa_define_module(
     src/tests/util/rcuvector
     src/tests/util/reusable_set
     src/tests/util/size_literals
+    src/tests/util/string_escape
     src/tests/valgrind
     src/tests/visit_ranges
     src/tests/invokeservice

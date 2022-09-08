@@ -27,14 +27,10 @@ else
 fi
 CONTAINER_HOME="${VESPA_HOME}/var/jdisc_container/${DISCRIMINATOR}/"
 
-if [[ "$VESPA_SERVICE_NAME" = "container" || "$VESPA_SERVICE_NAME" = "container-clustercontroller" || "$VESPA_SERVICE_NAME" = "qrserver" ]]; then
+if [[ "$VESPA_SERVICE_NAME" = "container" || "$VESPA_SERVICE_NAME" = "container-clustercontroller" ]]; then
     ZOOKEEPER_LOG_FILE_PREFIX="${VESPA_HOME}/logs/vespa/zookeeper.${VESPA_SERVICE_NAME}"
     rm -f $ZOOKEEPER_LOG_FILE_PREFIX*lck
     zookeeper_log_file_property="-Dzookeeper_log_file_prefix=${ZOOKEEPER_LOG_FILE_PREFIX}"
-# TODO: Temporary, remove else clause after 2022-05-20
-else
-    ZOOKEEPER_LOG_FILE_PREFIX="${VESPA_HOME}/logs/vespa/zookeeper.${VESPA_SERVICE_NAME}"
-    rm -f $ZOOKEEPER_LOG_FILE_PREFIX*
 fi
 
 # common setup
@@ -64,7 +60,7 @@ getconfig() {
             qrstartcfg="`$VESPA_HOME/bin/vespa-get-config -l -w 10 -n search.config.qr-start -i ${VESPA_CONFIG_ID}`"
             ;;
     esac
-    cmds=`echo "$qrstartcfg" | perl -ne 's/^(\w+)\.(\w+) (.*)/$1_$2=$3/ && print'`
+    cmds=`echo "$qrstartcfg" | sed -n 's/^\([^. ]*\)[.]/\1_/;s/ /=/p'`
     eval "$cmds"
     set +e
 }

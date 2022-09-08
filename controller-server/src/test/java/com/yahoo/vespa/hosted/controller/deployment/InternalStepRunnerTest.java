@@ -25,8 +25,8 @@ import com.yahoo.vespa.hosted.controller.application.SystemApplication;
 import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
 import com.yahoo.vespa.hosted.controller.integration.ZoneApiMock;
 import com.yahoo.vespa.hosted.controller.maintenance.JobRunner;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.security.cert.X509Certificate;
 import java.time.Duration;
@@ -51,10 +51,10 @@ import static com.yahoo.vespa.hosted.controller.deployment.Step.Status.failed;
 import static com.yahoo.vespa.hosted.controller.deployment.Step.Status.succeeded;
 import static com.yahoo.vespa.hosted.controller.deployment.Step.Status.unfinished;
 import static java.time.temporal.ChronoUnit.SECONDS;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author jonmv
@@ -65,7 +65,7 @@ public class InternalStepRunnerTest {
     private DeploymentTester tester;
     private DeploymentContext app;
 
-    @Before
+    @BeforeEach
     public void setup() {
         tester = new DeploymentTester();
         app = tester.newDeploymentContext();
@@ -358,7 +358,8 @@ public class InternalStepRunnerTest {
         // Test sleeps for a while.
         tester.runner().run();
         assertEquals(unfinished, tester.jobs().run(id).stepStatuses().get(Step.deployTester));
-        tester.clock().advance(Duration.ofSeconds(899));
+        Instant nextAttemptAt = tester.clock().instant().plusSeconds(1800);
+        tester.clock().advance(Duration.ofSeconds(1799));
         tester.runner().run();
         assertEquals(unfinished, tester.jobs().run(id).stepStatuses().get(Step.deployTester));
 
@@ -380,8 +381,8 @@ public class InternalStepRunnerTest {
 
         assertTestLogEntries(id, Step.endTests,
                              new LogEntry(lastId1 + 1, Instant.ofEpochMilli(123), info, "Not enough data!"),
-                             new LogEntry(lastId1 + 2, instant1, info, "Tests were inconclusive, and will run again in 15 minutes."),
-                             new LogEntry(lastId1 + 15, instant1, info, "### Run will reset, and start over at " + instant1.plusSeconds(900).truncatedTo(SECONDS)),
+                             new LogEntry(lastId1 + 2, instant1, info, "Tests were inconclusive, and will run again at " + nextAttemptAt + "."),
+                             new LogEntry(lastId1 + 15, instant1, info, "### Run will reset, and start over at " + nextAttemptAt),
                              new LogEntry(lastId1 + 16, instant1, info, ""),
                              new LogEntry(lastId2 + 1, tester.clock().instant(), info, "Tests completed successfully."));
 
@@ -469,28 +470,24 @@ public class InternalStepRunnerTest {
                              new LogEntry(lastId + 4, tester.clock().instant().minusSeconds(4), info,
                                           "17491290-v6-1.ostk.bm2.prod.ne1.yahoo.com\tcontainer\tstdout\n" +
                                           "ERROR: Bundle canary-application [71] Unable to get module class path. (java.lang.NullPointerException)"),
-                             /*
                              new LogEntry(lastId + 5, tester.clock().instant().minusSeconds(4), info,
                                           "17491290-v6-1.ostk.bm2.prod.ne1.yahoo.com\tcontainer\tstdout\n" +
                                           "ERROR: Bundle canary-application [71] Unable to get module class path. (java.lang.NullPointerException)"),
                              new LogEntry(lastId + 6, tester.clock().instant().minusSeconds(4), info,
                                           "17491290-v6-1.ostk.bm2.prod.ne1.yahoo.com\tcontainer\tstdout\n" +
                                           "ERROR: Bundle canary-application [71] Unable to get module class path. (java.lang.NullPointerException)"),
-                              */
-                             new LogEntry(lastId + 5, tester.clock().instant().minusSeconds(3), info,
+                             new LogEntry(lastId + 7, tester.clock().instant().minusSeconds(3), info,
                                           "17491290-v6-1.ostk.bm2.prod.ne1.yahoo.com\tcontainer\tstdout\n" +
                                           "ERROR: Bundle canary-application [71] Unable to get module class path. (java.lang.NullPointerException)"),
-                             new LogEntry(lastId + 6, tester.clock().instant().minusSeconds(3), warning,
+                             new LogEntry(lastId + 8, tester.clock().instant().minusSeconds(3), warning,
                                           "17491290-v6-1.ostk.bm2.prod.ne1.yahoo.com\tcontainer\tstderr\n" +
-                                          "java.lang.NullPointerException\n\tat org.apache.felix.framework.BundleRevisionImpl.calculateContentPath(BundleRevisionImpl.java:438)\n\tat org.apache.felix.framework.BundleRevisionImpl.initializeContentPath(BundleRevisionImpl.java:371)"));
-                             /*
+                                          "java.lang.NullPointerException\n\tat org.apache.felix.framework.BundleRevisionImpl.calculateContentPath(BundleRevisionImpl.java:438)\n\tat org.apache.felix.framework.BundleRevisionImpl.initializeContentPath(BundleRevisionImpl.java:371)"),
                              new LogEntry(lastId + 9, tester.clock().instant().minusSeconds(3), info,
                                           "17491290-v6-1.ostk.bm2.prod.ne1.yahoo.com\tcontainer\tstdout\n" +
                                           "ERROR: Bundle canary-application [71] Unable to get module class path. (java.lang.NullPointerException)"),
                              new LogEntry(lastId + 10, tester.clock().instant().minusSeconds(3), warning,
                                           "17491290-v6-1.ostk.bm2.prod.ne1.yahoo.com\tcontainer\tstderr\n" +
                                           "java.lang.NullPointerException\n\tat org.apache.felix.framework.BundleRevisionImpl.calculateContentPath(BundleRevisionImpl.java:438)\n\tat org.apache.felix.framework.BundleRevisionImpl.initializeContentPath(BundleRevisionImpl.java:371)"));
-                             */
     }
 
     @Test

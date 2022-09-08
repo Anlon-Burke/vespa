@@ -6,21 +6,16 @@
 
 namespace search::docsummary {
 
-class IDocsumEnvironment;
-
 class SummaryFeaturesDFW : public SimpleDFW
 {
-private:
-    IDocsumEnvironment * _env;
-
 public:
-    SummaryFeaturesDFW(IDocsumEnvironment * env);
+    SummaryFeaturesDFW();
     SummaryFeaturesDFW(const SummaryFeaturesDFW &) = delete;
     SummaryFeaturesDFW & operator=(const SummaryFeaturesDFW &) = delete;
     ~SummaryFeaturesDFW() override;
     bool IsGenerated() const override { return true; }
     void insertField(uint32_t docid, GetDocsumsState *state,
-                     ResType type, vespalib::slime::Inserter &target) override;
+                     ResType type, vespalib::slime::Inserter &target) const override;
 };
 
 }

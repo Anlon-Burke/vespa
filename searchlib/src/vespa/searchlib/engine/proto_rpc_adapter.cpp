@@ -4,10 +4,10 @@
 #include "searchapi.h"
 #include "docsumapi.h"
 #include "monitorapi.h"
+#include <vespa/fnet/frt/require_capabilities.h>
 #include <vespa/fnet/frt/rpcrequest.h>
 #include <vespa/fnet/frt/supervisor.h>
 #include <vespa/vespalib/util/compressor.h>
-#include <vespa/searchlib/util/slime_output_raw_buf_adapter.h>
 #include <vespa/vespalib/data/databuffer.h>
 #include <vespa/searchlib/common/packets.h>
 
@@ -193,6 +193,10 @@ void describe_bix_param_return(FRT_ReflectionBuilder &rb) {
     rb.ReturnDesc("reply", "possibly compressed serialized reply");
 }
 
+std::unique_ptr<FRT_RequireCapabilities> make_search_api_capability_filter() {
+    return FRT_RequireCapabilities::of(vespalib::net::tls::Capability::content_search_api());
+}
+
 }
 
 ProtoRpcAdapter::ProtoRpcAdapter(SearchServer &search_server,
@@ -210,16 +214,19 @@ ProtoRpcAdapter::ProtoRpcAdapter(SearchServer &search_server,
     rb.DefineMethod("vespa.searchprotocol.search", "bix", "bix",
                     FRT_METHOD(ProtoRpcAdapter::rpc_search), this);
     rb.MethodDesc("perform a search against this back-end");
+    rb.RequestAccessFilter(make_search_api_capability_filter());
     describe_bix_param_return(rb);
     //-------------------------------------------------------------------------
     rb.DefineMethod("vespa.searchprotocol.getDocsums", "bix", "bix",
                     FRT_METHOD(ProtoRpcAdapter::rpc_getDocsums), this);
     rb.MethodDesc("fetch document summaries from this back-end");
+    rb.RequestAccessFilter(make_search_api_capability_filter());
     describe_bix_param_return(rb);
     //-------------------------------------------------------------------------
     rb.DefineMethod("vespa.searchprotocol.ping", "bix", "bix",
                     FRT_METHOD(ProtoRpcAdapter::rpc_ping), this);
     rb.MethodDesc("ping this back-end");
+    rb.RequestAccessFilter(make_search_api_capability_filter());
     describe_bix_param_return(rb);
     //-------------------------------------------------------------------------
 }

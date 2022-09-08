@@ -4,7 +4,6 @@ package com.yahoo.vespa.hosted.controller.restapi.billing;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
-import com.yahoo.restapi.ErrorResponse;
 import com.yahoo.restapi.MessageResponse;
 import com.yahoo.restapi.RestApi;
 import com.yahoo.restapi.RestApiException;
@@ -23,8 +22,10 @@ import com.yahoo.vespa.hosted.controller.api.integration.billing.CollectionMetho
 import com.yahoo.vespa.hosted.controller.api.integration.billing.Plan;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.PlanId;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.PlanRegistry;
+import com.yahoo.vespa.hosted.controller.api.integration.billing.Quota;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
 import com.yahoo.vespa.hosted.controller.api.role.SecurityContext;
+import com.yahoo.vespa.hosted.controller.restapi.ErrorResponses;
 import com.yahoo.vespa.hosted.controller.tenant.CloudTenant;
 import com.yahoo.vespa.hosted.controller.tenant.Tenant;
 
@@ -36,11 +37,15 @@ import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.logging.Logger;
 
 /**
  * @author ogronnesby
  */
 public class BillingApiHandlerV2 extends RestApiRequestHandler<BillingApiHandlerV2> {
+
+    private static final Logger log = Logger.getLogger(BillingApiHandlerV2.class.getName());
+
     private static final String[] CSV_INVOICE_HEADER = new String[]{ "ID", "Tenant", "From", "To", "CpuHours", "MemoryHours", "DiskHours", "Cpu", "Memory", "Disk", "Additional" };
 
     private final ApplicationController applications;
@@ -82,7 +87,7 @@ public class BillingApiHandlerV2 extends RestApiRequestHandler<BillingApiHandler
                         .post(Slime.class, self::createBill))
                 .addRoute(RestApi.route("/billing/v2/accountant/plans")
                         .get(self::plans))
-                .addExceptionMapper(RuntimeException.class, (__, e) -> ErrorResponse.internalServerError(e.getMessage()))
+                .addExceptionMapper(RuntimeException.class, (c, e) -> ErrorResponses.logThrowing(c.request(), log, e))
                 .build();
     }
 
@@ -200,11 +205,13 @@ public class BillingApiHandlerV2 extends RestApiRequestHandler<BillingApiHandler
 
         var response = new Slime();
         var tenantsResponse = response.setObject().setArray("tenants");
+
         tenants.asList().stream().sorted(Comparator.comparing(Tenant::name)).forEach(tenant -> {
             var usage = Optional.ofNullable(usagePerTenant.get(tenant.name()));
             var tenantResponse = tenantsResponse.addObject();
             tenantResponse.setString("tenant", tenant.name().value());
             toSlime(tenantResponse.setObject("plan"), planFor(tenant.name()));
+            toSlime(tenantResponse.setObject("quota"), billing.getQuota(tenant.name()));
             tenantResponse.setString("collection", billing.getCollectionMethod(tenant.name()).name());
             tenantResponse.setString("lastBill", usage.map(Bill::getStartDate).map(DateTimeFormatter.ISO_DATE::format).orElse(null));
             tenantResponse.setString("unbilled", usage.map(Bill::sum).map(BigDecimal::toPlainString).orElse("0.00"));
@@ -355,6 +362,10 @@ public class BillingApiHandlerV2 extends RestApiRequestHandler<BillingApiHandler
     private void toSlime(Cursor cursor, Plan plan) {
         cursor.setString("id", plan.id().value());
         cursor.setString("name", plan.displayName());
+    }
+
+    private void toSlime(Cursor cursor, Quota quota) {
+        cursor.setDouble("budget", quota.budget().map(BigDecimal::doubleValue).orElse(-1.0));
     }
 
     private Plan planFor(TenantName tenant) {

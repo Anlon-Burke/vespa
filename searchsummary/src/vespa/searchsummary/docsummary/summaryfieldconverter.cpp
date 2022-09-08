@@ -28,6 +28,7 @@
 #include <vespa/document/fieldvalue/tensorfieldvalue.h>
 #include <vespa/document/fieldvalue/referencefieldvalue.h>
 #include <vespa/eval/eval/value_codec.h>
+#include <vespa/juniper/juniper_separators.h>
 #include <vespa/searchcommon/common/schema.h>
 #include <vespa/searchlib/util/url.h>
 #include <vespa/vespalib/geo/zcurve.h>
@@ -35,8 +36,8 @@
 #include <vespa/vespalib/util/size_literals.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/data/slime/slime.h>
+#include <vespa/vespalib/data/smart_buffer.h>
 #include <vespa/vespalib/objects/nbostream.h>
-#include <vespa/searchlib/util/slime_output_raw_buf_adapter.h>
 #include <vespa/vespalib/util/exceptions.h>
 
 
@@ -137,7 +138,7 @@ void handleIndexingTerms(Handler &handler, const StringFieldValue &value) {
     if (!tree) {
         // Treat a string without annotations as a single span.
         SpanTerm str(Span(0, handler.text.size()),
-                     static_cast<const FieldValue*>(0));
+                     static_cast<const FieldValue*>(nullptr));
         handler.handleAnnotations(str.first, &str, &str + 1);
         return;
     }
@@ -152,11 +153,11 @@ void handleIndexingTerms(Handler &handler, const StringFieldValue &value) {
         }
     }
     sort(terms.begin(), terms.end());
-    SpanTermVector::const_iterator it = terms.begin();
-    SpanTermVector::const_iterator ite = terms.end();
+    auto it = terms.begin();
+    auto ite = terms.end();
     int32_t endPos = 0;
     for (; it != ite; ) {
-        SpanTermVector::const_iterator it_begin = it;
+        auto it_begin = it;
         if (it_begin->first.from() >  endPos) {
             Span tmpSpan(endPos, it_begin->first.from() - endPos);
             handler.handleAnnotations(tmpSpan, it, it);
@@ -184,7 +185,7 @@ const StringFieldValue &ensureStringFieldValue(const FieldValue &value) {
 
 struct FieldValueConverter {
     virtual FieldValue::UP convert(const FieldValue &input) = 0;
-    virtual ~FieldValueConverter() {}
+    virtual ~FieldValueConverter() = default;
 };
 
 
@@ -201,15 +202,15 @@ struct SummaryHandler {
         if (annCnt > 1 || (annCnt == 1 && it->second)) {
             annotateSpans(span, it, last);
         } else {
-            out << getSpanString(text, span) << '\037';
+            out << getSpanString(text, span) << juniper::separators::unit_separator_string;
         }
     }
 
     template <typename ForwardIt>
     void annotateSpans(const Span &span, ForwardIt it, ForwardIt last) {
-        out << "\357\277\271"  // ANCHOR
+        out << juniper::separators::interlinear_annotation_anchor_string  // ANCHOR
             << (getSpanString(text, span))
-            << "\357\277\272"; // SEPARATOR
+            << juniper::separators::interlinear_annotation_separator_string; // SEPARATOR
         while (it != last) {
             if (it->second) {
                 out << ensureStringFieldValue(*it->second).getValue();
@@ -220,8 +221,8 @@ struct SummaryHandler {
                 out << " ";
             }
         }
-        out << "\357\277\273"  // TERMINATOR
-            << "\037";
+        out << juniper::separators::interlinear_annotation_terminator_string  // TERMINATOR
+            << juniper::separators::unit_separator_string;
     }
 };
 
@@ -243,7 +244,7 @@ class SummaryFieldValueConverter : protected ConstFieldValueVisitor
     void visit(const BoolFieldValue &value) override { visitPrimitive(value); }
     void visit(const ByteFieldValue &value) override {
         int8_t signedValue = value.getAsByte();
-        _field_value.reset(new ShortFieldValue(signedValue));
+        _field_value = std::make_unique<ShortFieldValue>(signedValue);
     }
     void visit(const DoubleFieldValue &value) override { visitPrimitive(value); }
     void visit(const FloatFieldValue &value) override { visitPrimitive(value); }
@@ -313,7 +314,7 @@ class SummaryFieldValueConverter : protected ConstFieldValueVisitor
 
 public:
     SummaryFieldValueConverter(bool tokenize, FieldValueConverter &subConverter);
-    ~SummaryFieldValueConverter();
+    ~SummaryFieldValueConverter() override;
 
     FieldValue::UP convert(const FieldValue &input) {
         input.accept(*this);
@@ -506,13 +507,30 @@ private:
         if (value.size() > 0) {
             Symbol isym = a.resolve("item");
             Symbol wsym = a.resolve("weight");
+            using matching_elements_iterator_type = std::vector<uint32_t>::const_iterator;
+            matching_elements_iterator_type matching_elements_itr;
+            matching_elements_iterator_type matching_elements_itr_end;
+            if (filter_matching_elements()) {
+                matching_elements_itr = (!_matching_elems->empty() && _matching_elems->back() < value.size()) ? _matching_elems->begin() : _matching_elems->end();
+                matching_elements_itr_end = _matching_elems->end();
+            }
+            uint32_t idx = 0;
             for (const auto & entry : value) {
+                if (filter_matching_elements()) {
+                    if (matching_elements_itr == matching_elements_itr_end ||
+                        idx < *matching_elements_itr) {
+                        ++idx;
+                        continue;
+                    }
+                    ++matching_elements_itr;
+                }
                 Cursor &o = a.addObject();
                 ObjectSymbolInserter ki(o, isym);
                 SlimeFiller conv(ki, _tokenize);
                 entry.first->accept(conv);
                 int weight = static_cast<const IntFieldValue &>(*entry.second).getValue();
                 o.setLong(wsym, weight);
+                ++idx;
             }
         }
     }
@@ -552,7 +570,7 @@ private:
     const std::vector<uint32_t>* _matching_elems;
 
 public:
-    SlimeConverter(bool tokenize)
+    explicit SlimeConverter(bool tokenize)
         : _tokenize(tokenize),
           _matching_elems()
     {}
@@ -567,10 +585,10 @@ public:
         SlimeInserter inserter(slime);
         SlimeFiller visitor(inserter, _tokenize, _matching_elems);
         input.accept(visitor);
-        search::RawBuf rbuf(4_Ki);
-        search::SlimeOutputRawBufAdapter adapter(rbuf);
-        vespalib::slime::BinaryFormat::encode(slime, adapter);
-        return std::make_unique<RawFieldValue>(rbuf.GetDrainPos(), rbuf.GetUsedLen());
+        vespalib::SmartBuffer buffer(4_Ki);
+        vespalib::slime::BinaryFormat::encode(slime, buffer);
+        vespalib::Memory mem = buffer.obtain();
+        return std::make_unique<RawFieldValue>(mem.data, mem.size);
     }
 };
 

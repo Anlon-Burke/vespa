@@ -1,8 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.jrt.slobrok.api;
 
-
-import com.yahoo.jrt.ErrorCode;
 import com.yahoo.jrt.Int32Value;
 import com.yahoo.jrt.Request;
 import com.yahoo.jrt.RequestWaiter;
@@ -13,6 +11,7 @@ import com.yahoo.jrt.Task;
 import com.yahoo.jrt.TransportThread;
 import com.yahoo.jrt.Values;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -50,8 +49,7 @@ public class Mirror implements IMirror {
     private Request req = null;
 
     /**
-     * Create a new MirrorAPI using the given Supervisor and slobrok
-     * connect specs.
+     * Create a new MirrorAPI using the given Supervisor and slobrok connect specs.
      *
      * @param orb the Supervisor to use
      * @param slobroks slobrok connect spec list
@@ -206,7 +204,7 @@ public class Mirror implements IMirror {
         req = new Request("slobrok.incremental.fetch");
         req.parameters().add(new Int32Value(specsGeneration)); // gencnt
         req.parameters().add(new Int32Value(5000));     // mstimeout
-        target.invokeAsync(req, 40.0, reqWait);
+        target.invokeAsync(req, Duration.ofSeconds(40), reqWait);
     }
 
     private void handleUpdate() {

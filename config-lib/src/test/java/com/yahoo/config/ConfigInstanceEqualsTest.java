@@ -3,26 +3,28 @@ package com.yahoo.config;
 
 import com.yahoo.test.AppConfig;
 import com.yahoo.test.FunctionTestConfig;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.Optional;
 
 import static com.yahoo.test.FunctionTestConfig.BasicStruct;
 import static com.yahoo.test.FunctionTestConfig.Enum_val;
 import static com.yahoo.test.FunctionTestConfig.Enumarr;
 import static com.yahoo.test.FunctionTestConfig.Myarray;
 import static com.yahoo.test.FunctionTestConfig.RootStruct;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 public class ConfigInstanceEqualsTest {
+
     FunctionTestConfig config1;
     FunctionTestConfig.Builder builder2;
     FunctionTestConfig config2;
 
-    @Before
+    @BeforeEach
     public void reset() {
         config1 = new FunctionTestConfig(newBuilder());
         builder2 = newBuilder();
@@ -30,28 +32,28 @@ public class ConfigInstanceEqualsTest {
     }
 
     @Test
-    public void require_same_hashCode_for_equal_instances() {
+    void require_same_hashCode_for_equal_instances() {
         assertEquals(config1.hashCode(), config2.hashCode());
     }
 
     @Test
-    public void require_true_for_equal_instances() {
+    void require_true_for_equal_instances() {
         assertEquals(config1, config2);
     }
 
     @Test
-    public void require_false_for_null() {
+    void require_false_for_null() {
         assertNotEquals(null, config1);
 
     }
 
     @Test
-    public void require_false_for_different_subclass() {
+    void require_false_for_different_subclass() {
         assertNotEquals(config1, new AppConfig(new AppConfig.Builder()));
     }
 
     @Test
-    public void require_false_for_different_scalars_at_root_node() {
+    void require_false_for_different_scalars_at_root_node() {
         assertNotEquals(config1, new FunctionTestConfig(newBuilder().bool_val(true)));
         assertNotEquals(config1, new FunctionTestConfig(newBuilder().int_val(0)));
         assertNotEquals(config1, new FunctionTestConfig(newBuilder().long_val(0L)));
@@ -63,50 +65,50 @@ public class ConfigInstanceEqualsTest {
     }
 
     @Test
-    public void require_false_for_different_leaf_array_at_root_node() {
+    void require_false_for_different_leaf_array_at_root_node() {
         builder2.longarr.set(0, 0L);
         assertNotEquals(config1, new FunctionTestConfig(builder2));
     }
 
     @Test
-    public void require_false_for_different_scalar_in_struct() {
+    void require_false_for_different_scalar_in_struct() {
         builder2.basicStruct(new BasicStruct.Builder(config1.basicStruct()).bar(0));
         assertNotEquals(config1, new FunctionTestConfig(builder2));
     }
 
     @Test
-    public void require_false_for_different_scalar_in_inner_array() {
+    void require_false_for_different_scalar_in_inner_array() {
         builder2.myarray.get(0).intval(0);
         assertNotEquals(config1, new FunctionTestConfig(builder2));
     }
 
     @Test
-    public void require_false_for_different_leaf_array_in_inner_array() {
+    void require_false_for_different_leaf_array_in_inner_array() {
         builder2.myarray.get(0).stringval.set(0, "");
         assertNotEquals(config1, new FunctionTestConfig(builder2));
     }
 
     @Test
-    public void require_equal_structs_for_equal_configs() {
+    void require_equal_structs_for_equal_configs() {
         assertEquals(config1.basicStruct(), config2.basicStruct());
         assertEquals(config1.rootStruct(), config2.rootStruct());
         assertEquals(config1.rootStruct().inner0(), config2.rootStruct().inner0());
     }
 
     @Test
-    public void require_equal_inner_arrays_for_equal_configs() {
+    void require_equal_inner_arrays_for_equal_configs() {
         assertEquals(config1.myarray(), config2.myarray());
         assertEquals(config1.myarray(0).anotherarray(), config2.myarray(0).anotherarray());
     }
 
     @Test
-    public void require_equal_inner_array_elements_for_equal_configs() {
+    void require_equal_inner_array_elements_for_equal_configs() {
         assertEquals(config1.myarray(0), config2.myarray(0));
         assertEquals(config1.myarray(0).anotherarray(0), config2.myarray(0).anotherarray(0));
     }
 
     @Test
-    public void require_equal_leaf_arrays_for_equal_configs() {
+    void require_equal_leaf_arrays_for_equal_configs() {
         assertEquals(config1.intarr(), config2.intarr());
         assertEquals(config1.boolarr(), config2.boolarr());
         assertEquals(config1.longarr(), config2.longarr());
@@ -130,6 +132,9 @@ public class ConfigInstanceEqualsTest {
                 fileVal("etc").
                 pathVal(FileReference.mockFileReferenceForUnitTesting(new File("pom.xml"))).
                 urlVal(new UrlReference("http://docs.vespa.ai")).
+                modelVal(new ModelReference(Optional.of("my-model-id"),
+                                            Optional.of(new UrlReference("http://docs.vespa.ai")),
+                                            Optional.empty())).
                 boolarr(false).
                 longarr(9223372036854775807L).
                 longarr(-9223372036854775808L).
@@ -140,6 +145,9 @@ public class ConfigInstanceEqualsTest {
                 refarr(Arrays.asList(":parent:", ":parent", "parent:")).  // test collection based setter
                 fileArr("bin").
                 urlArr(new UrlReference("http://docs.vespa.ai")).
+                modelArr(new ModelReference(Optional.empty(),
+                                            Optional.of(new UrlReference("http://docs.vespa.ai")),
+                                            Optional.of(FileReference.mockFileReferenceForUnitTesting(new File("pom.xml"))))).
 
                 basicStruct(new BasicStruct.Builder().
                         foo("basicFoo").
@@ -183,4 +191,5 @@ public class ConfigInstanceEqualsTest {
                                 b(-2)));
 
     }
+
 }

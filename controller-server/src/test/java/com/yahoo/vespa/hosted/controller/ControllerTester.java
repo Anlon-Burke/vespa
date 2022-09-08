@@ -74,9 +74,8 @@ import java.util.logging.Handler;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Convenience methods for controller tests.
@@ -345,7 +344,7 @@ public final class ControllerTester {
     private TenantName createCloudTenant(String tenantName) {
         TenantName tenant = TenantName.from(tenantName);
         TenantSpec spec = new CloudTenantSpec(tenant, "token");
-        controller().tenants().create(spec, new Auth0Credentials(new SimplePrincipal("dev"), Set.of(Role.administrator(tenant))));
+        controller().tenants().create(spec, new Auth0Credentials(new SimplePrincipal("dev-" + tenantName), Set.of(Role.administrator(tenant))));
         return tenant;
     }
 

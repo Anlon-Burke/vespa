@@ -31,6 +31,8 @@ import java.util.Map;
 import java.util.OptionalInt;
 import java.util.StringJoiner;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -364,15 +366,31 @@ public class ApplicationPackageBuilder {
         return new SimpleDateFormat("yyyy-MM-dd").format(Date.from(instant));
     }
 
-    public static ApplicationPackage fromDeploymentXml(String deploymentXml) {
+    public static ApplicationPackage fromDeploymentXml(String deploymentXml, ValidationId... overrides) {
+        return fromDeploymentXml(deploymentXml, "6.1", overrides);
+    }
+
+    public static ApplicationPackage fromDeploymentXml(String deploymentXml, String compileVersion) {
+        return fromDeploymentXml(deploymentXml, compileVersion, new ValidationId[0]);
+    }
+
+    public static ApplicationPackage fromDeploymentXml(String deploymentXml, String compileVersion, ValidationId... overrides) {
         ByteArrayOutputStream zip = new ByteArrayOutputStream();
         try (ZipOutputStream out = new ZipOutputStream(zip)) {
             out.putNextEntry(new ZipEntry("deployment.xml"));
             out.write(deploymentXml.getBytes(UTF_8));
             out.closeEntry();
             out.putNextEntry(new ZipEntry("build-meta.json"));
-            out.write(buildMeta(Version.fromString("6.1")));
+            out.write(buildMeta(Version.fromString(compileVersion)));
             out.closeEntry();
+            if (overrides.length > 0) {
+                out.putNextEntry(new ZipEntry("validation-overrides.xml"));
+                String override = "<allow until='" + asIso8601Date(Instant.now().plus(Duration.ofDays(28))) + "'>%s</allow>";
+                out.write(("<validation-overrides version='1.0'>\n" +
+                           Arrays.stream(overrides).map(ValidationId::value).map(override::formatted).collect(Collectors.joining("\n")) +
+                           "</validation-overrides>\n").getBytes(UTF_8));
+                out.closeEntry();
+            }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

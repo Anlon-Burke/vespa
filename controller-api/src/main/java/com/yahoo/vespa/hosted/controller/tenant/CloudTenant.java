@@ -5,6 +5,7 @@ import com.google.common.collect.BiMap;
 import com.google.common.collect.ImmutableBiMap;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
+import com.yahoo.vespa.hosted.controller.api.role.SimplePrincipal;
 
 import java.security.Principal;
 import java.security.PublicKey;
@@ -20,22 +21,24 @@ import java.util.Optional;
  */
 public class CloudTenant extends Tenant {
 
-    private final Optional<Principal> creator;
-    private final BiMap<PublicKey, Principal> developerKeys;
+    private final Optional<SimplePrincipal> creator;
+    private final BiMap<PublicKey, SimplePrincipal> developerKeys;
     private final TenantInfo info;
     private final List<TenantSecretStore> tenantSecretStores;
     private final ArchiveAccess archiveAccess;
+    private final Optional<Instant> invalidateUserSessionsBefore;
 
     /** Public for the serialization layer — do not use! */
-    public CloudTenant(TenantName name, Instant createdAt, LastLoginInfo lastLoginInfo, Optional<Principal> creator,
-                       BiMap<PublicKey, Principal> developerKeys, TenantInfo info,
-                       List<TenantSecretStore> tenantSecretStores, ArchiveAccess archiveAccess) {
+    public CloudTenant(TenantName name, Instant createdAt, LastLoginInfo lastLoginInfo, Optional<SimplePrincipal> creator,
+                       BiMap<PublicKey, SimplePrincipal> developerKeys, TenantInfo info,
+                       List<TenantSecretStore> tenantSecretStores, ArchiveAccess archiveAccess, Optional<Instant> invalidateUserSessionsBefore) {
         super(name, createdAt, lastLoginInfo, Optional.empty());
         this.creator = creator;
         this.developerKeys = developerKeys;
         this.info = Objects.requireNonNull(info);
         this.tenantSecretStores = tenantSecretStores;
         this.archiveAccess = Objects.requireNonNull(archiveAccess);
+        this.invalidateUserSessionsBefore = invalidateUserSessionsBefore;
     }
 
     /** Creates a tenant with the given name, provided it passes validation. */
@@ -43,12 +46,12 @@ public class CloudTenant extends Tenant {
         return new CloudTenant(requireName(tenantName),
                                createdAt,
                                LastLoginInfo.EMPTY,
-                               Optional.ofNullable(creator),
-                               ImmutableBiMap.of(), TenantInfo.empty(), List.of(), new ArchiveAccess());
+                               Optional.ofNullable(creator).map(SimplePrincipal::of),
+                               ImmutableBiMap.of(), TenantInfo.empty(), List.of(), new ArchiveAccess(), Optional.empty());
     }
 
     /** The user that created the tenant */
-    public Optional<Principal> creator() {
+    public Optional<SimplePrincipal> creator() {
         return creator;
     }
 
@@ -58,7 +61,7 @@ public class CloudTenant extends Tenant {
     }
 
     /** Returns the set of developer keys and their corresponding developers for this tenant. */
-    public BiMap<PublicKey, Principal> developerKeys() { return developerKeys; }
+    public BiMap<PublicKey, SimplePrincipal> developerKeys() { return developerKeys; }
 
     /** List of configured secret stores */
     public List<TenantSecretStore> tenantSecretStores() {
@@ -73,6 +76,11 @@ public class CloudTenant extends Tenant {
      */
     public ArchiveAccess archiveAccess() {
         return archiveAccess;
+    }
+
+    /** Returns instant before which all user sessions that have access to this tenant must be refreshed */
+    public Optional<Instant> invalidateUserSessionsBefore() {
+        return invalidateUserSessionsBefore;
     }
 
     @Override

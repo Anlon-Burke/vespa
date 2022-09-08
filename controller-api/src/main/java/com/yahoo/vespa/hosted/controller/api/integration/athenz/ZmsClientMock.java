@@ -274,6 +274,16 @@ public class ZmsClientMock implements ZmsClient {
     }
 
     @Override
+    public void deleteSubdomain(AthenzDomain parent, String name) {
+        athenz.domains.remove(new AthenzDomain(parent.getName() + "." + name));
+    }
+
+    @Override
+    public void deletePolicy(AthenzDomain domain, String athenzPolicy) {
+        athenz.getOrCreateDomain(domain).policies.remove(athenzPolicy);
+    }
+
+    @Override
     public void close() {}
 
     private static AthenzDomain getTenantDomain(AthenzResourceName resource) {

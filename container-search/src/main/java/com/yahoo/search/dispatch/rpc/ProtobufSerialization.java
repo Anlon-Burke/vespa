@@ -33,6 +33,7 @@ import com.yahoo.vespa.objects.BufferSerializer;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 
 public class ProtobufSerialization {
@@ -81,6 +82,7 @@ public class ProtobufSerialization {
         }
 
         builder.setTraceLevel(getTraceLevelForBackend(query));
+        builder.setProfileDepth(query.getTrace().getProfileDepth());
 
         mergeToSearchRequestFromRanking(query.getRanking(), builder);
 
@@ -129,6 +131,7 @@ public class ProtobufSerialization {
     static SearchProtocol.DocsumRequest.Builder createDocsumRequestBuilder(Query query,
                                                                            String serverId,
                                                                            String summaryClass,
+                                                                           Set<String> fields,
                                                                            boolean includeQueryData,
                                                                            double requestTimeout) {
         var builder = SearchProtocol.DocsumRequest.newBuilder()
@@ -137,6 +140,9 @@ public class ProtobufSerialization {
 
         if (summaryClass != null) {
             builder.setSummaryClass(summaryClass);
+        }
+        if (fields != null) {
+            builder.addAllFields(fields);
         }
 
         var documentDb = query.getModel().getDocumentDb();
@@ -283,8 +289,7 @@ public class ProtobufSerialization {
             if (hit.getRelevance() != null) {
                 hitBuilder.setRelevance(hit.getRelevance().getScore());
             }
-            if (hit instanceof FastHit) {
-                FastHit fhit = (FastHit) hit;
+            if (hit instanceof FastHit fhit) {
                 hitBuilder.setGlobalId(ByteString.copyFrom(fhit.getRawGlobalId()));
             }
             builder.addHits(hitBuilder);

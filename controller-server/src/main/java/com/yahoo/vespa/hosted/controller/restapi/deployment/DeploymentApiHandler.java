@@ -14,6 +14,7 @@ import com.yahoo.restapi.UriBuilder;
 import com.yahoo.slime.Cursor;
 import com.yahoo.slime.Slime;
 import com.yahoo.vespa.hosted.controller.Controller;
+import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationVersion;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.application.ApplicationList;
 import com.yahoo.vespa.hosted.controller.application.Change;
@@ -21,6 +22,7 @@ import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentStatus;
 import com.yahoo.vespa.hosted.controller.deployment.Run;
 import com.yahoo.vespa.hosted.controller.deployment.Versions;
+import com.yahoo.vespa.hosted.controller.restapi.ErrorResponses;
 import com.yahoo.vespa.hosted.controller.restapi.application.EmptyResponse;
 import com.yahoo.vespa.hosted.controller.versions.DeploymentStatistics;
 import com.yahoo.vespa.hosted.controller.versions.VespaVersion;
@@ -31,7 +33,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
-import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -60,18 +61,17 @@ public class DeploymentApiHandler extends ThreadedHttpRequestHandler {
     @Override
     public HttpResponse handle(HttpRequest request) {
         try {
-            switch (request.getMethod()) {
-                case GET: return handleGET(request);
-                case OPTIONS: return handleOPTIONS();
-                default: return ErrorResponse.methodNotAllowed("Method '" + request.getMethod() + "' is not supported");
-            }
+            return switch (request.getMethod()) {
+                case GET -> handleGET(request);
+                case OPTIONS -> handleOPTIONS();
+                default -> ErrorResponse.methodNotAllowed("Method '" + request.getMethod() + "' is not supported");
+            };
         }
         catch (IllegalArgumentException e) {
             return ErrorResponse.badRequest(Exceptions.toMessageString(e));
         }
         catch (RuntimeException e) {
-            log.log(Level.WARNING, "Unexpected error handling '" + request.getUri() + "'", e);
-            return ErrorResponse.internalServerError(Exceptions.toMessageString(e));
+            return ErrorResponses.logThrowing(request, log, e);
         }
     }
 
@@ -175,6 +175,8 @@ public class DeploymentApiHandler extends ThreadedHttpRequestHandler {
                       instanceObject.setString("upgradePolicy", toString(status.application().deploymentSpec().instance(instance.instance())
                                                                                .map(DeploymentInstanceSpec::upgradePolicy)
                                                                                .orElse(DeploymentSpec.UpgradePolicy.defaultPolicy)));
+                      status.application().revisions().last().flatMap(ApplicationVersion::compileVersion)
+                            .ifPresent(compiled -> instanceObject.setString("compileVersion", compiled.toFullString()));
                       Cursor jobsArray = instanceObject.setArray("jobs");
                       status.jobSteps().forEach((job, jobStatus) -> {
                           if ( ! job.application().equals(instance)) return;

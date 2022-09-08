@@ -6,7 +6,7 @@ import com.yahoo.jdisc.http.ConnectorConfig;
 import com.yahoo.security.SslContextBuilder;
 import com.yahoo.security.tls.TransportSecurityOptions;
 import com.yahoo.security.tls.TransportSecurityUtils;
-import com.yahoo.security.tls.TrustAllX509TrustManager;
+import com.yahoo.security.TrustAllX509TrustManager;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.ProxyProtocolClientConnectionFactory;
 import org.eclipse.jetty.client.api.ContentResponse;
@@ -91,8 +91,7 @@ class HealthCheckProxyHandler extends HandlerWrapper {
                                 .map(detectorConnFactory -> detectorConnFactory.getBean(SslConnectionFactory.class)))
                         .map(connFactory -> (SslContextFactory.Server) connFactory.getSslContextFactory())
                         .orElseThrow(() -> new IllegalArgumentException("Health check proxy can only target https port"));
-        ConnectorConfig.ProxyProtocol proxyProtocolCfg = targetConnector.connectorConfig().proxyProtocol();
-        boolean proxyProtocol = proxyProtocolCfg.enabled() && !proxyProtocolCfg.mixedMode();
+        boolean proxyProtocol = targetConnector.connectorConfig().proxyProtocol().enabled();
         return new ProxyTarget(targetPort, clientTimeout,handlerTimeout, cacheExpiry, sslContextFactory, proxyProtocol);
     }
 

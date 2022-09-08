@@ -45,18 +45,6 @@ AttrDFW::get_attribute(const GetDocsumsState& s) const
     return *s.getAttribute(getIndex());
 }
 
-const vespalib::string &
-AttrDFW::getAttributeName() const
-{
-    return _attrName;
-}
-
-bool
-AttrDFW::IsGenerated() const
-{
-    return true;
-}
-
 namespace {
 
 class SingleAttrDFW : public AttrDFW
@@ -65,14 +53,14 @@ public:
     explicit SingleAttrDFW(const vespalib::string & attrName) :
         AttrDFW(attrName)
     { }
-    void insertField(uint32_t docid, GetDocsumsState *state, ResType type, Inserter &target) override;
+    void insertField(uint32_t docid, GetDocsumsState *state, ResType type, Inserter &target) const override;
     bool isDefaultValue(uint32_t docid, const GetDocsumsState * state) const override {
         return get_attribute(*state).isUndefined(docid);
     }
 };
 
 void
-SingleAttrDFW::insertField(uint32_t docid, GetDocsumsState * state, ResType type, Inserter &target)
+SingleAttrDFW::insertField(uint32_t docid, GetDocsumsState * state, ResType type, Inserter &target) const
 {
     const auto& v = get_attribute(*state);
     switch (type) {
@@ -280,9 +268,10 @@ private:
     std::shared_ptr<MatchingElementsFields> _matching_elems_fields;
 
 public:
-    explicit MultiAttrDFW(const vespalib::string& attr_name, bool filter_elements, std::shared_ptr<MatchingElementsFields> matching_elems_fields)
+    MultiAttrDFW(const vespalib::string& attr_name, bool filter_elements, std::shared_ptr<MatchingElementsFields> matching_elems_fields)
         : AttrDFW(attr_name),
           _filter_elements(filter_elements),
+          _state_index(0),
           _matching_elems_fields(std::move(matching_elems_fields))
     {
         if (filter_elements && _matching_elems_fields) {
@@ -290,7 +279,7 @@ public:
         }
     }
     bool setFieldWriterStateIndex(uint32_t fieldWriterStateIndex) override;
-    void insertField(uint32_t docid, GetDocsumsState* state, ResType type, Inserter& target) override;
+    void insertField(uint32_t docid, GetDocsumsState* state, ResType type, Inserter& target) const override;
 };
 
 bool
@@ -338,7 +327,7 @@ make_field_writer_state(const vespalib::string& field_name, const IAttributeVect
 }
 
 void
-MultiAttrDFW::insertField(uint32_t docid, GetDocsumsState *state, ResType, vespalib::slime::Inserter &target)
+MultiAttrDFW::insertField(uint32_t docid, GetDocsumsState *state, ResType, vespalib::slime::Inserter &target) const
 {
     auto& field_writer_state = state->_fieldWriterStates[_state_index];
     if (!field_writer_state) {
@@ -375,7 +364,7 @@ create_multi_writer(const IAttributeVector& attr, bool filter_elements, std::sha
 }
 
 std::unique_ptr<DocsumFieldWriter>
-AttributeDFWFactory::create(IAttributeManager& attr_mgr,
+AttributeDFWFactory::create(const IAttributeManager& attr_mgr,
                             const vespalib::string& attr_name,
                             bool filter_elements,
                             std::shared_ptr<MatchingElementsFields> matching_elems_fields)

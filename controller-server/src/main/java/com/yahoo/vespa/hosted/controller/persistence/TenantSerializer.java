@@ -81,6 +81,7 @@ public class TenantSerializer {
     private static final String archiveAccessField = "archiveAccess";
     private static final String awsArchiveAccessRoleField = "awsArchiveAccessRole";
     private static final String gcpArchiveAccessMemberField = "gcpArchiveAccessMember";
+    private static final String invalidateUserSessionsBeforeField = "invalidateUserSessionsBefore";
 
     private static final String awsIdField = "awsId";
     private static final String roleField = "role";
@@ -123,6 +124,7 @@ public class TenantSerializer {
         toSlime(tenant.info(), root);
         toSlime(tenant.tenantSecretStores(), root);
         toSlime(tenant.archiveAccess(), root);
+        tenant.invalidateUserSessionsBefore().ifPresent(instant -> root.setLong(invalidateUserSessionsBeforeField, instant.toEpochMilli()));
     }
 
     private void toSlime(ArchiveAccess archiveAccess, Cursor root) {
@@ -135,7 +137,7 @@ public class TenantSerializer {
         root.setLong(deletedAtField, tenant.deletedAt().toEpochMilli());
     }
 
-    private void developerKeysToSlime(BiMap<PublicKey, Principal> keys, Cursor array) {
+    private void developerKeysToSlime(BiMap<PublicKey, ? extends Principal> keys, Cursor array) {
         keys.forEach((key, user) -> {
             Cursor object = array.addObject();
             object.setString("key", KeyUtils.toPem(key));
@@ -182,12 +184,13 @@ public class TenantSerializer {
         TenantName name = TenantName.from(tenantObject.field(nameField).asString());
         Instant createdAt = SlimeUtils.instant(tenantObject.field(createdAtField));
         LastLoginInfo lastLoginInfo = lastLoginInfoFromSlime(tenantObject.field(lastLoginInfoField));
-        Optional<Principal> creator = SlimeUtils.optionalString(tenantObject.field(creatorField)).map(SimplePrincipal::new);
-        BiMap<PublicKey, Principal> developerKeys = developerKeysFromSlime(tenantObject.field(pemDeveloperKeysField));
+        Optional<SimplePrincipal> creator = SlimeUtils.optionalString(tenantObject.field(creatorField)).map(SimplePrincipal::new);
+        BiMap<PublicKey, SimplePrincipal> developerKeys = developerKeysFromSlime(tenantObject.field(pemDeveloperKeysField));
         TenantInfo info = tenantInfoFromSlime(tenantObject.field(tenantInfoField));
         List<TenantSecretStore> tenantSecretStores = secretStoresFromSlime(tenantObject.field(secretStoresField));
         ArchiveAccess archiveAccess = archiveAccessFromSlime(tenantObject);
-        return new CloudTenant(name, createdAt, lastLoginInfo, creator, developerKeys, info, tenantSecretStores, archiveAccess);
+        Optional<Instant> invalidateUserSessionsBefore = SlimeUtils.optionalInstant(tenantObject.field(invalidateUserSessionsBeforeField));
+        return new CloudTenant(name, createdAt, lastLoginInfo, creator, developerKeys, info, tenantSecretStores, archiveAccess, invalidateUserSessionsBefore);
     }
 
     private DeletedTenant deletedTenantFrom(Inspector tenantObject) {
@@ -197,8 +200,8 @@ public class TenantSerializer {
         return new DeletedTenant(name, createdAt, deletedAt);
     }
 
-    private BiMap<PublicKey, Principal> developerKeysFromSlime(Inspector array) {
-        ImmutableBiMap.Builder<PublicKey, Principal> keys = ImmutableBiMap.builder();
+    private BiMap<PublicKey, SimplePrincipal> developerKeysFromSlime(Inspector array) {
+        ImmutableBiMap.Builder<PublicKey, SimplePrincipal> keys = ImmutableBiMap.builder();
         array.traverse((ArrayTraverser) (__, keyObject) ->
                 keys.put(KeyUtils.fromPemEncodedPublicKey(keyObject.field("key").asString()),
                          new SimplePrincipal(keyObject.field("user").asString())));

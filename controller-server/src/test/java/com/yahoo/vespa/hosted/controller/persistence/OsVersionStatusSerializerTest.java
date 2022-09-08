@@ -8,7 +8,7 @@ import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.vespa.hosted.controller.versions.NodeVersion;
 import com.yahoo.vespa.hosted.controller.versions.OsVersion;
 import com.yahoo.vespa.hosted.controller.versions.OsVersionStatus;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * @author mpolden
@@ -24,16 +24,16 @@ import static org.junit.Assert.assertEquals;
 public class OsVersionStatusSerializerTest {
 
     @Test
-    public void serialization() {
+    void serialization() {
         Version version1 = Version.fromString("7.1");
         Version version2 = Version.fromString("7.2");
         Map<OsVersion, List<NodeVersion>> versions = new LinkedHashMap<>();
 
-        versions.put(new OsVersion(version1, CloudName.defaultName()), List.of(
+        versions.put(new OsVersion(version1, CloudName.DEFAULT), List.of(
                 new NodeVersion(HostName.of("node1"), ZoneId.from("prod", "us-west"), version1, version2, Optional.of(Instant.ofEpochMilli(11))),
                 new NodeVersion(HostName.of("node2"), ZoneId.from("prod", "us-east"), version1, version2, Optional.of(Instant.ofEpochMilli(22)))
         ));
-        versions.put(new OsVersion(version2, CloudName.defaultName()), List.of(
+        versions.put(new OsVersion(version2, CloudName.DEFAULT), List.of(
                 new NodeVersion(HostName.of("node3"), ZoneId.from("prod", "us-west"), version2, version2, Optional.of(Instant.ofEpochMilli(33))),
                 new NodeVersion(HostName.of("node4"), ZoneId.from("prod", "us-east"), version2, version2, Optional.of(Instant.ofEpochMilli(44)))
         ));

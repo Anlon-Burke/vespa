@@ -34,7 +34,7 @@ using search::common::Location;
 using search::common::GeoGcd;
 
 LocationAttrDFW::AllLocations
-LocationAttrDFW::getAllLocations(GetDocsumsState *state)
+LocationAttrDFW::getAllLocations(GetDocsumsState *state) const
 {
     AllLocations retval;
     if (! state->_args.locations_possible()) {
@@ -61,13 +61,16 @@ LocationAttrDFW::getAllLocations(GetDocsumsState *state)
     return retval;
 }
 
+LocationAttrDFW::AllLocations::AllLocations() = default;
+LocationAttrDFW::AllLocations::~AllLocations() = default;
+
 AbsDistanceDFW::AbsDistanceDFW(const vespalib::string & attrName)
     : LocationAttrDFW(attrName)
 { }
 
 uint64_t
 AbsDistanceDFW::findMinDistance(uint32_t docid, GetDocsumsState *state,
-                                const std::vector<const GeoLoc *> &locations)
+                                const std::vector<const GeoLoc *> &locations) const
 {
     // ensure result fits in Java "int"
     uint64_t absdist = std::numeric_limits<int32_t>::max();
@@ -92,7 +95,7 @@ AbsDistanceDFW::findMinDistance(uint32_t docid, GetDocsumsState *state,
 }
 
 void
-AbsDistanceDFW::insertField(uint32_t docid, GetDocsumsState *state, ResType type, vespalib::slime::Inserter &target)
+AbsDistanceDFW::insertField(uint32_t docid, GetDocsumsState *state, ResType type, vespalib::slime::Inserter &target) const
 {
     const auto & all_locations = getAllLocations(state);
     if (all_locations.empty()) {
@@ -237,7 +240,7 @@ void insertV8FromAttr(const attribute::IAttributeVector &attribute, uint32_t doc
 } // namespace
 
 void
-PositionsDFW::insertField(uint32_t docid, GetDocsumsState * dsState, ResType type, vespalib::slime::Inserter &target)
+PositionsDFW::insertField(uint32_t docid, GetDocsumsState * dsState, ResType type, vespalib::slime::Inserter &target) const
 {
     checkExpected(type);
     if (_useV8geoPositions) {
@@ -249,7 +252,7 @@ PositionsDFW::insertField(uint32_t docid, GetDocsumsState * dsState, ResType typ
 
 //--------------------------------------------------------------------------
 
-PositionsDFW::UP PositionsDFW::create(const char *attribute_name, IAttributeManager *attribute_manager, bool useV8geoPositions) {
+PositionsDFW::UP PositionsDFW::create(const char *attribute_name, const IAttributeManager *attribute_manager, bool useV8geoPositions) {
     PositionsDFW::UP ret;
     if (attribute_manager != nullptr) {
         if (!attribute_name) {
@@ -271,7 +274,7 @@ PositionsDFW::UP PositionsDFW::create(const char *attribute_name, IAttributeMana
 }
 
 std::unique_ptr<DocsumFieldWriter>
-AbsDistanceDFW::create(const char *attribute_name, IAttributeManager *attribute_manager) {
+AbsDistanceDFW::create(const char *attribute_name, const IAttributeManager *attribute_manager) {
     std::unique_ptr<DocsumFieldWriter> ret;
     if (attribute_manager != nullptr) {
         if (!attribute_name) {

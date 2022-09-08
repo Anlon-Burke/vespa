@@ -6,7 +6,7 @@ import com.yahoo.vespa.hosted.node.admin.container.metrics.Metrics;
 import com.yahoo.vespa.hosted.node.admin.nodeagent.NodeAgentContext;
 import com.yahoo.vespa.hosted.node.admin.nodeagent.NodeAgentContextImpl;
 import com.yahoo.vespa.test.file.TestFileSystem;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
 import java.time.Duration;
@@ -17,9 +17,7 @@ import java.util.Set;
 
 import static com.yahoo.vespa.hosted.node.admin.nodeadmin.NodeAdminImpl.NodeAgentWithScheduler;
 import static com.yahoo.vespa.hosted.node.admin.nodeadmin.NodeAdminImpl.NodeAgentWithSchedulerFactory;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
@@ -37,12 +35,12 @@ public class NodeAdminImplTest {
 
     private final NodeAgentWithSchedulerFactory nodeAgentWithSchedulerFactory = mock(NodeAgentWithSchedulerFactory.class);
     private final ManualClock clock = new ManualClock();
-
+    private final ProcMeminfoReader procMeminfoReader = mock(ProcMeminfoReader.class);
     private final NodeAdminImpl nodeAdmin = new NodeAdminImpl(nodeAgentWithSchedulerFactory,
-            new Metrics(), clock, Duration.ZERO, Duration.ZERO);
+            new Metrics(), clock, Duration.ZERO, Duration.ZERO, procMeminfoReader);
 
     @Test
-    public void nodeAgentsAreProperlyLifeCycleManaged() {
+    void nodeAgentsAreProperlyLifeCycleManaged() {
         final NodeAgentContext context1 = createNodeAgentContext("host1.test.yahoo.com");
         final NodeAgentContext context2 = createNodeAgentContext("host2.test.yahoo.com");
         final NodeAgentWithScheduler nodeAgent1 = mockNodeAgentWithSchedulerFactory(context1);
@@ -80,7 +78,7 @@ public class NodeAdminImplTest {
     }
 
     @Test
-    public void testSetFrozen() {
+    void testSetFrozen() {
         Set<NodeAgentContext> contexts = new HashSet<>();
         List<NodeAgentWithScheduler> nodeAgents = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
@@ -127,7 +125,7 @@ public class NodeAdminImplTest {
     }
 
     @Test
-    public void testSubsystemFreezeDuration() {
+    void testSubsystemFreezeDuration() {
         // Initially everything is frozen to force convergence
         assertTrue(nodeAdmin.isFrozen());
         assertTrue(nodeAdmin.subsystemFreezeDuration().isZero());

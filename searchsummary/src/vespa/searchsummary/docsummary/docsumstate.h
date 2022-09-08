@@ -32,10 +32,10 @@ class DocsumFieldWriterState;
 class GetDocsumsStateCallback
 {
 public:
-    virtual void FillSummaryFeatures(GetDocsumsState * state, IDocsumEnvironment * env) = 0;
-    virtual void FillRankFeatures(GetDocsumsState * state, IDocsumEnvironment * env) = 0;
+    virtual void FillSummaryFeatures(GetDocsumsState& state) = 0;
+    virtual void FillRankFeatures(GetDocsumsState& state) = 0;
     virtual std::unique_ptr<MatchingElements> fill_matching_elements(const MatchingElementsFields &matching_elems_fields) = 0;
-    virtual ~GetDocsumsStateCallback(void) { }
+    virtual ~GetDocsumsStateCallback() = default;
     GetDocsumsStateCallback(const GetDocsumsStateCallback &) = delete;
     GetDocsumsStateCallback & operator = (const GetDocsumsStateCallback &) = delete;
 protected:
@@ -57,12 +57,7 @@ public:
     GetDocsumsStateCallback    &_callback;
 
     struct DynTeaserState {
-        uint32_t              _docid;  // document id ('cache key')
-        uint32_t              _input;  // input field ('cache key')
-        uint32_t              _lang;   // lang field  ('cache key')
-        juniper::Config      *_config; // juniper config ('cache key')
-        juniper::QueryHandle *_query;  // juniper query representation
-        juniper::Result      *_result; // juniper analyze result
+        std::unique_ptr<juniper::QueryHandle> _query;  // juniper query representation
     } _dynteaser;
 
 
@@ -91,7 +86,7 @@ public:
 
     GetDocsumsState(const GetDocsumsState &) = delete;
     GetDocsumsState& operator=(const GetDocsumsState &) = delete;
-    GetDocsumsState(GetDocsumsStateCallback &callback);
+    explicit GetDocsumsState(GetDocsumsStateCallback &callback);
     ~GetDocsumsState();
 
     const MatchingElements &get_matching_elements(const MatchingElementsFields &matching_elems_fields);

@@ -167,6 +167,14 @@ namespace execute::onsummary {
     };
 }
 
+namespace mutate {
+    //TODO Remove October 2022
+    struct AllowQueryOverride {
+        static const vespalib::string NAME;
+        static bool check(const Properties &props);
+    };
+}
+
 namespace mutate::on_match {
     struct Attribute {
         static const vespalib::string NAME;
@@ -237,18 +245,8 @@ namespace matching {
     struct SplitUnpackingIterators {
         static const vespalib::string NAME;
         static const bool DEFAULT_VALUE;
-        static bool check(const Properties &props);
-    };
-
-    /**
-     * When enabled, iterators that unpack posting information as part
-     * of matching will be tagged as expensive, in order to delay
-     * their execution within the iterator tree.
-     **/
-    struct DelayUnpackingIterators {
-        static const vespalib::string NAME;
-        static const bool DEFAULT_VALUE;
-        static bool check(const Properties &props);
+        static bool check(const Properties &props) { return check(props, DEFAULT_VALUE); }
+        static bool check(const Properties &props, bool fallback);
     };
 
     /**

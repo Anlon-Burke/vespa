@@ -2,10 +2,8 @@
 
 #pragma once
 
-#include "searchable.h"
-#include "irequestcontext.h"
+#include "blueprint.h"
 #include <vespa/searchlib/fef/matchdatalayout.h>
-#include <vespa/vespalib/util/doom.h>
 
 namespace search::fef { class TermFieldMatchData; }
 
@@ -14,18 +12,17 @@ namespace search::queryeval {
 class SimplePhraseBlueprint : public ComplexLeafBlueprint
 {
 private:
-    const vespalib::Doom    _doom; 
     FieldSpec               _field;
     HitEstimate             _estimate;
     fef::MatchDataLayout    _layout;
     std::vector<Blueprint*> _terms;
 
-    SimplePhraseBlueprint(const SimplePhraseBlueprint &); // disabled
-    SimplePhraseBlueprint &operator=(const SimplePhraseBlueprint &); // disabled
-
 public:
-    SimplePhraseBlueprint(const FieldSpec &field, const IRequestContext & requestContext, bool expensive);
-    ~SimplePhraseBlueprint();
+    SimplePhraseBlueprint(const FieldSpec &field, bool expensive);
+    SimplePhraseBlueprint(const SimplePhraseBlueprint &) = delete;
+    SimplePhraseBlueprint &operator=(const SimplePhraseBlueprint &) = delete;
+
+    ~SimplePhraseBlueprint() override;
 
     // used by create visitor
     FieldSpec getNextChildField(const FieldSpec &outer);

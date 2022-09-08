@@ -8,14 +8,14 @@ import com.yahoo.config.provision.zone.ZoneApi;
 import com.yahoo.vespa.hosted.controller.ControllerTester;
 import com.yahoo.vespa.hosted.controller.versions.OsVersion;
 import com.yahoo.vespa.hosted.controller.versions.OsVersionStatus;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author mpolden
@@ -23,7 +23,7 @@ import static org.junit.Assert.assertTrue;
 public class OsVersionStatusUpdaterTest {
 
     @Test
-    public void test_update() {
+    void test_update() {
         ControllerTester tester = new ControllerTester();
         OsVersionStatusUpdater statusUpdater = new OsVersionStatusUpdater(tester.controller(), Duration.ofDays(1)
         );
@@ -32,21 +32,21 @@ public class OsVersionStatusUpdaterTest {
         for (ZoneApi zone : tester.zoneRegistry().zones().controllerUpgraded().zones()) {
             upgradePolicy = upgradePolicy.upgrade(zone);
         }
-        tester.zoneRegistry().setOsUpgradePolicy(CloudName.defaultName(), upgradePolicy.build());
+        tester.zoneRegistry().setOsUpgradePolicy(CloudName.DEFAULT, upgradePolicy.build());
 
         // Initially empty
         assertSame(OsVersionStatus.empty, tester.controller().osVersionStatus());
 
         // Setting a new target adds it to current status
         Version version1 = Version.fromString("7.1");
-        CloudName cloud = CloudName.defaultName();
+        CloudName cloud = CloudName.DEFAULT;
         tester.controller().upgradeOsIn(cloud, version1, Duration.ZERO, false);
         statusUpdater.maintain();
 
         var osVersions = tester.controller().osVersionStatus().versions();
         assertEquals(2, osVersions.size());
-        assertFalse("All nodes on unknown version", osVersions.get(new OsVersion(Version.emptyVersion, cloud)).isEmpty());
-        assertTrue("No nodes on current target", osVersions.get(new OsVersion(version1, cloud)).isEmpty());
+        assertFalse(osVersions.get(new OsVersion(Version.emptyVersion, cloud)).isEmpty(), "All nodes on unknown version");
+        assertTrue(osVersions.get(new OsVersion(version1, cloud)).isEmpty(), "No nodes on current target");
     }
 
 }

@@ -5,6 +5,7 @@ import com.google.common.net.InetAddresses;
 import com.yahoo.vespa.hosted.node.admin.task.util.network.IPVersion;
 
 import java.net.InetAddress;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -62,13 +63,23 @@ public class Acl {
 
         // Allow trusted ports if any
         if (!trustedPorts.isEmpty()) {
-            String ports = trustedPorts.stream().map(i -> Integer.toString(i)).sorted().collect(Collectors.joining(","));
-            rules.add("-A INPUT -p tcp -m multiport --dports " + ports + " -j ACCEPT");
+            rules.add("-A INPUT -p tcp -m multiport --dports " + joinPorts(trustedPorts) + " -j ACCEPT");
         }
 
-        // Allow traffic from trusted nodes
+        // Allow traffic from trusted nodes, limited to specific ports, if any
         getTrustedNodes(ipVersion).stream()
-                                  .map(node -> "-A INPUT -s " + node.inetAddressString() + ipVersion.singleHostCidr() + " -j ACCEPT")
+                                  .map(node -> {
+                                      StringBuilder rule = new StringBuilder();
+                                      rule.append("-A INPUT -s ")
+                                          .append(node.inetAddressString())
+                                          .append(ipVersion.singleHostCidr());
+                                      if (!node.ports.isEmpty()) {
+                                          rule.append(" -p tcp -m multiport --dports ")
+                                              .append(joinPorts(node.ports()));
+                                      }
+                                      rule.append(" -j ACCEPT");
+                                      return rule.toString();
+                                  })
                                   .sorted()
                                   .forEach(rules::add);
 
@@ -82,6 +93,10 @@ public class Acl {
         rules.add("-A INPUT -j REJECT --reject-with " + ipVersion.icmpPortUnreachable());
 
         return Collections.unmodifiableList(rules);
+    }
+
+    private static String joinPorts(Collection<Integer> ports) {
+        return ports.stream().sorted().map(String::valueOf).collect(Collectors.joining(","));
     }
 
     public Set<Node> getTrustedNodes() {
@@ -136,25 +151,10 @@ public class Acl {
         return Optional.ofNullable(set).map(Set::copyOf).orElseGet(Set::of);
     }
 
-    public static class Node {
-        private final String hostname;
-        private final InetAddress inetAddress;
+    public record Node(String hostname, InetAddress inetAddress, Set<Integer> ports) {
 
-        public Node(String hostname, String ipAddress) {
-            this(hostname, InetAddresses.forString(ipAddress));
-        }
-
-        public Node(String hostname, InetAddress inetAddress) {
-            this.hostname = hostname;
-            this.inetAddress = inetAddress;
-        }
-
-        public String hostname() {
-            return hostname;
-        }
-
-        public InetAddress inetAddress() {
-            return inetAddress;
+        public Node(String hostname, String ipAddress, Set<Integer> ports) {
+            this(hostname, InetAddresses.forString(ipAddress), ports);
         }
 
         public String inetAddressString() {
@@ -162,25 +162,12 @@ public class Acl {
         }
 
         @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            Node node = (Node) o;
-            return Objects.equals(hostname, node.hostname) &&
-                    Objects.equals(inetAddress, node.inetAddress);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(hostname, inetAddress);
-        }
-
-        @Override
         public String toString() {
             return "Node{" +
-                    "hostname='" + hostname + '\'' +
-                    ", inetAddress=" + inetAddress +
-                    '}';
+                   "hostname='" + hostname + '\'' +
+                   ", inetAddress=" + inetAddress +
+                   ", ports=" + ports +
+                   '}';
         }
     }
 
@@ -204,11 +191,15 @@ public class Acl {
         }
 
         public Builder withTrustedNode(String hostname, String ipAddress) {
-            return withTrustedNode(new Node(hostname, ipAddress));
+            return withTrustedNode(hostname, ipAddress, Set.of());
         }
 
-        public Builder withTrustedNode(String hostname, InetAddress inetAddress) {
-            return withTrustedNode(new Node(hostname, inetAddress));
+        public Builder withTrustedNode(String hostname, String ipAddress, Set<Integer> ports) {
+            return withTrustedNode(new Node(hostname, ipAddress, ports));
+        }
+
+        public Builder withTrustedNode(String hostname, InetAddress inetAddress, Set<Integer> ports) {
+            return withTrustedNode(new Node(hostname, inetAddress, ports));
         }
 
         public Builder withTrustedPorts(Integer... ports) {

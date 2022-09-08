@@ -66,6 +66,3 @@ ComponentDefinition =
    BundleSpec &
    GenericConfig* &
    Component*
-
-
-

@@ -19,7 +19,7 @@ import com.yahoo.vespa.model.container.ContainerModel;
 import com.yahoo.vespa.model.container.ContainerModelEvaluation;
 import com.yahoo.vespa.model.container.configserver.option.CloudConfigOptions;
 import com.yahoo.vespa.model.container.xml.ConfigServerContainerModelBuilder;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -28,9 +28,7 @@ import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * @author Ulf Lilleengen
@@ -38,34 +36,37 @@ import static org.junit.Assert.assertTrue;
 public class ConfigserverClusterTest {
 
     @Test
-    public void zookeeperConfig_default() {
+    void zookeeperConfig_default() {
         ZookeeperServerConfig config = getConfig(ZookeeperServerConfig.class);
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::hostname, "localhost");
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::id, 0);
         assertEquals(0, config.myid());
+        assertEquals("/opt/vespa/conf/zookeeper/tls.conf.json", config.vespaTlsConfigFile());
     }
 
     @Test
-    public void zookeeperConfig_only_config_servers_set_hosted() {
+    void zookeeperConfig_only_config_servers_set_hosted() {
         TestOptions testOptions = createTestOptions(Arrays.asList("cfg1", "localhost", "cfg3"), Collections.emptyList());
         ZookeeperServerConfig config = getConfig(ZookeeperServerConfig.class, testOptions);
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::hostname, "cfg1", "localhost", "cfg3");
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::id, 0, 1, 2);
         assertEquals(1, config.myid());
         assertEquals("gz", config.snapshotMethod());
+        assertEquals("/opt/vespa/conf/zookeeper/tls.conf.json", config.vespaTlsConfigFile());
     }
 
     @Test
-    public void zookeeperConfig_with_config_servers_and_zk_ids_hosted() {
+    void zookeeperConfig_with_config_servers_and_zk_ids_hosted() {
         TestOptions testOptions = createTestOptions(Arrays.asList("cfg1", "localhost", "cfg3"), Arrays.asList(4, 2, 3));
         ZookeeperServerConfig config = getConfig(ZookeeperServerConfig.class, testOptions);
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::hostname, "cfg1", "localhost", "cfg3");
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::id, 4, 2, 3);
         assertEquals(2, config.myid());
+        assertEquals("/opt/vespa/conf/zookeeper/tls.conf.json", config.vespaTlsConfigFile());
     }
 
     @Test
-    public void zookeeperConfig_self_hosted() {
+    void zookeeperConfig_self_hosted() {
         final boolean hostedVespa = false;
         TestOptions testOptions = createTestOptions(Arrays.asList("cfg1", "localhost", "cfg3"), Arrays.asList(4, 2, 3), hostedVespa);
         ZookeeperServerConfig config = getConfig(ZookeeperServerConfig.class, testOptions);
@@ -73,28 +74,33 @@ public class ConfigserverClusterTest {
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::id, 4, 2, 3);
         assertEquals(2, config.myid());
         assertEquals("gz", config.snapshotMethod());
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void zookeeperConfig_uneven_number_of_config_servers_and_zk_ids() {
-        TestOptions testOptions = createTestOptions(Arrays.asList("cfg1", "localhost", "cfg3"), Collections.singletonList(1));
-        getConfig(ZookeeperServerConfig.class, testOptions);
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void zookeeperConfig_negative_zk_id() {
-        TestOptions testOptions = createTestOptions(Arrays.asList("cfg1", "localhost", "cfg3"), Arrays.asList(1, 2, -1));
-        getConfig(ZookeeperServerConfig.class, testOptions);
+        assertEquals("", config.vespaTlsConfigFile());
     }
 
     @Test
-    public void testHealthMonitorConfig() {
+    void zookeeperConfig_uneven_number_of_config_servers_and_zk_ids() {
+        assertThrows(IllegalArgumentException.class, () -> {
+            TestOptions testOptions = createTestOptions(Arrays.asList("cfg1", "localhost", "cfg3"), Collections.singletonList(1));
+            getConfig(ZookeeperServerConfig.class, testOptions);
+        });
+    }
+
+    @Test
+    void zookeeperConfig_negative_zk_id() {
+        assertThrows(IllegalArgumentException.class, () -> {
+            TestOptions testOptions = createTestOptions(Arrays.asList("cfg1", "localhost", "cfg3"), Arrays.asList(1, 2, -1));
+            getConfig(ZookeeperServerConfig.class, testOptions);
+        });
+    }
+
+    @Test
+    void testHealthMonitorConfig() {
         HealthMonitorConfig config = getConfig(HealthMonitorConfig.class);
         assertEquals(60, (int) config.snapshot_interval());
     }
 
     @Test
-    public void testConfigserverConfig() {
+    void testConfigserverConfig() {
         ConfigserverConfig config = getConfig(ConfigserverConfig.class);
         assertEquals(1, config.configModelPluginDir().size());
         assertEquals(Defaults.getDefaults().underVespaHome("lib/jars/config-models"), config.configModelPluginDir().get(0));
@@ -110,7 +116,7 @@ public class ConfigserverClusterTest {
     }
 
     @Test
-    public void testCuratorConfig() {
+    void testCuratorConfig() {
         CuratorConfig config = getConfig(CuratorConfig.class);
         assertEquals(1, config.server().size());
         assertEquals("localhost", config.server().get(0).hostname());
@@ -119,7 +125,7 @@ public class ConfigserverClusterTest {
     }
 
     @Test
-    public void model_evaluation_bundles_are_not_installed_via_config() {
+    void model_evaluation_bundles_are_not_installed_via_config() {
         // These bundles must be pre-installed because they are used by config-model.
         PlatformBundlesConfig config = getConfig(PlatformBundlesConfig.class);
         assertFalse(config.bundlePaths().contains(ContainerModelEvaluation.MODEL_INTEGRATION_BUNDLE_FILE.toString()));
@@ -177,7 +183,7 @@ public class ConfigserverClusterTest {
 
         // Simulate the behaviour of StandaloneContainer
         List<? extends Container> containers = containerModel.getCluster().getContainers();
-        assertEquals("Standalone container", 1, containers.size());
+        assertEquals(1, containers.size(), "Standalone container");
         HostResource hostResource = root.hostSystem().getHost(Container.SINGLENODE_CONTAINER_SERVICESPEC);
         containers.get(0).setHostResource(hostResource);
 

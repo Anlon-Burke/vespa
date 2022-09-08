@@ -16,6 +16,7 @@ public class PhraseParser extends AbstractParser {
         super(environment);
     }
 
+    @Override
     protected Item parseItems() {
         return forcedPhrase();
     }

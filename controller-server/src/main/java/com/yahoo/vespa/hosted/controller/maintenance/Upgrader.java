@@ -9,6 +9,7 @@ import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.application.ApplicationList;
 import com.yahoo.vespa.hosted.controller.application.Change;
 import com.yahoo.vespa.hosted.controller.application.InstanceList;
+import com.yahoo.vespa.hosted.controller.deployment.DeploymentStatus;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentStatusList;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentTrigger;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentTrigger.ChangesToCancel;
@@ -60,17 +61,16 @@ public class Upgrader extends ControllerMaintainer {
         VersionStatus versionStatus = controller().readVersionStatus();
         cancelBrokenUpgrades(versionStatus);
 
-        OptionalInt targetMajorVersion = targetMajorVersion();
         DeploymentStatusList deploymentStatuses = deploymentStatuses(versionStatus);
         for (UpgradePolicy policy : UpgradePolicy.values())
-            updateTargets(versionStatus, deploymentStatuses, policy, targetMajorVersion);
+            updateTargets(versionStatus, deploymentStatuses, policy);
 
         return 1.0;
     }
 
     private DeploymentStatusList deploymentStatuses(VersionStatus versionStatus) {
         return controller().jobController().deploymentStatuses(ApplicationList.from(controller().applications().readable())
-                                                                       .withProjectId(),
+                                                                              .withProjectId(),
                                                                versionStatus);
     }
 
@@ -93,7 +93,7 @@ public class Upgrader extends ControllerMaintainer {
         }
     }
 
-    private void updateTargets(VersionStatus versionStatus, DeploymentStatusList deploymentStatuses, UpgradePolicy policy, OptionalInt targetMajorVersion) {
+    private void updateTargets(VersionStatus versionStatus, DeploymentStatusList deploymentStatuses, UpgradePolicy policy) {
         InstanceList instances = instances(deploymentStatuses);
         InstanceList remaining = instances.with(policy);
         Instant failureThreshold = controller().clock().instant().minus(DeploymentTrigger.maxFailingRevisionTime);
@@ -105,9 +105,9 @@ public class Upgrader extends ControllerMaintainer {
                                                                                                    .not().upgradingTo(targetAndNewer);
 
         Map<ApplicationId, Version> targets = new LinkedHashMap<>();
-        for (Version version : controller().applications().deploymentTrigger().targetsForPolicy(versionStatus, policy)) {
+        for (Version version : DeploymentStatus.targetsForPolicy(versionStatus, controller().systemVersion(versionStatus), policy)) {
             targetAndNewer.add(version);
-            InstanceList eligible = eligibleForVersion(remaining, version, targetMajorVersion);
+            InstanceList eligible = eligibleForVersion(remaining, version);
             InstanceList outdated = cancellationCriterion.apply(eligible);
             cancelUpgradesOf(outdated.upgrading(), "Upgrading to outdated versions");
 
@@ -119,20 +119,25 @@ public class Upgrader extends ControllerMaintainer {
         }
 
         int numberToUpgrade = policy == UpgradePolicy.canary ? instances.size() : numberOfApplicationsToUpgrade();
-        for (ApplicationId id : instances.matching(targets.keySet()::contains).first(numberToUpgrade)) {
-            log.log(Level.INFO, "Triggering upgrade to " + targets.get(id) + " for " + id);
-            if (failingRevision.contains(id))
+        for (ApplicationId id : instances.matching(targets.keySet()::contains)) {
+            if (failingRevision.contains(id)) {
+                log.log(Level.INFO, "Cancelling failing revision for " + id);
                 controller().applications().deploymentTrigger().cancelChange(id, ChangesToCancel.APPLICATION);
+            }
 
-            controller().applications().deploymentTrigger().triggerChange(id, Change.of(targets.get(id)));
+            if (controller().applications().requireInstance(id).change().isEmpty()) {
+                log.log(Level.INFO, "Triggering upgrade to " + targets.get(id) + " for " + id);
+                controller().applications().deploymentTrigger().forceChange(id, Change.of(targets.get(id)));
+                --numberToUpgrade;
+            }
+            if (numberToUpgrade <= 0) break;
         }
     }
 
-    private InstanceList eligibleForVersion(InstanceList instances, Version version,
-                                            OptionalInt targetMajorVersion) {
+    private InstanceList eligibleForVersion(InstanceList instances, Version version) {
         Change change = Change.of(version);
         return instances.not().failingOn(version)
-                        .allowingMajorVersion(version.getMajor(), targetMajorVersion.orElse(version.getMajor()))
+                        .allowingMajorVersion(version.getMajor())
                         .compatibleWithPlatform(version, controller().applications()::versionCompatibility)
                         .not().hasCompleted(change) // Avoid rescheduling change for instances without production steps.
                         .onLowerVersionThan(version)
@@ -173,16 +178,6 @@ public class Upgrader extends ControllerMaintainer {
         if (n < 0)
             throw new IllegalArgumentException("Upgrades per minute must be >= 0, got " + n);
         curator.writeUpgradesPerMinute(n);
-    }
-
-    /** Returns the target major version for applications not specifying one */
-    public OptionalInt targetMajorVersion() {
-        return controller().applications().targetMajorVersion();
-    }
-
-    /** Sets the default target major version. Set to empty to determine target version normally (by confidence) */
-    public void setTargetMajorVersion(OptionalInt targetMajorVersion) {
-        controller().applications().setTargetMajorVersion(targetMajorVersion);
     }
 
     /** Override confidence for given version. This will cause the computed confidence to be ignored */

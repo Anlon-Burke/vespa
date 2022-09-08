@@ -150,7 +150,7 @@ public class DefaultZmsClient extends ClientBase implements ZmsClient {
     @Override
     public void addRoleMember(AthenzRole role, AthenzIdentity member, Optional<String> reason) {
         URI uri = zmsUrl.resolve(String.format("domain/%s/role/%s/member/%s", role.domain().getName(), role.roleName(), member.getFullName()));
-        MembershipEntity membership = new MembershipEntity.RoleMembershipEntity(member.getFullName(), true, role.roleName(), null);
+        MembershipEntity membership = new MembershipEntity.RoleMembershipEntity(member.getFullName(), true, role.roleName(), null, true);
 
 
         RequestBuilder requestBuilder = RequestBuilder.put(uri)
@@ -176,7 +176,7 @@ public class DefaultZmsClient extends ClientBase implements ZmsClient {
                 .build();
         return execute(request, response -> {
             MembershipEntity membership = readEntity(response, MembershipEntity.GroupMembershipEntity.class);
-            return membership.isMember;
+            return membership.isMember && membership.approved;
         });
     }
 
@@ -434,6 +434,20 @@ public class DefaultZmsClient extends ClientBase implements ZmsClient {
         var usageEntity = execute(RequestBuilder.get(uri).build(), response -> readEntity(response, StatisticsEntity.class));
 
         return QuotaUsage.calculateUsage(usageEntity, quotaEntity);
+    }
+
+    @Override
+    public void deleteSubdomain(AthenzDomain parent, String name) {
+        URI uri = zmsUrl.resolve(String.format("subdomain/%s/%s", parent.getName(), name));
+        HttpUriRequest request = RequestBuilder.delete(uri).build();
+        execute(request, response -> readEntity(response, Void.class));
+    }
+
+    @Override
+    public void deletePolicy(AthenzDomain domain, String athenzPolicy) {
+        var uri = zmsUrl.resolve(String.format("domain/%s/policy/%s", domain.getName(), athenzPolicy));
+        var request = RequestBuilder.delete(uri).build();
+        execute(request, response -> readEntity(response, Void.class));
     }
 
     public AthenzRoleInformation getFullRoleInformation(AthenzRole role) {

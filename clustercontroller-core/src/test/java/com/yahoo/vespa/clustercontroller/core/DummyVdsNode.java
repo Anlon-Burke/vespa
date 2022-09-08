@@ -21,7 +21,8 @@ import com.yahoo.vdslib.state.NodeType;
 import com.yahoo.vdslib.state.State;
 import com.yahoo.vespa.clustercontroller.core.rpc.RPCCommunicator;
 import com.yahoo.vespa.clustercontroller.core.rpc.RPCUtil;
-
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
@@ -39,7 +40,7 @@ import java.util.stream.Collectors;
  */
 public class DummyVdsNode {
 
-    public static Logger log = Logger.getLogger(DummyVdsNode.class.getName());
+    private static final Logger log = Logger.getLogger(DummyVdsNode.class.getName());
 
     private final String[] slobrokConnectionSpecs;
     private final String clusterName;
@@ -50,12 +51,10 @@ public class DummyVdsNode {
     private Supervisor supervisor;
     private Acceptor acceptor;
     private Register register;
-    private final int stateCommunicationVersion;
-    private boolean negotiatedHandle = false;
     private final Timer timer;
     private boolean failSetSystemStateRequests = false;
     private boolean resetTimestampOnReconnect = false;
-    private final Map<Node, Long> highestStartTimestamps = new TreeMap<Node, Long>();
+    private final Map<Node, Long> highestStartTimestamps = new TreeMap<>();
     int timedOutStateReplies = 0;
     int outdatedStateReplies = 0;
     int immediateStateReplies = 0;
@@ -88,7 +87,7 @@ public class DummyVdsNode {
 
     private final Thread messageResponder = new Thread() {
         public void run() {
-            log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this.toString() + ": starting message reponder thread");
+            log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this + ": starting message responder thread");
             while (true) {
                 synchronized (timer) {
                     if (isInterrupted()) break;
@@ -96,10 +95,10 @@ public class DummyVdsNode {
                     for (Iterator<Req> it = waitingRequests.iterator(); it.hasNext(); ) {
                         Req r = it.next();
                         if (r.timeout <= currentTime) {
-                            log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this.toString() + ": Responding to node state request at time " + currentTime);
+                            log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this + ": Responding to node state request at time " + currentTime);
                             r.request.returnValues().add(new StringValue(nodeState.serialize()));
                             if (r.request.methodName().equals("getnodestate3")) {
-                                r.request.returnValues().add(new StringValue("No host info in dummy implementation"));
+                                r.request.returnValues().add(new StringValue(hostInfo));
                             }
                             r.request.returnRequest();
                             it.remove();
@@ -113,18 +112,18 @@ public class DummyVdsNode {
                     }
                 }
             }
-            log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this.toString() + ": shut down message reponder thread");
+            log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this + ": shut down message responder thread");
         }
     };
 
-    public DummyVdsNode(Timer timer, DummyVdsNodeOptions options, String[] slobrokConnectionSpecs, String clusterName, boolean distributor, int index) throws Exception {
+    public DummyVdsNode(Timer timer, String[] slobrokConnectionSpecs, String clusterName,
+                        NodeType nodeType, int index) throws Exception {
         this.timer = timer;
         this.slobrokConnectionSpecs = slobrokConnectionSpecs;
         this.clusterName = clusterName;
-        type = distributor ? NodeType.DISTRIBUTOR : NodeType.STORAGE;
+        type = nodeType;
         this.index = index;
         this.nodeState = new NodeState(type, State.UP);
-        this.stateCommunicationVersion = options.stateCommunicationVersion;
         messageResponder.start();
         nodeState.setStartTimestamp(timer.getCurrentTimeInMillis() / 1000);
     }
@@ -150,7 +149,6 @@ public class DummyVdsNode {
         slist.setup(slobrokConnectionSpecs);
         register = new Register(supervisor, slist, new Spec("localhost", acceptor.port()), new BackOff());
         registerSlobrok();
-        negotiatedHandle = false;
         return acceptor.port();
     }
 
@@ -170,31 +168,16 @@ public class DummyVdsNode {
         registeredInSlobrok = false;
     }
 
-    void disconnect() { disconnectImmediately(); }
-    void disconnectImmediately() { disconnect(false, 0, false);  }
-    void disconnectBreakConnection() { disconnect(true, FleetControllerTest.timeoutMS, false); }
-    void disconnectAsShutdown() { disconnect(true, FleetControllerTest.timeoutMS, true); }
-    private void disconnect(boolean waitForPendingNodeStateRequest, long timeoutms, boolean setStoppingStateFirst) {
-        log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this.toString() + ": Breaking connection." + (waitForPendingNodeStateRequest ? " Waiting for pending state first." : ""));
-        if (waitForPendingNodeStateRequest) {
-            this.waitForPendingGetNodeStateRequest(timeoutms);
-        }
-        if (setStoppingStateFirst) {
-            NodeState newState = nodeState.clone();
-            newState.setState(State.STOPPING);
-            // newState.setDescription("Received signal 15 (SIGTERM - Termination signal)");
-            // Altered in storageserver implementation. Updating now to fit
-            newState.setDescription("controlled shutdown");
-            setNodeState(newState);
-            // Sleep a bit in hopes of answer being written before shutting down socket
-            try{ Thread.sleep(10); } catch (InterruptedException e) { /* ignore */ }
-        }
+    void disconnectImmediately() { disconnect();  }
+
+    void disconnect() {
+        log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this + ": Breaking connection.");
         if (supervisor == null) return;
         register.shutdown();
         acceptor.shutdown().join();
         supervisor.transport().shutdown().join();
         supervisor = null;
-        log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this.toString() + ": Done breaking connection.");
+        log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this + ": Done breaking connection.");
     }
 
     public String toString() {
@@ -208,13 +191,11 @@ public class DummyVdsNode {
         return new Node(type, index);
     }
 
-    public int getStateCommunicationVersion() { return stateCommunicationVersion; }
-
-    void waitForSystemStateVersion(int version, long timeout) {
+    void waitForSystemStateVersion(int version, Duration timeout) {
         try {
-            long startTime = System.currentTimeMillis();
+            Instant endTime = Instant.now().plus(timeout);
             while (getLatestSystemStateVersion().orElse(-1) < version) {
-                if ( (System.currentTimeMillis() - startTime) > timeout)
+                if (Instant.now().isAfter(endTime))
                     throw new RuntimeException("Timed out waiting for state version " + version + " in " + this);
                 Thread.sleep(10);
             }
@@ -234,33 +215,6 @@ public class DummyVdsNode {
     public boolean hasPendingGetNodeStateRequest() {
         synchronized (timer) {
             return !waitingRequests.isEmpty();
-        }
-    }
-
-    private void waitForPendingGetNodeStateRequest(long timeout) {
-        long startTime = System.currentTimeMillis();
-        long endTime = startTime + timeout;
-        log.log(Level.FINE, () -> "Dummy node " + this + " waiting for pending node state request.");
-        while (true) {
-            synchronized(timer) {
-                if (!waitingRequests.isEmpty()) {
-                    log.log(Level.FINE, () -> "Dummy node " + this + " has pending request, returning.");
-                    return;
-                }
-                try {
-                    log.log(Level.FINE, "Dummy node " + this + " waiting " + (endTime - startTime) + " ms for pending request.");
-                    timer.wait(endTime - startTime);
-                } catch (InterruptedException e) { /* ignore */ }
-                log.log(Level.FINE, () -> "Dummy node " + this + " woke up to recheck.");
-            }
-            startTime = System.currentTimeMillis();
-            if (startTime >= endTime) {
-                log.log(Level.FINE, () -> "Dummy node " + this + " timeout passed. Don't have pending request.");
-                if (!waitingRequests.isEmpty()) {
-                    log.log(Level.FINE, () -> "Dummy node " + this + ". Non-empty set of waiting requests");
-                }
-                throw new IllegalStateException("Timeout. No pending get node state request pending after waiting " + timeout + " milliseconds.");
-            }
         }
     }
 
@@ -340,80 +294,31 @@ public class DummyVdsNode {
         m.returnDesc(0, "returnCode", "Returncode of request. Should be 0 = OK");
         supervisor.addMethod(m);
 
-        m = new Method("getnodestate", "", "issi", this::rpc_getNodeState);
-        m.methodDesc("Get nodeState of a node");
-        m.returnDesc(0, "returnCode", "Returncode of request. Should be 1 = OK");
-        m.returnDesc(1, "returnMessage", "Textual error message if returncode is not ok.");
-        m.returnDesc(2, "nodeState", "The node state of the given node");
-        m.returnDesc(3, "progress", "Progress in percent of node initialization");
+        m = new Method("getnodestate3", "sii", "ss", this::rpc_getNodeState2);
+        m.methodDesc("Get nodeState of a node, answer when state changes from given state.");
+        m.paramDesc(0, "nodeStateIn", "The node state of the given node");
+        m.paramDesc(1, "timeout", "Time timeout in milliseconds set by the state requester.");
+        m.returnDesc(0, "nodeStateOut", "The node state of the given node");
+        m.returnDesc(1, "hostinfo", "Information on the host node is running on");
         supervisor.addMethod(m);
 
-        m = new Method("setsystemstate", "s", "is", this::rpc_setSystemState);
-        m.methodDesc("Set system state of entire system");
-        m.paramDesc(0, "systemState", "new systemstate");
-        m.returnDesc(0, "returnCode", "Returncode of request. Should be 1 = OK");
-        m.returnDesc(1, "returnMessage", "Textual error message if returncode is not ok.");
+        m = new Method(RPCCommunicator.SET_DISTRIBUTION_STATES_RPC_METHOD_NAME, "bix", "", this::rpc_setDistributionStates);
+        m.methodDesc("Set distribution states for cluster and bucket spaces");
+        m.paramDesc(0, "compressionType", "Compression type for payload");
+        m.paramDesc(1, "uncompressedSize", "Uncompressed size of payload");
+        m.paramDesc(2, "payload", "Slime format payload");
         supervisor.addMethod(m);
 
-        if (stateCommunicationVersion > 0) {
-            m = new Method("getnodestate2", "si", "s", this::rpc_getNodeState2);
-            m.methodDesc("Get nodeState of a node, answer when state changes from given state.");
-            m.paramDesc(0, "nodeStateIn", "The node state of the given node");
-            m.paramDesc(1, "timeout", "Time timeout in milliseconds set by the state requester.");
-            m.returnDesc(0, "nodeStateOut", "The node state of the given node");
-            supervisor.addMethod(m);
-
-            m = new Method("setsystemstate2", "s", "", this::rpc_setSystemState2);
-            m.methodDesc("Set system state of entire system");
-            m.paramDesc(0, "systemState", "new systemstate");
-            supervisor.addMethod(m);
-
-            if (stateCommunicationVersion > 1) {
-                m = new Method("getnodestate3", "sii", "ss", this::rpc_getNodeState2);
-                m.methodDesc("Get nodeState of a node, answer when state changes from given state.");
-                m.paramDesc(0, "nodeStateIn", "The node state of the given node");
-                m.paramDesc(1, "timeout", "Time timeout in milliseconds set by the state requester.");
-                m.returnDesc(0, "nodeStateOut", "The node state of the given node");
-                m.returnDesc(1, "hostinfo", "Information on the host node is running on");
-                supervisor.addMethod(m);
-            }
-        }
-        if (stateCommunicationVersion >= RPCCommunicator.SET_DISTRIBUTION_STATES_RPC_VERSION) {
-            m = new Method(RPCCommunicator.SET_DISTRIBUTION_STATES_RPC_METHOD_NAME, "bix", "", this::rpc_setDistributionStates);
-            m.methodDesc("Set distribution states for cluster and bucket spaces");
-            m.paramDesc(0, "compressionType", "Compression type for payload");
-            m.paramDesc(1, "uncompressedSize", "Uncompressed size of payload");
-            m.paramDesc(2, "payload", "Slime format payload");
-            supervisor.addMethod(m);
-        }
-        if (stateCommunicationVersion >= RPCCommunicator.ACTIVATE_CLUSTER_STATE_VERSION_RPC_VERSION) {
-            m = new Method(RPCCommunicator.ACTIVATE_CLUSTER_STATE_VERSION_RPC_METHOD_NAME, "i", "i", this::rpc_activateClusterStateVersion);
-            m.methodDesc("Activate a given cluster state version");
-            m.paramDesc(0, "stateVersion", "Cluster state version to activate");
-            m.returnDesc(0, "actualVersion", "Actual cluster state version on node");
-            supervisor.addMethod(m);
-        }
+        m = new Method(RPCCommunicator.ACTIVATE_CLUSTER_STATE_VERSION_RPC_METHOD_NAME, "i", "i", this::rpc_activateClusterStateVersion);
+        m.methodDesc("Activate a given cluster state version");
+        m.paramDesc(0, "stateVersion", "Cluster state version to activate");
+        m.returnDesc(0, "actualVersion", "Actual cluster state version on node");
+        supervisor.addMethod(m);
     }
 
     private void rpc_storageConnect(Request req) {
         synchronized(timer) {
             log.log(Level.FINEST, () -> "Dummy node " + this + " got old type handle connect message.");
-            req.returnValues().add(new Int32Value(0));
-            negotiatedHandle = true;
-        }
-    }
-
-    private void rpc_getNodeState(Request req) {
-        synchronized(timer) {
-            if (!negotiatedHandle) {
-                req.setError(75000, "Connection not bound to a handle");
-                return;
-            }
-            String stateString = nodeState.serialize(-1, true);
-            log.log(Level.FINE, () -> "Dummy node " + this + " got old type get node state request, answering: " + stateString);
-            req.returnValues().add(new Int32Value(1));
-            req.returnValues().add(new StringValue(""));
-            req.returnValues().add(new StringValue(stateString));
             req.returnValues().add(new Int32Value(0));
         }
     }
@@ -422,9 +327,9 @@ public class DummyVdsNode {
         for (Iterator<Req> it = waitingRequests.iterator(); it.hasNext(); ) {
              Req r = it.next();
              if (r.request.parameters().size() > 2 && r.request.parameters().get(2).asInt32() == index) {
-                 log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this.toString() + ": Responding to node state reply from controller " + index + " as we received new one");
+                 log.log(Level.FINE, () -> "Dummy node " + DummyVdsNode.this + ": Responding to node state reply from controller " + index + " as we received new one");
                  r.request.returnValues().add(new StringValue(nodeState.serialize()));
-                 r.request.returnValues().add(new StringValue("No host info from dummy implementation"));
+                 r.request.returnValues().add(new StringValue(hostInfo));
                  r.request.returnRequest();
                  it.remove();
                  ++outdatedStateReplies;
@@ -448,16 +353,16 @@ public class DummyVdsNode {
                 NodeState givenState = (oldState.equals("unknown") ? null : NodeState.deserialize(type, oldState));
                 if (givenState != null && (givenState.equals(nodeState) || sentReply)) {
                     log.log(Level.FINE, () -> "Dummy node " + this + ": Has same state as reported " + givenState + ". Queing request. Timeout is " + timeout + " ms. "
-                            + "Will be answered at time " + (timer.getCurrentTimeInMillis() + timeout * 800l / 1000));
+                            + "Will be answered at time " + (timer.getCurrentTimeInMillis() + timeout * 800L / 1000));
                     req.detach();
-                    waitingRequests.add(new Req(req, timer.getCurrentTimeInMillis() + timeout * 800l / 1000));
+                    waitingRequests.add(new Req(req, timer.getCurrentTimeInMillis() + timeout * 800L / 1000));
                     log.log(Level.FINE, () -> "Dummy node " + this + " has now " + waitingRequests.size() + " entries and is " + (waitingRequests.isEmpty() ? "empty" : "not empty"));
                     timer.notifyAll();
                 } else {
                     log.log(Level.FINE, () -> "Dummy node " + this + ": Request had " + (givenState == null ? "no state" : "different state(" + givenState +")") + ". Answering with " + nodeState);
                     req.returnValues().add(new StringValue(nodeState.serialize()));
                     if (req.methodName().equals("getnodestate3")) {
-                        req.returnValues().add(new StringValue("Dummy node host info"));
+                        req.returnValues().add(new StringValue(hostInfo));
                     }
                     ++immediateStateReplies;
                 }
@@ -498,56 +403,6 @@ public class DummyVdsNode {
         }
     }
 
-    private void rpc_setSystemState(Request req) {
-        try{
-            if (shouldFailSetSystemStateRequests()) {
-                req.setError(ErrorCode.GENERAL_ERROR, "Dummy node configured to fail setSystemState() calls");
-                return;
-            }
-            if (!negotiatedHandle) {
-                req.setError(75000, "Connection not bound to a handle");
-                return;
-            }
-            ClusterState newState = new ClusterState(req.parameters().get(0).asString());
-            synchronized(timer) {
-                updateStartTimestamps(newState);
-                clusterStateBundles.add(0, ClusterStateBundle.ofBaselineOnly(AnnotatedClusterState.withoutAnnotations(newState)));
-                timer.notifyAll();
-            }
-            req.returnValues().add(new Int32Value(1));
-            req.returnValues().add(new StringValue("OK"));
-            log.log(Level.FINE, () -> "Dummy node " + this + ": Got new system state (through old setsystemstate call) " + newState);
-        } catch (Exception e) {
-            log.log(Level.SEVERE, "Dummy node " + this + ": An error occurred when answering setsystemstate request: " + e.getMessage());
-            e.printStackTrace(System.err);
-            req.returnValues().add(new Int32Value(ErrorCode.METHOD_FAILED));
-            req.returnValues().add(new StringValue(e.getMessage()));
-        }
-    }
-
-    private void rpc_setSystemState2(Request req) {
-        try{
-            if (shouldFailSetSystemStateRequests()) {
-                req.setError(ErrorCode.GENERAL_ERROR, "Dummy node configured to fail setSystemState2() calls");
-                return;
-            }
-            ClusterState newState = new ClusterState(req.parameters().get(0).asString());
-            synchronized(timer) {
-                updateStartTimestamps(newState);
-                clusterStateBundles.add(0, ClusterStateBundle.ofBaselineOnly(AnnotatedClusterState.withoutAnnotations(newState)));
-                if (stateCommunicationVersion < RPCCommunicator.ACTIVATE_CLUSTER_STATE_VERSION_RPC_VERSION) {
-                    activatedClusterStateVersion = newState.getVersion(); // Simulate node that does not know of activation
-                }
-                timer.notifyAll();
-            }
-            log.log(Level.FINE, () -> "Dummy node " + this + ": Got new system state " + newState);
-        } catch (Exception e) {
-            log.log(Level.SEVERE, "Dummy node " + this + ": An error occurred when answering setsystemstate request: " + e.getMessage());
-            e.printStackTrace(System.err);
-            req.setError(ErrorCode.METHOD_FAILED, e.getMessage());
-        }
-    }
-
     private void rpc_setDistributionStates(Request req) {
         try {
             if (shouldFailSetSystemStateRequests()) {
@@ -558,9 +413,6 @@ public class DummyVdsNode {
             synchronized(timer) {
                 updateStartTimestamps(stateBundle.getBaselineClusterState());
                 clusterStateBundles.add(0, stateBundle);
-                if (stateCommunicationVersion < RPCCommunicator.ACTIVATE_CLUSTER_STATE_VERSION_RPC_VERSION) {
-                    activatedClusterStateVersion = stateBundle.getVersion(); // Simulate node that does not know of activation
-                }
                 timer.notifyAll();
             }
             log.log(Level.FINE, () -> "Dummy node " + this + ": Got new cluster state " + stateBundle);

@@ -23,6 +23,7 @@
 #include <vespa/vespalib/util/cpu_usage.h>
 #include <vespa/vespalib/util/idestructorcallback.h>
 #include <vespa/vespalib/util/sequencedtaskexecutor.h>
+#include <vespa/vespalib/util/string_escape.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/config/subscription/configuri.h>
 #include <vespa/config/helper/configfetcher.hpp>
@@ -887,16 +888,17 @@ void FileStorManager::onFlush(bool downwards)
 void
 FileStorManager::reportHtmlStatus(std::ostream& out, const framework::HttpUrlPath& path) const
 {
-    bool showStatus = !path.hasAttribute("thread");
-    bool verbose = path.hasAttribute("verbose");
+    using vespalib::xml_attribute_escaped;
 
-        // Print menu
+    bool showStatus = !path.hasAttribute("thread");
+    bool verbose    = path.hasAttribute("verbose");
+    // Print menu
     out << "<font size=\"-1\">[ <a href=\"/\">Back to top</a>"
         << " | <a href=\"?" << (verbose ? "verbose" : "")
         << "\">Main filestor manager status page</a>"
         << " | <a href=\"?" << (verbose ? "notverbose" : "verbose");
     if (!showStatus) {
-        out << "&thread=" << path.get("thread", std::string(""));
+        out << "&thread=" << xml_attribute_escaped(path.get("thread", std::string("")));
     }
     out << "\">" << (verbose ? "Less verbose" : "More verbose") << "</a>\n"
         << " ]</font><br><br>\n";
@@ -1041,7 +1043,9 @@ void FileStorManager::initialize_bucket_databases_from_provider() {
     const double elapsed = start_time.getElapsedTimeAsDouble();
     LOG(info, "Completed listing of %zu buckets in %.2g milliseconds", bucket_count, elapsed);
     _metrics->bucket_db_init_latency.addValue(elapsed);
+}
 
+void FileStorManager::complete_internal_initialization() {
     update_reported_state_after_db_init();
     _init_handler.notifyDoneInitializing();
 }

@@ -1,22 +1,20 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "resultclass.h"
+#include "docsum_field_writer.h"
 #include "resultconfig.h"
 #include <vespa/vespalib/stllike/hashtable.hpp>
 #include <cassert>
 
 namespace search::docsummary {
 
-ResultClass::ResultClass(const char *name, uint32_t id, util::StringEnum & fieldEnum, const DocsumBlobEntryFilter& docsum_blob_entry_filter)
+ResultClass::ResultClass(const char *name)
     : _name(name),
-      _classID(id),
       _entries(),
       _nameMap(),
-      _fieldEnum(fieldEnum),
-      _enumMap(),
-      _dynInfo(NULL),
+      _dynInfo(),
       _omit_summary_features(false),
-      _docsum_blob_entry_filter(docsum_blob_entry_filter)
+      _num_field_writer_states(0)
 { }
 
 
@@ -30,33 +28,32 @@ ResultClass::GetIndexFromName(const char* name) const
 }
 
 bool
-ResultClass::AddConfigEntry(const char *name, ResType type)
+ResultClass::AddConfigEntry(const char *name, ResType type, std::unique_ptr<DocsumFieldWriter> docsum_field_writer)
 {
     if (_nameMap.find(name) != _nameMap.end())
         return false;
 
     _nameMap[name] = _entries.size();
     ResConfigEntry e;
-    e._type      = type;
-    e._not_present = _docsum_blob_entry_filter.skip(type);
-    e._bindname  = name;
-    e._enumValue = _fieldEnum.Add(name);
-    assert(e._enumValue >= 0);
-    _entries.push_back(e);
+    e._type = type;
+    e._name = name;
+    if (docsum_field_writer) {
+        docsum_field_writer->setIndex(_entries.size());
+        bool generated = docsum_field_writer->IsGenerated();
+        getDynamicInfo().update_override_counts(generated);
+        if (docsum_field_writer->setFieldWriterStateIndex(_num_field_writer_states)) {
+            ++_num_field_writer_states;
+        }
+    }
+    e._docsum_field_writer = std::move(docsum_field_writer);
+    _entries.push_back(std::move(e));
     return true;
 }
 
-void
-ResultClass::CreateEnumMap()
+bool
+ResultClass::AddConfigEntry(const char *name, ResType type)
 {
-    _enumMap.resize(_fieldEnum.GetNumEntries());
-
-    for (uint32_t i(0), m(_enumMap.size()); i < m; i++) {
-        _enumMap[i] = -1;
-    }
-    for (uint32_t i(0); i < _entries.size(); i++) {
-        _enumMap[_entries[i]._enumValue] = i;
-    }
+    return AddConfigEntry(name, type, {});
 }
 
 }

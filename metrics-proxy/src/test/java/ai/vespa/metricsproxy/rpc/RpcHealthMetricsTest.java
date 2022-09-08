@@ -14,6 +14,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.time.Duration;
 import java.util.List;
 
 import static ai.vespa.metricsproxy.TestUtil.getFileContents;
@@ -35,7 +36,7 @@ public class RpcHealthMetricsTest {
             getFileContents("health-check-failed.response.json");
     private static final String WANTED_RPC_RESPONSE =
             getFileContents("rpc-json-output-check.json").trim();
-    private static final double RPC_INVOKE_TIMEOUT = 60.0;
+    private static final Duration RPC_INVOKE_TIMEOUT = Duration.ofSeconds(60);
 
 
     @Rule
@@ -49,19 +50,19 @@ public class RpcHealthMetricsTest {
             List<VespaService> services = tester.vespaServices().getInstancesById(SERVICE_1_CONFIG_ID);
 
             assertEquals(1, services.size());
-            VespaService qrserver = services.get(0);
-            HealthMetric h = qrserver.getHealth();
+            VespaService container = services.get(0);
+            HealthMetric h = container.getHealth();
             assertNotNull("Health metric should never be null", h);
             assertTrue("Status failed, reason = " + h.getMessage(), h.isOk());
             assertEquals("WORKING", h.getMessage());
 
             mockHttpServer.setResponse(HEALTH_FAILED_RESPONSE);
-            h = qrserver.getHealth();
+            h = container.getHealth();
             assertNotNull("Health metric should never be null", h);
             assertFalse("Status should be failed" + h.getMessage(), h.isOk());
             assertEquals("SOMETHING FAILED", h.getMessage());
 
-            String jsonRPCMessage = getHealthMetrics(tester, qrserver.getMonitoringName().id);
+            String jsonRPCMessage = getHealthMetrics(tester, container.getMonitoringName().id);
             assertEquals(WANTED_RPC_RESPONSE, jsonRPCMessage);
         }
     }

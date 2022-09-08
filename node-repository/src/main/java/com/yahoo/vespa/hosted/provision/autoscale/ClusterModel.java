@@ -9,6 +9,7 @@ import com.yahoo.vespa.hosted.provision.applications.ScalingEvent;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.logging.Level;
@@ -32,6 +33,11 @@ public class ClusterModel {
     static final double idealMemoryLoad = 0.65;
     static final double idealContainerDiskLoad = 0.95;
     static final double idealContentDiskLoad = 0.6;
+
+    // When a query is issued on a node the cost is the sum of a fixed cost component and a cost component
+    // proportional to document count. We must account for this when comparing configurations with more or fewer nodes.
+    // TODO: Measure this, and only take it into account with queries
+    private static final double fixedCpuCostFraction = 0.1;
 
     private final Application application;
     private final ClusterSpec clusterSpec;
@@ -74,7 +80,7 @@ public class ClusterModel {
         this.application = application;
         this.clusterSpec = clusterSpec;
         this.cluster = cluster;
-        this.nodes = null;
+        this.nodes = NodeList.of();
         this.clock = clock;
 
         this.scalingDuration = scalingDuration;
@@ -85,6 +91,29 @@ public class ClusterModel {
     public Application application() { return application; }
     public ClusterSpec clusterSpec() { return clusterSpec; }
     public Cluster cluster() { return cluster; }
+
+    /** Returns the relative load adjustment that should be made to this cluster given available measurements. */
+    public Load loadAdjustment() {
+        if (nodeTimeseries().isEmpty()) return Load.one();
+
+        Load adjustment = peakLoad().divide(idealLoad());
+        if (! safeToScaleDown())
+            adjustment = adjustment.map(v -> v < 1 ? 1 : v);
+        return adjustment;
+    }
+
+    /** Are we in a position to make decisions to scale down at this point? */
+    private boolean safeToScaleDown() {
+        if (hasScaledIn(scalingDuration().multipliedBy(3))) return false;
+        if (nodeTimeseries().measurementsPerNode() < 4) return false;
+        if (nodeTimeseries().nodesMeasured() != nodeCount()) return false;
+        return true;
+    }
+
+    private boolean hasScaledIn(Duration period) {
+        return cluster.lastScalingEvent().map(event -> event.at()).orElse(Instant.MIN)
+                      .isAfter(clock.instant().minus(period));
+    }
 
     /** Returns the predicted duration of a rescaling of this cluster */
     public Duration scalingDuration() { return scalingDuration; }
@@ -108,14 +137,81 @@ public class ClusterModel {
         return queryFractionOfMax = clusterTimeseries().queryFractionOfMax(scalingDuration(), clock);
     }
 
-    /** Returns average of the last load reading from each node. */
+    /** Returns the average of the last load measurement from each node. */
     public Load currentLoad() { return nodeTimeseries().currentLoad(); }
 
-    /** Returns average load during the last {@link #scalingDuration()} */
-    public Load averageLoad() { return nodeTimeseries().averageLoad(clock.instant().minus(scalingDuration())); }
+    /** Returns the average of all load measurements from all nodes*/
+    public Load averageLoad() { return nodeTimeseries().averageLoad(); }
 
+    /** Returns the average of the peak load measurement in each dimension, from each node. */
+    public Load peakLoad() { return nodeTimeseries().peakLoad(); }
+
+    /** The number of nodes this cluster has, or will have if not deployed yet. */
+    // TODO: Make this the deployed, not current count
+    public int nodeCount() {
+        if ( ! nodes.isEmpty()) return (int)nodes.stream().count();
+        return cluster.minResources().nodes();
+    }
+
+    /** The number of groups this cluster has, or will have if not deployed yet. */
+    // TODO: Make this the deployed, not current count
+    public int groupCount() {
+        if ( ! nodes.isEmpty()) return (int)nodes.stream().mapToInt(node -> node.allocation().get().membership().cluster().group().get().index()).distinct().count();
+        return cluster.minResources().groups();
+    }
+
+    public int groupSize() {
+        // ceil: If the division does not produce a whole number we assume some node is missing
+        return (int)Math.ceil((double)nodeCount() / groupCount());
+    }
+
+    /** Returns the relative load adjustment accounting for redundancy in this. */
+    public Load redundancyAdjustment() {
+        return loadWith(nodeCount(), groupCount());
+    }
+
+    /**
+     * Returns the relative load adjustment accounting for redundancy given these nodes+groups
+     * relative to node nodes+groups in this.
+     */
+    public Load loadWith(int trueNodes, int trueGroups) {
+        int nodes = nodesAdjustedForRedundancy(trueNodes, trueGroups);
+        int groups = groupsAdjustedForRedundancy(trueNodes, trueGroups);
+        if (clusterSpec().type() == ClusterSpec.Type.content) { // load scales with node share of content
+            int groupSize = nodes / groups;
+
+            // Cpu: Query cpu scales with cluster size, write cpu scales with group size
+            // Memory and disk: Scales with group size
+
+            // The fixed cost portion of cpu does not scale with changes to the node count
+            double queryCpuPerGroup = fixedCpuCostFraction + (1 - fixedCpuCostFraction) * groupSize() / groupSize;
+
+            double queryCpu = queryCpuPerGroup * groupCount() / groups;
+            double writeCpu = (double)groupSize() / groupSize;
+            return new Load(queryCpuFraction() * queryCpu + (1 - queryCpuFraction()) * writeCpu,
+                            (double)groupSize() / groupSize,
+                            (double)groupSize() / groupSize);
+        }
+        else {
+            return new Load((double)nodeCount() / nodes, 1, 1);
+        }
+    }
+
+    /**
+     * Returns the ideal load across the nodes of this sich that each node will be at ideal load
+     * if one of  the nodes go down.
+     */
     public Load idealLoad() {
-        return new Load(idealCpuLoad(), idealMemoryLoad, idealDiskLoad());
+        return new Load(idealCpuLoad(), idealMemoryLoad, idealDiskLoad()).divide(redundancyAdjustment());
+    }
+
+    public int nodesAdjustedForRedundancy(int nodes, int groups) {
+        int groupSize = (int)Math.ceil((double)nodes / groups);
+        return nodes > 1 ? (groups == 1 ? nodes - 1 : nodes - groupSize) : nodes;
+    }
+
+    public int groupsAdjustedForRedundancy(int nodes, int groups) {
+        return nodes > 1 ? (groups == 1 ? 1 : groups - 1) : groups;
     }
 
     /** Ideal cpu load must take the application traffic fraction into account */

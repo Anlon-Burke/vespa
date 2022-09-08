@@ -1,8 +1,9 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.jrt;
 
-import com.yahoo.security.tls.authz.ConnectionAuthContext;
-import com.yahoo.security.tls.authz.PeerAuthorizerTrustManager;
+import com.yahoo.security.tls.ConnectionAuthContext;
+import com.yahoo.security.tls.PeerAuthorizationFailedException;
+import com.yahoo.security.tls.TransportSecurityUtils;
 
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLEngineResult;
@@ -14,7 +15,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SocketChannel;
-import java.util.Optional;
+import java.util.Objects;
 import java.util.logging.Logger;
 
 import static javax.net.ssl.SSLEngineResult.Status;
@@ -97,15 +98,6 @@ public class TlsCryptoSocket implements CryptoSocket {
                     channelRead();
                     break;
                 case NEED_WORK:
-                    if (authContext == null) {
-                        PeerAuthorizerTrustManager.getConnectionAuthContext(sslEngine) // only available during handshake
-                                .ifPresent(ctx ->  {
-                                    if (!ctx.authorized()) {
-                                        metrics.incrementPeerAuthorizationFailures();
-                                    }
-                                    authContext = ctx;
-                                });
-                    }
                     break;
                 case COMPLETED:
                     return HandshakeState.COMPLETED;
@@ -122,6 +114,10 @@ public class TlsCryptoSocket implements CryptoSocket {
                         SSLSession session = sslEngine.getSession();
                         sessionApplicationBufferSize = session.getApplicationBufferSize();
                         sessionPacketBufferSize = session.getPacketBufferSize();
+                        authContext = TransportSecurityUtils.getConnectionAuthContext(session).orElseThrow();
+                        if (!authContext.authorized()) {
+                            metrics.incrementPeerAuthorizationFailures();
+                        }
                         log.fine(() -> String.format("Handshake complete: protocol=%s, cipherSuite=%s", session.getProtocol(), session.getCipherSuite()));
                         if (sslEngine.getUseClientMode()) {
                             metrics.incrementClientTlsConnectionsEstablished();
@@ -143,8 +139,7 @@ public class TlsCryptoSocket implements CryptoSocket {
                 }
             }
         } catch (SSLHandshakeException e) {
-            // sslEngine.getDelegatedTask().run() and handshakeWrap() may throw SSLHandshakeException, potentially handshakeUnwrap() and sslEngine.beginHandshake() as well.
-            if (authContext == null || authContext.authorized()) { // don't include handshake failures due from PeerAuthorizerTrustManager
+            if (!(e.getCause() instanceof PeerAuthorizationFailedException)) {
                 metrics.incrementTlsCertificateVerificationFailures();
             }
             throw e;
@@ -219,9 +214,9 @@ public class TlsCryptoSocket implements CryptoSocket {
     }
 
     @Override
-    public Optional<ConnectionAuthContext> getConnectionAuthContext() {
-        if (handshakeState != HandshakeState.COMPLETED) return Optional.empty();
-        return Optional.ofNullable(authContext);
+    public ConnectionAuthContext connectionAuthContext() {
+        if (handshakeState != HandshakeState.COMPLETED) throw new IllegalStateException("Handshake not complete");
+        return Objects.requireNonNull(authContext);
     }
 
     private boolean handshakeWrap() throws IOException {

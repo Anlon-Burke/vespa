@@ -3,7 +3,6 @@ package com.yahoo.vespa.clustercontroller.core;
 
 import com.yahoo.collections.Pair;
 import com.yahoo.jrt.Target;
-import java.util.logging.Level;
 import com.yahoo.vdslib.distribution.Distribution;
 import com.yahoo.vdslib.distribution.Group;
 import com.yahoo.vdslib.state.ClusterState;
@@ -13,12 +12,12 @@ import com.yahoo.vdslib.state.NodeType;
 import com.yahoo.vdslib.state.State;
 import com.yahoo.vespa.clustercontroller.core.hostinfo.HostInfo;
 import com.yahoo.vespa.clustercontroller.core.rpc.RPCCommunicator;
-
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.TreeMap;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -98,9 +97,6 @@ abstract public class NodeInfo implements Comparable<NodeInfo> {
     private long downStableStateTime = -1;
 
     private int prematureCrashCount = 0;
-
-    /** Remember last time we adjusted version, such that if we had multiple requests pending when we did, we can avoid printing error right after. */
-    private long adjustedVersionTime = 0;
 
     private HostInfo hostInfo = HostInfo.createHostInfo("{}");
 
@@ -244,11 +240,13 @@ abstract public class NodeInfo implements Comparable<NodeInfo> {
 
     public ContentCluster getCluster() { return cluster; }
 
-    /** Returns true if the node is currently registered in slobrok */
-    // FIXME why is this called "isRpcAddressOutdated" then???
-    public boolean isRpcAddressOutdated() { return lastSeenInSlobrok != null; }
+    /** Returns true if the node is registered in slobrok */
+    public boolean isInSlobrok() { return lastSeenInSlobrok == null; }
 
-    public Long getRpcAddressOutdatedTimestamp() { return lastSeenInSlobrok; }
+    /** Returns true if the node is NOT registered in slobrok */
+    public boolean isNotInSlobrok() { return ! isInSlobrok(); }
+
+    public Long lastSeenInSlobrok() { return lastSeenInSlobrok; }
 
     public void abortCurrentNodeStateRequests() {
         for(Pair<GetNodeStateRequest, Long> it : pendingNodeStateRequests) {
@@ -275,7 +273,7 @@ abstract public class NodeInfo implements Comparable<NodeInfo> {
         return wantedState;
     }
 
-    /** Returns the wanted state set directly by a user (i.e not configured) */
+    /** Returns the wanted state set directly by a user (i.e. not configured) */
     public NodeState getUserWantedState() { return wantedState; }
 
     public long getTimeOfFirstFailingConnectionAttempt() {
@@ -379,29 +377,6 @@ abstract public class NodeInfo implements Comparable<NodeInfo> {
 
     public long getTimeForNextStateRequestAttempt() {
         return nextAttemptTime;
-    }
-
-    /** @return True if we demoted communication version so this can be valid error. */
-    public boolean notifyNoSuchMethodError(String methodName, Timer timer) {
-        if (methodName.equals(RPCCommunicator.SET_DISTRIBUTION_STATES_RPC_METHOD_NAME)) {
-            if (version == RPCCommunicator.SET_DISTRIBUTION_STATES_RPC_VERSION) {
-                downgradeToRpcVersion(RPCCommunicator.LEGACY_SET_SYSTEM_STATE2_RPC_VERSION, methodName, timer);
-                return true;
-            } else if (timer.getCurrentTimeInMillis() - 2000 < adjustedVersionTime) {
-                log.log(Level.FINE, () -> "Node " + toString() + " does not support " + methodName + " call. Version already downgraded, so ignoring it.");
-                return true;
-            }
-        }
-        log.log(Level.WARNING, "Node " + toString() + " does not support " + methodName + " which it should.");
-        return false;
-    }
-
-    private void downgradeToRpcVersion(int newVersion, String methodName, Timer timer) {
-        log.log(Level.FINE, () -> String.format("Node %s does not support %s call. Downgrading to version %d.",
-                toString(), methodName, newVersion));
-        version = newVersion;
-        nextAttemptTime = 0;
-        adjustedVersionTime = timer.getCurrentTimeInMillis();
     }
 
     public Target getConnection() {

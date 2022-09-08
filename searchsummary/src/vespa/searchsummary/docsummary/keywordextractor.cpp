@@ -17,22 +17,15 @@ bool useful(search::ParseItem::ItemCreator creator)
 }
 
 
-KeywordExtractor::KeywordExtractor(IDocsumEnvironment * env)
+KeywordExtractor::KeywordExtractor(const IDocsumEnvironment * env)
     : _env(env),
-      _legalPrefixes(nullptr),
+      _legalPrefixes(),
       _legalIndexes()
 {
 }
 
 
-KeywordExtractor::~KeywordExtractor()
-{
-    while (_legalPrefixes != nullptr) {
-        IndexPrefix *tmp = _legalPrefixes;
-        _legalPrefixes = tmp->_next;
-        delete tmp;
-    }
-}
+KeywordExtractor::~KeywordExtractor() = default;
 
 bool
 KeywordExtractor::IsLegalIndexName(const char *idxName) const
@@ -40,12 +33,9 @@ KeywordExtractor::IsLegalIndexName(const char *idxName) const
     return _legalIndexes.find(idxName) != _legalIndexes.end();
 }
 
-KeywordExtractor::IndexPrefix::IndexPrefix(const char *prefix, IndexPrefix **list)
-    : _prefix(prefix),
-      _next(nullptr)
+KeywordExtractor::IndexPrefix::IndexPrefix(const char *prefix) noexcept
+    : _prefix(prefix)
 {
-    _next = *list;
-    *list = this;
 }
 
 KeywordExtractor::IndexPrefix::~IndexPrefix() = default;
@@ -99,20 +89,20 @@ KeywordExtractor::GetLegalIndexSpec()
 {
     vespalib::string spec;
 
-    if (_legalPrefixes != nullptr) {
-        for (IndexPrefix *pt = _legalPrefixes;
-             pt != nullptr; pt = pt->_next) {
-            if (spec.size() > 0)
+    if (!_legalPrefixes.empty()) {
+        for (auto& prefix : _legalPrefixes) {
+            if (!spec.empty()) {
                 spec.append(';');
-            spec.append(pt->_prefix);
+            }
+            spec.append(prefix.get_prefix());
             spec.append('*');
         }
     }
 
-    for (Set::const_iterator it(_legalIndexes.begin()), mt(_legalIndexes.end()); it != mt; it++) {
-        if (spec.size() > 0)
+    for (const auto & index : _legalIndexes) {
+        if (!spec.empty())
             spec.append(';');
-        spec.append(*it);
+        spec.append(index);
     }
     return spec;
 }
@@ -139,101 +129,6 @@ KeywordExtractor::IsLegalIndex(vespalib::stringref idxS) const
 
     return (IsLegalIndexPrefix(resolvedIdxName.c_str()) ||
             IsLegalIndexName(resolvedIdxName.c_str()));
-}
-
-
-char *
-KeywordExtractor::ExtractKeywords(vespalib::stringref buf) const
-{
-    search::SimpleQueryStackDumpIterator si(buf);
-    char keywordstore[4_Ki]; // Initial storage for keywords buffer
-    search::RawBuf keywords(keywordstore, sizeof(keywordstore));
-
-    while (si.next()) {
-        search::ParseItem::ItemCreator creator = si.getCreator();
-        switch (si.getType()) {
-        case search::ParseItem::ITEM_NOT:
-            /**
-             * @todo Must consider only the first argument on the stack.
-             * Difficult without recursion.
-             */
-            break;
-
-        case search::ParseItem::ITEM_PHRASE:
-            {
-            // Must take the next arity TERMS and put together
-            bool phraseterms_was_added = false;
-            int phraseterms = si.getArity();
-            for (int i = 0; i < phraseterms; i++) {
-                si.next();
-                search::ParseItem::ItemType newtype = si.getType();
-                if (newtype != search::ParseItem::ITEM_TERM &&
-                    newtype != search::ParseItem::ITEM_NUMTERM)
-                {
-                    // stack syntax error
-                    // LOG(debug, "Extracting keywords found a non-term in a phrase");
-                    // making a clean escape.
-                    keywords.reset();
-                    goto iteratorloopend;
-                } else {
-                    if (!IsLegalIndex(si.getIndexName()))
-                        continue;
-                    // Found a term
-                    vespalib::stringref term = si.getTerm();
-                    search::ParseItem::ItemCreator term_creator = si.getCreator();
-                    if ( !term.empty() && useful(term_creator)) {
-                        // Actual term to add
-                        if (phraseterms_was_added) {
-                            // Not the first term in the phrase
-                            keywords += " ";
-                        } else {
-                            phraseterms_was_added = true;
-                        }
-
-                        keywords.append(term.data(), term.size());
-                    }
-                }
-            }
-            if (phraseterms_was_added) {
-                // Terms was added, so 0-terminate the string
-                keywords.append("\0", 1);
-            }
-
-            break;
-        }
-        case search::ParseItem::ITEM_PREFIXTERM:
-        case search::ParseItem::ITEM_SUBSTRINGTERM:
-        case search::ParseItem::ITEM_EXACTSTRINGTERM:
-        case search::ParseItem::ITEM_NUMTERM:
-        case search::ParseItem::ITEM_TERM:
-            if (!IsLegalIndex(si.getIndexName()))
-                continue;
-            {
-                // add a new keyword
-                vespalib::stringref term = si.getTerm();
-                if ( !term.empty() && useful(creator)) {
-                    // An actual string to add
-                    keywords.append(term.data(), term.size());
-                    keywords.append("\0", 1);
-                }
-            }
-            break;
-
-        default:
-            // Do nothing to AND, RANK, OR
-            break;
-        }
-    }
- iteratorloopend:
-    // Add a 'blank' keyword
-    keywords.append("\0", 1);
-
-    // Must now allocate a string and copy the data from the rawbuf
-    void *result = malloc(keywords.GetUsedLen());
-    if (result != nullptr) {
-        memcpy(result, keywords.GetDrainPos(), keywords.GetUsedLen());
-    }
-    return static_cast<char *>(result);
 }
 
 }

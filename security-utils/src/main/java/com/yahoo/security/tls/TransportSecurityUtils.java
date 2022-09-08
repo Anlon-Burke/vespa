@@ -1,6 +1,9 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.security.tls;
 
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.SSLSocket;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
@@ -18,6 +21,7 @@ public class TransportSecurityUtils {
     public static final String CONFIG_FILE_ENVIRONMENT_VARIABLE = "VESPA_TLS_CONFIG_FILE";
     public static final String INSECURE_MIXED_MODE_ENVIRONMENT_VARIABLE = "VESPA_TLS_INSECURE_MIXED_MODE";
     public static final String INSECURE_AUTHORIZATION_MODE_ENVIRONMENT_VARIABLE = "VESPA_TLS_INSECURE_AUTHORIZATION_MODE";
+    public static final String CAPABILITIES_ENV_VAR = "VESPA_TLS_CAPABILITIES_ENFORCEMENT_MODE";
 
     private TransportSecurityUtils() {}
 
@@ -47,6 +51,12 @@ public class TransportSecurityUtils {
         return getEnvironmentVariable(envVariables, INSECURE_AUTHORIZATION_MODE_ENVIRONMENT_VARIABLE)
                 .map(AuthorizationMode::fromConfigValue)
                 .orElse(AuthorizationMode.defaultValue());
+    }
+
+    public static CapabilityMode getCapabilityMode() {
+        return getEnvironmentVariable(System.getenv(), CAPABILITIES_ENV_VAR)
+                .map(CapabilityMode::fromConfigValue)
+                .orElse(CapabilityMode.defaultValue());
     }
 
     public static Optional<Path> getConfigFile() {
@@ -80,6 +90,24 @@ public class TransportSecurityUtils {
         }
     }
 
+    /**
+     * @return {@link ConnectionAuthContext} instance if {@link SSLEngine} was constructed by a {@link TlsContext}.
+     *         Only available after TLS handshake is completed.
+     */
+    public static Optional<ConnectionAuthContext> getConnectionAuthContext(SSLSession s) {
+        return Optional.ofNullable((ConnectionAuthContext) s.getValue(PeerAuthorizerTrustManager.AUTH_CONTEXT_PROPERTY));
+    }
+
+    /** @see #getConnectionAuthContext(SSLSession) */
+    public static Optional<ConnectionAuthContext> getConnectionAuthContext(SSLEngine e) {
+        return getConnectionAuthContext(e.getSession());
+    }
+
+    /** @see #getConnectionAuthContext(SSLSession) */
+    public static Optional<ConnectionAuthContext> getConnectionAuthContext(SSLSocket s) {
+        return getConnectionAuthContext(s.getSession());
+    }
+
     private static Optional<String> getEnvironmentVariable(Map<String, String> environmentVariables, String variableName) {
         return Optional.ofNullable(environmentVariables.get(variableName))
                 .filter(var -> !var.isEmpty());
@@ -89,7 +117,6 @@ public class TransportSecurityUtils {
         SystemTlsContext(Path tlsOptionsConfigFile) {
             super(tlsOptionsConfigFile, getInsecureAuthorizationMode());
         }
-
-        @Override public void close() { throw new UnsupportedOperationException("Shared TLS context cannot be closed"); }
+        @Override public void close() {}
     }
 }

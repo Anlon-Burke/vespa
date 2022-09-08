@@ -2,13 +2,11 @@
 
 #include "rawbuf.h"
 #include <vespa/vespalib/util/compress.h>
-#include <vespa/fastos/file.h>
 #include <cassert>
 #include <cstring>
+#include <cstdlib>
 
 namespace search {
-
-static inline size_t smin(size_t a, size_t b) { return (a < b) ? a : b; }
 
 RawBuf::RawBuf(size_t size)
     : _bufStart(nullptr),
@@ -24,21 +22,6 @@ RawBuf::RawBuf(size_t size)
     _bufEnd = _bufStart + size;
     _bufDrainPos = _bufFillPos = _bufStart;
 }
-
-
-RawBuf::RawBuf(char *start, size_t size)
-    : _bufStart(nullptr),
-      _bufEnd(nullptr),
-      _bufFillPos(nullptr),
-      _bufDrainPos(nullptr),
-      _initialBufStart(start),
-      _initialSize(size)
-{
-    _bufStart = start;
-    _bufEnd = _bufStart + size;
-    _bufDrainPos = _bufFillPos = _bufStart;
-}
-
 
 RawBuf::~RawBuf()
 {
@@ -109,17 +92,6 @@ RawBuf::appendCompressedNumber(int64_t n)
     _bufFillPos += vespalib::compress::Integer::compress(n, _bufFillPos);
 }
 
-
-/**
- * Has the entire contents of the buffer been used up, i.e. freed?
- */
-bool
-RawBuf::IsEmpty()
-{
-    return _bufFillPos == _bufDrainPos;
-}
-
-
 /**
  * Free 'len' bytes from the start of the contents.  (These
  * have presumably been written or read.)
@@ -158,19 +130,6 @@ RawBuf::preAlloc(size_t len)
     assert(static_cast<size_t>(_bufEnd -_bufFillPos) >= len);
 }
 
-
-void
-RawBuf::Compact()
-{
-    if (_bufDrainPos == _bufStart)
-        return;
-    if (_bufFillPos != _bufDrainPos)
-        memmove(_bufStart, _bufDrainPos, _bufFillPos - _bufDrainPos);
-    _bufFillPos -= (_bufDrainPos - _bufStart);
-    _bufDrainPos = _bufStart;
-}
-
-
 void
 RawBuf::Reuse()
 {
@@ -191,7 +150,7 @@ RawBuf::Reuse()
 
 
 void
-RawBuf::operator+=(const char *src)
+RawBuf::append(const char *src)
 {
     while (*src) {
         char *cachedBufFillPos = _bufFillPos;
@@ -202,37 +161,6 @@ RawBuf::operator+=(const char *src)
         if (_bufFillPos >= _bufEnd)
             expandBuf(1);
     }
-}
-
-
-void
-RawBuf::operator+=(const RawBuf& buffer)
-{
-    size_t nbytes = buffer.GetUsedLen();
-    if (nbytes == 0)
-        return;
-
-    while (GetFreeLen() < nbytes)
-        expandBuf(nbytes);
-    memcpy(_bufFillPos, buffer._bufDrainPos, nbytes);
-    _bufFillPos += nbytes;
-}
-
-
-bool
-RawBuf::operator==(const RawBuf &buffer) const
-{
-    size_t nbytes = buffer.GetUsedLen();
-    if (nbytes != GetUsedLen())
-        return false;
-
-    const char *p, *t;
-    for (p=_bufDrainPos, t=buffer._bufDrainPos; p<_bufFillPos; p++, t++) {
-        if (*p != *t)
-            return false;
-    }
-
-    return true;
 }
 
 /**
@@ -325,37 +253,6 @@ RawBuf::addNum64(int64_t num, size_t fieldw, char fill)
         *cachedBufFillPos++ = *--p;
     }
     _bufFillPos = cachedBufFillPos;
-}
-
-
-void
-RawBuf::addHitRank(HitRank num)
-{
-    char buf1[100];
-    snprintf(buf1, sizeof(buf1), "%g", static_cast<double>(num));
-    append(buf1, strlen(buf1));
-}
-
-
-void
-RawBuf::addSignedHitRank(SignedHitRank num)
-{
-    char buf1[100];
-    snprintf(buf1, sizeof(buf1), "%g", static_cast<double>(num));
-    append(buf1, strlen(buf1));
-}
-
-/**
- * Read from the indicated file into the buffer, no more that the
- * given number of bytes and no more than will fit in the buffer.
- */
-size_t
-RawBuf::readFile(FastOS_FileInterface &file, size_t maxlen)
-{
-    size_t  got = file.Read(_bufFillPos, smin((_bufEnd - _bufFillPos), maxlen));
-    if (got > 0)
-        _bufFillPos += got;
-    return got;
 }
 
 void

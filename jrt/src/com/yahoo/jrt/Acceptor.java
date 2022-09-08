@@ -1,13 +1,11 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.jrt;
 
-
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ServerSocketChannel;
 import java.util.concurrent.CountDownLatch;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
 
 /**
  * A class used to listen on a network socket. A separate thread is
@@ -87,8 +85,8 @@ public class Acceptor {
      * is listening to.  If this Acceptor is no longer listening (it has
      * been shut down), null will be returned.
      *
-     * @return listening spec, or null if not listening.
-     **/
+     * @return listening spec, or null if not listening
+     */
     public Spec spec() {
         if ( ! serverChannel.isOpen()) {
             return null;

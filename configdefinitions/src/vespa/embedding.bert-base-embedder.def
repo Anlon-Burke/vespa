@@ -1,13 +1,10 @@
 
 namespace=embedding
 
-# Settings for wordpiece tokenizer
-tokenizerVocabUrl  url
-tokenizerVocabPath path
+# Wordpiece tokenizer
+tokenizerVocab model
 
-# Transformer model settings
-transformerModelUrl  url
-transformerModelPath path
+transformerModel  model
 
 # Max length of token sequence model can handle
 transformerMaxTokens int default=384

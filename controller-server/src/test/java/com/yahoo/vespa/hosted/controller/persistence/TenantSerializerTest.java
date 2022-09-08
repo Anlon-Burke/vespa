@@ -23,7 +23,7 @@ import com.yahoo.vespa.hosted.controller.tenant.TenantBilling;
 import com.yahoo.vespa.hosted.controller.tenant.TenantContact;
 import com.yahoo.vespa.hosted.controller.tenant.TenantContacts;
 import com.yahoo.vespa.hosted.controller.tenant.TenantInfo;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.net.URI;
 import java.security.PublicKey;
@@ -33,9 +33,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author mpolden
@@ -53,12 +53,12 @@ public class TenantSerializerTest {
                                                                                      "-----END PUBLIC KEY-----\n");
 
     @Test
-    public void athenz_tenant() {
+    void athenz_tenant() {
         AthenzTenant tenant = AthenzTenant.create(TenantName.from("athenz-tenant"),
-                                                  new AthenzDomain("domain1"),
-                                                  new Property("property1"),
-                                                  Optional.of(new PropertyId("1")),
-                                                  Instant.ofEpochMilli(1234L));
+                new AthenzDomain("domain1"),
+                new Property("property1"),
+                Optional.of(new PropertyId("1")),
+                Instant.ofEpochMilli(1234L));
         AthenzTenant serialized = (AthenzTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(tenant.name(), serialized.name());
         assertEquals(tenant.domain(), serialized.domain());
@@ -69,42 +69,42 @@ public class TenantSerializerTest {
     }
 
     @Test
-    public void athenz_tenant_without_property_id() {
+    void athenz_tenant_without_property_id() {
         AthenzTenant tenant = AthenzTenant.create(TenantName.from("athenz-tenant"),
-                                                             new AthenzDomain("domain1"),
-                                                             new Property("property1"),
-                                                             Optional.empty(),
-                                                             Instant.EPOCH);
+                new AthenzDomain("domain1"),
+                new Property("property1"),
+                Optional.empty(),
+                Instant.EPOCH);
         AthenzTenant serialized = (AthenzTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertFalse(serialized.propertyId().isPresent());
         assertEquals(tenant.propertyId(), serialized.propertyId());
     }
 
     @Test
-    public void athenz_tenant_with_contact() {
+    void athenz_tenant_with_contact() {
         AthenzTenant tenant = new AthenzTenant(TenantName.from("athenz-tenant"),
-                                               new AthenzDomain("domain1"),
-                                               new Property("property1"),
-                                               Optional.of(new PropertyId("1")),
-                                               Optional.of(contact()),
-                                               Instant.EPOCH,
-                                               lastLoginInfo(321L, 654L, 987L));
+                new AthenzDomain("domain1"),
+                new Property("property1"),
+                Optional.of(new PropertyId("1")),
+                Optional.of(contact()),
+                Instant.EPOCH,
+                lastLoginInfo(321L, 654L, 987L));
         AthenzTenant serialized = (AthenzTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(tenant.contact(), serialized.contact());
     }
 
     @Test
-    public void cloud_tenant() {
+    void cloud_tenant() {
         CloudTenant tenant = new CloudTenant(TenantName.from("elderly-lady"),
-                                             Instant.ofEpochMilli(1234L),
-                                             lastLoginInfo(123L, 456L, null),
-                                             Optional.of(new SimplePrincipal("foobar-user")),
-                                             ImmutableBiMap.of(publicKey, new SimplePrincipal("joe"),
-                                                               otherPublicKey, new SimplePrincipal("jane")),
-                                             TenantInfo.empty(),
-                                             List.of(),
-                                             new ArchiveAccess()
-        );
+                Instant.ofEpochMilli(1234L),
+                lastLoginInfo(123L, 456L, null),
+                Optional.of(new SimplePrincipal("foobar-user")),
+                ImmutableBiMap.of(publicKey, new SimplePrincipal("joe"),
+                        otherPublicKey, new SimplePrincipal("jane")),
+                TenantInfo.empty(),
+                List.of(),
+                new ArchiveAccess(),
+                Optional.empty());
         CloudTenant serialized = (CloudTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(tenant.name(), serialized.name());
         assertEquals(tenant.creator(), serialized.creator());
@@ -113,7 +113,7 @@ public class TenantSerializerTest {
     }
 
     @Test
-    public void cloud_tenant_with_info() {
+    void cloud_tenant_with_info() {
         CloudTenant tenant = new CloudTenant(TenantName.from("elderly-lady"),
                 Instant.EPOCH,
                 lastLoginInfo(null, 789L, 654L),
@@ -125,15 +125,16 @@ public class TenantSerializerTest {
                         new TenantSecretStore("ss1", "123", "role1"),
                         new TenantSecretStore("ss2", "124", "role2")
                 ),
-                new ArchiveAccess().withAWSRole("arn:aws:iam::123456789012:role/my-role")
-        );
+                new ArchiveAccess().withAWSRole("arn:aws:iam::123456789012:role/my-role"),
+                Optional.of(Instant.ofEpochMilli(1234567)));
         CloudTenant serialized = (CloudTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(tenant.info(), serialized.info());
         assertEquals(tenant.tenantSecretStores(), serialized.tenantSecretStores());
+        assertEquals(tenant.invalidateUserSessionsBefore(), serialized.invalidateUserSessionsBefore());
     }
 
     @Test
-    public void cloud_tenant_with_old_archive_access_serialization() {
+    void cloud_tenant_with_old_archive_access_serialization() {
         var json = "{\n" +
                 "  \"name\": \"elderly-lady\",\n" +
                 "  \"type\": \"cloud\",\n" +
@@ -165,7 +166,7 @@ public class TenantSerializerTest {
     }
 
     @Test
-    public void cloud_tenant_with_archive_access() {
+    void cloud_tenant_with_archive_access() {
         CloudTenant tenant = new CloudTenant(TenantName.from("elderly-lady"),
                 Instant.ofEpochMilli(1234L),
                 lastLoginInfo(123L, 456L, null),
@@ -174,15 +175,15 @@ public class TenantSerializerTest {
                         otherPublicKey, new SimplePrincipal("jane")),
                 TenantInfo.empty(),
                 List.of(),
-                new ArchiveAccess().withAWSRole("arn:aws:iam::123456789012:role/my-role").withGCPMember("user:foo@example.com")
-        );
+                new ArchiveAccess().withAWSRole("arn:aws:iam::123456789012:role/my-role").withGCPMember("user:foo@example.com"),
+                Optional.empty());
         CloudTenant serialized = (CloudTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(serialized.archiveAccess().awsRole().get(), "arn:aws:iam::123456789012:role/my-role");
         assertEquals(serialized.archiveAccess().gcpMember().get(), "user:foo@example.com");
     }
 
     @Test
-    public void cloud_tenant_with_tenant_info_partial() {
+    void cloud_tenant_with_tenant_info_partial() {
         TenantInfo partialInfo = TenantInfo.empty()
                 .withAddress(TenantAddress.empty().withCity("Hønefoss"));
 
@@ -193,7 +194,7 @@ public class TenantSerializerTest {
     }
 
     @Test
-    public void cloud_tenant_with_tenant_info_full() {
+    void cloud_tenant_with_tenant_info_full() {
         TenantInfo fullInfo = TenantInfo.empty()
                 .withName("My Company")
                 .withEmail("email@mycomp.any")
@@ -222,7 +223,7 @@ public class TenantSerializerTest {
     }
 
     @Test
-    public void cloud_tenant_with_tenant_info_contacts() {
+    void cloud_tenant_with_tenant_info_contacts() {
         TenantInfo tenantInfo = TenantInfo.empty()
                 .withContacts(new TenantContacts(List.of(
                         new TenantContacts.EmailContact(List.of(TenantContacts.Audience.TENANT), "email1@email.com"),
@@ -235,7 +236,7 @@ public class TenantSerializerTest {
     }
 
     @Test
-    public void deleted_tenant() {
+    void deleted_tenant() {
         DeletedTenant tenant = new DeletedTenant(
                 TenantName.from("tenant1"), Instant.ofEpochMilli(1234L), Instant.ofEpochMilli(2345L));
         DeletedTenant serialized = (DeletedTenant) serializer.tenantFrom(serializer.toSlime(tenant));

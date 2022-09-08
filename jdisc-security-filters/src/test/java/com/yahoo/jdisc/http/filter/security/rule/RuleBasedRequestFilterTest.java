@@ -8,9 +8,9 @@ import com.yahoo.container.jdisc.RequestHandlerTestDriver.MockResponseHandler;
 import com.yahoo.jdisc.Metric;
 import com.yahoo.jdisc.Response;
 import com.yahoo.jdisc.http.filter.DiscFilterRequest;
-import com.yahoo.jdisc.http.filter.security.rule.RuleBasedFilterConfig.DefaultRule;
-import com.yahoo.jdisc.http.filter.security.rule.RuleBasedFilterConfig.Rule;
-import com.yahoo.test.json.JsonTestHelper;
+import com.yahoo.vespa.config.jdisc.http.filter.RuleBasedFilterConfig;
+import com.yahoo.vespa.config.jdisc.http.filter.RuleBasedFilterConfig.DefaultRule;
+import com.yahoo.vespa.config.jdisc.http.filter.RuleBasedFilterConfig.Rule;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -237,7 +237,7 @@ class RuleBasedRequestFilterTest {
         ObjectNode expectedJson = jsonMapper.createObjectNode();
         expectedJson.put("message", expectedMessage).put("code", expectedCode);
         JsonNode actualJson = jsonMapper.readTree(handler.readAll().getBytes());
-        JsonTestHelper.assertJsonEquals(expectedJson, actualJson);
+        assertEquals(expectedJson, actualJson);
     }
 
 }

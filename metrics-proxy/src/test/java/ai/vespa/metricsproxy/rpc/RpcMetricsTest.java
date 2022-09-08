@@ -19,6 +19,7 @@ import org.junit.Test;
 import org.junit.rules.Timeout;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
 
 import static ai.vespa.metricsproxy.TestUtil.getFileContents;
@@ -45,7 +46,7 @@ public class RpcMetricsTest {
 
     private static final String METRICS_RESPONSE = getFileContents("metrics-storage-simple.json").trim();
     private static final String EXTRA_APP = "extra";
-    private static final double RPC_INVOKE_TIMEOUT = 60.0;
+    private static final Duration RPC_INVOKE_TIMEOUT = Duration.ofSeconds(60);
 
     private static class RpcClient implements AutoCloseable {
         private final Supervisor supervisor;
@@ -106,10 +107,10 @@ public class RpcMetricsTest {
 
             assertEquals("#Services should be 1 for config id " + SERVICE_1_CONFIG_ID, 1, services.size());
 
-            VespaService qrserver = services.get(0);
-            assertEquals(MONITORING_SYSTEM + VespaService.SEPARATOR + "qrserver", qrserver.getMonitoringName().id);
+            VespaService container = services.get(0);
+            assertEquals(MONITORING_SYSTEM + VespaService.SEPARATOR + "container", container.getMonitoringName().id);
 
-            Metrics metrics = qrserver.getMetrics();
+            Metrics metrics = container.getMetrics();
             assertEquals("Fetched number of metrics is not correct", 2, metrics.size());
             Metric m = getMetric("foo.count", metrics);
             assertNotNull("Did not find expected metric with name 'foo.count'", m);
@@ -117,7 +118,7 @@ public class RpcMetricsTest {
             assertNotNull("Did not find expected metric with name 'bar.count'", m2);
 
             try (RpcClient rpcClient = new RpcClient(tester.rpcPort())) {
-                verifyMetricsFromRpcRequest(qrserver, rpcClient);
+                verifyMetricsFromRpcRequest(container, rpcClient);
 
                 services = tester.vespaServices().getInstancesById(SERVICE_2_CONFIG_ID);
                 assertEquals("#Services should be 1 for config id " + SERVICE_2_CONFIG_ID, 1, services.size());

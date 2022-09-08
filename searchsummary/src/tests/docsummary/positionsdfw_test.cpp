@@ -9,7 +9,6 @@
 #include <vespa/searchsummary/docsummary/idocsumenvironment.h>
 #include <vespa/searchsummary/docsummary/docsumstate.h>
 #include <vespa/searchsummary/test/slime_value.h>
-#include <vespa/searchlib/util/rawbuf.h>
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/data/slime/slime.h>
 #include <vespa/juniper/rpinterface.h>
@@ -52,9 +51,9 @@ struct MyEnvironment : IDocsumEnvironment {
 
     MyEnvironment() : attribute_man(0) {}
 
-    IAttributeManager *getAttributeManager() override { return attribute_man; }
+    const IAttributeManager *getAttributeManager() const override { return attribute_man; }
     string lookupIndex(const string &s) const override { return s; }
-    juniper::Juniper *getJuniper() override { return 0; }
+    const juniper::Juniper *getJuniper() const override { return nullptr; }
 };
 
 class MyAttributeContext : public IAttributeContext {
@@ -98,7 +97,7 @@ public:
     }
 
     IAttributeContext::UP createContext() const override {
-        return IAttributeContext::UP(new MyAttributeContext(_attr));
+        return std::make_unique<MyAttributeContext>(_attr);
     }
 
     std::shared_ptr<attribute::ReadableAttributeVector> readable_attribute_vector(const string&) const override {
@@ -107,8 +106,8 @@ public:
 };
 
 struct MyGetDocsumsStateCallback : GetDocsumsStateCallback {
-    virtual void FillSummaryFeatures(GetDocsumsState *, IDocsumEnvironment *) override {}
-    virtual void FillRankFeatures(GetDocsumsState *, IDocsumEnvironment *) override {}
+    virtual void FillSummaryFeatures(GetDocsumsState&) override {}
+    virtual void FillRankFeatures(GetDocsumsState&) override {}
     std::unique_ptr<MatchingElements> fill_matching_elements(const MatchingElementsFields &) override { abort(); }
 };
 

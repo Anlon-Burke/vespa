@@ -24,6 +24,7 @@ message SearchRequest {
     bytes grouping_blob = 15;   // serialized opaquely like now, to be changed later
     string geo_location = 16; // to be moved into query_tree
     bytes query_tree_blob = 17; // serialized opaquely like now, to be changed later
+    int32 profile_depth = 18;
 }
 
 message TensorProperty {
@@ -87,6 +88,7 @@ message DocsumRequest {
     string geo_location = 13; // to be moved into query_tree
     bytes query_tree_blob = 14; // serialized opaquely like now, to be changed later
     repeated bytes global_ids = 15;
+    repeated string fields = 16;
 }
 
 message DocsumReply {

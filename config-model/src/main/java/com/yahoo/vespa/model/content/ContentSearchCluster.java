@@ -158,7 +158,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
                                                String clusterName, ContentSearchCluster search) {
             List<ModelElement> indexedDefs = getIndexedSchemas(clusterElem);
             if (!indexedDefs.isEmpty()) {
-                IndexedSearchCluster isc = new IndexedSearchCluster(search, clusterName, 0);
+                IndexedSearchCluster isc = new IndexedSearchCluster(search, clusterName, 0, deployState.featureFlags());
                 isc.setRoutingSelector(clusterElem.childAsString("documents.selection"));
 
                 Double visibilityDelay = clusterElem.childAsDouble("engine.proton.visibility-delay");
@@ -245,7 +245,7 @@ public class ContentSearchCluster extends AbstractConfigProducer<SearchCluster> 
                 throw new IllegalArgumentException("Schema '" + schemaDefinitionXMLHandler.getName() + "' referenced in " +
                                                    this + " does not exist");
 
-            sc.add(new SchemaInfo(schema, deployState.rankProfileRegistry(), null, null));
+            sc.add(new SchemaInfo(schema, deployState.rankProfileRegistry(), null));
         }
     }
 

@@ -2,7 +2,7 @@
 
 #include "matched_elements_filter_dfw.h"
 #include "docsumstate.h"
-#include "general_result.h"
+#include "i_docsum_store_document.h"
 #include "struct_fields_resolver.h"
 #include "summaryfieldconverter.h"
 #include <vespa/document/fieldvalue/document.h>
@@ -33,23 +33,22 @@ MatchedElementsFilterDFW::get_matching_elements(uint32_t docid, GetDocsumsState&
     return state.get_matching_elements(*_matching_elems_fields).get_matching_elements(docid, _input_field_name);
 }
 
-MatchedElementsFilterDFW::MatchedElementsFilterDFW(const std::string& input_field_name, uint32_t input_field_enum,
+MatchedElementsFilterDFW::MatchedElementsFilterDFW(const std::string& input_field_name,
                                                    std::shared_ptr<MatchingElementsFields> matching_elems_fields)
     : _input_field_name(input_field_name),
-      _input_field_enum(input_field_enum),
       _matching_elems_fields(std::move(matching_elems_fields))
 {
 }
 
 std::unique_ptr<DocsumFieldWriter>
-MatchedElementsFilterDFW::create(const std::string& input_field_name, uint32_t input_field_enum,
+MatchedElementsFilterDFW::create(const std::string& input_field_name,
                                  std::shared_ptr<MatchingElementsFields> matching_elems_fields)
 {
-    return std::make_unique<MatchedElementsFilterDFW>(input_field_name, input_field_enum, std::move(matching_elems_fields));
+    return std::make_unique<MatchedElementsFilterDFW>(input_field_name, std::move(matching_elems_fields));
 }
 
 std::unique_ptr<DocsumFieldWriter>
-MatchedElementsFilterDFW::create(const std::string& input_field_name, uint32_t input_field_enum,
+MatchedElementsFilterDFW::create(const std::string& input_field_name,
                                  search::attribute::IAttributeContext& attr_ctx,
                                  std::shared_ptr<MatchingElementsFields> matching_elems_fields)
 {
@@ -58,21 +57,12 @@ MatchedElementsFilterDFW::create(const std::string& input_field_name, uint32_t i
         return std::unique_ptr<DocsumFieldWriter>();
     }
     resolver.apply_to(*matching_elems_fields);
-    return std::make_unique<MatchedElementsFilterDFW>(input_field_name, input_field_enum, std::move(matching_elems_fields));
+    return std::make_unique<MatchedElementsFilterDFW>(input_field_name, std::move(matching_elems_fields));
 }
 
 MatchedElementsFilterDFW::~MatchedElementsFilterDFW() = default;
 
 namespace {
-
-void
-decode_input_field_to_slime(const ResEntry& entry, Slime& input_field_as_slime)
-{
-    const char* buf;
-    uint32_t buf_len;
-    entry._resolve_field(&buf, &buf_len);
-    BinaryFormat::decode(vespalib::Memory(buf, buf_len), input_field_as_slime);
-}
 
 void
 filter_matching_elements_in_input_field_while_converting_to_slime(const FieldValue& input_field_value,
@@ -86,57 +76,24 @@ filter_matching_elements_in_input_field_while_converting_to_slime(const FieldVal
     assert(converted->isLiteral());
     auto& literal = static_cast<const LiteralFieldValueB&>(*converted);
     vespalib::stringref buf = literal.getValueRef();
+    if (buf.empty()) {
+        return;
+    }
     Slime input_field_as_slime;
     BinaryFormat::decode(vespalib::Memory(buf.data(), buf.size()), input_field_as_slime);
     inject(input_field_as_slime.get(), target);
 }
 
-bool
-resolve_input_field_as_slime(GeneralResult& result, int entry_idx, Slime& input_field_as_slime)
-{
-    ResEntry* entry = result.GetPresentEntry(entry_idx);
-    if (entry != nullptr) {
-        decode_input_field_to_slime(*entry, input_field_as_slime);
-        return true;
-    }
-    return false;
 }
 
 void
-filter_matching_elements_in_input_field(const Slime& input_field, const std::vector<uint32_t>& matching_elems, Slime& output_field)
-{
-    SlimeInserter output_inserter(output_field);
-    Inspector& input_inspector = input_field.get();
-    ArrayInserter array_inserter(output_inserter.insertArray(matching_elems.size()));
-    auto elems_itr = matching_elems.begin();
-    for (size_t i = 0; (i < input_inspector.entries()) && (elems_itr != matching_elems.end()); ++i) {
-        assert(*elems_itr >= i);
-        if (*elems_itr == i) {
-            inject(input_inspector[i], array_inserter);
-            ++elems_itr;
-        }
-    }
-}
-
-}
-
-void
-MatchedElementsFilterDFW::insertField(uint32_t docid, GeneralResult* result, GetDocsumsState *state,
-                                      ResType type, vespalib::slime::Inserter& target)
+MatchedElementsFilterDFW::insertField(uint32_t docid, const IDocsumStoreDocument* doc, GetDocsumsState *state,
+                                      ResType type, vespalib::slime::Inserter& target) const
 {
     assert(type == ResType::RES_JSONSTRING);
-    int entry_idx = result->GetClass()->GetIndexFromEnumValue(_input_field_enum);
-    Slime input_field;
-    if (resolve_input_field_as_slime(*result, entry_idx, input_field)) {
-        Slime output_field;
-        filter_matching_elements_in_input_field(input_field, get_matching_elements(docid, *state), output_field);
-        inject(output_field.get(), target);
-    } else {
-        // Use the document instance if the input field is not in the docsum blob.
-        auto field_value = result->get_field_value(_input_field_name);
-        if (field_value) {
-            filter_matching_elements_in_input_field_while_converting_to_slime(*field_value, get_matching_elements(docid, *state), target);
-        }
+    auto field_value = doc->get_field_value(_input_field_name);
+    if (field_value) {
+        filter_matching_elements_in_input_field_while_converting_to_slime(*field_value, get_matching_elements(docid, *state), target);
     }
 }
 

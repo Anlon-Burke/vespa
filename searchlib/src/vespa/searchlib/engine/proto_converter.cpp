@@ -47,6 +47,17 @@ void add_multi_props(fef::Properties &dst, const T &src) {
     }
 }
 
+DocsumRequest::FieldList
+convertFields(const searchlib::searchprotocol::protobuf::DocsumRequest &proto) {
+    DocsumRequest::FieldList fields;
+    fields.reserve(proto.fields_size());
+    for (int i = 0; i < proto.fields_size(); ++i) {
+        fields.emplace_back(proto.fields(i));
+
+    }
+    return fields;
+}
+
 }
 
 //-----------------------------------------------------------------------------
@@ -57,7 +68,8 @@ ProtoConverter::search_request_from_proto(const ProtoSearchRequest &proto, Searc
     request.offset = proto.offset();
     request.maxhits = proto.hits();
     request.setTimeout(1ms * proto.timeout());
-    request.setTraceLevel(proto.trace_level());
+    request.trace().setLevel(proto.trace_level());
+    request.trace().setProfileDepth(proto.profile_depth());
     request.sortSpec = make_sort_spec(proto.sorting());
     request.sessionId.assign(proto.session_key().begin(), proto.session_key().end());
     request.propertiesMap.lookupCreate(MapNames::MATCH).add("documentdb.searchdoctype", proto.document_type());
@@ -92,7 +104,7 @@ ProtoConverter::search_reply_to_proto(const SearchReply &reply, ProtoSearchReply
     proto.set_soon_active_docs(reply.coverage.getSoonActive());
     proto.set_degraded_by_match_phase(reply.coverage.wasDegradedByMatchPhase());
     proto.set_degraded_by_soft_timeout(reply.coverage.wasDegradedByTimeout());
-    bool has_sort_data = (reply.sortIndex.size() > 0);
+    bool has_sort_data = ! reply.sortIndex.empty();
     assert(!has_sort_data || (reply.sortIndex.size() == (reply.hits.size() + 1)));
     if (reply.request) {
         uint32_t asked_offset = reply.request->offset;
@@ -114,7 +126,7 @@ ProtoConverter::search_reply_to_proto(const SearchReply &reply, ProtoSearchReply
             hit->set_sort_data(&reply.sortData[sort_data_offset], sort_data_size);
         }
     }
-    if (reply.match_features.values.size() > 0) {
+    if ( ! reply.match_features.values.empty()) {
         size_t num_match_features = reply.match_features.names.size();
         assert(num_match_features * reply.hits.size() == reply.match_features.values.size());
         for (const auto & name : reply.match_features.names) {
@@ -184,6 +196,7 @@ ProtoConverter::docsum_request_from_proto(const ProtoDocsumRequest &proto, Docsu
             request.hits[i].gid = document::GlobalId(gid.data());
         }
     }
+    request.setFields(convertFields(proto));
 }
 
 void

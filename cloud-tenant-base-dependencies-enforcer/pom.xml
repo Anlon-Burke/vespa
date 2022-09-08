@@ -27,7 +27,7 @@
         <httpclient.version>4.5.13</httpclient.version>
         <httpcore.version>4.4.13</httpcore.version>
         <junit5.version>5.8.1</junit5.version>  <!-- TODO: in parent this is named 'junit.version' -->
-        <onnxruntime.version>1.11.0</onnxruntime.version>
+        <onnxruntime.version>1.12.1</onnxruntime.version>
         <!-- END parent/pom.xml -->
 
 
@@ -45,7 +45,7 @@
         <jetty.version>9.4.48.v20220622</jetty.version>
         <jetty-alpn.version>1.1.3.v20160715</jetty-alpn.version>
         <org.lz4.version>1.8.0</org.lz4.version>
-        <org.json.version>20090211</org.json.version>
+        <org.json.version>20220320</org.json.version>
         <slf4j.version>1.7.32</slf4j.version> <!-- WARNING: when updated, also update c.y.v.tenant:base pom -->
         <xml-apis.version>1.4.01</xml-apis.version>
     </properties>
@@ -151,7 +151,6 @@
                                         <include>com.yahoo.vespa:config-model:*:jar:test</include>
                                         <include>com.yahoo.vespa:config-provisioning:*:jar:test</include>
                                         <include>com.yahoo.vespa:container-apache-http-client-bundle:*:jar:test</include>
-                                        <include>com.yahoo.vespa:container-search-gui:*:jar:test</include>
                                         <include>com.yahoo.vespa:container-test:*:jar:test</include>
                                         <include>com.yahoo.vespa:hosted-api:*:jar:test</include>
                                         <include>com.yahoo.vespa:indexinglanguage:*:jar:test</include>
@@ -189,6 +188,7 @@
                                         <include>org.apache.commons:commons-compress:1.21:jar:test</include>
                                         <include>org.apache.commons:commons-math3:3.6.1:jar:test</include>
                                         <include>org.apache.felix:org.apache.felix.framework:[${felix.version}]:jar:test</include>
+                                        <include>org.apache.felix:org.apache.felix.log:1.0.1:jar:test</include>
                                         <include>org.apache.httpcomponents.client5:httpclient5:${httpclient5.version}:jar:test</include>
                                         <include>org.apache.httpcomponents.core5:httpcore5:${httpclient5.version}:jar:test</include>
                                         <include>org.apache.httpcomponents.core5:httpcore5-h2:${httpclient5.version}:jar:test</include>
@@ -219,7 +219,7 @@
                                         <include>org.eclipse.jetty:jetty-util:[${jetty.version}]:jar:test</include>
                                         <include>org.hamcrest:hamcrest-core:1.3:jar:test</include>
                                         <include>org.hdrhistogram:HdrHistogram:2.1.8:jar:test</include>
-                                        <include>org.json:json:20090211:jar:test</include>
+                                        <include>org.json:json:${org.json.version}:jar:test</include>
                                         <include>org.junit.jupiter:junit-jupiter-api:[${junit5.version}]:jar:test</include>
                                         <include>org.junit.jupiter:junit-jupiter-engine:[${junit5.version}]:jar:test</include>
                                         <include>org.junit.platform:junit-platform-commons:[${junit5.platform.version}]:jar:test</include>
@@ -227,6 +227,8 @@
                                         <include>org.junit.vintage:junit-vintage-engine:[${junit5.version}]:jar:test</include>
                                         <include>org.lz4:lz4-java:[${org.lz4.version}]:jar:test</include>
                                         <include>org.opentest4j:opentest4j:1.2.0:jar:test</include>
+                                        <include>org.osgi:org.osgi.compendium:4.1.0:jar:test</include>
+                                        <include>org.osgi:org.osgi.core:4.1.0:jar:test</include>
                                         <include>xerces:xercesImpl:2.12.1:jar:test</include>
                                     </allowed>
                                 </enforceDependencies>

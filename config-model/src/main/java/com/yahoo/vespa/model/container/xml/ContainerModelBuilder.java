@@ -80,11 +80,9 @@ import com.yahoo.vespa.model.container.http.ssl.HostedSslConnectorFactory;
 import com.yahoo.vespa.model.container.http.xml.HttpBuilder;
 import com.yahoo.vespa.model.container.processing.ProcessingChains;
 import com.yahoo.vespa.model.container.search.ContainerSearch;
-import com.yahoo.vespa.model.container.search.GUIHandler;
 import com.yahoo.vespa.model.container.search.PageTemplates;
 import com.yahoo.vespa.model.container.search.searchchain.SearchChains;
 import com.yahoo.vespa.model.container.xml.document.DocumentFactoryBuilder;
-import com.yahoo.vespa.model.container.xml.embedder.EmbedderConfig;
 import com.yahoo.vespa.model.content.StorageGroup;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -186,7 +184,6 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         addConfiguredComponents(deployState, cluster, spec);
         addSecretStore(cluster, spec, deployState);
 
-        addEmbedderComponents(deployState, cluster, spec);
         addModelEvaluation(spec, cluster, context);
         addModelEvaluationBundles(cluster);
 
@@ -354,19 +351,12 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         container.setProp("rotations", String.join(",", rotationsProperty));
     }
 
-    private static void addEmbedderComponents(DeployState deployState, ApplicationContainerCluster cluster, Element spec) {
-        for (Element node : XML.getChildren(spec, "embedder")) {
-            Element transformed = EmbedderConfig.transform(deployState, node);
-            cluster.addComponent(new DomComponentBuilder().build(deployState, cluster, transformed));
-        }
-    }
-
-    private void addConfiguredComponents(DeployState deployState, ApplicationContainerCluster cluster, Element spec) {
-        for (Element components : XML.getChildren(spec, "components")) {
+    private void addConfiguredComponents(DeployState deployState, ApplicationContainerCluster cluster, Element parent) {
+        for (Element components : XML.getChildren(parent, "components")) {
             addIncludes(components);
             addConfiguredComponents(deployState, cluster, components, "component");
         }
-        addConfiguredComponents(deployState, cluster, spec, "component");
+        addConfiguredComponents(deployState, cluster, parent, "component");
     }
 
     protected void addStatusHandlers(ApplicationContainerCluster cluster, boolean isHostedVespa) {
@@ -551,7 +541,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         cluster.setSearch(buildSearch(deployState, cluster, searchElement));
 
         addSearchHandler(cluster, searchElement);
-        addGUIHandler(cluster);
+
         validateAndAddConfiguredComponents(deployState, cluster, searchElement, "renderer", ContainerModelBuilder::validateRendererElement);
     }
 
@@ -895,13 +885,6 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         searchHandler.addComponent(Component.fromClassAndBundle(SearchHandler.EXECUTION_FACTORY_CLASS, PlatformBundles.SEARCH_AND_DOCPROC_BUNDLE));
     }
 
-    private void addGUIHandler(ApplicationContainerCluster cluster) {
-        Handler guiHandler = new GUIHandler();
-        guiHandler.addServerBindings(SystemBindingPattern.fromHttpPath(GUIHandler.BINDING_PATH));
-        cluster.addComponent(guiHandler);
-    }
-
-
     private List<BindingPattern> serverBindings(Element searchElement, BindingPattern... defaultBindings) {
         List<Element> bindings = XML.getChildren(searchElement, "binding");
         if (bindings.isEmpty())
@@ -972,9 +955,10 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     }
 
     private static void addConfiguredComponents(DeployState deployState, ContainerCluster<? extends Container> cluster,
-                                                Element spec, String componentName) {
-        for (Element node : XML.getChildren(spec, componentName)) {
-            cluster.addComponent(new DomComponentBuilder().build(deployState, cluster, node));
+                                                Element parent, String componentName) {
+        for (Element component : XML.getChildren(parent, componentName)) {
+            ModelIdResolver.resolveModelIds(component, deployState.isHosted());
+            cluster.addComponent(new DomComponentBuilder().build(deployState, cluster, component));
         }
     }
 
@@ -1053,7 +1037,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
      */
      private static class JvmOptions {
 
-        private static final Pattern validPattern = Pattern.compile("-[a-zA-z0-9=:./,+-]+");
+        private static final Pattern validPattern = Pattern.compile("-[a-zA-z0-9=:./,+*-]+");
         // debug port will not be available in hosted, don't allow
         private static final Pattern invalidInHostedatttern = Pattern.compile("-Xrunjdwp:transport=.*");
 

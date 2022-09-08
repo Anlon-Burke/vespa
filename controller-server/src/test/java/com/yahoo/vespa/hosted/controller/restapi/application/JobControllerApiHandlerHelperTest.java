@@ -7,6 +7,7 @@ import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.slime.SlimeUtils;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServerException;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
+import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.TestReport;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
@@ -15,7 +16,7 @@ import com.yahoo.vespa.hosted.controller.deployment.DeploymentContext;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentTester;
 import com.yahoo.vespa.hosted.controller.notification.Notification.Type;
 import com.yahoo.vespa.hosted.controller.notification.NotificationSource;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
@@ -40,7 +41,7 @@ import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.deploymentF
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.installationFailed;
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.running;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * @author jonmv
@@ -49,7 +50,7 @@ import static org.junit.Assert.assertEquals;
 public class JobControllerApiHandlerHelperTest {
 
     @Test
-    public void testResponses() {
+    void testResponses() {
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
                 .stagingTest()
                 .blockChange(true, true, "mon,tue", "7-13", "UTC")
@@ -100,7 +101,7 @@ public class JobControllerApiHandlerHelperTest {
 
         // Revision 3 starts.
         app.submit(applicationPackage)
-           .runJob(systemTest).runJob(stagingTest);
+                .runJob(systemTest).runJob(stagingTest);
         tester.triggerJobs(); // Starts runs for us-central-1 and a new staging test run.
         tester.runner().run();
         assertEquals(running, tester.jobs().last(app.instanceId(), productionUsCentral1).get().status());
@@ -144,10 +145,14 @@ public class JobControllerApiHandlerHelperTest {
         assertResponse(JobControllerApiHandlerHelper.runResponse(app.application(), tester.jobs().runs(userApp.instanceId(), devAwsUsEast2a), Optional.empty(), URI.create("https://some.url:43/root")), "dev-aws-us-east-2a-runs.json");
         assertResponse(JobControllerApiHandlerHelper.jobTypeResponse(tester.controller(), userApp.instanceId(), URI.create("https://some.url:43/root/")), "overview-user-instance.json");
         assertResponse(JobControllerApiHandlerHelper.overviewResponse(tester.controller(), app.application().id(), URI.create("https://some.url:43/root/")), "deployment-overview-2.json");
+
+        tester.configServer().setLogStream(() -> "no more logs");
+        assertResponse(JobControllerApiHandlerHelper.vespaLogsResponse(tester.jobs(), new RunId(app.instanceId(), stagingTest, 1), 0, false), "vespa.log");
+        assertResponse(JobControllerApiHandlerHelper.vespaLogsResponse(tester.jobs(), new RunId(app.instanceId(), stagingTest, 1), 0, true), "vespa.log");
     }
 
     @Test
-    public void testDevResponses() {
+    void testDevResponses() {
         DeploymentTester tester = new DeploymentTester();
         var app = tester.newDeploymentContext();
         tester.clock().setInstant(Instant.EPOCH);
@@ -167,7 +172,7 @@ public class JobControllerApiHandlerHelperTest {
     }
 
     @Test
-    public void testResponsesWithDirectDeployment() {
+    void testResponsesWithDirectDeployment() {
         var tester = new DeploymentTester();
         var app = tester.newDeploymentContext();
         tester.clock().setInstant(Instant.EPOCH);
@@ -176,11 +181,11 @@ public class JobControllerApiHandlerHelperTest {
         // Deploy directly to production zone, like integration tests.
         tester.controller().jobController().deploy(tester.instance().id(), productionUsWest1, Optional.empty(), applicationPackage);
         assertResponse(JobControllerApiHandlerHelper.jobTypeResponse(tester.controller(), app.instanceId(), URI.create("https://some.url:43/root/")),
-                       "jobs-direct-deployment.json");
+                "jobs-direct-deployment.json");
     }
 
     @Test
-    public void testResponsesWithDryRunDeployment() {
+    void testResponsesWithDryRunDeployment() {
         var tester = new DeploymentTester();
         var app = tester.newDeploymentContext();
         tester.clock().setInstant(Instant.EPOCH);
@@ -189,7 +194,7 @@ public class JobControllerApiHandlerHelperTest {
         // Deploy directly to production zone, like integration tests, with dryRun.
         tester.controller().jobController().deploy(tester.instance().id(), productionUsWest1, Optional.empty(), applicationPackage, true);
         assertResponse(JobControllerApiHandlerHelper.jobTypeResponse(tester.controller(), app.instanceId(), URI.create("https://some.url:43/root/")),
-                       "jobs-direct-deployment.json");
+                "jobs-direct-deployment.json");
     }
 
     private void assertResponse(HttpResponse response, String fileName) {
@@ -197,11 +202,17 @@ public class JobControllerApiHandlerHelperTest {
             Path path = Paths.get("src/test/java/com/yahoo/vespa/hosted/controller/restapi/application/responses/").resolve(fileName);
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             response.render(baos);
-            byte[] actualJson = SlimeUtils.toJsonBytes(SlimeUtils.jsonToSlimeOrThrow(baos.toByteArray()).get(), false);
-            // Files.write(path, actualJson);
-            byte[] expected = Files.readAllBytes(path);
-            assertEquals(new String(SlimeUtils.toJsonBytes(SlimeUtils.jsonToSlimeOrThrow(expected).get(), false), UTF_8),
-                         new String(actualJson, UTF_8));
+            if (fileName.endsWith(".json")) {
+                byte[] actualJson = SlimeUtils.toJsonBytes(SlimeUtils.jsonToSlimeOrThrow(baos.toByteArray()).get(), false);
+                // Files.write(path, actualJson);
+                byte[] expected = Files.readAllBytes(path);
+                assertEquals(new String(SlimeUtils.toJsonBytes(SlimeUtils.jsonToSlimeOrThrow(expected).get(), false), UTF_8),
+                             new String(actualJson, UTF_8));
+            }
+            else {
+                assertEquals(Files.readString(path),
+                             baos.toString(UTF_8));
+            }
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

@@ -52,7 +52,7 @@ inject(Node::UP query, Node::UP to_inject) {
     if (auto * my_and = dynamic_cast<search::query::And *>(query.get())) {
         my_and->append(std::move(to_inject));
     } else  if (dynamic_cast<search::query::Rank *>(query.get()) || dynamic_cast<search::query::AndNot *>(query.get())) {
-        search::query::Intermediate & root = static_cast<search::query::Intermediate &>(*query);
+        auto & root = static_cast<search::query::Intermediate &>(*query);
         root.prepend(inject(root.stealFirst(), std::move(to_inject)));
     } else {
         auto new_root = std::make_unique<ProtonAnd>();
@@ -82,7 +82,7 @@ find_location_terms(Node *tree) {
     return locations;
 }
 
-GeoLocationSpec parse_location_string(string str) {
+GeoLocationSpec parse_location_string(const string & str) {
     GeoLocationSpec empty;
     if (str.empty()) {
         return empty;
@@ -164,7 +164,7 @@ Query::~Query() = default;
 bool
 Query::buildTree(vespalib::stringref stack, const string &location,
                  const ViewResolver &resolver, const IIndexEnvironment &indexEnv,
-                 bool split_unpacking_iterators, bool delay_unpacking_iterators)
+                 bool split_unpacking_iterators)
 {
     SimpleQueryStackDumpIterator stack_dump_iterator(stack);
     _query_tree = QueryTreeCreator<ProtonNodeTypes>::create(stack_dump_iterator);
@@ -173,7 +173,7 @@ Query::buildTree(vespalib::stringref stack, const string &location,
         _query_tree->accept(prefixSameElementSubIndexes);
         exchange_location_nodes(location, _query_tree, _locations);
         _query_tree = UnpackingIteratorsOptimizer::optimize(std::move(_query_tree),
-                bool(_whiteListBlueprint), split_unpacking_iterators, delay_unpacking_iterators);
+                bool(_whiteListBlueprint), split_unpacking_iterators);
         ResolveViewVisitor resolve_visitor(resolver, indexEnv);
         _query_tree->accept(resolve_visitor);
         return true;

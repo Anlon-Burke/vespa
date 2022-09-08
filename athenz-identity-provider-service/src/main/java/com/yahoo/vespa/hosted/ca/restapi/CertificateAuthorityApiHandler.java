@@ -37,7 +37,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.logging.Level;
-import java.util.stream.Stream;
 
 /**
  * REST API for issuing and refreshing node certificates in a hosted Vespa system.
@@ -97,8 +96,8 @@ public class CertificateAuthorityApiHandler extends ThreadedHttpRequestHandler {
         var instanceRegistration = deserializeRequest(request, InstanceSerializer::registrationFromSlime);
 
         InstanceConfirmation confirmation = new InstanceConfirmation(instanceRegistration.provider(), instanceRegistration.domain(), instanceRegistration.service(), EntityBindingsMapper.toSignedIdentityDocumentEntity(instanceRegistration.attestationData()));
-        confirmation.set(InstanceValidator.SAN_IPS_ATTRNAME, Certificates.getSubjectAlternativeNames(instanceRegistration.csr(), SubjectAlternativeName.Type.IP_ADDRESS));
-        confirmation.set(InstanceValidator.SAN_DNS_ATTRNAME, Certificates.getSubjectAlternativeNames(instanceRegistration.csr(), SubjectAlternativeName.Type.DNS_NAME));
+        confirmation.set(InstanceValidator.SAN_IPS_ATTRNAME, Certificates.getSubjectAlternativeNames(instanceRegistration.csr(), SubjectAlternativeName.Type.IP));
+        confirmation.set(InstanceValidator.SAN_DNS_ATTRNAME, Certificates.getSubjectAlternativeNames(instanceRegistration.csr(), SubjectAlternativeName.Type.DNS));
         if (!instanceValidator.isValidInstance(confirmation)) {
             log.log(Level.INFO, "Invalid instance registration for " + instanceRegistration.toString());
             return ErrorResponse.forbidden("Unable to launch service: " +instanceRegistration.service());
@@ -130,8 +129,8 @@ public class CertificateAuthorityApiHandler extends ThreadedHttpRequestHandler {
         refreshesSameService(instanceRefresh, athenzService);
 
         InstanceConfirmation instanceConfirmation = new InstanceConfirmation(provider, athenzService.getDomain().getName(), athenzService.getName(), null);
-        instanceConfirmation.set(InstanceValidator.SAN_IPS_ATTRNAME, Certificates.getSubjectAlternativeNames(instanceRefresh.csr(), SubjectAlternativeName.Type.IP_ADDRESS));
-        instanceConfirmation.set(InstanceValidator.SAN_DNS_ATTRNAME, Certificates.getSubjectAlternativeNames(instanceRefresh.csr(), SubjectAlternativeName.Type.DNS_NAME));
+        instanceConfirmation.set(InstanceValidator.SAN_IPS_ATTRNAME, Certificates.getSubjectAlternativeNames(instanceRefresh.csr(), SubjectAlternativeName.Type.IP));
+        instanceConfirmation.set(InstanceValidator.SAN_DNS_ATTRNAME, Certificates.getSubjectAlternativeNames(instanceRefresh.csr(), SubjectAlternativeName.Type.DNS));
         if(!instanceValidator.isValidRefresh(instanceConfirmation)) {
             return ErrorResponse.forbidden("Unable to refresh cert: " + instanceRefresh.csr().getSubject().toString());
         }
@@ -177,9 +176,7 @@ public class CertificateAuthorityApiHandler extends ThreadedHttpRequestHandler {
     private AthenzService getRequestAthenzService(HttpRequest request) {
         return getRequestCertificateChain(request).stream()
                 .findFirst()
-                .map(X509CertificateUtils::getSubjectCommonNames)
-                .map(List::stream)
-                .flatMap(Stream::findFirst)
+                .flatMap(X509CertificateUtils::getSubjectCommonName)
                 .map(AthenzService::new)
                 .orElseThrow(() -> new RuntimeException("No certificate found"));
     }

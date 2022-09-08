@@ -59,7 +59,6 @@ import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbi
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.identifiers.TenantId;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.TenantRoles;
-import com.yahoo.vespa.hosted.controller.api.integration.billing.Quota;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ApplicationReindexing;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Cluster;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServerException;
@@ -102,6 +101,7 @@ import com.yahoo.vespa.hosted.controller.maintenance.ResourceMeterMaintainer;
 import com.yahoo.vespa.hosted.controller.notification.Notification;
 import com.yahoo.vespa.hosted.controller.notification.NotificationSource;
 import com.yahoo.vespa.hosted.controller.persistence.SupportAccessSerializer;
+import com.yahoo.vespa.hosted.controller.restapi.ErrorResponses;
 import com.yahoo.vespa.hosted.controller.routing.RoutingStatus;
 import com.yahoo.vespa.hosted.controller.routing.context.DeploymentRoutingContext;
 import com.yahoo.vespa.hosted.controller.routing.rotation.RotationId;
@@ -165,7 +165,6 @@ import static java.util.Map.Entry.comparingByKey;
 import static java.util.stream.Collectors.collectingAndThen;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toUnmodifiableList;
 
 /**
  * This implements the application/v4 API which is used to deploy and manage applications
@@ -202,15 +201,15 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     public HttpResponse auditAndHandle(HttpRequest request) {
         try {
             Path path = new Path(request.getUri());
-            switch (request.getMethod()) {
-                case GET: return handleGET(path, request);
-                case PUT: return handlePUT(path, request);
-                case POST: return handlePOST(path, request);
-                case PATCH: return handlePATCH(path, request);
-                case DELETE: return handleDELETE(path, request);
-                case OPTIONS: return handleOPTIONS();
-                default: return ErrorResponse.methodNotAllowed("Method '" + request.getMethod() + "' is not supported");
-            }
+            return switch (request.getMethod()) {
+                case GET: yield handleGET(path, request);
+                case PUT: yield handlePUT(path, request);
+                case POST: yield handlePOST(path, request);
+                case PATCH: yield handlePATCH(path, request);
+                case DELETE: yield handleDELETE(path, request);
+                case OPTIONS: yield handleOPTIONS();
+                default: yield ErrorResponse.methodNotAllowed("Method '" + request.getMethod() + "' is not supported");
+            };
         }
         catch (RestApiException.Forbidden e) {
             return ErrorResponse.forbidden(Exceptions.toMessageString(e));
@@ -225,20 +224,15 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             return ErrorResponse.badRequest(Exceptions.toMessageString(e));
         }
         catch (ConfigServerException e) {
-            switch (e.code()) {
-                case NOT_FOUND:
-                    return ErrorResponse.notFoundError(Exceptions.toMessageString(e));
-                case ACTIVATION_CONFLICT:
-                    return new ErrorResponse(CONFLICT, e.code().name(), Exceptions.toMessageString(e));
-                case INTERNAL_SERVER_ERROR:
-                    return ErrorResponse.internalServerError(Exceptions.toMessageString(e));
-                default:
-                    return new ErrorResponse(BAD_REQUEST, e.code().name(), Exceptions.toMessageString(e));
-            }
+            return switch (e.code()) {
+                case NOT_FOUND: yield ErrorResponse.notFoundError(Exceptions.toMessageString(e));
+                case ACTIVATION_CONFLICT: yield new ErrorResponse(CONFLICT, e.code().name(), Exceptions.toMessageString(e));
+                case INTERNAL_SERVER_ERROR: yield ErrorResponses.logThrowing(request, log, e);
+                default: yield new ErrorResponse(BAD_REQUEST, e.code().name(), Exceptions.toMessageString(e));
+            };
         }
         catch (RuntimeException e) {
-            log.log(Level.WARNING, "Unexpected error handling '" + request.getUri() + "'", e);
-            return ErrorResponse.internalServerError(Exceptions.toMessageString(e));
+            return ErrorResponses.logThrowing(request, log, e);
         }
     }
 
@@ -272,6 +266,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/job/{jobtype}/diff/{number}")) return devApplicationPackageDiff(runIdFromPath(path));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/job/{jobtype}/test-config")) return testConfig(appIdFromPath(path), jobTypeFromPath(path));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/job/{jobtype}/run/{number}")) return JobControllerApiHandlerHelper.runDetailsResponse(controller.jobController(), runIdFromPath(path), request.getProperty("after"));
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/job/{jobtype}/run/{number}/logs")) return JobControllerApiHandlerHelper.vespaLogsResponse(controller.jobController(), runIdFromPath(path), asLong(request.getProperty("from"), 0), request.getBooleanProperty("tester"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}")) return deployment(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/reindexing")) return getReindexing(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/suspended")) return suspended(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
@@ -713,19 +708,18 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private static TenantContacts.Audience fromAudience(String value) {
-        switch (value) {
-            case "tenant":  return TenantContacts.Audience.TENANT;
-            case "notifications":  return TenantContacts.Audience.NOTIFICATIONS;
+        return switch (value) {
+            case "tenant":  yield TenantContacts.Audience.TENANT;
+            case "notifications":  yield TenantContacts.Audience.NOTIFICATIONS;
             default: throw new IllegalArgumentException("Unknown contact audience '" + value + "'.");
-        }
+        };
     }
 
     private static String toAudience(TenantContacts.Audience audience) {
-        switch (audience) {
-            case TENANT: return "tenant";
-            case NOTIFICATIONS: return "notifications";
-            default: throw new IllegalArgumentException("Unexpected contact audience '" + audience + "'.");
-        }
+        return switch (audience) {
+            case TENANT: yield "tenant";
+            case NOTIFICATIONS: yield "notifications";
+        };
     }
 
 
@@ -819,18 +813,18 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     private TenantContacts updateTenantInfoContacts(Inspector insp, TenantContacts oldContacts) {
         if (!insp.valid()) return oldContacts;
 
-        List<TenantContacts.Contact> contacts = SlimeUtils.entriesStream(insp).map(inspector -> {
+        List<TenantContacts.EmailContact> contacts = SlimeUtils.entriesStream(insp).map(inspector -> {
                 String email = inspector.field("email").asString().trim();
                 List<TenantContacts.Audience> audiences = SlimeUtils.entriesStream(inspector.field("audiences"))
                             .map(audience -> fromAudience(audience.asString()))
-                            .collect(Collectors.toUnmodifiableList());
+                            .toList();
 
                 if (!email.contains("@")) {
                     throw new IllegalArgumentException("'email' needs to be an email address");
                 }
 
                 return new TenantContacts.EmailContact(audiences, email);
-            }).collect(toUnmodifiableList());
+            }).toList();
 
         return new TenantContacts(contacts);
     }
@@ -883,24 +877,21 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private static String notificationTypeAsString(Notification.Type type) {
-        switch (type) {
-            case submission:
-            case applicationPackage: return "applicationPackage";
-            case testPackage: return "testPackage";
-            case deployment: return "deployment";
-            case feedBlock: return "feedBlock";
-            case reindex: return "reindex";
-            default: throw new IllegalArgumentException("No serialization defined for notification type " + type);
-        }
+        return switch (type) {
+            case submission, applicationPackage: yield "applicationPackage";
+            case testPackage: yield "testPackage";
+            case deployment: yield "deployment";
+            case feedBlock: yield "feedBlock";
+            case reindex: yield "reindex";
+        };
     }
 
     private static String notificationLevelAsString(Notification.Level level) {
-        switch (level) {
-            case info: return "info";
-            case warning: return "warning";
-            case error: return "error";
-            default: throw new IllegalArgumentException("No serialization defined for notification level " + level);
-        }
+        return switch (level) {
+            case info: yield "info";
+            case warning: yield "warning";
+            case error: yield "error";
+        };
     }
 
     private HttpResponse applications(String tenantName, Optional<String> applicationName, HttpRequest request) {
@@ -1037,7 +1028,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         var awsRegion = request.getProperty("aws-region");
         var parameterName = request.getProperty("parameter-name");
         var applicationId = ApplicationId.fromFullString(request.getProperty("application-id"));
-        var zoneId = ZoneId.from(request.getProperty("zone"));
+        var zoneId = requireZone(ZoneId.from(request.getProperty("zone")));
         var deploymentId = new DeploymentId(applicationId, zoneId);
 
         var tenant = controller.tenants().require(applicationId.tenant(), CloudTenant.class);
@@ -1060,7 +1051,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             SlimeUtils.copyObject(responseSlime.get(), responseResultCursor);
             return new SlimeJsonResponse(responseRoot);
         } catch (JsonParseException e) {
-            return ErrorResponse.internalServerError(response);
+            return ErrorResponses.logThrowing(request, log, e);
         }
     }
 
@@ -1080,7 +1071,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         return new SlimeJsonResponse(root);
     }
 
-    private void toSlime(Cursor keysArray, Map<PublicKey, Principal> keys) {
+    private void toSlime(Cursor keysArray, Map<PublicKey, ? extends Principal> keys) {
         keys.forEach((key, principal) -> {
             Cursor keyObject = keysArray.addObject();
             keyObject.setString("key", KeyUtils.toPem(key));
@@ -1333,17 +1324,19 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private static String valueOf(Node.State state) {
-        switch (state) {
-            case failed: return "failed";
-            case parked: return "parked";
-            case dirty: return "dirty";
-            case ready: return "ready";
-            case active: return "active";
-            case inactive: return "inactive";
-            case reserved: return "reserved";
-            case provisioned: return "provisioned";
+        return switch (state) {
+            case failed: yield "failed";
+            case parked: yield "parked";
+            case dirty: yield "dirty";
+            case ready: yield "ready";
+            case active: yield "active";
+            case inactive: yield "inactive";
+            case reserved: yield "reserved";
+            case provisioned: yield "provisioned";
+            case breakfixed: yield "breakfixed";
+            case deprovisioned: yield "deprovisioned";
             default: throw new IllegalArgumentException("Unexpected node state '" + state + "'.");
-        }
+        };
     }
 
     static String valueOf(Node.ServiceState state) {
@@ -1359,31 +1352,29 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private static String valueOf(Node.ClusterType type) {
-        switch (type) {
-            case admin: return "admin";
-            case content: return "content";
-            case container: return "container";
-            case combined: return "combined";
-            default: throw new IllegalArgumentException("Unexpected node cluster type '" + type + "'.");
-        }
+        return switch (type) {
+            case admin: yield "admin";
+            case content: yield "content";
+            case container: yield "container";
+            case combined: yield "combined";
+            case unknown: throw new IllegalArgumentException("Unexpected node cluster type '" + type + "'.");
+        };
     }
 
     private static String valueOf(NodeResources.DiskSpeed diskSpeed) {
-        switch (diskSpeed) {
-            case fast : return "fast";
-            case slow : return "slow";
-            case any  : return "any";
-            default: throw new IllegalArgumentException("Unknown disk speed '" + diskSpeed.name() + "'");
-        }
+        return switch (diskSpeed) {
+            case fast : yield "fast";
+            case slow : yield "slow";
+            case any  : yield "any";
+        };
     }
 
     private static String valueOf(NodeResources.StorageType storageType) {
-        switch (storageType) {
-            case remote : return "remote";
-            case local  : return "local";
-            case any    : return "any";
-            default: throw new IllegalArgumentException("Unknown storage type '" + storageType.name() + "'");
-        }
+        return switch (storageType) {
+            case remote : yield "remote";
+            case local  : yield "local";
+            case any    : yield "any";
+        };
     }
 
     private HttpResponse logs(String tenantName, String applicationName, String instanceName, String environment, String region, Map<String, String> queryParameters) {
@@ -1397,6 +1388,10 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                 try (logStream) {
                     logStream.transferTo(outputStream);
                 }
+            }
+            @Override
+            public long maxPendingBytes() {
+                return 1 << 26;
             }
         };
     }
@@ -1844,7 +1839,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                                 response.setString("status", "complete");
                             else if (stepStatus.readyAt(instance.change()).map(controller.clock().instant()::isBefore).orElse(true))
                                 response.setString("status", "pending");
-                            else response.setString("status", "running");
+                            else
+                                response.setString("status", "running");
                         });
             } else {
                 var deploymentRun = controller.jobController().last(deploymentId.applicationId(), JobType.deploymentTo(deploymentId.zoneId()));
@@ -2144,11 +2140,11 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         List<String> clusterNames = Optional.ofNullable(request.getProperty("clusterId")).stream()
                                             .flatMap(clusters -> Stream.of(clusters.split(",")))
                                             .filter(cluster -> ! cluster.isBlank())
-                                            .collect(toUnmodifiableList());
+                                            .toList();
         List<String> documentTypes = Optional.ofNullable(request.getProperty("documentType")).stream()
                                              .flatMap(types -> Stream.of(types.split(",")))
                                              .filter(type -> ! type.isBlank())
-                                             .collect(toUnmodifiableList());
+                                             .toList();
 
         Double speed = request.hasProperty("speed") ? Double.parseDouble(request.getProperty("speed")) : null;
         boolean indexedOnly = request.getBooleanProperty("indexedOnly");
@@ -2207,13 +2203,12 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private static String toString(ApplicationReindexing.State state) {
-        switch (state) {
-            case PENDING: return "pending";
-            case RUNNING: return "running";
-            case FAILED: return "failed";
-            case SUCCESSFUL: return "successful";
-            default: return null;
-        }
+        return switch (state) {
+            case PENDING: yield "pending";
+            case RUNNING: yield "running";
+            case FAILED: yield "failed";
+            case SUCCESSFUL: yield "successful";
+        };
     }
 
     /** Enables reindexing of an application in a zone. */
@@ -2557,12 +2552,11 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                         cloudTenant.tenantSecretStores());
 
                 try {
-                    var tenantQuota = controller.serviceRegistry().billingController().getQuota(tenant.name());
                     var usedQuota = applications.stream()
                             .map(Application::quotaUsage)
                             .reduce(QuotaUsage.none, QuotaUsage::add);
 
-                    toSlime(tenantQuota, usedQuota, object.setObject("quota"));
+                    toSlime(object.setObject("quota"), usedQuota);
                 } catch (Exception e) {
                     log.warning(String.format("Failed to get quota for tenant %s: %s", tenant.name(), Exceptions.toMessageString(e)));
                 }
@@ -2605,15 +2599,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         archiveAccess.gcpMember().ifPresent(member -> object.setString("gcpMember", member));
     }
 
-    private void toSlime(Quota quota, QuotaUsage usage, Cursor object) {
-        quota.budget().ifPresentOrElse(
-                budget -> object.setDouble("budget", budget.doubleValue()),
-                () -> object.setNix("budget")
-        );
+    private void toSlime(Cursor object, QuotaUsage usage) {
         object.setDouble("budgetUsed", usage.rate());
-
-        // TODO: Retire when we no longer use maxClusterSize as a meaningful limit
-        quota.maxClusterSize().ifPresent(maxClusterSize -> object.setLong("clusterSize", maxClusterSize));
     }
 
     private void toSlime(ClusterResources resources, Cursor object) {
@@ -2629,12 +2616,17 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         utilizationObject.setDouble("cpu", utilization.cpu());
         utilizationObject.setDouble("idealCpu", utilization.idealCpu());
         utilizationObject.setDouble("currentCpu", utilization.currentCpu());
+        utilizationObject.setDouble("peakCpu", utilization.peakCpu());
+
         utilizationObject.setDouble("memory", utilization.memory());
         utilizationObject.setDouble("idealMemory", utilization.idealMemory());
         utilizationObject.setDouble("currentMemory", utilization.currentMemory());
+        utilizationObject.setDouble("peakMemory", utilization.peakMemory());
+
         utilizationObject.setDouble("disk", utilization.disk());
         utilizationObject.setDouble("idealDisk", utilization.idealDisk());
         utilizationObject.setDouble("currentDisk", utilization.currentDisk());
+        utilizationObject.setDouble("peakDisk", utilization.peakDisk());
     }
 
     private void scalingEventsToSlime(List<Cluster.ScalingEvent> scalingEvents, Cursor scalingEventsArray) {
@@ -2750,7 +2742,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private static Principal requireUserPrincipal(HttpRequest request) {
         Principal principal = request.getJDiscRequest().getUserPrincipal();
-        if (principal == null) throw new RestApiException.InternalServerError("Expected a user principal");
+        if (principal == null) throw new IllegalArgumentException("Expected a user principal");
         return principal;
     }
 
@@ -2894,12 +2886,11 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private static String tenantType(Tenant tenant) {
-        switch (tenant.type()) {
-            case athenz: return "ATHENS";
-            case cloud: return "CLOUD";
-            case deleted: return "DELETED";
-            default: throw new IllegalArgumentException("Unknown tenant type: " + tenant.getClass().getSimpleName());
-        }
+        return switch (tenant.type()) {
+            case athenz: yield "ATHENS";
+            case cloud: yield "CLOUD";
+            case deleted: yield "DELETED";
+        };
     }
 
     private static ApplicationId appIdFromPath(Path path) {
@@ -2962,7 +2953,10 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private ZoneId requireZone(String environment, String region) {
-        ZoneId zone = ZoneId.from(environment, region);
+        return requireZone(ZoneId.from(environment, region));
+    }
+
+    private ZoneId requireZone(ZoneId zone) {
         // TODO(mpolden): Find a way to not hardcode this. Some APIs allow this "virtual" zone, e.g. /logs
         if (zone.environment() == Environment.prod && zone.region().value().equals("controller")) {
             return zone;
@@ -3004,29 +2998,27 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private static String rotationStateString(RotationState state) {
-        switch (state) {
-            case in: return "IN";
-            case out: return "OUT";
-        }
-        return "UNKNOWN";
+        return switch (state) {
+            case in: yield "IN";
+            case out: yield "OUT";
+            case unknown: yield "UNKNOWN";
+        };
     }
 
     private static String endpointScopeString(Endpoint.Scope scope) {
-        switch (scope) {
-            case weighted: return "weighted";
-            case application: return "application";
-            case global: return "global";
-            case zone: return "zone";
-        }
-        throw new IllegalArgumentException("Unknown endpoint scope " + scope);
+        return switch (scope) {
+            case weighted: yield "weighted";
+            case application: yield "application";
+            case global: yield "global";
+            case zone: yield "zone";
+        };
     }
 
     private static String routingMethodString(RoutingMethod method) {
-        switch (method) {
-            case exclusive: return "exclusive";
-            case sharedLayer4: return "sharedLayer4";
-        }
-        throw new IllegalArgumentException("Unknown routing method " + method);
+        return switch (method) {
+            case exclusive: yield "exclusive";
+            case sharedLayer4: yield "sharedLayer4";
+        };
     }
 
     private static <T> T getAttribute(HttpRequest request, String attributeName, Class<T> cls) {

@@ -1,9 +1,9 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.jrt;
 
-import com.yahoo.security.tls.authz.ConnectionAuthContext;
+import com.yahoo.security.tls.ConnectionAuthContext;
 
-import java.util.Optional;
+import java.time.Duration;
 
 /**
  * A Target represents a connection endpoint with RPC
@@ -71,9 +71,13 @@ public abstract class Target {
     public Exception getConnectionLostReason() { return null; }
 
     /**
-     * Returns the connection auth context associated with this target, or empty if no connection or is insecure.
+     * Returns the connection auth context associated with this target.
      */
-    public abstract Optional<ConnectionAuthContext> getConnectionAuthContext();
+    public abstract ConnectionAuthContext connectionAuthContext();
+
+
+    /** @return address spec of socket peer */
+    public abstract Spec peerSpec();
 
     /**
      * Check if this target represents the client side of a
@@ -99,6 +103,10 @@ public abstract class Target {
      */
     public abstract void invokeSync(Request req, double timeout);
 
+    public void invokeSync(Request req, Duration timeout) {
+        invokeSync(req, toSeconds(timeout));
+    }
+
     /**
      * Invoke a request on this target and let the completion be
      * signalled with a callback.
@@ -107,8 +115,15 @@ public abstract class Target {
      * @param timeout timeout in seconds
      * @param waiter callback handler
      */
-    public abstract void invokeAsync(Request req, double timeout,
-                                     RequestWaiter waiter);
+    public abstract void invokeAsync(Request req, double timeout, RequestWaiter waiter);
+
+    public void invokeAsync(Request req, Duration timeout, RequestWaiter waiter) {
+        invokeAsync(req, toSeconds(timeout), waiter);
+    }
+
+    private static double toSeconds(Duration duration) {
+        return ((double)duration.toMillis())/1000.0;
+    }
 
     /**
      * Invoke a request on this target, but ignore the return

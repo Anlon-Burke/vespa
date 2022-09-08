@@ -16,6 +16,7 @@ import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.api.integration.athenz.ApplicationAction;
 import com.yahoo.vespa.hosted.controller.api.integration.athenz.AthenzClientFactoryMock;
+import com.yahoo.vespa.hosted.controller.api.integration.stubs.MockUserManagement;
 import com.yahoo.vespa.hosted.controller.integration.ServiceRegistryMock;
 
 import java.io.File;
@@ -28,8 +29,8 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Provides testing of JSON container responses
@@ -62,6 +63,10 @@ public class ContainerTester {
 
     public ServiceRegistryMock serviceRegistry() {
         return (ServiceRegistryMock) container.components().getComponent(ServiceRegistryMock.class.getName());
+    }
+
+    public MockUserManagement userManagement() {
+        return (MockUserManagement) container.components().getComponent(MockUserManagement.class.getName());
     }
 
     public void authorize(AthenzDomain tenantDomain, AthenzIdentity identity, ApplicationAction action, ApplicationName application) {
@@ -123,7 +128,7 @@ public class ContainerTester {
         catch (IOException e) {
             fail("failed writing JSON: " + e);
         }
-        assertEquals("Status code", expectedStatusCode, response.getStatus());
+        assertEquals(expectedStatusCode, response.getStatus(), "Status code");
     }
 
     public void assertResponse(Supplier<Request> request, String expectedResponse) {
@@ -154,7 +159,7 @@ public class ContainerTester {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        assertEquals("Status code", expectedStatusCode, response.getStatus());
+        assertEquals(expectedStatusCode, response.getStatus(), "Status code");
     }
 
     // Hack to run request filters as part of the request processing chain.

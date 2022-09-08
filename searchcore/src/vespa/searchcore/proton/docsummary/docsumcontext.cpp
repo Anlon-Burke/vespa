@@ -71,22 +71,21 @@ makeSlimeParams(size_t chunkSize) {
 vespalib::Slime::UP
 DocsumContext::createSlimeReply()
 {
-    _docsumWriter.InitState(_attrMgr, &_docsumState);
+    IDocsumWriter::ResolveClassInfo rci = _docsumWriter.resolveClassInfo(_docsumState._args.getResultClassName());
+    _docsumWriter.InitState(_attrMgr, _docsumState, rci);
     const size_t estimatedChunkSize(std::min(0x200000ul, _docsumState._docsumbuf.size()*0x400ul));
     vespalib::Slime::UP response(std::make_unique<vespalib::Slime>(makeSlimeParams(estimatedChunkSize)));
     Cursor & root = response->setObject();
     Cursor & array = root.setArray(DOCSUMS);
     const Symbol docsumSym = response->insert(DOCSUM);
-    IDocsumWriter::ResolveClassInfo rci = _docsumWriter.resolveClassInfo(_docsumState._args.getResultClassName(),
-                                                                         _docsumStore.getSummaryClassId());
-    _docsumState._omit_summary_features = rci.outputClass->omit_summary_features();
+    _docsumState._omit_summary_features = (rci.outputClass != nullptr) ? rci.outputClass->omit_summary_features() : true;
     uint32_t num_ok(0);
     for (uint32_t docId : _docsumState._docsumbuf) {
         if (_request.expired() ) { break; }
         Cursor &docSumC = array.addObject();
         ObjectSymbolInserter inserter(docSumC, docsumSym);
-        if ((docId != search::endDocId) && !rci.mustSkip) {
-            _docsumWriter.insertDocsum(rci, docId, &_docsumState, &_docsumStore, *response, inserter);
+        if ((docId != search::endDocId) && rci.outputClass != nullptr) {
+            _docsumWriter.insertDocsum(rci, docId, &_docsumState, &_docsumStore, inserter);
         }
         num_ok++;
     }
@@ -104,7 +103,7 @@ DocsumContext::createSlimeReply()
 DocsumContext::DocsumContext(const DocsumRequest & request, IDocsumWriter & docsumWriter,
                              IDocsumStore & docsumStore, std::shared_ptr<Matcher> matcher,
                              ISearchContext & searchCtx, IAttributeContext & attrCtx,
-                             IAttributeManager & attrMgr, SessionManager & sessionMgr) :
+                             const IAttributeManager & attrMgr, SessionManager & sessionMgr) :
     _request(request),
     _docsumWriter(docsumWriter),
     _docsumStore(docsumStore),
@@ -125,24 +124,24 @@ DocsumContext::getDocsums()
 }
 
 void
-DocsumContext::FillSummaryFeatures(search::docsummary::GetDocsumsState * state, search::docsummary::IDocsumEnvironment *)
+DocsumContext::FillSummaryFeatures(search::docsummary::GetDocsumsState& state)
 {
-    assert(&_docsumState == state);
+    assert(&_docsumState == &state);
     if (_matcher->canProduceSummaryFeatures()) {
-        state->_summaryFeatures = _matcher->getSummaryFeatures(_request, _searchCtx, _attrCtx, _sessionMgr);
+        state._summaryFeatures = _matcher->getSummaryFeatures(_request, _searchCtx, _attrCtx, _sessionMgr);
     }
-    state->_summaryFeaturesCached = false;
+    state._summaryFeaturesCached = false;
 }
 
 void
-DocsumContext::FillRankFeatures(search::docsummary::GetDocsumsState * state, search::docsummary::IDocsumEnvironment *)
+DocsumContext::FillRankFeatures(search::docsummary::GetDocsumsState& state)
 {
-    assert(&_docsumState == state);
+    assert(&_docsumState == &state);
     // check if we are allowed to run
-    if ( ! state->_args.dumpFeatures()) {
+    if ( ! state._args.dumpFeatures()) {
         return;
     }
-    state->_rankFeatures = _matcher->getRankFeatures(_request, _searchCtx, _attrCtx, _sessionMgr);
+    state._rankFeatures = _matcher->getRankFeatures(_request, _searchCtx, _attrCtx, _sessionMgr);
 }
 
 std::unique_ptr<MatchingElements>

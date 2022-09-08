@@ -12,27 +12,28 @@ import com.yahoo.vdslib.state.Node;
 import com.yahoo.vdslib.state.NodeState;
 import com.yahoo.vdslib.state.NodeType;
 import com.yahoo.vdslib.state.State;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.logging.Logger;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@ExtendWith(CleanupZookeeperLogsOnSuccess.class)
 public class DatabaseTest extends FleetControllerTest {
 
     private static final Logger log = Logger.getLogger(DatabaseTest.class.getName());
 
     @Test
-    public void testWantedStatesInZooKeeper() throws Exception {
+    void testWantedStatesInZooKeeper() throws Exception {
         startingTest("DatabaseTest::testWantedStatesInZooKeeper");
-        FleetControllerOptions options = defaultOptions("mycluster");
-        options.zooKeeperServerAddress = "127.0.0.1";
-        setUpFleetController(true, options);
-        setUpVdsNodes(true, new DummyVdsNodeOptions());
+        FleetControllerOptions.Builder builder = defaultOptions("mycluster");
+        builder.setZooKeeperServerAddress("127.0.0.1");
+        setUpFleetController(true, builder);
+        setUpVdsNodes(true);
         log.info("WAITING FOR STABLE SYSTEM");
         waitForStableSystem();
 
@@ -61,7 +62,7 @@ public class DatabaseTest extends FleetControllerTest {
 
         log.info("CHECK THAT WANTED STATES PERSIST FLEETCONTROLLER RESTART");
         stopFleetController();
-        startFleetController();
+        startFleetController(false);
 
         waitForState("version:\\d+ distributor:10 .2.s:d storage:10 .3.s:m .7.s:r");
         assertWantedStates(wantedStates);
@@ -81,14 +82,14 @@ public class DatabaseTest extends FleetControllerTest {
     }
 
     @Test
-    public void testWantedStateOfUnknownNode() throws Exception {
+    void testWantedStateOfUnknownNode() throws Exception {
         startingTest("DatabaseTest::testWantedStatesOfUnknownNode");
-        FleetControllerOptions options = defaultOptions("mycluster");
-        options.minRatioOfDistributorNodesUp = 0;
-        options.minRatioOfStorageNodesUp = 0;
-        options.zooKeeperServerAddress = "localhost";
-        setUpFleetController(true, options);
-        setUpVdsNodes(true, new DummyVdsNodeOptions());
+        FleetControllerOptions.Builder builder = defaultOptions("mycluster")
+                .setMinRatioOfDistributorNodesUp(0)
+                .setMinRatioOfStorageNodesUp(0)
+                .setZooKeeperServerAddress("localhost");
+        setUpFleetController(true, builder);
+        setUpVdsNodes(true);
         waitForStableSystem();
 
         // Populate map of wanted states we should have
@@ -124,22 +125,22 @@ public class DatabaseTest extends FleetControllerTest {
         assertWantedStates(wantedStates);
 
         stopFleetController();
-        for (int i=6; i<nodes.size(); ++i) nodes.get(i).disconnect();
-        startFleetController();
+        for (int i = 6; i < nodes.size(); ++i) nodes.get(i).disconnect();
+        startFleetController(false);
 
         waitForState("version:\\d+ distributor:3 storage:7 .1.s:m .3.s:d .4.s:d .5.s:d .6.s:m");
 
         setWantedState(new Node(NodeType.STORAGE, 6), new NodeState(NodeType.STORAGE, State.UP), wantedStates);
         waitForState("version:\\d+ distributor:3 storage:3 .1.s:m");
 
-        for (int i=6; i<nodes.size(); ++i) nodes.get(i).connect();
+        for (int i = 6; i < nodes.size(); ++i) nodes.get(i).connect();
         waitForState("version:\\d+ distributor:10 .8.s:d storage:10 .1.s:m .7.s:r .8.s:d");
         assertWantedStates(wantedStates);
     }
 
     private void assertWantedStates(Map<Node, NodeState> wantedStates) {
         for (DummyVdsNode node : nodes) {
-            assertEquals(node.getNode().toString(), wantedStates.get(node.getNode()), fleetController.getWantedNodeState(node.getNode()));
+            assertEquals(wantedStates.get(node.getNode()), fleetController.getWantedNodeState(node.getNode()), node.getNode().toString());
         }
     }
 
@@ -155,9 +156,9 @@ public class DatabaseTest extends FleetControllerTest {
         Request req = new Request("setNodeState");
         req.parameters().add(new StringValue("storage/cluster.mycluster/" + n.getType().toString() + "/" + n.getIndex()));
         req.parameters().add(new StringValue(ns.serialize(true)));
-        connection.invokeSync(req, timeoutS);
-        assertEquals(req.toString(), ErrorCode.NONE, req.errorCode());
-        assertTrue(req.toString(), req.checkReturnTypes("s"));
+        connection.invokeSync(req, timeout());
+        assertEquals(ErrorCode.NONE, req.errorCode(), req.toString());
+        assertTrue(req.checkReturnTypes("s"), req.toString());
         wantedStates.put(n, ns);
     }
 

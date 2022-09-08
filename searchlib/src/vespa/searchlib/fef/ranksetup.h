@@ -23,6 +23,7 @@ namespace search::fef {
 class RankSetup
 {
 public:
+    using Warnings = BlueprintResolver::Warnings;
     struct MutateOperation {
     public:
         MutateOperation() : MutateOperation("", "") {}
@@ -30,6 +31,7 @@ public:
             : _attribute(attribute),
               _operation(operation)
         {}
+        bool enabled() const { return !_attribute.empty() && !_operation.empty(); }
         vespalib::string _attribute;
         vespalib::string _operation;
     };
@@ -45,7 +47,6 @@ private:
     vespalib::string         _secondPhaseRankFeature;
     vespalib::string         _degradationAttribute;
     bool                     _split_unpacking_iterators;
-    bool                     _delay_unpacking_iterators;
     double                   _termwise_limit;
     uint32_t                 _numThreads;
     uint32_t                 _minHitsPerThread;
@@ -62,6 +63,7 @@ private:
     std::vector<vespalib::string> _match_features;
     std::vector<vespalib::string> _summaryFeatures;
     std::vector<vespalib::string> _dumpFeatures;
+    Warnings                 _warnings;
     StringStringMap          _feature_rename_map;
     bool                     _ignoreDefaultRankFeatures;
     bool                     _compiled;
@@ -80,6 +82,9 @@ private:
     MutateOperation          _mutateOnFirstPhase;
     MutateOperation          _mutateOnSecondPhase;
     MutateOperation          _mutateOnSummary;
+    bool                     _mutateAllowQueryOverride;
+
+    void compileAndCheckForErrors(BlueprintResolver &bp);
 public:
     RankSetup(const RankSetup &) = delete;
     RankSetup &operator=(const RankSetup &) = delete;
@@ -138,9 +143,6 @@ public:
 
     bool split_unpacking_iterators() const { return _split_unpacking_iterators; }
     void split_unpacking_iterators(bool value) { _split_unpacking_iterators = value; }
-
-    bool delay_unpacking_iterators() const { return _delay_unpacking_iterators; }
-    void delay_unpacking_iterators(bool value) { _delay_unpacking_iterators = value; }
 
     /**
      * Set the termwise limit
@@ -438,6 +440,12 @@ public:
      **/
     bool compile();
 
+    /**
+     * Will return any accumulated warnings during compile
+     * @return joined string of warnings separated by newline
+     */
+    vespalib::string getJoinedWarnings() const;
+
     // These functions create rank programs for different tasks. Note
     // that the setup function must be called on rank programs for
     // them to be ready to use. Also keep in mind that creating a rank
@@ -460,6 +468,8 @@ public:
     const MutateOperation & getMutateOnFirstPhase() const { return _mutateOnFirstPhase; }
     const MutateOperation & getMutateOnSecondPhase() const { return _mutateOnSecondPhase; }
     const MutateOperation & getMutateOnSummary() const { return _mutateOnSummary; }
+
+    bool allowMutateQueryOverride() const { return _mutateAllowQueryOverride; }
 };
 
 }
