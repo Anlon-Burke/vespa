@@ -289,8 +289,9 @@ public class DeploymentSpec {
 
     /** Computes a hash of all fields that influence what is deployed with this spec, i.e., not orchestration. */
     public int deployableHashCode() {
-        Object[] toHash = new Object[instances().size() + 3];
+        Object[] toHash = new Object[instances().size() + 4];
         int i = 0;
+        toHash[i++] = majorVersion;
         toHash[i++] = athenzDomain;
         toHash[i++] = athenzService;
         toHash[i++] = endpoints;
@@ -376,8 +377,6 @@ public class DeploymentSpec {
                 illegal("Non-prod environments cannot specify a region");
             if (environment == Environment.prod && region.isEmpty())
                 illegal("Prod environments must be specified with a region");
-            if (environment != Environment.prod && cloudAccount.isPresent())
-                illegal("Non-prod environments cannot specify cloud account");
             this.environment = Objects.requireNonNull(environment);
             this.region = Objects.requireNonNull(region);
             this.active = active;
@@ -403,7 +402,7 @@ public class DeploymentSpec {
         }
 
         @Override
-        public List<DeclaredZone> zones() { return Collections.singletonList(this); }
+        public List<DeclaredZone> zones() { return List.of(this); }
 
         @Override
         public boolean concerns(Environment environment, Optional<RegionName> region) {
@@ -492,7 +491,7 @@ public class DeploymentSpec {
         public List<DeclaredZone> zones() {
             return steps.stream()
                         .flatMap(step -> step.zones().stream())
-                        .collect(Collectors.toUnmodifiableList());
+                        .toList();
         }
 
         @Override

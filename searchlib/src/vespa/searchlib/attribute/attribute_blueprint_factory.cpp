@@ -116,16 +116,28 @@ private:
 class AttributeFieldBlueprint : public SimpleLeafBlueprint
 {
 private:
+    // Must take a copy of the query term for visitMembers()
+    // as only a few ISearchContext implementations exposes the query term.
+    vespalib::string _query_term;
     ISearchContext::UP _search_context;
+    enum Type {INT, FLOAT, OTHER};
+    Type _type;
 
     AttributeFieldBlueprint(const FieldSpec &field, const IAttributeVector &attribute,
                             QueryTermSimple::UP term, const attribute::SearchContextParams &params)
         : SimpleLeafBlueprint(field),
-          _search_context(attribute.createSearchContext(std::move(term), params))
+          _query_term(term->getTermString()),
+          _search_context(attribute.createSearchContext(std::move(term), params)),
+          _type(OTHER)
     {
         uint32_t estHits = _search_context->approximateHits();
         HitEstimate estimate(estHits, estHits == 0);
         setEstimate(estimate);
+        if (attribute.isFloatingPointType()) {
+            _type = FLOAT;
+        } else if (attribute.isIntegerType()) {
+            _type = INT;
+        }
     }
 
     AttributeFieldBlueprint(const FieldSpec &field, const IAttributeVector &attribute,
@@ -180,6 +192,7 @@ public:
     const attribute::ISearchContext *get_attribute_search_context() const override {
         return _search_context.get();
     }
+    bool getRange(vespalib::string &from, vespalib::string &to) const override;
 };
 
 void
@@ -187,6 +200,7 @@ AttributeFieldBlueprint::visitMembers(vespalib::ObjectVisitor &visitor) const
 {
     LeafBlueprint::visitMembers(visitor);
     visit(visitor, "attribute", _search_context->attributeName());
+    visit(visitor, "query_term", _query_term);
 }
 
 //-----------------------------------------------------------------------------
@@ -533,6 +547,25 @@ DirectWandBlueprint::createFilterSearch(bool, FilterConstraint constraint) const
     } else {
         return std::make_unique<queryeval::EmptySearch>();
     }
+}
+
+bool
+AttributeFieldBlueprint::getRange(vespalib::string &from, vespalib::string &to) const {
+    if (_type == INT) {
+        Int64Range range = _search_context->getAsIntegerTerm();
+        char buf[32];
+        auto res = std::to_chars(buf, buf + sizeof(buf), range.lower(), 10);
+        from = vespalib::stringref(buf, res.ptr - buf);
+        res = std::to_chars(buf, buf + sizeof(buf), range.upper(), 10);
+        to = vespalib::stringref(buf, res.ptr - buf);
+        return true;
+    } else if (_type == FLOAT) {
+        DoubleRange range = _search_context->getAsDoubleTerm();
+        from = vespalib::make_string("%g", range.lower());
+        to = vespalib::make_string("%g", range.upper());
+        return true;
+    }
+    return false;
 }
 
 //-----------------------------------------------------------------------------

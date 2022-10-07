@@ -15,17 +15,19 @@ TEST(WordStoreTest, words_can_be_added_and_retrieved)
     std::string w2 = "that";
     std::string w3 = "words";
     WordStore ws;
+    static constexpr auto buffer_array_size = WordStore::buffer_array_size;
+    using Aligner = WordStore::Aligner;
     EntryRef r1 = ws.addWord(w1);
     EntryRef r2 = ws.addWord(w2);
     EntryRef r3 = ws.addWord(w3);
-    uint32_t invp = WordStore::RefType::align(1);   // Reserved as invalid
+    uint32_t invp = WordStore::buffer_array_size;   // Reserved as invalid
     uint32_t w1s = w1.size() + 1;
-    uint32_t w1p = WordStore::RefType::pad(w1s);
+    uint32_t w1p = Aligner::pad(w1s);
     uint32_t w2s = w2.size() + 1;
-    uint32_t w2p = WordStore::RefType::pad(w2s);
-    EXPECT_EQ(invp, WordStore::RefType(r1).offset());
-    EXPECT_EQ(invp + w1s + w1p, WordStore::RefType(r2).offset());
-    EXPECT_EQ(invp + w1s + w1p + w2s + w2p, WordStore::RefType(r3).offset());
+    uint32_t w2p = Aligner::pad(w2s);
+    EXPECT_EQ(invp, WordStore::RefType(r1).offset() * buffer_array_size);
+    EXPECT_EQ(invp + w1s + w1p, WordStore::RefType(r2).offset() * buffer_array_size);
+    EXPECT_EQ(invp + w1s + w1p + w2s + w2p, WordStore::RefType(r3).offset() * buffer_array_size);
     EXPECT_EQ(0u, WordStore::RefType(r1).bufferId());
     EXPECT_EQ(0u, WordStore::RefType(r2).bufferId());
     EXPECT_EQ(0u, WordStore::RefType(r3).bufferId());

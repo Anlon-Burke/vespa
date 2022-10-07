@@ -12,9 +12,10 @@ import com.yahoo.vdslib.state.Node;
 import com.yahoo.vdslib.state.NodeState;
 import com.yahoo.vdslib.state.NodeType;
 import com.yahoo.vdslib.state.State;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.logging.Logger;
@@ -26,6 +27,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class DatabaseTest extends FleetControllerTest {
 
     private static final Logger log = Logger.getLogger(DatabaseTest.class.getName());
+    private Supervisor supervisor;
+
+    @BeforeEach
+    public void setup() {
+       supervisor = new Supervisor(new Transport());
+    }
+
+    @AfterEach
+    public void teardown() {
+        supervisor.transport().shutdown().join();
+    }
 
     @Test
     void testWantedStatesInZooKeeper() throws Exception {
@@ -140,16 +152,13 @@ public class DatabaseTest extends FleetControllerTest {
 
     private void assertWantedStates(Map<Node, NodeState> wantedStates) {
         for (DummyVdsNode node : nodes) {
-            assertEquals(wantedStates.get(node.getNode()), fleetController.getWantedNodeState(node.getNode()), node.getNode().toString());
+            assertEquals(wantedStates.get(node.getNode()), fleetController().getWantedNodeState(node.getNode()), node.getNode().toString());
         }
     }
 
     // Note: different semantics than FleetControllerTest.setWantedState
     private void setWantedState(Node n, NodeState ns, Map<Node, NodeState> wantedStates) {
-        int rpcPort = fleetController.getRpcPort();
-        if (supervisor == null) {
-            supervisor = new Supervisor(new Transport());
-        }
+        int rpcPort = fleetController().getRpcPort();
         Target connection = supervisor.connect(new Spec("localhost", rpcPort));
         assertTrue(connection.isValid());
 
@@ -161,6 +170,5 @@ public class DatabaseTest extends FleetControllerTest {
         assertTrue(req.checkReturnTypes("s"), req.toString());
         wantedStates.put(n, ns);
     }
-
 
 }

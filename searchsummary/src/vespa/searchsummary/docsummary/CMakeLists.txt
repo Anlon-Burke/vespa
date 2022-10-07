@@ -1,6 +1,7 @@
 # Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 vespa_add_library(searchsummary_docsummary OBJECT
     SOURCES
+    annotation_converter.cpp
     array_attribute_combiner_dfw.cpp
     attribute_combiner_dfw.cpp
     attribute_field_writer.cpp
@@ -8,6 +9,7 @@ vespa_add_library(searchsummary_docsummary OBJECT
     check_undefined_value_visitor.cpp
     copy_dfw.cpp
     docsum_field_writer.cpp
+    docsum_field_writer_commands.cpp
     docsum_field_writer_factory.cpp
     docsum_store_document.cpp
     docsumstate.cpp
@@ -17,7 +19,9 @@ vespa_add_library(searchsummary_docsummary OBJECT
     empty_dfw.cpp
     geoposdfw.cpp
     getdocsumargs.cpp
-    juniper_input.cpp
+    juniper_dfw_query_item.cpp
+    juniper_dfw_term_visitor.cpp
+    juniper_query_adapter.cpp
     juniperproperties.cpp
     keywordextractor.cpp
     linguisticsannotation.cpp
@@ -25,13 +29,13 @@ vespa_add_library(searchsummary_docsummary OBJECT
     positionsdfw.cpp
     rankfeaturesdfw.cpp
     res_config_entry.cpp
-    res_type_utils.cpp
     resultclass.cpp
     resultconfig.cpp
     searchdatatype.cpp
     simple_dfw.cpp
+    slime_filler.cpp
+    slime_filler_filter.cpp
     struct_fields_resolver.cpp
     struct_map_attribute_combiner_dfw.cpp
     summaryfeaturesdfw.cpp
-    summaryfieldconverter.cpp
 )

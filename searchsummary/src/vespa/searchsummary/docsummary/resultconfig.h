@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "res_type_utils.h"
 #include <vespa/vespalib/stllike/hash_map.h>
 
 namespace vespa::config::search::internal {
@@ -89,16 +88,13 @@ public:
     /**
      * @return value denoting an undefined class id.
      **/
-    static uint32_t NoClassID() { return static_cast<uint32_t>(-1); }
+    static uint32_t noClassID() { return static_cast<uint32_t>(-1); }
 
     // whether last config seen wanted useV8geoPositions = true
     static bool wantedV8geoPositions();
 
-    /**
-     * @return the name of the given result field type.
-     * @param resType enum value of a result field type.
-     **/
-    static const char *GetResTypeName(ResType type) { return ResTypeUtils::GetResTypeName(type); }
+    // This function should only be called by unit tests.
+    static void set_wanted_v8_geo_positions(bool value);
 
     /**
      * Discard the current configuration and start over. After this
@@ -106,7 +102,7 @@ public:
      * state right after it was created. This method may call both Clean
      * and Init.
      **/
-    void Reset();
+    void reset();
 
 
     /**
@@ -119,7 +115,7 @@ public:
      * @param name name of result class to add.
      * @param classID id of result class to add.
      **/
-    ResultClass *AddResultClass(const char *name, uint32_t classID);
+    ResultClass *addResultClass(const char *name, uint32_t classID);
 
     /*
      * Set default result class id.
@@ -133,7 +129,7 @@ public:
      * @return result class with the given id or NULL if not found.
      * @param classID the id of the result class to look up.
      **/
-    const ResultClass *LookupResultClass(uint32_t classID) const;
+    const ResultClass *lookupResultClass(uint32_t classID) const;
 
 
     /**
@@ -142,7 +138,7 @@ public:
      * @return result class id or configured default if empty or "default".
      * @param name the name of the result class, NoClassId(-1) meaning undefined
      **/
-    uint32_t LookupResultClassId(const vespalib::string &name) const;
+    uint32_t lookupResultClassId(const vespalib::string &name) const;
 
     /**
      * Read config that has been fetched from configserver.
@@ -150,7 +146,7 @@ public:
      * @return true(success)/false(fail)
      * @param configId reference on server
      **/
-    bool ReadConfig(const SummaryConfig &cfg, const char *configId, IDocsumFieldWriterFactory& docsum_field_writer_factory);
+    bool readConfig(const SummaryConfig &cfg, const char *configId, IDocsumFieldWriterFactory& docsum_field_writer_factory);
 };
 
 }

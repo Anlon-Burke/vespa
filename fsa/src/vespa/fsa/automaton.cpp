@@ -1,7 +1,4 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
 
 #include <stdio.h>
 #include <fcntl.h>
@@ -638,11 +635,7 @@ void Automaton::cleanUp()
     _register.clear();
     delete _q0;
     _q0 = NULL;
-#if ((__GNUG__ == 3 && __GNUC_MINOR__ >= 1) || __GNUG__ > 3)
     _previous_input.clear();
-#else
-    _previous_input = "";
-#endif
   }
 }
 

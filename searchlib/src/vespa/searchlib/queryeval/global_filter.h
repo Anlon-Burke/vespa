@@ -3,44 +3,43 @@
 #pragma once
 
 #include <memory>
-#include <vespa/searchlib/common/bitvector.h>
+#include <vector>
+
+namespace vespalib { struct ThreadBundle; }
+namespace search { class BitVector; }
 
 namespace search::queryeval {
 
+class Blueprint;
+
 /**
- * Hold ownership of a global filter that can be taken
- * into account by adaptive query operators.  The owned
- * bitvector should be a white-list (documents that may
- * possibly become hits have their bit set, documents
- * that are certain to be filtered away should have theirs
- * cleared).
+ * Hold ownership of a global filter that can be taken into account by
+ * adaptive query operators. The owned 'bitvector' should be a
+ * white-list (documents that may possibly become hits have their bit
+ * set, documents that are certain to be filtered away should have
+ * theirs cleared).
  **/
 class GlobalFilter : public std::enable_shared_from_this<GlobalFilter>
 {
-private:
-    struct ctor_tag {};
-    std::unique_ptr<search::BitVector> bit_vector;
-
 public:
+    GlobalFilter();
     GlobalFilter(const GlobalFilter &) = delete;
     GlobalFilter(GlobalFilter &&) = delete;
+    virtual bool is_active() const = 0;
+    virtual uint32_t size() const = 0;
+    virtual uint32_t count() const = 0;
+    virtual bool check(uint32_t docid) const = 0;
+    virtual ~GlobalFilter();
 
-    GlobalFilter(ctor_tag, std::unique_ptr<search::BitVector> bit_vector_in) noexcept
-      : bit_vector(std::move(bit_vector_in))
-    {}
-
-    GlobalFilter(ctor_tag) noexcept : bit_vector() {}
-
-    ~GlobalFilter() {}
-
-    template<typename ... Params>
-    static std::shared_ptr<GlobalFilter> create(Params&& ... params) {
-        return std::make_shared<GlobalFilter>(ctor_tag(), std::forward<Params>(params)...);
+    const GlobalFilter *ptr_if_active() const {
+        return is_active() ? this : nullptr;
     }
 
-    const search::BitVector *filter() const { return bit_vector.get(); }
-
-    bool has_filter() const { return bool(bit_vector); }
+    static std::shared_ptr<GlobalFilter> create();
+    static std::shared_ptr<GlobalFilter> create(std::vector<uint32_t> docids, uint32_t size);
+    static std::shared_ptr<GlobalFilter> create(std::unique_ptr<BitVector> vector);
+    static std::shared_ptr<GlobalFilter> create(std::vector<std::unique_ptr<BitVector>> vectors);
+    static std::shared_ptr<GlobalFilter> create(Blueprint &blueprint, uint32_t docid_limit, vespalib::ThreadBundle &thread_bundle);
 };
 
 } // namespace

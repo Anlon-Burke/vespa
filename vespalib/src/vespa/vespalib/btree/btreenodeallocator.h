@@ -164,13 +164,8 @@ public:
     vespalib::string toString(const BTreeNode * node) const;
 
     bool getCompacting(EntryRef ref) const { return _nodeStore.getCompacting(ref); }
-    std::vector<uint32_t> startCompact() { return _nodeStore.startCompact(); }
 
-    std::vector<uint32_t> start_compact_worst(const CompactionStrategy& compaction_strategy) { return _nodeStore.start_compact_worst(compaction_strategy); }
-
-    void finishCompact(const std::vector<uint32_t> &toHold) {
-        return _nodeStore.finishCompact(toHold);
-    }
+    std::unique_ptr<vespalib::datastore::CompactingBuffers> start_compact_worst(const CompactionStrategy& compaction_strategy) { return _nodeStore.start_compact_worst(compaction_strategy); }
 
     template <typename FunctionType>
     void foreach_key(EntryRef ref, FunctionType func) const {

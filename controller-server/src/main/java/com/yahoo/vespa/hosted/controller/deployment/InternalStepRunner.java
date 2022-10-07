@@ -2,6 +2,7 @@
 package com.yahoo.vespa.hosted.controller.deployment;
 
 import ai.vespa.http.DomainName;
+import com.google.common.net.InetAddresses;
 import com.yahoo.component.Version;
 import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.application.api.Notifications;
@@ -241,6 +242,10 @@ public class InternalStepRunner implements StepRunner {
                     logger.log("Deployment failed with possibly transient error " + e.code() +
                                ", will retry: " + e.getMessage());
                     return result;
+                case INTERNAL_SERVER_ERROR:
+                    // Log only error code, to avoid exposing internal data in error message
+                    logger.log("Deployment failed with possibly transient error " + e.code() + ", will retry");
+                    return result;
                 case LOAD_BALANCER_NOT_READY:
                 case PARENT_HOST_NOT_READY:
                     logger.log(e.message()); // Consider splitting these messages in summary and details, on config server.
@@ -257,6 +262,10 @@ public class InternalStepRunner implements StepRunner {
             }
 
             throw e;
+        }
+        catch (IllegalArgumentException e) {
+            logger.log(WARNING, e.getMessage());
+            return Optional.of(deploymentFailed);
         }
         catch (EndpointCertificateException e) {
             switch (e.type()) {
@@ -506,18 +515,25 @@ public class InternalStepRunner implements StepRunner {
             if (context.routingMethod() == RoutingMethod.exclusive)  {
                 RoutingPolicy policy = context.routingPolicy(ClusterSpec.Id.from(endpoint.name()))
                                               .orElseThrow(() -> new IllegalStateException(endpoint + " has no matching policy"));
+                if (policy.ipAddress().isPresent()) {
+                    if (ipAddress.equals(policy.ipAddress().map(InetAddresses::forString))) continue;
+                    logger.log(INFO, "IP address of '" + endpointName + "' (" +
+                            ipAddress.map(InetAddresses::toAddrString).get() + ") and load balancer "
+                            + "' (" + policy.ipAddress().orElseThrow() + ") are not equal");
+                    return false;
+                }
 
                 var cNameValue = controller.jobController().cloud().resolveCname(endpointName);
-                if ( ! cNameValue.map(policy.canonicalName()::equals).orElse(false)) {
+                if ( ! cNameValue.map(policy.canonicalName().get()::equals).orElse(false)) {
                     logger.log(INFO, "CNAME '" + endpointName + "' points at " +
                                      cNameValue.map(name -> "'" + name + "'").orElse("nothing") +
                                      " but should point at load balancer '" + policy.canonicalName() + "'");
                     return false;
                 }
-                var loadBalancerAddress = controller.jobController().cloud().resolveHostName(policy.canonicalName());
+                var loadBalancerAddress = controller.jobController().cloud().resolveHostName(policy.canonicalName().get());
                 if ( ! loadBalancerAddress.equals(ipAddress)) {
                     logger.log(INFO, "IP address of CNAME '" + endpointName + "' (" + ipAddress.get() + ") and load balancer '" +
-                                     policy.canonicalName() + "' (" + loadBalancerAddress.orElse(null) + ") are not equal");
+                                     policy.canonicalName().get() + "' (" + loadBalancerAddress.orElse(null) + ") are not equal");
                     return false;
                 }
             }

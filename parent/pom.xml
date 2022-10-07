@@ -400,7 +400,7 @@
                             <failOnError>${javadoc.failOnError}</failOnError>
                             <quiet>true</quiet>
                             <show>protected</show>
-                            <header>&lt;a href="https://docs.vespa.ai"&gt;&lt;img src="https://docs.vespa.ai/img/vespa-logo.png" width="100" height="28" style="padding-top:7px"/&gt;&lt;/a&gt;</header>
+                            <header>&lt;a href="https://docs.vespa.ai"&gt;&lt;img src="https://docs.vespa.ai/assets/logos/vespa-logo-full-white.svg" width="100" height="28" style="padding-top:7px"/&gt;&lt;/a&gt;</header>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -465,16 +465,6 @@
                 <groupId>com.auth0</groupId>
                 <artifactId>java-jwt</artifactId>
                 <version>3.10.0</version>
-            </dependency>
-            <dependency>
-                <groupId>com.fasterxml.jackson.jaxrs</groupId>
-                <artifactId>jackson-jaxrs-xml-provider</artifactId>
-                <version>${jackson2.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.fasterxml.jackson.dataformat</groupId>
-                <artifactId>jackson-dataformat-xml</artifactId>
-                <version>${jackson2.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.github.cverges.expect4j</groupId>
@@ -1042,9 +1032,9 @@
         <felix.version>7.0.1</felix.version>
         <felix.log.version>1.0.1</felix.log.version>
         <findbugs.version>3.0.2</findbugs.version> <!-- Should be kept in sync with guava -->
-        <gson.version>2.8.9</gson.version>
+        <gson.version>2.9.1</gson.version>
         <hdrhistogram.version>2.1.12</hdrhistogram.version>
-        <jetty.version>9.4.48.v20220622</jetty.version>
+        <jetty.version>9.4.49.v20220914</jetty.version>
         <jetty-alpn.version>1.1.3.v20160715</jetty-alpn.version>
         <jna.version>5.11.0</jna.version>
         <junit.version>5.8.1</junit.version>
@@ -1071,7 +1061,7 @@
         <org.json.version>20220320</org.json.version>
         <org.lz4.version>1.8.0</org.lz4.version>
         <prometheus.client.version>0.6.0</prometheus.client.version>
-        <protobuf.version>3.19.2</protobuf.version>
+        <protobuf.version>3.21.7</protobuf.version>
         <spifly.version>1.3.5</spifly.version>
         <surefire.version>2.22.2</surefire.version>
         <zookeeper.client.version>3.8.0</zookeeper.client.version>

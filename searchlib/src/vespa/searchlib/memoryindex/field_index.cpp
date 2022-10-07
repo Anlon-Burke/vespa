@@ -5,8 +5,8 @@
 #include "posting_iterator.h"
 #include <vespa/searchlib/bitcompression/posocccompression.h>
 #include <vespa/searchlib/queryeval/booleanmatchiteratorwrapper.h>
-#include <vespa/searchlib/queryeval/searchiterator.h>
 #include <vespa/searchlib/queryeval/filter_wrapper.h>
+#include <vespa/searchlib/queryeval/searchiterator.h>
 #include <vespa/vespalib/btree/btree.hpp>
 #include <vespa/vespalib/btree/btreeiterator.hpp>
 #include <vespa/vespalib/btree/btreenode.hpp>
@@ -14,10 +14,9 @@
 #include <vespa/vespalib/btree/btreenodestore.hpp>
 #include <vespa/vespalib/btree/btreeroot.hpp>
 #include <vespa/vespalib/btree/btreestore.hpp>
-#include <vespa/vespalib/util/array.hpp>
 #include <vespa/vespalib/datastore/buffer_type.hpp>
-#include <vespa/vespalib/util/exceptions.h>
-#include <vespa/vespalib/util/stringfmt.h>
+#include <vespa/vespalib/objects/visit.h>
+#include <vespa/vespalib/util/array.hpp>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".searchlib.memoryindex.field_index");
@@ -104,9 +103,7 @@ template <bool interleaved_features>
 void
 FieldIndex<interleaved_features>::compactFeatures()
 {
-    std::vector<uint32_t> toHold;
-
-    toHold = _featureStore.startCompact();
+    auto compacting_buffers = _featureStore.start_compact();
     auto itr = _dict.begin();
     uint32_t packedIndex = _fieldId;
     for (; itr.valid(); ++itr) {
@@ -144,7 +141,7 @@ FieldIndex<interleaved_features>::compactFeatures()
         }
     }
     using generation_t = GenerationHandler::generation_t;
-    _featureStore.finishCompact(toHold);
+    compacting_buffers->finish();
     generation_t generation = _generationHandler.getCurrentGeneration();
     _featureStore.transferHoldLists(generation);
 }
@@ -229,23 +226,28 @@ private:
     using FieldIndexType = FieldIndex<interleaved_features>;
     using PostingListIteratorType = typename FieldIndexType::PostingList::ConstIterator;
     GenerationHandler::Guard _guard;
+    const queryeval::FieldSpec _field;
     PostingListIteratorType _posting_itr;
     const FeatureStore& _feature_store;
     const uint32_t _field_id;
+    const vespalib::string _query_term;
     const bool _use_bit_vector;
 
 public:
     MemoryTermBlueprint(GenerationHandler::Guard&& guard,
                         PostingListIteratorType posting_itr,
                         const FeatureStore& feature_store,
-                        const FieldSpecBase& field,
+                        const queryeval::FieldSpec& field,
                         uint32_t field_id,
+                        const vespalib::string& query_term,
                         bool use_bit_vector)
         : SimpleLeafBlueprint(field),
           _guard(),
+          _field(field),
           _posting_itr(posting_itr),
           _feature_store(feature_store),
           _field_id(field_id),
+          _query_term(query_term),
           _use_bit_vector(use_bit_vector)
     {
         _guard = std::move(guard);
@@ -271,6 +273,12 @@ public:
         wrapper->wrap(make_search_iterator<interleaved_features>(_posting_itr, _feature_store, _field_id, tfmda));
         return wrapper;
     }
+
+    void visitMembers(vespalib::ObjectVisitor& visitor) const override {
+        SimpleLeafBlueprint::visitMembers(visitor);
+        visit(visitor, "field_name", _field.getName());
+        visit(visitor, "query_term", _query_term);
+    }
 };
 
 }
@@ -278,14 +286,14 @@ public:
 template <bool interleaved_features>
 std::unique_ptr<queryeval::SimpleLeafBlueprint>
 FieldIndex<interleaved_features>::make_term_blueprint(const vespalib::string& term,
-                                                      const queryeval::FieldSpecBase& field,
+                                                      const queryeval::FieldSpec& field,
                                                       uint32_t field_id)
 {
     auto guard = takeGenerationGuard();
     auto posting_itr = findFrozen(term);
     bool use_bit_vector = field.isFilter();
     return std::make_unique<MemoryTermBlueprint<interleaved_features>>
-            (std::move(guard), posting_itr, getFeatureStore(), field, field_id, use_bit_vector);
+            (std::move(guard), posting_itr, getFeatureStore(), field, field_id, term, use_bit_vector);
 }
 
 template class FieldIndex<false>;

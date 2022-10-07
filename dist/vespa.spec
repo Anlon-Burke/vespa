@@ -32,7 +32,7 @@ License:        Commercial
 URL:            http://vespa.ai
 Source0:        vespa-%{version}.tar.gz
 
-%if 0%{?centos} || 0%{?rocky}
+%if 0%{?centos} || 0%{?rocky} || 0%{?oraclelinux}
 BuildRequires: epel-release
 %endif
 %if 0%{?el8}
@@ -78,7 +78,7 @@ BuildRequires: glibc-langpack-en
 %endif
 %if 0%{?el8}
 BuildRequires: cmake >= 3.11.4-3
-%if 0%{?centos} || 0%{?rocky}
+%if 0%{?centos} || 0%{?rocky} || 0%{?oraclelinux}
 %if 0%{?centos}
 # Current cmake on CentOS 8 is broken and manually requires libarchive install
 BuildRequires: libarchive
@@ -142,13 +142,6 @@ BuildRequires: boost-devel >= 1.75
 BuildRequires: gtest-devel
 BuildRequires: gmock-devel
 %endif
-%if 0%{?fc35}
-BuildRequires: protobuf-devel
-BuildRequires: llvm-devel >= 13.0.0
-BuildRequires: boost-devel >= 1.76
-BuildRequires: gtest-devel
-BuildRequires: gmock-devel
-%endif
 %if 0%{?fc36}
 BuildRequires: protobuf-devel
 BuildRequires: llvm-devel >= 14.0.0
@@ -158,14 +151,14 @@ BuildRequires: gmock-devel
 %endif
 %if 0%{?fc37}
 BuildRequires: protobuf-devel
-BuildRequires: llvm-devel >= 14.0.5
+BuildRequires: llvm-devel >= 15.0.0
 BuildRequires: boost-devel >= 1.78
 BuildRequires: gtest-devel
 BuildRequires: gmock-devel
 %endif
 %if 0%{?fc38}
 BuildRequires: protobuf-devel
-BuildRequires: llvm-devel >= 14.0.5
+BuildRequires: llvm-devel >= 15.0.0
 BuildRequires: boost-devel >= 1.78
 BuildRequires: gtest-devel
 BuildRequires: gmock-devel
@@ -207,30 +200,30 @@ Requires: initscripts
 Requires: libcgroup-tools
 %endif
 Requires: numactl
-Requires: perl
-Requires: perl-Carp
-Requires: perl-Data-Dumper
-Requires: perl-Digest-MD5
-Requires: perl-Env
-Requires: perl-Exporter
-Requires: perl-File-Path
-Requires: perl-File-Temp
-Requires: perl-Getopt-Long
-Requires: perl-IO-Socket-IP
-Requires: perl-JSON
-Requires: perl-libwww-perl
-Requires: perl-LWP-Protocol-https
+BuildRequires: perl
+BuildRequires: perl-Carp
+BuildRequires: perl-Data-Dumper
+BuildRequires: perl-Digest-MD5
+BuildRequires: perl-Env
+BuildRequires: perl-Exporter
+BuildRequires: perl-File-Path
+BuildRequires: perl-File-Temp
+BuildRequires: perl-Getopt-Long
+BuildRequires: perl-IO-Socket-IP
+BuildRequires: perl-JSON
+BuildRequires: perl-libwww-perl
+BuildRequires: perl-LWP-Protocol-https
 %if ! 0%{?amzn2022} && ! 0%{?el9}
-Requires: perl-Net-INET6Glue
+BuildRequires: perl-Net-INET6Glue
 %endif
-Requires: perl-Pod-Usage
-Requires: perl-URI
-Requires: valgrind
+BuildRequires: perl-Pod-Usage
+BuildRequires: perl-URI
+BuildRequires: valgrind
+BuildRequires: perf
 Requires: xxhash
 Requires: xxhash-libs >= 0.8.0
 Requires: gdb
 Requires: hostname
-Requires: perf
 Requires: nc
 Requires: nghttp2
 Requires: net-tools
@@ -238,7 +231,7 @@ Requires: unzip
 Requires: zlib
 Requires: zstd
 %if 0%{?el8}
-%if 0%{?centos} || 0%{?rocky}
+%if 0%{?centos} || 0%{?rocky} || 0%{?oraclelinux}
 %if 0%{?_centos_stream}
 %define _vespa_llvm_version 14
 %else
@@ -266,17 +259,14 @@ Requires: gtest
 %if 0%{?amzn2022}
 %define _vespa_llvm_version 14
 %endif
-%if 0%{?fc35}
-%define _vespa_llvm_version 13
-%endif
 %if 0%{?fc36}
 %define _vespa_llvm_version 14
 %endif
 %if 0%{?fc37}
-%define _vespa_llvm_version 14
+%define _vespa_llvm_version 15
 %endif
 %if 0%{?fc38}
-%define _vespa_llvm_version 14
+%define _vespa_llvm_version 15
 %endif
 %define _extra_link_directory %{_vespa_deps_prefix}/lib64
 %define _extra_include_directory %{_vespa_deps_prefix}/include;/usr/include/openblas
@@ -310,8 +300,8 @@ Requires: java-17-amazon-corretto
 %else
 Requires: java-17-openjdk-devel
 %endif
-Requires: perl
-Requires: perl-Getopt-Long
+BuildRequires: perl
+BuildRequires: perl-Getopt-Long
 Requires(pre): shadow-utils
 
 %description base
@@ -322,7 +312,7 @@ Vespa - The open big data serving engine - base
 
 Summary: Vespa - The open big data serving engine - base C++ libraries
 
-%if 0%{?centos} || 0%{?rocky}
+%if 0%{?centos} || 0%{?rocky} || 0%{?oraclelinux}
 Requires: epel-release
 %endif
 Requires: xxhash-libs >= 0.8.0
@@ -363,7 +353,7 @@ Requires: vespa-openssl >= 1.1.1o-1
 Requires: openssl-libs
 %endif
 %if 0%{?el8}
-%if 0%{?centos} || 0%{?rocky}
+%if 0%{?centos} || 0%{?rocky} || 0%{?oraclelinux}
 %if 0%{?_centos_stream}
 Requires: (llvm-libs >= 14.0.0 and llvm-libs < 15)
 %else
@@ -387,17 +377,14 @@ Requires: protobuf
 %if 0%{?amzn2022}
 Requires: llvm-libs >= 14.0.5
 %endif
-%if 0%{?fc35}
-Requires: llvm-libs >= 13.0.0
-%endif
 %if 0%{?fc36}
 Requires: llvm-libs >= 14.0.0
 %endif
 %if 0%{?fc37}
-Requires: llvm-libs >= 14.0.5
+Requires: llvm-libs >= 15.0.0
 %endif
 %if 0%{?fc38}
-Requires: llvm-libs >= 14.0.5
+Requires: llvm-libs >= 15.0.0
 %endif
 %endif
 Requires: vespa-onnxruntime = 1.12.1
@@ -460,6 +447,19 @@ Requires: %{name}-base-libs = %{version}-%{release}
 
 Vespa - The open big data serving engine - tools
 
+%package systemtest-tools
+
+Summary: Vespa - The open big data serving engine - tools for system tests
+
+Requires: %{name} = %{version}-%{release}
+Requires: %{name}-base-libs = %{version}-%{release}
+Requires: valgrind
+Requires: perf
+
+%description systemtest-tools
+
+Vespa - The open big data serving engine - tools for system tests
+
 %package ann-benchmark
 
 Summary: Vespa - The open big data serving engine - ann-benchmark
@@ -492,7 +492,7 @@ nearest neighbor search used for low-level benchmarking.
 %endif
 %else
 %setup -q
-%if 0%{?el8} && %{_vespa_llvm_version} < 13
+%if 0%{?el8} && %{?_vespa_llvm_version}%{!?_vespa_llvm_version:13} < 13
 if grep -qs 'result_pair<R>(' /usr/include/llvm/ADT/STLExtras.h
 then
   patch /usr/include/llvm/ADT/STLExtras.h < dist/STLExtras.h.diff
@@ -644,6 +644,8 @@ fi
 %exclude %{_prefix}/bin/vespa-stat
 %exclude %{_prefix}/bin/vespa-security-env
 %exclude %{_prefix}/bin/vespa-summary-benchmark
+%exclude %{_prefix}/bin/vespa-tensor-conformance
+%exclude %{_prefix}/bin/vespa-tensor-instructions-benchmark
 %exclude %{_prefix}/bin/vespa-visit
 %exclude %{_prefix}/bin/vespa-visit-target
 %dir %{_prefix}/conf
@@ -901,6 +903,15 @@ fi
 %dir %{_prefix}/lib
 %dir %{_prefix}/lib/jars
 %{_prefix}/lib/jars/vespaclient-java-jar-with-dependencies.jar
+
+%files systemtest-tools
+%if %{_defattr_is_vespa_vespa}
+%defattr(-,%{_vespa_user},%{_vespa_group},-)
+%endif
+%dir %{_prefix}
+%dir %{_prefix}/bin
+%{_prefix}/bin/vespa-tensor-conformance
+%{_prefix}/bin/vespa-tensor-instructions-benchmark
 
 %files ann-benchmark
 %if %{_defattr_is_vespa_vespa}

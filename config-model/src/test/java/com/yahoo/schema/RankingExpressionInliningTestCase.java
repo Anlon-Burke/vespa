@@ -68,11 +68,38 @@ public class RankingExpressionInliningTestCase extends AbstractSchemaTestCase {
         Schema s = builder.getSchema();
 
         RankProfile parent = rankProfileRegistry.get(s, "parent").compile(new QueryProfileRegistry(), new ImportedMlModels());
-        assertEquals("7.0 * (3 + attribute(a) + attribute(b) * (attribute(a) * 3 + if (7.0 < attribute(a), 1, 2) == 0))",
+        assertEquals("7.0 * (3 + attribute(a) + attribute(b) * (attribute(a) * 3 + (if (7.0 < attribute(a), 1, 2) == 0)))",
                 parent.getFirstPhaseRanking().getRoot().toString());
         RankProfile child = rankProfileRegistry.get(s, "child").compile(new QueryProfileRegistry(), new ImportedMlModels());
         assertEquals("7.0 * (9 + attribute(a))",
                 child.getFirstPhaseRanking().getRoot().toString());
+    }
+
+    @Test
+    void testInlinedComparison() throws ParseException {
+        RankProfileRegistry rankProfileRegistry = new RankProfileRegistry();
+        ApplicationBuilder builder = new ApplicationBuilder(rankProfileRegistry);
+        builder.addSchema("search test {\n" +
+                          "    document test { \n" +
+                          "    }\n" +
+                          "    \n" +
+                          "    rank-profile parent {\n" +
+                          "function foo() {\n" +
+                          "   expression: 3 * bar\n" +
+                          "}\n" +
+                          "\n" +
+                          "function inline bar() {\n" +
+                          "   expression: query(test) > 2.0\n" +
+                          "}\n" +
+                          "}\n" +
+                          "}\n");
+        builder.build(true);
+        Schema s = builder.getSchema();
+
+        RankProfile parent = rankProfileRegistry.get(s, "parent").compile(new QueryProfileRegistry(), new ImportedMlModels());
+        assertEquals("3 * (query(test) > 2.0)",
+                     parent.getFunctions().get("foo").function().getBody().getRoot().toString());
+
     }
 
     @Test
@@ -163,7 +190,7 @@ public class RankingExpressionInliningTestCase extends AbstractSchemaTestCase {
                         "    \n" +
                         "    rank-profile test {\n" +
                         "        first-phase {\n" +
-                        "            expression: A + C + D\n" +
+                        "            expression: A + C - D\n" +
                         "        }\n" +
                         "        function inline D() {\n" +
                         "            expression: B + 1\n" +
@@ -184,7 +211,7 @@ public class RankingExpressionInliningTestCase extends AbstractSchemaTestCase {
         Schema s = builder.getSchema();
 
         RankProfile test = rankProfileRegistry.get(s, "test").compile(new QueryProfileRegistry(), new ImportedMlModels());
-        assertEquals("attribute(a) + C + (attribute(b) + 1)", test.getFirstPhaseRanking().getRoot().toString());
+        assertEquals("attribute(a) + C - (attribute(b) + 1)", test.getFirstPhaseRanking().getRoot().toString());
         assertEquals("attribute(a) + attribute(b)", getRankingExpression("C", test, s));
         assertEquals("attribute(b) + 1", getRankingExpression("D", test, s));
     }
@@ -249,7 +276,7 @@ public class RankingExpressionInliningTestCase extends AbstractSchemaTestCase {
 
     private String getRankingExpression(String name, RankProfile rankProfile, Schema schema) {
         Optional<String> rankExpression =
-                new RawRankProfile(rankProfile, new LargeRankExpressions(new MockFileRegistry()), new QueryProfileRegistry(), new ImportedMlModels(), new AttributeFields(schema), new TestProperties())
+                new RawRankProfile(rankProfile, new LargeRankingExpressions(new MockFileRegistry()), new QueryProfileRegistry(), new ImportedMlModels(), new AttributeFields(schema), new TestProperties())
                         .configProperties()
                         .stream()
                         .filter(r -> r.getFirst().equals("rankingExpression(" + name + ").rankingScript"))

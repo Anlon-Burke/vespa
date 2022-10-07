@@ -1,10 +1,10 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
+#include "documentdb.h"
 #include "bootstrapconfig.h"
 #include "combiningfeedview.h"
 #include "document_meta_store_read_guards.h"
 #include "document_subdb_collection_explorer.h"
-#include "documentdb.h"
 #include "documentdbconfigscout.h"
 #include "feedhandler.h"
 #include "i_shared_threading_service.h"
@@ -30,6 +30,7 @@
 #include <vespa/searchcore/proton/persistenceengine/commit_and_wait_document_retriever.h>
 #include <vespa/searchcore/proton/reference/document_db_reference_resolver.h>
 #include <vespa/searchcore/proton/reference/i_document_db_reference_registry.h>
+#include <vespa/searchcore/proton/bucketdb/bucket_db_owner.h>
 #include <vespa/searchlib/attribute/configconverter.h>
 #include <vespa/searchlib/engine/docsumreply.h>
 #include <vespa/searchlib/engine/searchreply.h>
@@ -74,7 +75,7 @@ constexpr uint32_t indexing_thread_stack_size = 128_Ki;
 
 index::IndexConfig
 makeIndexConfig(const ProtonConfig::Index & cfg) {
-    return index::IndexConfig(WarmupConfig(vespalib::from_s(cfg.warmup.time), cfg.warmup.unpack), cfg.maxflushed, cfg.cache.size);
+    return {WarmupConfig(vespalib::from_s(cfg.warmup.time), cfg.warmup.unpack), size_t(cfg.maxflushed), size_t(cfg.cache.size)};
 }
 
 ReplayThrottlingPolicy
@@ -92,7 +93,7 @@ make_replay_throttling_policy(const ProtonConfig::ReplayThrottlingPolicy& cfg) {
 class MetricsUpdateHook : public metrics::UpdateHook {
     DocumentDB &_db;
 public:
-    MetricsUpdateHook(DocumentDB &s)
+    explicit MetricsUpdateHook(DocumentDB &s)
         : metrics::UpdateHook("documentdb-hook"),
           _db(s)
     {}
@@ -106,7 +107,7 @@ private:
     const DocumentDB& _doc_db;
 
 public:
-    DocumentDBResourceUsageProvider(const DocumentDB& doc_db) noexcept
+    explicit DocumentDBResourceUsageProvider(const DocumentDB& doc_db) noexcept
         : _doc_db(doc_db)
     {}
     TransientResourceUsage get_transient_resource_usage() const override {
@@ -119,10 +120,10 @@ public:
 
 template<typename T>
 void
-forceCommitAndWait(std::shared_ptr<IFeedView> feedView, SerialNum serialNum, T keepAlive) {
+forceCommitAndWait(IFeedView & feedView, SerialNum serialNum, T keepAlive) {
     vespalib::Gate gate;
     using Keep = vespalib::KeepAlive<std::pair<T, std::shared_ptr<IDestructorCallback>>>;
-    feedView->forceCommit(CommitParam(serialNum),
+    feedView.forceCommit(CommitParam(serialNum),
                           std::make_shared<Keep>(std::make_pair(std::move(keepAlive), std::make_shared<GateCallback>(gate))));
     gate.await();
 }
@@ -157,7 +158,7 @@ DocumentDB::create(const vespalib::string &baseDir,
             new DocumentDB(baseDir, std::move(currentSnapshot), tlsSpec, queryLimiter, docTypeName, bucketSpace,
                            protonCfg, owner, shared_service, tlsWriterFactory,
                            metricsWireService, fileHeaderContext, std::move(attribute_interlock),
-                           std::move(config_store), initializeThreads, hwInfo));
+                           std::move(config_store), std::move(initializeThreads), hwInfo));
 }
 DocumentDB::DocumentDB(const vespalib::string &baseDir,
                        DocumentDBConfig::SP configSnapshot,
@@ -232,7 +233,7 @@ DocumentDB::DocumentDB(const vespalib::string &baseDir,
 
     _feedHandler->init(_config_store->getOldestSerialNum());
     _feedHandler->setBucketDBHandler(&_subDBs.getBucketDBHandler());
-    saveInitialConfig(*configSnapshot);
+    saveInitialConfig(configSnapshot);
     resumeSaveConfig();
     SerialNum configSerial = _config_store->getPrevValidSerial(_feedHandler->getPrunedSerialNum() + 1);
     assert(configSerial > 0);
@@ -268,11 +269,11 @@ DocumentDB::registerReference()
 }
 
 void
-DocumentDB::setActiveConfig(const DocumentDBConfig::SP &config, int64_t generation) {
+DocumentDB::setActiveConfig(DocumentDBConfig::SP config, int64_t generation) {
     lock_guard guard(_configMutex);
     registerReference();
-    _activeConfigSnapshot = config;
     assert(generation >= config->getGeneration());
+    _activeConfigSnapshot = std::move(config);
     if (_activeConfigSnapshotGeneration < generation) {
         _activeConfigSnapshotGeneration = generation;
     }
@@ -342,7 +343,8 @@ DocumentDB::initFinish(DocumentDBConfig::SP configSnapshot)
     syncFeedView();
     // Check that feed view has been activated.
     assert(_feedView.get());
-    setActiveConfig(configSnapshot, configSnapshot->getGeneration());
+    int64_t generation = configSnapshot->getGeneration();
+    setActiveConfig(std::move(configSnapshot), generation);
     startTransactionLogReplay();
 }
 
@@ -351,7 +353,7 @@ void
 DocumentDB::newConfigSnapshot(DocumentDBConfig::SP snapshot)
 {
     // Called by executor thread
-    _pendingConfigSnapshot.set(snapshot);
+    _pendingConfigSnapshot.set(std::move(snapshot));
     {
         lock_guard guard(_configMutex);
         if ( ! _activeConfigSnapshot) {
@@ -428,7 +430,7 @@ DocumentDB::applySubDBConfig(const DocumentDBConfig &newConfigSnapshot,
     auto oldRepo = _activeConfigSnapshot->getDocumentTypeRepoSP();
     auto oldDocType = oldRepo->getDocumentType(_docTypeName.getName());
     assert(oldDocType != nullptr);
-    auto newRepo = newConfigSnapshot.getDocumentTypeRepoSP();
+    const auto & newRepo = newConfigSnapshot.getDocumentTypeRepoSP();
     auto newDocType = newRepo->getDocumentType(_docTypeName.getName());
     assert(newDocType != nullptr);
     DocumentDBReferenceResolver resolver(*registry, *newDocType, newConfigSnapshot.getImportedFieldsConfig(), *oldDocType,
@@ -471,15 +473,17 @@ DocumentDB::applyConfig(DocumentDBConfig::SP configSnapshot, SerialNum serialNum
     const ReconfigParams params(cmpres);
 
     // Save config via config manager if replay is done.
+    auto replay_config = DocumentDBConfig::makeReplayConfig(configSnapshot);
     bool equalReplayConfig =
-        *DocumentDBConfig::makeReplayConfig(configSnapshot) ==
+        *replay_config ==
         *DocumentDBConfig::makeReplayConfig(_activeConfigSnapshot);
     bool tlsReplayDone = _feedHandler->getTransactionLogReplayDone();
     FeedHandler::CommitResult commit_result;
     if (!equalReplayConfig && tlsReplayDone) {
         sync(_feedHandler->getSerialNum());
         serialNum = _feedHandler->inc_serial_num();
-        _config_store->saveConfig(*configSnapshot, serialNum);
+        _config_store->saveConfig(*replay_config, serialNum);
+        replay_config.reset();
         // save entry in transaction log
         NewConfigOperation op(serialNum, *_config_store);
         commit_result = _feedHandler->storeOperationSync(op);
@@ -487,7 +491,7 @@ DocumentDB::applyConfig(DocumentDBConfig::SP configSnapshot, SerialNum serialNum
     }
     {
         bool elidedConfigSave = equalReplayConfig && tlsReplayDone;
-        forceCommitAndWait(_feedView.get(), elidedConfigSave ? serialNum : serialNum - 1, std::move(commit_result));
+        forceCommitAndWait(*_feedView.get(), elidedConfigSave ? serialNum : serialNum - 1, std::move(commit_result));
     }
     if (params.shouldMaintenanceControllerChange()) {
         _maintenanceController.killJobs();
@@ -619,18 +623,18 @@ DocumentDB::getNumDocs() const
     }
 }
 
-size_t
+ActiveDocs
 DocumentDB::getNumActiveDocs() const
 {
     if (_state.get_load_done()) {
-        return _subDBs.getReadySubDB()->getNumActiveDocs();
+        return { _subDBs.getReadySubDB()->getNumActiveDocs(), _subDBs.getBucketDB().getNumActiveDocs() };
     } else {
-        return 0u;
+        return {0u, 0u};
     }
 }
 
 void
-DocumentDB::saveInitialConfig(const DocumentDBConfig &configSnapshot)
+DocumentDB::saveInitialConfig(std::shared_ptr<DocumentDBConfig> configSnapshot)
 {
     // Only called from ctor
 
@@ -655,7 +659,8 @@ DocumentDB::saveInitialConfig(const DocumentDBConfig &configSnapshot)
         LOG(warning, "DocumentDB(%s): saveInitialConfig() failed pruning due to '%s'",
             _docTypeName.toString().c_str(), e.what());
     }
-    _config_store->saveConfig(configSnapshot, confSerial);
+    auto replay_config = DocumentDBConfig::makeReplayConfig(configSnapshot);
+    _config_store->saveConfig(*replay_config, confSerial);
 }
 
 void
@@ -805,9 +810,9 @@ DocumentDB::setIndexSchema(const DocumentDBConfig &configSnapshot, SerialNum ser
 }
 
 void
-DocumentDB::reconfigure(const DocumentDBConfig::SP & snapshot)
+DocumentDB::reconfigure(DocumentDBConfig::SP snapshot)
 {
-    masterExecute([this, snapshot]() { newConfigSnapshot(snapshot); });
+    masterExecute([this, snapshot]() mutable { newConfigSnapshot(std::move(snapshot)); });
     // Wait for config to be applied, or for document db close
     std::unique_lock<std::mutex> guard(_configMutex);
     while ((_activeConfigSnapshotGeneration < snapshot->getGeneration()) && !_state.getClosed()) {
@@ -1010,7 +1015,7 @@ DocumentDB::notifyClusterStateChanged(const std::shared_ptr<IBucketStateCalculat
     IFeedView::SP feedView(_feedView.get());
     if (feedView) {
         // Try downcast to avoid polluting API
-        CombiningFeedView *cfv = dynamic_cast<CombiningFeedView *>(feedView.get());
+        auto *cfv = dynamic_cast<CombiningFeedView *>(feedView.get());
         if (cfv != nullptr)
             cfv->setCalculator(newCalc);
     }

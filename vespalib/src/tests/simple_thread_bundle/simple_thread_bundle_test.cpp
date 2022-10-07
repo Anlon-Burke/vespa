@@ -3,7 +3,9 @@
 #include <vespa/vespalib/util/simple_thread_bundle.h>
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/util/box.h>
+#include <vespa/vespalib/util/small_vector.h>
 #include <thread>
+#include <forward_list>
 
 using namespace vespalib;
 using namespace vespalib::fixed_thread_bundle;
@@ -87,6 +89,17 @@ TEST_FF("require that bundles can be run without targets", SimpleThreadBundle(1)
 TEST_FF("require that having too many targets fails", SimpleThreadBundle(1), State(2)) {
     EXPECT_EXCEPTION(f1.run(f2.getTargets(2)), IllegalArgumentException, "");
     f2.check(Box<size_t>().add(0).add(0));
+}
+
+TEST_F("require that ThreadBundle::trivial works the same as SimpleThreadBundle(1)", State(2)) {
+    ThreadBundle &bundle = ThreadBundle::trivial();
+    EXPECT_EQUAL(bundle.size(), 1u);
+    bundle.run(f.getTargets(0));
+    f.check({0,0});
+    bundle.run(f.getTargets(1));
+    f.check({1,0});
+    EXPECT_EXCEPTION(bundle.run(f.getTargets(2)), IllegalArgumentException, "");
+    f.check({1,0});
 }
 
 TEST_FF("require that bundles with multiple internal threads work", SimpleThreadBundle(3), State(3)) {
@@ -188,6 +201,75 @@ TEST_MT_FF("require that bundle pool works with multiple threads", 32, SimpleThr
     }
     TEST_BARRIER();
     f1.release(std::move(bundle));
+}
+
+struct Filler {
+    int stuff;
+    Filler() : stuff(0) {}
+    virtual ~Filler() {}
+};
+
+struct Proxy : Filler, Runnable {
+    Runnable &target;
+    Proxy(Runnable &target_in) : target(target_in) {}
+    void run() override { target.run(); }
+};
+
+struct AlmostRunnable : Runnable {};
+
+TEST("require that Proxy needs fixup to become Runnable") {
+    Cnt cnt;
+    Proxy proxy(cnt);
+    Runnable &runnable = proxy;
+    void *proxy_ptr = &proxy;
+    void *runnable_ptr = &runnable;
+    EXPECT_TRUE(proxy_ptr != runnable_ptr);
+}
+
+TEST_FF("require that various versions of run can be used to invoke targets", SimpleThreadBundle(5), State(5)) {
+    EXPECT_TRUE(thread_bundle::direct_dispatch_array<std::vector<Runnable*>>);
+    EXPECT_TRUE(thread_bundle::direct_dispatch_array<SmallVector<Runnable*>>);
+    EXPECT_TRUE(thread_bundle::direct_dispatch_array<std::initializer_list<Runnable*>>);
+    EXPECT_TRUE(thread_bundle::direct_dispatch_array<std::vector<Runnable::UP>>);
+    EXPECT_TRUE(thread_bundle::direct_dispatch_array<SmallVector<Runnable::UP>>);
+    EXPECT_TRUE(thread_bundle::direct_dispatch_array<std::initializer_list<Runnable::UP>>);
+    EXPECT_FALSE(thread_bundle::direct_dispatch_array<std::forward_list<Runnable*>>);
+    EXPECT_FALSE(thread_bundle::direct_dispatch_array<std::vector<std::unique_ptr<Proxy>>>);
+    EXPECT_FALSE(thread_bundle::direct_dispatch_array<std::vector<std::unique_ptr<AlmostRunnable>>>);
+    std::vector<Runnable::UP> direct;
+    std::vector<std::unique_ptr<Proxy>> custom;
+    for (Runnable &target: f2.cnts) {
+        direct.push_back(std::make_unique<Proxy>(target));
+        custom.push_back(std::make_unique<Proxy>(target));
+    }
+    std::vector<Runnable*> refs = f2.getTargets(5);
+    f2.check({0,0,0,0,0});
+    f1.run(refs.data(), 3);   // baseline
+    f2.check({1,1,1,0,0});
+    f1.run(&refs[3], 2);      // baseline
+    f2.check({1,1,1,1,1});
+    f1.run(f2.getTargets(5)); // const fast dispatch
+    f2.check({2,2,2,2,2});
+    f1.run(refs);             // non-const fast dispatch
+    f2.check({3,3,3,3,3});
+    f1.run(direct);           // fast dispatch with transparent UP
+    f2.check({4,4,4,4,4});
+    f1.run(custom);           // fall-back with runnable subclass UP
+    f2.check({5,5,5,5,5});
+    f1.run(f2.cnts);          // fall-back with resolved reference (actual objects)
+    f2.check({6,6,6,6,6});
+    std::initializer_list<std::reference_wrapper<Cnt>> list = {f2.cnts[0], f2.cnts[1], f2.cnts[2], f2.cnts[3], f2.cnts[4]};
+    f1.run(list);             // fall-back with resolved reference (reference wrapper)
+    f2.check({7,7,7,7,7});
+    std::initializer_list<Runnable*> list2 = {&f2.cnts[0], &f2.cnts[1], &f2.cnts[2], &f2.cnts[3], &f2.cnts[4]};
+    f1.run(list2);            // fast dispatch with non-vector range
+    f2.check({8,8,8,8,8});
+    std::forward_list<Runnable*> run_list(list2);
+    f1.run(run_list);         // fall-back with non-sized range
+    f2.check({9,9,9,9,9});
+    vespalib::SmallVector<Runnable*> my_vec(list2);
+    f1.run(my_vec);           // fast dispatch with custom container
+    f2.check({10,10,10,10,10});
 }
 
 TEST_MAIN() { TEST_RUN_ALL(); }

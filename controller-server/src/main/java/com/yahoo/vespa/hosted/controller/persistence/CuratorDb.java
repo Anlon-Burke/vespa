@@ -7,7 +7,6 @@ import com.yahoo.component.annotation.Inject;
 import com.yahoo.concurrent.UncheckedTimeoutException;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.HostName;
-import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.path.Path;
@@ -18,7 +17,6 @@ import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.api.identifiers.ControllerVersion;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
-import com.yahoo.vespa.hosted.controller.api.integration.ServiceRegistry;
 import com.yahoo.vespa.hosted.controller.api.integration.archive.ArchiveBucket;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateMetadata;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
@@ -54,7 +52,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Optional;
-import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
@@ -66,7 +63,6 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 
 import static java.util.stream.Collectors.collectingAndThen;
-import static java.util.stream.Collectors.toUnmodifiableList;
 
 /**
  * Curator backed database for storing the persistence state of controllers. This maps controller specific operations
@@ -84,7 +80,9 @@ public class CuratorDb {
     private static final Duration defaultTryLockTimeout = Duration.ofSeconds(1);
 
     private static final Path root = Path.fromString("/controller/v1");
+
     private static final Path lockRoot = root.append("locks");
+
     private static final Path tenantRoot = root.append("tenants");
     private static final Path applicationRoot = root.append("applications");
     private static final Path jobRoot = root.append("jobs");
@@ -125,11 +123,11 @@ public class CuratorDb {
     private final Map<Path, Pair<Integer, NavigableMap<RunId, Run>>> cachedHistoricRuns = new ConcurrentHashMap<>();
 
     @Inject
-    public CuratorDb(Curator curator, ServiceRegistry services) {
-        this(curator, defaultTryLockTimeout, services.zoneRegistry().system());
+    public CuratorDb(Curator curator) {
+        this(curator, defaultTryLockTimeout);
     }
 
-    CuratorDb(Curator curator, Duration tryLockTimeout, SystemName system) {
+    CuratorDb(Curator curator, Duration tryLockTimeout) {
         this.curator = curator;
         this.tryLockTimeout = tryLockTimeout;
     }
@@ -139,29 +137,34 @@ public class CuratorDb {
         return Arrays.stream(curator.zooKeeperEnsembleConnectionSpec().split(","))
                      .filter(hostAndPort -> !hostAndPort.isEmpty())
                      .map(hostAndPort -> hostAndPort.split(":")[0])
-                     .collect(Collectors.toUnmodifiableList());
+                     .toList();
     }
 
     // -------------- Locks ---------------------------------------------------
 
     public Mutex lock(TenantName name) {
-        return curator.lock(lockPath(name), defaultLockTimeout.multipliedBy(2));
+        return curator.lock(lockRoot.append("tenants").append(name.value()), defaultLockTimeout.multipliedBy(2));
     }
 
     public Mutex lock(TenantAndApplicationId id) {
-        return curator.lock(lockPath(id), defaultLockTimeout.multipliedBy(2));
+        return curator.lock(lockRoot.append("applications").append(id.tenant().value() + ":" +
+                                                                   id.application().value()),
+                            defaultLockTimeout.multipliedBy(2));
     }
 
     public Mutex lockForDeployment(ApplicationId id, ZoneId zone) {
-        return curator.lock(lockPath(id, zone), deployLockTimeout);
+        return curator.lock(lockRoot.append("instances").append(id.serializedForm() + ":" + zone.environment().value() +
+                                                                ":" + zone.region().value()),
+                            deployLockTimeout);
     }
 
     public Mutex lock(ApplicationId id, JobType type) {
-        return curator.lock(lockPath(id, type), defaultLockTimeout);
+        return curator.lock(lockRoot.append("jobs").append(id.serializedForm() + ":" + type.jobName()),
+                            defaultLockTimeout);
     }
 
     public Mutex lock(ApplicationId id, JobType type, Step step) throws TimeoutException {
-        return tryLock(lockPath(id, type, step));
+        return tryLock(lockRoot.append("steps").append(id.serializedForm() + ":" + type.jobName() + ":" + step.name()));
     }
 
     public Mutex lockRotations() {
@@ -181,7 +184,7 @@ public class CuratorDb {
     }
 
     public Mutex lockProvisionState(String provisionStateId) {
-        return curator.lock(lockPath(provisionStateId), Duration.ofSeconds(1));
+        return curator.lock(lockRoot.append("provisioning").append("states").append(provisionStateId), Duration.ofSeconds(1));
     }
 
     public Mutex lockOsVersions() {
@@ -387,7 +390,7 @@ public class CuratorDb {
         return curator.getChildren(applicationRoot).stream()
                       .map(TenantAndApplicationId::fromSerialized)
                       .sorted()
-                      .collect(toUnmodifiableList());
+                      .toList();
     }
 
     public void removeApplication(TenantAndApplicationId id) {
@@ -620,8 +623,8 @@ public class CuratorDb {
 
     public List<TenantName> listTenantsWithNotifications() {
         return curator.getChildren(notificationsRoot).stream()
-                .map(TenantName::from)
-                .collect(Collectors.toUnmodifiableList());
+                      .map(TenantName::from)
+                      .toList();
     }
 
     public void writeNotifications(TenantName tenantName, List<Notification> notifications) {
@@ -638,7 +641,6 @@ public class CuratorDb {
         return readSlime(supportAccessPath(deploymentId)).map(SupportAccessSerializer::fromSlime).orElse(SupportAccess.DISALLOWED_NO_HISTORY);
     }
 
-    /** Take lock before reading before writing */
     public void writeSupportAccess(DeploymentId deploymentId, SupportAccess supportAccess) {
         curator.set(supportAccessPath(deploymentId), asJson(SupportAccessSerializer.toSlime(supportAccess)));
     }
@@ -654,33 +656,6 @@ public class CuratorDb {
     }
 
     // -------------- Paths ---------------------------------------------------
-
-    private Path lockPath(TenantName tenant) {
-        return lockRoot
-                .append(tenant.value());
-    }
-
-    private Path lockPath(TenantAndApplicationId application) {
-        return lockRoot.append(application.tenant().value() + ":" + application.application().value());
-    }
-
-    private Path lockPath(ApplicationId instance, ZoneId zone) {
-        return lockRoot.append(instance.serializedForm() + ":" + zone.environment().value() + ":" + zone.region().value());
-    }
-
-    private Path lockPath(ApplicationId instance, JobType type) {
-        return lockRoot.append(instance.serializedForm() + ":" + type.jobName());
-    }
-
-    private Path lockPath(ApplicationId instance, JobType type, Step step) {
-        return lockRoot.append(instance.serializedForm() + ":" + type.jobName() + ":" + step.name());
-    }
-
-    private Path lockPath(String provisionId) {
-        return lockRoot
-                .append(provisionStatePath())
-                .append(provisionId);
-    }
 
     private static Path upgradesPerMinutePath() {
         return root.append("upgrader").append("upgradesPerMinute");

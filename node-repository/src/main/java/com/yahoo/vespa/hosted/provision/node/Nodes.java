@@ -132,9 +132,7 @@ public class Nodes {
                 illegal("Cannot add " + node + ": Child nodes need to be allocated");
             Optional<Node> existing = node(node.hostname());
             if (existing.isPresent())
-                illegal("Cannot add " + node + ": A node with this name already exists (" +
-                        existing.get() + ", " + existing.get().history() + "). Node to be added: " +
-                        node + ", " + node.history());
+                illegal("Cannot add " + node + ": A node with this name already exists");
         }
         return db.addNodesInState(nodes.asList(), Node.State.reserved, Agent.system);
     }
@@ -291,16 +289,13 @@ public class Nodes {
         List<Node> nodesToDirty =
                 (nodeToDirty.type().isHost() ?
                  Stream.concat(list().childrenOf(hostname).asList().stream(), Stream.of(nodeToDirty)) :
-                 Stream.of(nodeToDirty))
-                        .filter(node -> node.state() != Node.State.dirty)
-                        .collect(Collectors.toList());
+                 Stream.of(nodeToDirty)).filter(node -> node.state() != Node.State.dirty).toList();
         List<String> hostnamesNotAllowedToDirty = nodesToDirty.stream()
                                                               .filter(node -> node.state() != Node.State.provisioned)
                                                               .filter(node -> node.state() != Node.State.failed)
                                                               .filter(node -> node.state() != Node.State.parked)
                                                               .filter(node -> node.state() != Node.State.breakfixed)
-                                                              .map(Node::hostname)
-                                                              .collect(Collectors.toList());
+                                                              .map(Node::hostname).toList();
         if ( ! hostnamesNotAllowedToDirty.isEmpty())
             illegal("Could not deallocate " + nodeToDirty + ": " +
                     hostnamesNotAllowedToDirty + " are not in states [provisioned, failed, parked, breakfixed]");
@@ -643,30 +638,35 @@ public class Nodes {
 
     /** Retire and deprovision given host and all of its children */
     public List<Node> deprovision(String hostname, Agent agent, Instant instant) {
-        return decommission(hostname, DecommissionOperation.deprovision, agent, instant);
+        return decommission(hostname, HostOperation.deprovision, agent, instant);
     }
 
-    /** Retire and rebuild given host and all of its children */
-    public List<Node> rebuild(String hostname, Agent agent, Instant instant) {
-        return decommission(hostname, DecommissionOperation.rebuild, agent, instant);
+    /** Rebuild given host */
+    public List<Node> rebuild(String hostname, boolean soft, Agent agent, Instant instant) {
+        return decommission(hostname, soft ? HostOperation.softRebuild : HostOperation.rebuild, agent, instant);
     }
 
-    private List<Node> decommission(String hostname, DecommissionOperation op, Agent agent, Instant instant) {
+    private List<Node> decommission(String hostname, HostOperation op, Agent agent, Instant instant) {
         Optional<NodeMutex> nodeMutex = lockAndGet(hostname);
         if (nodeMutex.isEmpty()) return List.of();
         Node host = nodeMutex.get().node();
         if (!host.type().isHost()) throw new IllegalArgumentException("Cannot " + op + " non-host " + host);
-        List<Node> result;
-        boolean wantToDeprovision = op == DecommissionOperation.deprovision;
-        boolean wantToRebuild = op == DecommissionOperation.rebuild;
+
+        boolean wantToDeprovision = op == HostOperation.deprovision;
+        boolean wantToRebuild = op == HostOperation.rebuild || op == HostOperation.softRebuild;
+        boolean wantToRetire = op.needsRetirement();
+        List<Node> result = new ArrayList<>();
         try (NodeMutex lock = nodeMutex.get(); Mutex allocationLock = lockUnallocated()) {
             // This takes allocationLock to prevent any further allocation of nodes on this host
             host = lock.node();
-            result = performOn(list(allocationLock).childrenOf(host), (node, nodeLock) -> {
-                Node newNode = node.withWantToRetire(true, wantToDeprovision, wantToRebuild, agent, instant);
-                return write(newNode, nodeLock);
-            });
-            Node newHost = host.withWantToRetire(true, wantToDeprovision, wantToRebuild, agent, instant);
+            if (wantToRetire) { // Apply recursively if we're retiring
+                List<Node> updatedNodes = performOn(list(allocationLock).childrenOf(host), (node, nodeLock) -> {
+                    Node newNode = node.withWantToRetire(wantToRetire, wantToDeprovision, wantToRebuild, agent, instant);
+                    return write(newNode, nodeLock);
+                });
+                result.addAll(updatedNodes);
+            }
+            Node newHost = host.withWantToRetire(wantToRetire, wantToDeprovision, wantToRebuild, agent, instant);
             result.add(write(newHost, lock));
         }
         return result;
@@ -868,10 +868,28 @@ public class Nodes {
                retirementRequestedByOperator;
     }
 
-    /** The different ways a host can be decommissioned */
-    private enum DecommissionOperation {
-        deprovision,
-        rebuild,
+    private enum HostOperation {
+
+        /** Host is deprovisioned and data is destroyed */
+        deprovision(true),
+
+        /** Host is deprovisioned, the same host is later re-provisioned and data is destroyed */
+        rebuild(true),
+
+        /** Host is stopped and re-bootstrapped, data is preserved */
+        softRebuild(false);
+
+        private final boolean needsRetirement;
+
+        HostOperation(boolean needsRetirement) {
+            this.needsRetirement = needsRetirement;
+        }
+
+        /** Returns whether this operation requires the host and its children to be retired */
+        public boolean needsRetirement() {
+            return needsRetirement;
+        }
+
     }
 
 }

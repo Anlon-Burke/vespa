@@ -31,20 +31,20 @@ public:
             return matching.empty() ? other : matching;
         }
     };
-    AllLocations getAllLocations(GetDocsumsState *state) const;
+    AllLocations getAllLocations(GetDocsumsState& state) const;
 };
 
 class AbsDistanceDFW : public LocationAttrDFW
 {
 private:
-    uint64_t findMinDistance(uint32_t docid, GetDocsumsState *state,
+    uint64_t findMinDistance(uint32_t docid, GetDocsumsState& state,
                              const std::vector<const GeoLoc *> &locations) const;
 public:
     explicit AbsDistanceDFW(const vespalib::string & attrName);
 
-    bool IsGenerated() const override { return true; }
-    void insertField(uint32_t docid, GetDocsumsState *state,
-                     ResType type, vespalib::slime::Inserter &target) const override;
+    bool isGenerated() const override { return true; }
+    void insertField(uint32_t docid, GetDocsumsState& state,
+                     vespalib::slime::Inserter &target) const override;
 
     static std::unique_ptr<DocsumFieldWriter> create(const char *attribute_name, const IAttributeManager *index_man);
 
@@ -57,10 +57,10 @@ class PositionsDFW : public AttrDFW
 private:
     bool _useV8geoPositions;
 public:
-    typedef std::unique_ptr<PositionsDFW> UP;
+    using UP = std::unique_ptr<PositionsDFW>;
     PositionsDFW(const vespalib::string & attrName, bool useV8geoPositions);
-    bool IsGenerated() const override { return true; }
-    void insertField(uint32_t docid, GetDocsumsState *state, ResType type, vespalib::slime::Inserter &target) const override;
+    bool isGenerated() const override { return true; }
+    void insertField(uint32_t docid, GetDocsumsState& state, vespalib::slime::Inserter &target) const override;
     static UP create(const char *attribute_name, const IAttributeManager *index_man, bool useV8geoPositions);
 };
 

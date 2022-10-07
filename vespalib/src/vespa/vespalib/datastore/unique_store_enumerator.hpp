@@ -3,8 +3,8 @@
 #pragma once
 
 #include "unique_store_enumerator.h"
-#include <vespa/vespalib/datastore/bufferstate.h>
-#include <vespa/vespalib/datastore/datastorebase.h>
+#include "bufferstate.h"
+#include "datastorebase.h"
 
 namespace vespalib::datastore {
 
@@ -31,8 +31,8 @@ UniqueStoreEnumerator<RefT>::enumerateValue(EntryRef ref)
 {
     RefType iRef(ref);
     assert(iRef.valid());
-    assert(iRef.unscaled_offset() < _enumValues[iRef.bufferId()].size());
-    uint32_t &enumVal = _enumValues[iRef.bufferId()][iRef.unscaled_offset()];
+    assert(iRef.offset() < _enumValues[iRef.bufferId()].size());
+    uint32_t &enumVal = _enumValues[iRef.bufferId()][iRef.offset()];
     assert(enumVal == 0u);
     enumVal = _next_enum_val;
     ++_next_enum_val;

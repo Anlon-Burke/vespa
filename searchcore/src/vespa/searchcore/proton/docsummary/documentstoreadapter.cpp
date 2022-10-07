@@ -2,7 +2,6 @@
 
 #include "documentstoreadapter.h"
 #include <vespa/searchsummary/docsummary/docsum_store_document.h>
-#include <vespa/searchsummary/docsummary/summaryfieldconverter.h>
 #include <vespa/document/fieldvalue/document.h>
 #include <vespa/document/fieldvalue/stringfieldvalue.h>
 #include <vespa/eval/eval/value_codec.h>
@@ -34,7 +33,7 @@ DocumentStoreAdapter(const search::IDocumentStore & docStore,
 DocumentStoreAdapter::~DocumentStoreAdapter() = default;
 
 std::unique_ptr<const IDocsumStoreDocument>
-DocumentStoreAdapter::getMappedDocsum(uint32_t docId)
+DocumentStoreAdapter::get_document(uint32_t docId)
 {
     auto document = _docStore.read(docId, _repo);
     if ( ! document) {

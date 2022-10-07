@@ -150,10 +150,18 @@ public class MessageBus implements ConfigHandler, NetworkOwner, MessageHandler, 
         // Attach and start network.
         this.net = net;
         net.attach(this);
-        if ( ! net.net().waitUntilReady(120)) {
-            Process.dumpThreads();
-            String fn = "var/crash/java_pid." + ProcessHandle.current().pid() + ".hprof";
-            Process.dumpHeap(Defaults.getDefaults().underVespaHome(fn), true);
+        if ( ! net.net().waitUntilReady(180)) {
+            try {
+                var tmp = net.net().getMirror();
+                var mirror = (com.yahoo.jrt.slobrok.api.Mirror) tmp;
+                if (mirror.getIterations() < 2) {
+                    Process.dumpThreads();
+                    String fn = "var/crash/java_pid." + ProcessHandle.current().pid() + ".hprof";
+                    Process.dumpHeap(Defaults.getDefaults().underVespaHome(fn), true);
+                }
+            } catch (Exception e) {
+                // ignore
+            }
             throw new IllegalStateException("Network failed to become ready in time.");
         }
 

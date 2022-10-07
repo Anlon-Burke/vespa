@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <vespa/vespalib/datastore/aligner.h>
 #include <vespa/searchlib/index/docidandfeatures.h>
 #include <vespa/searchlib/bitcompression/posocccompression.h>
 #include <vespa/searchlib/bitcompression/posocc_fields_params.h>
@@ -14,11 +15,13 @@ namespace search::memoryindex {
  */
 class FeatureStore {
 public:
-    using DataStoreType = vespalib::datastore::DataStoreT<vespalib::datastore::AlignedEntryRefT<22, 2>>;
+    using DataStoreType = vespalib::datastore::DataStoreT<vespalib::datastore::EntryRefT<22>>;
     using RefType = DataStoreType::RefType;
     using EncodeContext = bitcompression::EG2PosOccEncodeContext<true>;
     using DecodeContextCooked = bitcompression::EG2PosOccDecodeContextCooked<true>;
     using generation_t = vespalib::GenerationHandler::generation_t;
+    static constexpr uint32_t buffer_array_size = 4u; // Must be a power of 2
+    using Aligner = vespalib::datastore::Aligner<buffer_array_size>;
 
 private:
     using Schema = index::Schema;
@@ -154,7 +157,7 @@ public:
         uint32_t bufferId = RefType(ref).bufferId();
         const vespalib::datastore::BufferState &state = _store.getBufferState(bufferId);
         decoder.setEnd(
-                ((_store.getEntry<uint8_t>(RefType(0, bufferId)) + state.size() -
+                ((_store.getEntryArray<uint8_t>(RefType(0, bufferId), buffer_array_size) + state.size() -
                   bits) + 7) / 8,
                 false);
     }
@@ -188,7 +191,7 @@ public:
      */
     const uint8_t *getBits(vespalib::datastore::EntryRef ref) const {
         RefType iRef(ref);
-        return _store.getEntry<uint8_t>(iRef);
+        return _store.getEntryArray<uint8_t>(iRef, buffer_array_size);
     }
 
     /**
@@ -205,10 +208,9 @@ public:
     void trimHoldLists(generation_t usedGen) { _store.trimHoldLists(usedGen); }
     void transferHoldLists(generation_t generation) { _store.transferHoldLists(generation); }
     void clearHoldLists() { _store.clearHoldLists();}
-    std::vector<uint32_t> startCompact() { return _store.startCompact(_typeId); }
-    void finishCompact(const std::vector<uint32_t> & toHold) { _store.finishCompact(toHold); }
+    std::unique_ptr<vespalib::datastore::CompactingBuffers> start_compact();
     vespalib::MemoryUsage getMemoryUsage() const { return _store.getMemoryUsage(); }
-    vespalib::datastore::DataStoreBase::MemStats getMemStats() const { return _store.getMemStats(); }
+    vespalib::datastore::MemoryStats getMemStats() const { return _store.getMemStats(); }
 };
 
 }

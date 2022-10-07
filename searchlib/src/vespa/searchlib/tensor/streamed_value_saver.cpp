@@ -1,7 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "streamed_value_saver.h"
-#include "streamed_value_store.h"
+#include "tensor_buffer_store.h"
 
 #include <vespa/searchlib/attribute/iattributesavetarget.h>
 #include <vespa/searchlib/util/bufferwriter.h>
@@ -15,7 +15,7 @@ StreamedValueSaver::
 StreamedValueSaver(GenerationHandler::Guard &&guard,
                    const attribute::AttributeHeader &header,
                    RefCopyVector &&refs,
-                   const StreamedValueStore &tensorStore)
+                   const TensorBufferStore &tensorStore)
   : AttributeSaver(std::move(guard), header),
     _refs(std::move(refs)),
     _tensorStore(tensorStore)
@@ -31,7 +31,7 @@ StreamedValueSaver::onSave(IAttributeSaveTarget &saveTarget)
     const uint32_t docIdLimit(_refs.size());
     vespalib::nbostream stream;
     for (uint32_t lid = 0; lid < docIdLimit; ++lid) {
-        if (_tensorStore.encode_tensor(_refs[lid], stream)) {
+        if (_tensorStore.encode_stored_tensor(_refs[lid], stream)) {
             uint32_t sz = stream.size();
             datWriter->write(&sz, sizeof(sz));
             datWriter->write(stream.peek(), stream.size());

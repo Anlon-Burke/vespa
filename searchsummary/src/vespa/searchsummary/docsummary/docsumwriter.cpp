@@ -14,80 +14,72 @@
 LOG_SETUP(".searchlib.docsummary.docsumwriter");
 
 using vespalib::Issue;
-using vespalib::slime::ObjectInserter;
 using vespalib::Memory;
+using vespalib::slime::ObjectInserter;
 
 namespace search::docsummary {
 
 DynamicDocsumWriter::ResolveClassInfo
-DynamicDocsumWriter::resolveClassInfo(vespalib::stringref outputClassName) const
-{
-    DynamicDocsumWriter::ResolveClassInfo rci = resolveOutputClass(outputClassName);
-    return rci;
-}
-
-DynamicDocsumWriter::ResolveClassInfo
-DynamicDocsumWriter::resolveOutputClass(vespalib::stringref summaryClass) const
+DynamicDocsumWriter::resolveClassInfo(vespalib::stringref class_name,
+                                      const vespalib::hash_set<vespalib::string>& fields) const
 {
     DynamicDocsumWriter::ResolveClassInfo result;
-    auto id = _resultConfig->LookupResultClassId(summaryClass);
+    auto id = _resultConfig->lookupResultClassId(class_name);
 
-    const ResultClass *oC = (id != ResultConfig::NoClassID()) ? _resultConfig->LookupResultClass(id) : nullptr;
-    if (oC == nullptr) {
+    const auto* res_class = (id != ResultConfig::noClassID()) ? _resultConfig->lookupResultClass(id) : nullptr;
+    if (res_class == nullptr) {
         Issue::report("Illegal docsum class requested: %s, using empty docsum for documents",
-                      vespalib::string(summaryClass).c_str());
+                      vespalib::string(class_name).c_str());
     } else {
-        const ResultClass::DynamicInfo &rcInfo = oC->getDynamicInfo();
-        if (rcInfo._generateCnt == oC->GetNumEntries()) {
-            LOG_ASSERT(rcInfo._overrideCnt == rcInfo._generateCnt);
-            result.allGenerated = true;
-        }
+        result.all_fields_generated = res_class->all_fields_generated(fields);
     }
-    result.outputClass = oC;
+    result.res_class = res_class;
     return result;
 }
 
 void
-DynamicDocsumWriter::insertDocsum(const ResolveClassInfo & rci, uint32_t docid, GetDocsumsState *state,
-                                  IDocsumStore *docinfos, Inserter& topInserter)
+DynamicDocsumWriter::insertDocsum(const ResolveClassInfo & rci, uint32_t docid, GetDocsumsState& state,
+                                  IDocsumStore &docinfos, Inserter& topInserter)
 {
-    if (rci.outputClass == nullptr) {
+    if (rci.res_class == nullptr) {
         // Use empty docsum when illegal docsum class has been requested
         return;
     }
-    if (rci.allGenerated) {
+    if (rci.all_fields_generated) {
         // generate docsum entry on-the-fly
         vespalib::slime::Cursor & docsum = topInserter.insertObject();
-        for (uint32_t i = 0; i < rci.outputClass->GetNumEntries(); ++i) {
-            const ResConfigEntry *resCfg = rci.outputClass->GetEntry(i);
-            const DocsumFieldWriter *writer = resCfg->_docsum_field_writer.get();
-            if (state->_args.needField(resCfg->_name) && ! writer->isDefaultValue(docid, state)) {
-                const Memory field_name(resCfg->_name.data(), resCfg->_name.size());
+        for (uint32_t i = 0; i < rci.res_class->getNumEntries(); ++i) {
+            const ResConfigEntry *resCfg = rci.res_class->getEntry(i);
+            const DocsumFieldWriter *writer = resCfg->writer();
+            if (state._args.need_field(resCfg->name()) && ! writer->isDefaultValue(docid, state)) {
+                const Memory field_name(resCfg->name().data(), resCfg->name().size());
                 ObjectInserter inserter(docsum, field_name);
-                writer->insertField(docid, nullptr, state, resCfg->_type, inserter);
+                writer->insertField(docid, nullptr, state, inserter);
             }
         }
     } else {
         // look up docsum entry
-        auto doc = docinfos->getMappedDocsum(docid);
+        auto doc = docinfos.get_document(docid);
         if (!doc) {
             return; // Use empty docsum when document is gone
         }
         // insert docsum blob
         vespalib::slime::Cursor & docsum = topInserter.insertObject();
-        for (uint32_t i = 0; i < rci.outputClass->GetNumEntries(); ++i) {
-            const ResConfigEntry *outCfg = rci.outputClass->GetEntry(i);
-            if ( ! state->_args.needField(outCfg->_name)) continue;
-            const DocsumFieldWriter *writer = outCfg->_docsum_field_writer.get();
-            const Memory field_name(outCfg->_name.data(), outCfg->_name.size());
+        for (uint32_t i = 0; i < rci.res_class->getNumEntries(); ++i) {
+            const ResConfigEntry *outCfg = rci.res_class->getEntry(i);
+            if (!state._args.need_field(outCfg->name())) {
+                continue;
+            }
+            const DocsumFieldWriter *writer = outCfg->writer();
+            const Memory field_name(outCfg->name().data(), outCfg->name().size());
             ObjectInserter inserter(docsum, field_name);
             if (writer != nullptr) {
                 if (! writer->isDefaultValue(docid, state)) {
-                    writer->insertField(docid, doc.get(), state, outCfg->_type, inserter);
+                    writer->insertField(docid, doc.get(), state, inserter);
                 }
             } else {
                 if (doc) {
-                    doc->insert_summary_field(outCfg->_name, inserter);
+                    doc->insert_summary_field(outCfg->name(), inserter);
                 }
             }
         }
@@ -104,19 +96,19 @@ DynamicDocsumWriter::DynamicDocsumWriter(std::unique_ptr<ResultConfig> config, s
 DynamicDocsumWriter::~DynamicDocsumWriter() = default;
 
 void
-DynamicDocsumWriter::InitState(const IAttributeManager & attrMan, GetDocsumsState& state, const ResolveClassInfo& rci)
+DynamicDocsumWriter::initState(const IAttributeManager & attrMan, GetDocsumsState& state, const ResolveClassInfo& rci)
 {
     state._kwExtractor = _keywordExtractor.get();
     state._attrCtx = attrMan.createContext();
-    auto result_class = rci.outputClass;
+    auto result_class = rci.res_class;
     if (result_class == nullptr) {
         return;
     }
-    size_t num_entries = result_class->GetNumEntries();
+    size_t num_entries = result_class->getNumEntries();
     state._attributes.resize(num_entries);
     state._fieldWriterStates.resize(result_class->get_num_field_writer_states());
     for (size_t i(0); i < num_entries; i++) {
-        const DocsumFieldWriter *fw = result_class->GetEntry(i)->_docsum_field_writer.get();
+        const DocsumFieldWriter *fw = result_class->getEntry(i)->writer();
         if (fw) {
             const vespalib::string & attributeName = fw->getAttributeName();
             if (!attributeName.empty()) {

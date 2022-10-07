@@ -3,8 +3,9 @@
 #pragma once
 
 #include "res_config_entry.h"
-#include <vespa/vespalib/stllike/string.h>
 #include <vespa/vespalib/stllike/hash_map.h>
+#include <vespa/vespalib/stllike/hash_set.h>
+#include <vespa/vespalib/stllike/string.h>
 
 namespace search::docsummary {
 
@@ -66,20 +67,12 @@ public:
     ~ResultClass();
 
     /**
-     * Obtain reference to dynamic field data for this result class.
-     *
-     * @return reference to dynamic field data.
-     **/
-    DynamicInfo& getDynamicInfo() noexcept { return _dynInfo; }
-    const DynamicInfo& getDynamicInfo() const noexcept { return _dynInfo; }
-
-    /**
      * Obtain the number of config entries (size of the
      * ResConfigEntry array) held by this result class.
      *
      * @return number of config entries held by this object.
      **/
-    uint32_t GetNumEntries() const { return _entries.size(); }
+    uint32_t getNumEntries() const { return _entries.size(); }
 
 
     /**
@@ -91,11 +84,10 @@ public:
      *
      * @return true(success)/false(fail)
      * @param name the name of the field to add.
-     * @param type the type of the field to add.
      * @param docsum_field_writer field writer for writing field
      **/
-    bool AddConfigEntry(const char *name, ResType type, std::unique_ptr<DocsumFieldWriter> docsum_field_writer);
-    bool AddConfigEntry(const char *name, ResType type);
+    bool addConfigEntry(const char *name, std::unique_ptr<DocsumFieldWriter> docsum_field_writer);
+    bool addConfigEntry(const char *name);
 
     /**
      * Obtain the field index from the field name. The field index may
@@ -105,21 +97,28 @@ public:
      * GeneralResult object, make sure that the
      * GeneralResult object has this object as it's result
      * class. NOTE2: This method is called by the
-     * GeneralResult::GetEntry(string) method; no need to call it
+     * GeneralResult::getEntry(string) method; no need to call it
      * directly.
      *
      * @return field index or -1 if not found
      **/
-    int GetIndexFromName(const char* name) const;
+    int getIndexFromName(const char* name) const;
 
     /**
      * Obtain config entry by field index.
      *
      * @return config entry or NULL if not found.
      **/
-    const ResConfigEntry *GetEntry(uint32_t offset) const {
+    const ResConfigEntry *getEntry(uint32_t offset) const {
         return (offset < _entries.size()) ? &_entries[offset] : nullptr;
     }
+
+    /**
+     * Returns whether the given fields are generated in this result class (do not require the document instance).
+     *
+     * If the given fields set is empty, check all fields defined in this result class.
+     */
+    bool all_fields_generated(const vespalib::hash_set<vespalib::string>& fields) const;
 
     void set_omit_summary_features(bool value) {
         _omit_summary_features = value;

@@ -27,7 +27,7 @@ protected:
     std::unique_ptr<juniper::Config> _juniperConfig;
     const juniper::Juniper          *_juniper;
 private:
-    bool IsGenerated() const override { return false; }
+    bool isGenerated() const override { return false; }
     JuniperDFW(const JuniperDFW &);
     JuniperDFW & operator=(const JuniperDFW &);
 };
@@ -45,14 +45,12 @@ protected:
 
 class DynamicTeaserDFW : public JuniperTeaserDFW
 {
-    vespalib::string makeDynamicTeaser(uint32_t docid,
-                                       vespalib::stringref input,
-                                       GetDocsumsState *state) const;
 public:
     explicit DynamicTeaserDFW(const juniper::Juniper * juniper) : JuniperTeaserDFW(juniper) { }
 
-    void insertField(uint32_t docid, const IDocsumStoreDocument* doc, GetDocsumsState *state,
-                     ResType type, vespalib::slime::Inserter &target) const override;
+    void insertField(uint32_t docid, const IDocsumStoreDocument* doc, GetDocsumsState& state,
+                     vespalib::slime::Inserter &target) const override;
+    void insert_juniper_field(uint32_t docid, vespalib::stringref input, GetDocsumsState& state, vespalib::slime::Inserter& inserter) const;
 };
 
 }

@@ -323,6 +323,15 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
                 request("/application/v4/tenant/scoober/secret-store/secret-foo/validate?aws-region=us-west-1&parameter-name=foo&application-id=scoober.albums.default&zone=prod.aws-us-east-1c", GET)
                         .roles(Set.of(Role.developer(tenantName)));
         tester.assertResponse(secretStoreRequest, "{\"target\":\"scoober.albums in prod.aws-us-east-1c\",\"result\":{\"settings\":{\"name\":\"foo\",\"role\":\"vespa-secretstore-access\",\"awsId\":\"892075328880\",\"externalId\":\"*****\",\"region\":\"us-east-1\"},\"status\":\"ok\"}}", 200);
+
+        secretStoreRequest =
+                request("/application/v4/tenant/scoober/secret-store/secret-foo/validate?aws-region=us-west-1&parameter-name=foo&application-id=scober.albums.default&zone=prod.aws-us-east-1c", GET)
+                        .roles(Set.of(Role.developer(tenantName)));
+        tester.assertResponse(secretStoreRequest, "{" +
+                "\"error-code\":\"BAD_REQUEST\"," +
+                "\"message\":\"Invalid application id\"" +
+                "}", 400);
+
     }
 
     @Test
@@ -413,7 +422,7 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
     @Test
     void create_application_on_deploy() {
         var application = ApplicationName.from("unique");
-        var applicationPackage = new ApplicationPackageBuilder().withoutAthenzIdentity().build();
+        var applicationPackage = new ApplicationPackageBuilder().trustDefaultCertificate().withoutAthenzIdentity().build();
 
         new ControllerTester(tester).upgradeSystem(new Version("6.1"));
         assertTrue(tester.controller().applications().getApplication(TenantAndApplicationId.from(tenantName, application)).isEmpty());
@@ -473,6 +482,7 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
 
     private void deployApplication() {
         var applicationPackage = new ApplicationPackageBuilder()
+                .trustDefaultCertificate()
                 .instances("default")
                 .globalServiceId("foo")
                 .region("aws-us-east-1c")

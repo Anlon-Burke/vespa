@@ -29,6 +29,7 @@
 #include <vespa/searchlib/parsequery/stackdumpiterator.h>
 #include <vespa/document/datatype/positiondatatype.h>
 #include <vespa/vespalib/stllike/asciistream.h>
+#include <vespa/vespalib/util/thread_bundle.h>
 
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/log/log.h>
@@ -165,6 +166,8 @@ const uint32_t term_count = 8;
 fef_test::IndexEnvironment plain_index_env;
 fef_test::IndexEnvironment resolved_index_env;
 fef_test::IndexEnvironment attribute_index_env;
+
+vespalib::ThreadBundle &ttb() { return vespalib::ThreadBundle::trivial(); }
 
 vespalib::string
 termAsString(const search::query::Range &term) {
@@ -1141,38 +1144,37 @@ Test::global_filter_is_calculated_and_handled()
     uint32_t docid_limit = 10;
     { // global filter is not wanted
         GlobalFilterBlueprint bp(result, false);
-        auto res = Query::handle_global_filter(bp, docid_limit, 0, 1, nullptr);
+        auto res = Query::handle_global_filter(bp, docid_limit, 0, 1, ttb(), nullptr);
         EXPECT_FALSE(res);
         EXPECT_FALSE(bp.filter);
         EXPECT_EQUAL(-1.0, bp.estimated_hit_ratio);
     }
     { // estimated_hit_ratio < global_filter_lower_limit
         GlobalFilterBlueprint bp(result, true);
-        auto res = Query::handle_global_filter(bp, docid_limit, 0.31, 1, nullptr);
+        auto res = Query::handle_global_filter(bp, docid_limit, 0.31, 1, ttb(), nullptr);
         EXPECT_FALSE(res);
         EXPECT_FALSE(bp.filter);
         EXPECT_EQUAL(-1.0, bp.estimated_hit_ratio);
     }
     { // estimated_hit_ratio <= global_filter_upper_limit
         GlobalFilterBlueprint bp(result, true);
-        auto res = Query::handle_global_filter(bp, docid_limit, 0, 0.3, nullptr);
+        auto res = Query::handle_global_filter(bp, docid_limit, 0, 0.3, ttb(), nullptr);
         EXPECT_TRUE(res);
         EXPECT_TRUE(bp.filter);
-        EXPECT_TRUE(bp.filter->has_filter());
+        EXPECT_TRUE(bp.filter->is_active());
         EXPECT_EQUAL(0.3, bp.estimated_hit_ratio);
 
-        auto* bv = bp.filter->filter();
-        EXPECT_EQUAL(3u, bv->countTrueBits());
-        EXPECT_TRUE(bv->testBit(3));
-        EXPECT_TRUE(bv->testBit(5));
-        EXPECT_TRUE(bv->testBit(7));
+        EXPECT_EQUAL(3u, bp.filter->count());
+        EXPECT_TRUE(bp.filter->check(3));
+        EXPECT_TRUE(bp.filter->check(5));
+        EXPECT_TRUE(bp.filter->check(7));
     }
     { // estimated_hit_ratio > global_filter_upper_limit
         GlobalFilterBlueprint bp(result, true);
-        auto res = Query::handle_global_filter(bp, docid_limit, 0, 0.29, nullptr);
+        auto res = Query::handle_global_filter(bp, docid_limit, 0, 0.29, ttb(), nullptr);
         EXPECT_TRUE(res);
         EXPECT_TRUE(bp.filter);
-        EXPECT_FALSE(bp.filter->has_filter());
+        EXPECT_FALSE(bp.filter->is_active());
         EXPECT_EQUAL(0.3, bp.estimated_hit_ratio);
     }
 }

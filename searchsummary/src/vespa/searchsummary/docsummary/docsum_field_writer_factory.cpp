@@ -1,8 +1,9 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include "docsum_field_writer_factory.h"
 #include "attribute_combiner_dfw.h"
 #include "copy_dfw.h"
+#include "docsum_field_writer_commands.h"
+#include "docsum_field_writer_factory.h"
 #include "document_id_dfw.h"
 #include "empty_dfw.h"
 #include "geoposdfw.h"
@@ -34,65 +35,83 @@ DocsumFieldWriterFactory::has_attribute_manager() const noexcept
     return getEnvironment().getAttributeManager() != nullptr;
 }
 
-std::unique_ptr<DocsumFieldWriter>
-DocsumFieldWriterFactory::create_docsum_field_writer(const vespalib::string& fieldName, const vespalib::string& overrideName, const vespalib::string& argument, bool& rc)
+namespace {
+
+void
+throw_if_nullptr(const std::unique_ptr<DocsumFieldWriter>& writer,
+                 const vespalib::string& command)
 {
-    rc = false;
+    if (writer.get() == nullptr) {
+        throw IllegalArgumentException("Failed to create docsum field writer for command '" + command + "'.");
+    }
+}
+
+void
+throw_missing_source(const vespalib::string& command)
+{
+    throw IllegalArgumentException("Missing source for command '" + command + "'.");
+}
+
+}
+
+std::unique_ptr<DocsumFieldWriter>
+DocsumFieldWriterFactory::create_docsum_field_writer(const vespalib::string& field_name,
+                                                     const vespalib::string& command,
+                                                     const vespalib::string& source)
+{
     std::unique_ptr<DocsumFieldWriter> fieldWriter;
-    if (overrideName == "dynamicteaser") {
-        if ( ! argument.empty() ) {
+    if (command == command::dynamic_teaser) {
+        if ( ! source.empty() ) {
             auto fw = std::make_unique<DynamicTeaserDFW>(getEnvironment().getJuniper());
             auto fw_ptr = fw.get();
             fieldWriter = std::move(fw);
-            rc = fw_ptr->Init(fieldName.c_str(), argument);
+            if (!fw_ptr->Init(field_name.c_str(), source)) {
+                throw IllegalArgumentException("Failed to initialize DynamicTeaserDFW.");
+            }
         } else {
-            throw IllegalArgumentException("Missing argument");
+            throw_missing_source(command);
         }
-    } else if (overrideName == "summaryfeatures") {
+    } else if (command == command::summary_features) {
         fieldWriter = std::make_unique<SummaryFeaturesDFW>();
-        rc = true;
-    } else if (overrideName == "rankfeatures") {
+    } else if (command == command::rank_features) {
         fieldWriter = std::make_unique<RankFeaturesDFW>();
-        rc = true;
-    } else if (overrideName == "empty") {
+    } else if (command == command::empty) {
         fieldWriter = std::make_unique<EmptyDFW>();
-        rc = true;
-    } else if (overrideName == "copy") {
-        if ( ! argument.empty() ) {
-            fieldWriter = std::make_unique<CopyDFW>(argument);
-            rc = true;
+    } else if (command == command::copy) {
+        if ( ! source.empty() ) {
+            fieldWriter = std::make_unique<CopyDFW>(source);
         } else {
-            throw IllegalArgumentException("Missing argument");
+            throw_missing_source(command);
         }
-    } else if (overrideName == "absdist") {
+    } else if (command == command::abs_distance) {
         if (has_attribute_manager()) {
-            fieldWriter = AbsDistanceDFW::create(argument.c_str(), getEnvironment().getAttributeManager());
-            rc = static_cast<bool>(fieldWriter);
+            fieldWriter = AbsDistanceDFW::create(source.c_str(), getEnvironment().getAttributeManager());
+            throw_if_nullptr(fieldWriter, command);
         }
-    } else if (overrideName == "positions") {
+    } else if (command == command::positions) {
         if (has_attribute_manager()) {
-            fieldWriter = PositionsDFW::create(argument.c_str(), getEnvironment().getAttributeManager(), _use_v8_geo_positions);
-            rc = static_cast<bool>(fieldWriter);
+            fieldWriter = PositionsDFW::create(source.c_str(), getEnvironment().getAttributeManager(), _use_v8_geo_positions);
+            throw_if_nullptr(fieldWriter, command);
         }
-    } else if (overrideName == "geopos") {
+    } else if (command == command::geo_position) {
         if (has_attribute_manager()) {
-            fieldWriter = GeoPositionDFW::create(argument.c_str(), getEnvironment().getAttributeManager(), _use_v8_geo_positions);
-            rc = static_cast<bool>(fieldWriter);
+            fieldWriter = GeoPositionDFW::create(source.c_str(), getEnvironment().getAttributeManager(), _use_v8_geo_positions);
+            throw_if_nullptr(fieldWriter, command);
         }
-    } else if (overrideName == "attribute") {
+    } else if (command == command::attribute) {
         if (has_attribute_manager()) {
-            fieldWriter = AttributeDFWFactory::create(*getEnvironment().getAttributeManager(), argument);
-            rc = true; // Allow missing attribute vector
+            fieldWriter = AttributeDFWFactory::create(*getEnvironment().getAttributeManager(), source);
+            // Missing attribute vector is allowed, so throw_if_nullptr() is NOT used.
         }
-    } else if (overrideName == "attributecombiner") {
+    } else if (command == command::attribute_combiner) {
         if (has_attribute_manager()) {
             auto attr_ctx = getEnvironment().getAttributeManager()->createContext();
-            const vespalib::string& source_field = argument.empty() ? fieldName : argument;
+            const vespalib::string& source_field = source.empty() ? field_name : source;
             fieldWriter = AttributeCombinerDFW::create(source_field, *attr_ctx, false, std::shared_ptr<MatchingElementsFields>());
-            rc = static_cast<bool>(fieldWriter);
+            throw_if_nullptr(fieldWriter, command);
         }
-    } else if (overrideName == "matchedattributeelementsfilter") {
-        const vespalib::string& source_field = argument.empty() ? fieldName : argument;
+    } else if (command == command::matched_attribute_elements_filter) {
+        const vespalib::string& source_field = source.empty() ? field_name : source;
         if (has_attribute_manager()) {
             auto attr_ctx = getEnvironment().getAttributeManager()->createContext();
             if (attr_ctx->getAttribute(source_field) != nullptr) {
@@ -100,20 +119,19 @@ DocsumFieldWriterFactory::create_docsum_field_writer(const vespalib::string& fie
             } else {
                 fieldWriter = AttributeCombinerDFW::create(source_field, *attr_ctx, true, _matching_elems_fields);
             }
-            rc = static_cast<bool>(fieldWriter);
+            throw_if_nullptr(fieldWriter, command);
         }
-    } else if (overrideName == "matchedelementsfilter") {
-        const vespalib::string& source_field = argument.empty() ? fieldName : argument;
+    } else if (command == command::matched_elements_filter) {
+        const vespalib::string& source_field = source.empty() ? field_name : source;
         if (has_attribute_manager()) {
             auto attr_ctx = getEnvironment().getAttributeManager()->createContext();
             fieldWriter = MatchedElementsFilterDFW::create(source_field,*attr_ctx, _matching_elems_fields);
-            rc = static_cast<bool>(fieldWriter);
+            throw_if_nullptr(fieldWriter, command);
         }
-    } else if (overrideName == "documentid") {
+    } else if (command == command::documentid) {
         fieldWriter = std::make_unique<DocumentIdDFW>();
-        rc = true;
     } else {
-        throw IllegalArgumentException("unknown override operation '" + overrideName + "' for field '" + fieldName + "'.");
+        throw IllegalArgumentException("Unknown command '" + command + "'.");
     }
     return fieldWriter;
 }

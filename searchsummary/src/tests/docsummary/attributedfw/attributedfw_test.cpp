@@ -69,7 +69,7 @@ public:
     void expect_field(const vespalib::string& exp_slime_as_json, uint32_t docid) {
         vespalib::Slime act;
         vespalib::slime::SlimeInserter inserter(act);
-        _writer->insertField(docid, nullptr, &_state, search::docsummary::RES_JSONSTRING, inserter);
+        _writer->insertField(docid, nullptr, _state, inserter);
 
         SlimeValue exp(exp_slime_as_json);
         EXPECT_EQ(exp.slime, act);
@@ -135,19 +135,19 @@ TEST_F(AttributeDFWTest, matched_elements_fields_is_populated)
 TEST_F(AttributeDFWTest, filteres_matched_elements_in_array_attribute)
 {
     setup("array_str", true);
-    expect_filtered({}, "[]");
+    expect_filtered({}, "null");
     expect_filtered({0}, "[ 'a' ]");
     expect_filtered({1, 2}, "[ 'b', 'c' ]");
-    expect_filtered({3}, "[]");
+    expect_filtered({3}, "null");
 }
 
 TEST_F(AttributeDFWTest, filteres_matched_elements_in_wset_attribute)
 {
     setup("wset_str", true);
-    expect_filtered({}, "[]");
+    expect_filtered({}, "null");
     expect_filtered({0}, "[ {'item':'a', 'weight':1} ]");
     expect_filtered({1, 2}, "[ {'item':'b', 'weight':1}, {'item':'c', 'weight':1} ]");
-    expect_filtered({3}, "[]");
+    expect_filtered({3}, "null");
 }
 
 GTEST_MAIN_RUN_ALL_TESTS()

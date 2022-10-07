@@ -159,6 +159,25 @@ public class MetricsPacketsHandlerTest extends StateHandlerTestBase {
             if (dimensions.has("dim2")) assertDimension(packet, "host", HOST_DIMENSION);
         });
     }
+
+    @Test
+    public void prometheus_metrics() {
+        var context = StateMetricContext.newInstance(Map.of("dim-1", "value1"));
+        var snapshot = new MetricSnapshot();
+        snapshot.set(context, "gauge.metric", 0.2);
+        snapshot.add(context, "counter.metric", 5);
+        snapshotProvider.setSnapshot(snapshot);
+        var response = requestAsString("http://localhost/metrics-packets?format=prometheus");
+        var expectedResponse = """
+                # HELP gauge_metric_last\s
+                # TYPE gauge_metric_last untyped
+                gauge_metric_last{dim_1="value1",vespa_service="state-handler-test-base",} 0.2 0
+                # HELP counter_metric_count\s
+                # TYPE counter_metric_count untyped
+                counter_metric_count{dim_1="value1",vespa_service="state-handler-test-base",} 5 0
+                """;
+        assertEquals(expectedResponse, response);
+    }
     
     private List<JsonNode> incrementTimeAndGetJsonPackets() throws Exception {
         advanceToNextSnapshot();

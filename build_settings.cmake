@@ -60,7 +60,7 @@ if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR "${CMAKE_CXX_COMPILER_ID}" ST
     endif()
   endif()
 else()
-  set(CXX_SPECIFIC_WARN_OPTS "-Wnoexcept -Wsuggest-override -Wnon-virtual-dtor -Wformat-security")
+  set(CXX_SPECIFIC_WARN_OPTS "-Wnoexcept -Wsuggest-override -Wnon-virtual-dtor -Wformat-security -Wmismatched-tags")
   set(VESPA_GCC_LIB "gcc")
   set(VESPA_STDCXX_FS_LIB "stdc++fs")
 endif()
@@ -85,6 +85,9 @@ else()
 endif()
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DGOOGLE_PROTOBUF_NO_RDTSC")
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15.0)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DBOOST_NO_CXX98_FUNCTION_BASE")
+  endif()
 endif()
 
 # Linker flags

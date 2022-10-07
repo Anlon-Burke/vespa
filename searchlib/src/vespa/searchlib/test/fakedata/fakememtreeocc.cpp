@@ -12,12 +12,14 @@
 #include <vespa/vespalib/btree/btreenodeallocator.hpp>
 #include <vespa/vespalib/btree/btreenodestore.hpp>
 #include <vespa/vespalib/btree/btreeroot.hpp>
+#include <vespa/vespalib/datastore/compaction_strategy.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".fakememtreeocc");
 
 using search::fef::TermFieldMatchData;
 using search::fef::TermFieldMatchDataPosition;
+using vespalib::datastore::CompactionStrategy;
 
 namespace search::fakedata {
 
@@ -199,14 +201,12 @@ FakeMemTreeOccMgr::sync()
 void
 FakeMemTreeOccMgr::add(uint32_t wordIdx, index::DocIdAndFeatures &features)
 {
-    typedef FeatureStore::RefType RefType;
-
+    using Aligner = FeatureStore::Aligner;
     const FakeWord *fw = _fakeWords[wordIdx];
 
     std::pair<EntryRef, uint64_t> r =
         _featureStore.addFeatures(fw->getPackedIndex(), features);
-
-    _featureSizes[wordIdx] += RefType::align((r.second + 7) / 8) * 8;
+    _featureSizes[wordIdx] += Aligner::align((r.second + 7) / 8) * 8;
 
     _unflushed.push_back(PendingOp(wordIdx, features.doc_id(), r.first));
 
@@ -240,7 +240,7 @@ FakeMemTreeOccMgr::sortUnflushed()
 void
 FakeMemTreeOccMgr::flush()
 {
-    typedef FeatureStore::RefType RefType;
+    using Aligner = FeatureStore::Aligner;
     typedef std::vector<PendingOp>::iterator I;
 
     if (_unflushed.empty())
@@ -264,7 +264,7 @@ FakeMemTreeOccMgr::flush()
         if (i->getRemove()) {
             if (itr.valid() && itr.getKey() == docId) {
                 uint64_t bits = _featureStore.bitSize(fw->getPackedIndex(), EntryRef(itr.getData().get_features_relaxed()));
-                _featureSizes[wordIdx] -= RefType::align((bits + 7) / 8) * 8;
+                _featureSizes[wordIdx] -= Aligner::align((bits + 7) / 8) * 8;
                 tree.remove(itr);
             }
         } else {
@@ -282,7 +282,9 @@ FakeMemTreeOccMgr::compactTrees()
 {
     // compact full trees by calling incremental compaction methods in a loop
 
-    std::vector<uint32_t> toHold = _allocator.startCompact();
+    // Use a compaction strategy that will compact all active buffers
+    auto compaction_strategy = CompactionStrategy::make_compact_all_active_buffers_strategy();
+    auto compacting_buffers = _allocator.start_compact_worst(compaction_strategy);
     for (uint32_t wordIdx = 0; wordIdx < _postingIdxs.size(); ++wordIdx) {
         PostingIdx &pidx(*_postingIdxs[wordIdx].get());
         Tree &tree = pidx._tree;
@@ -293,7 +295,7 @@ FakeMemTreeOccMgr::compactTrees()
             itr.moveNextLeafNode();
         }
     }
-    _allocator.finishCompact(toHold);
+    compacting_buffers->finish();
     sync();
 }
 

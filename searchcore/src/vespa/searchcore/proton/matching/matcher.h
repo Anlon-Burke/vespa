@@ -2,13 +2,13 @@
 
 #pragma once
 
-#include "i_constant_value_repo.h"
+#include "i_ranking_assets_repo.h"
+#include "docsum_matcher.h"
 #include "indexenvironment.h"
 #include "matching_stats.h"
+#include "querylimiter.h"
 #include "search_session.h"
 #include "viewresolver.h"
-#include "docsum_matcher.h"
-#include <vespa/searchcore/proton/matching/querylimiter.h>
 #include <vespa/searchcommon/attribute/i_attribute_functor.h>
 #include <vespa/searchlib/fef/blueprintfactory.h>
 #include <vespa/searchlib/common/featureset.h>
@@ -69,10 +69,7 @@ private:
     size_t computeNumThreadsPerSearch(search::queryeval::Blueprint::HitEstimate hits,
                                       const Properties & rankProperties) const;
 public:
-    /**
-     * Convenience typedefs.
-     */
-    typedef std::shared_ptr<Matcher> SP;
+    using SP = std::shared_ptr<Matcher>;
 
 
     Matcher(const Matcher &) = delete;
@@ -87,11 +84,9 @@ public:
      * @param props ranking configuration
      * @param clock used for timeout handling
      **/
-    Matcher(const search::index::Schema &schema, const Properties &props,
+    Matcher(const search::index::Schema &schema, Properties props,
             const vespalib::Clock &clock, QueryLimiter &queryLimiter,
-            const IConstantValueRepo &constantValueRepo,
-            RankingExpressions rankingExpressions, OnnxModels onnxModels,
-            uint32_t distributionKey);
+            const IRankingAssetsRepo &rankingAssetsRepo, uint32_t distributionKey);
 
     const search::fef::IIndexEnvironment &get_index_env() const { return _indexEnv; }
 
@@ -109,7 +104,8 @@ public:
     std::unique_ptr<MatchToolsFactory>
     create_match_tools_factory(const search::engine::Request &request, ISearchContext &searchContext,
                                IAttributeContext &attrContext, const search::IDocumentMetaStore &metaStore,
-                               const Properties &feature_overrides, bool is_search) const;
+                               const Properties &feature_overrides, vespalib::ThreadBundle &thread_bundle,
+                               bool is_search) const;
 
     /**
      * Perform a search against this matcher.
@@ -126,6 +122,7 @@ public:
     match(const SearchRequest &request, vespalib::ThreadBundle &threadBundle,
           ISearchContext &searchContext, IAttributeContext &attrContext,
           SessionManager &sessionManager, const search::IDocumentMetaStore &metaStore,
+          const bucketdb::BucketDBOwner & bucketdb,
           SearchSession::OwnershipBundle &&owned_objects);
 
     /**
@@ -140,7 +137,7 @@ public:
      **/
     search::FeatureSet::SP
     getSummaryFeatures(const DocsumRequest & req, ISearchContext & searchCtx,
-                       IAttributeContext & attrCtx, SessionManager &sessionManager);
+                       IAttributeContext & attrCtx, SessionManager &sessionManager) const;
 
     /**
      * Perform matching for the documents in the given docsum request
@@ -154,7 +151,7 @@ public:
      **/
     search::FeatureSet::SP
     getRankFeatures(const DocsumRequest & req, ISearchContext & searchCtx,
-                    IAttributeContext & attrCtx, SessionManager &sessionManager);
+                    IAttributeContext & attrCtx, SessionManager &sessionManager) const;
 
     /**
      * Perform partial matching for the documents in the given docsum request
@@ -170,16 +167,15 @@ public:
      **/
     MatchingElements::UP get_matching_elements(const DocsumRequest &req, ISearchContext &search_ctx,
                                                IAttributeContext &attr_ctx, SessionManager &session_manager,
-                                               const MatchingElementsFields &fields);
+                                               const MatchingElementsFields &fields) const;
 
     DocsumMatcher::UP create_docsum_matcher(const DocsumRequest &req, ISearchContext &search_ctx,
-                                            IAttributeContext &attr_ctx, SessionManager &session_manager);
+                                            IAttributeContext &attr_ctx, SessionManager &session_manager) const;
 
     /**
      * @return true if this rankprofile has summary-features enabled
      **/
     bool canProduceSummaryFeatures() const;
-    double get_termwise_limit() const;
 };
 
 }

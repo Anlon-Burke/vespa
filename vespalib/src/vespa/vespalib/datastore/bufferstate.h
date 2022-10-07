@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "buffer_free_list.h"
+#include "buffer_stats.h"
 #include "buffer_type.h"
 #include "entryref.h"
 #include <vespa/vespalib/util/generationhandler.h>
@@ -30,17 +32,6 @@ class BufferState
 public:
     using Alloc = vespalib::alloc::Alloc;
 
-    class FreeListList
-    {
-    public:
-        BufferState *_head;
-
-        FreeListList() : _head(nullptr) { }
-        ~FreeListList();
-    };
-
-    using FreeList = vespalib::Array<EntryRef>;
-
     enum class State : uint8_t {
         FREE,
         ACTIVE,
@@ -48,23 +39,8 @@ public:
     };
 
 private:
-    std::atomic<ElemCount>     _usedElems;
-    std::atomic<ElemCount>     _allocElems;
-    std::atomic<ElemCount>     _deadElems;
-    std::atomic<ElemCount>     _holdElems;
-    // Number of bytes that are heap allocated by elements that are stored in this buffer.
-    // For simple types this is 0.
-    std::atomic<size_t>        _extraUsedBytes;
-    // Number of bytes that are heap allocated by elements that are stored in this buffer and is now on hold.
-    // For simple types this is 0.
-    std::atomic<size_t>        _extraHoldBytes;
-    FreeList      _freeList;
-    FreeListList *_freeListList;    // non-nullptr if free lists are enabled
-
-    // nullptr if not on circular list of buffer states with free elems
-    BufferState    *_nextHasFree;
-    BufferState    *_prevHasFree;
-
+    InternalBufferStats _stats;
+    BufferFreeList _free_list;
     std::atomic<BufferTypeBase*> _typeHandler;
     Alloc           _buffer;
     uint32_t        _arraySize;
@@ -107,63 +83,37 @@ public:
     void onFree(std::atomic<void*>& buffer);
 
     /**
-     * Set list of buffer states with nonempty free lists.
-     *
-     * @param freeListList  List of buffer states. If nullptr then free lists are disabled.
-     */
-    void setFreeListList(FreeListList *freeListList);
-
-    void disableFreeList() { setFreeListList(nullptr); }
-
-    /**
-     * Add buffer state to list of buffer states with nonempty free lists.
-     */
-    void addToFreeListList();
-
-    /**
-     * Remove buffer state from list of buffer states with nonempty free lists.
-     */
-    void removeFromFreeListList();
-
-    /**
-     * Disable hold of elements, just mark then as dead without cleanup.
+     * Disable hold of elements, just mark elements as dead without cleanup.
      * Typically used when tearing down data structure in a controlled manner.
      */
     void disableElemHoldList();
 
     /**
-     * Pop element from free list.
+     * Update stats to reflect that the given elements are put on hold.
+     * Returns true if element hold list is disabled for this buffer.
      */
-    EntryRef popFreeList() {
-        EntryRef ret = _freeList.back();
-        _freeList.pop_back();
-        if (isFreeListEmpty()) {
-            removeFromFreeListList();
-        }
-        _deadElems.store(getDeadElems() - _arraySize, std::memory_order_relaxed);
-        return ret;
-    }
+    bool hold_elems(size_t num_elems, size_t extra_bytes);
 
-    size_t size() const { return _usedElems.load(std::memory_order_relaxed); }
-    size_t capacity() const { return _allocElems.load(std::memory_order_relaxed); }
-    size_t remaining() const { return capacity() - size(); }
-    void pushed_back(size_t numElems) {
-        pushed_back(numElems, 0);
-    }
-    void pushed_back(size_t numElems, size_t extraBytes) {
-        _usedElems.store(size() + numElems, std::memory_order_relaxed);
-        _extraUsedBytes.store(getExtraUsedBytes() + extraBytes, std::memory_order_relaxed);
-    }
-    void cleanHold(void *buffer, size_t offset, ElemCount numElems) {
-        getTypeHandler()->cleanHold(buffer, offset, numElems, BufferTypeBase::CleanContext(_extraUsedBytes, _extraHoldBytes));
-    }
+    /**
+     * Free the given elements and update stats accordingly.
+     *
+     * The given entry ref is put on the free list (if enabled).
+     * Hold cleaning of elements is executed on the buffer type.
+     */
+    void free_elems(EntryRef ref, size_t num_elems, bool was_held, size_t ref_offset);
+
+    BufferStats& stats() { return _stats; }
+    const BufferStats& stats() const { return _stats; }
+
+    void enable_free_list(FreeList& type_free_list) { _free_list.enable(type_free_list); }
+    void disable_free_list() { _free_list.disable(); }
+
+    size_t size() const { return _stats.size(); }
+    size_t capacity() const { return _stats.capacity(); }
+    size_t remaining() const { return _stats.remaining(); }
     void dropBuffer(uint32_t buffer_id, std::atomic<void*>& buffer);
     uint32_t getTypeId() const { return _typeId; }
     uint32_t getArraySize() const { return _arraySize; }
-    size_t getDeadElems() const { return _deadElems.load(std::memory_order_relaxed); }
-    size_t getHoldElems() const { return _holdElems.load(std::memory_order_relaxed); }
-    size_t getExtraUsedBytes() const { return _extraUsedBytes.load(std::memory_order_relaxed); }
-    size_t getExtraHoldBytes() const { return _extraHoldBytes.load(std::memory_order_relaxed); }
     bool getCompacting() const { return _compacting; }
     void setCompacting() { _compacting = true; }
     uint32_t get_used_arrays() const noexcept { return size() / _arraySize; }
@@ -179,19 +129,6 @@ public:
     const BufferTypeBase *getTypeHandler() const { return _typeHandler.load(std::memory_order_relaxed); }
     BufferTypeBase *getTypeHandler() { return _typeHandler.load(std::memory_order_relaxed); }
 
-    void incDeadElems(size_t value) { _deadElems.store(getDeadElems() + value, std::memory_order_relaxed); }
-    void incHoldElems(size_t value) { _holdElems.store(getHoldElems() + value, std::memory_order_relaxed); }
-    void decHoldElems(size_t value);
-    void incExtraUsedBytes(size_t value) { _extraUsedBytes.store(getExtraUsedBytes() + value, std::memory_order_relaxed); }
-    void incExtraHoldBytes(size_t value) {
-        _extraHoldBytes.store(getExtraHoldBytes() + value, std::memory_order_relaxed);
-    }
-
-    bool hasDisabledElemHoldList() const { return _disableElemHoldList; }
-    bool isFreeListEmpty() const { return _freeList.empty();}
-    FreeList &freeList() { return _freeList; }
-    const FreeListList *freeListList() const { return _freeListList; }
-    FreeListList *freeListList() { return _freeListList; }
     void resume_primary_buffer(uint32_t buffer_id);
 
 };

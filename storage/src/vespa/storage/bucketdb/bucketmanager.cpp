@@ -40,9 +40,8 @@ BucketManager::BucketManager(const config::ConfigUri & configUri,
       _clusterStateLock(),
       _queueProcessingLock(),
       _queuedReplies(),
-      _firstEqualClusterStateVersion(0),
-      _lastClusterStateSeen(0),
-      _lastUnifiedClusterState(""),
+      _last_cluster_state_version_initiated(0),
+      _last_cluster_state_version_completed(0),
       _doneInitialized(false),
       _requestsCurrentlyProcessing(0),
       _component(compReg, "bucketmanager"),
@@ -289,7 +288,7 @@ void BucketManager::run(framework::ThreadHandle& thread)
         bool didWork = false;
         BucketInfoRequestMap infoReqs;
         {
-            std::lock_guard<std::mutex> guard(_workerLock);
+            std::lock_guard guard(_workerLock);
             infoReqs.swap(_bucketInfoRequests);
         }
 
@@ -298,7 +297,7 @@ void BucketManager::run(framework::ThreadHandle& thread)
         }
 
         {
-            std::unique_lock<std::mutex> guard(_workerLock);
+            std::unique_lock guard(_workerLock);
             for (const auto &req : infoReqs) {
                 assert(req.second.empty());
             }
@@ -376,8 +375,8 @@ BucketManager::reportStatus(std::ostream& out,
     } else {
         framework::PartlyHtmlStatusReporter htmlReporter(*this);
         htmlReporter.reportHtmlHeader(out, path);
-            // Print menu
-        out << "<font size=\"-1\">[ <a href=\"/\">Back to top</a>"
+        // Print menu
+        out << "<font size=\"-1\">[ <a href=\"../\">Back to top</a>"
             << " | <a href=\"?showall\">Show all buckets</a> ]</font>";
         htmlReporter.reportHtmlFooter(out, path);
     }
@@ -413,7 +412,7 @@ bool BucketManager::onRequestBucketInfo(
     LOG(debug, "Got request bucket info command %s", cmd->toString().c_str());
     if (cmd->getBuckets().size() == 0 && cmd->hasSystemState()) {
 
-        std::lock_guard<std::mutex> guard(_workerLock);
+        std::lock_guard guard(_workerLock);
         _bucketInfoRequests[cmd->getBucketSpace()].push_back(cmd);
         _workerCond.notify_all();
         LOG(spam, "Scheduled request bucket info request for retrieval");
@@ -459,24 +458,6 @@ bool BucketManager::onRequestBucketInfo(
     return true;
 }
 
-namespace {
-    std::string unifyState(const lib::ClusterState& state) {
-        std::vector<char> distributors(
-                state.getNodeCount(lib::NodeType::DISTRIBUTOR), 'd');
-
-        uint32_t length = 0;
-        for (uint32_t i = 0; i < distributors.size(); ++i) {
-            const lib::NodeState& ns(state.getNodeState(
-                    lib::Node(lib::NodeType::DISTRIBUTOR, i)));
-            if (ns.getState().oneOf("uirm")) {
-                distributors[i] = 'u';
-                length = i + 1;
-            }
-        }
-        return std::string(&distributors[0], length);
-    }
-}
-
 BucketManager::ScopedQueueDispatchGuard::ScopedQueueDispatchGuard(
         BucketManager& mgr)
     : _mgr(mgr)
@@ -492,7 +473,7 @@ BucketManager::ScopedQueueDispatchGuard::~ScopedQueueDispatchGuard()
 void
 BucketManager::enterQueueProtectedSection()
 {
-    std::lock_guard<std::mutex> guard(_queueProcessingLock);
+    std::lock_guard guard(_queueProcessingLock);
     ++_requestsCurrentlyProcessing;
 }
 
@@ -500,7 +481,7 @@ void
 BucketManager::leaveQueueProtectedSection(ScopedQueueDispatchGuard& queueGuard)
 {
     (void) queueGuard; // Only used to enforce guard is held while calling.
-    std::lock_guard<std::mutex> guard(_queueProcessingLock);
+    std::lock_guard guard(_queueProcessingLock);
     assert(_requestsCurrentlyProcessing > 0);
     // Full bucket info fetches may be concurrently interleaved with bucket-
     // specific fetches outside of the processing thread. We only allow queued
@@ -548,32 +529,28 @@ BucketManager::processRequestBucketInfoCommands(document::BucketSpace bucketSpac
         clusterState->toString().c_str(),
         our_hash.c_str());
 
-    std::lock_guard<std::mutex> clusterStateGuard(_clusterStateLock);
+    std::lock_guard clusterStateGuard(_clusterStateLock);
     for (auto it = reqs.rbegin(); it != reqs.rend(); ++it) {
         // Currently small requests should not be forwarded to worker thread
         assert((*it)->hasSystemState());
         const auto their_hash = (*it)->getDistributionHash();
 
         std::ostringstream error;
-        if (clusterState->getVersion() != _lastClusterStateSeen) {
+        if ((clusterState->getVersion() != _last_cluster_state_version_initiated) ||
+            (_last_cluster_state_version_initiated != _last_cluster_state_version_completed))
+        {
             // Calling onSetSystemState() on _this_ component and actually switching over
             // to another cluster state version does not happen atomically. Detect and
             // gracefully deal with the case where we're not internally in sync.
             error << "Inconsistent internal cluster state on node during transition; "
                   << "failing request from distributor " << (*it)->getDistributor()
                   << " so it can be retried. Node version is " << clusterState->getVersion()
-                  << ", but last version seen by the bucket manager is " << _lastClusterStateSeen;
-        } else if ((*it)->getSystemState().getVersion() > _lastClusterStateSeen) {
+                  << ", last version seen by the bucket manager is " << _last_cluster_state_version_initiated
+                  << ", last internally converged version is " << _last_cluster_state_version_completed;
+        } else if ((*it)->getSystemState().getVersion() != _last_cluster_state_version_initiated) {
             error << "Ignoring bucket info request for cluster state version "
                   << (*it)->getSystemState().getVersion() << " as newest "
-                  << "version we know of is " << _lastClusterStateSeen;
-        } else if ((*it)->getSystemState().getVersion()
-                    < _firstEqualClusterStateVersion)
-        {
-            error << "Ignoring bucket info request for cluster state version "
-                  << (*it)->getSystemState().getVersion() << " as versions "
-                  << "from version " << _firstEqualClusterStateVersion
-                  << " differs from this state.";
+                  << "version we know of is " << _last_cluster_state_version_initiated;
         } else if (!their_hash.empty() && their_hash != our_hash) {
             // Mismatching config hash indicates nodes are out of sync with their config generations
             error << "Distributor config hash is not equal to our own; must reject request (our hash: "
@@ -714,20 +691,35 @@ BucketManager::verifyAndUpdateLastModified(api::StorageCommand& cmd,
 }
 
 bool
-BucketManager::onSetSystemState(
-            const std::shared_ptr<api::SetSystemStateCommand>& cmd)
+BucketManager::onSetSystemState(const std::shared_ptr<api::SetSystemStateCommand>& cmd)
 {
     LOG(debug, "onSetSystemState(%s)", cmd->toString().c_str());
     const lib::ClusterState& state(cmd->getSystemState());
-    std::string unified(unifyState(state));
-    std::lock_guard<std::mutex> lock(_clusterStateLock);
-    if (unified != _lastUnifiedClusterState
-        || state.getVersion() != _lastClusterStateSeen + 1)
-    {
-        _lastUnifiedClusterState = unified;
-        _firstEqualClusterStateVersion = state.getVersion();
-    }
-    _lastClusterStateSeen = state.getVersion();
+    std::lock_guard lock(_clusterStateLock);
+    // At this point, the incoming cluster state version has not yet been enabled on this node;
+    // it's on its merry way down to the StateManager which handles internal transitions.
+    // We must take note of the fact that it will _soon_ be enabled, and must avoid processing
+    // any bucket info requests until any and all side effects caused by this process are
+    // visible in the bucket DB. Failure to enforce this may cause bucket DB iterations to happen
+    // concurrently with transition-induced mutations, causing inconsistent results.
+    // We will not allow processing bucket info fetches until we've observed the _reply_ of the
+    // state command. Such replies are always ordered _after_ side effects of state enabling have
+    // become visible in the bucket DB. See onSetSystemStateReply().
+    _last_cluster_state_version_initiated = state.getVersion();
+    return false;
+}
+
+bool
+BucketManager::onSetSystemStateReply(const std::shared_ptr<api::SetSystemStateReply>& reply)
+{
+    LOG(debug, "onSetSystemStateReply(%s)", reply->toString().c_str());
+    std::lock_guard lock(_clusterStateLock);
+    // This forms part 2 of the cluster state visibility barrier that was initiated when
+    // we first observed the new cluster state version in onSetSystemState(). After this
+    // point, bucket info requests may be processed (assuming no new cluster state versions
+    // have arrived concurrently). In the case of racing cluster states, internal FIFO ordering
+    // of messages shall ensure we eventually end up with a consistent view of observed versions.
+    _last_cluster_state_version_completed = reply->getSystemState().getVersion();
     return false;
 }
 
@@ -830,7 +822,7 @@ BucketManager::enqueueIfBucketHasConflicts(const api::BucketReply::SP& reply)
 {
     // Should very rarely contend, since persistence replies are all sent up
     // via a single dispatcher thread.
-    std::lock_guard<std::mutex> guard(_queueProcessingLock);
+    std::lock_guard guard(_queueProcessingLock);
     if (_requestsCurrentlyProcessing == 0) {
         return false; // Nothing to do here; pass through reply.
     }
@@ -867,7 +859,7 @@ bool
 BucketManager::enqueueAsConflictIfProcessingRequest(
         const api::StorageReply::SP& reply)
 {
-    std::lock_guard<std::mutex> guard(_queueProcessingLock);
+    std::lock_guard guard(_queueProcessingLock);
     if (_requestsCurrentlyProcessing != 0) {
         LOG(debug, "Enqueued %s due to concurrent RequestBucketInfo",
             reply->toString().c_str());

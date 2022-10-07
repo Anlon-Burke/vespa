@@ -38,7 +38,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private Zone zone;
     private final Set<ContainerEndpoint> endpoints = Collections.emptySet();
     private boolean useDedicatedNodeForLogserver = false;
-    private boolean useThreePhaseUpdates = false;
     private double defaultTermwiseLimit = 1.0;
     private String jvmGCOptions = null;
     private String queryDispatchPolicy = "adaptive";
@@ -56,8 +55,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private int maxActivationInhibitedOutOfSyncGroups = 0;
     private List<TenantSecretStore> tenantSecretStores = Collections.emptyList();
     private String jvmOmitStackTraceInFastThrowOption;
-    private int maxConcurrentMergesPerNode = 16;
-    private int maxMergeQueueSize = 100;
     private boolean allowDisableMtls = true;
     private List<X509Certificate> operatorCertificates = Collections.emptyList();
     private double resourceLimitDisk = 0.75;
@@ -66,18 +63,10 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private boolean containerDumpHeapOnShutdownTimeout = false;
     private double containerShutdownTimeout = 50.0;
     private int maxUnCommittedMemory = 123456;
-    private boolean unorderedMergeChaining = true;
     private List<String> zoneDnsSuffixes = List.of();
     private int maxCompactBuffers = 1;
-    private String mergeThrottlingPolicy = "STATIC";
-    private double persistenceThrottlingWsDecrementFactor = 1.2;
-    private double persistenceThrottlingWsBackoff = 0.95;
-    private int persistenceThrottlingWindowSize = -1;
-    private double persistenceThrottlingWsResizeRate = 3.0;
-    private boolean persistenceThrottlingOfMergeFeedOps = true;
     private boolean useV8GeoPositions = true;
     private List<String> environmentVariables = List.of();
-    private boolean enableBitVectors = false;
     private boolean loadCodeAsHugePages = false;
     private boolean sharedStringRepoNoReclaim = false;
     private boolean useTwoPhaseDocumentGc = false;
@@ -89,6 +78,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private int rpc_events_before_wakeup = 1;
     private int mbus_network_threads = 1;
     private Architecture adminClusterNodeResourcesArchitecture = Architecture.getDefault();
+    private boolean useRestrictedDataPlaneBindings = false;
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
     @Override public boolean multitenant() { return multitenant; }
@@ -107,7 +97,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public boolean useDedicatedNodeForLogserver() { return useDedicatedNodeForLogserver; }
     @Override public Optional<EndpointCertificateSecrets> endpointCertificateSecrets() { return endpointCertificateSecrets; }
     @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
-    @Override public boolean useThreePhaseUpdates() { return useThreePhaseUpdates; }
     @Override public Optional<AthenzDomain> athenzDomain() { return Optional.ofNullable(athenzDomain); }
     @Override public String responseSequencerType() { return responseSequencerType; }
     @Override public int defaultNumResponseThreads() { return responseNumThreads; }
@@ -120,26 +109,16 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public String jvmOmitStackTraceInFastThrowOption(ClusterSpec.Type type) { return jvmOmitStackTraceInFastThrowOption; }
     @Override public boolean allowDisableMtls() { return allowDisableMtls; }
     @Override public List<X509Certificate> operatorCertificates() { return operatorCertificates; }
-    @Override public int maxConcurrentMergesPerNode() { return maxConcurrentMergesPerNode; }
-    @Override public int maxMergeQueueSize() { return maxMergeQueueSize; }
     @Override public double resourceLimitDisk() { return resourceLimitDisk; }
     @Override public double resourceLimitMemory() { return resourceLimitMemory; }
     @Override public double minNodeRatioPerGroup() { return minNodeRatioPerGroup; }
     @Override public double containerShutdownTimeout() { return containerShutdownTimeout; }
     @Override public boolean containerDumpHeapOnShutdownTimeout() { return containerDumpHeapOnShutdownTimeout; }
     @Override public int maxUnCommittedMemory() { return maxUnCommittedMemory; }
-    @Override public boolean unorderedMergeChaining() { return unorderedMergeChaining; }
     @Override public List<String> zoneDnsSuffixes() { return zoneDnsSuffixes; }
     @Override public int maxCompactBuffers() { return maxCompactBuffers; }
-    @Override public String mergeThrottlingPolicy() { return mergeThrottlingPolicy; }
-    @Override public double persistenceThrottlingWsDecrementFactor() { return persistenceThrottlingWsDecrementFactor; }
-    @Override public double persistenceThrottlingWsBackoff() { return persistenceThrottlingWsBackoff; }
-    @Override public int persistenceThrottlingWindowSize() { return persistenceThrottlingWindowSize; }
-    @Override public double persistenceThrottlingWsResizeRate() { return persistenceThrottlingWsResizeRate; }
-    @Override public boolean persistenceThrottlingOfMergeFeedOps() { return persistenceThrottlingOfMergeFeedOps; }
     @Override public boolean useV8GeoPositions() { return useV8GeoPositions; }
     @Override public List<String> environmentVariables() { return environmentVariables; }
-    @Override public boolean enableBitVectors() { return this.enableBitVectors; }
     @Override public Architecture adminClusterArchitecture() { return adminClusterNodeResourcesArchitecture; }
     @Override public boolean sharedStringRepoNoReclaim() { return sharedStringRepoNoReclaim; }
     @Override public boolean loadCodeAsHugePages() { return loadCodeAsHugePages; }
@@ -153,6 +132,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public String queryDispatchPolicy() { return queryDispatchPolicy; }
     @Override public boolean useTwoPhaseDocumentGc() { return useTwoPhaseDocumentGc; }
     @Override public String phraseOptimization() { return phraseOptimization; }
+    @Override public boolean useRestrictedDataPlaneBindings() { return useRestrictedDataPlaneBindings; }
 
     public TestProperties sharedStringRepoNoReclaim(boolean sharedStringRepoNoReclaim) {
         this.sharedStringRepoNoReclaim = sharedStringRepoNoReclaim;
@@ -222,22 +202,8 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
-    public TestProperties setMaxConcurrentMergesPerNode(int maxConcurrentMergesPerNode) {
-        this.maxConcurrentMergesPerNode = maxConcurrentMergesPerNode;
-        return this;
-    }
-    public TestProperties setMaxMergeQueueSize(int maxMergeQueueSize) {
-        this.maxMergeQueueSize = maxMergeQueueSize;
-        return this;
-    }
-
     public TestProperties setDefaultTermwiseLimit(double limit) {
         defaultTermwiseLimit = limit;
-        return this;
-    }
-
-    public TestProperties setUseThreePhaseUpdates(boolean useThreePhaseUpdates) {
-        this.useThreePhaseUpdates = useThreePhaseUpdates;
         return this;
     }
 
@@ -326,11 +292,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
-    public TestProperties setUnorderedMergeChaining(boolean unordered) {
-        unorderedMergeChaining = unordered;
-        return this;
-    }
-
     public TestProperties setZoneDnsSuffixes(List<String> zoneDnsSuffixes) {
         this.zoneDnsSuffixes = List.copyOf(zoneDnsSuffixes);
         return this;
@@ -341,36 +302,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
         return this;
     }
 
-    public TestProperties setMergeThrottlingPolicy(String policy) {
-        this.mergeThrottlingPolicy = policy;
-        return this;
-    }
-
-    public TestProperties setPersistenceThrottlingWsDecrementFactor(double factor) {
-        this.persistenceThrottlingWsDecrementFactor = factor;
-        return this;
-    }
-
-    public TestProperties setPersistenceThrottlingWsBackoff(double backoff) {
-        this.persistenceThrottlingWsBackoff = backoff;
-        return this;
-    }
-
-    public TestProperties setPersistenceThrottlingWindowSize(int windowSize) {
-        this.persistenceThrottlingWindowSize = windowSize;
-        return this;
-    }
-
-    public TestProperties setPersistenceThrottlingWsResizeRate(double resizeRate) {
-        this.persistenceThrottlingWsResizeRate = resizeRate;
-        return this;
-    }
-
-    public TestProperties setPersistenceThrottlingOfMergeFeedOps(boolean throttleOps) {
-        this.persistenceThrottlingOfMergeFeedOps = throttleOps;
-        return this;
-    }
-
     public TestProperties setUseV8GeoPositions(boolean value) {
         this.useV8GeoPositions = value;
         return this;
@@ -378,11 +309,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setEnvironmentVariables(List<String> value) {
         this.environmentVariables = value;
-        return this;
-    }
-
-    public TestProperties setEnableBitVectors(boolean value) {
-        this.enableBitVectors = value;
         return this;
     }
 
@@ -422,6 +348,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setUseTwoPhaseDocumentGc(boolean useTwoPhase) {
         this.useTwoPhaseDocumentGc = useTwoPhase;
+        return this;
+    }
+
+    public TestProperties setUseRestrictedDataPlaneBindings(boolean useRestrictedDataPlaneBindings) {
+        this.useRestrictedDataPlaneBindings = useRestrictedDataPlaneBindings;
         return this;
     }
 

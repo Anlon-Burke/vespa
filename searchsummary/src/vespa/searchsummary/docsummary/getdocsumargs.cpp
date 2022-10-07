@@ -32,20 +32,15 @@ GetDocsumArgs::initFromDocsumRequest(const engine::DocsumRequest &req)
 }
 
 void
-GetDocsumArgs::SetStackDump(uint32_t stackDumpLen, const char *stackDump)
+GetDocsumArgs::setStackDump(uint32_t stackDumpLen, const char *stackDump)
 {
     _stackDump.resize(stackDumpLen);
     memcpy(&_stackDump[0], stackDump, _stackDump.size());
 }
 
 bool
-GetDocsumArgs::needField(vespalib::stringref field) const {
+GetDocsumArgs::need_field(vespalib::stringref field) const {
     return _fields.empty() || _fields.contains(field);
-}
-
-void
-GetDocsumArgs::add_field(vespalib::stringref field) {
-    _fields.insert(field);
 }
 
 }

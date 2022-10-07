@@ -1,5 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
+#include "proton.h"
 #include "disk_mem_usage_sampler.h"
 #include "document_db_explorer.h"
 #include "fileconfigmanager.h"
@@ -8,7 +9,6 @@
 #include "memoryflush.h"
 #include "persistencehandlerproxy.h"
 #include "prepare_restart_handler.h"
-#include "proton.h"
 #include "proton_config_snapshot.h"
 #include "proton_disk_layout.h"
 #include "proton_thread_pools_explorer.h"
@@ -115,11 +115,10 @@ setFS4Compression(const ProtonConfig & proton)
 DiskMemUsageSampler::Config
 diskMemUsageSamplerConfig(const ProtonConfig &proton, const HwInfo &hwInfo)
 {
-    return DiskMemUsageSampler::Config(
-            proton.writefilter.memorylimit,
-            proton.writefilter.disklimit,
-            vespalib::from_s(proton.writefilter.sampleinterval),
-            hwInfo);
+    return { proton.writefilter.memorylimit,
+             proton.writefilter.disklimit,
+             vespalib::from_s(proton.writefilter.sampleinterval),
+             hwInfo };
 }
 
 uint32_t
@@ -135,7 +134,7 @@ computeRpcTransportThreads(const ProtonConfig & cfg, const HwInfo::Cpu &cpuInfo)
 struct MetricsUpdateHook : metrics::UpdateHook
 {
     Proton &self;
-    MetricsUpdateHook(Proton &s)
+    explicit MetricsUpdateHook(Proton &s)
         : metrics::UpdateHook("proton-hook"),
           self(s)
     {}
@@ -427,14 +426,14 @@ Proton::addDocumentDB(const DocTypeName &docTypeName,
                 "Did not find document type '%s' in the document manager. "
                 "Skipping creating document database for this type",
                 docTypeName.toString().c_str());
-            return std::shared_ptr<DocumentDBConfigOwner>();
+            return {};
         }
     } catch (const document::DocumentTypeNotFoundException & e) {
         LOG(warning,
             "Did not find document type '%s' in the document manager. "
             "Skipping creating document database for this type",
             docTypeName.toString().c_str());
-        return std::shared_ptr<DocumentDBConfigOwner>();
+        return {};
     }
 }
 
@@ -537,14 +536,15 @@ size_t Proton::getNumDocs() const
     return numDocs;
 }
 
-size_t Proton::getNumActiveDocs() const
+ActiveDocs
+Proton::getNumActiveDocs() const
 {
-    size_t numDocs(0);
+    ActiveDocs sum;
     std::shared_lock<std::shared_mutex> guard(_mutex);
     for (const auto &kv : _documentDBMap) {
-        numDocs += kv.second->getNumActiveDocs();
+        sum += kv.second->getNumActiveDocs();
     }
-    return numDocs;
+    return sum;
 }
 
 search::engine::SearchServer &
@@ -643,7 +643,7 @@ Proton::addDocumentDB(const document::DocumentType &docType,
     } catch (vespalib::Exception &e) {
         LOG(warning, "Failed to start database for document type '%s'; %s",
             docTypeName.toString().c_str(), e.what());
-        return DocumentDB::SP();
+        return {};
     }
     // Wait for replay done on document dbs added due to reconfigs, since engines are already up and running.
     // Also wait for document db reaching online state if initializing in sequence.
@@ -725,8 +725,16 @@ Proton::ping(std::unique_ptr<MonitorRequest>, MonitorClient &)
     BootstrapConfig::SP configSnapshot = getActiveConfigSnapshot();
     const ProtonConfig &protonConfig = configSnapshot->getProtonConfig();
     ret.distribution_key = protonConfig.distributionkey;
-    ret.timestamp = (_matchEngine->isOnline()) ? 42 : 0;
-    ret.activeDocs = (_matchEngine->isOnline()) ? getNumActiveDocs() : 0;
+    if (_matchEngine->isOnline()) {
+        ret.timestamp = 42;
+        auto docs = getNumActiveDocs();
+        ret.activeDocs = docs.active;
+        ret.targetActiveDocs = docs.target_active;
+    } else {
+        ret.timestamp = 0;
+        ret.activeDocs = 0;
+        ret.targetActiveDocs = 0; // TODO vekterli hmm... or target anyway ...
+    }
     ret.is_blocking_writes = !_diskMemUsageSampler->writeFilter().acceptWriteOperation();
     return reply;
 }
@@ -932,11 +940,10 @@ struct DocumentDBMapExplorer : vespalib::StateExplorer {
         return names;
     }
     std::unique_ptr<vespalib::StateExplorer> get_child(vespalib::stringref name) const override {
-        typedef std::unique_ptr<StateExplorer> Explorer_UP;
         std::shared_lock<std::shared_mutex> guard(mutex);
         auto result = documentDBMap.find(DocTypeName(vespalib::string(name)));
         if (result == documentDBMap.end()) {
-            return Explorer_UP(nullptr);
+            return {};
         }
         return std::make_unique<DocumentDBExplorer>(result->second);
     }
@@ -958,7 +965,6 @@ Proton::get_children_names() const
 std::unique_ptr<vespalib::StateExplorer>
 Proton::get_child(vespalib::stringref name) const
 {
-    typedef std::unique_ptr<StateExplorer> Explorer_UP;
     if (name == MATCH_ENGINE && _matchEngine) {
         return std::make_unique<StateExplorerProxy>(*_matchEngine);
     } else if (name == DOCUMENT_DB) {
@@ -982,7 +988,7 @@ Proton::get_child(vespalib::stringref name) const
     } else if (name == HW_INFO) {
         return std::make_unique<HwInfoExplorer>(_hw_info);
     }
-    return Explorer_UP(nullptr);
+    return {};
 }
 
 std::shared_ptr<IDocumentDBReferenceRegistry>

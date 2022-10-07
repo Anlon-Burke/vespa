@@ -36,13 +36,13 @@
         <aopalliance.version>1.0</aopalliance.version>
         <guava.version>27.1-jre</guava.version>
         <guice.version>4.2.3</guice.version>
-        <jackson2.version>2.13.3</jackson2.version>
+        <jackson2.version>2.13.4</jackson2.version>
         <jackson-databind.version>${jackson2.version}</jackson-databind.version>
         <javax.inject.version>1</javax.inject.version>
         <javax.servlet-api.version>3.1.0</javax.servlet-api.version>
         <javax.ws.rs-api.version>2.0.1</javax.ws.rs-api.version>
         <jaxb.version>2.3.0</jaxb.version>
-        <jetty.version>9.4.48.v20220622</jetty.version>
+        <jetty.version>9.4.49.v20220914</jetty.version>
         <jetty-alpn.version>1.1.3.v20160715</jetty-alpn.version>
         <org.lz4.version>1.8.0</org.lz4.version>
         <org.json.version>20220320</org.json.version>
@@ -169,8 +169,6 @@
                                         <include>com.yahoo.vespa:vsm:*:jar:test</include>
 
                                         <!-- 3rd party test dependencies -->
-                                        <include>com.fasterxml.jackson.dataformat:jackson-dataformat-xml:[${jackson2.version}]:jar:test</include>
-                                        <include>com.fasterxml.woodstox:woodstox-core:5.0.3:jar:test</include>
                                         <include>com.google.protobuf:protobuf-java:3.7.0:jar:test</include>
                                         <include>com.ibm.icu:icu4j:57.1:jar:test</include>
                                         <include>com.microsoft.onnxruntime:onnxruntime:[${onnxruntime.version}]:jar:test</include>
@@ -199,7 +197,6 @@
                                         <include>org.apiguardian:apiguardian-api:1.1.0:jar:test</include>
                                         <include>org.bouncycastle:bcpkix-jdk15on:[${bouncycastle.version}]:jar:test</include>
                                         <include>org.bouncycastle:bcprov-jdk15on:[${bouncycastle.version}]:jar:test</include>
-                                        <include>org.codehaus.woodstox:stax2-api:3.1.4:jar:test</include>
                                         <include>org.eclipse.jetty.alpn:alpn-api:[${jetty-alpn.version}]:jar:test</include>
                                         <include>org.eclipse.jetty.http2:http2-common:[${jetty.version}]:jar:test</include>
                                         <include>org.eclipse.jetty.http2:http2-hpack:[${jetty.version}]:jar:test</include>

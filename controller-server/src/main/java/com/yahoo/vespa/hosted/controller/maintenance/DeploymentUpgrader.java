@@ -2,19 +2,23 @@
 package com.yahoo.vespa.hosted.controller.maintenance;
 
 import com.yahoo.component.Version;
+import com.yahoo.config.provision.Environment;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.Instance;
+import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationVersion;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.deployment.Run;
 import com.yahoo.vespa.hosted.controller.deployment.Versions;
+import com.yahoo.vespa.hosted.controller.versions.VersionStatus;
 import com.yahoo.vespa.hosted.controller.versions.VespaVersion;
 import com.yahoo.yolean.Exceptions;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
@@ -36,8 +40,9 @@ public class DeploymentUpgrader extends ControllerMaintainer {
         AtomicInteger failures = new AtomicInteger();
 
         Version targetPlatform = null; // Upgrade to the newest non-broken, deployable version.
-        for (VespaVersion platform : controller().readVersionStatus().deployableVersions())
-            if (platform.confidence().equalOrHigherThan(VespaVersion.Confidence.low))
+        VersionStatus versionStatus = controller().readVersionStatus();
+        for (VespaVersion platform : versionStatus.deployableVersions())
+            if (platform.confidence().equalOrHigherThan(VespaVersion.Confidence.normal))
                 targetPlatform = platform.versionNumber();
 
         if (targetPlatform == null)
@@ -53,11 +58,16 @@ public class DeploymentUpgrader extends ControllerMaintainer {
                         Run last = controller().jobController().last(job).get();
                         Versions target = new Versions(targetPlatform, last.versions().targetRevision(), Optional.of(last.versions().targetPlatform()), Optional.of(last.versions().targetRevision()));
                         if ( ! last.hasEnded()) continue;
-                        if (application.revisions().get(last.versions().targetRevision()).compileVersion()
-                                .map(version -> controller().applications().versionCompatibility(instance.id()).refuse(version, target.targetPlatform()))
-                                .orElse(false)) continue;
+                        ApplicationVersion devVersion = application.revisions().get(last.versions().targetRevision());
+                        if (devVersion.compileVersion()
+                                      .map(version -> controller().applications().versionCompatibility(instance.id()).refuse(version, target.targetPlatform()))
+                                      .orElse(false)) continue;
+                        if (   devVersion.allowedMajor().isPresent()
+                            && devVersion.allowedMajor().get() < targetPlatform.getMajor()) continue;
+
                         if ( ! deployment.version().isBefore(target.targetPlatform())) continue;
                         if ( ! isLikelyNightFor(job)) continue;
+                        if (deployment.zone().environment() == Environment.perf && ! isIdleOrOutdated(deployment, job)) continue;
 
                         log.log(Level.FINE, "Upgrading deployment of " + instance.id() + " in " + deployment.zone());
                         attempts.incrementAndGet();
@@ -69,6 +79,14 @@ public class DeploymentUpgrader extends ControllerMaintainer {
                                                interval());
                     }
         return asSuccessFactor(attempts.get(), failures.get());
+    }
+
+    /** Returns whether query and feed metrics are ~zero, or currently platform has been deployed for a week. */
+    private boolean isIdleOrOutdated(Deployment deployment, JobId job) {
+        if (deployment.metrics().queriesPerSecond() <= 1 && deployment.metrics().writesPerSecond() <= 1) return true;
+        return controller().jobController().runs(job).descendingMap().values().stream()
+                           .takeWhile(run -> run.versions().targetPlatform().equals(deployment.version()))
+                           .anyMatch(run -> run.start().isBefore(controller().clock().instant().minus(Duration.ofDays(7))));
     }
 
     private boolean isLikelyNightFor(JobId job) {

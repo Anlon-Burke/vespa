@@ -42,7 +42,8 @@ public class LegacyIndexPageRequestHandler implements StatusPageServer.RequestHa
     private final StateVersionTracker stateVersionTracker;
     private final EventLog eventLog;
     private final long startedTime;
-    private final FleetControllerOptions options;
+
+    private FleetControllerOptions options;
 
     public LegacyIndexPageRequestHandler(Timer timer,
                                          ContentCluster cluster,
@@ -56,6 +57,10 @@ public class LegacyIndexPageRequestHandler implements StatusPageServer.RequestHa
         this.stateVersionTracker = stateVersionTracker;
         this.eventLog = eventLog;
         this.startedTime = timer.getCurrentTimeInMillis();
+        this.options = options;
+    }
+
+    public void propagateOptions(FleetControllerOptions options) {
         this.options = options;
     }
 
@@ -172,8 +177,7 @@ public class LegacyIndexPageRequestHandler implements StatusPageServer.RequestHa
                                           HtmlTable.escape(state.getFeedBlockOrNull().getDescription())));
         }
 
-        List<Group> groups = LeafGroups.enumerateFrom(options.storageDistribution().getRootGroup());
-
+        List<Group> groups = LeafGroups.enumerateFrom(cluster.getDistribution().getRootGroup());
         for (Group group : groups) {
             assert (group != null);
             String localName = group.getUnixStylePath();
@@ -258,6 +262,7 @@ public class LegacyIndexPageRequestHandler implements StatusPageServer.RequestHa
         sb.append("<tr><td><nobr>Feed block limits</nobr></td><td align=\"right\">")
           .append(options.clusterFeedBlockLimit().entrySet().stream()
                                        .map(kv -> String.format("%s: %.2f%%", kv.getKey(), kv.getValue() * 100.0))
+                                       .sorted()
                                        .collect(Collectors.joining("<br/>"))).append("</td></tr>");
 
         sb.append("</table>");

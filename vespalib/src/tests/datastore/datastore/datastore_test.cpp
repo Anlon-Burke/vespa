@@ -17,7 +17,6 @@ using vespalib::alloc::MemoryAllocator;
 class MyStore : public DataStore<int, EntryRefT<3, 2> > {
 private:
     using ParentType = DataStore<int, EntryRefT<3, 2> >;
-    using ParentType::_primary_buffer_ids;
 public:
     MyStore() {}
     explicit MyStore(std::unique_ptr<BufferType<int>> type)
@@ -35,9 +34,6 @@ public:
     void trimElemHoldList(generation_t usedGen) override {
         ParentType::trimElemHoldList(usedGen);
     }
-    void incDead(EntryRef ref, uint64_t dead) {
-        ParentType::incDead(ref, dead);
-    }
     void ensureBufferCapacity(size_t sizeNeeded) {
         ParentType::ensureBufferCapacity(0, sizeNeeded);
     }
@@ -47,7 +43,7 @@ public:
     void switch_primary_buffer() {
         ParentType::switch_primary_buffer(0, 0u);
     }
-    size_t primary_buffer_id() const { return _primary_buffer_ids[0]; }
+    size_t primary_buffer_id() const { return get_primary_buffer_id(0); }
     BufferState& get_active_buffer_state() {
         return ParentType::getBufferState(primary_buffer_id());
     }
@@ -55,7 +51,7 @@ public:
 
 
 using GrowthStats = std::vector<int>;
-using BufferStats = std::vector<int>;
+using BufferIds = std::vector<int>;
 
 constexpr float ALLOC_GROW_FACTOR = 0.4;
 constexpr size_t HUGE_PAGE_ARRAY_SIZE = (MemoryAllocator::HUGEPAGE_SIZE / sizeof(int));
@@ -124,8 +120,8 @@ public:
             ++i;
         }
     }
-    BufferStats getBuffers(size_t bufs) {
-        BufferStats buffers;
+    BufferIds getBuffers(size_t bufs) {
+        BufferIds buffers;
         while (buffers.size() < bufs) {
             RefType iRef = (_type.getArraySize() == 1) ?
                            (_store.template allocator<DataType>(_typeId).alloc().ref) :
@@ -143,8 +139,8 @@ public:
 using MyRef = MyStore::RefType;
 
 void
-assertMemStats(const DataStoreBase::MemStats &exp,
-               const DataStoreBase::MemStats &act)
+assertMemStats(const MemoryStats &exp,
+               const MemoryStats &act)
 {
     EXPECT_EQ(exp._allocElems, act._allocElems);
     EXPECT_EQ(exp._usedElems, act._usedElems);
@@ -212,34 +208,6 @@ TEST(DataStoreTest, require_that_entry_ref_is_working)
         MyRefType r2(r1);
         EXPECT_EQ(r1.offset(), r2.offset());
         EXPECT_EQ(r1.bufferId(), r2.bufferId());
-    }
-}
-
-TEST(DataStoreTest, require_that_aligned_entry_ref_is_working)
-{
-    using MyRefType = AlignedEntryRefT<22, 2>; // 4 byte alignement
-    EXPECT_EQ(16_Mi, MyRefType::offsetSize());
-    EXPECT_EQ(1_Ki, MyRefType::numBuffers());
-    EXPECT_EQ(0u, MyRefType::align(0));
-    EXPECT_EQ(4u, MyRefType::align(1));
-    EXPECT_EQ(4u, MyRefType::align(2));
-    EXPECT_EQ(4u, MyRefType::align(3));
-    EXPECT_EQ(4u, MyRefType::align(4));
-    EXPECT_EQ(8u, MyRefType::align(5));
-    {
-        MyRefType r(0, 0);
-        EXPECT_EQ(0u, r.offset());
-        EXPECT_EQ(0u, r.bufferId());
-    }
-    {
-        MyRefType r(237, 13);
-        EXPECT_EQ(MyRefType::align(237), r.offset());
-        EXPECT_EQ(13u, r.bufferId());
-    }
-    {
-        MyRefType r(MyRefType::offsetSize() - 4, 1023);
-        EXPECT_EQ(MyRefType::align(MyRefType::offsetSize() - 4), r.offset());
-        EXPECT_EQ(1023u, r.bufferId());
     }
 }
 
@@ -442,7 +410,7 @@ TEST(DataStoreTest, require_that_we_can_use_free_lists_with_raw_allocator)
 TEST(DataStoreTest, require_that_memory_stats_are_calculated)
 {
     MyStore s;
-    DataStoreBase::MemStats m;
+    MemoryStats m;
     m._allocElems = MyRef::offsetSize();
     m._usedElems = 1; // ref = 0 is reserved
     m._deadElems = 1; // ref = 0 is reserved
@@ -455,11 +423,6 @@ TEST(DataStoreTest, require_that_memory_stats_are_calculated)
     // add entry
     MyRef r = s.addEntry(10);
     m._usedElems++;
-    assertMemStats(m, s.getMemStats());
-
-    // inc dead
-    s.incDead(r, 1);
-    m._deadElems++;
     assertMemStats(m, s.getMemStats());
 
     // hold buffer
@@ -494,7 +457,7 @@ TEST(DataStoreTest, require_that_memory_stats_are_calculated)
 
     { // increase extra used bytes
         auto prev_stats = s.getMemStats();
-        s.get_active_buffer_state().incExtraUsedBytes(50);
+        s.get_active_buffer_state().stats().inc_extra_used_bytes(50);
         auto curr_stats = s.getMemStats();
         EXPECT_EQ(prev_stats._allocBytes + 50, curr_stats._allocBytes);
         EXPECT_EQ(prev_stats._usedBytes + 50, curr_stats._usedBytes);
@@ -502,7 +465,7 @@ TEST(DataStoreTest, require_that_memory_stats_are_calculated)
 
     { // increase extra hold bytes
         auto prev_stats = s.getMemStats();
-        s.get_active_buffer_state().incExtraHoldBytes(30);
+        s.get_active_buffer_state().hold_elems(0, 30);
         auto curr_stats = s.getMemStats();
         EXPECT_EQ(prev_stats._holdBytes + 30, curr_stats._holdBytes);
     }
@@ -515,7 +478,6 @@ TEST(DataStoreTest, require_that_memory_usage_is_calculated)
     s.addEntry(20);
     s.addEntry(30);
     s.addEntry(40);
-    s.incDead(r, 1);
     s.holdBuffer(r.bufferId());
     s.transferHoldLists(100);
     vespalib::MemoryUsage m = s.getMemoryUsage();
@@ -683,7 +645,7 @@ TEST(DataStoreTest, can_set_memory_allocator)
 namespace {
 
 void
-assertBuffers(BufferStats exp_buffers, size_t num_arrays_for_new_buffer)
+assertBuffers(BufferIds exp_buffers, size_t num_arrays_for_new_buffer)
 {
     EXPECT_EQ(exp_buffers, IntGrowStore(1, 1, 1024, num_arrays_for_new_buffer).getBuffers(exp_buffers.size()));
 }
@@ -698,7 +660,8 @@ TEST(DataStoreTest, can_reuse_active_buffer_as_primary_buffer)
 
 TEST(DataStoreTest, control_static_sizes) {
     EXPECT_EQ(96, sizeof(BufferTypeBase));
-    EXPECT_EQ(32, sizeof(BufferState::FreeList));
+    EXPECT_EQ(24, sizeof(FreeList));
+    EXPECT_EQ(56, sizeof(BufferFreeList));
     EXPECT_EQ(1, sizeof(BufferState::State));
     EXPECT_EQ(144, sizeof(BufferState));
     BufferState bs;
@@ -725,9 +688,9 @@ void test_free_element_to_held_buffer(bool direct, bool before_hold_buffer)
     s.holdBuffer(0); // hold last buffer
     if (!before_hold_buffer) {
         if (direct) {
-            ASSERT_DEATH({ s.freeElem(ref, 1); }, "state.isOnHold\\(\\) && was_held");
+            ASSERT_DEATH({ s.freeElem(ref, 1); }, "isOnHold\\(\\) && was_held");
         } else {
-            ASSERT_DEATH({ s.holdElem(ref, 1); }, "state.isActive\\(\\)");
+            ASSERT_DEATH({ s.holdElem(ref, 1); }, "isActive\\(\\)");
         }
     }
     s.transferHoldLists(100);

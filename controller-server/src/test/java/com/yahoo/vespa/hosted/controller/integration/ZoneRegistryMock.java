@@ -32,6 +32,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -43,9 +44,9 @@ public class ZoneRegistryMock extends AbstractComponent implements ZoneRegistry 
     private final Map<ZoneId, Duration> deploymentTimeToLive = new HashMap<>();
     private final Map<Environment, RegionName> defaultRegionForEnvironment = new HashMap<>();
     private final Map<CloudName, UpgradePolicy> osUpgradePolicies = new HashMap<>();
-    private final Map<ZoneApi, List<RoutingMethod>> zoneRoutingMethods = new HashMap<>();
+    private final Map<ZoneApi, RoutingMethod> zoneRoutingMethods = new HashMap<>();
     private final Map<CloudAccount, Set<ZoneId>> cloudAccountZones = new HashMap<>();
-    private final Set<ZoneApi> reprovisionToUpgradeOs = new HashSet<>();
+    private final Set<ZoneApi> dynamicallyProvisioned = new HashSet<>();
     private final SystemName system; // Don't even think about making it non-final!   ƪ(`▿▿▿▿´ƪ)
 
     private List<? extends ZoneApi> zones;
@@ -125,31 +126,27 @@ public class ZoneRegistryMock extends AbstractComponent implements ZoneRegistry 
         return setRoutingMethod(zones, RoutingMethod.exclusive);
     }
 
-    public ZoneRegistryMock setRoutingMethod(ZoneApi zone, RoutingMethod... routingMethods) {
-        return setRoutingMethod(zone, Set.of(routingMethods));
-    }
-
-    public ZoneRegistryMock setRoutingMethod(List<? extends ZoneApi> zones, RoutingMethod... routingMethods) {
-        zones.forEach(zone -> setRoutingMethod(zone, Set.of(routingMethods)));
+    public ZoneRegistryMock setRoutingMethod(List<? extends ZoneApi> zones, RoutingMethod routingMethod) {
+        zones.forEach(zone -> setRoutingMethod(zone, routingMethod));
         return this;
     }
 
-    private ZoneRegistryMock setRoutingMethod(ZoneApi zone, Set<RoutingMethod> routingMethods) {
-        this.zoneRoutingMethods.put(zone, List.copyOf(routingMethods));
+    public ZoneRegistryMock setRoutingMethod(ZoneApi zone, RoutingMethod routingMethod) {
+        this.zoneRoutingMethods.put(zone, routingMethod);
         return this;
     }
 
-    public ZoneRegistryMock reprovisionToUpgradeOsIn(ZoneApi... zones) {
-        return reprovisionToUpgradeOsIn(List.of(zones));
+    public ZoneRegistryMock dynamicProvisioningIn(ZoneApi... zones) {
+        return dynamicProvisioningIn(List.of(zones));
     }
 
-    public ZoneRegistryMock reprovisionToUpgradeOsIn(List<ZoneApi> zones) {
-        this.reprovisionToUpgradeOs.addAll(zones);
+    public ZoneRegistryMock dynamicProvisioningIn(List<ZoneApi> zones) {
+        this.dynamicallyProvisioned.addAll(zones);
         return this;
     }
 
-    public ZoneRegistryMock setCloudAccountZones(CloudAccount cloudAccount, ZoneId... zones) {
-        this.cloudAccountZones.put(cloudAccount, Set.of(zones));
+    public ZoneRegistryMock configureCloudAccount(CloudAccount cloudAccount, ZoneId... zones) {
+        this.cloudAccountZones.computeIfAbsent(cloudAccount, (k) -> new HashSet<>()).addAll(Set.of(zones));
         return this;
     }
 
@@ -165,7 +162,7 @@ public class ZoneRegistryMock extends AbstractComponent implements ZoneRegistry 
 
     @Override
     public ZoneFilter zones() {
-        return ZoneFilterMock.from(zones, zoneRoutingMethods, reprovisionToUpgradeOs);
+        return ZoneFilterMock.from(zones, zoneRoutingMethods, dynamicallyProvisioned);
     }
 
     @Override
@@ -173,7 +170,7 @@ public class ZoneRegistryMock extends AbstractComponent implements ZoneRegistry 
         var fullZones = new ArrayList<ZoneApi>(1 + zones.size());
         fullZones.add(systemAsZone());
         fullZones.addAll(zones);
-        return ZoneFilterMock.from(fullZones, zoneRoutingMethods, reprovisionToUpgradeOs);
+        return ZoneFilterMock.from(fullZones, zoneRoutingMethods, dynamicallyProvisioned);
     }
 
     private ZoneApiMock systemAsZone() {
@@ -214,8 +211,8 @@ public class ZoneRegistryMock extends AbstractComponent implements ZoneRegistry 
     }
 
     @Override
-    public List<RoutingMethod> routingMethods(ZoneId zone) {
-        return List.copyOf(zoneRoutingMethods.getOrDefault(ZoneApiMock.from(zone), List.of()));
+    public RoutingMethod routingMethod(ZoneId zone) {
+        return Objects.requireNonNull(zoneRoutingMethods.get(ZoneApiMock.from(zone)));
     }
 
     @Override
@@ -272,7 +269,7 @@ public class ZoneRegistryMock extends AbstractComponent implements ZoneRegistry 
 
     @Override
     public Optional<String> getVipHostname(ZoneId zoneId) {
-        if (routingMethods(zoneId).stream().anyMatch(RoutingMethod::isShared)) {
+        if (routingMethod(zoneId).isShared()) {
             return Optional.of("vip." + zoneId.value());
         }
         return Optional.empty();

@@ -22,7 +22,6 @@
 #include <vespa/searchsummary/docsummary/matched_elements_filter_dfw.h>
 #include <vespa/searchsummary/docsummary/resultclass.h>
 #include <vespa/searchsummary/docsummary/resultconfig.h>
-#include <vespa/searchsummary/docsummary/summaryfieldconverter.h>
 #include <vespa/searchsummary/test/slime_value.h>
 #include <vespa/vespalib/data/slime/slime.h>
 #include <vespa/vespalib/gtest/gtest.h>
@@ -96,14 +95,12 @@ public:
         _doc_type.addField(Field("map2", _map_type));
         _doc_type.addField(Field("wset", _wset_type));
 
-        auto* result_class = _config.AddResultClass("test", class_id);
-        EXPECT_TRUE(result_class->AddConfigEntry("array", ResType::RES_JSONSTRING));
-        EXPECT_TRUE(result_class->AddConfigEntry("map", ResType::RES_JSONSTRING));
-        EXPECT_TRUE(result_class->AddConfigEntry("map2", ResType::RES_JSONSTRING));
+        auto* result_class = _config.addResultClass("test", class_id);
+        EXPECT_TRUE(result_class->addConfigEntry("array"));
+        EXPECT_TRUE(result_class->addConfigEntry("map"));
+        EXPECT_TRUE(result_class->addConfigEntry("map2"));
     }
     ~DocsumStore();
-    const ResultConfig& get_config() const { return _config; }
-    const ResultClass* get_class() const { return _config.LookupResultClass(class_id); }
     std::unique_ptr<IDocsumStoreDocument> getMappedDocsum() {
         auto doc = std::make_unique<Document>(_doc_type, DocumentId("id:test:test::0"));
         {
@@ -193,8 +190,8 @@ public:
     {
     }
     ~StateCallback() override;
-    void FillSummaryFeatures(GetDocsumsState&) override {}
-    void FillRankFeatures(GetDocsumsState&) override {}
+    void fillSummaryFeatures(GetDocsumsState&) override {}
+    void fillRankFeatures(GetDocsumsState&) override {}
     std::unique_ptr<MatchingElements> fill_matching_elements(const MatchingElementsFields&) override {
         auto result = std::make_unique<MatchingElements>();
         result->add_matching_elements(doc_id, _field_name, _matching_elements);
@@ -218,7 +215,7 @@ private:
         Slime slime;
         SlimeInserter inserter(slime);
 
-        writer->insertField(doc_id, doc.get(), &state, ResType::RES_JSONSTRING, inserter);
+        writer->insertField(doc_id, doc.get(), state, inserter);
         return slime;
     }
 
@@ -247,14 +244,14 @@ MatchedElementsFilterTest::~MatchedElementsFilterTest() = default;
 
 TEST_F(MatchedElementsFilterTest, filters_elements_in_array_field_value)
 {
-    expect_filtered("array", {}, "[]");
+    expect_filtered("array", {}, "null");
     expect_filtered("array", {0}, "[{'name':'a','weight':3}]");
     expect_filtered("array", {1}, "[{'name':'b','weight':5}]");
     expect_filtered("array", {2}, "[{'name':'c','weight':7}]");
     expect_filtered("array", {0, 1, 2}, "[{'name':'a','weight':3},"
                                         "{'name':'b','weight':5},"
                                         "{'name':'c','weight':7}]");
-    expect_filtered("array", {0, 1, 100}, "[]");
+    expect_filtered("array", {0, 1, 100}, "null");
     set_empty_values();
     expect_filtered("array", {}, "null");
     set_skip_set_values();
@@ -271,14 +268,14 @@ TEST_F(MatchedElementsFilterTest, matching_elements_fields_is_setup_for_array_fi
 
 TEST_F(MatchedElementsFilterTest, filters_elements_in_map_field_value)
 {
-    expect_filtered("map", {}, "[]");
+    expect_filtered("map", {}, "null");
     expect_filtered("map", {0}, "[{'key':'a','value':{'name':'a','weight':3}}]");
     expect_filtered("map", {1}, "[{'key':'b','value':{'name':'b','weight':5}}]");
     expect_filtered("map", {2}, "[{'key':'c','value':{'name':'c','weight':7}}]");
     expect_filtered("map", {0, 1, 2}, "[{'key':'a','value':{'name':'a','weight':3}},"
                                       "{'key':'b','value':{'name':'b','weight':5}},"
                                       "{'key':'c','value':{'name':'c','weight':7}}]");
-    expect_filtered("map", {0, 1, 100}, "[]");
+    expect_filtered("map", {0, 1, 100}, "null");
     set_empty_values();
     expect_filtered("map", {}, "null");
     set_skip_set_values();
@@ -287,12 +284,12 @@ TEST_F(MatchedElementsFilterTest, filters_elements_in_map_field_value)
 
 TEST_F(MatchedElementsFilterTest, filter_elements_in_weighed_set_field_value)
 {
-    expect_filtered("wset", {}, "[]");
+    expect_filtered("wset", {}, "null");
     expect_filtered("wset", {0}, "[{'item':'a','weight':13}]");
     expect_filtered("wset", {1}, "[{'item':'b','weight':15}]");
     expect_filtered("wset", {2}, "[{'item':'c','weight':17}]");
     expect_filtered("wset", {0, 1, 2}, "[{'item':'a','weight':13},{'item':'b','weight':15},{'item':'c','weight':17}]");
-    expect_filtered("wset", {0, 1, 100}, "[]");
+    expect_filtered("wset", {0, 1, 100}, "null");
     set_empty_values();
     expect_filtered("wset", {}, "null");
     set_skip_set_values();
@@ -320,7 +317,7 @@ TEST_F(MatchedElementsFilterTest, matching_elements_fields_is_setup_for_map_fiel
 TEST_F(MatchedElementsFilterTest, field_writer_is_not_generated_as_it_depends_on_data_from_document_store)
 {
     auto writer = make_field_writer("array");
-    EXPECT_FALSE(writer->IsGenerated());
+    EXPECT_FALSE(writer->isGenerated());
 }
 
 GTEST_MAIN_RUN_ALL_TESTS()

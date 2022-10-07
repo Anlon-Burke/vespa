@@ -26,24 +26,24 @@ double to_degrees(int32_t microDegrees) {
 
 }
 
+using search::attribute::BasicType;
 using search::attribute::IAttributeContext;
 using search::attribute::IAttributeVector;
-using search::attribute::BasicType;
 using search::attribute::IntegerContent;
-using search::common::Location;
 using search::common::GeoGcd;
+using search::common::Location;
 
 LocationAttrDFW::AllLocations
-LocationAttrDFW::getAllLocations(GetDocsumsState *state) const
+LocationAttrDFW::getAllLocations(GetDocsumsState& state) const
 {
     AllLocations retval;
-    if (! state->_args.locations_possible()) {
+    if (! state._args.locations_possible()) {
         return retval;
     }
-    if (state->_parsedLocations.empty()) {
-        state->parse_locations();
+    if (state._parsedLocations.empty()) {
+        state.parse_locations();
     }
-    for (const auto & loc : state->_parsedLocations) {
+    for (const auto & loc : state._parsedLocations) {
         if (loc.location.valid()) {
             LOG(debug, "found location(field %s) for DFW(field %s)\n",
                 loc.field_name.c_str(), getAttributeName().c_str());
@@ -56,7 +56,7 @@ LocationAttrDFW::getAllLocations(GetDocsumsState *state) const
     }
     if (retval.empty()) {
         // avoid doing things twice
-        state->_args.locations_possible(false);
+        state._args.locations_possible(false);
     }
     return retval;
 }
@@ -69,13 +69,13 @@ AbsDistanceDFW::AbsDistanceDFW(const vespalib::string & attrName)
 { }
 
 uint64_t
-AbsDistanceDFW::findMinDistance(uint32_t docid, GetDocsumsState *state,
+AbsDistanceDFW::findMinDistance(uint32_t docid, GetDocsumsState& state,
                                 const std::vector<const GeoLoc *> &locations) const
 {
     // ensure result fits in Java "int"
     uint64_t absdist = std::numeric_limits<int32_t>::max();
     uint64_t sqdist = absdist*absdist;
-    const auto& attribute = get_attribute(*state);
+    const auto& attribute = get_attribute(state);
     for (auto location : locations) {
         int32_t docx = 0;
         int32_t docy = 0;
@@ -95,26 +95,14 @@ AbsDistanceDFW::findMinDistance(uint32_t docid, GetDocsumsState *state,
 }
 
 void
-AbsDistanceDFW::insertField(uint32_t docid, GetDocsumsState *state, ResType type, vespalib::slime::Inserter &target) const
+AbsDistanceDFW::insertField(uint32_t docid, GetDocsumsState& state, vespalib::slime::Inserter &target) const
 {
     const auto & all_locations = getAllLocations(state);
     if (all_locations.empty()) {
         return;
     }
     uint64_t absdist = findMinDistance(docid, state, all_locations.best());
-    if (type == RES_INT) {
-        target.insertLong(absdist);
-    } else {
-        vespalib::string value = vespalib::stringify(absdist);
-        vespalib::Memory data(value.c_str(), value.size());
-
-        if (type == RES_STRING || type == RES_LONG_STRING) {
-            target.insertString(data);
-        }
-        if (type == RES_LONG_DATA || type == RES_DATA) {
-            target.insertData(data);
-        }
-    }
+    target.insertLong(absdist);
 }
 
 //--------------------------------------------------------------------------
@@ -181,14 +169,6 @@ insertFromAttr(const attribute::IAttributeVector &attribute, uint32_t docid, ves
     }
 }
 
-void checkExpected(ResType type) {
-    static bool alreadyWarned = false;
-    if (type == RES_JSONSTRING) return;
-    if (alreadyWarned) return;
-    alreadyWarned = true;
-    LOG(error, "Unexpected summary field type %s", ResultConfig::GetResTypeName(type));
-}
-
 void insertPosV8(int64_t docxy, vespalib::slime::Inserter &target) {
     int32_t docx = 0;
     int32_t docy = 0;
@@ -240,34 +220,32 @@ void insertV8FromAttr(const attribute::IAttributeVector &attribute, uint32_t doc
 } // namespace
 
 void
-PositionsDFW::insertField(uint32_t docid, GetDocsumsState * dsState, ResType type, vespalib::slime::Inserter &target) const
+PositionsDFW::insertField(uint32_t docid, GetDocsumsState& dsState, vespalib::slime::Inserter &target) const
 {
-    checkExpected(type);
     if (_useV8geoPositions) {
-        insertV8FromAttr(get_attribute(*dsState), docid, target);
+        insertV8FromAttr(get_attribute(dsState), docid, target);
     } else {
-        insertFromAttr(get_attribute(*dsState), docid, target);
+        insertFromAttr(get_attribute(dsState), docid, target);
     }
 }
 
 //--------------------------------------------------------------------------
 
 PositionsDFW::UP PositionsDFW::create(const char *attribute_name, const IAttributeManager *attribute_manager, bool useV8geoPositions) {
-    PositionsDFW::UP ret;
     if (attribute_manager != nullptr) {
         if (!attribute_name) {
             LOG(debug, "createPositionsDFW: missing attribute name '%p'", attribute_name);
-            return ret;
+            return {};
         }
         IAttributeContext::UP context = attribute_manager->createContext();
         if (!context.get()) {
             LOG(debug, "createPositionsDFW: could not create context from attribute manager");
-            return ret;
+            return {};
         }
         const IAttributeVector *attribute = context->getAttribute(attribute_name);
         if (!attribute) {
             LOG(debug, "createPositionsDFW: could not get attribute '%s' from context", attribute_name);
-            return ret;
+            return {};
         }
     }
     return std::make_unique<PositionsDFW>(attribute_name, useV8geoPositions);
@@ -275,21 +253,20 @@ PositionsDFW::UP PositionsDFW::create(const char *attribute_name, const IAttribu
 
 std::unique_ptr<DocsumFieldWriter>
 AbsDistanceDFW::create(const char *attribute_name, const IAttributeManager *attribute_manager) {
-    std::unique_ptr<DocsumFieldWriter> ret;
     if (attribute_manager != nullptr) {
         if (!attribute_name) {
             LOG(debug, "createAbsDistanceDFW: missing attribute name '%p'", attribute_name);
-            return ret;
+            return {};
         }
         IAttributeContext::UP context = attribute_manager->createContext();
         if (!context.get()) {
             LOG(debug, "createAbsDistanceDFW: could not create context from attribute manager");
-            return ret;
+            return {};
         }
         const IAttributeVector *attribute = context->getAttribute(attribute_name);
         if (!attribute) {
             LOG(debug, "createAbsDistanceDFW: could not get attribute '%s' from context", attribute_name);
-            return ret;
+            return {};
         }
     }
     return std::make_unique<AbsDistanceDFW>(attribute_name);

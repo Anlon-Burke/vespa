@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.restapi.deployment;
 
+import com.yahoo.component.Version;
 import com.yahoo.config.application.api.DeploymentInstanceSpec;
 import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.provision.ApplicationId;
@@ -96,9 +97,9 @@ public class DeploymentApiHandler extends ThreadedHttpRequestHandler {
         var versionStatus = controller.readVersionStatus();
         ApplicationList applications = ApplicationList.from(controller.applications().asList()).withJobs();
         var deploymentStatuses = controller.jobController().deploymentStatuses(applications, versionStatus);
-        var deploymentStatistics = DeploymentStatistics.compute(versionStatus.versions().stream().map(VespaVersion::versionNumber).collect(toList()),
-                                                                deploymentStatuses)
-                                                       .stream().collect(toMap(DeploymentStatistics::version, identity()));
+        Map<Version, DeploymentStatistics> deploymentStatistics = DeploymentStatistics.compute(versionStatus.versions().stream().map(VespaVersion::versionNumber).collect(toList()),
+                                                                                               deploymentStatuses)
+                                                                                      .stream().collect(toMap(DeploymentStatistics::version, identity()));
         for (VespaVersion version : versionStatus.versions()) {
             Cursor versionObject = platformArray.addObject();
             versionObject.setString("version", version.versionNumber().toString());
@@ -183,13 +184,13 @@ public class DeploymentApiHandler extends ThreadedHttpRequestHandler {
                           Cursor jobObject = jobsArray.addObject();
                           jobObject.setString("name", job.type().jobName());
                           jobStatus.pausedUntil().ifPresent(until -> jobObject.setLong("pausedUntil", until.toEpochMilli()));
-                          jobStatus.coolingDownUntil(status.application().require(instance.instance()).change())
+                          jobStatus.coolingDownUntil(status.application().require(instance.instance()).change(), Optional.empty())
                                    .ifPresent(until -> jobObject.setLong("coolingDownUntil", until.toEpochMilli()));
                           if (jobsToRun.containsKey(job)) {
                               List<Versions> versionsOnThisPlatform = jobsToRun.get(job).stream()
-                                      .map(DeploymentStatus.Job::versions)
-                                      .filter(versions -> versions.targetPlatform().equals(statistics.version()))
-                                      .collect(Collectors.toList());
+                                                                               .map(DeploymentStatus.Job::versions)
+                                                                               .filter(versions -> versions.targetPlatform().equals(statistics.version()))
+                                                                               .toList();
                               if ( ! versionsOnThisPlatform.isEmpty())
                                   jobObject.setString("pending", versionsOnThisPlatform.stream()
                                                                                        .allMatch(versions -> versions.sourcePlatform()

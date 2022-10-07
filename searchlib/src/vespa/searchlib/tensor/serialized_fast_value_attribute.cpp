@@ -11,7 +11,6 @@
 LOG_SETUP(".searchlib.tensor.serialized_fast_value_attribute");
 
 #include "blob_sequence_reader.h"
-#include "tensor_attribute.hpp"
 
 using namespace vespalib;
 using namespace vespalib::eval;
@@ -19,9 +18,9 @@ using namespace vespalib::eval;
 namespace search::tensor {
 
 SerializedFastValueAttribute::SerializedFastValueAttribute(stringref name, const Config &cfg)
-  : TensorAttribute(name, cfg, _streamedValueStore),
+  : TensorAttribute(name, cfg, _tensorBufferStore),
     _tensor_type(cfg.tensorType()),
-    _streamedValueStore(_tensor_type)
+    _tensorBufferStore(_tensor_type, {}, 1000u)
 {
 }
 
@@ -36,7 +35,7 @@ void
 SerializedFastValueAttribute::setTensor(DocId docId, const vespalib::eval::Value &tensor)
 {
     checkTensorType(tensor);
-    EntryRef ref = _streamedValueStore.store_tensor(tensor);
+    EntryRef ref = _tensorBufferStore.store_tensor(tensor);
     assert(ref.valid());
     setTensorRef(docId, ref);
 }
@@ -48,13 +47,7 @@ SerializedFastValueAttribute::getTensor(DocId docId) const
     if (docId < getCommittedDocIdLimit()) {
         ref = acquire_entry_ref(docId);
     }
-    if (!ref.valid()) {
-        return {};
-    }
-    if (const auto * ptr = _streamedValueStore.get_tensor_entry(ref)) {
-        return ptr->create_fast_value_view(_tensor_type);
-    }
-    return {};
+    return _tensorBufferStore.get_tensor(ref);
 }
 
 bool
@@ -78,7 +71,7 @@ SerializedFastValueAttribute::onLoad(vespalib::Executor *)
             }
             tensorReader.readBlob(&buffer[0], tensorSize);
             vespalib::nbostream source(&buffer[0], tensorSize);
-            EntryRef ref = _streamedValueStore.store_encoded_tensor(source);
+            EntryRef ref = _tensorBufferStore.store_encoded_tensor(source);
             _refVector.push_back(AtomicEntryRef(ref));
         } else {
             EntryRef invalid;
@@ -100,13 +93,7 @@ SerializedFastValueAttribute::onInitSave(vespalib::stringref fileName)
         (std::move(guard),
          this->createAttributeHeader(fileName),
          getRefCopy(),
-         _streamedValueStore);
-}
-
-void
-SerializedFastValueAttribute::compactWorst()
-{
-    doCompactWorst<StreamedValueStore::RefType>();
+         _tensorBufferStore);
 }
 
 }

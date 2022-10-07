@@ -2,8 +2,8 @@
 
 #pragma once
 
-#include "allocator.hpp"
 #include "datastore.h"
+#include "allocator.hpp"
 #include "free_list_allocator.hpp"
 #include "free_list_raw_allocator.hpp"
 #include "raw_allocator.hpp"
@@ -13,8 +13,7 @@ namespace vespalib::datastore {
 
 template <typename RefT>
 DataStoreT<RefT>::DataStoreT()
-    : DataStoreBase(RefType::numBuffers(),
-                    RefType::unscaled_offset_size())
+    : DataStoreBase(RefType::numBuffers(), RefType::offset_bits, RefType::offsetSize())
 {
 }
 
@@ -27,22 +26,7 @@ DataStoreT<RefT>::free_elem_internal(EntryRef ref, size_t numElems, bool was_hel
 {
     RefType intRef(ref);
     BufferState &state = getBufferState(intRef.bufferId());
-    if (state.isActive()) {
-        if (state.freeListList() != nullptr && numElems == state.getArraySize()) {
-            if (state.isFreeListEmpty()) {
-                state.addToFreeListList();
-            }
-            state.freeList().push_back(ref);
-        }
-    } else {
-        assert(state.isOnHold() && was_held);
-    }
-    state.incDeadElems(numElems);
-    if (was_held) {
-        state.decHoldElems(numElems);
-    }
-    state.cleanHold(getBuffer(intRef.bufferId()),
-                    intRef.unscaled_offset() * state.getArraySize(), numElems);
+    state.free_elems(ref, numElems, was_held, intRef.offset());
 }
 
 template <typename RefT>
@@ -50,35 +34,28 @@ void
 DataStoreT<RefT>::holdElem(EntryRef ref, size_t numElems, size_t extraBytes)
 {
     RefType intRef(ref);
-    size_t alignedLen = RefType::align(numElems);
     BufferState &state = getBufferState(intRef.bufferId());
-    assert(state.isActive());
-    if (state.hasDisabledElemHoldList()) {
-        state.incDeadElems(alignedLen);
-        return;
+    if (!state.hold_elems(numElems, extraBytes)) {
+        _elemHold1List.push_back(ElemHold1ListElem(ref, numElems));
     }
-    _elemHold1List.push_back(ElemHold1ListElem(ref, alignedLen));
-    state.incHoldElems(alignedLen);
-    state.incExtraHoldBytes(extraBytes);
 }
 
 template <typename RefT>
 void
 DataStoreT<RefT>::trimElemHoldList(generation_t usedGen)
 {
-    ElemHold2List &elemHold2List = _elemHold2List;
-
-    ElemHold2List::iterator it(elemHold2List.begin());
-    ElemHold2List::iterator ite(elemHold2List.end());
+    auto it = _elemHold2List.begin();
+    auto ite = _elemHold2List.end();
     uint32_t freed = 0;
     for (; it != ite; ++it) {
-        if (static_cast<sgeneration_t>(it->_generation - usedGen) >= 0)
+        if (static_cast<sgeneration_t>(it->_generation - usedGen) >= 0) {
             break;
+        }
         free_elem_internal(it->_ref, it->_len, true);
         ++freed;
     }
     if (freed != 0) {
-        elemHold2List.erase(elemHold2List.begin(), it);
+        _elemHold2List.erase(_elemHold2List.begin(), it);
     }
 }
 
@@ -86,14 +63,12 @@ template <typename RefT>
 void
 DataStoreT<RefT>::clearElemHoldList()
 {
-    ElemHold2List &elemHold2List = _elemHold2List;
-
-    ElemHold2List::iterator it(elemHold2List.begin());
-    ElemHold2List::iterator ite(elemHold2List.end());
+    auto it = _elemHold2List.begin();
+    auto ite = _elemHold2List.end();
     for (; it != ite; ++it) {
         free_elem_internal(it->_ref, it->_len, true);
     }
-    elemHold2List.clear();
+    _elemHold2List.clear();
 }
 
 template <typename RefT>

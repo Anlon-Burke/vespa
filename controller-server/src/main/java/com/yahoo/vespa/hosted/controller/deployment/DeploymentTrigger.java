@@ -1,11 +1,10 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.deployment;
 
-import com.yahoo.component.Version;
-import com.yahoo.component.VersionCompatibility;
 import com.yahoo.config.application.api.DeploymentInstanceSpec;
 import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.transaction.Mutex;
@@ -14,7 +13,6 @@ import com.yahoo.vespa.hosted.controller.ApplicationController;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.Instance;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
-import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationVersion;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
@@ -22,8 +20,6 @@ import com.yahoo.vespa.hosted.controller.application.ApplicationList;
 import com.yahoo.vespa.hosted.controller.application.Change;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
-import com.yahoo.vespa.hosted.controller.versions.VersionStatus;
-import com.yahoo.vespa.hosted.controller.versions.VespaVersion;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -43,7 +39,6 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import static java.util.Comparator.comparing;
-import static java.util.Comparator.reverseOrder;
 import static java.util.stream.Collectors.groupingBy;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
@@ -93,7 +88,8 @@ public class DeploymentTrigger {
                                                instance -> withRemainingChange(instance,
                                                                                deployOutstanding ? outstanding.onTopOf(instance.change())
                                                                                                  : instance.change(),
-                                                                               status));
+                                                                               status,
+                                                                               false));
             }
             applications().store(application);
         });
@@ -112,7 +108,10 @@ public class DeploymentTrigger {
         applications().lockApplicationOrThrow(TenantAndApplicationId.from(id), application -> {
             if (application.get().deploymentSpec().instance(id.instance()).isPresent())
                 applications().store(application.with(id.instance(),
-                                                      instance -> withRemainingChange(instance, instance.change(), jobs.deploymentStatus(application.get()))));
+                                                      instance -> withRemainingChange(instance,
+                                                                                      instance.change(),
+                                                                                      jobs.deploymentStatus(application.get()),
+                                                                                      true)));
         });
     }
 
@@ -201,11 +200,17 @@ public class DeploymentTrigger {
                                     boolean upgradeRevision, boolean upgradePlatform) {
         Application application = applications().requireApplication(TenantAndApplicationId.from(applicationId));
         Instance instance = application.require(applicationId.instance());
+        DeploymentStatus status = jobs.deploymentStatus(application);
+        if (jobType.environment().isTest()) {
+            CloudName cloud = status.firstDependentProductionJobsWithDeployment(applicationId.instance()).keySet().stream().findFirst()
+                                    .orElse(controller.zoneRegistry().systemZone().getCloudName());
+            jobType = jobType.isSystemTest() ? JobType.systemTest(controller.zoneRegistry(), cloud)
+                                             : JobType.stagingTest(controller.zoneRegistry(), cloud);
+        }
         JobId job = new JobId(instance.id(), jobType);
         if (job.type().environment().isManuallyDeployed())
             return forceTriggerManualJob(job, reason);
 
-        DeploymentStatus status = jobs.deploymentStatus(application);
         Change change = instance.change();
         if ( ! upgradeRevision && change.revision().isPresent()) change = change.withoutApplication();
         if ( ! upgradePlatform && change.platform().isPresent()) change = change.withoutPlatform();
@@ -287,9 +292,17 @@ public class DeploymentTrigger {
 
     /** Overrides the given instance's platform and application changes with any contained in the given change. */
     public void forceChange(ApplicationId instanceId, Change change) {
+        forceChange(instanceId, change, true);
+    }
+
+    /** Overrides the given instance's platform and application changes with any contained in the given change. */
+    public void forceChange(ApplicationId instanceId, Change change, boolean allowOutdatedPlatform) {
         applications().lockApplicationOrThrow(TenantAndApplicationId.from(instanceId), application -> {
             applications().store(application.with(instanceId.instance(),
-                                                  instance -> withRemainingChange(instance, change.onTopOf(application.get().require(instanceId.instance()).change()), jobs.deploymentStatus(application.get()))));
+                                                  instance -> withRemainingChange(instance,
+                                                                                  change.onTopOf(instance.change()),
+                                                                                  jobs.deploymentStatus(application.get()),
+                                                                                  allowOutdatedPlatform)));
         });
     }
 
@@ -306,7 +319,10 @@ public class DeploymentTrigger {
                 default: throw new IllegalArgumentException("Unknown cancellation choice '" + cancellation + "'!");
             }
             applications().store(application.with(instanceId.instance(),
-                                                  instance -> withRemainingChange(instance, change, jobs.deploymentStatus(application.get()))));
+                                                  instance -> withRemainingChange(instance,
+                                                                                  change,
+                                                                                  jobs.deploymentStatus(application.get()),
+                                                                                  true)));
         });
     }
 
@@ -422,14 +438,14 @@ public class DeploymentTrigger {
         }
     }
 
-    private Instance withRemainingChange(Instance instance, Change change, DeploymentStatus status) {
+    private Instance withRemainingChange(Instance instance, Change change, DeploymentStatus status, boolean allowOutdatedPlatform) {
         Change remaining = change;
         if (status.hasCompleted(instance.name(), change.withoutApplication()))
             remaining = remaining.withoutPlatform();
         if (status.hasCompleted(instance.name(), change.withoutPlatform()))
             remaining = remaining.withoutApplication();
 
-        return instance.withChange(status.withCompatibilityPlatform(remaining, instance.name()));
+        return instance.withChange(status.withPermittedPlatform(remaining, instance.name(), allowOutdatedPlatform));
     }
 
     // ---------- Version and job helpers ----------

@@ -6,6 +6,8 @@
 #include "btreetraits.h"
 #include <vespa/vespalib/datastore/datastore.h>
 
+namespace vespalib::datastore { class CompactingBuffers; }
+
 namespace vespalib::btree {
 
 class BTreeNodeReclaimer
@@ -158,18 +160,14 @@ public:
         _store.freeElem(ref, 1);
     }
 
-    std::vector<uint32_t> startCompact();
-
-    std::vector<uint32_t> start_compact_worst(const CompactionStrategy& compaction_strategy);
-
-    void finishCompact(const std::vector<uint32_t> &toHold);
+    std::unique_ptr<vespalib::datastore::CompactingBuffers> start_compact_worst(const CompactionStrategy& compaction_strategy);
 
     void transferHoldLists(generation_t generation) {
         _store.transferHoldLists(generation);
     }
 
     // Inherit doc from DataStoreBase
-    datastore::DataStoreBase::MemStats getMemStats() const {
+    datastore::MemoryStats getMemStats() const {
         return _store.getMemStats();
     }
 

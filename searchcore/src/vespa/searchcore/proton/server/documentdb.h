@@ -57,6 +57,18 @@ struct MetricsWireService;
 
 namespace matching { class SessionManager; }
 
+struct ActiveDocs {
+    ActiveDocs() noexcept : active(0), target_active(0) { }
+    ActiveDocs(size_t active_in, size_t target_active_in) noexcept : active(active_in), target_active(target_active_in) { }
+    ActiveDocs & operator += (const ActiveDocs & b) {
+        active += b.active;
+        target_active += b.target_active;
+        return *this;
+    }
+    size_t active;
+    size_t target_active;
+};
+
 /**
  * The document database contains all the necessary structures required per
  * document type. It has an internal single-threaded Executor to process input
@@ -126,7 +138,7 @@ private:
     DocumentDBMetricsUpdater                         _metricsUpdater;
 
     void registerReference();
-    void setActiveConfig(const DocumentDBConfigSP &config, int64_t generation);
+    void setActiveConfig(DocumentDBConfigSP config, int64_t generation);
     DocumentDBConfigSP getActiveConfig() const;
     void internalInit();
     void initManagers();
@@ -143,7 +155,7 @@ private:
      *
      * @param configSnapshot initial config snapshot.
      */
-    void saveInitialConfig(const DocumentDBConfig &configSnapshot);
+    void saveInitialConfig(std::shared_ptr<DocumentDBConfig> configSnapshot);
 
     /**
      * Resume interrupted config save if needed.
@@ -297,11 +309,12 @@ public:
     size_t getNumDocs() const;
 
     /**
-     * Returns the number of documents that are active for search in this database.
+     * Returns the number of documents that are active for search in this database,
+     * and the number of documents that will be active once ideal state is reached.
      *
-     * @return The active-document count.
+     * @return The active and target-active document count.
      */
-    size_t getNumActiveDocs() const;
+    ActiveDocs getNumActiveDocs() const;
 
     /**
      * Returns the base directory that this document database uses when
@@ -364,13 +377,13 @@ public:
     /**
      * Reference counting
      */
-    vespalib::RetainGuard retain() { return vespalib::RetainGuard(_refCount); }
+    vespalib::RetainGuard retain() { return {_refCount}; }
 
     bool getDelayedConfig() const { return _state.getDelayedConfig(); }
     void replayConfig(SerialNum serialNum) override;
     const DocTypeName & getDocTypeName() const { return _docTypeName; }
     void newConfigSnapshot(DocumentDBConfigSP snapshot);
-    void reconfigure(const DocumentDBConfigSP & snapshot) override;
+    void reconfigure(DocumentDBConfigSP snapshot) override;
     int64_t getActiveGeneration() const;
     /*
      * Implements IDocumentSubDBOwner

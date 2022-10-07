@@ -1036,22 +1036,6 @@ public class ContentClusterTest extends ContentBaseTest {
         }
     }
 
-    private boolean resolveThreePhaseUpdateConfigWithFeatureFlag(boolean flagEnableThreePhase) {
-        VespaModel model = createEnd2EndOneNode(new TestProperties().setUseThreePhaseUpdates(flagEnableThreePhase));
-
-        ContentCluster cc = model.getContentClusters().get("storage");
-        var builder = new StorDistributormanagerConfig.Builder();
-        cc.getDistributorNodes().getConfig(builder);
-
-        return (new StorDistributormanagerConfig(builder)).enable_metadata_only_fetch_phase_for_inconsistent_updates();
-    }
-
-    @Test
-    void default_distributor_three_phase_update_config_controlled_by_properties() {
-        assertFalse(resolveThreePhaseUpdateConfigWithFeatureFlag(false));
-        assertTrue(resolveThreePhaseUpdateConfigWithFeatureFlag(true));
-    }
-
     private int resolveMaxCompactBuffers(OptionalInt maxCompactBuffers) {
         TestProperties testProperties = new TestProperties();
         if (maxCompactBuffers.isPresent()) {
@@ -1146,23 +1130,6 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(2, resolveTunedNumDistributorStripesConfig(17));
         assertEquals(2, resolveTunedNumDistributorStripesConfig(64));
         assertEquals(4, resolveTunedNumDistributorStripesConfig(65));
-    }
-
-    @Test
-    void unordered_merge_chaining_config_controlled_by_properties() throws Exception {
-        assertFalse(resolveUnorderedMergeChainingConfig(Optional.of(false)));
-        assertTrue(resolveUnorderedMergeChainingConfig(Optional.empty()));
-    }
-
-    private boolean resolveUnorderedMergeChainingConfig(Optional<Boolean> unorderedMergeChaining) throws Exception {
-        var props = new TestProperties();
-        if (unorderedMergeChaining.isPresent()) {
-            props.setUnorderedMergeChaining(unorderedMergeChaining.get());
-        }
-        var cluster = createOneNodeCluster(props);
-        var builder = new StorDistributormanagerConfig.Builder();
-        cluster.getDistributorNodes().getConfig(builder);
-        return (new StorDistributormanagerConfig(builder)).use_unordered_merge_chaining();
     }
 
     private boolean resolveTwoPhaseGcConfigWithFeatureFlag(Boolean flagEnableTwoPhase) {

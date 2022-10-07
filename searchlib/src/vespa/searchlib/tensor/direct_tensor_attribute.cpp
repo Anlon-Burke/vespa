@@ -11,7 +11,6 @@
 
 #include "blob_sequence_reader.h"
 #include "tensor_deserialize.h"
-#include "tensor_attribute.hpp"
 
 using vespalib::eval::FastValueBuilderFactory;
 
@@ -85,7 +84,7 @@ DirectTensorAttribute::update_tensor(DocId docId,
         ref = _refVector[docId].load_relaxed();
     }
     if (ref.valid()) {
-        auto ptr = _direct_store.get_tensor(ref);
+        auto ptr = _direct_store.get_tensor_ptr(ref);
         if (ptr) {
             auto new_value = update.apply_to(*ptr, FastValueBuilderFactory::get());
             if (new_value) {
@@ -110,7 +109,7 @@ DirectTensorAttribute::getTensor(DocId docId) const
         ref = acquire_entry_ref(docId);
     }
     if (ref.valid()) {
-        auto ptr = _direct_store.get_tensor(ref);
+        auto ptr = _direct_store.get_tensor_ptr(ref);
         if (ptr) {
             return FastValueBuilderFactory::get().copy(*ptr);
         }
@@ -124,7 +123,7 @@ DirectTensorAttribute::get_tensor_ref(DocId docId) const
 {
     if (docId >= getCommittedDocIdLimit()) { return *_emptyTensor; }
 
-    auto ptr = _direct_store.get_tensor(acquire_entry_ref(docId));
+    auto ptr = _direct_store.get_tensor_ptr(acquire_entry_ref(docId));
     if ( ptr == nullptr) { return *_emptyTensor; }
 
     return *ptr;
@@ -139,12 +138,6 @@ DirectTensorAttribute::onInitSave(vespalib::stringref fileName)
          this->createAttributeHeader(fileName),
          getRefCopy(),
          _direct_store);
-}
-
-void
-DirectTensorAttribute::compactWorst()
-{
-    doCompactWorst<DirectTensorStore::RefType>();
 }
 
 } // namespace

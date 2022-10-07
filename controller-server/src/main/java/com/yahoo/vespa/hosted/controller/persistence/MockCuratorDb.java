@@ -1,10 +1,11 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.persistence;
 
-import com.yahoo.component.annotation.Inject;
 import com.yahoo.cloud.config.ConfigserverConfig;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.vespa.curator.mock.MockCurator;
+
 import java.time.Duration;
 
 /**
@@ -19,20 +20,19 @@ public class MockCuratorDb extends CuratorDb {
 
     @Inject
     public MockCuratorDb(ConfigserverConfig config) {
-        this("test-controller:2222", SystemName.from(config.system()));
+        this("test-controller:2222");
     }
 
     public MockCuratorDb(SystemName system) {
-        this("test-controller:2222", system);
+        this("test-controller:2222");
     }
 
-    public MockCuratorDb(String zooKeeperEnsembleConnectionSpec, SystemName system) {
-        this(new MockCurator() { @Override public String zooKeeperEnsembleConnectionSpec() { return zooKeeperEnsembleConnectionSpec; } },
-             system);
+    public MockCuratorDb(String zooKeeperEnsembleConnectionSpec) {
+        this(new MockCurator() { @Override public String zooKeeperEnsembleConnectionSpec() { return zooKeeperEnsembleConnectionSpec; } });
     }
 
-    public MockCuratorDb(MockCurator curator, SystemName system) {
-        super(curator, Duration.ofMillis(100), system);
+    public MockCuratorDb(MockCurator curator) {
+        super(curator, Duration.ofMillis(100));
         this.curator = curator;
     }
 

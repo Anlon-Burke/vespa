@@ -99,7 +99,6 @@ public class AttributeFields extends Derived implements AttributesConfig.Produce
     private void applyRanking(ImmutableSDField field, Attribute attribute) {
         Ranking ranking = field.getRanking();
         if (ranking != null && ranking.isFilter()) {
-            attribute.setEnableBitVectors(true);
             attribute.setEnableOnlyBitVector(true);
         }
     }
@@ -183,7 +182,7 @@ public class AttributeFields extends Derived implements AttributesConfig.Produce
     @Override
     public void getConfig(AttributesConfig.Builder builder) {
         //TODO This is just to get some exporting tests to work, Should be undone and removed
-        getConfig(builder, FieldSet.ALL, 77777, false);
+        getConfig(builder, FieldSet.ALL, 77777);
     }
 
     private boolean isAttributeInFieldSet(Attribute attribute, FieldSet fs) {
@@ -201,7 +200,6 @@ public class AttributeFields extends Derived implements AttributesConfig.Produce
         if (attribute.isCreateIfNonExistent()) {
             aaB.createifnonexistent(true);
         }
-        aaB.enablebitvectors(attribute.isEnabledBitVectors());
         aaB.enableonlybitvector(attribute.isEnabledOnlyBitVector());
         if (attribute.isFastSearch() || attribute.isFastRank()) {
             // TODO make a separate fastrank flag in config instead of overloading fastsearch
@@ -277,14 +275,11 @@ public class AttributeFields extends Derived implements AttributesConfig.Produce
         };
     }
 
-    public void getConfig(AttributesConfig.Builder builder, FieldSet fs, long maxUnCommittedMemory, boolean enableBitVectors) {
+    public void getConfig(AttributesConfig.Builder builder, FieldSet fs, long maxUnCommittedMemory) {
         for (Attribute attribute : attributes.values()) {
             if (isAttributeInFieldSet(attribute, fs)) {
                 AttributesConfig.Attribute.Builder attrBuilder = getConfig(attribute.getName(), attribute, false);
                 attrBuilder.maxuncommittedmemory(maxUnCommittedMemory);
-                if (enableBitVectors && attribute.isFastSearch()) {
-                    attrBuilder.enablebitvectors(true);
-                }
                 builder.attribute(attrBuilder);
             }
         }

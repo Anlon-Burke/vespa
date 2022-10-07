@@ -167,9 +167,7 @@ public class ModelContextImpl implements ModelContext {
     public static class FeatureFlags implements ModelContext.FeatureFlags {
 
         private final String queryDispatchPolicy;
-        private final String phraseOptimization;
         private final double defaultTermwiseLimit;
-        private final boolean useThreePhaseUpdates;
         private final String feedSequencer;
         private final String responseSequencer;
         private final int numResponseThreads;
@@ -182,40 +180,25 @@ public class ModelContextImpl implements ModelContext {
         private final List<String> allowedAthenzProxyIdentities;
         private final int maxActivationInhibitedOutOfSyncGroups;
         private final ToIntFunction<ClusterSpec.Type> jvmOmitStackTraceInFastThrow;
-        private final int maxConcurrentMergesPerContentNode;
-        private final int maxMergeQueueSize;
         private final double resourceLimitDisk;
         private final double resourceLimitMemory;
         private final double minNodeRatioPerGroup;
-        private final int metricsproxyNumThreads;
-        private final int availableProcessors;
         private final boolean containerDumpHeapOnShutdownTimeout;
         private final boolean loadCodeAsHugePages;
         private final double containerShutdownTimeout;
         private final int maxUnCommittedMemory;
         private final boolean forwardIssuesAsErrors;
         private final boolean ignoreThreadStackSizes;
-        private final boolean unorderedMergeChaining;
         private final boolean useV8GeoPositions;
         private final int maxCompactBuffers;
         private final List<String> ignoredHttpUserAgents;
-        private final String mergeThrottlingPolicy;
-        private final double persistenceThrottlingWsDecrementFactor;
-        private final double persistenceThrottlingWsBackoff;
-        private final int persistenceThrottlingWindowSize;
-        private final double persistenceThrottlingWsResizeRate;
-        private final boolean persistenceThrottlingOfMergeFeedOps;
         private final boolean useQrserverServiceName;
         private final boolean avoidRenamingSummaryFeatures;
-        private final boolean enableBitVectors;
         private final Architecture adminClusterArchitecture;
         private final boolean enableProxyProtocolMixedMode;
         private final boolean sharedStringRepoNoReclaim;
         private final String logFileCompressionAlgorithm;
         private final boolean useTwoPhaseDocumentGc;
-        private final boolean mbus_dispatch_on_decode;
-        private final boolean mbus_dispatch_on_encode;
-        private final int mbus_threads;
         private final int mbus_network_threads;
         private final int mbus_java_num_targets;
         private final int mbus_java_events_before_wakeup;
@@ -223,11 +206,10 @@ public class ModelContextImpl implements ModelContext {
         private final int mbus_cpp_events_before_wakeup;
         private final int rpc_num_targets;
         private final int rpc_events_before_wakeup;
-        private final int clusterControllerStateGatherCount;
+        private final boolean useRestrictedDataPlaneBindings;
 
         public FeatureFlags(FlagSource source, ApplicationId appId, Version version) {
             this.defaultTermwiseLimit = flagValue(source, appId, version, Flags.DEFAULT_TERM_WISE_LIMIT);
-            this.useThreePhaseUpdates = flagValue(source, appId, version, Flags.USE_THREE_PHASE_UPDATES);
             this.feedSequencer = flagValue(source, appId, version, Flags.FEED_SEQUENCER_TYPE);
             this.responseSequencer = flagValue(source, appId, version, Flags.RESPONSE_SEQUENCER_TYPE);
             this.numResponseThreads = flagValue(source, appId, version, Flags.RESPONSE_NUM_THREADS);
@@ -237,39 +219,24 @@ public class ModelContextImpl implements ModelContext {
             this.useAsyncMessageHandlingOnSchedule = flagValue(source, appId, version, Flags.USE_ASYNC_MESSAGE_HANDLING_ON_SCHEDULE);
             this.feedConcurrency = flagValue(source, appId, version, Flags.FEED_CONCURRENCY);
             this.feedNiceness = flagValue(source, appId, version, Flags.FEED_NICENESS);
-            this.mbus_dispatch_on_decode = flagValue(source, appId, version, Flags.MBUS_DISPATCH_ON_DECODE);
-            this.mbus_dispatch_on_encode = flagValue(source, appId, version, Flags.MBUS_DISPATCH_ON_ENCODE);
-            this.mbus_threads = flagValue(source, appId, version, Flags.MBUS_NUM_THREADS);
             this.mbus_network_threads = flagValue(source, appId, version, Flags.MBUS_NUM_NETWORK_THREADS);
             this.allowedAthenzProxyIdentities = flagValue(source, appId, version, Flags.ALLOWED_ATHENZ_PROXY_IDENTITIES);
             this.maxActivationInhibitedOutOfSyncGroups = flagValue(source, appId, version, Flags.MAX_ACTIVATION_INHIBITED_OUT_OF_SYNC_GROUPS);
             this.jvmOmitStackTraceInFastThrow = type -> flagValueAsInt(source, appId, version, type, PermanentFlags.JVM_OMIT_STACK_TRACE_IN_FAST_THROW);
-            this.maxConcurrentMergesPerContentNode = flagValue(source, appId, version, Flags.MAX_CONCURRENT_MERGES_PER_NODE);
-            this.maxMergeQueueSize = flagValue(source, appId, version, Flags.MAX_MERGE_QUEUE_SIZE);
             this.resourceLimitDisk = flagValue(source, appId, version, PermanentFlags.RESOURCE_LIMIT_DISK);
             this.resourceLimitMemory = flagValue(source, appId, version, PermanentFlags.RESOURCE_LIMIT_MEMORY);
             this.minNodeRatioPerGroup = flagValue(source, appId, version, Flags.MIN_NODE_RATIO_PER_GROUP);
-            this.metricsproxyNumThreads = flagValue(source, appId, version, Flags.METRICSPROXY_NUM_THREADS);
-            this.availableProcessors = flagValue(source, appId, version, Flags.AVAILABLE_PROCESSORS);
             this.containerDumpHeapOnShutdownTimeout = flagValue(source, appId, version, Flags.CONTAINER_DUMP_HEAP_ON_SHUTDOWN_TIMEOUT);
             this.loadCodeAsHugePages = flagValue(source, appId, version, Flags.LOAD_CODE_AS_HUGEPAGES);
             this.containerShutdownTimeout = flagValue(source, appId, version, Flags.CONTAINER_SHUTDOWN_TIMEOUT);
             this.maxUnCommittedMemory = flagValue(source, appId, version, Flags.MAX_UNCOMMITTED_MEMORY);
             this.forwardIssuesAsErrors = flagValue(source, appId, version, PermanentFlags.FORWARD_ISSUES_AS_ERRORS);
             this.ignoreThreadStackSizes = flagValue(source, appId, version, Flags.IGNORE_THREAD_STACK_SIZES);
-            this.unorderedMergeChaining = flagValue(source, appId, version, Flags.UNORDERED_MERGE_CHAINING);
             this.useV8GeoPositions = flagValue(source, appId, version, Flags.USE_V8_GEO_POSITIONS);
             this.maxCompactBuffers = flagValue(source, appId, version, Flags.MAX_COMPACT_BUFFERS);
             this.ignoredHttpUserAgents = flagValue(source, appId, version, PermanentFlags.IGNORED_HTTP_USER_AGENTS);
-            this.mergeThrottlingPolicy = flagValue(source, appId, version, Flags.MERGE_THROTTLING_POLICY);
-            this.persistenceThrottlingWsDecrementFactor = flagValue(source, appId, version, Flags.PERSISTENCE_THROTTLING_WS_DECREMENT_FACTOR);
-            this.persistenceThrottlingWsBackoff = flagValue(source, appId, version, Flags.PERSISTENCE_THROTTLING_WS_BACKOFF);
-            this.persistenceThrottlingWindowSize = flagValue(source, appId, version, Flags.PERSISTENCE_THROTTLING_WINDOW_SIZE);
-            this.persistenceThrottlingWsResizeRate = flagValue(source, appId, version, Flags.PERSISTENCE_THROTTLING_WS_RESIZE_RATE);
-            this.persistenceThrottlingOfMergeFeedOps = flagValue(source, appId, version, Flags.PERSISTENCE_THROTTLING_OF_MERGE_FEED_OPS);
             this.useQrserverServiceName = flagValue(source, appId, version, Flags.USE_QRSERVER_SERVICE_NAME);
             this.avoidRenamingSummaryFeatures = flagValue(source, appId, version, Flags.AVOID_RENAMING_SUMMARY_FEATURES);
-            this.enableBitVectors = flagValue(source, appId, version, Flags.ENABLE_BIT_VECTORS);
             this.adminClusterArchitecture = Architecture.valueOf(flagValue(source, appId, version, PermanentFlags.ADMIN_CLUSTER_NODE_ARCHITECTURE));
             this.enableProxyProtocolMixedMode = flagValue(source, appId, version, Flags.ENABLE_PROXY_PROTOCOL_MIXED_MODE);
             this.sharedStringRepoNoReclaim = flagValue(source, appId, version, Flags.SHARED_STRING_REPO_NO_RECLAIM);
@@ -282,14 +249,11 @@ public class ModelContextImpl implements ModelContext {
             this.rpc_num_targets = flagValue(source, appId, version, Flags.RPC_NUM_TARGETS);
             this.rpc_events_before_wakeup = flagValue(source, appId, version, Flags.RPC_EVENTS_BEFORE_WAKEUP);
             this.queryDispatchPolicy = flagValue(source, appId, version, Flags.QUERY_DISPATCH_POLICY);
-            this.phraseOptimization = flagValue(source, appId, version, Flags.PHRASE_OPTIMIZATION);
-            this.clusterControllerStateGatherCount = flagValue(source, appId, version, Flags.CLUSTER_CONTROLLER_STATE_GATHER_COUNT);
+            this.useRestrictedDataPlaneBindings = flagValue(source, appId, version, Flags.RESTRICT_DATA_PLANE_BINDINGS);
         }
 
         @Override public String queryDispatchPolicy() { return queryDispatchPolicy; }
-        @Override public String phraseOptimization() { return phraseOptimization; }
         @Override public double defaultTermwiseLimit() { return defaultTermwiseLimit; }
-        @Override public boolean useThreePhaseUpdates() { return useThreePhaseUpdates; }
         @Override public String feedSequencerType() { return feedSequencer; }
         @Override public String responseSequencerType() { return responseSequencer; }
         @Override public int defaultNumResponseThreads() { return numResponseThreads; }
@@ -299,41 +263,26 @@ public class ModelContextImpl implements ModelContext {
         @Override public boolean useAsyncMessageHandlingOnSchedule() { return useAsyncMessageHandlingOnSchedule; }
         @Override public double feedConcurrency() { return feedConcurrency; }
         @Override public double feedNiceness() { return feedNiceness; }
-        @Override public boolean mbusDispatchOnDecode() { return mbus_dispatch_on_decode; }
-        @Override public boolean mbusDispatchOnEncode() { return mbus_dispatch_on_encode; }
         @Override public int mbusNetworkThreads() { return mbus_network_threads; }
-        @Override public int mbusThreads() { return mbus_threads; }
         @Override public List<String> allowedAthenzProxyIdentities() { return allowedAthenzProxyIdentities; }
         @Override public int maxActivationInhibitedOutOfSyncGroups() { return maxActivationInhibitedOutOfSyncGroups; }
         @Override public String jvmOmitStackTraceInFastThrowOption(ClusterSpec.Type type) {
             return translateJvmOmitStackTraceInFastThrowIntToString(jvmOmitStackTraceInFastThrow, type);
         }
-        @Override public int maxConcurrentMergesPerNode() { return maxConcurrentMergesPerContentNode; }
-        @Override public int maxMergeQueueSize() { return maxMergeQueueSize; }
         @Override public double resourceLimitDisk() { return resourceLimitDisk; }
         @Override public double resourceLimitMemory() { return resourceLimitMemory; }
         @Override public double minNodeRatioPerGroup() { return minNodeRatioPerGroup; }
-        @Override public int defaultPoolNumThreads() { return metricsproxyNumThreads; }
-        @Override public int availableProcessors() { return availableProcessors; }
         @Override public double containerShutdownTimeout() { return containerShutdownTimeout; }
         @Override public boolean containerDumpHeapOnShutdownTimeout() { return containerDumpHeapOnShutdownTimeout; }
         @Override public boolean loadCodeAsHugePages() { return loadCodeAsHugePages; }
         @Override public int maxUnCommittedMemory() { return maxUnCommittedMemory; }
         @Override public boolean forwardIssuesAsErrors() { return forwardIssuesAsErrors; }
         @Override public boolean ignoreThreadStackSizes() { return ignoreThreadStackSizes; }
-        @Override public boolean unorderedMergeChaining() { return unorderedMergeChaining; }
         @Override public boolean useV8GeoPositions() { return useV8GeoPositions; }
         @Override public int maxCompactBuffers() { return maxCompactBuffers; }
         @Override public List<String> ignoredHttpUserAgents() { return ignoredHttpUserAgents; }
-        @Override public String mergeThrottlingPolicy() { return mergeThrottlingPolicy; }
-        @Override public double persistenceThrottlingWsDecrementFactor() { return persistenceThrottlingWsDecrementFactor; }
-        @Override public double persistenceThrottlingWsBackoff() { return persistenceThrottlingWsBackoff; }
-        @Override public int persistenceThrottlingWindowSize() { return persistenceThrottlingWindowSize; }
-        @Override public double persistenceThrottlingWsResizeRate() { return persistenceThrottlingWsResizeRate; }
-        @Override public boolean persistenceThrottlingOfMergeFeedOps() { return persistenceThrottlingOfMergeFeedOps; }
         @Override public boolean useQrserverServiceName() { return useQrserverServiceName; }
         @Override public boolean avoidRenamingSummaryFeatures() { return avoidRenamingSummaryFeatures; }
-        @Override public boolean enableBitVectors() { return this.enableBitVectors; }
         @Override public Architecture adminClusterArchitecture() { return adminClusterArchitecture; }
         @Override public boolean enableProxyProtocolMixedMode() { return enableProxyProtocolMixedMode; }
         @Override public boolean sharedStringRepoNoReclaim() { return sharedStringRepoNoReclaim; }
@@ -351,7 +300,7 @@ public class ModelContextImpl implements ModelContext {
             return defVal;
         }
         @Override public boolean useTwoPhaseDocumentGc() { return useTwoPhaseDocumentGc; }
-        @Override public int clusterControllerStateGatherCount() { return clusterControllerStateGatherCount; }
+        @Override public boolean useRestrictedDataPlaneBindings() { return useRestrictedDataPlaneBindings; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, Version vespaVersion, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)

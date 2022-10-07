@@ -3,15 +3,18 @@
 #pragma once
 
 #include "bufferstate.h"
+#include "free_list.h"
+#include "memory_stats.h"
 #include <vespa/vespalib/util/address_space.h>
 #include <vespa/vespalib/util/generationholder.h>
 #include <vespa/vespalib/util/memoryusage.h>
-#include <vector>
-#include <deque>
 #include <atomic>
+#include <deque>
+#include <vector>
 
 namespace vespalib::datastore {
 
+class CompactingBuffers;
 class CompactionSpec;
 class CompactionStrategy;
 
@@ -22,9 +25,10 @@ class CompactionStrategy;
  */
 class DataStoreBase
 {
-public:
+protected:
     /**
-     * Hold list before freeze, before knowing how long elements must be held.
+     * Hold list element used in the first phase of holding (before freeze),
+     * before knowing how long elements must be held.
      */
     class ElemHold1ListElem
     {
@@ -38,9 +42,26 @@ public:
         { }
     };
 
-protected:
     using generation_t = vespalib::GenerationHandler::generation_t;
     using sgeneration_t = vespalib::GenerationHandler::sgeneration_t;
+
+    /**
+     * Hold list element used in the second phase of holding (at freeze),
+     * when knowing how long elements must be held.
+     */
+    class ElemHold2ListElem : public ElemHold1ListElem
+    {
+    public:
+        generation_t _generation;
+
+        ElemHold2ListElem(const ElemHold1ListElem &hold1, generation_t generation)
+                : ElemHold1ListElem(hold1),
+                  _generation(generation)
+        { }
+    };
+
+    using ElemHold1List = vespalib::Array<ElemHold1ListElem>;
+    using ElemHold2List = std::deque<ElemHold2ListElem>;
 
 private:
     class BufferAndTypeId {
@@ -57,32 +78,16 @@ private:
         uint32_t   _typeId;
     };
     std::vector<BufferAndTypeId> _buffers; // For fast mapping with known types
-protected:
+
     // Provides a mapping from typeId -> primary buffer for that type.
     // The primary buffer is used for allocations of new element(s) if no available slots are found in free lists.
     std::vector<uint32_t> _primary_buffer_ids;
 
+protected:
     void* getBuffer(uint32_t bufferId) { return _buffers[bufferId].get_buffer_relaxed(); }
 
     /**
-     * Hold list at freeze, when knowing how long elements must be held
-     */
-    class ElemHold2ListElem : public ElemHold1ListElem
-    {
-    public:
-        generation_t _generation;
-
-        ElemHold2ListElem(const ElemHold1ListElem &hold1, generation_t generation)
-            : ElemHold1ListElem(hold1),
-              _generation(generation)
-        { }
-    };
-
-    using ElemHold1List = vespalib::Array<ElemHold1ListElem>;
-    using ElemHold2List = std::deque<ElemHold2ListElem>;
-
-    /**
-     * Class used to hold the old buffer as part of fallbackResize().
+     * Class used to hold the entire old buffer as part of fallbackResize().
      */
     class FallbackHold : public vespalib::GenerationHeldBase
     {
@@ -100,58 +105,12 @@ protected:
 
     class BufferHold;
 
-public:
-    class MemStats
-    {
-    public:
-        size_t _allocElems;
-        size_t _usedElems;
-        size_t _deadElems;
-        size_t _holdElems;
-        size_t _allocBytes;
-        size_t _usedBytes;
-        size_t _deadBytes;
-        size_t _holdBytes;
-        uint32_t _freeBuffers;
-        uint32_t _activeBuffers;
-        uint32_t _holdBuffers;
-
-        MemStats()
-            : _allocElems(0),
-              _usedElems(0),
-              _deadElems(0),
-              _holdElems(0),
-              _allocBytes(0),
-              _usedBytes(0),
-              _deadBytes(0),
-              _holdBytes(0),
-              _freeBuffers(0),
-              _activeBuffers(0),
-              _holdBuffers(0)
-        { }
-
-        MemStats& operator+=(const MemStats &rhs) {
-            _allocElems += rhs._allocElems;
-            _usedElems += rhs._usedElems;
-            _deadElems += rhs._deadElems;
-            _holdElems += rhs._holdElems;
-            _allocBytes += rhs._allocBytes;
-            _usedBytes += rhs._usedBytes;
-            _deadBytes += rhs._deadBytes;
-            _holdBytes += rhs._holdBytes;
-            _freeBuffers += rhs._freeBuffers;
-            _activeBuffers += rhs._activeBuffers;
-            _holdBuffers += rhs._holdBuffers;
-            return *this;
-        }
-    };
-
 private:
     std::vector<BufferState> _states;
 protected:
     std::vector<BufferTypeBase *> _typeHandlers; // TypeId -> handler
 
-    std::vector<BufferState::FreeListList> _freeListLists;
+    std::vector<FreeList> _free_lists;
     bool _freeListsEnabled;
     bool _initializing;
 
@@ -159,18 +118,20 @@ protected:
     ElemHold2List _elemHold2List;
 
     const uint32_t _numBuffers;
+    const uint32_t _offset_bits;
     uint32_t       _hold_buffer_count;
     const size_t   _maxArrays;
     mutable std::atomic<uint64_t> _compaction_count;
 
     vespalib::GenerationHolder _genHolder;
 
-    DataStoreBase(uint32_t numBuffers, size_t maxArrays);
+    DataStoreBase(uint32_t numBuffers, uint32_t offset_bits, size_t maxArrays);
     DataStoreBase(const DataStoreBase &) = delete;
     DataStoreBase &operator=(const DataStoreBase &) = delete;
 
     virtual ~DataStoreBase();
 
+private:
     /**
      * Get the next buffer id after the given buffer id.
      */
@@ -180,6 +141,7 @@ protected:
             ret = 0;
         return ret;
     }
+protected:
 
     /**
      * Get the primary buffer for the given type id.
@@ -197,9 +159,8 @@ protected:
 
     virtual void clearElemHoldList() = 0;
 
-    template <typename BufferStateActiveFilter>
-    uint32_t startCompactWorstBuffer(uint32_t initWorstBufferId, BufferStateActiveFilter &&filterFunc);
     void markCompacting(uint32_t bufferId);
+
 public:
     uint32_t addType(BufferTypeBase *typeHandler);
     void init_primary_buffers();
@@ -235,9 +196,11 @@ public:
      */
     void switch_primary_buffer(uint32_t typeId, size_t elemsNeeded);
 
+private:
     bool consider_grow_active_buffer(uint32_t type_id, size_t elems_needed);
     void switch_or_grow_primary_buffer(uint32_t typeId, size_t elemsNeeded);
 
+public:
     vespalib::MemoryUsage getMemoryUsage() const;
 
     vespalib::AddressSpace getAddressSpaceUsage() const;
@@ -249,6 +212,8 @@ public:
     const BufferState &getBufferState(uint32_t bufferId) const { return _states[bufferId]; }
     BufferState &getBufferState(uint32_t bufferId) { return _states[bufferId]; }
     uint32_t getNumBuffers() const { return _numBuffers; }
+
+private:
     bool hasElemHold1() const { return !_elemHold1List.empty(); }
 
     /**
@@ -256,16 +221,19 @@ public:
      */
     void transferElemHoldList(generation_t generation);
 
+public:
     /**
      * Transfer holds from hold1 to hold2 lists, assigning generation.
      */
     void transferHoldLists(generation_t generation);
 
+private:
     /**
      * Hold of buffer has ended.
      */
     void doneHoldBuffer(uint32_t bufferId);
 
+public:
     /**
      * Trim hold lists, freeing buffers that no longer needs to be held.
      *
@@ -297,12 +265,6 @@ public:
 
     void dropBuffers();
 
-
-    void incDead(uint32_t bufferId, size_t deadElems) {
-        BufferState &state = _states[bufferId];
-        state.incDeadElems(deadElems);
-    }
-
     /**
      * Enable free list management.
      * This only works for fixed size elements.
@@ -314,16 +276,14 @@ public:
      */
     void disableFreeLists();
 
+private:
     /**
      * Enable free list management.
      * This only works for fixed size elements.
      */
     void enableFreeList(uint32_t bufferId);
 
-    /**
-     * Disable free list management.
-     */
-    void disableFreeList(uint32_t bufferId);
+public:
     void disableElemHoldList();
 
     bool has_free_lists_enabled() const { return _freeListsEnabled; }
@@ -331,14 +291,14 @@ public:
     /**
      * Returns the free list for the given type id.
      */
-    BufferState::FreeListList &getFreeList(uint32_t typeId) {
-        return _freeListLists[typeId];
+    FreeList &getFreeList(uint32_t typeId) {
+        return _free_lists[typeId];
     }
 
     /**
      * Returns aggregated memory statistics for all buffers in this data store.
      */
-    MemStats getMemStats() const;
+    MemoryStats getMemStats() const;
 
     /**
      * Assume that no readers are present while data structure is being initialized.
@@ -356,16 +316,18 @@ private:
     void onActive(uint32_t bufferId, uint32_t typeId, size_t elemsNeeded);
 
     void inc_hold_buffer_count();
+
 public:
     uint32_t getTypeId(uint32_t bufferId) const {
         return _buffers[bufferId].getTypeId();
     }
 
-    std::vector<uint32_t> startCompact(uint32_t typeId);
-
     void finishCompact(const std::vector<uint32_t> &toHold);
+
+private:
     void fallbackResize(uint32_t bufferId, size_t elementsNeeded);
 
+public:
     vespalib::GenerationHolder &getGenerationHolder() {
         return _genHolder;
     }
@@ -375,8 +337,7 @@ public:
         return self._genHolder;
     }
 
-    uint32_t startCompactWorstBuffer(uint32_t typeId);
-    std::vector<uint32_t> startCompactWorstBuffers(CompactionSpec compaction_spec, const CompactionStrategy &compaction_strategy);
+    std::unique_ptr<CompactingBuffers> start_compact_worst_buffers(CompactionSpec compaction_spec, const CompactionStrategy &compaction_strategy);
     uint64_t get_compaction_count() const { return _compaction_count.load(std::memory_order_relaxed); }
     void inc_compaction_count() const { ++_compaction_count; }
     bool has_held_buffers() const noexcept { return _hold_buffer_count != 0u; }

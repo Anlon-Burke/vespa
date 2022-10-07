@@ -24,7 +24,6 @@
 #include <vespa/vespalib/net/http/json_get_handler.h>
 #include <vespa/vespalib/net/http/json_handler_repo.h>
 #include <vespa/vespalib/net/http/state_explorer.h>
-#include <vespa/vespalib/util/varholder.h>
 #include <vespa/vespalib/util/cpu_usage.h>
 #include <mutex>
 #include <shared_mutex>
@@ -77,7 +76,7 @@ private:
         pid_t _pid;
 
     public:
-        ProtonFileHeaderContext(const vespalib::string &creator);
+        explicit ProtonFileHeaderContext(const vespalib::string &creator);
         ~ProtonFileHeaderContext() override;
 
         void addTags(vespalib::GenericHeader &header, const vespalib::string &name) const override;
@@ -198,7 +197,8 @@ public:
     int64_t getConfigGeneration();
 
     size_t getNumDocs() const;
-    size_t getNumActiveDocs() const;
+    // Active (searchable), and targetActive that will be searchable when idealstate is reached
+    ActiveDocs getNumActiveDocs() const;
 
     search::engine::SearchServer &get_search_server();
     search::engine::DocsumServer &get_docsum_server();

@@ -25,7 +25,10 @@ func RunPrepare(opts *Options, args []string) (err error) {
 		sessId := getSessionIdFromFile(opts.Tenant)
 		response, err = doPrepare(opts, sessId)
 	} else if isFileOrDir(args[0]) {
-		RunUpload(opts, args)
+		err := RunUpload(opts, args)
+		if err != nil {
+			return err
+		}
 		return RunPrepare(opts, []string{})
 	} else if looksLikeNumber(args[0]) {
 		response, err = doPrepare(opts, args[0])
@@ -75,6 +78,6 @@ func doPrepare(opts *Options, sessionId string) (output string, err error) {
 	url = addUrlPropertyFromOption(url, opts.Rotations, "rotations")
 	url = addUrlPropertyFromOption(url, opts.VespaVersion, "vespaVersion")
 	fmt.Printf("Preparing session %s using %s\n", sessionId, urlWithoutQuery(url))
-	output, err = curlPut(url, src)
+	output, err = curlPutNothing(url)
 	return
 }

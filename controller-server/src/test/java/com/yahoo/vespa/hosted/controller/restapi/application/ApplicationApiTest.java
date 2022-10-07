@@ -102,6 +102,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.Collectors.joining;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -925,7 +926,8 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant1", POST).userIdentity(USER_ID)
                         .data("{\"athensDomain\":\"domain1\", \"property\":\"property1\"}")
                         .oAuthCredentials(OKTA_CREDENTIALS),
-                "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Tenant 'tenant1' already exists\"}", 400);
+                """
+                        {"error-code":"BAD_REQUEST","message":"Tenant 'tenant1' cannot be created, try a different name"}""", 400);
 
 
         // Forget a deleted tenant
@@ -972,14 +974,14 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // Invalid deployment fails
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/global-rotation", GET)
                         .userIdentity(USER_ID),
-                "{\"error-code\":\"NOT_FOUND\",\"message\":\"application 'tenant1.application1.instance1' has no deployment in prod.us-central-1\"}",
+                "{\"error-code\":\"NOT_FOUND\",\"message\":\"application instance 'tenant1.application1.instance1' has no deployment in prod.us-central-1\"}",
                 404);
 
         // Change status of non-existing deployment fails
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/global-rotation/override", PUT)
                         .userIdentity(USER_ID)
                         .data("{\"reason\":\"unit-test\"}"),
-                "{\"error-code\":\"NOT_FOUND\",\"message\":\"application 'tenant1.application1.instance1' has no deployment in prod.us-central-1\"}",
+                "{\"error-code\":\"NOT_FOUND\",\"message\":\"application instance 'tenant1.application1.instance1' has no deployment in prod.us-central-1\"}",
                 404);
 
         // GET global rotation status
@@ -1037,7 +1039,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // GET global rotation status without specifying endpointId fails
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-west-1/global-rotation", GET)
                         .userIdentity(USER_ID),
-                "{\"error-code\":\"BAD_REQUEST\",\"message\":\"application 'tenant1.application1.instance1' has multiple rotations. Query parameter 'endpointId' must be given\"}",
+                "{\"error-code\":\"BAD_REQUEST\",\"message\":\"application instance 'tenant1.application1.instance1' has multiple rotations. Query parameter 'endpointId' must be given\"}",
                 400);
 
         // GET global rotation status for us-west-1 in default endpoint
@@ -1646,7 +1648,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
     }
 
     @Test
-    void create_application_on_deploy() {
+    void create_application_on_deploy_with_okta() {
         // Setup
         createAthenzDomainWithAdmin(ATHENZ_TENANT_DOMAIN, USER_ID);
         addUserToHostedOperatorRole(HostedAthenzIdentities.from(HOSTED_VESPA_OPERATOR));
@@ -1668,11 +1670,40 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploy/dev-us-east-1/", POST)
                         .data(entity)
                         .oAuthCredentials(OKTA_CREDENTIALS)
-
                         .userIdentity(USER_ID),
-                "{\"message\":\"Deployment started in run 1 of dev-us-east-1 for tenant1.application1.instance1. This may take about 15 minutes the first time.\",\"run\":1}");
+                """
+                        {"message":"Deployment started in run 1 of dev-us-east-1 for tenant1.application1.instance1. This may take about 15 minutes the first time.","run":1}""");
 
         assertTrue(tester.controller().applications().getApplication(appId).isPresent());
+    }
+
+    @Test
+    void create_application_on_deploy_with_athenz() {
+        // Setup
+        createAthenzDomainWithAdmin(ATHENZ_TENANT_DOMAIN, USER_ID);
+        addUserToHostedOperatorRole(HostedAthenzIdentities.from(HOSTED_VESPA_OPERATOR));
+
+        // Create tenant
+        tester.assertResponse(request("/application/v4/tenant/tenant1", POST).userIdentity(USER_ID)
+                        .data("{\"athensDomain\":\"domain1\", \"property\":\"property1\"}")
+                        .oAuthCredentials(OKTA_CREDENTIALS),
+                new File("tenant-without-applications.json"));
+
+        // Deploy application
+        var id = ApplicationId.from("tenant1", "application1", "instance1");
+        var appId = TenantAndApplicationId.from(id);
+        var entity = createApplicationDeployData(applicationPackageInstance1);
+
+        assertTrue(tester.controller().applications().getApplication(appId).isEmpty());
+
+        // POST (deploy) an application to start a manual deployment to dev
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploy/dev-us-east-1/", POST)
+                        .data(entity)
+                        .userIdentity(USER_ID),
+                """
+                        {"error-code":"BAD_REQUEST","message":"Application does not exist. Create application in Console first."}""", 400);
+
+        assertFalse(tester.controller().applications().getApplication(appId).isPresent());
     }
 
     private static String serializeInstant(Instant i) {

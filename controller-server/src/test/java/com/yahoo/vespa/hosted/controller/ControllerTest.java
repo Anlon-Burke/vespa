@@ -67,6 +67,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.yahoo.config.provision.SystemName.main;
+import static com.yahoo.vespa.hosted.controller.deployment.DeploymentContext.devUsEast1;
 import static com.yahoo.vespa.hosted.controller.deployment.DeploymentContext.productionUsEast3;
 import static com.yahoo.vespa.hosted.controller.deployment.DeploymentContext.productionUsWest1;
 import static com.yahoo.vespa.hosted.controller.deployment.DeploymentContext.stagingTest;
@@ -92,6 +93,7 @@ public class ControllerTest {
     void testDeployment() {
         // Setup system
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
+                .explicitEnvironment(Environment.dev, Environment.perf)
                 .region("us-west-1")
                 .region("us-east-3")
                 .build();
@@ -173,12 +175,13 @@ public class ControllerTest {
             fail("Expected exception due to illegal production deployment removal");
         }
         catch (IllegalArgumentException e) {
-            assertEquals("deployment-removal: application 'tenant.application' is deployed in us-west-1, but does not include this zone in deployment.xml. " +
-                    ValidationOverrides.toAllowMessage(ValidationId.deploymentRemoval),
-                    e.getMessage());
+            assertEquals("deployment-removal: application instance 'tenant.application.default' is deployed in us-west-1, " +
+                         "but this instance and region combination is removed from deployment.xml. " +
+                         ValidationOverrides.toAllowMessage(ValidationId.deploymentRemoval),
+                         e.getMessage());
         }
         assertNotNull(context.instance().deployments().get(productionUsWest1.zone()),
-                "Zone was not removed");
+                      "Zone was not removed");
 
         // prod zone removal is allowed with override
         applicationPackage = new ApplicationPackageBuilder()
@@ -694,7 +697,8 @@ public class ControllerTest {
 
     @Test
     void testDevDeployment() {
-        ApplicationPackage applicationPackage = new ApplicationPackageBuilder().build();
+        // A package without deployment.xml is considered valid
+        ApplicationPackage applicationPackage = new ApplicationPackage(new byte[0]);
 
         // Create application
         var context = tester.newDeploymentContext();
@@ -740,6 +744,7 @@ public class ControllerTest {
         var context = tester.newDeploymentContext();
         tester.controllerTester().flagSource().withListFlag(PermanentFlags.INCOMPATIBLE_VERSIONS.id(), List.of("8"), String.class);
         tester.controllerTester().upgradeSystem(version2);
+        tester.newDeploymentContext("keep", "v2", "alive").submit().deploy(); // TODO jonmv: remove
         ZoneId zone = ZoneId.from("dev", "us-east-1");
 
         context.runJob(zone, new ApplicationPackageBuilder().compileVersion(version1).build());
@@ -1271,33 +1276,38 @@ public class ControllerTest {
     @Test
     void testCloudAccount() {
         DeploymentContext context = tester.newDeploymentContext();
-        ZoneId zone = ZoneId.from("prod", "us-west-1");
+        ZoneId devZone = devUsEast1.zone();
+        ZoneId prodZone = productionUsWest1.zone();
         String cloudAccount = "012345678912";
         var applicationPackage = new ApplicationPackageBuilder()
                 .cloudAccount(cloudAccount)
-                .region(zone.region())
+                .region(prodZone.region())
                 .build();
-        // Deployment fails because cloud account is not declared for this tenant
-        try {
-            context.submit(applicationPackage).deploy();
-            fail("Expected exception");
-        } catch (IllegalArgumentException e) {
-            assertEquals("Cloud account '012345678912' is not valid for tenant 'tenant'", e.getMessage());
-        }
+        // Prod and dev deployments fail because cloud account is not declared for this tenant
+        context.submit(applicationPackage).runJobExpectingFailure(systemTest, "Requested cloud account '012345678912' is not valid for tenant 'tenant'");
 
-        // Deployment fails because requested region is not configured in cloud account
+        // Deployment fails because zone is not configured in requested cloud account
         tester.controllerTester().flagSource().withListFlag(PermanentFlags.CLOUD_ACCOUNTS.id(), List.of(cloudAccount), String.class);
-        try {
-            context.submit(applicationPackage).deploy();
-            fail("Expected exception");
-        } catch (IllegalArgumentException e) {
-            assertEquals("Zone prod.us-west-1 in deployment spec is not configured for use in cloud account '012345678912', in this system", e.getMessage());
-        }
+        context.runJobExpectingFailure(systemTest, "Zone test.us-east-1 is not configured in requested cloud account '012345678912'")
+               .abortJob(stagingTest);
 
-        // Deployment succeeds
-        tester.controllerTester().zoneRegistry().setCloudAccountZones(new CloudAccount(cloudAccount), zone);
+        // Deployment to prod succeeds once all zones are configured in requested account
+        tester.controllerTester().zoneRegistry().configureCloudAccount(new CloudAccount(cloudAccount),
+                                                                       systemTest.zone(),
+                                                                       stagingTest.zone(),
+                                                                       prodZone);
         context.submit(applicationPackage).deploy();
-        assertEquals(cloudAccount, tester.controllerTester().configServer().cloudAccount(context.deploymentIdIn(zone)).get().value());
+
+        // Dev zone is added as a configured zone and deployment succeeds
+        tester.controllerTester().zoneRegistry().configureCloudAccount(new CloudAccount(cloudAccount), devZone);
+        context.runJob(devZone, applicationPackage);
+
+        // All deployments use the custom account
+        for (var zoneId : List.of(systemTest.zone(), stagingTest.zone(), devZone, prodZone)) {
+            assertEquals(cloudAccount, tester.controllerTester().configServer()
+                                             .cloudAccount(context.deploymentIdIn(zoneId))
+                                             .get().value());
+        }
     }
 
     @Test

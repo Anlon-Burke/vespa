@@ -93,10 +93,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.logging.Level;
@@ -113,6 +115,9 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
     // Default path to vip status file for container in Hosted Vespa.
     static final String HOSTED_VESPA_STATUS_FILE = Defaults.getDefaults().underVespaHome("var/vespa/load-balancer/status.html");
+
+    // Data plane port for hosted Vespa
+    static final int HOSTED_VESPA_DATAPLANE_PORT = 4443;
 
     //Path to vip status file for container in Hosted Vespa. Only used if set, else use HOSTED_VESPA_STATUS_FILE
     private static final String HOSTED_VESPA_STATUS_FILE_SETTING = "VESPA_LB_STATUS_FILE";
@@ -187,14 +192,14 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         addModelEvaluation(spec, cluster, context);
         addModelEvaluationBundles(cluster);
 
-        addProcessing(deployState, spec, cluster);
-        addSearch(deployState, spec, cluster);
+        addProcessing(deployState, spec, cluster, context);
+        addSearch(deployState, spec, cluster, context);
         addDocproc(deployState, spec, cluster);
-        addDocumentApi(spec, cluster);  // NOTE: Must be done after addSearch
+        addDocumentApi(deployState, spec, cluster, context);  // NOTE: Must be done after addSearch
 
         cluster.addDefaultHandlersExceptStatus();
         addStatusHandlers(cluster, context.getDeployState().isHosted());
-        addUserHandlers(deployState, cluster, spec);
+        addUserHandlers(deployState, cluster, spec, context);
 
         addHttp(deployState, spec, cluster, context);
 
@@ -450,11 +455,11 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
             connectorFactory = authorizeClient
                     ? HostedSslConnectorFactory.withProvidedCertificateAndTruststore(
-                            serverName, endpointCertificateSecrets,  getTlsClientAuthorities(deployState), tlsCiphersOverride, proxyProtocolMixedMode)
+                    serverName, endpointCertificateSecrets, getTlsClientAuthorities(deployState), tlsCiphersOverride, proxyProtocolMixedMode, HOSTED_VESPA_DATAPLANE_PORT)
                     : HostedSslConnectorFactory.withProvidedCertificate(
-                            serverName, endpointCertificateSecrets, enforceHandshakeClientAuth, tlsCiphersOverride, proxyProtocolMixedMode);
+                    serverName, endpointCertificateSecrets, enforceHandshakeClientAuth, tlsCiphersOverride, proxyProtocolMixedMode, HOSTED_VESPA_DATAPLANE_PORT);
         } else {
-            connectorFactory = HostedSslConnectorFactory.withDefaultCertificateAndTruststore(serverName, tlsCiphersOverride, proxyProtocolMixedMode);
+            connectorFactory = HostedSslConnectorFactory.withDefaultCertificateAndTruststore(serverName, tlsCiphersOverride, proxyProtocolMixedMode, HOSTED_VESPA_DATAPLANE_PORT);
         }
         cluster.getHttp().getAccessControl().ifPresent(accessControl -> accessControl.configureHostedConnector(connectorFactory));
         server.addConnector(connectorFactory);
@@ -516,8 +521,8 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         return http;
     }
 
-    private void addDocumentApi(Element spec, ApplicationContainerCluster cluster) {
-        ContainerDocumentApi containerDocumentApi = buildDocumentApi(cluster, spec);
+    private void addDocumentApi(DeployState deployState, Element spec, ApplicationContainerCluster cluster, ConfigModelContext context) {
+        ContainerDocumentApi containerDocumentApi = buildDocumentApi(deployState, cluster, spec, context);
         if (containerDocumentApi == null) return;
 
         cluster.setDocumentApi(containerDocumentApi);
@@ -533,14 +538,14 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
                 docprocOptions.maxConcurrentFactor, docprocOptions.documentExpansionFactor, docprocOptions.containerCoreMemory));
     }
 
-    private void addSearch(DeployState deployState, Element spec, ApplicationContainerCluster cluster) {
+    private void addSearch(DeployState deployState, Element spec, ApplicationContainerCluster cluster, ConfigModelContext context) {
         Element searchElement = XML.getChild(spec, "search");
         if (searchElement == null) return;
 
         addIncludes(searchElement);
         cluster.setSearch(buildSearch(deployState, cluster, searchElement));
 
-        addSearchHandler(cluster, searchElement);
+        addSearchHandler(deployState, cluster, searchElement, context);
 
         validateAndAddConfiguredComponents(deployState, cluster, searchElement, "renderer", ContainerModelBuilder::validateRendererElement);
     }
@@ -584,14 +589,14 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         cluster.addPlatformBundle(ContainerModelEvaluation.MODEL_INTEGRATION_BUNDLE_FILE);
     }
 
-    private void addProcessing(DeployState deployState, Element spec, ApplicationContainerCluster cluster) {
+    private void addProcessing(DeployState deployState, Element spec, ApplicationContainerCluster cluster, ConfigModelContext context) {
         Element processingElement = XML.getChild(spec, "processing");
         if (processingElement == null) return;
 
         cluster.addSearchAndDocprocBundles();
         addIncludes(processingElement);
         cluster.setProcessingChains(new DomProcessingBuilder(null).build(deployState, cluster, processingElement),
-                                    serverBindings(processingElement, ProcessingChains.defaultBindings).toArray(BindingPattern[]::new));
+                                    serverBindings(deployState, context, processingElement, ProcessingChains.defaultBindings).toArray(BindingPattern[]::new));
         validateAndAddConfiguredComponents(deployState, cluster, processingElement, "renderer", ContainerModelBuilder::validateRendererElement);
     }
 
@@ -613,10 +618,11 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         containerSearch.setPageTemplates(PageTemplates.create(applicationPackage));
     }
 
-    private void addUserHandlers(DeployState deployState, ApplicationContainerCluster cluster, Element spec) {
+    private void addUserHandlers(DeployState deployState, ApplicationContainerCluster cluster, Element spec, ConfigModelContext context) {
+        OptionalInt portBindingOverride = isHostedTenantApplication(context) ? OptionalInt.of(HOSTED_VESPA_DATAPLANE_PORT) : OptionalInt.empty();
         for (Element component: XML.getChildren(spec, "handler")) {
             cluster.addComponent(
-                    new DomHandlerBuilder(cluster).build(deployState, cluster, component));
+                    new DomHandlerBuilder(cluster, portBindingOverride).build(deployState, cluster, component));
         }
     }
 
@@ -702,25 +708,27 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
             extractJvmOptions(nodes, cluster, nodesElement, context);
             applyDefaultPreload(nodes, nodesElement);
-            String environmentVars = getEnvironmentVariables(XML.getChild(nodesElement, ENVIRONMENT_VARIABLES_ELEMENT));
-            if (!environmentVars.isEmpty()) {
-                cluster.setEnvironmentVars(environmentVars);
+            var envVars = getEnvironmentVariables(XML.getChild(nodesElement, ENVIRONMENT_VARIABLES_ELEMENT)).entrySet();
+            for (var container : nodes) {
+                for (var entry : envVars) {
+                    container.addEnvironmentVariable(entry.getKey(), entry.getValue());
+                }
             }
             if (useCpuSocketAffinity(nodesElement))
                 AbstractService.distributeCpuSocketAffinity(nodes);
-
             cluster.addContainers(nodes);
         }
     }
 
-    private static String getEnvironmentVariables(Element environmentVariables) {
-        StringBuilder sb = new StringBuilder();
+    private static Map<String, String> getEnvironmentVariables(Element environmentVariables) {
+        var map = new LinkedHashMap<String, String>();
         if (environmentVariables != null) {
             for (Element var: XML.getChildren(environmentVariables)) {
-                sb.append(var.getNodeName()).append('=').append(var.getTextContent()).append(' ');
+                var name = new com.yahoo.text.Identifier(var.getNodeName());
+                map.put(name.toString(), var.getTextContent());
             }
         }
-        return sb.toString();
+        return map;
     }
     
     private List<ApplicationContainer> createNodes(ApplicationContainerCluster cluster, Element containerElement, Element nodesElement, ConfigModelContext context) {
@@ -875,9 +883,13 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             container.setPreLoad(nodesElement.getAttribute(VespaDomBuilder.PRELOAD_ATTRIB_NAME));
     }
 
-    private void addSearchHandler(ApplicationContainerCluster cluster, Element searchElement) {
+    private void addSearchHandler(DeployState deployState, ApplicationContainerCluster cluster, Element searchElement, ConfigModelContext context) {
+        BindingPattern bindingPattern = SearchHandler.DEFAULT_BINDING;
+        if (isHostedTenantApplication(context) && deployState.featureFlags().useRestrictedDataPlaneBindings()) {
+            bindingPattern = SearchHandler.bindingPattern(Optional.of(Integer.toString(HOSTED_VESPA_DATAPLANE_PORT)));
+        }
         SearchHandler searchHandler = new SearchHandler(cluster,
-                                                        serverBindings(searchElement, SearchHandler.DEFAULT_BINDING),
+                                                        serverBindings(deployState, context, searchElement, bindingPattern),
                                                         ContainerThreadpool.UserOptions.fromXml(searchElement).orElse(null));
         cluster.addComponent(searchHandler);
 
@@ -885,34 +897,43 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         searchHandler.addComponent(Component.fromClassAndBundle(SearchHandler.EXECUTION_FACTORY_CLASS, PlatformBundles.SEARCH_AND_DOCPROC_BUNDLE));
     }
 
-    private List<BindingPattern> serverBindings(Element searchElement, BindingPattern... defaultBindings) {
+    private List<BindingPattern> serverBindings(DeployState deployState, ConfigModelContext context, Element searchElement, BindingPattern... defaultBindings) {
         List<Element> bindings = XML.getChildren(searchElement, "binding");
         if (bindings.isEmpty())
             return List.of(defaultBindings);
 
-        return toBindingList(bindings);
+        return toBindingList(deployState, context, bindings);
     }
 
-    private List<BindingPattern> toBindingList(List<Element> bindingElements) {
+    private List<BindingPattern> toBindingList(DeployState deployState, ConfigModelContext context, List<Element> bindingElements) {
         List<BindingPattern> result = new ArrayList<>();
-
+        OptionalInt portOverride = isHostedTenantApplication(context) && deployState.featureFlags().useRestrictedDataPlaneBindings() ? OptionalInt.of(HOSTED_VESPA_DATAPLANE_PORT) : OptionalInt.empty();
         for (Element element: bindingElements) {
             String text = element.getTextContent().trim();
             if (!text.isEmpty())
-                result.add(UserBindingPattern.fromPattern(text));
+                result.add(userBindingPattern(text, portOverride));
         }
 
         return result;
     }
+    private static UserBindingPattern userBindingPattern(String path, OptionalInt portOverride) {
+        UserBindingPattern bindingPattern = UserBindingPattern.fromPattern(path);
+        return portOverride.isPresent()
+                ? bindingPattern.withPort(portOverride.getAsInt())
+                : bindingPattern;
+    }
 
-    private ContainerDocumentApi buildDocumentApi(ApplicationContainerCluster cluster, Element spec) {
+    private ContainerDocumentApi buildDocumentApi(DeployState deployState, ApplicationContainerCluster cluster, Element spec, ConfigModelContext context) {
         Element documentApiElement = XML.getChild(spec, "document-api");
         if (documentApiElement == null) return null;
 
         ContainerDocumentApi.HandlerOptions documentApiOptions = DocumentApiOptionsBuilder.build(documentApiElement);
         Element ignoreUndefinedFields = XML.getChild(documentApiElement, "ignore-undefined-fields");
+        OptionalInt portBindingOverride = deployState.featureFlags().useRestrictedDataPlaneBindings() && isHostedTenantApplication(context)
+                ? OptionalInt.of(HOSTED_VESPA_DATAPLANE_PORT)
+                : OptionalInt.empty();
         return new ContainerDocumentApi(cluster, documentApiOptions,
-                                        "true".equals(XML.getValue(ignoreUndefinedFields)));
+                                        "true".equals(XML.getValue(ignoreUndefinedFields)), portBindingOverride);
     }
 
     private ContainerDocproc buildDocproc(DeployState deployState, ApplicationContainerCluster cluster, Element spec) {

@@ -3,7 +3,7 @@
 #include <vespa/searchcore/proton/bucketdb/bucket_db_owner.h>
 #include <vespa/searchcore/proton/documentmetastore/documentmetastore.h>
 #include <vespa/searchcore/proton/matching/fakesearchcontext.h>
-#include <vespa/searchcore/proton/matching/i_constant_value_repo.h>
+#include <vespa/searchcore/proton/matching/i_ranking_assets_repo.h>
 #include <vespa/searchcore/proton/matching/match_context.h>
 #include <vespa/searchcore/proton/matching/match_params.h>
 #include <vespa/searchcore/proton/matching/match_tools.h>
@@ -66,6 +66,8 @@ using vespalib::eval::SimpleValue;
 using vespalib::eval::TensorSpec;
 using vespalib::nbostream;
 
+vespalib::ThreadBundle &ttb() { return vespalib::ThreadBundle::trivial(); }
+
 void inject_match_phase_limiting(Properties &setup, const vespalib::string &attribute, size_t max_hits, bool descending)
 {
     Properties cfg;
@@ -107,9 +109,17 @@ vespalib::string make_same_element_stack_dump(const vespalib::string &a1_term, c
 
 const uint32_t NUM_DOCS = 1000;
 
-struct EmptyConstantValueRepo : public proton::matching::IConstantValueRepo {
+struct EmptyRankingAssetsRepo : public proton::matching::IRankingAssetsRepo {
     vespalib::eval::ConstantValue::UP getConstant(const vespalib::string &) const override {
         return {};
+    }
+
+    vespalib::string getExpression(const vespalib::string &) const override {
+        return {};
+    }
+
+    const OnnxModel *getOnnxModel(const vespalib::string &) const override {
+        return nullptr;
     }
 };
 
@@ -125,7 +135,7 @@ struct MyWorld {
     MatchingStats           matchingStats;
     vespalib::TestClock     clock;
     QueryLimiter            queryLimiter;
-    EmptyConstantValueRepo  constantValueRepo;
+    EmptyRankingAssetsRepo  constantValueRepo;
 
     MyWorld();
     ~MyWorld();
@@ -175,7 +185,7 @@ struct MyWorld {
             attributeContext.add(attr);
         }
         {
-            SingleInt32ExtAttribute *attr = new SingleInt32ExtAttribute("a2");
+            auto *attr = new SingleInt32ExtAttribute("a2");
             AttributeVector::DocId docid(0);
             for (uint32_t i = 0; i < NUM_DOCS; ++i) {
                 attr->addDoc(docid);
@@ -185,7 +195,7 @@ struct MyWorld {
             attributeContext.add(attr);
         }
         {
-            SingleInt32ExtAttribute *attr = new SingleInt32ExtAttribute("a3");
+            auto *attr = new SingleInt32ExtAttribute("a3");
             AttributeVector::DocId docid(0);
             for (uint32_t i = 0; i < NUM_DOCS; ++i) {
                 attr->addDoc(docid);
@@ -347,7 +357,7 @@ struct MyWorld {
     }
 
     Matcher::SP createMatcher() {
-        return std::make_shared<Matcher>(schema, config, clock.clock(), queryLimiter, constantValueRepo, RankingExpressions(), OnnxModels(), 0);
+        return std::make_shared<Matcher>(schema, config, clock.clock(), queryLimiter, constantValueRepo, 0);
     }
 
     struct MySearchHandler : ISearchHandler {
@@ -363,10 +373,10 @@ struct MyWorld {
         }
     };
 
-    void verify_diversity_filter(SearchRequest::SP req, bool expectDiverse) {
+    void verify_diversity_filter(const SearchRequest & req, bool expectDiverse) {
         Matcher::SP matcher = createMatcher();
         search::fef::Properties overrides;
-        auto mtf = matcher->create_match_tools_factory(*req, searchContext, attributeContext, metaStore, overrides, true);
+        auto mtf = matcher->create_match_tools_factory(req, searchContext, attributeContext, metaStore, overrides, ttb(), true);
         auto diversity = mtf->createDiversifier(HeapSize::lookup(config));
         EXPECT_EQUAL(expectDiverse, static_cast<bool>(diversity));
     }
@@ -376,21 +386,22 @@ struct MyWorld {
         SearchRequest::SP request = createSimpleRequest("f1", "spread");
         search::fef::Properties overrides;
         MatchToolsFactory::UP match_tools_factory = matcher->create_match_tools_factory(
-                *request, searchContext, attributeContext, metaStore, overrides, true);
+            *request, searchContext, attributeContext, metaStore, overrides, ttb(), true);
         MatchTools::UP match_tools = match_tools_factory->createMatchTools();
         match_tools->setup_first_phase(nullptr);
         return match_tools->match_data().get_termwise_limit();
     }
 
-    SearchReply::UP performSearch(SearchRequest::SP req, size_t threads) {
+    SearchReply::UP performSearch(const SearchRequest & req, size_t threads) {
         Matcher::SP matcher = createMatcher();
         SearchSession::OwnershipBundle owned_objects;
         owned_objects.search_handler = std::make_shared<MySearchHandler>(matcher);
         owned_objects.context = std::make_unique<MatchContext>(std::make_unique<MockAttributeContext>(),
                                                                std::make_unique<FakeSearchContext>());
         vespalib::SimpleThreadBundle threadBundle(threads);
-        SearchReply::UP reply = matcher->match(*req, threadBundle, searchContext, attributeContext,
-                                               *sessionManager, metaStore, std::move(owned_objects));
+        SearchReply::UP reply = matcher->match(req, threadBundle, searchContext, attributeContext,
+                                               *sessionManager, metaStore, metaStore.getBucketDB(),
+                                               std::move(owned_objects));
         matchingStats.add(matcher->getStats());
         return reply;
     }
@@ -399,7 +410,7 @@ struct MyWorld {
         auto req = std::make_unique<DocsumRequest>();
         setStackDump(*req, stack_dump);
         for (uint32_t docid: docs) {
-            req->hits.push_back(DocsumRequest::Hit());
+            req->hits.emplace_back();
             req->hits.back().docid = docid;
         }
         return req;
@@ -415,7 +426,7 @@ struct MyWorld {
         Matcher::SP matcher = createMatcher();
         const FieldInfo *field = matcher->get_index_env().getFieldByName(field_name);
         if (field == nullptr) {
-            return std::unique_ptr<FieldInfo>();
+            return {};
         }
         return std::make_unique<FieldInfo>(*field);
     }
@@ -501,8 +512,8 @@ TEST("require that matching is performed (multi-threaded)") {
         MyWorld world;
         world.basicSetup();
         world.basicResults();
-        SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
-        SearchReply::UP reply = world.performSearch(request, threads);
+        SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
+        SearchReply::UP reply = world.performSearch(*request, threads);
         EXPECT_EQUAL(9u, world.matchingStats.docsMatched());
         EXPECT_EQUAL(9u, reply->hits.size());
         EXPECT_GREATER(world.matchingStats.matchTimeAvg(), 0.0000001);
@@ -515,10 +526,10 @@ TEST("require that match features are calculated (multi-threaded)") {
         world.basicSetup();
         world.basicResults();
         world.setup_match_features();
-        SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
-        SearchReply::UP reply = world.performSearch(request, threads);
+        SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
+        SearchReply::UP reply = world.performSearch(*request, threads);
         EXPECT_GREATER(reply->hits.size(), 0u);
-        world.verify_match_features(*reply, "f1");
+        MyWorld::verify_match_features(*reply, "f1");
     }
 }
 
@@ -528,10 +539,10 @@ TEST("require that match features can be renamed") {
     world.basicResults();
     world.setup_match_features();
     world.setup_feature_renames();
-    SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
-    SearchReply::UP reply = world.performSearch(request, 1);
+    SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
+    SearchReply::UP reply = world.performSearch(*request, 1);
     EXPECT_GREATER(reply->hits.size(), 0u);
-    world.verify_match_feature_renames(*reply, "f1");
+    MyWorld::verify_match_feature_renames(*reply, "f1");
 }
 
 TEST("require that no hits gives no match feature names") {
@@ -539,10 +550,10 @@ TEST("require that no hits gives no match feature names") {
     world.basicSetup();
     world.basicResults();
     world.setup_match_features();
-    SearchRequest::SP request = world.createSimpleRequest("f1", "not_found");
-    SearchReply::UP reply = world.performSearch(request, 1);
+    SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "not_found");
+    SearchReply::UP reply = world.performSearch(*request, 1);
     EXPECT_EQUAL(reply->hits.size(), 0u);
-    world.verify_match_features(*reply, "f1");
+    MyWorld::verify_match_features(*reply, "f1");
 }
 
 TEST("require that matching also returns hits when only bitvector is used (multi-threaded)") {
@@ -550,8 +561,8 @@ TEST("require that matching also returns hits when only bitvector is used (multi
         MyWorld world;
         world.basicSetup(0, 0);
         world.verbose_a1_result("all");
-        SearchRequest::SP request = world.createSimpleRequest("a1", "all");
-        SearchReply::UP reply = world.performSearch(request, threads);
+        SearchRequest::SP request = MyWorld::createSimpleRequest("a1", "all");
+        SearchReply::UP reply = world.performSearch(*request, threads);
         EXPECT_EQUAL(985u, world.matchingStats.docsMatched());
         EXPECT_EQUAL(10u, reply->hits.size());
         EXPECT_GREATER(world.matchingStats.matchTimeAvg(), 0.0000001);
@@ -563,8 +574,8 @@ TEST("require that ranking is performed (multi-threaded)") {
         MyWorld world;
         world.basicSetup();
         world.basicResults();
-        SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
-        SearchReply::UP reply = world.performSearch(request, threads);
+        SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
+        SearchReply::UP reply = world.performSearch(*request, threads);
         EXPECT_EQUAL(9u, world.matchingStats.docsMatched());
         EXPECT_EQUAL(9u, world.matchingStats.docsRanked());
         EXPECT_EQUAL(0u, world.matchingStats.docsReRanked());
@@ -586,8 +597,8 @@ TEST("require that re-ranking is performed (multi-threaded)") {
         world.basicSetup();
         world.setupSecondPhaseRanking();
         world.basicResults();
-        SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
-        SearchReply::UP reply = world.performSearch(request, threads);
+        SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
+        SearchReply::UP reply = world.performSearch(*request, threads);
         EXPECT_EQUAL(9u, world.matchingStats.docsMatched());
         EXPECT_EQUAL(9u, world.matchingStats.docsRanked());
         EXPECT_EQUAL(3u, world.matchingStats.docsReRanked());
@@ -612,8 +623,8 @@ TEST("require that re-ranking is not diverse when not requested to be.") {
     world.basicSetup();
     world.setupSecondPhaseRanking();
     world.basicResults();
-    SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
-    world.verify_diversity_filter(request, false);
+    SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
+    world.verify_diversity_filter(*request, false);
 }
 
 using namespace search::fef::indexproperties::matchphase;
@@ -623,12 +634,12 @@ TEST("require that re-ranking is diverse when requested to be") {
     world.basicSetup();
     world.setupSecondPhaseRanking();
     world.basicResults();
-    SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
+    SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
     auto & rankProperies = request->propertiesMap.lookupCreate(MapNames::RANK);
     rankProperies.add(DiversityAttribute::NAME, "a2")
             .add(DiversityMinGroups::NAME, "3")
             .add(DiversityCutoffStrategy::NAME, "strict");
-    world.verify_diversity_filter(request, true);
+    world.verify_diversity_filter(*request, true);
 }
 
 TEST("require that re-ranking is diverse with diversity = 1/1") {
@@ -636,12 +647,12 @@ TEST("require that re-ranking is diverse with diversity = 1/1") {
     world.basicSetup();
     world.setupSecondPhaseRanking();
     world.basicResults();
-    SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
+    SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
     auto & rankProperies = request->propertiesMap.lookupCreate(MapNames::RANK);
     rankProperies.add(DiversityAttribute::NAME, "a2")
                  .add(DiversityMinGroups::NAME, "3")
                  .add(DiversityCutoffStrategy::NAME, "strict");
-    SearchReply::UP reply = world.performSearch(request, 1);
+    SearchReply::UP reply = world.performSearch(*request, 1);
     EXPECT_EQUAL(9u, world.matchingStats.docsMatched());
     EXPECT_EQUAL(9u, world.matchingStats.docsRanked());
     EXPECT_EQUAL(3u, world.matchingStats.docsReRanked());
@@ -663,12 +674,12 @@ TEST("require that re-ranking is diverse with diversity = 1/10") {
     world.basicSetup();
     world.setupSecondPhaseRanking();
     world.basicResults();
-    SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
+    SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
     auto & rankProperies = request->propertiesMap.lookupCreate(MapNames::RANK);
     rankProperies.add(DiversityAttribute::NAME, "a3")
                  .add(DiversityMinGroups::NAME, "3")
                  .add(DiversityCutoffStrategy::NAME, "strict");
-    SearchReply::UP reply = world.performSearch(request, 1);
+    SearchReply::UP reply = world.performSearch(*request, 1);
     EXPECT_EQUAL(9u, world.matchingStats.docsMatched());
     EXPECT_EQUAL(9u, world.matchingStats.docsRanked());
     EXPECT_EQUAL(1u, world.matchingStats.docsReRanked());
@@ -691,9 +702,9 @@ TEST("require that sortspec can be used (multi-threaded)") {
         MyWorld world;
         world.basicSetup();
         world.basicResults();
-        SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
+        SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
         request->sortSpec = "+a1";
-        SearchReply::UP reply = world.performSearch(request, threads);
+        SearchReply::UP reply = world.performSearch(*request, threads);
         ASSERT_EQUAL(9u, reply->hits.size());
         EXPECT_EQUAL(document::DocumentId("id:ns:searchdocument::100").getGlobalId(),  reply->hits[0].gid);
         EXPECT_EQUAL(zero_rank_value, reply->hits[0].metric);
@@ -712,7 +723,7 @@ TEST("require that grouping is performed (multi-threaded)") {
         MyWorld world;
         world.basicSetup();
         world.basicResults();
-        SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
+        SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
         {
             vespalib::nbostream buf;
             vespalib::NBOSerializer os(buf);
@@ -723,7 +734,7 @@ TEST("require that grouping is performed (multi-threaded)") {
             grequest.serialize(os);
             request->groupSpec.assign(buf.data(), buf.data() + buf.size());
         }
-        SearchReply::UP reply = world.performSearch(request, threads);
+        SearchReply::UP reply = world.performSearch(*request, threads);
         {
             vespalib::nbostream buf(&reply->groupResult[0], reply->groupResult.size());
             vespalib::NBOSerializer is(buf);
@@ -746,7 +757,7 @@ TEST("require that summary features are filled") {
     MyWorld world;
     world.basicSetup();
     world.basicResults();
-    DocsumRequest::SP req = world.createSimpleDocsumRequest("f1", "foo");
+    DocsumRequest::SP req = MyWorld::createSimpleDocsumRequest("f1", "foo");
     FeatureSet::SP fs = world.getSummaryFeatures(*req);
     const FeatureSet::Value * f = nullptr;
     EXPECT_EQUAL(5u, fs->numFeatures());
@@ -788,7 +799,7 @@ TEST("require that rank features are filled") {
     MyWorld world;
     world.basicSetup();
     world.basicResults();
-    DocsumRequest::SP req = world.createSimpleDocsumRequest("f1", "foo");
+    DocsumRequest::SP req = MyWorld::createSimpleDocsumRequest("f1", "foo");
     FeatureSet::SP fs = world.getRankFeatures(*req);
     const FeatureSet::Value * f = nullptr;
     EXPECT_EQUAL(1u, fs->numFeatures());
@@ -809,11 +820,11 @@ TEST("require that search session can be cached") {
     MyWorld world;
     world.basicSetup();
     world.basicResults();
-    SearchRequest::SP request = world.createSimpleRequest("f1", "foo");
+    SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "foo");
     request->propertiesMap.lookupCreate(search::MapNames::CACHES).add("query", "true");
     request->sessionId.push_back('a');
     EXPECT_EQUAL(0u, world.sessionManager->getSearchStats().numInsert);
-    SearchReply::UP reply = world.performSearch(request, 1);
+    SearchReply::UP reply = world.performSearch(*request, 1);
     EXPECT_EQUAL(1u, world.sessionManager->getSearchStats().numInsert);
     SearchSession::SP session = world.sessionManager->pickSearch("a");
     ASSERT_TRUE(session.get());
@@ -826,7 +837,7 @@ TEST("require that summary features can be renamed") {
     world.basicSetup();
     world.setup_feature_renames();
     world.basicResults();
-    DocsumRequest::SP req = world.createSimpleDocsumRequest("f1", "foo");
+    DocsumRequest::SP req = MyWorld::createSimpleDocsumRequest("f1", "foo");
     FeatureSet::SP fs = world.getSummaryFeatures(*req);
     const FeatureSet::Value * f = nullptr;
     EXPECT_EQUAL(5u, fs->numFeatures());
@@ -845,10 +856,10 @@ TEST("require that getSummaryFeatures can use cached query setup") {
     MyWorld world;
     world.basicSetup();
     world.basicResults();
-    SearchRequest::SP request = world.createSimpleRequest("f1", "foo");
+    SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "foo");
     request->propertiesMap.lookupCreate(search::MapNames::CACHES).add("query", "true");
     request->sessionId.push_back('a');
-    world.performSearch(request, 1);
+    world.performSearch(*request, 1);
 
     DocsumRequest::SP docsum_request(new DocsumRequest);  // no stack dump
     docsum_request->sessionId = request->sessionId;
@@ -899,12 +910,12 @@ TEST("require that getSummaryFeatures prefers cached query setup") {
     MyWorld world;
     world.basicSetup();
     world.basicResults();
-    SearchRequest::SP request = world.createSimpleRequest("f1", "spread");
+    SearchRequest::SP request = MyWorld::createSimpleRequest("f1", "spread");
     request->propertiesMap.lookupCreate(search::MapNames::CACHES).add("query", "true");
     request->sessionId.push_back('a');
-    world.performSearch(request, 1);
+    world.performSearch(*request, 1);
 
-    DocsumRequest::SP req = world.createSimpleDocsumRequest("f1", "foo");
+    DocsumRequest::SP req = MyWorld::createSimpleDocsumRequest("f1", "foo");
     req->sessionId = request->sessionId;
     req->propertiesMap.lookupCreate(search::MapNames::CACHES).add("query", "true");
     FeatureSet::SP fs = world.getSummaryFeatures(*req);
@@ -923,8 +934,8 @@ TEST("require that getSummaryFeatures prefers cached query setup") {
 }
 
 TEST("require that match params are set up straight with ranking on") {
-    MatchParams p(1, 2, 4, 0.7, 0, 1, true, true);
-    ASSERT_EQUAL(1u, p.numDocs);
+    MatchParams p(10, 2, 4, 0.7, 0, 1, true, true);
+    ASSERT_EQUAL(10u, p.numDocs);
     ASSERT_EQUAL(2u, p.heapSize);
     ASSERT_EQUAL(4u, p.arraySize);
     ASSERT_EQUAL(0.7, p.rankDropLimit);
@@ -934,8 +945,8 @@ TEST("require that match params are set up straight with ranking on") {
 }
 
 TEST("require that match params can turn off rank-drop-limit") {
-    MatchParams p(1, 2, 4, -std::numeric_limits<feature_t>::quiet_NaN(), 0, 1, true, true);
-    ASSERT_EQUAL(1u, p.numDocs);
+    MatchParams p(10, 2, 4, -std::numeric_limits<feature_t>::quiet_NaN(), 0, 1, true, true);
+    ASSERT_EQUAL(10u, p.numDocs);
     ASSERT_EQUAL(2u, p.heapSize);
     ASSERT_EQUAL(4u, p.arraySize);
     ASSERT_TRUE(std::isnan(p.rankDropLimit));
@@ -946,8 +957,8 @@ TEST("require that match params can turn off rank-drop-limit") {
 
 
 TEST("require that match params are set up straight with ranking on arraySize is atleast the size of heapSize") {
-    MatchParams p(1, 6, 4, 0.7, 1, 1, true, true);
-    ASSERT_EQUAL(1u, p.numDocs);
+    MatchParams p(10, 6, 4, 0.7, 1, 1, true, true);
+    ASSERT_EQUAL(10u, p.numDocs);
     ASSERT_EQUAL(6u, p.heapSize);
     ASSERT_EQUAL(6u, p.arraySize);
     ASSERT_EQUAL(0.7, p.rankDropLimit);
@@ -956,8 +967,8 @@ TEST("require that match params are set up straight with ranking on arraySize is
 }
 
 TEST("require that match params are set up straight with ranking on arraySize is atleast the size of hits+offset") {
-    MatchParams p(1, 6, 4, 0.7, 4, 4, true, true);
-    ASSERT_EQUAL(1u, p.numDocs);
+    MatchParams p(10, 6, 4, 0.7, 4, 4, true, true);
+    ASSERT_EQUAL(10u, p.numDocs);
     ASSERT_EQUAL(6u, p.heapSize);
     ASSERT_EQUAL(8u, p.arraySize);
     ASSERT_EQUAL(0.7, p.rankDropLimit);
@@ -965,9 +976,29 @@ TEST("require that match params are set up straight with ranking on arraySize is
     ASSERT_EQUAL(4u, p.hits);
 }
 
-TEST("require that match params are set up straight with ranking off array and heap size is 0") {
-    MatchParams p(1, 6, 4, 0.7, 4, 4, true, false);
+TEST("require that match params are capped by numDocs") {
+    MatchParams p(1, 6, 4, 0.7, 4, 4, true, true);
     ASSERT_EQUAL(1u, p.numDocs);
+    ASSERT_EQUAL(1u, p.heapSize);
+    ASSERT_EQUAL(1u, p.arraySize);
+    ASSERT_EQUAL(0.7, p.rankDropLimit);
+    ASSERT_EQUAL(1u, p.offset);
+    ASSERT_EQUAL(0u, p.hits);
+}
+
+TEST("require that match params are capped by numDocs and hits adjusted down") {
+    MatchParams p(5, 6, 4, 0.7, 4, 4, true, true);
+    ASSERT_EQUAL(5u, p.numDocs);
+    ASSERT_EQUAL(5u, p.heapSize);
+    ASSERT_EQUAL(5u, p.arraySize);
+    ASSERT_EQUAL(0.7, p.rankDropLimit);
+    ASSERT_EQUAL(4u, p.offset);
+    ASSERT_EQUAL(1u, p.hits);
+}
+
+TEST("require that match params are set up straight with ranking off array and heap size is 0") {
+    MatchParams p(10, 6, 4, 0.7, 4, 4, true, false);
+    ASSERT_EQUAL(10u, p.numDocs);
     ASSERT_EQUAL(0u, p.heapSize);
     ASSERT_EQUAL(0u, p.arraySize);
     ASSERT_EQUAL(0.7, p.rankDropLimit);
@@ -998,14 +1029,14 @@ TEST("require that match phase limiting works") {
                 }
                 world.add_match_phase_limiting_result("limiter", 152, descending, {948, 951, 963, 987, 991, 994, 997});
             }
-            SearchRequest::SP request = world.createSimpleRequest("a1", "all");
+            SearchRequest::SP request = MyWorld::createSimpleRequest("a1", "all");
             if (query_time) {
                 inject_match_phase_limiting(request->propertiesMap.lookupCreate(search::MapNames::RANK), "limiter", 150, descending);
             }
             if (use_sorting) {
                 request->sortSpec = "-a1";
             }
-            SearchReply::UP reply = world.performSearch(request, want_threads);
+            SearchReply::UP reply = world.performSearch(*request, want_threads);
             ASSERT_EQUAL(10u, reply->hits.size());
             if (enable) {
                 EXPECT_EQUAL(79u, reply->totalHitCount);
@@ -1070,8 +1101,8 @@ TEST("require that same element search works") {
     MyWorld world;
     world.basicSetup();
     world.add_same_element_results("foo", "bar");
-    SearchRequest::SP request = world.createSameElementRequest("foo", "bar");
-    SearchReply::UP reply = world.performSearch(request, 1);
+    SearchRequest::SP request = MyWorld::createSameElementRequest("foo", "bar");
+    SearchReply::UP reply = world.performSearch(*request, 1);
     ASSERT_EQUAL(1u, reply->hits.size());
     EXPECT_EQUAL(document::DocumentId("id:ns:searchdocument::20").getGlobalId(), reply->hits[0].gid);
 }
@@ -1080,7 +1111,7 @@ TEST("require that docsum matcher can extract matching elements from same elemen
     MyWorld world;
     world.basicSetup();
     world.add_same_element_results("foo", "bar");
-    auto request = world.create_docsum_request(make_same_element_stack_dump("foo", "bar"), {20});
+    auto request = MyWorld::create_docsum_request(make_same_element_stack_dump("foo", "bar"), {20});
     MatchingElementsFields fields;
     fields.add_mapping("my", "my.a1");
     fields.add_mapping("my", "my.f1");
@@ -1094,7 +1125,7 @@ TEST("require that docsum matcher can extract matching elements from single attr
     MyWorld world;
     world.basicSetup();
     world.add_same_element_results("foo", "bar");
-    auto request = world.create_docsum_request(make_simple_stack_dump("my.a1", "foo"), {20});
+    auto request = MyWorld::create_docsum_request(make_simple_stack_dump("my.a1", "foo"), {20});
     MatchingElementsFields fields;
     fields.add_mapping("my", "my.a1");
     fields.add_mapping("my", "my.f1");

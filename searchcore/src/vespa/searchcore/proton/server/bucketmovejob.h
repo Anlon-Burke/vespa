@@ -36,12 +36,12 @@ namespace bucketdb { class IBucketCreateNotifier; }
  * 3 - Actual movement is then done in master thread while still holding bucket lock. Once bucket has fully moved
  *     bucket modified notification is sent.
  */
-class BucketMoveJob : public BlockableMaintenanceJob,
-                      public IClusterStateChangedHandler,
-                      public bucketdb::IBucketCreateListener,
-                      public IBucketStateChangedHandler,
-                      public IDiskMemUsageListener,
-                      public std::enable_shared_from_this<BucketMoveJob>
+class BucketMoveJob final : public BlockableMaintenanceJob,
+                            public IClusterStateChangedHandler,
+                            public bucketdb::IBucketCreateListener,
+                            public IBucketStateChangedHandler,
+                            public IDiskMemUsageListener,
+                            public std::enable_shared_from_this<BucketMoveJob>
 {
 private:
     using BucketExecutor = storage::spi::BucketExecutor;
@@ -83,13 +83,13 @@ private:
         const bucketdb::BucketState & _state;
 
     public:
-        BucketStateWrapper(const bucketdb::BucketState & state) noexcept : _state(state) {}
+        explicit BucketStateWrapper(const bucketdb::BucketState & state) noexcept : _state(state) {}
 
         bool                isActive() const noexcept { return _state.isActive(); }
         bool      hasReadyBucketDocs() const noexcept { return _state.getReadyCount() != 0; }
         bool   hasNotReadyBucketDocs() const noexcept { return _state.getNotReadyCount() != 0; }
     };
-    BucketMoveJob(const std::shared_ptr<IBucketStateCalculator> &calc,
+    BucketMoveJob(std::shared_ptr<IBucketStateCalculator> calc,
                   vespalib::RetainGuard dbRetainer,
                   IDocumentMoveHandler &moveHandler,
                   IBucketModifiedHandler &modifiedHandler,
@@ -124,7 +124,7 @@ private:
     class StartMove;
 public:
     static std::shared_ptr<BucketMoveJob>
-    create(const std::shared_ptr<IBucketStateCalculator> &calc,
+    create(std::shared_ptr<IBucketStateCalculator> calc,
            vespalib::RetainGuard dbRetainer,
            IDocumentMoveHandler &moveHandler,
            IBucketModifiedHandler &modifiedHandler,

@@ -307,6 +307,7 @@ public class SearchCluster implements NodeManager<Node> {
             if (fullCoverage) {
                 log.info("Cluster " + clusterId + ": " + group + " has full coverage. " +
                          "Active documents: " + group.activeDocuments() + "/" + medianDocuments + ", " +
+                         "Target active documents: " + group.targetActiveDocuments() + ", " +
                          "working nodes: " + group.workingNodes() + "/" + group.nodes().size());
             } else {
                 StringBuilder unresponsive = new StringBuilder();
@@ -316,6 +317,7 @@ public class SearchCluster implements NodeManager<Node> {
                 }
                 log.warning("Cluster " + clusterId + ": " + group + " has reduced coverage: " +
                             "Active documents: " + group.activeDocuments() + "/" + medianDocuments + ", " +
+                            "Target active documents: " + group.targetActiveDocuments() + ", " +
                             "working nodes: " + group.workingNodes() + "/" + group.nodes().size() +
                             ", unresponsive nodes: " + (unresponsive.toString().isEmpty() ? " none" : unresponsive));
             }
@@ -339,6 +341,7 @@ public class SearchCluster implements NodeManager<Node> {
             } else {
                 if (pong.activeDocuments().isPresent()) {
                     node.setActiveDocuments(pong.activeDocuments().get());
+                    node.setTargetActiveDocuments(pong.targetActiveDocuments().get());
                     node.setBlockingWrites(pong.isBlockingWrites());
                 }
                 clusterMonitor.responded(node);

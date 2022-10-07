@@ -10,6 +10,7 @@
 #include <vespa/searchlib/queryeval/blueprint.h>
 #include <vespa/searchlib/queryeval/irequestcontext.h>
 
+namespace vespalib { struct ThreadBundle; }
 namespace search::engine { class Trace; }
 
 namespace proton::matching {
@@ -21,6 +22,7 @@ class Query
 {
 private:
     using Blueprint = search::queryeval::Blueprint;
+    using GlobalFilter = search::queryeval::GlobalFilter;
     search::query::Node::UP _query_tree;
     Blueprint::UP           _blueprint;
     Blueprint::UP           _whiteListBlueprint;
@@ -53,7 +55,11 @@ public:
                    const vespalib::string &location,
                    const ViewResolver &resolver,
                    const search::fef::IIndexEnvironment &idxEnv,
-                   bool split_unpacking_iterators = false);
+                   bool split_unpacking_iterators);
+    bool buildTree(vespalib::stringref stack,
+                   const vespalib::string &location,
+                   const ViewResolver &resolver,
+                   const search::fef::IIndexEnvironment &idxEnv);
 
     /**
      * Extract query terms from the query tree; to be used to build
@@ -95,7 +101,7 @@ public:
     void fetchPostings();
 
     void handle_global_filter(uint32_t docid_limit, double global_filter_lower_limit, double global_filter_upper_limit,
-                              search::engine::Trace& trace);
+                              vespalib::ThreadBundle &thread_bundle, search::engine::Trace& trace);
 
     /**
      * Calculates and handles the global filter if needed by the blueprint tree.
@@ -112,7 +118,7 @@ public:
      */
     static bool handle_global_filter(Blueprint& blueprint, uint32_t docid_limit,
                                      double global_filter_lower_limit, double global_filter_upper_limit,
-                                     search::engine::Trace* trace);
+                                     vespalib::ThreadBundle &thread_bundle, search::engine::Trace* trace);
 
     void freeze();
 
@@ -129,7 +135,6 @@ public:
      * @return estimate of hits produced.
      */
     Blueprint::HitEstimate estimate() const;
-
     const Blueprint * peekRoot() const { return _blueprint.get(); }
 };
 

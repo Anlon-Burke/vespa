@@ -29,7 +29,7 @@ public:
     void initFromDocsumRequest(const search::engine::DocsumRequest &req);
 
     void setResultClassName(vespalib::stringref name) { _resultClassName = name; }
-    void SetStackDump(uint32_t stackDumpLen, const char *stackDump);
+    void setStackDump(uint32_t stackDumpLen, const char *stackDump);
     void locations_possible(bool value) { _locations_possible = value; }
     bool locations_possible() const { return _locations_possible; }
     const vespalib::string &getLocation() const { return _location; }
@@ -46,8 +46,9 @@ public:
     bool dumpFeatures() const { return _dumpFeatures; }
 
     const fef::Properties &highlightTerms() const { return _highlightTerms; }
-    bool needField(vespalib::stringref field) const;
-    void add_field(vespalib::stringref field);
+    void set_fields(const FieldSet& fields_in) { _fields = fields_in; }
+    const FieldSet& get_fields() const { return _fields; }
+    bool need_field(vespalib::stringref field) const;
 };
 
 }

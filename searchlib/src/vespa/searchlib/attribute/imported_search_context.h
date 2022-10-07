@@ -3,9 +3,9 @@
 #pragma once
 
 #include "bitvector_search_cache.h"
+#include "posting_list_merger.h"
 #include <vespa/searchcommon/attribute/search_context_params.h>
 #include <vespa/searchcommon/attribute/i_search_context.h>
-#include <vespa/searchlib/attribute/posting_list_merger.h>
 #include <vespa/searchlib/common/i_document_meta_store_context.h>
 #include <vespa/vespalib/datastore/atomic_value_wrapper.h>
 #include <vespa/vespalib/util/arrayref.h>
@@ -63,6 +63,7 @@ public:
     void fetchPostings(const queryeval::ExecuteInfo &execInfo) override;
     bool valid() const override;
     Int64Range getAsIntegerTerm() const override;
+    DoubleRange getAsDoubleTerm() const override;
     const QueryTermUCS4 * queryTerm() const override;
     const vespalib::string& attributeName() const override;
 

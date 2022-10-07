@@ -22,7 +22,7 @@ import java.util.logging.Level;
 
 /**
  * Resolves and assigns types to all functions in a ranking expression, and
- * validates the types of all ranking expressions under a search instance:
+ * validates the types of all ranking expressions under a schema instance:
  * Some operators constrain the types of inputs, and first-and second-phase expressions
  * must return scalar values.
  *
@@ -90,10 +90,10 @@ public class RankingExpressionTypeResolver extends Processor {
                  && ! context.queryFeaturesNotDeclared().isEmpty()
                  && ! warnedAbout.containsAll(context.queryFeaturesNotDeclared())) {
                 if (profile.isStrict())
-                    throw new IllegalArgumentException(profile + " is strict but is missing a query profile type " +
-                                                       "declaration of features " + context.queryFeaturesNotDeclared());
+                    throw new IllegalArgumentException(profile + " is strict but is missing a " +
+                                                       "declaration of inputs " + context.queryFeaturesNotDeclared());
                 else
-                    deployLogger.logApplicationPackage(Level.WARNING, "The following query features used in " +
+                    deployLogger.logApplicationPackage(Level.WARNING, "The following inputs used in " +
                                                                       profile + " are not declared " +
                                                                       "and will be interpreted as scalars, not tensors: " +
                                                                       context.queryFeaturesNotDeclared());

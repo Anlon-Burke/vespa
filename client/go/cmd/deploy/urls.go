@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/vespa-engine/vespa/client/go/trace"
+	"github.com/vespa-engine/vespa/client/go/util"
 	"github.com/vespa-engine/vespa/client/go/vespa"
 )
 
@@ -26,17 +28,19 @@ func makeConfigsourceUrls(opts *Options) []string {
 	var results = make([]string, 0, 3)
 	if opts.ServerHost == "" {
 		home := vespa.FindHome()
-		configsources, _ := getOutputFromCmd(home+"/bin/vespa-print-default", "configservers_http")
+		backticks := util.BackTicksForwardStderr
+		configsources, _ := backticks.Run(home+"/bin/vespa-print-default", "configservers_http")
 		for _, src := range strings.Split(configsources, "\n") {
 			colonParts := strings.Split(src, ":")
 			if len(colonParts) > 1 {
 				// XXX overwrites port number from above - is this sensible?
 				src = fmt.Sprintf("%s:%s:%d", colonParts[0], colonParts[1], opts.PortNumber)
+				trace.Trace("can use config server at", src)
 				results = append(results, src)
 			}
 		}
 		if len(results) == 0 {
-			fmt.Println("Could not get url to config server, make sure that VESPA_CONFIGSERVERS is set")
+			trace.Warning("Could not get url to config server, make sure that VESPA_CONFIGSERVERS is set")
 			results = append(results, fmt.Sprintf("http://localhost:%d", opts.PortNumber))
 		}
 	} else {

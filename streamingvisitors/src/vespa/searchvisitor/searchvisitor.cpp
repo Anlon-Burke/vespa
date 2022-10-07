@@ -145,13 +145,15 @@ SearchVisitor::SummaryGenerator::get_streaming_docsums_state(const vespalib::str
     if (itr != _docsum_states.end()) {
         return *itr->second;
     }
-    auto rci = _docsumWriter->resolveClassInfo(summary_class);
+    vespalib::hash_set<vespalib::string> fields;
+    for (const auto& field: _summaryFields) {
+        fields.insert(field);
+    }
+    auto rci = _docsumWriter->resolveClassInfo(summary_class, fields);
     auto state = std::make_unique<StreamingDocsumsState>(_callback, rci);
     auto &ds = state->get_state();
     ds._args.setResultClassName(summary_class);
-    for (const auto &field: _summaryFields) {
-        ds._args.add_field(field);
-    }
+    ds._args.set_fields(fields);
     if (_dump_features.has_value()) {
         ds._args.dumpFeatures(_dump_features.value());
     }
@@ -159,9 +161,9 @@ SearchVisitor::SummaryGenerator::get_streaming_docsums_state(const vespalib::str
         ds._args.setLocation(_location.value());
     }
     if (_stack_dump.has_value()) {
-        ds._args.SetStackDump(_stack_dump.value().size(), _stack_dump.value().data());
+        ds._args.setStackDump(_stack_dump.value().size(), _stack_dump.value().data());
     }
-    _docsumWriter->InitState(_attr_manager, ds, state->get_resolve_class_info());
+    _docsumWriter->initState(_attr_manager, ds, state->get_resolve_class_info());
     auto insres = _docsum_states.insert(std::make_pair(summary_class, std::move(state)));
     return *insres.first->second;
 }
@@ -173,7 +175,7 @@ SearchVisitor::SummaryGenerator::fillSummary(AttributeVector::DocId lid, const H
         vespalib::Slime slime;
         vespalib::slime::SlimeInserter inserter(slime);
         auto& sds = get_streaming_docsums_state(summaryClass);
-        _docsumWriter->insertDocsum(sds.get_resolve_class_info(), lid, &sds.get_state(), _docsumFilter.get(), inserter);
+        _docsumWriter->insertDocsum(sds.get_resolve_class_info(), lid, sds.get_state(), *_docsumFilter, inserter);
         _buf.reset();
         vespalib::WritableMemory magicId = _buf.reserve(4);
         memcpy(magicId.data, &search::docsummary::SLIME_MAGIC_ID, 4);
@@ -348,7 +350,7 @@ void SearchVisitor::init(const Parameters & params)
             LOG(spam, "Received query blob of %zu bytes", queryBlob.size());
             VISITOR_TRACE(9, vespalib::make_string("Setting up for query blob of %zu bytes", queryBlob.size()));
             QueryTermDataFactory addOnFactory;
-            _query = Query(addOnFactory, search::QueryPacketT(queryBlob.data(), queryBlob.size()));
+            _query = Query(addOnFactory, vespalib::stringref(queryBlob.data(), queryBlob.size()));
             _searchBuffer->reserve(0x10000);
 
             int stackCount = 0;

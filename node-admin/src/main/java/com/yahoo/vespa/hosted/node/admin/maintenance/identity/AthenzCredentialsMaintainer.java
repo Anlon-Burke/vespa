@@ -2,7 +2,6 @@
 package com.yahoo.vespa.hosted.node.admin.maintenance.identity;
 
 import com.yahoo.security.KeyAlgorithm;
-import com.yahoo.security.KeyStoreType;
 import com.yahoo.security.KeyUtils;
 import com.yahoo.security.Pkcs10Csr;
 import com.yahoo.security.SslContextBuilder;
@@ -63,7 +62,7 @@ public class AthenzCredentialsMaintainer implements CredentialsMaintainer {
     private static final String CONTAINER_SIA_DIRECTORY = "/var/lib/sia";
 
     private final URI ztsEndpoint;
-    private final Path trustStorePath;
+    private final Path ztsTrustStorePath;
     private final AthenzIdentity configserverIdentity;
     private final Clock clock;
     private final ServiceIdentityProvider hostIdentityProvider;
@@ -75,23 +74,14 @@ public class AthenzCredentialsMaintainer implements CredentialsMaintainer {
     private final Map<ContainerName, Instant> lastRefreshAttempt = new ConcurrentHashMap<>();
 
     public AthenzCredentialsMaintainer(URI ztsEndpoint,
-                                       Path trustStorePath,
-                                       ConfigServerInfo configServerInfo,
-                                       String certificateDnsSuffix,
-                                       ServiceIdentityProvider hostIdentityProvider,
-                                       boolean useInternalZts) {
-        this(ztsEndpoint, trustStorePath, configServerInfo, certificateDnsSuffix, hostIdentityProvider, useInternalZts, Clock.systemUTC());
-    }
-
-    public AthenzCredentialsMaintainer(URI ztsEndpoint,
-                                       Path trustStorePath,
+                                       Path ztsTrustStorePath,
                                        ConfigServerInfo configServerInfo,
                                        String certificateDnsSuffix,
                                        ServiceIdentityProvider hostIdentityProvider,
                                        boolean useInternalZts,
                                        Clock clock) {
         this.ztsEndpoint = ztsEndpoint;
-        this.trustStorePath = trustStorePath;
+        this.ztsTrustStorePath = ztsTrustStorePath;
         this.configserverIdentity = configServerInfo.getConfigServerIdentity();
         this.csrGenerator = new CsrGenerator(certificateDnsSuffix, configserverIdentity.getFullName());
         this.hostIdentityProvider = hostIdentityProvider;
@@ -216,11 +206,11 @@ public class AthenzCredentialsMaintainer implements CredentialsMaintainer {
         KeyPair keyPair = KeyUtils.generateKeypair(KeyAlgorithm.RSA);
         Pkcs10Csr csr = csrGenerator.generateInstanceCsr(
                 context.identity(), identityDocument.providerUniqueId(), identityDocument.ipAddresses(), keyPair);
-        SSLContext containerIdentitySslContext =
-                new SslContextBuilder()
-                        .withKeyStore(privateKeyFile, certificateFile)
-                        .withTrustStore(trustStorePath, KeyStoreType.JKS)
-                        .build();
+
+        SSLContext containerIdentitySslContext = new SslContextBuilder().withKeyStore(privateKeyFile, certificateFile)
+                                                                        .withTrustStore(ztsTrustStorePath)
+                                                                        .build();
+
         try {
             // Set up a hostname verified for zts if this is configured to use the config server (internal zts) apis
             HostnameVerifier ztsHostNameVerifier = useInternalZts

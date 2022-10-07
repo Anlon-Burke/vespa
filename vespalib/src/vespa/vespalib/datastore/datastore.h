@@ -38,17 +38,6 @@ public:
     ~DataStoreT() override;
 
     /**
-     * Increase number of dead elements in buffer.
-     *
-     * @param ref       Reference to dead stored features
-     * @param dead      Number of newly dead elements
-     */
-    void incDead(EntryRef ref, size_t deadElems) {
-        RefType intRef(ref);
-        DataStoreBase::incDead(intRef.bufferId(), deadElems);
-    }
-
-    /**
      * Free element(s).
      */
     void freeElem(EntryRef ref, size_t numElems) { free_elem_internal(ref, numElems, false); }
@@ -97,8 +86,6 @@ class DataStore : public DataStoreT<RefT>
 protected:
     typedef DataStoreT<RefT> ParentType;
     using ParentType::ensureBufferCapacity;
-    using ParentType::_primary_buffer_ids;
-    using ParentType::_freeListLists;
     using ParentType::getEntry;
     using ParentType::dropBuffers;
     using ParentType::init_primary_buffers;

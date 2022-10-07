@@ -3,11 +3,14 @@ package com.yahoo.vespa.hosted.provision.os;
 
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.Cloud;
+import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.test.ManualClock;
+import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
@@ -95,7 +98,7 @@ public class OsVersionsTest {
     public void max_active_upgrades() {
         int totalNodes = 20;
         int maxActiveUpgrades = 5;
-        var versions = new OsVersions(tester.nodeRepository(), false, maxActiveUpgrades);
+        var versions = new OsVersions(tester.nodeRepository(), Cloud.defaultCloud(), maxActiveUpgrades);
         provisionInfraApplication(totalNodes);
         Supplier<NodeList> hostNodes = () -> tester.nodeRepository().nodes().list().state(Node.State.active).hosts();
 
@@ -160,7 +163,7 @@ public class OsVersionsTest {
 
     @Test
     public void upgrade_by_retiring() {
-        var versions = new OsVersions(tester.nodeRepository(), true, Integer.MAX_VALUE);
+        var versions = new OsVersions(tester.nodeRepository(), Cloud.builder().dynamicProvisioning(true).build(), Integer.MAX_VALUE);
         var clock = (ManualClock) tester.nodeRepository().clock();
         int hostCount = 10;
         // Provision hosts and children
@@ -228,7 +231,7 @@ public class OsVersionsTest {
 
     @Test
     public void upgrade_by_retiring_everything_at_once() {
-        var versions = new OsVersions(tester.nodeRepository(), true, Integer.MAX_VALUE);
+        var versions = new OsVersions(tester.nodeRepository(), Cloud.builder().dynamicProvisioning(true).build(), Integer.MAX_VALUE);
         int hostCount = 3;
         provisionInfraApplication(hostCount, infraApplication, NodeType.confighost);
         Supplier<NodeList> hostNodes = () -> tester.nodeRepository().nodes().list()
@@ -253,7 +256,7 @@ public class OsVersionsTest {
     @Test
     public void upgrade_by_rebuilding() {
         tester.flagSource().withIntFlag(PermanentFlags.MAX_REBUILDS.id(), 1);
-        var versions = new OsVersions(tester.nodeRepository(), false, Integer.MAX_VALUE);
+        var versions = new OsVersions(tester.nodeRepository(), Cloud.defaultCloud(), Integer.MAX_VALUE);
         int hostCount = 10;
         provisionInfraApplication(hostCount + 1);
         Supplier<NodeList> hostNodes = () -> tester.nodeRepository().nodes().list().nodeType(NodeType.host);
@@ -273,35 +276,35 @@ public class OsVersionsTest {
         versions.resumeUpgradeOf(NodeType.host, true);
 
         // One host starts rebuilding
-        assertEquals(1, hostNodes.get().rebuilding().size());
+        assertEquals(1, hostNodes.get().rebuilding(false).size());
 
         // We cannot rebuild another host until the current one is done
         versions.resumeUpgradeOf(NodeType.host, true);
-        NodeList hostsRebuilding = hostNodes.get().rebuilding();
+        NodeList hostsRebuilding = hostNodes.get().rebuilding(false);
         assertEquals(1, hostsRebuilding.size());
         completeRebuildOf(hostsRebuilding.asList(), NodeType.host);
         assertEquals(1, hostNodes.get().onOsVersion(version1).size());
 
         // Second host is rebuilt
         versions.resumeUpgradeOf(NodeType.host, true);
-        completeRebuildOf(hostNodes.get().rebuilding().asList(), NodeType.host);
+        completeRebuildOf(hostNodes.get().rebuilding(false).asList(), NodeType.host);
         assertEquals(2, hostNodes.get().onOsVersion(version1).size());
 
         // The remaining hosts complete their upgrade
         for (int i = 0; i < hostCount - 2; i++) {
             versions.resumeUpgradeOf(NodeType.host, true);
-            hostsRebuilding = hostNodes.get().rebuilding();
+            hostsRebuilding = hostNodes.get().rebuilding(false);
             assertEquals(1, hostsRebuilding.size());
             completeRebuildOf(hostsRebuilding.asList(), NodeType.host);
         }
 
         // All hosts upgraded and none are rebuilding
-        assertEquals(hostCount, hostNodes.get().onOsVersion(version1).not().rebuilding().size());
+        assertEquals(hostCount, hostNodes.get().onOsVersion(version1).not().rebuilding(false).size());
         assertEquals(hostCount, tester.nodeRepository().nodes().list(Node.State.active).size());
 
         // Resuming after everything has upgraded has no effect
         versions.resumeUpgradeOf(NodeType.host, true);
-        assertEquals(0, hostNodes.get().rebuilding().size());
+        assertEquals(0, hostNodes.get().rebuilding(false).size());
 
         // Next version is within same major. Upgrade mechanism switches to delegated
         var version2 = Version.fromString("8.1");
@@ -319,15 +322,65 @@ public class OsVersionsTest {
 
         // Resuming upgrades reactivated host. Upgrade mechanism switches to rebuilding
         versions.resumeUpgradeOf(NodeType.host, true);
-        hostsRebuilding = hostNodes.get().rebuilding();
+        hostsRebuilding = hostNodes.get().rebuilding(false);
         assertEquals(List.of(reactivatedHost), hostsRebuilding.asList());
         completeRebuildOf(hostsRebuilding.asList(), NodeType.host);
     }
 
     @Test
+    public void upgrade_by_soft_rebuilding() {
+        int maxRebuilds = 3;
+        int hostCount = 12;
+        boolean softRebuild = true;
+
+        tester.flagSource().withIntFlag(PermanentFlags.MAX_REBUILDS.id(), maxRebuilds);
+        tester.flagSource().withBooleanFlag(Flags.SOFT_REBUILD.id(), softRebuild);
+        var versions = new OsVersions(tester.nodeRepository(), Cloud.builder().dynamicProvisioning(true).name(CloudName.AWS).build(), Integer.MAX_VALUE);
+
+        provisionInfraApplication(hostCount, infraApplication, NodeType.host, NodeResources.StorageType.remote);
+        Supplier<NodeList> hostNodes = () -> tester.nodeRepository().nodes().list().nodeType(NodeType.host);
+
+        // New target is set
+        int hostsRebuilt = 0;
+        var version1 = Version.fromString("8.0");
+        versions.setTarget(NodeType.host, version1, Duration.ZERO, false);
+        versions.resumeUpgradeOf(NodeType.host, true);
+
+        // First batch of hosts start rebuilding
+        assertEquals(maxRebuilds, hostNodes.get().rebuilding(softRebuild).size());
+
+        // We cannot rebuild another host yet
+        versions.resumeUpgradeOf(NodeType.host, true);
+        NodeList hostsRebuilding = hostNodes.get().rebuilding(softRebuild);
+        assertEquals(maxRebuilds, hostsRebuilding.size());
+        completeSoftRebuildOf(hostsRebuilding.asList());
+        assertEquals(hostsRebuilt += maxRebuilds, hostNodes.get().onOsVersion(version1).size());
+
+        // Another batch is rebuilt
+        versions.resumeUpgradeOf(NodeType.host, true);
+        completeSoftRebuildOf(hostNodes.get().rebuilding(softRebuild).asList());
+        assertEquals(hostsRebuilt += maxRebuilds, hostsRebuilt);
+
+        // The remaining batches complete their upgrade
+        for (int i = 0; i < (hostCount - hostsRebuilt) / maxRebuilds; i++) {
+            versions.resumeUpgradeOf(NodeType.host, true);
+            hostsRebuilding = hostNodes.get().rebuilding(softRebuild);
+            assertEquals(maxRebuilds, hostsRebuilding.size());
+            completeSoftRebuildOf(hostsRebuilding.asList());
+        }
+
+        // All hosts upgraded and none are rebuilding
+        assertEquals(hostCount, hostNodes.get().onOsVersion(version1).not().rebuilding(softRebuild).size());
+
+        // Resuming after everything has upgraded has no effect
+        versions.resumeUpgradeOf(NodeType.host, true);
+        assertEquals(0, hostNodes.get().rebuilding(softRebuild).size());
+    }
+
+    @Test
     public void upgrade_by_rebuilding_multiple_host_types() {
         tester.flagSource().withIntFlag(PermanentFlags.MAX_REBUILDS.id(), 1);
-        var versions = new OsVersions(tester.nodeRepository(), false, Integer.MAX_VALUE);
+        var versions = new OsVersions(tester.nodeRepository(), Cloud.defaultCloud(), Integer.MAX_VALUE);
         int hostCount = 3;
         provisionInfraApplication(hostCount, infraApplication, NodeType.host);
         provisionInfraApplication(hostCount, ApplicationId.from("hosted-vespa", "confighost", "default"), NodeType.confighost);
@@ -349,7 +402,7 @@ public class OsVersionsTest {
         for (int i = 0; i < hostCount; i++) {
             versions.resumeUpgradeOf(NodeType.host, true);
             versions.resumeUpgradeOf(NodeType.confighost, true);
-            NodeList hostsRebuilding = hosts.get().rebuilding();
+            NodeList hostsRebuilding = hosts.get().rebuilding(false);
             assertEquals(2, hostsRebuilding.size());
             completeRebuildOf(hostsRebuilding.nodeType(NodeType.host).asList(), NodeType.host);
             completeRebuildOf(hostsRebuilding.nodeType(NodeType.confighost).asList(), NodeType.confighost);
@@ -360,7 +413,7 @@ public class OsVersionsTest {
     @Test
     public void upgrade_by_rebuilding_is_limited_by_stateful_clusters() {
         tester.flagSource().withIntFlag(PermanentFlags.MAX_REBUILDS.id(), 3);
-        var versions = new OsVersions(tester.nodeRepository(), false, Integer.MAX_VALUE);
+        var versions = new OsVersions(tester.nodeRepository(), Cloud.defaultCloud(), Integer.MAX_VALUE);
         int hostCount = 5;
         ApplicationId app1 = ApplicationId.from("t1", "a1", "i1");
         ApplicationId app2 = ApplicationId.from("t2", "a2", "i2");
@@ -382,7 +435,7 @@ public class OsVersionsTest {
         versions.resumeUpgradeOf(NodeType.host, true);
         NodeList allNodes = tester.nodeRepository().nodes().list();
         List<Node> hostsRebuilding = allNodes.nodeType(NodeType.host)
-                                             .rebuilding()
+                                             .rebuilding(false)
                                              .sortedBy(Comparator.comparing(Node::hostname))
                                              .asList();
         List<Optional<ApplicationId>> owners = List.of(Optional.of(app1), Optional.of(app2), Optional.empty());
@@ -420,7 +473,7 @@ public class OsVersionsTest {
         // Since both applications now occupy all remaining hosts, we can only upgrade 1 at a time
         for (int i = 0; i < hostsOnOldVersion.size(); i++) {
             versions.resumeUpgradeOf(NodeType.host, true);
-            hostsRebuilding = hosts.get().rebuilding().asList();
+            hostsRebuilding = hosts.get().rebuilding(false).asList();
             assertEquals(1, hostsRebuilding.size());
             replaceNodes(app1);
             replaceNodes(app2);
@@ -430,7 +483,7 @@ public class OsVersionsTest {
         // Resuming upgrade has no effect as all hosts have upgraded
         versions.resumeUpgradeOf(NodeType.host, true);
         NodeList allHosts = hosts.get();
-        assertEquals(0, allHosts.rebuilding().size());
+        assertEquals(0, allHosts.rebuilding(false).size());
         assertEquals(allHosts.size(), allHosts.onOsVersion(version1).size());
     }
 
@@ -438,7 +491,7 @@ public class OsVersionsTest {
     public void upgrade_by_rebuilding_limits_infrastructure_host() {
         int hostCount = 3;
         tester.flagSource().withIntFlag(PermanentFlags.MAX_REBUILDS.id(), hostCount);
-        var versions = new OsVersions(tester.nodeRepository(), false, Integer.MAX_VALUE);
+        var versions = new OsVersions(tester.nodeRepository(), Cloud.defaultCloud(), Integer.MAX_VALUE);
         provisionInfraApplication(hostCount, infraApplication, NodeType.proxyhost);
         Supplier<NodeList> hosts = () -> tester.nodeRepository().nodes().list().nodeType(NodeType.proxyhost);
 
@@ -454,7 +507,7 @@ public class OsVersionsTest {
         // Upgrades 1 infrastructure host at a time
         for (int i = 0; i < hostCount; i++) {
             versions.resumeUpgradeOf(NodeType.proxyhost, true);
-            List<Node> hostsRebuilding = hosts.get().rebuilding().asList();
+            List<Node> hostsRebuilding = hosts.get().rebuilding(false).asList();
             assertEquals(1, hostsRebuilding.size());
             completeRebuildOf(hostsRebuilding, NodeType.proxyhost);
         }
@@ -490,7 +543,13 @@ public class OsVersionsTest {
     }
 
     private List<Node> provisionInfraApplication(int nodeCount, ApplicationId application, NodeType nodeType) {
-        var nodes = tester.makeReadyNodes(nodeCount, new NodeResources(48, 128, 2000, 10), nodeType, 10);
+        return provisionInfraApplication(nodeCount, application, nodeType, NodeResources.StorageType.local);
+    }
+
+    private List<Node> provisionInfraApplication(int nodeCount, ApplicationId application, NodeType nodeType, NodeResources.StorageType storageType) {
+        var nodes = tester.makeReadyNodes(nodeCount, new NodeResources(48, 128, 2000, 10,
+                                                                       NodeResources.DiskSpeed.fast, storageType),
+                                          nodeType, 10);
         tester.prepareAndActivateInfraApplication(application, nodeType);
         return nodes.stream()
                     .map(Node::hostname)
@@ -553,6 +612,17 @@ public class OsVersionsTest {
                 tester.prepareAndActivateInfraApplication(application, nodeType);
                 node = tester.nodeRepository().nodes().node(node.hostname()).get();
             }
+            return node.with(node.status().withOsVersion(node.status().osVersion().withCurrent(wantedOsVersion)));
+        });
+    }
+
+    private void completeSoftRebuildOf(List<Node> nodes) {
+        tester.patchNodes(nodes, (node) -> {
+            Optional<Version> wantedOsVersion = node.status().osVersion().wanted();
+            assertFalse(node + " is not retiring", node.status().wantToRetire());
+            assertTrue(node + " is rebuilding", node.status().wantToRebuild());
+            node = node.withWantToRetire(false, false, false, Agent.system,
+                                         tester.clock().instant());
             return node.with(node.status().withOsVersion(node.status().osVersion().withCurrent(wantedOsVersion)));
         });
     }

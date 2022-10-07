@@ -2,14 +2,19 @@
 package com.yahoo.vespa.hosted.provision.os;
 
 import com.yahoo.component.Version;
+import com.yahoo.config.provision.Cloud;
+import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.vespa.curator.Lock;
+import com.yahoo.vespa.flags.BooleanFlag;
+import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.node.Status;
 import com.yahoo.vespa.hosted.provision.persistence.CuratorDatabaseClient;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.UnaryOperator;
@@ -35,18 +40,20 @@ public class OsVersions {
 
     private final NodeRepository nodeRepository;
     private final CuratorDatabaseClient db;
-    private final boolean reprovisionToUpgradeOs;
     private final int maxDelegatedUpgrades;
+    private final BooleanFlag softRebuildFlag;
+    private final Cloud cloud;
 
     public OsVersions(NodeRepository nodeRepository) {
-        this(nodeRepository, nodeRepository.zone().getCloud().reprovisionToUpgradeOs(), MAX_DELEGATED_UPGRADES);
+        this(nodeRepository, nodeRepository.zone().getCloud(), MAX_DELEGATED_UPGRADES);
     }
 
-    OsVersions(NodeRepository nodeRepository, boolean reprovisionToUpgradeOs, int maxDelegatedUpgrades) {
+    OsVersions(NodeRepository nodeRepository, Cloud cloud, int maxDelegatedUpgrades) {
         this.nodeRepository = Objects.requireNonNull(nodeRepository);
         this.db = nodeRepository.database();
-        this.reprovisionToUpgradeOs = reprovisionToUpgradeOs;
         this.maxDelegatedUpgrades = maxDelegatedUpgrades;
+        this.softRebuildFlag = Flags.SOFT_REBUILD.bindTo(nodeRepository.flagSource());
+        this.cloud = Objects.requireNonNull(cloud);
 
         // Read and write all versions to make sure they are stored in the latest version of the serialized format
         try (var lock = db.lockOsVersionChange()) {
@@ -136,8 +143,16 @@ public class OsVersions {
 
     /** Returns the upgrader to use when upgrading given node type to target */
     private OsUpgrader chooseUpgrader(NodeType nodeType, Optional<Version> target) {
-        if (reprovisionToUpgradeOs) {
-            return new RetiringOsUpgrader(nodeRepository);
+        if (cloud.dynamicProvisioning()) {
+            boolean canSoftRebuild = cloud.name().equals(CloudName.AWS) && softRebuildFlag.value();
+            RetiringOsUpgrader retiringOsUpgrader = new RetiringOsUpgrader(nodeRepository, canSoftRebuild);
+            if (canSoftRebuild) {
+                // If soft rebuild is enabled, we can use RebuildingOsUpgrader for hosts with remote storage.
+                // RetiringOsUpgrader is then only used for hosts with local storage.
+                return new CompositeOsUpgrader(List.of(new RebuildingOsUpgrader(nodeRepository, canSoftRebuild),
+                                                       retiringOsUpgrader));
+            }
+            return retiringOsUpgrader;
         }
         // Require rebuild if we have any nodes of this type on a major version lower than target
         boolean rebuildRequired = target.isPresent() &&
@@ -147,7 +162,7 @@ public class OsVersions {
                                                 .anyMatch(osVersion -> osVersion.current().isPresent() &&
                                                                        osVersion.current().get().getMajor() < target.get().getMajor());
         if (rebuildRequired) {
-            return new RebuildingOsUpgrader(nodeRepository);
+            return new RebuildingOsUpgrader(nodeRepository, false);
         }
         return new DelegatingOsUpgrader(nodeRepository, maxDelegatedUpgrades);
     }

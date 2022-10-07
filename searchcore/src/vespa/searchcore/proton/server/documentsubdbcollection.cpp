@@ -1,13 +1,14 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
+#include "documentsubdbcollection.h"
 #include "combiningfeedview.h"
 #include "document_subdb_collection_initializer.h"
-#include "documentsubdbcollection.h"
 #include "i_document_subdb_owner.h"
 #include "maintenancecontroller.h"
 #include "searchabledocsubdb.h"
 #include <vespa/searchcore/proton/persistenceengine/commit_and_wait_document_retriever.h>
 #include <vespa/searchcore/proton/metrics/documentdb_tagged_metrics.h>
+#include <vespa/searchcore/proton/bucketdb/bucket_db_owner.h>
 #include <vespa/vespalib/util/lambdatask.h>
 #include <vespa/vespalib/util/threadstackexecutor.h>
 

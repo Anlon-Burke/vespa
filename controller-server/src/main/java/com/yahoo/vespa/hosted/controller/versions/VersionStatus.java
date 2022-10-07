@@ -3,17 +3,22 @@ package com.yahoo.vespa.hosted.controller.versions;
 
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.HostName;
+import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
+import com.yahoo.vespa.hosted.controller.Instance;
 import com.yahoo.vespa.hosted.controller.api.identifiers.ControllerVersion;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.NodeFilter;
 import com.yahoo.vespa.hosted.controller.application.ApplicationList;
+import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.SystemApplication;
 import com.yahoo.vespa.hosted.controller.maintenance.SystemUpgrader;
+import com.yahoo.vespa.hosted.controller.versions.VespaVersion.Confidence;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -119,10 +124,10 @@ public record VersionStatus(List<VespaVersion> versions) {
                                              .orElse(newSystemVersion);
         if (newSystemVersion.isBefore(systemVersion)) {
             log.warning("Refusing to lower system version from " +
-                        systemVersion +
+                        systemVersion.toFullString() +
                         " to " +
-                        newSystemVersion +
-                        ", nodes on " + newSystemVersion + ": " +
+                        newSystemVersion.toFullString() +
+                        ", nodes on " + newSystemVersion.toFullString() + ": " +
                         infrastructureVersions.get(newSystemVersion).stream()
                                               .map(HostName::value)
                                               .collect(Collectors.joining(", ")));
@@ -130,8 +135,13 @@ public record VersionStatus(List<VespaVersion> versions) {
             systemVersion = newSystemVersion;
         }
 
+        Set<Version> allVersions = new HashSet<>(infrastructureVersions.keySet());
+        for (Application application : controller.applications().asList())
+            for (Instance instance : application.instances().values())
+                for (Deployment deployment : instance.deployments().values())
+                    allVersions.add(deployment.version());
 
-        List<DeploymentStatistics> deploymentStatistics = DeploymentStatistics.compute(infrastructureVersions.keySet(),
+        List<DeploymentStatistics> deploymentStatistics = DeploymentStatistics.compute(allVersions,
                                                                                        controller.jobController().deploymentStatuses(ApplicationList.from(controller.applications().asList())
                                                                                                                                                     .withProjectId()
                                                                                                                                                     .withJobs()));
@@ -225,14 +235,14 @@ public record VersionStatus(List<VespaVersion> versions) {
         if (!confidenceIsOverridden) {
             // Always compute confidence for system and controller
             if (isSystemVersion || isControllerVersion) {
-                confidence = VespaVersion.confidenceFrom(statistics, controller);
+                confidence = VespaVersion.confidenceFrom(statistics, controller, versionStatus);
             } else {
-                // This is an older version so we preserve the existing confidence, if any
+                // This is an older version, so we preserve the existing confidence, if any
                 confidence = versionStatus.versions().stream()
                                           .filter(v -> statistics.version().equals(v.versionNumber()))
                                           .map(VespaVersion::confidence)
                                           .findFirst()
-                                          .orElseGet(() -> VespaVersion.confidenceFrom(statistics, controller));
+                                          .orElseGet(() -> VespaVersion.confidenceFrom(statistics, controller, versionStatus));
             }
         }
 
@@ -260,6 +270,16 @@ public record VersionStatus(List<VespaVersion> versions) {
                                 isReleased,
                                 nodeVersions,
                                 confidence);
+    }
+
+    /** Whether no version on a newer major, with high confidence, can be deployed. */
+    public boolean isOnCurrentMajor(Version version) {
+        for (VespaVersion available : deployableVersions())
+            if (   available.confidence().equalOrHigherThan(Confidence.high)
+                && available.versionNumber().getMajor() > version.getMajor())
+                return false;
+
+        return true;
     }
 
 }

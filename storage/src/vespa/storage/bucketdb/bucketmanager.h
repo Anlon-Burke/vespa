@@ -57,20 +57,12 @@ private:
     using ConflictingBuckets = std::unordered_set<document::BucketId, document::BucketId::hash>;
     ReplyQueue _queuedReplies;
     ConflictingBuckets _conflictingBuckets;
-    /**
-     * Keeps the version number of the first cluster state version seen that
-     * after distributor unification is equal to all cluster states seen after.
-     */
-    uint32_t _firstEqualClusterStateVersion;
-    /**
-     * The last cluster state version seen. We must ensure we dont answer to
-     * cluster states we haven't seen.
-     */
-    uint32_t _lastClusterStateSeen;
-    /**
-     * The unified version of the last cluster state.
-     */
-    std::string _lastUnifiedClusterState;
+    // The most current cluster state versions that we've observed on the way _down_
+    // through the chain, i.e. prior to being enabled on the node.
+    uint32_t _last_cluster_state_version_initiated;
+    // The most current cluster state we've observed on the way _up_ through the
+    // chain, i.e. after being enabled on the node.
+    uint32_t _last_cluster_state_version_completed;
     bool _doneInitialized;
     size_t _requestsCurrentlyProcessing;
     ServiceLayerComponent _component;
@@ -104,6 +96,8 @@ public:
     StorBucketDatabase::Entry getBucketInfo(const document::Bucket &id) const;
 
     void force_db_sweep_and_metric_update() { updateMetrics(true); }
+
+    bool onUp(const std::shared_ptr<api::StorageMessage>&) override;
 
 private:
     friend struct BucketManagerTest;
@@ -198,8 +192,8 @@ private:
      */
     bool replyConflictsWithConcurrentOperation(const api::BucketReply& reply) const;
     bool enqueueIfBucketHasConflicts(const api::BucketReply::SP& reply);
-    bool onUp(const std::shared_ptr<api::StorageMessage>&) override;
     bool onSetSystemState(const std::shared_ptr<api::SetSystemStateCommand>&) override;
+    bool onSetSystemStateReply(const std::shared_ptr<api::SetSystemStateReply>&) override;
     bool onCreateBucket(const std::shared_ptr<api::CreateBucketCommand>&) override;
     bool onMergeBucket(const std::shared_ptr<api::MergeBucketCommand>&) override;
     bool onRemove(const std::shared_ptr<api::RemoveCommand>&) override;

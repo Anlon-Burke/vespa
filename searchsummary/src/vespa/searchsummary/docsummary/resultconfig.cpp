@@ -4,8 +4,9 @@
 #include "docsum_field_writer.h"
 #include "docsum_field_writer_factory.h"
 #include "resultclass.h"
-#include <vespa/vespalib/stllike/hash_map.hpp>
 #include <vespa/config-summary.h>
+#include <vespa/vespalib/stllike/hash_map.hpp>
+#include <vespa/vespalib/util/exceptions.h>
 #include <atomic>
 
 #include <vespa/log/log.h>
@@ -36,7 +37,7 @@ ResultConfig::~ResultConfig()
 
 
 void
-ResultConfig::Reset()
+ResultConfig::reset()
 {
     if (! _classLookup.empty()) {
         Clean();
@@ -45,18 +46,18 @@ ResultConfig::Reset()
 
 
 ResultClass *
-ResultConfig::AddResultClass(const char *name, uint32_t id)
+ResultConfig::addResultClass(const char *name, uint32_t classID)
 {
     ResultClass *ret = nullptr;
 
-    if (id != NoClassID() && (_classLookup.find(id) == _classLookup.end())) {
+    if (classID != noClassID() && (_classLookup.find(classID) == _classLookup.end())) {
         auto rc = std::make_unique<ResultClass>(name);
         ret = rc.get();
-        _classLookup[id] = std::move(rc);
+        _classLookup[classID] = std::move(rc);
         if (_nameLookup.find(name) != _nameLookup.end()) {
-            LOG(warning, "Duplicate result class name: %s (now maps to class id %u)", name, id);
+            LOG(warning, "Duplicate result class name: %s (now maps to class id %u)", name, classID);
         }
-        _nameLookup[name] = id;
+        _nameLookup[name] = classID;
     }
     return ret;
 }
@@ -68,17 +69,17 @@ ResultConfig::set_default_result_class_id(uint32_t id)
 }
 
 const ResultClass*
-ResultConfig::LookupResultClass(uint32_t id) const
+ResultConfig::lookupResultClass(uint32_t classID) const
 {
-    IdMap::const_iterator it(_classLookup.find(id));
+    auto it = _classLookup.find(classID);
     return (it != _classLookup.end()) ? it->second.get() : nullptr;
 }
 
 uint32_t
-ResultConfig::LookupResultClassId(const vespalib::string &name) const
+ResultConfig::lookupResultClassId(const vespalib::string &name) const
 {
-    NameMap::const_iterator found(_nameLookup.find(name));
-    return (found != _nameLookup.end()) ? found->second : ((name.empty() || (name == "default")) ? _defaultSummaryId : NoClassID());
+    auto found = _nameLookup.find(name);
+    return (found != _nameLookup.end()) ? found->second : ((name.empty() || (name == "default")) ? _defaultSummaryId : noClassID());
 }
 
 
@@ -90,11 +91,17 @@ bool ResultConfig::wantedV8geoPositions() {
     return global_useV8geoPositions;
 }
 
+void
+ResultConfig::set_wanted_v8_geo_positions(bool value)
+{
+    global_useV8geoPositions = value;
+}
+
 bool
-ResultConfig::ReadConfig(const SummaryConfig &cfg, const char *configId, IDocsumFieldWriterFactory& docsum_field_writer_factory)
+ResultConfig::readConfig(const SummaryConfig &cfg, const char *configId, IDocsumFieldWriterFactory& docsum_field_writer_factory)
 {
     bool rc = true;
-    Reset();
+    reset();
     int    maxclassID = 0x7fffffff; // avoid negative classids
     _defaultSummaryId = cfg.defaultsummaryid;
     global_useV8geoPositions = cfg.usev8geopositions;
@@ -110,43 +117,39 @@ ResultConfig::ReadConfig(const SummaryConfig &cfg, const char *configId, IDocsum
             rc = false;
             break;
         }
-        ResultClass *resClass = AddResultClass(cfg_class.name.c_str(), classID);
+        ResultClass *resClass = addResultClass(cfg_class.name.c_str(), classID);
         if (resClass == nullptr) {
             LOG(error,"%s: unable to add classes[%d] name %s", configId, i, cfg_class.name.c_str());
             rc = false;
             break;
         }
         resClass->set_omit_summary_features(cfg_class.omitsummaryfeatures);
-        for (unsigned int j = 0; rc && (j < cfg_class.fields.size()); j++) {
-            const char *fieldtype = cfg_class.fields[j].type.c_str();
-            const char *fieldname = cfg_class.fields[j].name.c_str();
-            vespalib::string override_name = cfg_class.fields[j].command;
-            vespalib::string source_name = cfg_class.fields[j].source;
-            auto res_type = ResTypeUtils::get_res_type(fieldtype);
-            LOG(debug, "Reconfiguring class '%s' field '%s' of type '%s'", cfg_class.name.c_str(), fieldname, fieldtype);
-            if (res_type != RES_BAD) {
-                std::unique_ptr<DocsumFieldWriter> docsum_field_writer;
-                if (!override_name.empty()) {
-                    docsum_field_writer = docsum_field_writer_factory.create_docsum_field_writer(fieldname, override_name, source_name, rc);
-                    if (!rc) {
-                        LOG(error, "%s override operation failed during initialization", override_name.c_str());
-                        break;
-                    }
+        for (const auto & field : cfg_class.fields) {
+            const char *fieldname = field.name.c_str();
+            vespalib::string command = field.command;
+            vespalib::string source_name = field.source;
+            LOG(debug, "Reconfiguring class '%s' field '%s'", cfg_class.name.c_str(), fieldname);
+            std::unique_ptr<DocsumFieldWriter> docsum_field_writer;
+            if (!command.empty()) {
+                try {
+                    docsum_field_writer = docsum_field_writer_factory.create_docsum_field_writer(fieldname,
+                                                                                                 command,
+                                                                                                 source_name);
+                } catch (const vespalib::IllegalArgumentException& ex) {
+                    LOG(error, "Exception during setup of summary result class '%s': field='%s', command='%s', source='%s': %s",
+                        cfg_class.name.c_str(), fieldname, command.c_str(), source_name.c_str(), ex.getMessage().c_str());
+                    break;
                 }
-                rc = resClass->AddConfigEntry(fieldname, res_type, std::move(docsum_field_writer));
-            } else {
-                LOG(error, "%s %s.fields[%d]: unknown type '%s'", configId, cfg_class.name.c_str(), j, fieldtype);
-                rc = false;
-                break;
             }
+            rc = resClass->addConfigEntry(fieldname, std::move(docsum_field_writer));
             if (!rc) {
-                LOG(error, "%s %s.fields[%d]: duplicate name '%s'", configId, cfg_class.name.c_str(), j, fieldname);
+                LOG(error, "%s %s.fields: duplicate name '%s'", configId, cfg_class.name.c_str(), fieldname);
                 break;
             }
         }
     }
     if (!rc) {
-        Reset();          // FAIL, discard all config
+        reset();          // FAIL, discard all config
     }
     return rc;
 }

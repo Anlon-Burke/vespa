@@ -1028,6 +1028,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         var awsRegion = request.getProperty("aws-region");
         var parameterName = request.getProperty("parameter-name");
         var applicationId = ApplicationId.fromFullString(request.getProperty("application-id"));
+        if (!applicationId.tenant().equals(TenantName.from(tenantName)))
+            return ErrorResponse.badRequest("Invalid application id");
         var zoneId = requireZone(ZoneId.from(request.getProperty("zone")));
         var deploymentId = new DeploymentId(applicationId, zoneId);
 
@@ -1469,15 +1471,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
 
     private HttpResponse trigger(ApplicationId id, JobType type, HttpRequest request) {
-        // JobType.fromJobName doesn't properly initiate test jobs. Triggering these without context isn't _really_
-        // necessary, but triggering a test in the default cloud is better than failing with a weird error.
-        ZoneRegistry zones = controller.zoneRegistry();
-        type = switch (type.environment()) {
-            case test -> JobType.systemTest(zones, zones.systemZone().getCloudName());
-            case staging -> JobType.stagingTest(zones, zones.systemZone().getCloudName());
-            default -> type;
-        };
-
         Inspector requestObject = toSlime(request.getData()).get();
         boolean requireTests = ! requestObject.field("skipTests").asBool();
         boolean reTrigger = requestObject.field("reTrigger").asBool();
@@ -2059,7 +2052,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             VersionStatus versionStatus = controller.readVersionStatus();
             if (version.equals(Version.emptyVersion))
                 version = controller.systemVersion(versionStatus);
-            if (!versionStatus.isActive(version))
+            if ( ! versionStatus.isActive(version) && ! isOperator(request))
                 throw new IllegalArgumentException("Cannot trigger deployment of version '" + version + "': " +
                                                    "Version is not active in this system. " +
                                                    "Active versions: " + versionStatus.versions()
@@ -2071,7 +2064,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             if (pin)
                 change = change.withPin();
 
-            controller.applications().deploymentTrigger().forceChange(id, change);
+            controller.applications().deploymentTrigger().forceChange(id, change, isOperator(request));
             response.append("Triggered ").append(change).append(" for ").append(id);
         });
         return new MessageResponse(response.toString());
@@ -2088,7 +2081,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             RevisionId revision = build == -1 ? application.get().revisions().last().get().id()
                                               : getRevision(application.get(), build);
             Change change = Change.of(revision);
-            controller.applications().deploymentTrigger().forceChange(id, change);
+            controller.applications().deploymentTrigger().forceChange(id, change, isOperator(request));
             response.append("Triggered ").append(change).append(" for ").append(id);
         });
         return new MessageResponse(response.toString());
@@ -2110,6 +2103,9 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         RevisionId revision = RevisionId.forProduction(Long.parseLong(build));
         controller.applications().lockApplicationOrThrow(id, application -> {
             controller.applications().store(application.withRevisions(revisions -> revisions.with(revisions.get(revision).skipped())));
+            for (Instance instance : application.get().instances().values())
+                if (instance.change().revision().equals(Optional.of(revision)))
+                    controller.applications().deploymentTrigger().cancelChange(instance.id(), ChangesToCancel.APPLICATION);
         });
         return new MessageResponse("Marked build '" + build + "' as non-deployable");
     }
@@ -2276,7 +2272,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                                  .map(Boolean::valueOf)
                                  .orElse(false);
 
-        controller.jobController().deploy(id, type, version, applicationPackage, dryRun);
+        controller.jobController().deploy(id, type, version, applicationPackage, dryRun, isOperator(request));
         RunId runId = controller.jobController().last(id, type).get().id();
         Slime slime = new Slime();
         Cursor rootObject = slime.setObject();
@@ -3038,9 +3034,23 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private void ensureApplicationExists(TenantAndApplicationId id, HttpRequest request) {
         if (controller.applications().getApplication(id).isEmpty()) {
-            log.fine("Application does not exist in public, creating: " + id);
-            var credentials = accessControlRequests.credentials(id.tenant(), null /* not used on public */ , request.getJDiscRequest());
-            controller.applications().createApplication(id, credentials);
+            if (controller.system().isPublic() || hasOktaContext(request)) {
+                log.fine("Application does not exist in public, creating: " + id);
+                var credentials = accessControlRequests.credentials(id.tenant(), null /* not used on public */ , request.getJDiscRequest());
+                controller.applications().createApplication(id, credentials);
+            } else {
+                log.fine("Application does not exist in hosted, failing: " + id);
+                throw new IllegalArgumentException("Application does not exist. Create application in Console first.");
+            }
+        }
+    }
+
+    private boolean hasOktaContext(HttpRequest request) {
+        try {
+            OAuthCredentials.fromOktaRequestContext(request.getJDiscRequest().context());
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
         }
     }
 

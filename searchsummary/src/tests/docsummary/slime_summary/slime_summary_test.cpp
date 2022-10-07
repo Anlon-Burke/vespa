@@ -1,8 +1,9 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+
 #include <vespa/document/base/documentid.h>
 #include <vespa/document/datatype/documenttype.h>
-#include <vespa/document/fieldvalue/document.h>
 #include <vespa/document/fieldvalue/bytefieldvalue.h>
+#include <vespa/document/fieldvalue/document.h>
 #include <vespa/document/fieldvalue/doublefieldvalue.h>
 #include <vespa/document/fieldvalue/floatfieldvalue.h>
 #include <vespa/document/fieldvalue/intfieldvalue.h>
@@ -10,14 +11,14 @@
 #include <vespa/document/fieldvalue/rawfieldvalue.h>
 #include <vespa/document/fieldvalue/shortfieldvalue.h>
 #include <vespa/document/fieldvalue/stringfieldvalue.h>
-#include <vespa/vespalib/testkit/test_kit.h>
 #include <vespa/searchlib/common/matching_elements.h>
-#include <vespa/searchsummary/docsummary/docsumwriter.h>
-#include <vespa/searchsummary/docsummary/docsumstate.h>
-#include <vespa/searchsummary/docsummary/keywordextractor.h>
 #include <vespa/searchsummary/docsummary/docsum_store_document.h>
+#include <vespa/searchsummary/docsummary/docsumstate.h>
+#include <vespa/searchsummary/docsummary/docsumwriter.h>
+#include <vespa/searchsummary/docsummary/keywordextractor.h>
 #include <vespa/vespalib/data/slime/slime.h>
 #include <vespa/vespalib/data/smart_buffer.h>
+#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/util/size_literals.h>
 
 using namespace vespalib::slime::convenience;
@@ -42,27 +43,26 @@ using document::StructFieldValue;
 
 namespace {
 
-struct DocsumFixture : IDocsumStore, GetDocsumsStateCallback {
+struct SlimeSummaryTest : testing::Test, IDocsumStore, GetDocsumsStateCallback {
     std::unique_ptr<DynamicDocsumWriter> writer;
     StructDataType  int_pair_type;
     DocumentType    doc_type;
     GetDocsumsState state;
     bool            fail_get_mapped_docsum;
     bool            empty_get_mapped_docsum;
-    DocsumFixture();
-    ~DocsumFixture() override;
+    SlimeSummaryTest();
+    ~SlimeSummaryTest() override;
     void getDocsum(Slime &slime) {
         Slime slimeOut;
         SlimeInserter inserter(slimeOut);
-        auto rci = writer->resolveClassInfo(state._args.getResultClassName());
-        writer->insertDocsum(rci, 1u, &state, this, inserter);
+        auto rci = writer->resolveClassInfo(state._args.getResultClassName(), {});
+        writer->insertDocsum(rci, 1u, state, *this, inserter);
         vespalib::SmartBuffer buf(4_Ki);
         BinaryFormat::encode(slimeOut, buf);
-        EXPECT_GREATER(BinaryFormat::decode(buf.obtain(), slime), 0u);
+        EXPECT_GT(BinaryFormat::decode(buf.obtain(), slime), 0u);
     }
-    uint32_t getNumDocs() const override { return 2; }
-    std::unique_ptr<const IDocsumStoreDocument> getMappedDocsum(uint32_t docid) override {
-        EXPECT_EQUAL(1u, docid);
+    std::unique_ptr<const IDocsumStoreDocument> get_document(uint32_t docid) override {
+        EXPECT_EQ(1u, docid);
         if (fail_get_mapped_docsum) {
             return {};
         }
@@ -88,13 +88,13 @@ struct DocsumFixture : IDocsumStore, GetDocsumsStateCallback {
         }
         return std::make_unique<DocsumStoreDocument>(std::move(doc));
     }
-    void FillSummaryFeatures(GetDocsumsState&) override { }
-    void FillRankFeatures(GetDocsumsState&) override { }
+    void fillSummaryFeatures(GetDocsumsState&) override { }
+    void fillRankFeatures(GetDocsumsState&) override { }
     std::unique_ptr<MatchingElements> fill_matching_elements(const search::MatchingElementsFields &) override { abort(); }
 };
 
 
-DocsumFixture::DocsumFixture()
+SlimeSummaryTest::SlimeSummaryTest()
     : writer(),
       int_pair_type("int_pair"),
       doc_type("test"),
@@ -103,19 +103,19 @@ DocsumFixture::DocsumFixture()
       empty_get_mapped_docsum(false)
 {
     auto config = std::make_unique<ResultConfig>();
-    ResultClass *cfg = config->AddResultClass("default", 0);
+    ResultClass *cfg = config->addResultClass("default", 0);
     EXPECT_TRUE(cfg != nullptr);
-    EXPECT_TRUE(cfg->AddConfigEntry("int_field", RES_INT));
-    EXPECT_TRUE(cfg->AddConfigEntry("short_field", RES_SHORT));
-    EXPECT_TRUE(cfg->AddConfigEntry("byte_field", RES_BYTE));
-    EXPECT_TRUE(cfg->AddConfigEntry("float_field", RES_FLOAT));
-    EXPECT_TRUE(cfg->AddConfigEntry("double_field", RES_DOUBLE));
-    EXPECT_TRUE(cfg->AddConfigEntry("int64_field", RES_INT64));
-    EXPECT_TRUE(cfg->AddConfigEntry("string_field", RES_STRING));
-    EXPECT_TRUE(cfg->AddConfigEntry("data_field", RES_DATA));
-    EXPECT_TRUE(cfg->AddConfigEntry("longstring_field", RES_LONG_STRING));
-    EXPECT_TRUE(cfg->AddConfigEntry("longdata_field", RES_LONG_DATA));
-    EXPECT_TRUE(cfg->AddConfigEntry("int_pair_field", RES_JSONSTRING));
+    EXPECT_TRUE(cfg->addConfigEntry("int_field"));
+    EXPECT_TRUE(cfg->addConfigEntry("short_field"));
+    EXPECT_TRUE(cfg->addConfigEntry("byte_field"));
+    EXPECT_TRUE(cfg->addConfigEntry("float_field"));
+    EXPECT_TRUE(cfg->addConfigEntry("double_field"));
+    EXPECT_TRUE(cfg->addConfigEntry("int64_field"));
+    EXPECT_TRUE(cfg->addConfigEntry("string_field"));
+    EXPECT_TRUE(cfg->addConfigEntry("data_field"));
+    EXPECT_TRUE(cfg->addConfigEntry("longstring_field"));
+    EXPECT_TRUE(cfg->addConfigEntry("longdata_field"));
+    EXPECT_TRUE(cfg->addConfigEntry("int_pair_field"));
     config->set_default_result_class_id(0);
     writer = std::make_unique<DynamicDocsumWriter>(std::move(config), std::unique_ptr<KeywordExtractor>());
     int_pair_type.addField(Field("foo", *DataType::INT));
@@ -132,49 +132,54 @@ DocsumFixture::DocsumFixture()
     doc_type.addField(Field("longdata_field", *DataType::RAW));
     doc_type.addField(Field("int_pair_field", int_pair_type));
 }
-DocsumFixture::~DocsumFixture() = default;
+SlimeSummaryTest::~SlimeSummaryTest() = default;
 
 } // namespace <unnamed>
 
-TEST_FF("require that docsum can be written as slime", DocsumFixture(), Slime()) {
-    f1.getDocsum(f2);
-    EXPECT_EQUAL(f2.get()["int_field"].asLong(), 4u);
-    EXPECT_EQUAL(f2.get()["short_field"].asLong(), 2u);
-    EXPECT_EQUAL(f2.get()["byte_field"].asLong(), 1u);
-    EXPECT_EQUAL(f2.get()["float_field"].asDouble(), 4.5);
-    EXPECT_EQUAL(f2.get()["double_field"].asDouble(), 8.75);
-    EXPECT_EQUAL(f2.get()["int64_field"].asLong(), 8u);
-    EXPECT_EQUAL(f2.get()["string_field"].asString().make_string(), std::string("string"));
-    EXPECT_EQUAL(f2.get()["data_field"].asData().make_string(), std::string("data"));
-    EXPECT_EQUAL(f2.get()["longstring_field"].asString().make_string(), std::string("long_string"));
-    EXPECT_EQUAL(f2.get()["longdata_field"].asData().make_string(), std::string("long_data"));
-    EXPECT_EQUAL(f2.get()["int_pair_field"]["foo"].asLong(), 1u);
-    EXPECT_EQUAL(f2.get()["int_pair_field"]["bar"].asLong(), 2u);
-}
-
-TEST_FF("require that unknown summary class gives empty slime", DocsumFixture(), Slime())
+TEST_F(SlimeSummaryTest, docsum_can_be_written_as_slime)
 {
-    f1.state._args.setResultClassName("unknown");
-    f1.getDocsum(f2);
-    EXPECT_TRUE(f2.get().valid());
-    EXPECT_EQUAL(vespalib::slime::NIX::ID, f2.get().type().getId());
+    Slime s;
+    getDocsum(s);
+    EXPECT_EQ(s.get()["int_field"].asLong(), 4u);
+    EXPECT_EQ(s.get()["short_field"].asLong(), 2u);
+    EXPECT_EQ(s.get()["byte_field"].asLong(), 1u);
+    EXPECT_EQ(s.get()["float_field"].asDouble(), 4.5);
+    EXPECT_EQ(s.get()["double_field"].asDouble(), 8.75);
+    EXPECT_EQ(s.get()["int64_field"].asLong(), 8u);
+    EXPECT_EQ(s.get()["string_field"].asString().make_string(), std::string("string"));
+    EXPECT_EQ(s.get()["data_field"].asData().make_string(), std::string("data"));
+    EXPECT_EQ(s.get()["longstring_field"].asString().make_string(), std::string("long_string"));
+    EXPECT_EQ(s.get()["longdata_field"].asData().make_string(), std::string("long_data"));
+    EXPECT_EQ(s.get()["int_pair_field"]["foo"].asLong(), 1u);
+    EXPECT_EQ(s.get()["int_pair_field"]["bar"].asLong(), 2u);
 }
 
-TEST_FF("require that failure to retrieve docsum store document gives empty slime", DocsumFixture(), Slime())
+TEST_F(SlimeSummaryTest, unknown_summary_class_gives_empty_slime)
 {
-    f1.fail_get_mapped_docsum = true;
-    f1.getDocsum(f2);
-    EXPECT_TRUE(f2.get().valid());
-    EXPECT_EQUAL(vespalib::slime::NIX::ID, f2.get().type().getId());
+    state._args.setResultClassName("unknown");
+    Slime s;
+    getDocsum(s);
+    EXPECT_TRUE(s.get().valid());
+    EXPECT_EQ(vespalib::slime::NIX::ID, s.get().type().getId());
 }
 
-TEST_FF("require that empty docsum store document gives empty object", DocsumFixture(), Slime())
+TEST_F(SlimeSummaryTest, failure_to_retrieve_docsum_store_document_gives_empty_slime)
 {
-    f1.empty_get_mapped_docsum = true;
-    f1.getDocsum(f2);
-    EXPECT_TRUE(f2.get().valid());
-    EXPECT_EQUAL(vespalib::slime::OBJECT::ID, f2.get().type().getId());
-    EXPECT_EQUAL(0u, f2.get().fields());
+    fail_get_mapped_docsum = true;
+    Slime s;
+    getDocsum(s);
+    EXPECT_TRUE(s.get().valid());
+    EXPECT_EQ(vespalib::slime::NIX::ID, s.get().type().getId());
 }
 
-TEST_MAIN() { TEST_RUN_ALL(); }
+TEST_F(SlimeSummaryTest, empty_docsum_store_document_gives_empty_object)
+{
+    empty_get_mapped_docsum = true;
+    Slime s;
+    getDocsum(s);
+    EXPECT_TRUE(s.get().valid());
+    EXPECT_EQ(vespalib::slime::OBJECT::ID, s.get().type().getId());
+    EXPECT_EQ(0u, s.get().fields());
+}
+
+GTEST_MAIN_RUN_ALL_TESTS()

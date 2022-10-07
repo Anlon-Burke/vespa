@@ -209,8 +209,8 @@ public class DeploymentContext {
     public DeploymentContext deployPlatform(Version version) {
         assertEquals(instance().change().platform().get(), version);
         assertFalse(application().instances().values().stream()
-                          .anyMatch(instance -> instance.deployments().values().stream()
-                                                        .anyMatch(deployment -> deployment.version().equals(version))));
+                                 .anyMatch(instance -> instance.deployments().values().stream()
+                                                               .anyMatch(deployment -> deployment.version().equals(version))));
         assertEquals(version, instance().change().platform().get());
         assertFalse(instance().change().revision().isPresent());
 
@@ -271,7 +271,8 @@ public class DeploymentContext {
         var clusterId = "default-inactive";
         var id = new RoutingPolicyId(instanceId, Id.from(clusterId), zone);
         var policies = new LinkedHashMap<>(tester.controller().routing().policies().read(instanceId).asMap());
-        policies.put(id, new RoutingPolicy(id, HostName.of("lb-host"),
+        policies.put(id, new RoutingPolicy(id, Optional.of(HostName.of("lb-host")),
+                                           Optional.empty(),
                                            Optional.empty(),
                                            Set.of(EndpointId.of("default")),
                                            Set.of(),
@@ -338,18 +339,18 @@ public class DeploymentContext {
 
     /** Fail current deployment in given job */
     public DeploymentContext failDeployment(JobType type) {
-        return failDeployment(type, new IllegalArgumentException("Exception from test code"));
+        return failDeployment(type, new RuntimeException("Exception from test code"));
     }
 
     /** Fail current deployment in given job */
     private DeploymentContext failDeployment(JobType type, RuntimeException exception) {
         configServer().throwOnNextPrepare(exception);
-        runJobExpectingFailure(type, Optional.empty());
+        runJobExpectingFailure(type, null);
         return this;
     }
 
     /** Run given job and expect it to fail with given message, if any */
-    public DeploymentContext runJobExpectingFailure(JobType type, Optional<String> messagePart) {
+    public DeploymentContext runJobExpectingFailure(JobType type, String messagePart) {
         triggerJobs();
         var job = jobId(type);
         RunId id = currentRun(job).id();
@@ -357,7 +358,7 @@ public class DeploymentContext {
         Run run = jobs.run(id);
         assertTrue(run.hasFailed());
         assertTrue(run.hasEnded());
-        if (messagePart.isPresent()) {
+        if (messagePart != null) {
             Optional<Step> firstFailing = run.stepStatuses().entrySet().stream()
                                              .filter(kv -> kv.getValue() == failed)
                                              .map(Entry::getKey)
@@ -366,8 +367,8 @@ public class DeploymentContext {
             Optional<RunLog> details = jobs.details(id);
             assertTrue(details.isPresent(), "Found log entries for run " + id);
             assertTrue(details.get().get(firstFailing.get()).stream()
-                              .anyMatch(entry -> entry.message().contains(messagePart.get())),
-                       "Found log message containing '" + messagePart.get() + "'");
+                              .anyMatch(entry -> entry.message().contains(messagePart)),
+                       "Found log message containing '" + messagePart + "'");
         }
         return this;
     }
@@ -406,7 +407,7 @@ public class DeploymentContext {
 
     /** Runs a deployment of the given package to the given dev/perf job, on the given version. */
     public DeploymentContext runJob(JobType type, ApplicationPackage applicationPackage, Version vespaVersion) {
-        jobs.deploy(instanceId, type, Optional.ofNullable(vespaVersion), applicationPackage, false);
+        jobs.deploy(instanceId, type, Optional.ofNullable(vespaVersion), applicationPackage, false, true);
         return runJob(type);
     }
 

@@ -35,11 +35,11 @@ protected:
     virtual DocsumFieldWriterState* allocFieldWriterState(search::attribute::IAttributeContext &context, vespalib::Stash& stash, const MatchingElements* matching_elements) const = 0;
 public:
     ~AttributeCombinerDFW() override;
-    bool IsGenerated() const override { return true; }
+    bool isGenerated() const override { return true; }
     bool setFieldWriterStateIndex(uint32_t fieldWriterStateIndex) override;
     static std::unique_ptr<DocsumFieldWriter> create(const vespalib::string &fieldName, search::attribute::IAttributeContext &attrCtx,
                                                      bool filter_elements, std::shared_ptr<MatchingElementsFields> matching_elems_fields);
-    void insertField(uint32_t docid, GetDocsumsState *state, ResType type, vespalib::slime::Inserter &target) const override;
+    void insertField(uint32_t docid, GetDocsumsState& state, vespalib::slime::Inserter &target) const override;
 };
 
 }
