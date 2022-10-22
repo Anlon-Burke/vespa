@@ -275,7 +275,7 @@
                                 <goal>run</goal>
                             </goals>
                             <configuration>
-                                <protocVersion>3.21.2</protocVersion>
+                                <protocVersion>${protobuf.version}</protocVersion>
                                 <addSources>main</addSources>
                                 <outputDirectory>${project.build.directory}/generated-sources/protobuf</outputDirectory>
                                 <inputDirectories>
@@ -791,12 +791,17 @@
             </dependency>
             <dependency>
                 <groupId>org.bouncycastle</groupId>
-                <artifactId>bcpkix-jdk15on</artifactId>
+                <artifactId>bcpkix-jdk18on</artifactId>
                 <version>${bouncycastle.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.bouncycastle</groupId>
-                <artifactId>bcprov-jdk15on</artifactId>
+                <artifactId>bcprov-jdk18on</artifactId>
+                <version>${bouncycastle.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcutil-jdk18on</artifactId>
                 <version>${bouncycastle.version}</version>
             </dependency>
             <dependency>
@@ -1004,7 +1009,7 @@
 
     <properties>
         <aircompressor.version>0.21</aircompressor.version>
-        <airline.version>0.7</airline.version>
+        <airline.version>0.9</airline.version>
         <antlr.version>3.5.2</antlr.version>
         <antlr4.version>4.9.3</antlr4.version>
         <apache.httpclient.version>4.5.13</apache.httpclient.version>
@@ -1024,7 +1029,7 @@
                  find zkfacade/src/main/java/org/apache/curator -name package-info.java | \
                      xargs perl -pi -e 's/major = [0-9]+, minor = [0-9]+, micro = [0-9]+/major = 5, minor = 3, micro = 0/g'
         -->
-        <bouncycastle.version>1.68</bouncycastle.version>
+        <bouncycastle.version>1.72</bouncycastle.version>
         <curator.version>5.3.0</curator.version>
         <commons.codec.version>1.15</commons.codec.version>
         <commons.math3.version>3.6.1</commons.math3.version>

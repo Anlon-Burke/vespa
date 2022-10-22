@@ -25,6 +25,7 @@ import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.RegionName;
+import com.yahoo.config.provision.Tags;
 import com.yahoo.io.IOUtils;
 import com.yahoo.text.XML;
 import org.w3c.dom.Element;
@@ -55,6 +56,7 @@ public class DeploymentSpecXmlReader {
 
     private static final String deploymentTag = "deployment";
     private static final String instanceTag = "instance";
+    private static final String tagsTag = "tags";
     private static final String testTag = "test";
     private static final String stagingTag = "staging";
     private static final String devTag = "dev";
@@ -155,48 +157,50 @@ public class DeploymentSpecXmlReader {
      * Reads the content of an (implicit or explicit) instance tag producing an instances step
      *
      * @param instanceNameString a comma-separated list of the names of the instances this is for
-     * @param instanceTag the element having the content of this instance
+     * @param instanceElement the element having the content of this instance
      * @param parentTag the parent of instanceTag (or the same, if this instance is implicitly defined, which means instanceTag is the root)
      * @return the instances specified, one for each instance name element
      */
     private List<DeploymentInstanceSpec> readInstanceContent(String instanceNameString,
-                                                             Element instanceTag,
+                                                             Element instanceElement,
                                                              Map<String, String> prodAttributes,
                                                              Element parentTag) {
         if (instanceNameString.isBlank())
             illegal("<instance> attribute 'id' must be specified, and not be blank");
 
         // If this is an absolutely empty instance, or the implicit "default" instance but without content, ignore it
-        if (XML.getChildren(instanceTag).isEmpty() && (instanceTag.getAttributes().getLength() == 0 || instanceTag == parentTag))
+        if (XML.getChildren(instanceElement).isEmpty() && (instanceElement.getAttributes().getLength() == 0 || instanceElement == parentTag))
             return List.of();
 
         if (validate)
-            validateTagOrder(instanceTag);
+            validateTagOrder(instanceElement);
 
         // Values where the parent may provide a default
-        DeploymentSpec.UpgradePolicy upgradePolicy = getWithFallback(instanceTag, parentTag, upgradeTag, "policy", this::readUpgradePolicy, UpgradePolicy.defaultPolicy);
-        DeploymentSpec.RevisionTarget revisionTarget = getWithFallback(instanceTag, parentTag, upgradeTag, "revision-target", this::readRevisionTarget, RevisionTarget.latest);
-        DeploymentSpec.RevisionChange revisionChange = getWithFallback(instanceTag, parentTag, upgradeTag, "revision-change", this::readRevisionChange, RevisionChange.whenFailing);
-        DeploymentSpec.UpgradeRollout upgradeRollout = getWithFallback(instanceTag, parentTag, upgradeTag, "rollout", this::readUpgradeRollout, UpgradeRollout.separate);
-        int minRisk = getWithFallback(instanceTag, parentTag, upgradeTag, "min-risk", Integer::parseInt, 0);
-        int maxRisk = getWithFallback(instanceTag, parentTag, upgradeTag, "max-risk", Integer::parseInt, 0);
-        int maxIdleHours = getWithFallback(instanceTag, parentTag, upgradeTag, "max-idle-hours", Integer::parseInt, 8);
-        List<DeploymentSpec.ChangeBlocker> changeBlockers = readChangeBlockers(instanceTag, parentTag);
-        Optional<AthenzService> athenzService = mostSpecificAttribute(instanceTag, athenzServiceAttribute).map(AthenzService::from);
-        Optional<CloudAccount> cloudAccount = mostSpecificAttribute(instanceTag, cloudAccountAttribute).map(CloudAccount::new);
-        Notifications notifications = readNotifications(instanceTag, parentTag);
+        DeploymentSpec.UpgradePolicy upgradePolicy = getWithFallback(instanceElement, parentTag, upgradeTag, "policy", this::readUpgradePolicy, UpgradePolicy.defaultPolicy);
+        DeploymentSpec.RevisionTarget revisionTarget = getWithFallback(instanceElement, parentTag, upgradeTag, "revision-target", this::readRevisionTarget, RevisionTarget.latest);
+        DeploymentSpec.RevisionChange revisionChange = getWithFallback(instanceElement, parentTag, upgradeTag, "revision-change", this::readRevisionChange, RevisionChange.whenFailing);
+        DeploymentSpec.UpgradeRollout upgradeRollout = getWithFallback(instanceElement, parentTag, upgradeTag, "rollout", this::readUpgradeRollout, UpgradeRollout.separate);
+        int minRisk = getWithFallback(instanceElement, parentTag, upgradeTag, "min-risk", Integer::parseInt, 0);
+        int maxRisk = getWithFallback(instanceElement, parentTag, upgradeTag, "max-risk", Integer::parseInt, 0);
+        int maxIdleHours = getWithFallback(instanceElement, parentTag, upgradeTag, "max-idle-hours", Integer::parseInt, 8);
+        List<DeploymentSpec.ChangeBlocker> changeBlockers = readChangeBlockers(instanceElement, parentTag);
+        Optional<AthenzService> athenzService = mostSpecificAttribute(instanceElement, athenzServiceAttribute).map(AthenzService::from);
+        Optional<CloudAccount> cloudAccount = mostSpecificAttribute(instanceElement, cloudAccountAttribute).map(CloudAccount::new);
+        Notifications notifications = readNotifications(instanceElement, parentTag);
 
         // Values where there is no default
+        Tags tags = XML.attribute(tagsTag, instanceElement).map(value -> Tags.fromString(value)).orElse(Tags.empty());
         List<Step> steps = new ArrayList<>();
-        for (Element instanceChild : XML.getChildren(instanceTag))
+        for (Element instanceChild : XML.getChildren(instanceElement))
             steps.addAll(readNonInstanceSteps(instanceChild, prodAttributes, instanceChild));
-        List<Endpoint> endpoints = readEndpoints(instanceTag, Optional.of(instanceNameString), steps);
+        List<Endpoint> endpoints = readEndpoints(instanceElement, Optional.of(instanceNameString), steps);
 
         // Build and return instances with these values
         Instant now = clock.instant();
         return Arrays.stream(instanceNameString.split(","))
                      .map(name -> name.trim())
                      .map(name -> new DeploymentInstanceSpec(InstanceName.from(name),
+                                                             tags,
                                                              steps,
                                                              upgradePolicy,
                                                              revisionTarget,
@@ -317,12 +321,15 @@ public class DeploymentSpecXmlReader {
 
             List<Endpoint.Target> targets = new ArrayList<>();
             if (level == Endpoint.Level.application) {
-                String region = requireStringAttribute("region", endpointElement);
+                Optional<String> endpointRegion = stringAttribute("region", endpointElement);
                 int weightSum = 0;
                 for (var instanceElement : XML.getChildren(endpointElement, "instance")) {
                     String instanceName = instanceElement.getTextContent();
-                    String weightFromAttribute = requireStringAttribute("weight", instanceElement);
                     if (instanceName == null || instanceName.isBlank()) illegal(msgPrefix + "empty 'instance' element");
+                    Optional<String> instanceRegion = stringAttribute("region", instanceElement);
+                    if (endpointRegion.isPresent() == instanceRegion.isPresent())
+                        illegal(msgPrefix + "'region' attribute must be declared on either <endpoint> or <instance> tag");
+                    String weightFromAttribute = requireStringAttribute("weight", instanceElement);
                     int weight;
                     try {
                         weight = Integer.parseInt(weightFromAttribute);
@@ -330,7 +337,7 @@ public class DeploymentSpecXmlReader {
                         throw new IllegalArgumentException(msgPrefix + "invalid weight value '" + weightFromAttribute + "'");
                     }
                     weightSum += weight;
-                    targets.add(new Endpoint.Target(RegionName.from(region),
+                    targets.add(new Endpoint.Target(RegionName.from(endpointRegion.orElseGet(instanceRegion::get)),
                                                     InstanceName.from(instanceName),
                                                     weight));
                 }

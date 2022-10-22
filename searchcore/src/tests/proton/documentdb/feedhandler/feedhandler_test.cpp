@@ -3,7 +3,11 @@
 #include <vespa/persistence/spi/result.h>
 #include <vespa/document/datatype/tensor_data_type.h>
 #include <vespa/document/datatype/documenttype.h>
+#include <vespa/document/fieldvalue/document.h>
+#include <vespa/document/fieldvalue/stringfieldvalue.h>
+#include <vespa/document/fieldvalue/tensorfieldvalue.h>
 #include <vespa/document/update/assignvalueupdate.h>
+#include <vespa/document/repo/configbuilder.h>
 #include <vespa/document/repo/documenttyperepo.h>
 #include <vespa/document/update/documentupdate.h>
 #include <vespa/document/update/clearvalueupdate.h>
@@ -29,8 +33,8 @@
 #include <vespa/searchcore/proton/server/ireplayconfig.h>
 #include <vespa/searchcore/proton/test/dummy_feed_view.h>
 #include <vespa/searchcore/proton/test/transport_helper.h>
-#include <vespa/searchlib/index/docbuilder.h>
 #include <vespa/searchlib/index/dummyfileheadercontext.h>
+#include <vespa/searchlib/test/doc_builder.h>
 #include <vespa/searchlib/transactionlog/translogserver.h>
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/util/lambdatask.h>
@@ -42,6 +46,7 @@
 LOG_SETUP("feedhandler_test");
 
 using document::BucketId;
+using document::DataType;
 using document::Document;
 using document::DocumentId;
 using document::DocumentType;
@@ -52,9 +57,8 @@ using document::TensorDataType;
 using document::TensorFieldValue;
 using vespalib::IDestructorCallback;
 using search::SerialNum;
-using search::index::schema::CollectionType;
-using search::index::schema::DataType;
 using vespalib::makeLambdaTask;
+using search::test::DocBuilder;
 using search::transactionlog::TransLogServer;
 using search::transactionlog::DomainConfig;
 using storage::spi::RemoveResult;
@@ -271,41 +275,40 @@ MyFeedView::~MyFeedView() = default;
 
 
 struct SchemaContext {
-    Schema::SP                schema;
-    std::unique_ptr<DocBuilder> builder;
+    DocBuilder builder;
     SchemaContext();
+    SchemaContext(bool has_i2);
     ~SchemaContext();
     DocTypeName getDocType() const {
-        return DocTypeName(builder->getDocumentType().getName());
+        return DocTypeName(builder.get_document_type().getName());
     }
-    const std::shared_ptr<const document::DocumentTypeRepo> &getRepo() const { return builder->getDocumentTypeRepo(); }
-    void addField(vespalib::stringref fieldName);
+    std::shared_ptr<const document::DocumentTypeRepo> getRepo() const { return builder.get_repo_sp(); }
 };
 
 SchemaContext::SchemaContext()
-    : schema(std::make_shared<Schema>()),
-      builder()
+    : SchemaContext(false)
 {
-    schema->addAttributeField(Schema::AttributeField("tensor", DataType::TENSOR, CollectionType::SINGLE, "tensor(x{},y{})"));
-    schema->addAttributeField(Schema::AttributeField("tensor2", DataType::TENSOR, CollectionType::SINGLE, "tensor(x{},y{})"));
-    addField("i1");
 }
 
+SchemaContext::SchemaContext(bool has_i2)
+    : builder([has_i2](auto& header) {
+                  header.addTensorField("tensor", "tensor(x{},y{})")
+                      .addTensorField("tensor2", "tensor(x{},y{})")
+                      .addField("i1", DataType::T_STRING);
+                  if (has_i2) {
+                      header.addField("i2", DataType::T_STRING);
+                  }
+              })
+{
+}
 
 SchemaContext::~SchemaContext() = default;
-
-void
-SchemaContext::addField(vespalib::stringref fieldName)
-{
-    schema->addIndexField(Schema::IndexField(fieldName, DataType::STRING, CollectionType::SINGLE));
-    builder = std::make_unique<DocBuilder>(*schema);
-}
 
 struct DocumentContext {
     Document::SP  doc;
     BucketId      bucketId;
     DocumentContext(const vespalib::string &docId, DocBuilder &builder) :
-        doc(builder.startDocument(docId).endDocument().release()),
+        doc(builder.make_document(docId)),
         bucketId(BucketFactory::getBucketId(doc->getId()))
     {
     }
@@ -313,9 +316,8 @@ struct DocumentContext {
 
 struct TwoFieldsSchemaContext : public SchemaContext {
     TwoFieldsSchemaContext()
-        : SchemaContext()
+        : SchemaContext(true)
     {
-        addField("i2");
     }
 };
 
@@ -325,7 +327,7 @@ struct UpdateContext {
     DocumentUpdate::SP update;
     BucketId           bucketId;
     UpdateContext(const vespalib::string &docId, DocBuilder &builder) :
-        update(std::make_shared<DocumentUpdate>(*builder.getDocumentTypeRepo(), builder.getDocumentType(), DocumentId(docId))),
+        update(std::make_shared<DocumentUpdate>(builder.get_repo(), builder.get_document_type(), DocumentId(docId))),
         bucketId(BucketFactory::getBucketId(update->getId()))
     {
     }
@@ -464,7 +466,7 @@ TEST_F("require that heartBeat calls FeedView's heartBeat",
 
 TEST_F("require that outdated remove is ignored", FeedHandlerFixture)
 {
-    DocumentContext doc_context("id:ns:searchdocument::foo", *f.schema.builder);
+    DocumentContext doc_context("id:ns:searchdocument::foo", f.schema.builder);
     auto op = std::make_unique<RemoveOperationWithDocId>(doc_context.bucketId, Timestamp(10), doc_context.doc->getId());
     static_cast<DocumentOperation &>(*op).setPrevDbDocumentId(DbDocumentId(4));
     static_cast<DocumentOperation &>(*op).setPrevTimestamp(Timestamp(10000));
@@ -476,7 +478,7 @@ TEST_F("require that outdated remove is ignored", FeedHandlerFixture)
 
 TEST_F("require that outdated put is ignored", FeedHandlerFixture)
 {
-    DocumentContext doc_context("id:ns:searchdocument::foo", *f.schema.builder);
+    DocumentContext doc_context("id:ns:searchdocument::foo", f.schema.builder);
     auto op =std::make_unique<PutOperation>(doc_context.bucketId, Timestamp(10), std::move(doc_context.doc));
     static_cast<DocumentOperation &>(*op).setPrevTimestamp(Timestamp(10000));
     FeedTokenContext token_context;
@@ -496,7 +498,7 @@ addLidToRemove(RemoveDocumentsOperation &op)
 
 TEST_F("require that handleMove calls FeedView", FeedHandlerFixture)
 {
-    DocumentContext doc_context("id:ns:searchdocument::foo", *f.schema.builder);
+    DocumentContext doc_context("id:ns:searchdocument::foo", f.schema.builder);
     MoveOperation op(doc_context.bucketId, Timestamp(2), doc_context.doc, DbDocumentId(0, 2), 1);
     op.setDbDocumentId(DbDocumentId(1, 2));
     f.runAsMaster([&]() { f.handler.handleMove(op, IDestructorCallback::SP()); });
@@ -556,7 +558,7 @@ TEST_F("require that flush cannot unprune", FeedHandlerFixture)
 
 TEST_F("require that remove of unknown document with known data type stores remove", FeedHandlerFixture)
 {
-    DocumentContext doc_context("id:test:searchdocument::foo", *f.schema.builder);
+    DocumentContext doc_context("id:test:searchdocument::foo", f.schema.builder);
     auto op = std::make_unique<RemoveOperationWithDocId>(doc_context.bucketId, Timestamp(10), doc_context.doc->getId());
     FeedTokenContext token_context;
     f.handler.performOperation(std::move(token_context.token), std::move(op));
@@ -566,7 +568,7 @@ TEST_F("require that remove of unknown document with known data type stores remo
 
 TEST_F("require that partial update for non-existing document is tagged as such", FeedHandlerFixture)
 {
-    UpdateContext upCtx("id:test:searchdocument::foo", *f.schema.builder);
+    UpdateContext upCtx("id:test:searchdocument::foo", f.schema.builder);
     auto  op = std::make_unique<UpdateOperation>(upCtx.bucketId, Timestamp(10), upCtx.update);
     FeedTokenContext token_context;
     f.handler.performOperation(std::move(token_context.token), std::move(op));
@@ -582,7 +584,7 @@ TEST_F("require that partial update for non-existing document is tagged as such"
 TEST_F("require that partial update for non-existing document is created if specified", FeedHandlerFixture)
 {
     f.handler.setSerialNum(15);
-    UpdateContext upCtx("id:test:searchdocument::foo", *f.schema.builder);
+    UpdateContext upCtx("id:test:searchdocument::foo", f.schema.builder);
     upCtx.update->setCreateIfNonExistent(true);
     f.feedView.metaStore.insert(upCtx.update->getId().getGlobalId(), MyDocumentMetaStore::Entry(5, 5, Timestamp(10)));
     auto op = std::make_unique<UpdateOperation>(upCtx.bucketId, Timestamp(10), upCtx.update);
@@ -605,7 +607,7 @@ TEST_F("require that put is rejected if resource limit is reached", FeedHandlerF
     f.writeFilter._acceptWriteOperation = false;
     f.writeFilter._message = "Attribute resource limit reached";
 
-    DocumentContext docCtx("id:test:searchdocument::foo", *f.schema.builder);
+    DocumentContext docCtx("id:test:searchdocument::foo", f.schema.builder);
     auto op = std::make_unique<PutOperation>(docCtx.bucketId, Timestamp(10), std::move(docCtx.doc));
     FeedTokenContext token;
     f.handler.performOperation(std::move(token.token), std::move(op));
@@ -620,7 +622,7 @@ TEST_F("require that update is rejected if resource limit is reached", FeedHandl
     f.writeFilter._acceptWriteOperation = false;
     f.writeFilter._message = "Attribute resource limit reached";
 
-    UpdateContext updCtx("id:test:searchdocument::foo", *f.schema.builder);
+    UpdateContext updCtx("id:test:searchdocument::foo", f.schema.builder);
     updCtx.addFieldUpdate("tensor");
     auto op = std::make_unique<UpdateOperation>(updCtx.bucketId, Timestamp(10), updCtx.update);
     FeedTokenContext token;
@@ -637,7 +639,7 @@ TEST_F("require that remove is NOT rejected if resource limit is reached", FeedH
     f.writeFilter._acceptWriteOperation = false;
     f.writeFilter._message = "Attribute resource limit reached";
 
-    DocumentContext docCtx("id:test:searchdocument::foo", *f.schema.builder);
+    DocumentContext docCtx("id:test:searchdocument::foo", f.schema.builder);
     auto op = std::make_unique<RemoveOperationWithDocId>(docCtx.bucketId, Timestamp(10), docCtx.doc->getId());
     FeedTokenContext token;
     f.handler.performOperation(std::move(token.token), std::move(op));
@@ -651,7 +653,7 @@ checkUpdate(FeedHandlerFixture &f, SchemaContext &schemaContext,
             const vespalib::string &fieldName, bool expectReject, bool existing)
 {
     f.handler.setSerialNum(15);
-    UpdateContext updCtx("id:test:searchdocument::foo", *schemaContext.builder);
+    UpdateContext updCtx("id:test:searchdocument::foo", schemaContext.builder);
     updCtx.addFieldUpdate(fieldName);
     if (existing) {
         f.feedView.metaStore.insert(updCtx.update->getId().getGlobalId(), MyDocumentMetaStore::Entry(5, 5, Timestamp(9)));
@@ -733,7 +735,7 @@ TEST_F("require that tensor update with wrong tensor type fails", FeedHandlerFix
 TEST_F("require that put with different document type repo is ok", FeedHandlerFixture)
 {
     TwoFieldsSchemaContext schema;
-    DocumentContext doc_context("id:ns:searchdocument::foo", *schema.builder);
+    DocumentContext doc_context("id:ns:searchdocument::foo", schema.builder);
     auto op = std::make_unique<PutOperation>(doc_context.bucketId,
                                              Timestamp(10), std::move(doc_context.doc));
     FeedTokenContext token_context;
@@ -747,7 +749,7 @@ TEST_F("require that put with different document type repo is ok", FeedHandlerFi
 
 TEST_F("require that feed stats are updated", FeedHandlerFixture)
 {
-    DocumentContext doc_context("id:ns:searchdocument::foo", *f.schema.builder);
+    DocumentContext doc_context("id:ns:searchdocument::foo", f.schema.builder);
     auto op =std::make_unique<PutOperation>(doc_context.bucketId, Timestamp(10), std::move(doc_context.doc));
     FeedTokenContext token_context;
     f.handler.performOperation(std::move(token_context.token), std::move(op));

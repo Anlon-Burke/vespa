@@ -8,12 +8,15 @@ import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.SystemName;
+import com.yahoo.config.provision.Tags;
 import com.yahoo.config.provision.zone.RoutingMethod;
 import com.yahoo.config.provision.zone.ZoneApi;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.hosted.controller.ControllerTester;
 import com.yahoo.vespa.hosted.controller.Instance;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServerException;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServerException.ErrorCode;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
@@ -118,9 +121,17 @@ public class DeploymentTriggerTest {
         tester.triggerJobs();
         app.assertRunning(productionUsWest1);
 
+        tester.configServer().throwOnNextPrepare(new ConfigServerException(ErrorCode.INVALID_APPLICATION_PACKAGE, "nope", "bah"));
+        tester.runner().run();
+        assertEquals(RunStatus.invalidApplication, tester.jobs().last(app.instanceId(), productionUsWest1).get().status());
+        tester.triggerJobs();
+        app.assertNotRunning(productionUsWest1);
+
         // production-us-west-1 fails, but the app loses its projectId, and the job isn't retried.
+        app.submit(applicationPackage).runJob(systemTest).runJob(stagingTest).triggerJobs();
         tester.applications().lockApplicationOrThrow(app.application().id(), locked ->
                 tester.applications().store(locked.withProjectId(OptionalLong.empty())));
+
         app.timeOutConvergence(productionUsWest1);
         tester.triggerJobs();
         assertEquals(0, tester.jobs().active().size(), "Job is not triggered when no projectId is present");
@@ -986,7 +997,7 @@ public class DeploymentTriggerTest {
     @Test
     void testUserInstancesNotInDeploymentSpec() {
         var app = tester.newDeploymentContext();
-        tester.controller().applications().createInstance(app.application().id().instance("user"));
+        tester.controller().applications().createInstance(app.application().id().instance("user"), Tags.empty());
         app.submit().deploy();
     }
 
@@ -1294,11 +1305,11 @@ public class DeploymentTriggerTest {
                                     </steps>
                                     <steps>
                                         <delay hours='3' />
-                                        <region active='true'>aws-us-east-1a</region>
+                                        <region active='true'>us-central-1</region>
                                         <parallel>
                                             <region active='true' athenz-service='no-service'>ap-northeast-1</region>
                                             <region active='true'>ap-northeast-2</region>
-                                            <test>aws-us-east-1a</test>
+                                            <test>us-central-1</test>
                                         </parallel>
                                     </steps>
                                     <delay hours='3' minutes='30' />
@@ -1377,10 +1388,10 @@ public class DeploymentTriggerTest {
         assertEquals(List.of(), tester.jobs().active());
 
         tester.clock().advance(Duration.ofHours(1));
-        app1.runJob(productionAwsUsEast1a);
+        app1.runJob(productionUsCentral1);
         tester.triggerJobs();
         assertEquals(3, tester.jobs().active().size());
-        app1.runJob(testAwsUsEast1a);
+        app1.runJob(testUsCentral1);
         tester.triggerJobs();
         assertEquals(2, tester.jobs().active().size());
         app1.runJob(productionApNortheast2);
@@ -1437,11 +1448,11 @@ public class DeploymentTriggerTest {
         tester.clock().advance(Duration.ofHours(2));
         app1.runJob(productionEuWest1);
         tester.clock().advance(Duration.ofHours(1));
-        app1.runJob(productionAwsUsEast1a);
-        app1.runJob(testAwsUsEast1a);
+        app1.runJob(productionUsCentral1);
+        app1.runJob(testUsCentral1);
         tester.clock().advance(Duration.ofSeconds(1));
-        app1.runJob(productionAwsUsEast1a); // R
-        app1.runJob(testAwsUsEast1a);       // R
+        app1.runJob(productionUsCentral1); // R
+        app1.runJob(testUsCentral1);       // R
         app1.runJob(productionApNortheast2);
         app1.runJob(productionApNortheast1);
         tester.clock().advance(Duration.ofHours(1));
@@ -1985,8 +1996,8 @@ public class DeploymentTriggerTest {
     @Test
     void mixedDirectAndPipelineJobsInProduction() {
         ApplicationPackage cdPackage = new ApplicationPackageBuilder().region("us-east-3")
-                .region("aws-us-east-1a")
-                .build();
+                                                                      .region("aws-us-east-1a")
+                                                                      .build();
         ControllerTester wrapped = new ControllerTester(cd);
         wrapped.upgradeSystem(Version.fromString("6.1"));
         wrapped.computeVersionStatus();
@@ -2697,6 +2708,54 @@ public class DeploymentTriggerTest {
         assertFalse(tester.jobs().last(app.instanceId(), systemTest).get().hasSucceeded());
         app.failTests(stagingTest, true);
         assertTrue(tester.jobs().last(app.instanceId(), stagingTest).get().hasSucceeded());
+    }
+
+    @Test
+    void testBrokenApplication() {
+        DeploymentContext app = tester.newDeploymentContext();
+        app.submit().runJob(systemTest).failDeployment(stagingTest).failDeployment(stagingTest);
+        tester.clock().advance(Duration.ofDays(31));
+        tester.outstandingChangeDeployer().run();
+        assertEquals(OptionalLong.empty(), app.application().projectId());
+
+        app.assertNotRunning(stagingTest);
+        tester.triggerJobs();
+        app.assertNotRunning(stagingTest);
+        assertEquals(4, app.deploymentStatus().jobsToRun().size());
+
+        app.submit().runJob(systemTest).failDeployment(stagingTest);
+        tester.clock().advance(Duration.ofDays(20));
+        app.submit().runJob(systemTest).failDeployment(stagingTest);
+        tester.clock().advance(Duration.ofDays(20));
+        tester.outstandingChangeDeployer().run();
+        assertEquals(OptionalLong.of(1000), app.application().projectId());
+        tester.clock().advance(Duration.ofDays(20));
+        tester.outstandingChangeDeployer().run();
+        assertEquals(OptionalLong.empty(), app.application().projectId());
+
+        app.assertNotRunning(stagingTest);
+        tester.triggerJobs();
+        app.assertNotRunning(stagingTest);
+        assertEquals(4, app.deploymentStatus().jobsToRun().size());
+
+        app.submit().runJob(systemTest).runJob(stagingTest).failDeployment(productionUsCentral1);
+        tester.clock().advance(Duration.ofDays(31));
+        tester.outstandingChangeDeployer().run();
+        assertEquals(OptionalLong.empty(), app.application().projectId());
+
+        app.assertNotRunning(productionUsCentral1);
+        tester.triggerJobs();
+        app.assertNotRunning(productionUsCentral1);
+        assertEquals(3, app.deploymentStatus().jobsToRun().size());
+
+        app.submit().runJob(systemTest).runJob(stagingTest).timeOutConvergence(productionUsCentral1);
+        tester.clock().advance(Duration.ofDays(31));
+        tester.outstandingChangeDeployer().run();
+        assertEquals(OptionalLong.of(1000), app.application().projectId());
+
+        app.assertNotRunning(productionUsCentral1);
+        tester.triggerJobs();
+        app.assertRunning(productionUsCentral1);
     }
 
     @Test

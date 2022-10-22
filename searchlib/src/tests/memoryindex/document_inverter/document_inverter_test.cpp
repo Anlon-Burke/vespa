@@ -1,8 +1,14 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/searchlib/index/docbuilder.h>
-#include <vespa/searchlib/index/field_length_calculator.h>
 #include <vespa/searchlib/memoryindex/document_inverter.h>
+#include <vespa/document/datatype/datatype.h>
+#include <vespa/document/fieldvalue/document.h>
+#include <vespa/document/fieldvalue/stringfieldvalue.h>
+#include <vespa/document/repo/configbuilder.h>
+#include <vespa/searchlib/index/field_length_calculator.h>
+#include <vespa/searchlib/test/doc_builder.h>
+#include <vespa/searchlib/test/schema_builder.h>
+#include <vespa/searchlib/test/string_field_builder.h>
 #include <vespa/searchlib/memoryindex/document_inverter_context.h>
 #include <vespa/searchlib/memoryindex/field_index_remover.h>
 #include <vespa/searchlib/memoryindex/field_inverter.h>
@@ -18,75 +24,79 @@
 
 namespace search::memoryindex {
 
+using document::DataType;
 using document::Document;
-using index::DocBuilder;
 using index::FieldLengthCalculator;
 using index::Schema;
-using index::schema::CollectionType;
-using index::schema::DataType;
+using search::test::DocBuilder;
+using search::test::SchemaBuilder;
+using search::test::StringFieldBuilder;
 using vespalib::SequencedTaskExecutor;
 using vespalib::ISequencedTaskExecutor;
 
 namespace {
 
+DocBuilder::AddFieldsType
+make_add_fields()
+{
+    return [](auto& header) { using namespace document::config_builder;
+        header.addField("f0", DataType::T_STRING)
+            .addField("f1", DataType::T_STRING)
+            .addField("f2", Array(DataType::T_STRING))
+            .addField("f3", Wset(DataType::T_STRING));
+            };
+}
+
 Document::UP
 makeDoc10(DocBuilder &b)
 {
-    b.startDocument("id:ns:searchdocument::10");
-    b.startIndexField("f0").
-        addStr("a").addStr("b").addStr("c").addStr("d").
-        endField();
-    return b.endDocument();
+    StringFieldBuilder sfb(b);
+    auto doc = b.make_document("id:ns:searchdocument::10");
+    doc->setValue("f0", sfb.tokenize("a b c d").build());
+    return doc;
 }
 
 Document::UP
 makeDoc11(DocBuilder &b)
 {
-    b.startDocument("id:ns:searchdocument::11");
-    b.startIndexField("f0").
-        addStr("a").addStr("b").addStr("e").addStr("f").
-        endField();
-    b.startIndexField("f1").
-        addStr("a").addStr("g").
-        endField();
-    return b.endDocument();
+    StringFieldBuilder sfb(b);
+    auto doc = b.make_document("id:ns:searchdocument::11");
+    doc->setValue("f0", sfb.tokenize("a b e f").build());
+    doc->setValue("f1", sfb.tokenize("a g").build());
+    return doc;
 }
 
 Document::UP
 makeDoc12(DocBuilder &b)
 {
-    b.startDocument("id:ns:searchdocument::12");
-    b.startIndexField("f0").
-        addStr("h").addStr("doc12").
-        endField();
-    return b.endDocument();
+    StringFieldBuilder sfb(b);
+    auto doc = b.make_document("id:ns:searchdocument::12");
+    doc->setValue("f0", sfb.tokenize("h doc12").build());
+    return doc;
 }
 
 Document::UP
 makeDoc13(DocBuilder &b)
 {
-    b.startDocument("id:ns:searchdocument::13");
-    b.startIndexField("f0").
-        addStr("i").addStr("doc13").
-        endField();
-    return b.endDocument();
+    StringFieldBuilder sfb(b);
+    auto doc = b.make_document("id:ns:searchdocument::13");
+    doc->setValue("f0", sfb.tokenize("i doc13").build());
+    return doc;
 }
 
 Document::UP
 makeDoc14(DocBuilder &b)
 {
-    b.startDocument("id:ns:searchdocument::14");
-    b.startIndexField("f0").
-        addStr("j").addStr("doc14").
-        endField();
-    return b.endDocument();
+    StringFieldBuilder sfb(b);
+    auto doc = b.make_document("id:ns:searchdocument::14");
+    doc->setValue("f0", sfb.tokenize("j doc14").build());
+    return doc;
 }
 
 Document::UP
 makeDoc15(DocBuilder &b)
 {
-    b.startDocument("id:ns:searchdocument::15");
-    return b.endDocument();
+    return b.make_document("id:ns:searchdocument::15");
 }
 
 }
@@ -95,8 +105,8 @@ VESPA_THREAD_STACK_TAG(invert_executor)
 VESPA_THREAD_STACK_TAG(push_executor)
 
 struct DocumentInverterTest : public ::testing::Test {
-    Schema _schema;
     DocBuilder _b;
+    Schema _schema;
     std::unique_ptr<ISequencedTaskExecutor> _invertThreads;
     std::unique_ptr<ISequencedTaskExecutor> _pushThreads;
     WordStore                       _word_store;
@@ -107,18 +117,9 @@ struct DocumentInverterTest : public ::testing::Test {
     DocumentInverterContext         _inv_context;
     DocumentInverter                _inv;
 
-    static Schema makeSchema() {
-        Schema schema;
-        schema.addIndexField(Schema::IndexField("f0", DataType::STRING));
-        schema.addIndexField(Schema::IndexField("f1", DataType::STRING));
-        schema.addIndexField(Schema::IndexField("f2", DataType::STRING, CollectionType::ARRAY));
-        schema.addIndexField(Schema::IndexField("f3", DataType::STRING, CollectionType::WEIGHTEDSET));
-        return schema;
-    }
-
     DocumentInverterTest()
-        : _schema(makeSchema()),
-          _b(_schema),
+        : _b(make_add_fields()),
+          _schema(SchemaBuilder(_b).add_all_indexes().build()),
           _invertThreads(SequencedTaskExecutor::create(invert_executor, 1)),
           _pushThreads(SequencedTaskExecutor::create(push_executor, 1)),
           _word_store(),

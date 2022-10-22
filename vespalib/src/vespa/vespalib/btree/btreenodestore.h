@@ -156,14 +156,10 @@ public:
         _store.holdElem(ref, 1);
     }
 
-    void freeElem(EntryRef ref) {
-        _store.freeElem(ref, 1);
-    }
-
     std::unique_ptr<vespalib::datastore::CompactingBuffers> start_compact_worst(const CompactionStrategy& compaction_strategy);
 
-    void transferHoldLists(generation_t generation) {
-        _store.transferHoldLists(generation);
+    void assign_generation(generation_t current_gen) {
+        _store.assign_generation(current_gen);
     }
 
     // Inherit doc from DataStoreBase
@@ -172,12 +168,12 @@ public:
     }
 
     // Inherit doc from DataStoreBase
-    void trimHoldLists(generation_t usedGen) {
-        _store.trimHoldLists(usedGen);
+    void reclaim_memory(generation_t oldest_used_gen) {
+        _store.reclaim_memory(oldest_used_gen);
     }
 
-    void clearHoldLists() {
-        _store.clearHoldLists();
+    void reclaim_all_memory() {
+        _store.reclaim_all_memory();
     }
 
     // Inherit doc from DataStoreBase

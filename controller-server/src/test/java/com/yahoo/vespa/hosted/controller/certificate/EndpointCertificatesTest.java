@@ -8,6 +8,7 @@ import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.SystemName;
+import com.yahoo.config.provision.Tags;
 import com.yahoo.config.provision.zone.RoutingMethod;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.security.KeyAlgorithm;
@@ -100,7 +101,7 @@ public class EndpointCertificatesTest {
         return x509CertificateBuilder.build();
     }
 
-    private final Instance testInstance = new Instance(ApplicationId.defaultId());
+    private final Instance testInstance = new Instance(ApplicationId.defaultId(), Tags.empty());
     private final String testKeyName = "testKeyName";
     private final String testCertName = "testCertName";
     private ZoneId testZone;
@@ -190,7 +191,7 @@ public class EndpointCertificatesTest {
 
     @Test
     void reprovisions_certificate_with_added_sans_when_deploying_to_new_zone() {
-        ZoneId testZone = tester.zoneRegistry().zones().all().routingMethod(RoutingMethod.exclusive).in(Environment.prod).zones().stream().skip(1).findFirst().orElseThrow().getId();
+        ZoneId testZone = ZoneId.from("prod.ap-northeast-1");
 
         mockCuratorDb.writeEndpointCertificateMetadata(testInstance.id(), new EndpointCertificateMetadata(testKeyName, testCertName, -1, 0, "original-request-uuid", Optional.of("leaf-request-uuid"), expectedSans, "mockCa", Optional.empty(), Optional.empty()));
         secretStore.setSecret("vespa.tls.default.default.default-key", KeyUtils.toPem(testKeyPair.getPrivate()), -1);
@@ -234,7 +235,7 @@ public class EndpointCertificatesTest {
 
     @Test
     void includes_application_endpoint_when_declared() {
-        Instance instance = new Instance(ApplicationId.from("t1", "a1", "default"));
+        Instance instance = new Instance(ApplicationId.from("t1", "a1", "default"), Tags.empty());
         ZoneId zone1 = ZoneId.from(Environment.prod, RegionName.from("aws-us-east-1c"));
         ZoneId zone2 = ZoneId.from(Environment.prod, RegionName.from("aws-us-west-2a"));
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
@@ -242,14 +243,13 @@ public class EndpointCertificatesTest {
                 .region(zone1.region())
                 .region(zone2.region())
                 .applicationEndpoint("a", "qrs", zone2.region().value(),
-                        Map.of(InstanceName.from("beta"), 2,
-                                InstanceName.from("main"), 8))
+                                     Map.of(InstanceName.from("beta"), 2))
                 .applicationEndpoint("b", "qrs", zone2.region().value(),
-                        Map.of(InstanceName.from("beta"), 1,
-                                InstanceName.from("main"), 1))
-                .applicationEndpoint("c", "qrs", zone1.region().value(),
-                        Map.of(InstanceName.from("beta"), 4,
-                                InstanceName.from("main"), 6))
+                                     Map.of(InstanceName.from("beta"), 1))
+                .applicationEndpoint("c", "qrs",
+                                     Map.of(zone1.region().value(), Map.of(InstanceName.from("beta"), 4,
+                                                                           InstanceName.from("main"), 6),
+                                            zone2.region().value(), Map.of(InstanceName.from("main"), 2)))
                 .build();
         ControllerTester tester = new ControllerTester(SystemName.Public);
         EndpointCertificateValidatorImpl endpointCertificateValidator = new EndpointCertificateValidatorImpl(secretStore, clock);

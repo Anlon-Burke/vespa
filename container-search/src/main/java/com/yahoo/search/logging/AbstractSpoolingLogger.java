@@ -3,6 +3,7 @@ package com.yahoo.search.logging;
 
 import com.yahoo.concurrent.DaemonThreadFactory;
 import java.io.IOException;
+import java.time.Clock;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -15,7 +16,7 @@ import java.util.logging.Level;
  *
  * @author hmusum
  */
-abstract class AbstractSpoolingLogger extends AbstractThreadedLogger implements Runnable {
+public abstract class AbstractSpoolingLogger extends AbstractThreadedLogger implements Runnable {
 
     protected static final java.util.logging.Logger log = java.util.logging.Logger.getLogger(Spooler.class.getName());
 
@@ -25,7 +26,7 @@ abstract class AbstractSpoolingLogger extends AbstractThreadedLogger implements 
     protected final Spooler spooler;
 
     public AbstractSpoolingLogger() {
-        this(new Spooler());
+        this(new Spooler(Clock.systemUTC()));
     }
 
     public AbstractSpoolingLogger(Spooler spooler) {
@@ -35,6 +36,7 @@ abstract class AbstractSpoolingLogger extends AbstractThreadedLogger implements 
 
     public void run() {
         try {
+            spooler.switchFileIfNeeded();
             spooler.processFiles(this::transport);
         } catch (IOException e) {
             e.printStackTrace();
@@ -61,6 +63,7 @@ abstract class AbstractSpoolingLogger extends AbstractThreadedLogger implements 
         } catch (InterruptedException e) {
             log.log(Level.WARNING, "Failure when waiting for termination: " + e.getMessage());
         }
+        run();  // Run a last time to make sure all data is written to file
     }
 
 }

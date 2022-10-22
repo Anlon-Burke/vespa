@@ -73,6 +73,7 @@ vespa_add_library(searchlib_attribute OBJECT
     loadedenumvalue.cpp
     loadednumericvalue.cpp
     loadedvalue.cpp
+    multi_enum_search_context.cpp
     multi_numeric_enum_search_context.cpp
     multi_numeric_flag_search_context.cpp
     multi_numeric_search_context.cpp
@@ -119,13 +120,13 @@ vespa_add_library(searchlib_attribute OBJECT
     singlesmallnumericattribute.cpp
     singlestringattribute.cpp
     singlestringpostattribute.cpp
+    single_enum_search_context.cpp
     single_numeric_enum_search_context.cpp
     single_numeric_search_context.cpp
     single_small_numeric_search_context.cpp
     single_string_enum_search_context.cpp
     single_string_enum_hint_search_context.cpp
     sourceselector.cpp
-    stringattribute.cpp
     stringbase.cpp
     string_matcher.cpp
     string_search_context.cpp

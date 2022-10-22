@@ -5,7 +5,7 @@
 #include "compacting_buffers.h"
 #include "compaction_spec.h"
 #include "compaction_strategy.h"
-#include <vespa/vespalib/util/array.hpp>
+#include <vespa/vespalib/util/generation_hold_list.hpp>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <algorithm>
 #include <limits>
@@ -15,6 +15,10 @@
 LOG_SETUP(".vespalib.datastore.datastorebase");
 
 using vespalib::GenerationHeldBase;
+
+namespace vespalib {
+template class GenerationHoldList<datastore::DataStoreBase::EntryRefHoldElem, false, true>;
+}
 
 namespace vespalib::datastore {
 
@@ -88,8 +92,7 @@ DataStoreBase::DataStoreBase(uint32_t numBuffers, uint32_t offset_bits, size_t m
       _free_lists(),
       _freeListsEnabled(false),
       _initializing(false),
-      _elemHold1List(),
-      _elemHold2List(),
+      _entry_ref_hold_list(),
       _numBuffers(numBuffers),
       _offset_bits(offset_bits),
       _hold_buffer_count(0u),
@@ -102,9 +105,6 @@ DataStoreBase::DataStoreBase(uint32_t numBuffers, uint32_t offset_bits, size_t m
 DataStoreBase::~DataStoreBase()
 {
     disableFreeLists();
-
-    assert(_elemHold1List.empty());
-    assert(_elemHold2List.empty());
 }
 
 void
@@ -221,21 +221,10 @@ DataStoreBase::addType(BufferTypeBase *typeHandler)
 }
 
 void
-DataStoreBase::transferElemHoldList(generation_t generation)
+DataStoreBase::assign_generation(generation_t current_gen)
 {
-    for (const auto& elemHold1 : _elemHold1List) {
-        _elemHold2List.push_back(ElemHold2ListElem(elemHold1, generation));
-    }
-    _elemHold1List.clear();
-}
-
-void
-DataStoreBase::transferHoldLists(generation_t generation)
-{
-    _genHolder.transferHoldLists(generation);
-    if (hasElemHold1()) {
-        transferElemHoldList(generation);
-    }
+    _genHolder.assign_generation(current_gen);
+    _entry_ref_hold_list.assign_generation(current_gen);
 }
 
 void
@@ -247,18 +236,18 @@ DataStoreBase::doneHoldBuffer(uint32_t bufferId)
 }
 
 void
-DataStoreBase::trimHoldLists(generation_t usedGen)
+DataStoreBase::reclaim_memory(generation_t oldest_used_gen)
 {
-    trimElemHoldList(usedGen);  // Trim entries before trimming buffers
-    _genHolder.trimHoldLists(usedGen);
+    reclaim_entry_refs(oldest_used_gen);  // Trim entries before trimming buffers
+    _genHolder.reclaim(oldest_used_gen);
 }
 
 void
-DataStoreBase::clearHoldLists()
+DataStoreBase::reclaim_all_memory()
 {
-    transferElemHoldList(0);
-    clearElemHoldList();
-    _genHolder.clearHoldLists();
+    _entry_ref_hold_list.assign_generation(0);
+    reclaim_all_entry_refs();
+    _genHolder.reclaim_all();
 }
 
 void
@@ -268,7 +257,7 @@ DataStoreBase::dropBuffers()
     for (uint32_t bufferId = 0; bufferId < numBuffers; ++bufferId) {
         _states[bufferId].dropBuffer(bufferId, _buffers[bufferId].get_atomic_buffer());
     }
-    _genHolder.clearHoldLists();
+    _genHolder.reclaim_all();
 }
 
 vespalib::MemoryUsage
@@ -289,7 +278,7 @@ DataStoreBase::holdBuffer(uint32_t bufferId)
     _states[bufferId].onHold(bufferId);
     size_t holdBytes = 0u;  // getMemStats() still accounts held buffers
     auto hold = std::make_unique<BufferHold>(holdBytes, *this, bufferId);
-    _genHolder.hold(std::move(hold));
+    _genHolder.insert(std::move(hold));
 }
 
 void
@@ -356,7 +345,7 @@ DataStoreBase::getMemStats() const
             LOG_ABORT("should not be reached");
         }
     }
-    size_t genHolderHeldBytes = _genHolder.getHeldBytes();
+    size_t genHolderHeldBytes = _genHolder.get_held_bytes();
     stats._holdBytes += genHolderHeldBytes;
     stats._allocBytes += genHolderHeldBytes;
     stats._usedBytes += genHolderHeldBytes;
@@ -428,7 +417,7 @@ DataStoreBase::fallbackResize(uint32_t bufferId, size_t elemsNeeded)
                                                state.getTypeHandler(),
                                                state.getTypeId());
     if (!_initializing) {
-        _genHolder.hold(std::move(hold));
+        _genHolder.insert(std::move(hold));
     }
 }
 

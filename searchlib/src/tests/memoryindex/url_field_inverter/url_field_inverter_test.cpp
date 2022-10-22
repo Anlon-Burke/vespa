@@ -1,12 +1,19 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
+#include <vespa/searchlib/memoryindex/url_field_inverter.h>
+#include <vespa/document/fieldvalue/document.h>
+#include <vespa/document/fieldvalue/arrayfieldvalue.h>
+#include <vespa/document/fieldvalue/stringfieldvalue.h>
+#include <vespa/document/fieldvalue/weightedsetfieldvalue.h>
+#include <vespa/document/repo/configbuilder.h>
 #include <vespa/document/repo/fixedtyperepo.h>
-#include <vespa/searchlib/index/docbuilder.h>
+#include <vespa/searchcommon/common/schema.h>
 #include <vespa/searchlib/index/field_length_calculator.h>
+#include <vespa/searchlib/index/schema_index_fields.h>
 #include <vespa/searchlib/memoryindex/field_index_remover.h>
 #include <vespa/searchlib/memoryindex/field_inverter.h>
-#include <vespa/searchlib/memoryindex/url_field_inverter.h>
 #include <vespa/searchlib/memoryindex/word_store.h>
+#include <vespa/searchlib/test/doc_builder.h>
 #include <vespa/searchlib/test/memoryindex/ordered_field_index_inserter.h>
 #include <vespa/searchlib/test/memoryindex/ordered_field_index_inserter_backend.h>
 #include <vespa/vespalib/gtest/gtest.h>
@@ -14,8 +21,12 @@
 namespace search {
 
 using document::Document;
+using document::ArrayFieldValue;
+using document::StringFieldValue;
+using document::WeightedSetFieldValue;
 using index::schema::CollectionType;
 using index::schema::DataType;
+using search::test::DocBuilder;
 
 using namespace index;
 
@@ -28,151 +39,37 @@ const vespalib::string url = "url";
 Document::UP
 makeDoc10Single(DocBuilder &b)
 {
-    b.startDocument("id:ns:searchdocument::10");
-    b.startIndexField("url").
-        startSubField("all").
-        addUrlTokenizedString("http://www.example.com:81/fluke?ab=2#4").
-        endSubField().
-        startSubField("scheme").
-        addUrlTokenizedString("http").
-        endSubField().
-        startSubField("host").
-        addUrlTokenizedString("www.example.com").
-        endSubField().
-        startSubField("port").
-        addUrlTokenizedString("81").
-        endSubField().
-        startSubField("path").
-        addUrlTokenizedString("/fluke").
-        addTermAnnotation("altfluke").
-        endSubField().
-        startSubField("query").
-        addUrlTokenizedString("ab=2").
-        endSubField().
-        startSubField("fragment").
-        addUrlTokenizedString("4").
-        endSubField().
-        endField();
-    return b.endDocument();
+    auto doc = b.make_document("id:ns:searchdocument::10");
+    doc->setValue("url", StringFieldValue("http://www.example.com:81/fluke?ab=2#4"));
+    return doc;
 }
 
 Document::UP
 makeDoc10Array(DocBuilder &b)
 {
-    b.startDocument("id:ns:searchdocument::10");
-    b.startIndexField("url").
-        startElement(1).
-        startSubField("all").
-        addUrlTokenizedString("http://www.example.com:82/fluke?ab=2#8").
-        endSubField().
-        startSubField("scheme").
-        addUrlTokenizedString("http").
-        endSubField().
-        startSubField("host").
-        addUrlTokenizedString("www.example.com").
-        endSubField().
-        startSubField("port").
-        addUrlTokenizedString("82").
-        endSubField().
-        startSubField("path").
-        addUrlTokenizedString("/fluke").
-        addTermAnnotation("altfluke").
-        endSubField().
-        startSubField("query").
-        addUrlTokenizedString("ab=2").
-        endSubField().
-        startSubField("fragment").
-        addUrlTokenizedString("8").
-        endSubField().
-        endElement().
-        startElement(1).
-        startSubField("all").
-        addUrlTokenizedString("http://www.flickr.com:82/fluke?ab=2#9").
-        endSubField().
-        startSubField("scheme").
-        addUrlTokenizedString("http").
-        endSubField().
-        startSubField("host").
-        addUrlTokenizedString("www.flickr.com").
-        endSubField().
-        startSubField("port").
-        addUrlTokenizedString("82").
-        endSubField().
-        startSubField("path").
-        addUrlTokenizedString("/fluke").
-        endSubField().
-        startSubField("query").
-        addUrlTokenizedString("ab=2").
-        endSubField().
-        startSubField("fragment").
-        addUrlTokenizedString("9").
-        endSubField().
-        endElement().
-        endField();
-    return b.endDocument();
+    auto doc = b.make_document("id:ns:searchdocument::10");
+    auto url_array = b.make_array("url");
+    url_array.add(StringFieldValue("http://www.example.com:82/fluke?ab=2#8"));
+    url_array.add(StringFieldValue("http://www.flickr.com:82/fluke?ab=2#9"));
+    doc->setValue("url", url_array);
+    return doc;
 }
 
 Document::UP
 makeDoc10WeightedSet(DocBuilder &b)
 {
-    b.startDocument("id:ns:searchdocument::10");
-    b.startIndexField("url").
-        startElement(4).
-        startSubField("all").
-        addUrlTokenizedString("http://www.example.com:83/fluke?ab=2#12").
-        endSubField().
-        startSubField("scheme").
-        addUrlTokenizedString("http").
-        endSubField().
-        startSubField("host").
-        addUrlTokenizedString("www.example.com").
-        endSubField().
-        startSubField("port").
-        addUrlTokenizedString("83").
-        endSubField().
-        startSubField("path").
-        addUrlTokenizedString("/fluke").
-        addTermAnnotation("altfluke").
-        endSubField().
-        startSubField("query").
-        addUrlTokenizedString("ab=2").
-        endSubField().
-        startSubField("fragment").
-        addUrlTokenizedString("12").
-        endSubField().
-        endElement().
-        startElement(7).
-        startSubField("all").
-        addUrlTokenizedString("http://www.flickr.com:85/fluke?ab=2#13").
-        endSubField().
-        startSubField("scheme").
-        addUrlTokenizedString("http").
-        endSubField().
-        startSubField("host").
-        addUrlTokenizedString("www.flickr.com").
-        endSubField().
-        startSubField("port").
-        addUrlTokenizedString("85").
-        endSubField().
-        startSubField("path").
-        addUrlTokenizedString("/fluke").
-        endSubField().
-        startSubField("query").
-        addUrlTokenizedString("ab=2").
-        endSubField().
-        startSubField("fragment").
-        addUrlTokenizedString("13").
-        endSubField().
-        endElement().
-        endField();
-    return b.endDocument();
+    auto doc = b.make_document("id:ns:searchdocument::10");
+    auto url_wset = b.make_wset("url");
+    url_wset.add(StringFieldValue("http://www.example.com:83/fluke?ab=2#12"), 4);
+    url_wset.add(StringFieldValue("http://www.flickr.com:85/fluke?ab=2#13"), 7);
+    doc->setValue("url", url_wset);
+    return doc;
 }
 
 Document::UP
 makeDoc10Empty(DocBuilder &b)
 {
-    b.startDocument("id:ns:searchdocument::10");
-    return b.endDocument();
+    return b.make_document("id:ns:searchdocument::10");
 }
 
 }
@@ -195,9 +92,10 @@ struct UrlFieldInverterTest : public ::testing::Test {
         return schema;
     }
 
-    UrlFieldInverterTest(Schema::CollectionType collectionType)
+    UrlFieldInverterTest(Schema::CollectionType collectionType,
+                         DocBuilder::AddFieldsType add_fields)
         : _schema(makeSchema(collectionType)),
-          _b(_schema),
+          _b(add_fields),
           _word_store(),
           _remover(_word_store),
           _inserter_backend(),
@@ -242,24 +140,36 @@ struct UrlFieldInverterTest : public ::testing::Test {
             inverter->pushDocuments();
         }
     }
-
-    void enableAnnotations() {
-        _urlInverter->setUseAnnotations(true);
-    }
 };
 
 UrlFieldInverterTest::~UrlFieldInverterTest() = default;
 
+DocBuilder::AddFieldsType
+add_single_url = [](auto& header) {
+                     header.addField("url", document::DataType::T_URI); };
+
+DocBuilder::AddFieldsType
+add_array_url = [](auto& header) {
+                    using namespace document::config_builder;
+                    header.addField("url", Array(document::DataType::T_URI)); };
+
+DocBuilder::AddFieldsType
+add_wset_url = [](auto& header) {
+                    using namespace document::config_builder;
+                    header.addField("url", Wset(document::DataType::T_URI)); };
+
+
+
 struct SingleInverterTest : public UrlFieldInverterTest {
-    SingleInverterTest() : UrlFieldInverterTest(CollectionType::SINGLE) {}
+    SingleInverterTest() : UrlFieldInverterTest(CollectionType::SINGLE, add_single_url) {}
 };
 
 struct ArrayInverterTest : public UrlFieldInverterTest {
-    ArrayInverterTest() : UrlFieldInverterTest(CollectionType::ARRAY) {}
+    ArrayInverterTest() : UrlFieldInverterTest(CollectionType::ARRAY, add_array_url) {}
 };
 
 struct WeightedSetInverterTest : public UrlFieldInverterTest {
-    WeightedSetInverterTest() : UrlFieldInverterTest(CollectionType::WEIGHTEDSET) {}
+    WeightedSetInverterTest() : UrlFieldInverterTest(CollectionType::WEIGHTEDSET, add_wset_url) {}
 };
 
 
@@ -389,139 +299,6 @@ TEST_F(WeightedSetInverterTest, require_that_weighted_set_field_works)
               _inserter_backend.toStr());
 }
 
-TEST_F(SingleInverterTest, require_that_annotated_single_url_field_works)
-{
-    enableAnnotations();
-    invertDocument(10, *makeDoc10Single(_b));
-    pushDocuments();
-    EXPECT_EQ("f=0,"
-              "w=2,a=10,"
-              "w=4,a=10,"
-              "w=81,a=10,"
-              "w=ab,a=10,"
-              "w=com,a=10,"
-              "w=example,a=10,"
-              "w=fluke,a=10,"
-              "w=http,a=10,"
-              "w=www,a=10,"
-              "f=1,"
-              "w=http,a=10,"
-              "f=2,"
-              "w=com,a=10,"
-              "w=example,a=10,"
-              "w=www,a=10,"
-              "f=3,"
-              "w=81,a=10,"
-              "f=4,"
-              "w=altfluke,a=10,"
-              "w=fluke,a=10,"
-              "f=5,"
-              "w=2,a=10,"
-              "w=ab,a=10,"
-              "f=6,"
-              "w=4,a=10,"
-              "f=7,"
-              "w=EnDhOsT,a=10,"
-              "w=StArThOsT,a=10,"
-              "w=com,a=10,"
-              "w=example,a=10,"
-              "w=www,a=10",
-              _inserter_backend.toStr());
-}
-
-TEST_F(ArrayInverterTest, require_that_annotated_array_url_field_works)
-{
-    enableAnnotations();
-    invertDocument(10, *makeDoc10Array(_b));
-    pushDocuments();
-    EXPECT_EQ("f=0,"
-              "w=2,a=10,"
-              "w=8,a=10,"
-              "w=82,a=10,"
-              "w=9,a=10,"
-              "w=ab,a=10,"
-              "w=com,a=10,"
-              "w=example,a=10,"
-              "w=flickr,a=10,"
-              "w=fluke,a=10,"
-              "w=http,a=10,"
-              "w=www,a=10,"
-              "f=1,"
-              "w=http,a=10,"
-              "f=2,"
-              "w=com,a=10,"
-              "w=example,a=10,"
-              "w=flickr,a=10,"
-              "w=www,a=10,"
-              "f=3,"
-              "w=82,a=10,"
-              "f=4,"
-              "w=altfluke,a=10,"
-              "w=fluke,a=10,"
-              "f=5,"
-              "w=2,a=10,"
-              "w=ab,a=10,"
-              "f=6,"
-              "w=8,a=10,"
-              "w=9,a=10,"
-              "f=7,"
-              "w=EnDhOsT,a=10,"
-              "w=StArThOsT,a=10,"
-              "w=com,a=10,"
-              "w=example,a=10,"
-              "w=flickr,a=10,"
-              "w=www,a=10",
-              _inserter_backend.toStr());
-}
-
-TEST_F(WeightedSetInverterTest, require_that_annotated_weighted_set_field_works)
-{
-    enableAnnotations();
-    _inserter_backend.setVerbose();
-    invertDocument(10, *makeDoc10WeightedSet(_b));
-    pushDocuments();
-    EXPECT_EQ("f=0,"
-              "w=12,a=10(e=0,w=4,l=9[8]),"
-              "w=13,a=10(e=1,w=7,l=9[8]),"
-              "w=2,a=10(e=0,w=4,l=9[7],e=1,w=7,l=9[7]),"
-              "w=83,a=10(e=0,w=4,l=9[4]),"
-              "w=85,a=10(e=1,w=7,l=9[4]),"
-              "w=ab,a=10(e=0,w=4,l=9[6],e=1,w=7,l=9[6]),"
-              "w=com,a=10(e=0,w=4,l=9[3],e=1,w=7,l=9[3]),"
-              "w=example,a=10(e=0,w=4,l=9[2]),"
-              "w=flickr,a=10(e=1,w=7,l=9[2]),"
-              "w=fluke,a=10(e=0,w=4,l=9[5],e=1,w=7,l=9[5]),"
-              "w=http,a=10(e=0,w=4,l=9[0],e=1,w=7,l=9[0]),"
-              "w=www,a=10(e=0,w=4,l=9[1],e=1,w=7,l=9[1]),"
-              "f=1,"
-              "w=http,a=10(e=0,w=4,l=1[0],e=1,w=7,l=1[0]),"
-              "f=2,"
-              "w=com,a=10(e=0,w=4,l=3[2],e=1,w=7,l=3[2]),"
-              "w=example,a=10(e=0,w=4,l=3[1]),"
-              "w=flickr,a=10(e=1,w=7,l=3[1]),"
-              "w=www,a=10(e=0,w=4,l=3[0],e=1,w=7,l=3[0]),"
-              "f=3,"
-              "w=83,a=10(e=0,w=4,l=1[0]),"
-              "w=85,a=10(e=1,w=7,l=1[0]),"
-              "f=4,"
-              "w=altfluke,a=10(e=0,w=4,l=1[0]),"
-              "w=fluke,a=10(e=0,w=4,l=1[0],e=1,w=7,l=1[0]),"
-              "f=5,"
-              "w=2,a=10(e=0,w=4,l=2[1],e=1,w=7,l=2[1]),"
-              "w=ab,a=10(e=0,w=4,l=2[0],e=1,w=7,l=2[0]),"
-              "f=6,"
-              "w=12,a=10(e=0,w=4,l=1[0]),"
-              "w=13,a=10(e=1,w=7,l=1[0]),"
-              "f=7,"
-              "w=EnDhOsT,a=10(e=0,w=4,l=5[4],e=1,w=7,l=5[4]),"
-              "w=StArThOsT,a=10(e=0,w=4,l=5[0],e=1,w=7,l=5[0]),"
-              "w=com,a=10(e=0,w=4,l=5[3],e=1,w=7,l=5[3]),"
-              "w=example,a=10(e=0,w=4,l=5[2]),"
-              "w=flickr,a=10(e=1,w=7,l=5[2]),"
-              "w=www,a=10(e=0,w=4,l=5[1],e=1,w=7,l=5[1])",
-              _inserter_backend.toStr());
-}
-
 TEST_F(SingleInverterTest, require_that_empty_single_field_works)
 {
     invertDocument(10, *makeDoc10Empty(_b));
@@ -539,30 +316,6 @@ TEST_F(ArrayInverterTest, require_that_empty_array_field_works)
 
 TEST_F(WeightedSetInverterTest, require_that_empty_weighted_set_field_works)
 {
-    invertDocument(10, *makeDoc10Empty(_b));
-    pushDocuments();
-    EXPECT_EQ("", _inserter_backend.toStr());
-}
-
-TEST_F(SingleInverterTest, require_that_annotated_empty_single_field_works)
-{
-    enableAnnotations();
-    invertDocument(10, *makeDoc10Empty(_b));
-    pushDocuments();
-    EXPECT_EQ("", _inserter_backend.toStr());
-}
-
-TEST_F(ArrayInverterTest, require_that_annotated_empty_array_field_works)
-{
-    enableAnnotations();
-    invertDocument(10, *makeDoc10Empty(_b));
-    pushDocuments();
-    EXPECT_EQ("", _inserter_backend.toStr());
-}
-
-TEST_F(WeightedSetInverterTest, require_that_annotated_empty_weighted_set_field_works)
-{
-    enableAnnotations();
     invertDocument(10, *makeDoc10Empty(_b));
     pushDocuments();
     EXPECT_EQ("", _inserter_backend.toStr());

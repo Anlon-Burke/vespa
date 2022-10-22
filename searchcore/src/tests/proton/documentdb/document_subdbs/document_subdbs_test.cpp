@@ -1,5 +1,8 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
+#include <vespa/document/datatype/datatype.h>
+#include <vespa/document/fieldvalue/intfieldvalue.h>
+#include <vespa/document/repo/configbuilder.h>
 #include <vespa/searchcore/proton/attribute/imported_attributes_repo.h>
 #include <vespa/searchcore/proton/bucketdb/bucketdbhandler.h>
 #include <vespa/searchcore/proton/bucketdb/bucket_db_owner.h>
@@ -27,8 +30,9 @@
 #include <vespa/searchcore/proton/test/thread_utils.h>
 #include <vespa/searchcore/proton/test/transport_helper.h>
 #include <vespa/searchlib/attribute/interlock.h>
-#include <vespa/searchlib/index/docbuilder.h>
 #include <vespa/searchlib/test/directory_handler.h>
+#include <vespa/searchlib/test/doc_builder.h>
+#include <vespa/searchlib/test/schema_builder.h>
 #include <vespa/searchcommon/attribute/config.h>
 #include <vespa/config-bucketspaces.h>
 #include <vespa/config/subscription/sourcespec.h>
@@ -60,6 +64,8 @@ using proton::bucketdb::IBucketDBHandler;
 using proton::bucketdb::IBucketDBHandlerInitializer;
 using vespalib::IDestructorCallback;
 using search::test::DirectoryHandler;
+using search::test::DocBuilder;
+using search::test::SchemaBuilder;
 using searchcorespi::IFlushTarget;
 using searchcorespi::index::IThreadingService;
 using storage::spi::Timestamp;
@@ -244,19 +250,27 @@ MySearchableContext::MySearchableContext(IThreadingService &writeService,
 {}
 MySearchableContext::~MySearchableContext() = default;
 
-struct OneAttrSchema : public Schema
-{
-    OneAttrSchema() {
-        addAttributeField(Schema::AttributeField("attr1", Schema::DataType::INT32));
-    }
-};
+static inline constexpr bool one_attr_schema = false;
 
-struct TwoAttrSchema : public OneAttrSchema
+static inline constexpr bool two_attr_schema = true;
+
+DocBuilder::AddFieldsType
+get_add_fields(bool has_attr2)
 {
-    TwoAttrSchema() {
-        addAttributeField(Schema::AttributeField("attr2", Schema::DataType::INT32));
-    }
-};
+    return [has_attr2](auto& header) {
+               header.addField("attr1", DataType::T_INT);
+               if (has_attr2) {
+                   header.addField("attr2", DataType::T_INT);
+               }
+           };
+}
+
+Schema
+make_all_attr_schema(bool has_attr2)
+{
+    DocBuilder db(get_add_fields(has_attr2));
+    return SchemaBuilder(db).add_all_attributes().build();
+}
 
 struct MyConfigSnapshot
 {
@@ -267,15 +281,15 @@ struct MyConfigSnapshot
     BootstrapConfig::SP  _bootstrap;
     MyConfigSnapshot(FNET_Transport & transport, const Schema &schema, const vespalib::string &cfgDir)
         : _schema(schema),
-          _builder(_schema),
+          _builder(get_add_fields(_schema.getNumAttributeFields() > 1)),
           _cfg(),
           _bootstrap()
     {
-        auto documenttypesConfig = std::make_shared<DocumenttypesConfig>(_builder.getDocumenttypesConfig());
+        auto documenttypesConfig = std::make_shared<DocumenttypesConfig>(_builder.get_documenttypes_config());
         auto tuneFileDocumentDB = std::make_shared<TuneFileDocumentDB>();
         _bootstrap = std::make_shared<BootstrapConfig>(1,
                                  documenttypesConfig,
-                                 _builder.getDocumentTypeRepo(),
+                                 _builder.get_repo_sp(),
                                  std::make_shared<ProtonConfig>(),
                                  std::make_shared<FiledistributorrpcConfig>(),
                                  std::make_shared<BucketspacesConfig>(),
@@ -292,12 +306,13 @@ template <typename Traits>
 struct FixtureBase
 {
     TransportAndExecutorService _service;
+    static constexpr bool has_attr2 = Traits::has_attr2;
 
     typename Traits::Config  _cfg;
     std::shared_ptr<bucketdb::BucketDBOwner> _bucketDB;
     BucketDBHandler          _bucketDBHandler;
     typename Traits::Context _ctx;
-    typename Traits::Schema  _baseSchema;
+    Schema                   _baseSchema;
     MyConfigSnapshot::UP     _snapshot;
     DirectoryHandler         _baseDir;
     typename Traits::SubDB   _subDb;
@@ -308,7 +323,7 @@ struct FixtureBase
           _bucketDB(std::make_shared<bucketdb::BucketDBOwner>()),
           _bucketDBHandler(*_bucketDB),
           _ctx(_service.write(), _bucketDB, _bucketDBHandler),
-          _baseSchema(),
+          _baseSchema(make_all_attr_schema(has_attr2)),
           _snapshot(std::make_unique<MyConfigSnapshot>(_service.transport(), _baseSchema, Traits::ConfigDir::dir())),
           _baseDir(BASE_DIR + "/" + SUB_NAME, BASE_DIR),
           _subDb(_cfg._cfg, _ctx._ctx),
@@ -343,7 +358,7 @@ struct FixtureBase
         runInMasterAndSync([&]() { _subDb.initViews(*_snapshot->_cfg, sessionMgr); });
     }
     void basicReconfig(SerialNum serialNum) {
-        runInMasterAndSync([&]() { performReconfig(serialNum, TwoAttrSchema(), ConfigDir2::dir()); });
+        runInMasterAndSync([&]() { performReconfig(serialNum, make_all_attr_schema(two_attr_schema), ConfigDir2::dir()); });
     }
     void reconfig(SerialNum serialNum, const Schema &reconfigSchema, const vespalib::string &reconfigConfigDir) {
         runInMasterAndSync([&]() { performReconfig(serialNum, reconfigSchema, reconfigConfigDir); });
@@ -384,15 +399,15 @@ struct FixtureBase
     }
 };
 
-template <typename SchemaT, typename ConfigDirT, uint32_t ConfigSerial = CFG_SERIAL>
+template <bool has_attr2_in, typename ConfigDirT, uint32_t ConfigSerial = CFG_SERIAL>
 struct BaseTraitsT
 {
-    typedef SchemaT Schema;
+    static constexpr bool has_attr2 = has_attr2_in;
     typedef ConfigDirT ConfigDir;
     static uint32_t configSerial() { return ConfigSerial; }
 };
 
-typedef BaseTraitsT<OneAttrSchema, ConfigDir1> BaseTraits;
+typedef BaseTraitsT<one_attr_schema, ConfigDir1> BaseTraits;
 
 struct StoreOnlyTraits : public BaseTraits
 {
@@ -415,7 +430,7 @@ struct FastAccessTraits : public BaseTraits
 typedef FixtureBase<FastAccessTraits> FastAccessFixture;
 
 template <typename ConfigDirT>
-struct FastAccessOnlyTraitsBase : public BaseTraitsT<TwoAttrSchema, ConfigDirT>
+struct FastAccessOnlyTraitsBase : public BaseTraitsT<two_attr_schema, ConfigDirT>
 {
     using Config = MyFastAccessConfig<true>;
     using Context = MyFastAccessContext;
@@ -427,8 +442,8 @@ struct FastAccessOnlyTraitsBase : public BaseTraitsT<TwoAttrSchema, ConfigDirT>
 typedef FastAccessOnlyTraitsBase<ConfigDir3> FastAccessOnlyTraits;
 typedef FixtureBase<FastAccessOnlyTraits> FastAccessOnlyFixture;
 
-template <typename SchemaT, typename ConfigDirT>
-struct SearchableTraitsBase : public BaseTraitsT<SchemaT, ConfigDirT>
+template <bool has_attr2_in, typename ConfigDirT>
+struct SearchableTraitsBase : public BaseTraitsT<has_attr2_in, ConfigDirT>
 {
     using Config = MySearchableConfig;
     using Context = MySearchableContext;
@@ -436,7 +451,7 @@ struct SearchableTraitsBase : public BaseTraitsT<SchemaT, ConfigDirT>
     using FeedView = proton::SearchableFeedView;
 };
 
-typedef SearchableTraitsBase<OneAttrSchema, ConfigDir1> SearchableTraits;
+typedef SearchableTraitsBase<one_attr_schema, ConfigDir1> SearchableTraits;
 typedef FixtureBase<SearchableTraits> SearchableFixture;
 
 void
@@ -747,7 +762,7 @@ struct DocumentHandler
 {
     FixtureType &_f;
     DocBuilder _builder;
-    DocumentHandler(FixtureType &f) : _f(f), _builder(f._baseSchema) {}
+    DocumentHandler(FixtureType &f) : _f(f), _builder(get_add_fields(f.has_attr2)) {}
     static constexpr uint32_t BUCKET_USED_BITS = 8;
     static DocumentId createDocId(uint32_t docId)
     {
@@ -755,16 +770,16 @@ struct DocumentHandler
                                                 "searchdocument::%u", docId));
     }
     Document::UP createEmptyDoc(uint32_t docId) {
-        return _builder.startDocument
-            (vespalib::make_string("id:searchdocument:searchdocument::%u",
-                                   docId)).
-            endDocument();
+        auto id = vespalib::make_string("id:searchdocument:searchdocument::%u",
+                                        docId);
+        return _builder.make_document(id);
     }
     Document::UP createDoc(uint32_t docId, int64_t attr1Value, int64_t attr2Value) {
-        return _builder.startDocument
-                (vespalib::make_string("id:searchdocument:searchdocument::%u", docId)).
-                startAttributeField("attr1").addInt(attr1Value).endField().
-                startAttributeField("attr2").addInt(attr2Value).endField().endDocument();
+        auto id = vespalib::make_string("id:searchdocument:searchdocument::%u", docId);
+        auto doc = _builder.make_document(id);
+        doc->setValue("attr1", IntFieldValue(attr1Value));
+        doc->setValue("attr2", IntFieldValue(attr2Value));
+        return doc;
     }
     PutOperation createPut(Document::UP doc, Timestamp timestamp, SerialNum serialNum) {
         proton::test::Document testDoc(Document::SP(doc.release()), 0, timestamp);
@@ -880,7 +895,7 @@ requireThatAttributesArePopulatedDuringReprocessing(FixtureType &f)
     }
 
     // Reconfig to 2 attribute fields
-    f.reconfig(40u, TwoAttrSchema(), ConfigDirT::dir());
+    f.reconfig(40u, make_all_attr_schema(two_attr_schema), ConfigDirT::dir());
 
     {
         std::vector<AttributeGuard> attrs;
@@ -898,7 +913,7 @@ TEST_F("require that fast-access attributes are populated during reprocessing",
 }
 
 // Setup with 2 fields (1 attribute according to config in dir)
-typedef SearchableTraitsBase<TwoAttrSchema, ConfigDir1> SearchableTraitsTwoField;
+typedef SearchableTraitsBase<two_attr_schema, ConfigDir1> SearchableTraitsTwoField;
 typedef FixtureBase<SearchableTraitsTwoField> SearchableFixtureTwoField;
 
 TEST_F("require that regular attributes are populated during reprocessing",

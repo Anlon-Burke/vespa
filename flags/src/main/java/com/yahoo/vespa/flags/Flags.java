@@ -299,14 +299,14 @@ public class Flags {
 
     public static final UnboundListFlag<String> FILE_DISTRIBUTION_ACCEPTED_COMPRESSION_TYPES = defineListFlag(
             "file-distribution-accepted-compression-types", List.of("gzip", "lz4"), String.class,
-            List.of("hmusum"), "2022-07-05", "2022-11-01",
+            List.of("hmusum"), "2022-07-05", "2022-12-01",
             "´List of accepted compression types used when asking for a file reference. Valid values: gzip, lz4",
             "Takes effect on restart of service",
             APPLICATION_ID);
 
     public static final UnboundListFlag<String> FILE_DISTRIBUTION_COMPRESSION_TYPES_TO_SERVE = defineListFlag(
             "file-distribution-compression-types-to-use", List.of("lz4", "gzip"), String.class,
-            List.of("hmusum"), "2022-07-05", "2022-11-01",
+            List.of("hmusum"), "2022-07-05", "2022-12-01",
             "List of compression types to use (in preferred order), matched with accepted compression types when serving file references. Valid values: gzip, lz4",
             "Takes effect on restart of service",
             APPLICATION_ID);
@@ -368,7 +368,7 @@ public class Flags {
             "Takes effect on controller restart/redeployment");
 
     public static final UnboundBooleanFlag SOFT_REBUILD = defineFeatureFlag(
-            "soft-rebuild", false,
+            "soft-rebuild", true,
             List.of("mpolden"), "2022-09-27", "2022-12-01",
             "Whether soft rebuild can be used to rebuild hosts with remote disk",
             "Takes effect on next run of OsUpgradeActivator"
@@ -399,7 +399,7 @@ public class Flags {
             List.of("andreer", "gjoranv"), "2022-09-28", "2023-04-01",
             "Set up a WireGuard endpoint on config servers",
             "Takes effect on configserver restart",
-            ZONE_ID, NODE_TYPE);
+            HOSTNAME);
 
     public static final UnboundBooleanFlag USE_WIREGUARD_ON_TENANT_HOSTS = defineFeatureFlag(
             "use-wireguard-on-tenant-hosts", false,
@@ -407,6 +407,12 @@ public class Flags {
             "Set up a WireGuard endpoint on tenant hosts",
             "Takes effect on host admin restart",
             HOSTNAME);
+
+    public static final UnboundStringFlag AUTH0_SESSION_LOGOUT = defineStringFlag(
+            "auth0-session-logout", "disabled",
+            List.of("bjorncs", "tokle"), "2022-10-17", "2023-06-01",
+            "Set mode for Auth0 session logout ('disabled', 'log_only', 'enabled')",
+            "Takes effect on controller restart/redeployment");
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

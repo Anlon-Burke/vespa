@@ -7,7 +7,6 @@
 #include <vespa/searchlib/attribute/configconverter.h>
 #include <vespa/searchlib/attribute/multinumericattribute.h>
 #include <vespa/searchlib/attribute/multinumericattribute.hpp>
-#include <vespa/searchlib/attribute/stringattribute.h>
 #include <vespa/vespalib/testkit/testapp.h>
 
 #include <vespa/log/log.h>
@@ -31,73 +30,71 @@ using TestAttributeBase = MultiValueNumericAttribute< IntegerAttributeTemplate<i
 class TestAttribute : public TestAttributeBase
 {
 public:
-    TestAttribute(const std::string &name)
+    explicit TestAttribute(const std::string &name)
         : TestAttributeBase(name)
     {}
 
     generation_t getGen() const { return getCurrentGeneration(); }
     uint32_t getRefCount(generation_t gen) const { return getGenerationRefCount(gen); }
     void incGen() { incGeneration(); }
-    void updateFirstUsedGen() { updateFirstUsedGeneration(); }
-    generation_t getFirstUsedGen() const { return getFirstUsedGeneration(); }
+    generation_t oldest_used_gen() const { return get_oldest_used_generation(); }
 };
 
 
 TEST("Test attribute guards")
 {
-    AttributeVector::SP vec(new TestAttribute("mvint") );
-    TestAttribute * v = static_cast<TestAttribute *> (vec.get());
+    auto v = std::make_shared<TestAttribute>("mvint");
     EXPECT_EQUAL(v->getGen(), unsigned(0));
     EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
-    EXPECT_EQUAL(v->getFirstUsedGen(), unsigned(0));
+    EXPECT_EQUAL(v->oldest_used_gen(), unsigned(0));
     {
-        AttributeGuard g0(vec);
+        AttributeGuard g0(v);
         EXPECT_EQUAL(v->getGen(), unsigned(0));
         EXPECT_EQUAL(v->getRefCount(0), unsigned(1));
-        EXPECT_EQUAL(v->getFirstUsedGen(), unsigned(0));
+        EXPECT_EQUAL(v->oldest_used_gen(), unsigned(0));
         {
-            AttributeGuard g1(vec);
+            AttributeGuard g1(v);
             EXPECT_EQUAL(v->getGen(), unsigned(0));
             EXPECT_EQUAL(v->getRefCount(0), unsigned(2));
-            EXPECT_EQUAL(v->getFirstUsedGen(), unsigned(0));
+            EXPECT_EQUAL(v->oldest_used_gen(), unsigned(0));
         }
         EXPECT_EQUAL(v->getRefCount(0), unsigned(1));
-        EXPECT_EQUAL(v->getFirstUsedGen(), unsigned(0));
+        EXPECT_EQUAL(v->oldest_used_gen(), unsigned(0));
     }
     EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
-    EXPECT_EQUAL(v->getFirstUsedGen(), unsigned(0));
+    EXPECT_EQUAL(v->oldest_used_gen(), unsigned(0));
 
     v->incGen();
     EXPECT_EQUAL(v->getGen(), unsigned(1));
     EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
     EXPECT_EQUAL(v->getRefCount(1), unsigned(0));
-    EXPECT_EQUAL(v->getFirstUsedGen(), unsigned(1));
+    EXPECT_EQUAL(v->oldest_used_gen(), unsigned(1));
     {
-        AttributeGuard g0(vec);
+        AttributeGuard g0(v);
         EXPECT_EQUAL(v->getGen(), unsigned(1));
         EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
         EXPECT_EQUAL(v->getRefCount(1), unsigned(1));
-        EXPECT_EQUAL(v->getFirstUsedGen(), unsigned(1));
+        EXPECT_EQUAL(v->oldest_used_gen(), unsigned(1));
         {
             v->incGen();
-            AttributeGuard g1(vec);
+            AttributeGuard g1(v);
             EXPECT_EQUAL(v->getGen(), unsigned(2));
             EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
             EXPECT_EQUAL(v->getRefCount(1), unsigned(1));
             EXPECT_EQUAL(v->getRefCount(2), unsigned(1));
-            EXPECT_EQUAL(v->getFirstUsedGen(), unsigned(1));
+            EXPECT_EQUAL(v->oldest_used_gen(), unsigned(1));
         }
         EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
         EXPECT_EQUAL(v->getRefCount(1), unsigned(1));
         EXPECT_EQUAL(v->getRefCount(2), unsigned(0));
-        EXPECT_EQUAL(v->getFirstUsedGen(), unsigned(1));
+        EXPECT_EQUAL(v->oldest_used_gen(), unsigned(1));
     }
     EXPECT_EQUAL(v->getRefCount(0), unsigned(0));
     EXPECT_EQUAL(v->getRefCount(1), unsigned(0));
     EXPECT_EQUAL(v->getRefCount(2), unsigned(0));
-    EXPECT_EQUAL(v->getFirstUsedGen(), unsigned(1));
-    v->updateFirstUsedGeneration();
-    EXPECT_EQUAL(v->getFirstUsedGen(), unsigned(2));
+    EXPECT_EQUAL(v->oldest_used_gen(), unsigned(1));
+    v->update_oldest_used_generation();
+    EXPECT_EQUAL(v->oldest_used_gen(), unsigned(2));
     EXPECT_EQUAL(v->getGen(), unsigned(2));
 }
 
