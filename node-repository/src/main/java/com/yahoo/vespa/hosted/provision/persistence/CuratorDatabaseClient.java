@@ -70,8 +70,7 @@ public class CuratorDatabaseClient {
     private static final Path firmwareCheckPath = root.append("firmwareCheck");
     private static final Path archiveUrisPath = root.append("archiveUris");
 
-    // TODO: Explain reasoning behind timeout value (why its it as high as 10 minutes?)
-    private static final Duration defaultLockTimeout = Duration.ofMinutes(10);
+    private static final Duration defaultLockTimeout = Duration.ofMinutes(1);
 
     private final NodeSerializer nodeSerializer;
     private final CuratorDatabase db;
@@ -87,7 +86,7 @@ public class CuratorDatabaseClient {
     }
 
     public List<String> cluster() {
-        return db.cluster().stream().map(HostName::value).collect(Collectors.toUnmodifiableList());
+        return db.cluster().stream().map(HostName::value).toList();
     }
 
     private void initZK() {
@@ -162,7 +161,7 @@ public class CuratorDatabaseClient {
     }
 
     /**
-     * Writes the given nodes to the given state (whether or not they are already in this state or another),
+     * Writes the given nodes to the given state (whether they are already in this state or another),
      * and returns a copy of the incoming nodes in their persisted state.
      *
      * @param  toState the state to write the nodes to
@@ -210,7 +209,7 @@ public class CuratorDatabaseClient {
                                     node.history().recordStateTransition(node.state(), toState, agent, clock.instant()),
                                     node.type(), node.reports(), node.modelName(), node.reservedTo(),
                                     node.exclusiveToApplicationId(), node.exclusiveToClusterType(), node.switchHostname(),
-                                    node.trustedCertificates(), node.cloudAccount());
+                                    node.trustedCertificates(), node.cloudAccount(), node.wireguardPubKey());
             writeNode(toState, curatorTransaction, node, newNode);
             writtenNodes.add(newNode);
         }
@@ -305,19 +304,18 @@ public class CuratorDatabaseClient {
     }
 
     private String toDir(Node.State state) {
-        switch (state) {
-            case active: return "allocated"; // legacy name
-            case dirty: return "dirty";
-            case failed: return "failed";
-            case inactive: return "deallocated"; // legacy name
-            case parked : return "parked";
-            case provisioned: return "provisioned";
-            case ready: return "ready";
-            case reserved: return "reserved";
-            case deprovisioned: return "deprovisioned";
-            case breakfixed: return "breakfixed";
-            default: throw new RuntimeException("Node state " + state + " does not map to a directory name");
-        }
+        return switch (state) {
+            case active -> "allocated"; // legacy name
+            case dirty -> "dirty";
+            case failed -> "failed";
+            case inactive -> "deallocated"; // legacy name
+            case parked -> "parked";
+            case provisioned -> "provisioned";
+            case ready -> "ready";
+            case reserved -> "reserved";
+            case deprovisioned -> "deprovisioned";
+            case breakfixed -> "breakfixed";
+        };
     }
 
     /** Acquires the single cluster-global, reentrant lock for all non-active nodes */
@@ -350,7 +348,7 @@ public class CuratorDatabaseClient {
     public List<ApplicationId> readApplicationIds() {
         return db.getChildren(applicationsPath).stream()
                  .map(ApplicationId::fromSerializedForm)
-                 .collect(Collectors.toList());
+                 .toList();
     }
 
     public Optional<Application> readApplication(ApplicationId id) {
@@ -513,7 +511,7 @@ public class CuratorDatabaseClient {
         return db.getChildren(loadBalancersPath).stream()
                  .map(LoadBalancerId::fromSerializedForm)
                  .filter(predicate)
-                 .collect(Collectors.toUnmodifiableList());
+                 .toList();
     }
 
     /** Returns a given number of unique provision indices */
@@ -524,7 +522,7 @@ public class CuratorDatabaseClient {
         int firstIndex = (int) provisionIndexCounter.add(count) - count;
         return IntStream.range(0, count)
                         .mapToObj(i -> firstIndex + i)
-                        .collect(Collectors.toList());
+                        .toList();
     }
 
     public CacheStats cacheStats() {

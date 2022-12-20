@@ -9,9 +9,11 @@ import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.model.api.TenantSecretStore;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.AthenzDomain;
+import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.Zone;
+import com.yahoo.vespa.model.container.ApplicationContainerCluster;
 
 import java.net.URI;
 import java.security.cert.X509Certificate;
@@ -76,8 +78,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private int rpc_num_targets = 1;
     private int rpc_events_before_wakeup = 1;
     private int mbus_network_threads = 1;
+    private int heapSizePercentage = ApplicationContainerCluster.defaultHeapSizePercentageOfTotalNodeMemory;
     private Architecture adminClusterNodeResourcesArchitecture = Architecture.getDefault();
     private boolean useRestrictedDataPlaneBindings = false;
+    private Optional<CloudAccount> cloudAccount = Optional.empty();
+    private boolean enableDataPlaneFilter = false;
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
     @Override public boolean multitenant() { return multitenant; }
@@ -127,10 +132,13 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public int mbusCppRpcNumTargets() { return mbus_cpp_num_targets; }
     @Override public int mbusCppEventsBeforeWakeup() { return mbus_cpp_events_before_wakeup; }
     @Override public int rpcNumTargets() { return rpc_num_targets; }
+    @Override public int heapSizePercentage() { return heapSizePercentage; }
     @Override public int rpcEventsBeforeWakeup() { return rpc_events_before_wakeup; }
     @Override public String queryDispatchPolicy() { return queryDispatchPolicy; }
     @Override public boolean useTwoPhaseDocumentGc() { return useTwoPhaseDocumentGc; }
     @Override public boolean useRestrictedDataPlaneBindings() { return useRestrictedDataPlaneBindings; }
+    @Override public Optional<CloudAccount> cloudAccount() { return cloudAccount; }
+    @Override public boolean enableDataPlaneFilter() { return enableDataPlaneFilter; }
 
     public TestProperties sharedStringRepoNoReclaim(boolean sharedStringRepoNoReclaim) {
         this.sharedStringRepoNoReclaim = sharedStringRepoNoReclaim;
@@ -163,6 +171,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setFeedNiceness(double feedNiceness) {
         this.feedNiceness = feedNiceness;
+        return this;
+    }
+
+    public TestProperties setHeapSizePercentage(int percentage) {
+        this.heapSizePercentage = percentage;
         return this;
     }
 
@@ -347,6 +360,16 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setUseRestrictedDataPlaneBindings(boolean useRestrictedDataPlaneBindings) {
         this.useRestrictedDataPlaneBindings = useRestrictedDataPlaneBindings;
+        return this;
+    }
+
+    public TestProperties setCloudAccount(CloudAccount cloudAccount) {
+        this.cloudAccount = Optional.ofNullable(cloudAccount);
+        return this;
+    }
+
+    public TestProperties setEnableDataPlaneFilter(boolean enableDataPlaneFilter) {
+        this.enableDataPlaneFilter = enableDataPlaneFilter;
         return this;
     }
 

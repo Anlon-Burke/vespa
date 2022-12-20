@@ -26,7 +26,9 @@ public class Zone {
         this(Cloud.builder()
                   .name(CloudName.from(configserverConfig.cloud()))
                   .dynamicProvisioning(cloudConfig.dynamicProvisioning())
+                  .allowHostSharing(cloudConfig.allowHostSharing())
                   .requireAccessControl(cloudConfig.requireAccessControl())
+                  .account(CloudAccount.from(cloudConfig.account()))
                   .build(),
              SystemName.from(configserverConfig.system()),
              Environment.from(configserverConfig.environment()),
@@ -51,8 +53,13 @@ public class Zone {
         this.region = region;
     }
 
+    // TODO(mpolden): For compatibility with older config models. Remove when versions < 8.76 are gone
+    public Cloud getCloud() {
+        return cloud();
+    }
+
     /** Returns the current cloud */
-    public Cloud getCloud() { return cloud; }
+    public Cloud cloud() { return cloud; }
 
     /** Returns the current system */
     public SystemName system() { return systemName; }

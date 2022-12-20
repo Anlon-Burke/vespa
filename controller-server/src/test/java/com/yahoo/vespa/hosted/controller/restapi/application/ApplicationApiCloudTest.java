@@ -8,6 +8,7 @@ import com.yahoo.config.provision.ApplicationName;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.restapi.RestApiException;
+import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.hosted.controller.ControllerTester;
@@ -81,6 +82,7 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
 
     @Test
     void tenant_info_profile() {
+        tester.flagSource().withBooleanFlag(Flags.ENABLED_MAIL_VERIFICATION.id(), true);
         var request = request("/application/v4/tenant/scoober/info/profile", GET)
                 .roles(Set.of(Role.reader(tenantName)));
         tester.assertResponse(request, "{}", 200);
@@ -90,7 +92,7 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
                 .roles(Set.of(Role.administrator(tenantName)));
         tester.assertResponse(updateRequest, "{\"message\":\"Tenant info updated\"}", 200);
 
-        tester.assertResponse(request, "{\"contact\":{\"name\":\"Some Name\",\"email\":\"foo@example.com\"},\"tenant\":{\"company\":\"\",\"website\":\"https://example.com/\"}}", 200);
+        tester.assertResponse(request, "{\"contact\":{\"name\":\"Some Name\",\"email\":\"foo@example.com\",\"emailVerified\":false},\"tenant\":{\"company\":\"\",\"website\":\"https://example.com/\"}}", 200);
     }
 
     @Test
@@ -112,12 +114,13 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
 
     @Test
     void tenant_info_contacts() {
+        tester.flagSource().withBooleanFlag(Flags.ENABLED_MAIL_VERIFICATION.id(), true);
         var request = request("/application/v4/tenant/scoober/info/contacts", GET)
                 .roles(Set.of(Role.reader(tenantName)));
         tester.assertResponse(request, "{\"contacts\":[]}", 200);
 
 
-        var fullContacts = "{\"contacts\":[{\"audiences\":[\"tenant\"],\"email\":\"contact1@example.com\"},{\"audiences\":[\"notifications\"],\"email\":\"contact2@example.com\"},{\"audiences\":[\"tenant\",\"notifications\"],\"email\":\"contact3@example.com\"}]}";
+        var fullContacts = "{\"contacts\":[{\"audiences\":[\"tenant\"],\"email\":\"contact1@example.com\",\"emailVerified\":false},{\"audiences\":[\"notifications\"],\"email\":\"contact2@example.com\",\"emailVerified\":false},{\"audiences\":[\"tenant\",\"notifications\"],\"email\":\"contact3@example.com\",\"emailVerified\":false}]}";
         var updateRequest = request("/application/v4/tenant/scoober/info/contacts", PUT)
                 .data(fullContacts)
                 .roles(Set.of(Role.administrator(tenantName)));
@@ -147,12 +150,13 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
         tester.assertResponse(postPartialContacts, "{\"message\":\"Tenant info updated\"}", 200);
 
         // Read back the updated info
-        tester.assertResponse(infoRequest, "{\"name\":\"\",\"email\":\"\",\"website\":\"\",\"contactName\":\"newName\",\"contactEmail\":\"foo@example.com\",\"billingContact\":{\"name\":\"billingName\",\"email\":\"\",\"phone\":\"\"},\"contacts\":[{\"audiences\":[\"tenant\"],\"email\":\"contact1@example.com\"}]}", 200);
+        tester.assertResponse(infoRequest, "{\"name\":\"\",\"email\":\"\",\"website\":\"\",\"contactName\":\"newName\",\"contactEmail\":\"foo@example.com\",\"contactEmailVerified\":true,\"billingContact\":{\"name\":\"billingName\",\"email\":\"\",\"phone\":\"\"},\"contacts\":[{\"audiences\":[\"tenant\"],\"email\":\"contact1@example.com\",\"emailVerified\":true}]}", 200);
+        tester.flagSource().withBooleanFlag(Flags.ENABLED_MAIL_VERIFICATION.id(), true);
 
         String fullAddress = "{\"addressLines\":\"addressLines\",\"postalCodeOrZip\":\"postalCodeOrZip\",\"city\":\"city\",\"stateRegionProvince\":\"stateRegionProvince\",\"country\":\"country\"}";
         String fullBillingContact = "{\"name\":\"name\",\"email\":\"foo@example\",\"phone\":\"phone\",\"address\":" + fullAddress + "}";
-        String fullContacts = "[{\"audiences\":[\"tenant\"],\"email\":\"contact1@example.com\"},{\"audiences\":[\"notifications\"],\"email\":\"contact2@example.com\"},{\"audiences\":[\"tenant\",\"notifications\"],\"email\":\"contact3@example.com\"}]";
-        String fullInfo = "{\"name\":\"name\",\"email\":\"foo@example\",\"website\":\"https://yahoo.com\",\"contactName\":\"contactName\",\"contactEmail\":\"contact@example.com\",\"address\":" + fullAddress + ",\"billingContact\":" + fullBillingContact + ",\"contacts\":" + fullContacts + "}";
+        String fullContacts = "[{\"audiences\":[\"tenant\"],\"email\":\"contact1@example.com\",\"emailVerified\":true},{\"audiences\":[\"notifications\"],\"email\":\"contact2@example.com\",\"emailVerified\":false},{\"audiences\":[\"tenant\",\"notifications\"],\"email\":\"contact3@example.com\",\"emailVerified\":false}]";
+        String fullInfo = "{\"name\":\"name\",\"email\":\"foo@example\",\"website\":\"https://yahoo.com\",\"contactName\":\"contactName\",\"contactEmail\":\"contact@example.com\",\"contactEmailVerified\":false,\"address\":" + fullAddress + ",\"billingContact\":" + fullBillingContact + ",\"contacts\":" + fullContacts + "}";
 
         // Now set all fields
         var postFull =
@@ -163,10 +167,25 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
 
         // Now compare the updated info with the full info we sent
         tester.assertResponse(infoRequest, fullInfo, 200);
+
+        var invalidBody = "{\"mail\":\"contact1@example.com\", \"mailType\":\"blurb\"}";
+        var resendMailRequest =
+                request("/application/v4/tenant/scoober/info/resend-mail-verification", PUT)
+                        .data(invalidBody)
+                        .roles(Set.of(Role.administrator(tenantName)));
+        tester.assertResponse(resendMailRequest, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Unknown mail type blurb\"}", 400);
+
+        var resendMailBody = "{\"mail\":\"contact2@example.com\", \"mailType\":\"notifications\"}";
+        resendMailRequest =
+                request("/application/v4/tenant/scoober/info/resend-mail-verification", PUT)
+                        .data(resendMailBody)
+                        .roles(Set.of(Role.administrator(tenantName)));
+        tester.assertResponse(resendMailRequest, "{\"message\":\"Re-sent verification mail to contact2@example.com\"}", 200);
     }
 
     @Test
     void tenant_info_missing_fields() {
+        tester.flagSource().withBooleanFlag(Flags.ENABLED_MAIL_VERIFICATION.id(), true);
         // tenants can be created with empty tenant info - they're not part of the POST to v4/tenant
         var infoRequest =
                 request("/application/v4/tenant/scoober/info", GET)
@@ -185,13 +204,13 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
         var missingEmailResponse = request("/application/v4/tenant/scoober/info", PUT)
                 .data(partialInfoMissingEmail)
                 .roles(Set.of(Role.administrator(tenantName)));
-        tester.assertResponse(missingEmailResponse, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"'contactEmail' cannot be empty\"}", 400);
+        tester.assertResponse(missingEmailResponse, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Invalid email address\"}", 400);
 
         var partialInfoBadEmail = "{\"contactName\": \"Scoober Rentals Inc.\", \"contactEmail\": \"somethingweird\"}";
         var badEmailResponse = request("/application/v4/tenant/scoober/info", PUT)
                 .data(partialInfoBadEmail)
                 .roles(Set.of(Role.administrator(tenantName)));
-        tester.assertResponse(badEmailResponse, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"'contactEmail' needs to be an email address\"}", 400);
+        tester.assertResponse(badEmailResponse, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Invalid email address\"}", 400);
 
         var invalidWebsite = "{\"contactName\": \"Scoober Rentals Inc.\", \"contactEmail\": \"email@scoober.com\", \"website\": \"scoober\" }";
         var badWebsiteResponse = request("/application/v4/tenant/scoober/info", PUT)
@@ -231,7 +250,7 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
         var contactsWithInvalidEmailResponse = request("/application/v4/tenant/scoober/info", PUT)
                 .data(contactsWithInvalidEmail)
                 .roles(Set.of(Role.administrator(tenantName)));
-        tester.assertResponse(contactsWithInvalidEmailResponse, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"'email' needs to be an email address\"}", 400);
+        tester.assertResponse(contactsWithInvalidEmailResponse, "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Invalid email address\"}", 400);
 
         // duplicate contact is not allowed
         var contactsWithDuplicateEmail = "{\"contacts\": [{\"audiences\": [\"tenant\"],\"email\": \"contact1@email.com\"}, {\"audiences\": [\"tenant\"],\"email\": \"contact1@email.com\"}]}";
@@ -331,7 +350,6 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
                 "\"error-code\":\"BAD_REQUEST\"," +
                 "\"message\":\"Invalid application id\"" +
                 "}", 400);
-
     }
 
     @Test
@@ -366,20 +384,17 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
         tester.assertResponse(request("/application/v4/tenant/scoober", GET).roles(Role.reader(tenantName)),
                 (response) -> assertFalse(response.getBodyAsString().contains("archiveAccessRole")),
                 200);
-        tester.assertResponse(request("/application/v4/tenant/scoober/archive-access", PUT)
-                        .data("{\"role\":\"dummy\"}").roles(Role.administrator(tenantName)),
-                "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Invalid archive access role 'dummy': Must match expected pattern: 'arn:aws:iam::\\\\d{12}:.+'\"}", 400);
 
         tester.assertResponse(request("/application/v4/tenant/scoober/archive-access/aws", PUT)
                         .data("{\"role\":\"arn:aws:iam::123456789012:role/my-role\"}").roles(Role.administrator(tenantName)),
                 "{\"message\":\"AWS archive access role set to 'arn:aws:iam::123456789012:role/my-role' for tenant scoober.\"}", 200);
         tester.assertResponse(request("/application/v4/tenant/scoober", GET).roles(Role.reader(tenantName)),
-                (response) -> assertTrue(response.getBodyAsString().contains("\"archiveAccessRole\":\"arn:aws:iam::123456789012:role/my-role\"")),
+                (response) -> assertTrue(response.getBodyAsString().contains("\"awsRole\":\"arn:aws:iam::123456789012:role/my-role\"")),
                 200);
         tester.assertResponse(request("/application/v4/tenant/scoober/archive-access/aws", DELETE).roles(Role.administrator(tenantName)),
                 "{\"message\":\"AWS archive access role removed for tenant scoober.\"}", 200);
         tester.assertResponse(request("/application/v4/tenant/scoober", GET).roles(Role.reader(tenantName)),
-                (response) -> assertFalse(response.getBodyAsString().contains("\"archiveAccessRole\":\"arn:aws:iam::123456789012:role/my-role\"")),
+                (response) -> assertFalse(response.getBodyAsString().contains("\"awsRole\":\"arn:aws:iam::123456789012:role/my-role\"")),
                 200);
 
         tester.assertResponse(request("/application/v4/tenant/scoober/archive-access/gcp", PUT)
@@ -394,25 +409,25 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
                 (response) -> assertFalse(response.getBodyAsString().contains("\"gcpMember\":\"user:test@example.com\"")),
                 200);
 
-        tester.assertResponse(request("/application/v4/tenant/scoober/archive-access", PUT)
+        tester.assertResponse(request("/application/v4/tenant/scoober/archive-access/aws", PUT)
                         .data("{\"role\":\"arn:aws:iam::123456789012:role/my-role\"}").roles(Role.administrator(tenantName)),
                 "{\"message\":\"AWS archive access role set to 'arn:aws:iam::123456789012:role/my-role' for tenant scoober.\"}", 200);
         tester.assertResponse(request("/application/v4/tenant/scoober", GET).roles(Role.reader(tenantName)),
-                (response) -> assertTrue(response.getBodyAsString().contains("\"archiveAccessRole\":\"arn:aws:iam::123456789012:role/my-role\"")),
+                (response) -> assertTrue(response.getBodyAsString().contains("\"awsRole\":\"arn:aws:iam::123456789012:role/my-role\"")),
                 200);
 
-        tester.assertResponse(request("/application/v4/tenant/scoober/archive-access", PUT)
+        tester.assertResponse(request("/application/v4/tenant/scoober/archive-access/aws", PUT)
                         .data("{\"role\":\"arn:aws:iam::123456789012:role/my-role\"}").roles(Role.administrator(tenantName)),
                 "{\"message\":\"AWS archive access role set to 'arn:aws:iam::123456789012:role/my-role' for tenant scoober.\"}", 200);
         tester.assertResponse(request("/application/v4/tenant/scoober", GET).roles(Role.reader(tenantName)),
-                (response) -> assertTrue(response.getBodyAsString().contains("\"archiveAccessRole\":\"arn:aws:iam::123456789012:role/my-role\"")),
+                (response) -> assertTrue(response.getBodyAsString().contains("\"awsRole\":\"arn:aws:iam::123456789012:role/my-role\"")),
                 200);
 
         tester.assertResponse(request("/application/v4/tenant/scoober/application/albums/environment/prod/region/aws-us-east-1c/instance/default", GET)
                         .roles(Role.reader(tenantName)),
                 new File("deployment-cloud.json"));
 
-        tester.assertResponse(request("/application/v4/tenant/scoober/archive-access", DELETE).roles(Role.administrator(tenantName)),
+        tester.assertResponse(request("/application/v4/tenant/scoober/archive-access/aws", DELETE).roles(Role.administrator(tenantName)),
                 "{\"message\":\"AWS archive access role removed for tenant scoober.\"}", 200);
         tester.assertResponse(request("/application/v4/tenant/scoober", GET).roles(Role.reader(tenantName)),
                 (response) -> assertFalse(response.getBodyAsString().contains("archiveAccessRole")),

@@ -84,7 +84,6 @@ private:
 
 protected:
     using Parent = StoreOnlyDocSubDB;
-    using SessionManagerSP = std::shared_ptr<matching::SessionManager>;
 
     const bool           _addMetrics;
     MetricsWireService  &_metricsWireService;
@@ -108,7 +107,7 @@ public:
                       const IndexConfig &indexCfg) const override;
 
     void setup(const DocumentSubDbInitializerResult &initResult) override;
-    void initViews(const DocumentDBConfig &configSnapshot, const SessionManagerSP &sessionManager) override;
+    void initViews(const DocumentDBConfig &configSnapshot) override;
 
     IReprocessingTask::List
     applyConfig(const DocumentDBConfig &newConfigSnapshot, const DocumentDBConfig &oldConfigSnapshot,
@@ -121,6 +120,7 @@ public:
     SerialNum getOldestFlushedSerial() override;
     SerialNum getNewestFlushedSerial() override;
     virtual void pruneRemovedFields(SerialNum serialNum) override;
+    TransientResourceUsage get_transient_resource_usage() const override;
 };
 
 } // namespace proton

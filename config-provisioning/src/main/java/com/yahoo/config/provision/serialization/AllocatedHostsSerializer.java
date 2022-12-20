@@ -1,10 +1,12 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.provision.serialization;
 
+import com.yahoo.component.Version;
 import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.HostSpec;
+import com.yahoo.config.provision.LoadBalancerSettings;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.slime.ArrayTraverser;
 import com.yahoo.slime.Cursor;
@@ -13,9 +15,7 @@ import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -40,6 +40,8 @@ public class AllocatedHostsSerializer {
     private static final String hostSpecKey = "hostSpec";
     private static final String hostSpecHostNameKey = "hostName";
     private static final String hostSpecMembershipKey = "membership";
+    private static final String loadBalancerSettingsKey = "loadBalancerSettings";
+    private static final String allowedUrnsKey = "allowedUrns";
 
     private static final String realResourcesKey = "realResources";
     private static final String advertisedResourcesKey = "advertisedResources";
@@ -51,6 +53,9 @@ public class AllocatedHostsSerializer {
     private static final String diskSpeedKey = "diskSpeed";
     private static final String storageTypeKey = "storageType";
     private static final String architectureKey = "architecture";
+    private static final String gpuKey = "gpu";
+    private static final String gpuCountKey = "gpuCount";
+    private static final String gpuMemoryKey = "gpuMemory";
 
     /** Wanted version */
     private static final String hostSpecVespaVersionKey = "vespaVersion";
@@ -80,6 +85,9 @@ public class AllocatedHostsSerializer {
         host.membership().ifPresent(membership -> {
             object.setString(hostSpecMembershipKey, membership.stringValue());
             object.setString(hostSpecVespaVersionKey, membership.cluster().vespaVersion().toFullString());
+            if ( ! membership.cluster().loadBalancerSettings().isEmpty())
+                membership.cluster().loadBalancerSettings().allowedUrns()
+                          .forEach(object.setObject(loadBalancerSettingsKey).setArray(allowedUrnsKey)::addString);
             membership.cluster().dockerImageRepo().ifPresent(repo -> object.setString(hostSpecDockerImageRepoKey, repo.untagged()));
         });
         toSlime(host.realResources(), object.setObject(realResourcesKey));
@@ -97,6 +105,11 @@ public class AllocatedHostsSerializer {
         resourcesObject.setString(diskSpeedKey, diskSpeedToString(resources.diskSpeed()));
         resourcesObject.setString(storageTypeKey, storageTypeToString(resources.storageType()));
         resourcesObject.setString(architectureKey, architectureToString(resources.architecture()));
+        if (!resources.gpuResources().isDefault()) {
+            Cursor gpuObject = resourcesObject.setObject(gpuKey);
+            gpuObject.setLong(gpuCountKey, resources.gpuResources().count());
+            gpuObject.setDouble(gpuMemoryKey, resources.gpuResources().memoryGb());
+        }
     }
 
     public static AllocatedHosts fromJson(byte[] json) {
@@ -113,14 +126,13 @@ public class AllocatedHostsSerializer {
     }
 
     private static HostSpec hostFromSlime(Inspector object) {
-
         if (object.field(hostSpecMembershipKey).valid()) { // Hosted
             return new HostSpec(object.field(hostSpecHostNameKey).asString(),
                                 nodeResourcesFromSlime(object.field(realResourcesKey)),
                                 nodeResourcesFromSlime(object.field(advertisedResourcesKey)),
                                 optionalNodeResourcesFromSlime(object.field(requestedResourcesKey)), // TODO: Make non-optional when we serialize NodeResources.unspecified()
                                 membershipFromSlime(object),
-                                optionalString(object.field(hostSpecCurrentVespaVersionKey)).map(com.yahoo.component.Version::new),
+                                optionalString(object.field(hostSpecCurrentVespaVersionKey)).map(Version::new),
                                 NetworkPortsSerializer.fromSlime(object.field(hostSpecNetworkPortsKey)),
                                 optionalDockerImage(object.field(hostSpecDockerImageRepoKey)));
         }
@@ -137,7 +149,14 @@ public class AllocatedHostsSerializer {
                                  resources.field(bandwidthKey).asDouble(),
                                  diskSpeedFromSlime(resources.field(diskSpeedKey)),
                                  storageTypeFromSlime(resources.field(storageTypeKey)),
-                                 architectureFromSlime(resources.field(architectureKey)));
+                                 architectureFromSlime(resources.field(architectureKey)),
+                                 gpuResourcesFromSlime(resources.field(gpuKey)));
+    }
+
+    private static NodeResources.GpuResources gpuResourcesFromSlime(Inspector gpu) {
+        if (!gpu.valid()) return NodeResources.GpuResources.getDefault();
+        return new NodeResources.GpuResources((int) gpu.field(gpuCountKey).asLong(),
+                                              gpu.field(gpuMemoryKey).asDouble());
     }
 
     private static NodeResources optionalNodeResourcesFromSlime(Inspector resources) {
@@ -146,66 +165,68 @@ public class AllocatedHostsSerializer {
     }
 
     private static NodeResources.DiskSpeed diskSpeedFromSlime(Inspector diskSpeed) {
-        switch (diskSpeed.asString()) {
-            case "fast" : return NodeResources.DiskSpeed.fast;
-            case "slow" : return NodeResources.DiskSpeed.slow;
-            case "any" : return NodeResources.DiskSpeed.any;
-            default: throw new IllegalStateException("Illegal disk-speed value '" + diskSpeed.asString() + "'");
-        }
+        return switch (diskSpeed.asString()) {
+            case "fast" -> NodeResources.DiskSpeed.fast;
+            case "slow" -> NodeResources.DiskSpeed.slow;
+            case "any" -> NodeResources.DiskSpeed.any;
+            default -> throw new IllegalStateException("Illegal disk-speed value '" + diskSpeed.asString() + "'");
+        };
     }
 
     private static String diskSpeedToString(NodeResources.DiskSpeed diskSpeed) {
-        switch (diskSpeed) {
-            case fast : return "fast";
-            case slow : return "slow";
-            case any : return "any";
-            default: throw new IllegalStateException("Illegal disk-speed value '" + diskSpeed + "'");
-        }
+        return switch (diskSpeed) {
+            case fast -> "fast";
+            case slow -> "slow";
+            case any -> "any";
+        };
     }
 
     private static NodeResources.StorageType storageTypeFromSlime(Inspector storageType) {
-        switch (storageType.asString()) {
-            case "remote" : return NodeResources.StorageType.remote;
-            case "local" : return NodeResources.StorageType.local;
-            case "any" : return NodeResources.StorageType.any;
-            default: throw new IllegalStateException("Illegal storage-type value '" + storageType.asString() + "'");
-        }
+        return switch (storageType.asString()) {
+            case "remote" -> NodeResources.StorageType.remote;
+            case "local" -> NodeResources.StorageType.local;
+            case "any" -> NodeResources.StorageType.any;
+            default -> throw new IllegalStateException("Illegal storage-type value '" + storageType.asString() + "'");
+        };
     }
 
     private static String storageTypeToString(NodeResources.StorageType storageType) {
-        switch (storageType) {
-            case remote : return "remote";
-            case local : return "local";
-            case any : return "any";
-            default: throw new IllegalStateException("Illegal storage-type value '" + storageType + "'");
-        }
+        return switch (storageType) {
+            case remote -> "remote";
+            case local -> "local";
+            case any -> "any";
+        };
     }
 
     private static NodeResources.Architecture architectureFromSlime(Inspector architecture) {
         if ( ! architecture.valid()) return NodeResources.Architecture.x86_64;
-        switch (architecture.asString()) {
-            case "x86_64" : return NodeResources.Architecture.x86_64;
-            case "arm64" : return NodeResources.Architecture.arm64;
-            case "any" : return NodeResources.Architecture.any;
-            default: throw new IllegalStateException("Illegal architecture value '" + architecture.asString() + "'");
-        }
+        return switch (architecture.asString()) {
+            case "x86_64" -> NodeResources.Architecture.x86_64;
+            case "arm64" -> NodeResources.Architecture.arm64;
+            case "any" -> NodeResources.Architecture.any;
+            default -> throw new IllegalStateException("Illegal architecture value '" + architecture.asString() + "'");
+        };
     }
 
     private static String architectureToString(NodeResources.Architecture architecture) {
-        switch (architecture) {
-            case x86_64: return "x86_64";
-            case arm64: return "arm64";
-            case any : return "any";
-            default: throw new IllegalStateException("Illegal architecture value '" + architecture + "'");
-        }
+        return switch (architecture) {
+            case x86_64 -> "x86_64";
+            case arm64 -> "arm64";
+            case any -> "any";
+        };
     }
 
     private static ClusterMembership membershipFromSlime(Inspector object) {
         return ClusterMembership.from(object.field(hostSpecMembershipKey).asString(),
-                                      com.yahoo.component.Version.fromString(object.field(hostSpecVespaVersionKey).asString()),
+                                      Version.fromString(object.field(hostSpecVespaVersionKey).asString()),
                                       object.field(hostSpecDockerImageRepoKey).valid()
-                                              ? Optional.of(DockerImage.fromString(object.field(hostSpecDockerImageRepoKey).asString()))
-                                              : Optional.empty());
+                                      ? Optional.of(DockerImage.fromString(object.field(hostSpecDockerImageRepoKey).asString()))
+                                      : Optional.empty(),
+                                      object.field(loadBalancerSettingsKey).valid()
+                                      ? new LoadBalancerSettings(SlimeUtils.entriesStream(object.field(loadBalancerSettingsKey).field(allowedUrnsKey))
+                                                                           .map(Inspector::asString)
+                                                                           .toList())
+                                      : LoadBalancerSettings.empty);
     }
 
     private static Optional<String> optionalString(Inspector inspector) {

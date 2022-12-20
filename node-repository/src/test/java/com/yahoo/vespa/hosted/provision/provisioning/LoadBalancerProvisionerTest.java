@@ -9,6 +9,7 @@ import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.HostSpec;
+import com.yahoo.config.provision.LoadBalancerSettings;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.exception.LoadBalancerServiceException;
@@ -20,10 +21,13 @@ import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancer;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancerList;
 import com.yahoo.vespa.hosted.provision.lb.Real;
+import com.yahoo.vespa.hosted.provision.maintenance.LoadBalancerExpirer;
+import com.yahoo.vespa.hosted.provision.maintenance.TestMetric;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import org.junit.Test;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -157,8 +161,7 @@ public class LoadBalancerProvisionerTest {
                                       clusterRequest(ClusterSpec.Type.container, containerCluster),
                                       clusterRequest(ClusterSpec.Type.content, contentCluster)));
         List<LoadBalancer> activeLoadBalancers = lbApp1.get().stream()
-                                                       .filter(lb -> lb.state() == LoadBalancer.State.active)
-                                                       .collect(Collectors.toList());
+                                                       .filter(lb -> lb.state() == LoadBalancer.State.active).toList();
         assertEquals(1, activeLoadBalancers.size());
         assertEquals(Set.of(), activeLoadBalancers.get(0).instance().get().reals());
     }
@@ -212,7 +215,7 @@ public class LoadBalancerProvisionerTest {
     public void provision_load_balancer_combined_cluster() {
         Supplier<List<LoadBalancer>> lbs = () -> tester.nodeRepository().loadBalancers().list(app1).asList();
         var combinedId = ClusterSpec.Id.from("container1");
-        var nodes = prepare(app1, clusterRequest(ClusterSpec.Type.combined, ClusterSpec.Id.from("content1"), Optional.of(combinedId)));
+        var nodes = prepare(app1, clusterRequest(ClusterSpec.Type.combined, ClusterSpec.Id.from("content1"), Optional.of(combinedId), LoadBalancerSettings.empty));
         assertEquals(1, lbs.get().size());
         assertEquals("Prepare provisions load balancer with reserved nodes", 2, lbs.get().get(0).instance().get().reals().size());
         tester.activate(app1, nodes);
@@ -311,14 +314,61 @@ public class LoadBalancerProvisionerTest {
     }
 
     @Test
-    public void load_balancer_with_custom_cloud_account() {
+    public void load_balancer_with_custom_settings() {
         ClusterResources resources = new ClusterResources(3, 1, nodeResources);
-        CloudAccount cloudAccount = new CloudAccount("012345678912");
-        Capacity capacity = Capacity.from(resources, resources, false, true, Optional.of(cloudAccount));
+        Capacity capacity = Capacity.from(resources, resources, false, true, Optional.of(CloudAccount.empty));
         tester.activate(app1, prepare(app1, capacity, clusterRequest(ClusterSpec.Type.container, ClusterSpec.Id.from("c1"))));
         LoadBalancerList loadBalancers = tester.nodeRepository().loadBalancers().list();
         assertEquals(1, loadBalancers.size());
-        assertEquals(cloudAccount, loadBalancers.first().get().instance().get().cloudAccount().get());
+        assertEquals(LoadBalancerSettings.empty, loadBalancers.first().get().instance().get().settings());
+
+        // Next deployment contains new settings
+        LoadBalancerSettings settings = new LoadBalancerSettings(List.of("alice", "bob"));
+        tester.activate(app1, prepare(app1, capacity, clusterRequest(ClusterSpec.Type.container, ClusterSpec.Id.from("c1"), Optional.empty(), settings)));
+        loadBalancers = tester.nodeRepository().loadBalancers().list();
+        assertEquals(1, loadBalancers.size());
+        assertEquals(settings, loadBalancers.first().get().instance().get().settings());
+    }
+
+
+    @Test
+    public void load_balancer_with_custom_cloud_account() {
+        ClusterResources resources = new ClusterResources(3, 1, nodeResources);
+        CloudAccount cloudAccount0 = CloudAccount.empty;
+        {
+            Capacity capacity = Capacity.from(resources, resources, false, true, Optional.of(cloudAccount0));
+            tester.activate(app1, prepare(app1, capacity, clusterRequest(ClusterSpec.Type.container, ClusterSpec.Id.from("c1"))));
+        }
+        LoadBalancerList loadBalancers = tester.nodeRepository().loadBalancers().list();
+        assertEquals(1, loadBalancers.size());
+        assertEquals(cloudAccount0, loadBalancers.first().get().instance().get().cloudAccount());
+
+        // Changing account fails if there is an existing LB in the previous account.
+        CloudAccount cloudAccount1 = CloudAccount.from("111111111111");
+        Capacity capacity = Capacity.from(resources, resources, false, true, Optional.of(cloudAccount1));
+        try {
+            prepare(app1, capacity, clusterRequest(ClusterSpec.Type.container, ClusterSpec.Id.from("c1")));
+            fail("Expected exception");
+        } catch (LoadBalancerServiceException e) {
+            assertTrue(e.getMessage().contains("due to change in cloud account"));
+        }
+
+        // Existing LB is removed
+        loadBalancers = tester.nodeRepository().loadBalancers().list();
+        assertEquals(1, loadBalancers.size());
+        assertSame(LoadBalancer.State.removable, loadBalancers.first().get().state());
+        LoadBalancerExpirer expirer = new LoadBalancerExpirer(tester.nodeRepository(),
+                                                              Duration.ofDays(1),
+                                                              tester.loadBalancerService(),
+                                                              new TestMetric());
+        expirer.run();
+        assertEquals(0, tester.nodeRepository().loadBalancers().list().in(LoadBalancer.State.removable).size());
+
+        // Next deployment provisions a new LB
+        tester.activate(app1, prepare(app1, capacity, clusterRequest(ClusterSpec.Type.container, ClusterSpec.Id.from("c1"))));
+        loadBalancers = tester.nodeRepository().loadBalancers().list();
+        assertEquals(1, loadBalancers.size());
+        assertEquals(cloudAccount1, loadBalancers.first().get().instance().get().cloudAccount());
     }
 
     private void assertReals(ApplicationId application, ClusterSpec.Id cluster, Node.State... states) {
@@ -327,13 +377,13 @@ public class LoadBalancerProvisionerTest {
         List<String> reals = loadBalancers.get(0).instance().get().reals().stream()
                                           .map(real -> real.hostname().value())
                                           .sorted()
-                                          .collect(Collectors.toList());
+                                          .toList();
         List<String> activeNodes = tester.nodeRepository().nodes().list(states)
                                          .owner(application)
                                          .cluster(cluster)
                                          .hostnames().stream()
                                          .sorted()
-                                         .collect(Collectors.toList());
+                                         .toList();
         assertEquals("Load balancer targets active nodes of " + application + " in " + cluster,
                      activeNodes, reals);
     }
@@ -380,11 +430,11 @@ public class LoadBalancerProvisionerTest {
     }
 
     private static ClusterSpec clusterRequest(ClusterSpec.Type type, ClusterSpec.Id id) {
-        return clusterRequest(type,  id, Optional.empty());
+        return clusterRequest(type, id, Optional.empty(), LoadBalancerSettings.empty);
     }
 
-    private static ClusterSpec clusterRequest(ClusterSpec.Type type, ClusterSpec.Id id, Optional<ClusterSpec.Id> combinedId) {
-        return ClusterSpec.request(type, id).vespaVersion("6.42").combinedId(combinedId).build();
+    private static ClusterSpec clusterRequest(ClusterSpec.Type type, ClusterSpec.Id id, Optional<ClusterSpec.Id> combinedId, LoadBalancerSettings settings) {
+        return ClusterSpec.request(type, id).vespaVersion("6.42").combinedId(combinedId).loadBalancerSettings(settings).build();
     }
 
     private static <T> T get(Set<T> set, int position) {

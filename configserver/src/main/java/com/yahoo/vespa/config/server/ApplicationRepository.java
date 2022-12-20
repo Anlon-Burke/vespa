@@ -57,6 +57,7 @@ import com.yahoo.vespa.config.server.configchange.RestartActions;
 import com.yahoo.vespa.config.server.deploy.DeployHandlerLogger;
 import com.yahoo.vespa.config.server.deploy.Deployment;
 import com.yahoo.vespa.config.server.deploy.InfraDeployerProvider;
+import com.yahoo.vespa.config.server.filedistribution.FileDirectory;
 import com.yahoo.vespa.config.server.http.InternalServerException;
 import com.yahoo.vespa.config.server.http.LogRetriever;
 import com.yahoo.vespa.config.server.http.SecretStoreValidator;
@@ -443,7 +444,7 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         Tenant tenant = tenantRepository.getTenant(application.tenant());
         if (tenant == null) return Optional.empty();
         Optional<Instant> activatedTime = getActiveSession(tenant, application).map(Session::getActivatedTime);
-        log.log(Level.FINE, application + " last activated " + activatedTime.orElse(Instant.EPOCH));
+        log.log(Level.FINEST, application + " last activated " + activatedTime.orElse(Instant.EPOCH));
         return activatedTime;
     }
 
@@ -594,27 +595,22 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         return fileDistributionStatus.status(getApplication(applicationId), timeout);
     }
 
-    public List<String> deleteUnusedFileDistributionReferences(File fileReferencesPath,
-                                                               Duration keepFileReferencesDuration,
-                                                               int numberToAlwaysKeep) {
-        log.log(Level.FINE, () -> "Keep unused file references for " + keepFileReferencesDuration);
-        if (!fileReferencesPath.isDirectory()) throw new RuntimeException(fileReferencesPath + " is not a directory");
-
+    public List<String> deleteUnusedFileDistributionReferences(FileDirectory fileDirectory, Duration keepFileReferencesDuration) {
         Set<String> fileReferencesInUse = getFileReferencesInUse();
         log.log(Level.FINE, () -> "File references in use : " + fileReferencesInUse);
+        Instant instant = clock.instant().minus(keepFileReferencesDuration);
+        log.log(Level.FINE, () -> "Remove unused file references last modified before " + instant);
 
-        List<String> candidates = sortedUnusedFileReferences(fileReferencesPath, fileReferencesInUse, keepFileReferencesDuration);
-        // Do not delete the newest ones
-        List<String> fileReferencesToDelete = candidates.subList(0, Math.max(0, candidates.size() - numberToAlwaysKeep));
+        List<String> fileReferencesToDelete = sortedUnusedFileReferences(fileDirectory.getRoot(), fileReferencesInUse, instant);
         if (fileReferencesToDelete.size() > 0) {
             log.log(Level.FINE, () -> "Will delete file references not in use: " + fileReferencesToDelete);
-            fileReferencesToDelete.forEach(fileReference -> {
-                File file = new File(fileReferencesPath, fileReference);
-                if ( ! IOUtils.recursiveDeleteDir(file))
-                    log.log(Level.WARNING, "Could not delete " + file.getAbsolutePath());
-            });
+            fileReferencesToDelete.forEach(fileReference -> fileDirectory.delete(new FileReference(fileReference), this::isFileReferenceInUse));
         }
         return fileReferencesToDelete;
+    }
+
+    private boolean isFileReferenceInUse(FileReference fileReference) {
+        return getFileReferencesInUse().contains(fileReference.value());
     }
 
     private Set<String> getFileReferencesInUse() {
@@ -628,16 +624,15 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         return fileReferencesInUse;
     }
 
-    private List<String> sortedUnusedFileReferences(File fileReferencesPath, Set<String> fileReferencesInUse, Duration keepFileReferences) {
+    private List<String> sortedUnusedFileReferences(File fileReferencesPath, Set<String> fileReferencesInUse, Instant instant) {
         Set<String> fileReferencesOnDisk = getFileReferencesOnDisk(fileReferencesPath);
         log.log(Level.FINE, () -> "File references on disk (in " + fileReferencesPath + "): " + fileReferencesOnDisk);
-        Instant instant = clock.instant().minus(keepFileReferences);
         return fileReferencesOnDisk
                 .stream()
                 .filter(fileReference -> ! fileReferencesInUse.contains(fileReference))
-                .filter(fileReference -> isLastFileAccessBefore(new File(fileReferencesPath, fileReference), instant))
-                .sorted(Comparator.comparing(a -> lastAccessed(new File(fileReferencesPath, a))))
-                .collect(Collectors.toList());
+                .filter(fileReference -> isLastModifiedBefore(new File(fileReferencesPath, fileReference), instant))
+                .sorted(Comparator.comparing(a -> lastModified(new File(fileReferencesPath, a))))
+                .toList();
     }
 
     public Set<FileReference> getFileReferences(ApplicationId applicationId) {
@@ -658,21 +653,13 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
     }
 
     private Application getApplication(ApplicationId applicationId, Optional<Version> version) {
-        try {
-            Tenant tenant = getTenant(applicationId);
-            if (tenant == null) throw new NotFoundException("Tenant '" + applicationId.tenant() + "' not found");
+        Tenant tenant = getTenant(applicationId);
+        if (tenant == null) throw new NotFoundException("Tenant '" + applicationId.tenant() + "' not found");
 
-            Optional<ApplicationSet> activeApplicationSet = tenant.getSessionRepository().getActiveApplicationSet(applicationId);
-            if (activeApplicationSet.isEmpty()) throw new NotFoundException("Unknown application id '" + applicationId + "'");
+        Optional<ApplicationSet> activeApplicationSet = tenant.getSessionRepository().getActiveApplicationSet(applicationId);
+        if (activeApplicationSet.isEmpty()) throw new NotFoundException("Unknown application id '" + applicationId + "'");
 
-            return activeApplicationSet.get().getForVersionOrLatest(version, clock.instant());
-        } catch (NotFoundException e) {
-            log.log(Level.WARNING, "Failed getting application for '" + applicationId + "': " + e.getMessage());
-            throw e;
-        } catch (Exception e) {
-            log.log(Level.WARNING, "Failed getting application for '" + applicationId + "'", e);
-            throw e;
-        }
+        return activeApplicationSet.get().getForVersionOrLatest(version, clock.instant());
     }
 
     // Will return Optional.empty() if getting application fails (instead of throwing an exception)
@@ -687,18 +674,18 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
     public List<ApplicationId> listApplications() {
         return tenantRepository.getAllTenants().stream()
                 .flatMap(tenant -> tenant.getApplicationRepo().activeApplications().stream())
-                .collect(Collectors.toList());
+                .toList();
     }
 
-    private boolean isLastFileAccessBefore(File fileReference, Instant instant) {
-        return lastAccessed(fileReference).isBefore(instant);
+    private boolean isLastModifiedBefore(File fileReference, Instant instant) {
+        return lastModified(fileReference).isBefore(instant);
     }
 
-    private Instant lastAccessed(File fileReference) {
+    private Instant lastModified(File fileReference) {
         BasicFileAttributes fileAttributes;
         try {
             fileAttributes = readAttributes(fileReference.toPath(), BasicFileAttributes.class);
-            return fileAttributes.lastAccessTime().toInstant();
+            return fileAttributes.lastModifiedTime().toInstant();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -945,6 +932,7 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
     private List<ApplicationId> activeApplications(TenantName tenantName) {
         return tenantRepository.getTenant(tenantName).getApplicationRepo().activeApplications();
     }
+
     // ---------------- Proton Metrics V1 ------------------------------------------------------------------------
 
     public ProtonMetricsResponse getProtonMetrics(ApplicationId applicationId) {

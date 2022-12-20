@@ -3,7 +3,6 @@ package com.yahoo.vespa.hosted.provision.autoscale;
 
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.NodeResources;
-import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 
 import java.util.Optional;
@@ -43,23 +42,35 @@ public class AllocationOptimizer {
         else
             limits = atLeast(minimumNodes, limits).fullySpecified(current.clusterSpec(), nodeRepository, clusterModel.application().id());
         Optional<AllocatableClusterResources> bestAllocation = Optional.empty();
-        NodeList hosts = nodeRepository.nodes().list().hosts();
+        var availableRealHostResources = nodeRepository.zone().cloud().dynamicProvisioning()
+                                         ? nodeRepository.flavors().getFlavors().stream().map(flavor -> flavor.resources()).toList()
+                                         : nodeRepository.nodes().list().hosts().stream().map(host -> host.flavor().resources())
+                                                         .map(hostResources -> maxResourcesOf(hostResources, clusterModel))
+                                                         .toList();
         for (int groups = limits.min().groups(); groups <= limits.max().groups(); groups++) {
             for (int nodes = limits.min().nodes(); nodes <= limits.max().nodes(); nodes++) {
                 if (nodes % groups != 0) continue;
 
-                ClusterResources next = new ClusterResources(nodes,
-                                                             groups,
-                                                             nodeResourcesWith(nodes, groups,
-                                                                               limits, targetLoad, current, clusterModel));
-                var allocatableResources = AllocatableClusterResources.from(next, current.clusterSpec(), limits,
-                                                                            hosts, nodeRepository);
+                var resources = new ClusterResources(nodes,
+                                                     groups,
+                                                     nodeResourcesWith(nodes, groups,
+                                                                       limits, targetLoad, current, clusterModel));
+                var allocatableResources = AllocatableClusterResources.from(resources, current.clusterSpec(), limits,
+                                                                            availableRealHostResources, nodeRepository);
                 if (allocatableResources.isEmpty()) continue;
-                if (bestAllocation.isEmpty() || allocatableResources.get().preferableTo(bestAllocation.get()))
+                if (bestAllocation.isEmpty() || allocatableResources.get().preferableTo(bestAllocation.get())) {
                     bestAllocation = allocatableResources;
+                }
             }
         }
         return bestAllocation;
+    }
+
+    /** Returns the max resources of a host one node may allocate. */
+    private NodeResources maxResourcesOf(NodeResources hostResources, ClusterModel clusterModel) {
+        if (nodeRepository.exclusiveAllocation(clusterModel.clusterSpec())) return hostResources;
+        // static, shared hosts: Allocate at most half of the host cpu to simplify management
+        return hostResources.withVcpu(hostResources.vcpu() / 2);
     }
 
     /**
@@ -76,7 +87,6 @@ public class AllocationOptimizer {
                      .multiply(clusterModel.loadWith(nodes, groups)) // redundancy aware adjustment with these counts
                      .divide(clusterModel.redundancyAdjustment())    // correct for double redundancy adjustment
                      .scaled(current.realResources().nodeResources());
-
         // Combine the scaled resource values computed here
         // with the currently configured non-scaled values, given in the limits, if any
         var nonScaled = limits.isEmpty() || limits.min().nodeResources().isUnspecified()

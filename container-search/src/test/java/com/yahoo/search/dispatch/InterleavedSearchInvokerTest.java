@@ -9,8 +9,8 @@ import com.yahoo.prelude.fastsearch.GroupingListHit;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
 import com.yahoo.search.dispatch.searchcluster.Group;
+import com.yahoo.search.dispatch.searchcluster.MockSearchCluster;
 import com.yahoo.search.dispatch.searchcluster.Node;
-import com.yahoo.search.dispatch.searchcluster.SearchCluster;
 import com.yahoo.search.result.Coverage;
 import com.yahoo.search.result.ErrorMessage;
 import com.yahoo.search.result.Hit;
@@ -39,7 +39,6 @@ import java.util.stream.StreamSupport;
 
 import static com.yahoo.container.handler.Coverage.DEGRADED_BY_MATCH_PHASE;
 import static com.yahoo.container.handler.Coverage.DEGRADED_BY_TIMEOUT;
-import static com.yahoo.search.dispatch.MockSearchCluster.createDispatchConfig;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -51,11 +50,12 @@ public class InterleavedSearchInvokerTest {
     private final Query query = new TestQuery();
     private final LinkedList<Event> expectedEvents = new LinkedList<>();
     private final List<SearchInvoker> invokers = new ArrayList<>();
+    DispatchConfig dispatchConfig = new DispatchConfig.Builder().build();
+    TopKEstimator hitEstimator = new TopKEstimator(30, dispatchConfig.topKProbability(), 0.05);
 
     @Test
     void requireThatAdaptiveTimeoutsAreNotUsedWithFullCoverageRequirement() throws IOException {
-        SearchCluster cluster = new MockSearchCluster("!", createDispatchConfig(100.0), 1, 3);
-        try (SearchInvoker invoker = createInterleavedInvoker(cluster, new Group(0, List.of()), 3)) {
+        try (SearchInvoker invoker = createInterleavedInvoker(new Group(0, List.of()), 3)) {
 
             expectedEvents.add(new Event(5000, 100, 0));
             expectedEvents.add(new Event(4900, 100, 1));
@@ -69,8 +69,7 @@ public class InterleavedSearchInvokerTest {
 
     @Test
     void requireThatTimeoutsAreNotMarkedAsAdaptive() throws IOException {
-        SearchCluster cluster = new MockSearchCluster("!", createDispatchConfig(100.0), 1, 3);
-        try (SearchInvoker invoker = createInterleavedInvoker(cluster, new Group(0, List.of()), 3)) {
+        try (SearchInvoker invoker = createInterleavedInvoker(new Group(0, List.of()), 3)) {
 
             expectedEvents.add(new Event(5000, 300, 0));
             expectedEvents.add(new Event(4700, 300, 1));
@@ -88,8 +87,7 @@ public class InterleavedSearchInvokerTest {
 
     @Test
     void requireThatAdaptiveTimeoutDecreasesTimeoutWhenCoverageIsReached() throws IOException {
-        SearchCluster cluster = new MockSearchCluster("!", createDispatchConfig(50.0), 1, 4);
-        try (SearchInvoker invoker = createInterleavedInvoker(cluster, new Group(0, List.of()), 4)) {
+        try (SearchInvoker invoker = createInterleavedInvoker(hitEstimator, MockSearchCluster.createDispatchConfig(50.0), new Group(0, List.of()), 4)) {
 
             expectedEvents.add(new Event(5000, 100, 0));
             expectedEvents.add(new Event(4900, 100, 1));
@@ -108,10 +106,9 @@ public class InterleavedSearchInvokerTest {
 
     @Test
     void requireCorrectCoverageCalculationWhenAllNodesOk() throws IOException {
-        SearchCluster cluster = new MockSearchCluster("!", 1, 2);
         invokers.add(new MockInvoker(0, createCoverage(50155, 50155, 50155, 1, 1, 0)));
         invokers.add(new MockInvoker(1, createCoverage(49845, 49845, 49845, 1, 1, 0)));
-        try (SearchInvoker invoker = createInterleavedInvoker(cluster, new Group(0, List.of()), 0)) {
+        try (SearchInvoker invoker = createInterleavedInvoker(new Group(0, List.of()), 0)) {
 
             expectedEvents.add(new Event(null, 100, 0));
             expectedEvents.add(new Event(null, 200, 1));
@@ -130,10 +127,9 @@ public class InterleavedSearchInvokerTest {
 
     @Test
     void requireCorrectCoverageCalculationWhenResultsAreLimitedByMatchPhase() throws IOException {
-        SearchCluster cluster = new MockSearchCluster("!", 1, 2);
         invokers.add(new MockInvoker(0, createCoverage(10101, 50155, 50155, 1, 1, DEGRADED_BY_MATCH_PHASE)));
         invokers.add(new MockInvoker(1, createCoverage(13319, 49845, 49845, 1, 1, DEGRADED_BY_MATCH_PHASE)));
-        try (SearchInvoker invoker = createInterleavedInvoker(cluster, new Group(0, List.of()), 0)) {
+        try (SearchInvoker invoker = createInterleavedInvoker(new Group(0, List.of()), 0)) {
 
             expectedEvents.add(new Event(null, 100, 0));
             expectedEvents.add(new Event(null, 200, 1));
@@ -153,10 +149,9 @@ public class InterleavedSearchInvokerTest {
 
     @Test
     void requireCorrectCoverageCalculationWhenResultsAreLimitedBySoftTimeout() throws IOException {
-        SearchCluster cluster = new MockSearchCluster("!", 1, 2);
         invokers.add(new MockInvoker(0, createCoverage(5000, 50155, 50155, 1, 1, DEGRADED_BY_TIMEOUT)));
         invokers.add(new MockInvoker(1, createCoverage(4900, 49845, 49845, 1, 1, DEGRADED_BY_TIMEOUT)));
-        try (SearchInvoker invoker = createInterleavedInvoker(cluster, new Group(0, List.of()), 0)) {
+        try (SearchInvoker invoker = createInterleavedInvoker(new Group(0, List.of()), 0)) {
 
             expectedEvents.add(new Event(null, 100, 0));
             expectedEvents.add(new Event(null, 200, 1));
@@ -176,10 +171,9 @@ public class InterleavedSearchInvokerTest {
 
     @Test
     void requireCorrectCoverageCalculationWhenOneNodeIsUnexpectedlyDown() throws IOException {
-        SearchCluster cluster = new MockSearchCluster("!", 1, 2);
         invokers.add(new MockInvoker(0, createCoverage(50155, 50155, 50155, 1, 1, 0)));
         invokers.add(new MockInvoker(1, createCoverage(49845, 49845, 49845, 1, 1, 0)));
-        try (SearchInvoker invoker = createInterleavedInvoker(cluster, new Group(0, List.of()), 0)) {
+        try (SearchInvoker invoker = createInterleavedInvoker(new Group(0, List.of()), 0)) {
 
             expectedEvents.add(new Event(null, 100, 0));
             expectedEvents.add(null);
@@ -340,7 +334,6 @@ public class InterleavedSearchInvokerTest {
 
     @Test
     void requireThatGroupingsAreMerged() throws IOException {
-        SearchCluster cluster = new MockSearchCluster("!", 1, 2);
         List<SearchInvoker> invokers = new ArrayList<>();
 
         Grouping grouping1 = new Grouping(0);
@@ -363,7 +356,7 @@ public class InterleavedSearchInvokerTest {
                         .addAggregationResult(new MinAggregationResult().setMin(new IntegerResultNode(6)).setTag(3))));
         invokers.add(new MockInvoker(0).setHits(List.of(new GroupingListHit(List.of(grouping2)))));
 
-        try (InterleavedSearchInvoker invoker = new InterleavedSearchInvoker(Timer.monotonic, invokers, cluster, new Group(0, List.of()), Collections.emptySet())) {
+        try (InterleavedSearchInvoker invoker = new InterleavedSearchInvoker(Timer.monotonic, invokers, hitEstimator, dispatchConfig, new Group(0, List.of()), Collections.emptySet())) {
             invoker.responseAvailable(invokers.get(0));
             invoker.responseAvailable(invokers.get(1));
             Result result = invoker.search(query, null);
@@ -375,11 +368,12 @@ public class InterleavedSearchInvokerTest {
     }
 
     private static InterleavedSearchInvoker createInterLeavedTestInvoker(List<Double> a, List<Double> b, Group group) {
-        SearchCluster cluster = new MockSearchCluster("!", 1, 2);
+        DispatchConfig dispatchConfig = new DispatchConfig.Builder().build();
+        TopKEstimator hitEstimator = new TopKEstimator(30, dispatchConfig.topKProbability(), 0.05);
         List<SearchInvoker> invokers = new ArrayList<>();
         invokers.add(createInvoker(a, 0));
         invokers.add(createInvoker(b, 1));
-        InterleavedSearchInvoker invoker = new InterleavedSearchInvoker(Timer.monotonic, invokers, cluster, group, Collections.emptySet());
+        InterleavedSearchInvoker invoker = new InterleavedSearchInvoker(Timer.monotonic, invokers, hitEstimator, dispatchConfig, group, Collections.emptySet());
         invoker.responseAvailable(invokers.get(0));
         invoker.responseAvailable(invokers.get(1));
         return invoker;
@@ -400,13 +394,12 @@ public class InterleavedSearchInvokerTest {
         return hits;
     }
 
-    void verifyCorrectCoverageCalculationWhenDegradedCoverageIsExpected(DispatchConfig dispatchConfig, int expectedCoverage) throws IOException {
-        SearchCluster cluster = new MockSearchCluster("!", dispatchConfig, 1, 2);
+    void verifyCorrectCoverageCalculationWhenDegradedCoverageIsExpected(int expectedCoverage) throws IOException {
         invokers.add(new MockInvoker(0, createCoverage(50155, 50155, 60000, 1, 1, 0)));
         Coverage errorCoverage = new Coverage(0, 0, 0);
         errorCoverage.setNodesTried(1);
         invokers.add(new SearchErrorInvoker(ErrorMessage.createBackendCommunicationError("node is down"), errorCoverage));
-        try (SearchInvoker invoker = createInterleavedInvoker(cluster, new Group(0, List.of()), 0)) {
+        try (SearchInvoker invoker = createInterleavedInvoker(new Group(0, List.of()), 0)) {
 
             expectedEvents.add(new Event(null, 1, 1));
             expectedEvents.add(new Event(null, 100, 0));
@@ -427,19 +420,20 @@ public class InterleavedSearchInvokerTest {
 
     @Test
     void requireCorrectCoverageCalculationWhenDegradedCoverageIsExpectedUsingTargetActiveDocs() throws IOException {
-        verifyCorrectCoverageCalculationWhenDegradedCoverageIsExpected(MockSearchCluster.createDispatchConfig(100.0, List.of())
-                .searchableCopies(1)
-                .redundancy(1)
-                .build(),
+        verifyCorrectCoverageCalculationWhenDegradedCoverageIsExpected(
                 42);
     }
 
-    private InterleavedSearchInvoker createInterleavedInvoker(SearchCluster searchCluster, Group group, int numInvokers) {
+    private InterleavedSearchInvoker createInterleavedInvoker(Group group, int numInvokers) {
+        return createInterleavedInvoker(hitEstimator, dispatchConfig, group, numInvokers);
+    }
+    private InterleavedSearchInvoker createInterleavedInvoker(TopKEstimator hitEstimator, DispatchConfig dispatchConfig,
+                                                              Group group, int numInvokers) {
         for (int i = 0; i < numInvokers; i++) {
             invokers.add(new MockInvoker(i));
         }
 
-        return new InterleavedSearchInvoker(Timer.wrap(clock), invokers, searchCluster, group,null) {
+        return new InterleavedSearchInvoker(Timer.wrap(clock), invokers, hitEstimator, dispatchConfig, group,null) {
 
             @Override
             protected LinkedBlockingQueue<SearchInvoker> newQueue() {

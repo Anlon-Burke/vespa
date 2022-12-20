@@ -148,6 +148,7 @@ public class DeploymentSpecXmlReader {
                                   optionalIntegerAttribute(majorVersionAttribute, root),
                                   stringAttribute(athenzDomainAttribute, root).map(AthenzDomain::from),
                                   stringAttribute(athenzServiceAttribute, root).map(AthenzService::from),
+                                  stringAttribute(cloudAccountAttribute, root).map(CloudAccount::from),
                                   applicationEndpoints,
                                   xmlForm,
                                   deprecatedElements);
@@ -185,7 +186,7 @@ public class DeploymentSpecXmlReader {
         int maxIdleHours = getWithFallback(instanceElement, parentTag, upgradeTag, "max-idle-hours", Integer::parseInt, 8);
         List<DeploymentSpec.ChangeBlocker> changeBlockers = readChangeBlockers(instanceElement, parentTag);
         Optional<AthenzService> athenzService = mostSpecificAttribute(instanceElement, athenzServiceAttribute).map(AthenzService::from);
-        Optional<CloudAccount> cloudAccount = mostSpecificAttribute(instanceElement, cloudAccountAttribute).map(CloudAccount::new);
+        Optional<CloudAccount> cloudAccount = mostSpecificAttribute(instanceElement, cloudAccountAttribute).map(CloudAccount::from);
         Notifications notifications = readNotifications(instanceElement, parentTag);
 
         // Values where there is no default
@@ -214,7 +215,7 @@ public class DeploymentSpecXmlReader {
                                                              notifications,
                                                              endpoints,
                                                              now))
-                     .collect(Collectors.toList());
+                     .toList();
     }
 
     private List<Step> readSteps(Element stepTag, Map<String, String> prodAttributes, Element parentTag) {
@@ -249,7 +250,7 @@ public class DeploymentSpecXmlReader {
             case prodTag: // regions, delay and parallel may be nested within, but we can flatten them
                 return XML.getChildren(stepTag).stream()
                                                .flatMap(child -> readNonInstanceSteps(child, prodAttributes, stepTag).stream())
-                                               .collect(Collectors.toList());
+                                               .toList();
             case delayTag:
                 return List.of(new Delay(Duration.ofSeconds(longAttribute("hours", stepTag) * 60 * 60 +
                                                             longAttribute("minutes", stepTag) * 60 +
@@ -257,11 +258,11 @@ public class DeploymentSpecXmlReader {
             case parallelTag: // regions and instances may be nested within
                 return List.of(new ParallelSteps(XML.getChildren(stepTag).stream()
                                                     .flatMap(child -> readSteps(child, prodAttributes, parentTag).stream())
-                                                    .collect(Collectors.toList())));
+                                                    .toList()));
             case stepsTag: // regions and instances may be nested within
                 return List.of(new Steps(XML.getChildren(stepTag).stream()
                                             .flatMap(child -> readSteps(child, prodAttributes, parentTag).stream())
-                                            .collect(Collectors.toList())));
+                                            .toList()));
             case regionTag:
                 return List.of(readDeclaredZone(Environment.prod, athenzService, testerFlavor, stepTag));
             default:
@@ -377,7 +378,7 @@ public class DeploymentSpecXmlReader {
      * Imposes some constraints on tag order which are not expressible in the schema
      */
     private void validateTagOrder(Element root) {
-        List<String> tags = XML.getChildren(root).stream().map(Element::getTagName).collect(Collectors.toList());
+        List<String> tags = XML.getChildren(root).stream().map(Element::getTagName).toList();
         for (int i = 0; i < tags.size(); i++) {
             if (tags.get(i).equals(blockChangeTag)) {
                 String constraint = "<block-change> must be placed after <test> and <staging> and before <prod>";
@@ -447,7 +448,7 @@ public class DeploymentSpecXmlReader {
     }
 
     private Optional<CloudAccount> readCloudAccount(Element tag) {
-        return mostSpecificAttribute(tag, cloudAccountAttribute).map(CloudAccount::new);
+        return mostSpecificAttribute(tag, cloudAccountAttribute).map(CloudAccount::from);
     }
 
     private Optional<String> readGlobalServiceId(Element environmentTag) {

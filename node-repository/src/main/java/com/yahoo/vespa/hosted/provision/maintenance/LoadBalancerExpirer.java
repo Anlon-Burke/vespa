@@ -48,7 +48,7 @@ public class LoadBalancerExpirer extends NodeRepositoryMaintainer {
     private final LoadBalancerService service;
     private final CuratorDatabaseClient db;
 
-    LoadBalancerExpirer(NodeRepository nodeRepository, Duration interval, LoadBalancerService service, Metric metric) {
+    public LoadBalancerExpirer(NodeRepository nodeRepository, Duration interval, LoadBalancerService service, Metric metric) {
         super(nodeRepository, interval, metric);
         this.service = Objects.requireNonNull(service, "service must be non-null");
         this.db = nodeRepository.database();
@@ -57,26 +57,24 @@ public class LoadBalancerExpirer extends NodeRepositoryMaintainer {
     @Override
     protected double maintain() {
         expireReserved();
-        return ( removeInactive() + pruneReals() ) / 2;
+        return (deprovisionRemovable() + pruneReals()) / 2;
     }
 
     /** Move reserved load balancer that have expired to inactive */
     private void expireReserved() {
         Instant now = nodeRepository().clock().instant();
         Instant expiry = now.minus(reservedExpiry);
-        patchLoadBalancers(lb -> lb.state() == State.reserved && lb.changedAt().isBefore(expiry),
+        patchLoadBalancers(lb -> canDeactivate(lb, expiry),
                            lb -> db.writeLoadBalancer(lb.with(State.inactive, now), lb.state()));
     }
 
-    /** Deprovision inactive load balancers that have expired */
-    private double removeInactive() {
+    /** Deprovision removable load balancers */
+    private double deprovisionRemovable() {
         MutableInteger attempts = new MutableInteger(0);
         var failed = new ArrayList<LoadBalancerId>();
         var lastException = new AtomicReference<Exception>();
         var expiry = nodeRepository().clock().instant().minus(inactiveExpiry);
-        patchLoadBalancers(lb -> lb.state() == State.inactive &&
-                                 lb.changedAt().isBefore(expiry) &&
-                                 allocatedNodes(lb.id()).isEmpty(), lb -> {
+        patchLoadBalancers(lb -> canRemove(lb, expiry), lb -> {
             try {
                 attempts.add(1);
                 log.log(Level.INFO, () -> "Removing expired inactive " + lb.id());
@@ -113,7 +111,9 @@ public class LoadBalancerExpirer extends NodeRepositoryMaintainer {
             try {
                 attempts.add(1);
                 LOG.log(Level.INFO, () -> "Removing reals from inactive load balancer " + lb.id() + ": " + Sets.difference(lb.instance().get().reals(), reals));
-                service.create(new LoadBalancerSpec(lb.id().application(), lb.id().cluster(), reals, lb.instance().get().cloudAccount()), true);
+                service.create(new LoadBalancerSpec(lb.id().application(), lb.id().cluster(), reals,
+                                                    lb.instance().get().settings(), lb.instance().get().cloudAccount()),
+                               true);
                 db.writeLoadBalancer(lb.with(lb.instance().map(instance -> instance.withReals(reals))), lb.state());
             } catch (Exception e) {
                 failed.add(lb.id());
@@ -145,8 +145,22 @@ public class LoadBalancerExpirer extends NodeRepositoryMaintainer {
         }
     }
 
+    private boolean canRemove(LoadBalancer lb, Instant expiry) {
+        return lb.state() == State.removable || (lb.state() == State.inactive &&
+                                                 lb.changedAt().isBefore(expiry) &&
+                                                 allocatedNodes(lb.id()).isEmpty());
+    }
+
+    private boolean canDeactivate(LoadBalancer lb, Instant expiry) {
+        return lb.state() == State.reserved && lb.changedAt().isBefore(expiry);
+    }
+
     private List<Node> allocatedNodes(LoadBalancerId loadBalancer) {
-        return nodeRepository().nodes().list().owner(loadBalancer.application()).cluster(loadBalancer.cluster()).asList();
+        return nodeRepository().nodes()
+                .list(Node.State.active, Node.State.inactive, Node.State.reserved)
+                .owner(loadBalancer.application())
+                .cluster(loadBalancer.cluster())
+                .asList();
     }
 
 }

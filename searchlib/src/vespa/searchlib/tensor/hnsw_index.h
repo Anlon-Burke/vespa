@@ -2,20 +2,25 @@
 
 #pragma once
 
+#include "hnsw_index_config.h"
 #include "distance_function.h"
 #include "doc_vector_access.h"
+#include "hnsw_identity_mapping.h"
 #include "hnsw_index_utils.h"
-#include "hnsw_node.h"
+#include "hnsw_multi_best_neighbors.h"
+#include "hnsw_nodeid_mapping.h"
+#include "hnsw_single_best_neighbors.h"
+#include "hnsw_test_node.h"
 #include "nearest_neighbor_index.h"
 #include "random_level_generator.h"
 #include "hnsw_graph.h"
+#include "vector_bundle.h"
 #include <vespa/eval/eval/typed_cells.h>
 #include <vespa/searchlib/common/bitvector.h>
 #include <vespa/vespalib/datastore/array_store.h>
 #include <vespa/vespalib/datastore/atomic_entry_ref.h>
 #include <vespa/vespalib/datastore/compaction_spec.h>
 #include <vespa/vespalib/datastore/entryref.h>
-#include <vespa/vespalib/util/reusable_set_pool.h>
 #include <vespa/vespalib/stllike/allocator.h>
 
 namespace search::tensor {
@@ -33,35 +38,10 @@ namespace search::tensor {
  *
  * TODO: Add details on how to handle removes.
  */
+
+template <HnswIndexType type>
 class HnswIndex : public NearestNeighborIndex {
 public:
-    class Config {
-    private:
-        uint32_t _max_links_at_level_0;
-        uint32_t _max_links_on_inserts;
-        uint32_t _neighbors_to_explore_at_construction;
-        uint32_t _min_size_before_two_phase;
-        bool _heuristic_select_neighbors;
-
-    public:
-        Config(uint32_t max_links_at_level_0_in,
-               uint32_t max_links_on_inserts_in,
-               uint32_t neighbors_to_explore_at_construction_in,
-               uint32_t min_size_before_two_phase_in,
-               bool heuristic_select_neighbors_in)
-            : _max_links_at_level_0(max_links_at_level_0_in),
-              _max_links_on_inserts(max_links_on_inserts_in),
-              _neighbors_to_explore_at_construction(neighbors_to_explore_at_construction_in),
-              _min_size_before_two_phase(min_size_before_two_phase_in),
-              _heuristic_select_neighbors(heuristic_select_neighbors_in)
-        {}
-        uint32_t max_links_at_level_0() const { return _max_links_at_level_0; }
-        uint32_t max_links_on_inserts() const { return _max_links_on_inserts; }
-        uint32_t neighbors_to_explore_at_construction() const { return _neighbors_to_explore_at_construction; }
-        uint32_t min_size_before_two_phase() const { return _min_size_before_two_phase; }
-        bool heuristic_select_neighbors() const { return _heuristic_select_neighbors; }
-    };
-
     class HnswIndexCompactionSpec {
         CompactionSpec _level_arrays;
         CompactionSpec _link_arrays;
@@ -81,31 +61,52 @@ public:
         CompactionSpec link_arrays() const noexcept { return _link_arrays; }
     };
 
-protected:
-    using AtomicEntryRef = HnswGraph::AtomicEntryRef;
-    using NodeStore = HnswGraph::NodeStore;
+    uint32_t get_docid(uint32_t nodeid) const {
+        if constexpr (NodeType::identity_mapping) {
+            return nodeid;
+        } else {
+            return _graph.node_refs.acquire_elem_ref(nodeid).acquire_docid();
+        }
+    }
 
-    using LinkStore = HnswGraph::LinkStore;
-    using LinkArrayRef = HnswGraph::LinkArrayRef;
+    static constexpr HnswIndexType index_type = type;
+    using SearchBestNeighbors = typename HnswIndexTraits<type>::SearchBestNeighbors;
+    using IdMapping = typename HnswIndexTraits<type>::IdMapping;
+protected:
+    using GraphType = HnswGraph<type>;
+    using NodeType = typename GraphType::NodeType;
+    using AtomicEntryRef = vespalib::datastore::AtomicEntryRef;
+    using NodeStore = typename GraphType::NodeStore;
+
+    using LinkStore = typename GraphType::LinkStore;
+    using LinkArrayRef = typename GraphType::LinkArrayRef;
     using LinkArray = std::vector<uint32_t, vespalib::allocator_large<uint32_t>>;
 
-    using LevelArrayRef = HnswGraph::LevelArrayRef;
+    using LevelArrayRef = typename GraphType::LevelArrayRef;
 
     using TypedCells = vespalib::eval::TypedCells;
 
-    HnswGraph _graph;
+    static uint32_t acquire_docid(const NodeType& node, uint32_t nodeid) {
+        if constexpr (NodeType::identity_mapping) {
+            return nodeid;
+        } else {
+            return node.acquire_docid();
+        }
+    }
+
+    GraphType _graph;
     const DocVectorAccess& _vectors;
     DistanceFunction::UP _distance_func;
     RandomLevelGenerator::UP _level_generator;
-    Config _cfg;
-    mutable vespalib::ReusableSetPool _visited_set_pool;
+    IdMapping _id_mapping; // mapping from docid to nodeid vector
+    HnswIndexConfig _cfg;
     HnswIndexCompactionSpec _compaction_spec;
 
     uint32_t max_links_for_level(uint32_t level) const;
-    void add_link_to(uint32_t docid, uint32_t level, const LinkArrayRef& old_links, uint32_t new_link) {
+    void add_link_to(uint32_t nodeid, uint32_t level, const LinkArrayRef& old_links, uint32_t new_link) {
         LinkArray new_links(old_links.begin(), old_links.end());
         new_links.push_back(new_link);
-        _graph.set_link_array(docid, level, new_links);
+        _graph.set_link_array(nodeid, level, new_links);
     }
 
     /**
@@ -115,77 +116,112 @@ protected:
      * where the candidate is located.
      * Used by select_neighbors_heuristic().
      */
-    bool have_closer_distance(HnswCandidate candidate, const HnswCandidateVector& curr_result) const;
+    bool have_closer_distance(HnswTraversalCandidate candidate, const HnswTraversalCandidateVector& curr_result) const;
     struct SelectResult {
-        HnswCandidateVector used;
+        HnswTraversalCandidateVector used;
         LinkArray unused;
         ~SelectResult() {}
     };
-    SelectResult select_neighbors_heuristic(const HnswCandidateVector& neighbors, uint32_t max_links) const;
-    SelectResult select_neighbors_simple(const HnswCandidateVector& neighbors, uint32_t max_links) const;
-    SelectResult select_neighbors(const HnswCandidateVector& neighbors, uint32_t max_links) const;
-    void shrink_if_needed(uint32_t docid, uint32_t level);
-    void connect_new_node(uint32_t docid, const LinkArrayRef &neighbors, uint32_t level);
+    template <typename HnswCandidateVectorT>
+    SelectResult select_neighbors_heuristic(const HnswCandidateVectorT& neighbors, uint32_t max_links) const;
+    template <typename HnswCandidateVectorT>
+    SelectResult select_neighbors_simple(const HnswCandidateVectorT& neighbors, uint32_t max_links) const;
+    template <typename HnswCandidateVectorT>
+    SelectResult select_neighbors(const HnswCandidateVectorT& neighbors, uint32_t max_links) const;
+    void shrink_if_needed(uint32_t nodeid, uint32_t level);
+    void connect_new_node(uint32_t nodeid, const LinkArrayRef &neighbors, uint32_t level);
     void mutual_reconnect(const LinkArrayRef &cluster, uint32_t level);
     void remove_link_to(uint32_t remove_from, uint32_t remove_id, uint32_t level);
 
-    inline TypedCells get_vector(uint32_t docid) const {
-        return _vectors.get_vector(docid);
+    inline TypedCells get_vector(uint32_t nodeid) const {
+        if constexpr (NodeType::identity_mapping) {
+            return _vectors.get_vector(nodeid, 0);
+        } else {
+            auto& ref = _graph.node_refs.acquire_elem_ref(nodeid);
+            uint32_t docid = ref.acquire_docid();
+            uint32_t subspace = ref.acquire_subspace();
+            return _vectors.get_vector(docid, subspace);
+        }
+    }
+    inline TypedCells get_vector(uint32_t docid, uint32_t subspace) const {
+        return _vectors.get_vector(docid, subspace);
+    }
+    inline VectorBundle get_vector_by_docid(uint32_t docid) const {
+        return _vectors.get_vectors(docid);
     }
 
-    double calc_distance(uint32_t lhs_docid, uint32_t rhs_docid) const;
-    double calc_distance(const TypedCells& lhs, uint32_t rhs_docid) const;
-    uint32_t estimate_visited_nodes(uint32_t level, uint32_t doc_id_limit, uint32_t neighbors_to_find, const GlobalFilter* filter) const;
+    double calc_distance(uint32_t lhs_nodeid, uint32_t rhs_nodeid) const;
+    double calc_distance(const TypedCells& lhs, uint32_t rhs_nodeid) const;
+    double calc_distance(const TypedCells& lhs, uint32_t rhs_docid, uint32_t rhs_subspace) const;
+    uint32_t estimate_visited_nodes(uint32_t level, uint32_t nodeid_limit, uint32_t neighbors_to_find, const GlobalFilter* filter) const;
 
     /**
      * Performs a greedy search in the given layer to find the candidate that is nearest the input vector.
      */
     HnswCandidate find_nearest_in_layer(const TypedCells& input, const HnswCandidate& entry_point, uint32_t level) const;
-    template <class VisitedTracker>
-    void search_layer_helper(const TypedCells& input, uint32_t neighbors_to_find, FurthestPriQ& found_neighbors,
+    template <class VisitedTracker, class BestNeighbors>
+    void search_layer_helper(const TypedCells& input, uint32_t neighbors_to_find, BestNeighbors& best_neighbors,
                              uint32_t level, const GlobalFilter *filter,
-                             uint32_t doc_id_limit,
+                             uint32_t nodeid_limit,
                              uint32_t estimated_visited_nodes) const;
-    void search_layer(const TypedCells& input, uint32_t neighbors_to_find, FurthestPriQ& found_neighbors,
+    template <class BestNeighbors>
+    void search_layer(const TypedCells& input, uint32_t neighbors_to_find, BestNeighbors& best_neighbors,
                       uint32_t level, const GlobalFilter *filter = nullptr) const;
     std::vector<Neighbor> top_k_by_docid(uint32_t k, TypedCells vector,
                                          const GlobalFilter *filter, uint32_t explore_k,
                                          double distance_threshold) const;
+
+    struct PreparedAddNode {
+        using Links = std::vector<std::pair<uint32_t, vespalib::datastore::EntryRef>>;
+        std::vector<Links> connections;
+
+        PreparedAddNode() noexcept
+            : connections()
+        {
+        }
+        PreparedAddNode(std::vector<Links>&& connections_in) noexcept
+            : connections(std::move(connections_in))
+        {
+        }
+        ~PreparedAddNode() = default;
+        PreparedAddNode(PreparedAddNode&& other) noexcept = default;
+    };
 
     struct PreparedFirstAddDoc : public PrepareResult {};
 
     struct PreparedAddDoc : public PrepareResult {
         using ReadGuard = vespalib::GenerationHandler::Guard;
         uint32_t docid;
-        int32_t max_level;
         ReadGuard read_guard;
-        using Links = std::vector<std::pair<uint32_t, HnswGraph::NodeRef>>;
-        std::vector<Links> connections;
-        PreparedAddDoc(uint32_t docid_in, int32_t max_level_in, ReadGuard read_guard_in)
-          : docid(docid_in), max_level(max_level_in),
+        std::vector<PreparedAddNode> nodes;
+        PreparedAddDoc(uint32_t docid_in, ReadGuard read_guard_in)
+          : docid(docid_in),
             read_guard(std::move(read_guard_in)),
-            connections(max_level+1)
+            nodes()
         {}
         ~PreparedAddDoc() = default;
         PreparedAddDoc(PreparedAddDoc&& other) = default;
     };
-    PreparedAddDoc internal_prepare_add(uint32_t docid, TypedCells input_vector,
+    PreparedAddDoc internal_prepare_add(uint32_t docid, VectorBundle input_vectors,
                                         vespalib::GenerationHandler::Guard read_guard) const;
-    LinkArray filter_valid_docids(uint32_t level, const PreparedAddDoc::Links &neighbors, uint32_t me);
+    void internal_prepare_add_node(HnswIndex::PreparedAddDoc& op, TypedCells input_vector, const typename GraphType::EntryNode& entry) const;
+    LinkArray filter_valid_nodeids(uint32_t level, const typename PreparedAddNode::Links &neighbors, uint32_t self_nodeid);
     void internal_complete_add(uint32_t docid, PreparedAddDoc &op);
+    void internal_complete_add_node(uint32_t nodeid, uint32_t docid, uint32_t subspace, PreparedAddNode &prepared_node);
 public:
     HnswIndex(const DocVectorAccess& vectors, DistanceFunction::UP distance_func,
-              RandomLevelGenerator::UP level_generator, const Config& cfg);
+              RandomLevelGenerator::UP level_generator, const HnswIndexConfig& cfg);
     ~HnswIndex() override;
 
-    const Config& config() const { return _cfg; }
+    const HnswIndexConfig& config() const { return _cfg; }
 
     // Implements NearestNeighborIndex
     void add_document(uint32_t docid) override;
     std::unique_ptr<PrepareResult> prepare_add_document(uint32_t docid,
-            TypedCells vector,
-            vespalib::GenerationHandler::Guard read_guard) const override;
+                                                        VectorBundle vectors,
+                                                        vespalib::GenerationHandler::Guard read_guard) const override;
     void complete_add_document(uint32_t docid, std::unique_ptr<PrepareResult> prepare_result) override;
+    void remove_node(uint32_t nodeid);
     void remove_document(uint32_t docid) override;
     void assign_generation(generation_t current_gen) override;
     void reclaim_memory(generation_t oldest_used_gen) override;
@@ -210,22 +246,21 @@ public:
                                                  double distance_threshold) const override;
     const DistanceFunction *distance_function() const override { return _distance_func.get(); }
 
-    FurthestPriQ top_k_candidates(const TypedCells &vector, uint32_t k, const GlobalFilter *filter) const;
+    SearchBestNeighbors top_k_candidates(const TypedCells &vector, uint32_t k, const GlobalFilter *filter) const;
 
-    uint32_t get_entry_docid() const { return _graph.get_entry_node().docid; }
+    uint32_t get_entry_nodeid() const { return _graph.get_entry_node().nodeid; }
     int32_t get_entry_level() const { return _graph.get_entry_node().level; }
 
     // Should only be used by unit tests.
-    HnswNode get_node(uint32_t docid) const;
-    void set_node(uint32_t docid, const HnswNode &node);
+    HnswTestNode get_node(uint32_t nodeid) const;
+    void set_node(uint32_t nodeid, const HnswTestNode &node);
     bool check_link_symmetry() const;
     std::pair<uint32_t, bool> count_reachable_nodes() const;
-    HnswGraph& get_graph() { return _graph; }
-    vespalib::ReusableSetPool& get_visited_set_pool() const noexcept { return _visited_set_pool; }
+    GraphType& get_graph() { return _graph; }
+    IdMapping& get_id_mapping() { return _id_mapping; }
 
     static vespalib::datastore::ArrayStoreConfig make_default_node_store_config();
     static vespalib::datastore::ArrayStoreConfig make_default_link_store_config();
 };
 
 }
-

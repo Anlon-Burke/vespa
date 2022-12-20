@@ -10,7 +10,10 @@ import java.util.Optional;
 /**
  * A host or node flavor.
  * *Host* flavors come from a configured set which corresponds to the actual flavors available in a zone.
+ * Its resources are the real resources available on the host.
+ *
  * *Node* flavors are simply a wrapper of a NodeResources object.
+ * Its resources are the advertised resources as specified or implied by the application package.
  *
  * @author bratseth
  */
@@ -35,7 +38,8 @@ public class Flavor {
                                flavorConfig.bandwidth() / 1000,
                                flavorConfig.fastDisk() ? NodeResources.DiskSpeed.fast : NodeResources.DiskSpeed.slow,
                                flavorConfig.remoteStorage() ? NodeResources.StorageType.remote : NodeResources.StorageType.local,
-                               NodeResources.Architecture.valueOf(flavorConfig.architecture())),
+                               NodeResources.Architecture.valueOf(flavorConfig.architecture()),
+                               new NodeResources.GpuResources(flavorConfig.gpuCount(), flavorConfig.gpuMemoryGb())),
              Optional.empty(),
              Type.valueOf(flavorConfig.environment()),
              true,
@@ -108,6 +112,7 @@ public class Flavor {
     public Type getType() { return type; }
     
     /** Convenience, returns getType() == Type.DOCKER_CONTAINER */
+    // TODO: Remove after December 2022
     public boolean isDocker() { return type == Type.DOCKER_CONTAINER; }
 
     @Override

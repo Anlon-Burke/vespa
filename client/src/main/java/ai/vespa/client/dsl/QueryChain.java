@@ -4,7 +4,6 @@ package ai.vespa.client.dsl;
 public abstract class QueryChain {
 
     String op;
-    int index; // for distinct each query chain
     Sources sources;
     Select select;
     Query query;
@@ -16,10 +15,6 @@ public abstract class QueryChain {
 
     String getOp() {
         return op;
-    }
-
-    void setIndex(int index) {
-        this.index = index;
     }
 
     Sources getSources() {
@@ -49,4 +44,5 @@ public abstract class QueryChain {
     abstract boolean hasNegativeSearchField(String fieldName);
 
     abstract boolean hasNegativeSearchField(String fieldName, Object value);
+
 }

@@ -8,6 +8,7 @@ import com.yahoo.lang.PublicCloneable;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.logging.Logger;
 import java.util.LinkedList;
 import java.util.ArrayList;
@@ -95,24 +96,13 @@ public class CloneHelper {
             return ((HashMap<?, ?>) object).clone();
         else if (object instanceof HashSet)
             return ((HashSet<?>) object).clone();
-        try {
-            return cloneByReflection(object);
-        } catch (IllegalArgumentException e) {
-            if ( ! (e.getCause() instanceof ClassCastException))
-                throw e;
-
-            // When changing bundles you might end up having cached the old method pointing to old bundle,
-            // That might then lead to a class cast exception when invoking the wrong clone method.
-            // So we will give dropping the cache a try, and retry the clone.
-            cloneMethodCache.clear();
-            return cloneByReflection(object);
-        }
-
+        
+        return cloneByReflection(object);
     }
 
     private Object cloneByReflection(Object object) {
         try {
-            Method cloneMethod = cloneMethodCache.get(object);
+            Method cloneMethod = cloneMethodCache.get(object, name -> log.warning("Caching the clone method of '" + name + "'. Let it implement com.yahoo.lang.PublicCloneable instead"));
             if (cloneMethod == null) {
                 log.warning("'" + object + "' of class " + object.getClass() +
                             " is Cloneable, but has no clone method - will use the same instance in all requests");

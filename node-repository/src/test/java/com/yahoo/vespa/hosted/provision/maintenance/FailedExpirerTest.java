@@ -311,9 +311,9 @@ public class FailedExpirerTest {
         public FailureScenario setReady(String... hostname) {
             List<Node> nodes = Stream.of(hostname)
                                      .map(this::get)
-                                     .collect(Collectors.toList());
+                                     .toList();
             nodes = nodeRepository.nodes().deallocate(nodes, Agent.system, getClass().getSimpleName());
-            nodeRepository.nodes().setReady(nodes, Agent.system, getClass().getSimpleName());
+            tester.move(Node.State.ready, nodes);
             return this;
         }
 

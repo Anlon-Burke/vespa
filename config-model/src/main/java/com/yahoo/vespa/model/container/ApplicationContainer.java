@@ -9,8 +9,10 @@ import com.yahoo.config.model.producer.AbstractConfigProducer;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.search.config.QrStartConfig;
+import com.yahoo.vespa.model.LogctlSpec;
 import com.yahoo.vespa.model.container.component.SimpleComponent;
 
+import java.util.List;
 import java.util.Optional;
 
 import static com.yahoo.vespa.defaults.Defaults.getDefaults;
@@ -23,8 +25,6 @@ import static com.yahoo.vespa.defaults.Defaults.getDefaults;
 public final class ApplicationContainer extends Container implements
         QrStartConfig.Producer,
         ZookeeperServerConfig.Producer {
-
-    private static final String defaultHostedJVMArgs = "-XX:+SuppressFatalErrorMessage";
 
     private final boolean isHostedVespa;
 
@@ -41,6 +41,16 @@ public final class ApplicationContainer extends Container implements
         addComponent(new SimpleComponent("com.yahoo.container.jdisc.messagebus.SessionCache"));
         addComponent(new SimpleComponent("com.yahoo.container.jdisc.SystemInfoProvider"));
         addComponent(new SimpleComponent("com.yahoo.container.jdisc.ZoneInfoProvider"));
+        addComponent(new SimpleComponent("com.yahoo.container.jdisc.ClusterInfoProvider"));
+    }
+
+    private List<LogctlSpec> logctlSpecs = List.of();
+    void setLogctlSpecs(List<LogctlSpec> logctlSpecs) {
+        this.logctlSpecs = logctlSpecs;
+    }
+    @Override
+    public List<LogctlSpec> getLogctlSpecs() {
+        return logctlSpecs;
     }
 
     @Override
@@ -63,9 +73,6 @@ public final class ApplicationContainer extends Container implements
     public String getJvmOptions() {
         StringBuilder b = new StringBuilder();
         if (isHostedVespa) {
-            if (hasDocproc()) {
-                b.append(ApplicationContainer.defaultHostedJVMArgs).append(' ');
-            }
             b.append("-Djdk.tls.server.enableStatusRequestExtension=true ")
                     .append("-Djdk.tls.stapling.responseTimeout=2000 ")
                     .append("-Djdk.tls.stapling.cacheSize=256 ")
@@ -76,10 +83,6 @@ public final class ApplicationContainer extends Container implements
              b.append(jvmArgs.trim());
         }
         return b.toString().trim();
-    }
-
-    private boolean hasDocproc() {
-        return (parent instanceof ContainerCluster) && (((ContainerCluster<?>)parent).getDocproc() != null);
     }
 
     @Override

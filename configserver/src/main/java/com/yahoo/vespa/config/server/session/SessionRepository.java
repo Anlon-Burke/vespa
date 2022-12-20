@@ -25,7 +25,6 @@ import com.yahoo.transaction.Transaction;
 import com.yahoo.vespa.config.server.ConfigServerDB;
 import com.yahoo.vespa.config.server.TimeoutBudget;
 import com.yahoo.vespa.config.server.application.ApplicationSet;
-import com.yahoo.vespa.config.server.application.PermanentApplicationPackage;
 import com.yahoo.vespa.config.server.application.TenantApplications;
 import com.yahoo.vespa.config.server.configchange.ConfigChangeActions;
 import com.yahoo.vespa.config.server.deploy.TenantFileSystemDirs;
@@ -43,7 +42,6 @@ import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.config.server.zookeeper.SessionCounter;
 import com.yahoo.vespa.config.server.zookeeper.ZKApplication;
 import com.yahoo.vespa.curator.Curator;
-import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.flags.UnboundStringFlag;
@@ -81,7 +79,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 
 import static com.yahoo.vespa.curator.Curator.CompletionWaiter;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
@@ -111,7 +108,6 @@ public class SessionRepository {
     private final Curator curator;
     private final Executor zkWatcherExecutor;
     private final FileDistributionFactory fileDistributionFactory;
-    private final PermanentApplicationPackage permanentApplicationPackage;
     private final FlagSource flagSource;
     private final TenantFileSystemDirs tenantFileSystemDirs;
     private final Metrics metrics;
@@ -138,7 +134,6 @@ public class SessionRepository {
                              Metrics metrics,
                              StripedExecutor<TenantName> zkWatcherExecutor,
                              FileDistributionFactory fileDistributionFactory,
-                             PermanentApplicationPackage permanentApplicationPackage,
                              FlagSource flagSource,
                              ExecutorService zkCacheExecutor,
                              SecretStore secretStore,
@@ -158,7 +153,6 @@ public class SessionRepository {
         this.sessionLifetime = Duration.ofSeconds(configserverConfig.sessionLifetime());
         this.zkWatcherExecutor = command -> zkWatcherExecutor.execute(tenantName, command);
         this.fileDistributionFactory = fileDistributionFactory;
-        this.permanentApplicationPackage = permanentApplicationPackage;
         this.flagSource = flagSource;
         this.tenantFileSystemDirs = new TenantFileSystemDirs(configServerDB, tenantName);
         this.applicationRepo = applicationRepo;
@@ -214,19 +208,6 @@ public class SessionRepository {
     /** Returns a copy of local sessions */
     public Collection<LocalSession> getLocalSessions() {
         return List.copyOf(localSessionCache.values());
-    }
-
-    public Set<LocalSession> getLocalSessionsFromFileSystem() {
-        File[] sessions = tenantFileSystemDirs.sessionsPath().listFiles(sessionApplicationsFilter);
-        if (sessions == null) return Set.of();
-
-        Set<LocalSession> sessionIds = new HashSet<>();
-        for (File session : sessions) {
-            long sessionId = Long.parseLong(session.getName());
-            LocalSession localSession = getSessionFromFile(sessionId);
-            sessionIds.add(localSession);
-        }
-        return sessionIds;
     }
 
     private LocalSession getSessionFromFile(long sessionId) {
@@ -299,6 +280,7 @@ public class SessionRepository {
         session.setVespaVersion(existingSession.getVespaVersion());
         session.setDockerImageRepository(existingSession.getDockerImageRepository());
         session.setAthenzDomain(existingSession.getAthenzDomain());
+        session.setQuota(existingSession.getQuota());
         session.setTenantSecretStores(existingSession.getTenantSecretStores());
         session.setOperatorCertificates(existingSession.getOperatorCertificates());
         session.setCloudAccount(existingSession.getCloudAccount());
@@ -377,10 +359,7 @@ public class SessionRepository {
     }
 
     public int deleteExpiredRemoteSessions(Clock clock) {
-        Duration expiryTime = configserverConfig.hostedVespa()
-                ? sessionLifetime.multipliedBy(2)
-                : sessionLifetime.multipliedBy(12); // TODO: Remove when tested more (Oct. 2022 at the latest)
-
+        Duration expiryTime = sessionLifetime.multipliedBy(2);
         List<Long> remoteSessionsFromZooKeeper = getRemoteSessionsFromZooKeeper();
         log.log(Level.FINE, () -> "Remote sessions for tenant " + tenantName + ": " + remoteSessionsFromZooKeeper);
 
@@ -424,11 +403,11 @@ public class SessionRepository {
     private List<Long> getSessionListFromDirectoryCache(List<ChildData> children) {
         return getSessionList(children.stream()
                                       .map(child -> Path.fromString(child.getPath()).getName())
-                                      .collect(Collectors.toList()));
+                                      .toList());
     }
 
     private List<Long> getSessionList(List<String> children) {
-        return children.stream().map(Long::parseLong).collect(Collectors.toList());
+        return children.stream().map(Long::parseLong).toList();
     }
 
     private void loadRemoteSessions(ExecutorService executor) throws NumberFormatException {
@@ -564,7 +543,6 @@ public class SessionRepository {
                                                                     sessionPreparer.getExecutor(),
                                                                     curator,
                                                                     metrics,
-                                                                    permanentApplicationPackage,
                                                                     flagSource,
                                                                     secretStore,
                                                                     hostProvisionerProvider,
@@ -596,13 +574,7 @@ public class SessionRepository {
         zkWatcherExecutor.execute(() -> {
             log.log(Level.FINE, () -> "Got child event: " + event);
             switch (event.getType()) {
-                case CHILD_ADDED:
-                case CHILD_REMOVED:
-                case CONNECTION_RECONNECTED:
-                    sessionsChanged();
-                    break;
-                default:
-                    break;
+                case CHILD_ADDED, CHILD_REMOVED, CONNECTION_RECONNECTED -> sessionsChanged();
             }
         });
     }
@@ -653,9 +625,7 @@ public class SessionRepository {
             }
 
             sessionIdsToDelete.forEach(this::deleteLocalSession);
-
-            // Make sure to catch here, to avoid executor just dying in case of issues ...
-        } catch (Throwable e) {
+        } catch (Throwable e) { // Make sure to catch here, to avoid executor just dying in case of issues ...
             log.log(Level.WARNING, "Error when purging old sessions ", e);
         }
         log.log(Level.FINE, () -> "Done purging old sessions");
@@ -801,13 +771,12 @@ public class SessionRepository {
     }
 
     private Optional<ApplicationSet> getApplicationSet(long sessionId) {
-        Optional<ApplicationSet> applicationSet = Optional.empty();
         try {
-            applicationSet = Optional.ofNullable(getRemoteSession(sessionId)).map(this::ensureApplicationLoaded);
+            return Optional.ofNullable(getRemoteSession(sessionId)).map(this::ensureApplicationLoaded);
         } catch (IllegalArgumentException e) {
             // Do nothing if we have no currently active session
+            return Optional.empty();
         }
-        return applicationSet;
     }
 
     private void copyApp(File sourceDir, File destinationDir) throws IOException {
@@ -841,15 +810,24 @@ public class SessionRepository {
         File schemasDir = applicationDir.resolve(ApplicationPackage.SCHEMAS_DIR.getRelative()).toFile();
         File sdDir = applicationDir.resolve(ApplicationPackage.SEARCH_DEFINITIONS_DIR.getRelative()).toFile();
         if (sdDir.exists() && sdDir.isDirectory()) {
-            File[] sdFiles = sdDir.listFiles();
-            if (sdFiles != null) {
-                Files.createDirectories(schemasDir.toPath());
-                Arrays.asList(sdFiles).forEach(file -> Exceptions.uncheck(
-                        () -> Files.move(file.toPath(),
-                                         schemasDir.toPath().resolve(file.toPath().getFileName()),
-                                         StandardCopyOption.REPLACE_EXISTING)));
+            try {
+                File[] sdFiles = sdDir.listFiles();
+                if (sdFiles != null) {
+                    Files.createDirectories(schemasDir.toPath());
+                    Arrays.asList(sdFiles).forEach(file -> Exceptions.uncheck(
+                            () -> Files.move(file.toPath(),
+                                             schemasDir.toPath().resolve(file.toPath().getFileName()),
+                                             StandardCopyOption.REPLACE_EXISTING)));
+                }
+                Files.delete(sdDir.toPath());
+            } catch (IOException | UncheckedIOException e) {
+                if (schemasDir.exists() && schemasDir.isDirectory())
+                    throw new InvalidApplicationException(
+                            "Both " + ApplicationPackage.SCHEMAS_DIR.getRelative() + "/ and " + ApplicationPackage.SEARCH_DEFINITIONS_DIR +
+                                    "/ exist in application package, please remove " + ApplicationPackage.SEARCH_DEFINITIONS_DIR + "/", e);
+                else
+                    throw e;
             }
-            Files.delete(sdDir.toPath());
         }
     }
 
@@ -869,9 +847,9 @@ public class SessionRepository {
     }
 
     /**
-     * Create a new local session for the given session id if it does not already exist.
-     * Will also add the session to the local session cache if necessary. If there is no
-     * remote session matching the session it will also be created.
+     * Create a new local session for the given session id if it does not already exist and
+     * will add the session to the local session cache. If there is no remote session matching
+     * the session id the remote session will also be created.
      */
     public void createLocalSessionFromDistributedApplicationPackage(long sessionId) {
         if (applicationRepo.sessionExistsInFileSystem(sessionId)) {
@@ -883,22 +861,25 @@ public class SessionRepository {
         SessionZooKeeperClient sessionZKClient = createSessionZooKeeperClient(sessionId);
         FileReference fileReference = sessionZKClient.readApplicationPackageReference();
         log.log(Level.FINE, () -> "File reference for session id " + sessionId + ": " + fileReference);
-        if (fileReference != null) {
-            File rootDir = new File(Defaults.getDefaults().underVespaHome(configserverConfig.fileReferencesDir()));
-            File sessionDir;
-            FileDirectory fileDirectory = new FileDirectory(rootDir);
-            try {
-                sessionDir = fileDirectory.getFile(fileReference);
-            } catch (IllegalArgumentException e) {
-                // We cannot be guaranteed that the file reference exists (it could be that it has not
-                // been downloaded yet), and e.g. when bootstrapping we cannot throw an exception in that case
-                log.log(Level.FINE, () -> "File reference for session id " + sessionId + ": " + fileReference + " not found in " + fileDirectory);
-                return;
-            }
-            ApplicationId applicationId = sessionZKClient.readApplicationId()
-                    .orElseThrow(() -> new RuntimeException("Could not find application id for session " + sessionId));
-            log.log(Level.FINE, () -> "Creating local session for tenant '" + tenantName + "' with session id " + sessionId);
+        if (fileReference == null) return;
+
+        File sessionDir;
+        FileDirectory fileDirectory = fileDistributionFactory.fileDirectory();
+        try {
+            sessionDir = fileDirectory.getFile(fileReference);
+        } catch (IllegalArgumentException e) {
+            // We cannot be guaranteed that the file reference exists (it could be that it has not
+            // been downloaded yet), and e.g. when bootstrapping we cannot throw an exception in that case
+            log.log(Level.FINE, () -> "File reference for session id " + sessionId + ": " + fileReference + " not found");
+            return;
+        }
+        ApplicationId applicationId = sessionZKClient.readApplicationId();
+        log.log(Level.FINE, () -> "Creating local session for tenant '" + tenantName + "' with session id " + sessionId);
+        try {
             createLocalSession(sessionDir, applicationId, sessionZKClient.readTags(), sessionId);
+        } finally {
+            log.log(Level.FINE, "Deleting file distribution reference " + fileReference + " for app package with session id " + sessionId);
+            fileDirectory.delete(fileReference, (reference) -> true); // Delete downloaded file reference, not needed anymore
         }
     }
 

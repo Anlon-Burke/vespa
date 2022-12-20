@@ -49,6 +49,9 @@
       "name": "DeploymentUpgrader"
     },
     {
+      "name": "EnclaveAccessMaintainer"
+    },
+    {
       "name": "EndpointCertificateMaintainer"
     },
     {
@@ -92,6 +95,9 @@
     },
     {
       "name": "SystemUpgrader"
+    },
+    {
+      "name": "TenantRoleCleanupMaintainer"
     },
     {
       "name": "TenantRoleMaintainer"

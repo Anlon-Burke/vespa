@@ -36,6 +36,8 @@ import com.yahoo.search.query.profile.config.QueryProfilesConfig;
 import com.yahoo.vespa.configdefinition.IlscriptsConfig;
 import com.yahoo.vespa.model.PortsMeta;
 import com.yahoo.vespa.model.Service;
+import com.yahoo.vespa.model.VespaModel;
+import com.yahoo.vespa.model.admin.Admin;
 import com.yahoo.vespa.model.admin.monitoring.Monitoring;
 import com.yahoo.vespa.model.clients.ContainerDocumentApi;
 import com.yahoo.vespa.model.container.component.AccessLogComponent;
@@ -52,6 +54,7 @@ import com.yahoo.vespa.model.container.component.chain.ProcessingHandler;
 import com.yahoo.vespa.model.container.configserver.ConfigserverCluster;
 import com.yahoo.vespa.model.container.docproc.ContainerDocproc;
 import com.yahoo.vespa.model.container.docproc.DocprocChains;
+import com.yahoo.vespa.model.container.http.Client;
 import com.yahoo.vespa.model.container.http.Http;
 import com.yahoo.vespa.model.container.processing.ProcessingChains;
 import com.yahoo.vespa.model.container.search.ContainerSearch;
@@ -161,6 +164,8 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     private String jvmGCOptions = null;
 
     private boolean deferChangesUntilRestart = false;
+    private boolean clientsLegacyMode;
+    private List<Client> clients = List.of();
 
     public ContainerCluster(AbstractConfigProducer<?> parent, String configSubId, String clusterId, DeployState deployState, boolean zooKeeperLocalhostAffinity) {
         this(parent, configSubId, clusterId, deployState, zooKeeperLocalhostAffinity, 1);
@@ -203,6 +208,17 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     }
     public Zone getZone() {
         return zone;
+    }
+
+    protected Optional<Admin> getAdmin() {
+        var parent = getParent();
+        if (parent != null) {
+            var r = parent.getRoot();
+            if (r instanceof VespaModel model) {
+                return Optional.ofNullable(model.getAdmin());
+            }
+        }
+        return Optional.empty();
     }
 
     public void addDefaultHandlersWithVip() {
@@ -351,6 +367,17 @@ public abstract class ContainerCluster<CONTAINER extends Container>
     public Http getHttp() {
         return http;
     }
+
+    public void setClients(boolean legacyMode, List<Client> clients) {
+        clientsLegacyMode = legacyMode;
+        this.clients = clients;
+    }
+
+    public List<Client> getClients() {
+        return clients;
+    }
+
+    public boolean clientsLegacyMode() { return clientsLegacyMode; }
 
     public ContainerDocproc getDocproc() {
         return containerDocproc;
@@ -595,7 +622,7 @@ public abstract class ContainerCluster<CONTAINER extends Container>
         builder.system(zone.system().value());
         builder.environment(zone.environment().value());
         builder.region(zone.region().value());
-        builder.cloud(zone.getCloud().name().value());
+        builder.cloud(zone.cloud().name().value());
     }
 
     @Override

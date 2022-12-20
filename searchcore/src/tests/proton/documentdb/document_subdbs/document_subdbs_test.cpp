@@ -15,6 +15,7 @@
 #include <vespa/searchcore/proton/metrics/metricswireservice.h>
 #include <vespa/searchcore/proton/reference/i_document_db_reference_resolver.h>
 #include <vespa/searchcore/proton/reprocessing/reprocessingrunner.h>
+#include <vespa/searchcore/proton/matching/sessionmanager.h>
 #include <vespa/searchcore/proton/server/bootstrapconfig.h>
 #include <vespa/searchcore/proton/server/document_subdb_explorer.h>
 #include <vespa/searchcore/proton/server/document_subdb_initializer.h>
@@ -93,10 +94,17 @@ struct ConfigDir4 { static vespalib::string dir() { return TEST_PATH("cfg4"); } 
 
 struct MySubDBOwner : public IDocumentSubDBOwner
 {
+    SessionManager _sessionMgr;
+    MySubDBOwner();
+    ~MySubDBOwner() override;
     document::BucketSpace getBucketSpace() const override { return makeBucketSpace(); }
     vespalib::string getName() const override { return "owner"; }
     uint32_t getDistributionKey() const override { return -1; }
+    SessionManager & session_manager() override { return _sessionMgr; }
 };
+
+MySubDBOwner::MySubDBOwner() : _sessionMgr(1) {}
+MySubDBOwner::~MySubDBOwner() = default;
 
 struct MySyncProxy : public SyncProxy
 {
@@ -354,8 +362,7 @@ struct FixtureBase
         vespalib::ThreadStackExecutor executor(1, 1_Mi);
         initializer::TaskRunner taskRunner(executor);
         taskRunner.runTask(task);
-        auto sessionMgr = std::make_shared<SessionManager>(1);
-        runInMasterAndSync([&]() { _subDb.initViews(*_snapshot->_cfg, sessionMgr); });
+        runInMasterAndSync([&]() { _subDb.initViews(*_snapshot->_cfg); });
     }
     void basicReconfig(SerialNum serialNum) {
         runInMasterAndSync([&]() { performReconfig(serialNum, make_all_attr_schema(two_attr_schema), ConfigDir2::dir()); });
@@ -747,6 +754,13 @@ TEST_F("require that flush targets can be retrieved", SearchableFixture)
     EXPECT_TRUE(assertTarget("subdb.summary.compact_spread", FType::GC, FComponent::DOCUMENT_STORE, *targets[7]));
     EXPECT_TRUE(assertTarget("subdb.summary.flush", FType::SYNC, FComponent::DOCUMENT_STORE, *targets[8]));
     EXPECT_TRUE(assertTarget("subdb.summary.shrink", FType::GC, FComponent::DOCUMENT_STORE, *targets[9]));
+}
+
+TEST_F("transient resource usage is zero in steady state", SearchableFixture)
+{
+    auto usage = f._subDb.get_transient_resource_usage();
+    EXPECT_EQUAL(0u, usage.disk());
+    EXPECT_EQUAL(0u, usage.memory());
 }
 
 TEST_F("require that only fast-access attributes are instantiated", FastAccessOnlyFixture)

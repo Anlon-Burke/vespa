@@ -10,7 +10,6 @@
 #include <vespa/searchcore/proton/server/isummaryadapter.h>
 #include <vespa/searchcore/proton/index/i_index_writer.h>
 #include <vespa/searchcore/proton/server/ifeedview.h>
-#include <vespa/searchcore/proton/matching/sessionmanager.h>
 #include <vespa/searchcore/proton/summaryengine/isearchhandler.h>
 #include <vespa/searchcore/proton/persistenceengine/i_document_retriever.h>
 #include <vespa/searchcore/proton/server/reconfig_params.h>
@@ -51,7 +50,7 @@ struct DummyDocumentSubDb : public IDocumentSubDB
             (const_cast<DummyDocumentSubDb &>(*this), _service.write().master());
     }
     void setup(const DocumentSubDbInitializerResult &) override {}
-    void initViews(const DocumentDBConfig &, const proton::matching::SessionManager::SP &) override {}
+    void initViews(const DocumentDBConfig &) override {}
     IReprocessingTask::List applyConfig(const DocumentDBConfig &, const DocumentDBConfig &,
                                         SerialNum, const ReconfigParams &, IDocumentDBReferenceResolver &) override
     {
@@ -103,6 +102,7 @@ struct DummyDocumentSubDb : public IDocumentSubDB
     }
 
     void tearDownReferences(IDocumentDBReferenceResolver &) override { }
+    TransientResourceUsage get_transient_resource_usage() const override { return {}; }
 };
 
 }

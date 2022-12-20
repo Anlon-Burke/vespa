@@ -13,10 +13,9 @@ using namespace vespalib::eval;
 
 namespace search::tensor {
 
-SerializedFastValueAttribute::SerializedFastValueAttribute(stringref name, const Config &cfg)
-  : TensorAttribute(name, cfg, _tensorBufferStore),
-    _tensor_type(cfg.tensorType()),
-    _tensorBufferStore(_tensor_type, get_memory_allocator(), 1000u)
+SerializedFastValueAttribute::SerializedFastValueAttribute(stringref name, const Config &cfg, const NearestNeighborIndexFactory& index_factory)
+    : TensorAttribute(name, cfg, _tensorBufferStore, index_factory),
+      _tensorBufferStore(cfg.tensorType(), get_memory_allocator(), 1000u)
 {
 }
 
@@ -27,23 +26,19 @@ SerializedFastValueAttribute::~SerializedFastValueAttribute()
     _tensorStore.reclaim_all_memory();
 }
 
-void
-SerializedFastValueAttribute::setTensor(DocId docId, const vespalib::eval::Value &tensor)
+vespalib::eval::TypedCells
+SerializedFastValueAttribute::get_vector(uint32_t docid, uint32_t subspace) const
 {
-    checkTensorType(tensor);
-    EntryRef ref = _tensorBufferStore.store_tensor(tensor);
-    assert(ref.valid());
-    setTensorRef(docId, ref);
+    EntryRef ref = acquire_entry_ref(docid);
+    auto vectors = _tensorBufferStore.get_vectors(ref);
+    return (subspace < vectors.subspaces()) ? vectors.cells(subspace) : _tensorBufferStore.get_empty_subspace();
 }
 
-std::unique_ptr<Value>
-SerializedFastValueAttribute::getTensor(DocId docId) const
+VectorBundle
+SerializedFastValueAttribute::get_vectors(uint32_t docid) const
 {
-    EntryRef ref;
-    if (docId < getCommittedDocIdLimit()) {
-        ref = acquire_entry_ref(docId);
-    }
-    return _tensorBufferStore.get_tensor(ref);
+    EntryRef ref = acquire_entry_ref(docid);
+    return _tensorBufferStore.get_vectors(ref);
 }
 
 }

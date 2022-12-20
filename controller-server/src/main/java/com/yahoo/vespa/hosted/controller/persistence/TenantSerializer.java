@@ -21,6 +21,7 @@ import com.yahoo.vespa.hosted.controller.tenant.ArchiveAccess;
 import com.yahoo.vespa.hosted.controller.tenant.AthenzTenant;
 import com.yahoo.vespa.hosted.controller.tenant.CloudTenant;
 import com.yahoo.vespa.hosted.controller.tenant.DeletedTenant;
+import com.yahoo.vespa.hosted.controller.tenant.Email;
 import com.yahoo.vespa.hosted.controller.tenant.LastLoginInfo;
 import com.yahoo.vespa.hosted.controller.tenant.Tenant;
 import com.yahoo.vespa.hosted.controller.tenant.TenantAddress;
@@ -82,6 +83,7 @@ public class TenantSerializer {
     private static final String awsArchiveAccessRoleField = "awsArchiveAccessRole";
     private static final String gcpArchiveAccessMemberField = "gcpArchiveAccessMember";
     private static final String invalidateUserSessionsBeforeField = "invalidateUserSessionsBefore";
+    private static final String tenantRolesLastMaintainedField = "tenantRolesLastMaintained";
 
     private static final String awsIdField = "awsId";
     private static final String roleField = "role";
@@ -93,6 +95,7 @@ public class TenantSerializer {
         tenantObject.setString(typeField, valueOf(tenant.type()));
         tenantObject.setLong(createdAtField, tenant.createdAt().toEpochMilli());
         toSlime(tenant.lastLoginInfo(), tenantObject.setObject(lastLoginInfoField));
+        tenantObject.setLong(tenantRolesLastMaintainedField, tenant.tenantRolesLastMaintained().toEpochMilli());
 
         switch (tenant.type()) {
             case athenz:  toSlime((AthenzTenant) tenant, tenantObject); break;
@@ -177,7 +180,8 @@ public class TenantSerializer {
         Optional<Contact> contact = contactFrom(tenantObject.field(contactField));
         Instant createdAt = SlimeUtils.instant(tenantObject.field(createdAtField));
         LastLoginInfo lastLoginInfo = lastLoginInfoFromSlime(tenantObject.field(lastLoginInfoField));
-        return new AthenzTenant(name, domain, property, propertyId, contact, createdAt, lastLoginInfo);
+        Instant tenantRolesLastMaintained = SlimeUtils.instant(tenantObject.field(tenantRolesLastMaintainedField));
+        return new AthenzTenant(name, domain, property, propertyId, contact, createdAt, lastLoginInfo, tenantRolesLastMaintained);
     }
 
     private CloudTenant cloudTenantFrom(Inspector tenantObject) {
@@ -190,7 +194,8 @@ public class TenantSerializer {
         List<TenantSecretStore> tenantSecretStores = secretStoresFromSlime(tenantObject.field(secretStoresField));
         ArchiveAccess archiveAccess = archiveAccessFromSlime(tenantObject);
         Optional<Instant> invalidateUserSessionsBefore = SlimeUtils.optionalInstant(tenantObject.field(invalidateUserSessionsBeforeField));
-        return new CloudTenant(name, createdAt, lastLoginInfo, creator, developerKeys, info, tenantSecretStores, archiveAccess, invalidateUserSessionsBefore);
+        Instant tenantRolesLastMaintained = SlimeUtils.instant(tenantObject.field(tenantRolesLastMaintainedField));
+        return new CloudTenant(name, createdAt, lastLoginInfo, creator, developerKeys, info, tenantSecretStores, archiveAccess, invalidateUserSessionsBefore, tenantRolesLastMaintained);
     }
 
     private DeletedTenant deletedTenantFrom(Inspector tenantObject) {
@@ -234,7 +239,7 @@ public class TenantSerializer {
                 .withWebsite(infoObject.field("website").asString())
                 .withContact(TenantContact.from(
                         infoObject.field("contactName").asString(),
-                        infoObject.field("contactEmail").asString()))
+                        new Email(infoObject.field("contactEmail").asString(), asBoolOrTrue(infoObject.field("contactEmailVerified")))))
                 .withAddress(tenantInfoAddressFromSlime(infoObject.field("address")))
                 .withBilling(tenantInfoBillingContactFromSlime(infoObject.field("billingContact")))
                 .withContacts(tenantContactsFrom(infoObject.field("contacts")));
@@ -253,7 +258,7 @@ public class TenantSerializer {
         return TenantBilling.empty()
                 .withContact(TenantContact.from(
                         billingObject.field("name").asString(),
-                        billingObject.field("email").asString(),
+                        new Email(billingObject.field("email").asString(), true),
                         billingObject.field("phone").asString()))
                 .withAddress(tenantInfoAddressFromSlime(billingObject.field("address")));
     }
@@ -283,7 +288,8 @@ public class TenantSerializer {
         infoCursor.setString("email", info.email());
         infoCursor.setString("website", info.website());
         infoCursor.setString("contactName", info.contact().name());
-        infoCursor.setString("contactEmail", info.contact().email());
+        infoCursor.setString("contactEmail", info.contact().email().getEmailAddress());
+        infoCursor.setBool("contactEmailVerified", info.contact().email().isVerified());
         toSlime(info.address(), infoCursor);
         toSlime(info.billingContact(), infoCursor);
         toSlime(info.contacts(), infoCursor);
@@ -305,7 +311,7 @@ public class TenantSerializer {
 
         Cursor addressCursor = parentCursor.setObject("billingContact");
         addressCursor.setString("name", billingContact.contact().name());
-        addressCursor.setString("email", billingContact.contact().email());
+        addressCursor.setString("email", billingContact.contact().email().getEmailAddress());
         addressCursor.setString("phone", billingContact.contact().phone());
         toSlime(billingContact.address(), addressCursor);
     }
@@ -386,7 +392,8 @@ public class TenantSerializer {
         switch (contact.type()) {
             case EMAIL:
                 var email = (TenantContacts.EmailContact) contact;
-                data.setString("email", email.email());
+                data.setString("email", email.email().getEmailAddress());
+                data.setBool("emailVerified", email.email().isVerified());
                 return;
             default:
                 throw new IllegalArgumentException("Serialization for contact type not implemented: " + contact.type());
@@ -401,7 +408,8 @@ public class TenantSerializer {
                 .collect(Collectors.toUnmodifiableList());
         switch (type) {
             case EMAIL:
-                return new TenantContacts.EmailContact(audiences, inspector.field("data").field("email").asString());
+                var isVerified = asBoolOrTrue(inspector.field("data").field("emailVerified"));
+                return new TenantContacts.EmailContact(audiences, new Email(inspector.field("data").field("email").asString(), isVerified));
             default:
                 throw new IllegalArgumentException("Serialization for contact type not implemented: " + type);
         }
@@ -458,6 +466,10 @@ public class TenantSerializer {
             case NOTIFICATIONS: return "notifications";
             default: throw new IllegalArgumentException("Unexpected contact audience '" + audience + "'.");
         }
+    }
+
+    private boolean asBoolOrTrue(Inspector inspector) {
+        return !inspector.valid() || inspector.asBool();
     }
 
 }

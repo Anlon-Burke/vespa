@@ -100,7 +100,7 @@ public:
                       const IndexConfig &indexCfg) const override;
 
     void setup(const DocumentSubDbInitializerResult &initResult) override;
-    void initViews(const DocumentDBConfig &configSnapshot, const SessionManagerSP &sessionManager)  override;
+    void initViews(const DocumentDBConfig &configSnapshot) override;
 
     IReprocessingTask::List
     applyConfig(const DocumentDBConfig &newConfigSnapshot, const DocumentDBConfig &oldConfigSnapshot,
@@ -131,6 +131,7 @@ public:
     void close() override;
     std::shared_ptr<IDocumentDBReference> getDocumentDBReference() override;
     void tearDownReferences(IDocumentDBReferenceResolver &resolver) override;
+    TransientResourceUsage get_transient_resource_usage() const override;
 };
 
 } // namespace proton

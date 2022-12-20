@@ -35,7 +35,8 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
             List.of(Node.State.provisioned, Node.State.ready, Node.State.active);
 
     private static final NodeResources zeroResources =
-            new NodeResources(0, 0, 0, 0, NodeResources.DiskSpeed.any, NodeResources.StorageType.any);
+            new NodeResources(0, 0, 0, 0, NodeResources.DiskSpeed.any, NodeResources.StorageType.any,
+                              NodeResources.Architecture.getDefault(), NodeResources.GpuResources.zero());
 
     /** The free capacity on the parent of this node, before adding this node to it */
     protected final NodeResources freeParentCapacity;
@@ -430,7 +431,9 @@ public abstract class NodeCandidate implements Nodelike, Comparable<NodeCandidat
                                      resources.with(parent.get().resources().diskSpeed())
                                               .with(parent.get().resources().storageType())
                                               .with(parent.get().resources().architecture()),
-                                     NodeType.tenant).build();
+                                     NodeType.tenant)
+                            .cloudAccount(parent.get().cloudAccount())
+                            .build();
             return new ConcreteNodeCandidate(node, freeParentCapacity, parent, violatesSpares, exclusiveSwitch, isSurplus, isNew, isResizable);
 
         }

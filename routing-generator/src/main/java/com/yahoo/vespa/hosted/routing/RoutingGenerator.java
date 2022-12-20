@@ -29,6 +29,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -81,9 +82,7 @@ public class RoutingGenerator extends AbstractComponent {
 
     /** Get the currently active routing table, if any */
     public Optional<RoutingTable> routingTable() {
-        synchronized (monitor) {
-            return Optional.ofNullable(routingTable);
-        }
+        return Optional.ofNullable(routingTable);
     }
 
     /** Reload the current routing table, if any */

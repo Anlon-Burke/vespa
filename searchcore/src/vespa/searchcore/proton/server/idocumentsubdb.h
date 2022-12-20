@@ -28,11 +28,7 @@ class DocumentDBConfig;
 class DocumentSubDbInitializer;
 class DocumentSubDbInitializerResult;
 class FeedHandler;
-struct IAttributeManager;
-struct IBucketStateCalculator;
-struct IDocumentDBReferenceResolver;
 class IDocumentDBReference;
-struct IDocumentMetaStoreContext;
 class IDocumentRetriever;
 class IFeedView;
 class IIndexWriter;
@@ -40,9 +36,14 @@ class IReplayConfig;
 class ISearchHandler;
 class ISummaryAdapter;
 class ISummaryManager;
+class PendingLidTrackerBase;
 class ReconfigParams;
 class RemoveDocumentsOperation;
-class PendingLidTrackerBase;
+class TransientResourceUsage;
+struct IAttributeManager;
+struct IBucketStateCalculator;
+struct IDocumentDBReferenceResolver;
+struct IDocumentMetaStoreContext;
 
 /**
  * Interface for a document sub database that handles a subset of the documents that belong to a
@@ -62,6 +63,7 @@ public:
     using IFlushTargetList = std::vector<std::shared_ptr<searchcorespi::IFlushTarget>>;
     using IndexConfig = index::IndexConfig;
     using OnDone = std::shared_ptr<vespalib::IDestructorCallback>;
+    using SessionManager = matching::SessionManager;
 public:
     IDocumentSubDB() { }
     virtual ~IDocumentSubDB() { }
@@ -74,7 +76,7 @@ public:
 
     // Called by master thread
     virtual void setup(const DocumentSubDbInitializerResult &initResult) = 0;
-    virtual void initViews(const DocumentDBConfig &configSnapshot, const std::shared_ptr<matching::SessionManager> &sessionManager) = 0;
+    virtual void initViews(const DocumentDBConfig &configSnapshot) = 0;
 
     virtual IReprocessingTask::List
     applyConfig(const DocumentDBConfig &newConfigSnapshot, const DocumentDBConfig &oldConfigSnapshot,
@@ -123,6 +125,7 @@ public:
     virtual void tearDownReferences(IDocumentDBReferenceResolver &resolver) = 0;
     virtual void validateDocStore(FeedHandler &op, SerialNum serialNum) const = 0;
     virtual PendingLidTrackerBase & getUncommittedLidsTracker() = 0;
+    virtual TransientResourceUsage get_transient_resource_usage() const = 0;
 };
 
 } // namespace proton

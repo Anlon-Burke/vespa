@@ -1,10 +1,10 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller;
 
-import com.yahoo.component.annotation.Inject;
 import com.yahoo.component.AbstractComponent;
 import com.yahoo.component.Version;
 import com.yahoo.component.Vtag;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.concurrent.maintenance.JobControl;
 import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.HostName;
@@ -17,6 +17,7 @@ import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.hosted.controller.api.integration.ServiceRegistry;
 import com.yahoo.vespa.hosted.controller.api.integration.maven.MavenRepository;
 import com.yahoo.vespa.hosted.controller.api.integration.zone.ZoneRegistry;
+import com.yahoo.vespa.hosted.controller.application.MailVerifier;
 import com.yahoo.vespa.hosted.controller.archive.CuratorArchiveBucketDb;
 import com.yahoo.vespa.hosted.controller.auditlog.AuditLogger;
 import com.yahoo.vespa.hosted.controller.config.ControllerConfig;
@@ -37,7 +38,6 @@ import com.yahoo.vespa.hosted.rotation.config.RotationsConfig;
 import com.yahoo.yolean.concurrent.Sleeper;
 
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -86,6 +86,7 @@ public class Controller extends AbstractComponent {
     private final NotificationsDb notificationsDb;
     private final SupportAccessControl supportAccessControl;
     private final Notifier notifier;
+    private final MailVerifier mailVerifier;
 
     /**
      * Creates a controller 
@@ -126,6 +127,7 @@ public class Controller extends AbstractComponent {
         notifier = new Notifier(curator, serviceRegistry.zoneRegistry(), serviceRegistry.mailer(), flagSource);
         notificationsDb = new NotificationsDb(this);
         supportAccessControl = new SupportAccessControl(this);
+        mailVerifier = new MailVerifier(serviceRegistry.zoneRegistry().dashboardUrl(), tenantController, serviceRegistry.mailer(), curator, clock);
 
         // Record the version of this controller
         curator().writeControllerVersion(this.hostname(), serviceRegistry.controllerVersion());
@@ -220,7 +222,7 @@ public class Controller extends AbstractComponent {
     }
 
     /** Set the target OS version for given cloud in this system */
-    public void upgradeOsIn(CloudName cloudName, Version version, Duration upgradeBudget, boolean force) {
+    public void upgradeOsIn(CloudName cloudName, Version version, boolean force) {
         if (version.isEmpty()) {
             throw new IllegalArgumentException("Invalid version '" + version.toFullString() + "'");
         }
@@ -239,15 +241,13 @@ public class Controller extends AbstractComponent {
                     throw new IllegalArgumentException("Cannot downgrade cloud '" + cloudName.value() + "' to version " +
                                                        version.toFullString());
                 }
-                if (currentTarget.osVersion().version().equals(version) &&
-                    currentTarget.upgradeBudget().equals(upgradeBudget)) return; // Version and budget unchanged
+                if (currentTarget.osVersion().version().equals(version)) return; // Version unchanged
             }
 
-            OsVersionTarget newTarget = new OsVersionTarget(new OsVersion(version, cloudName), upgradeBudget, scheduledAt);
+            OsVersionTarget newTarget = new OsVersionTarget(new OsVersion(version, cloudName), scheduledAt);
             targets.put(cloudName, newTarget);
             curator.writeOsVersionTargets(new TreeSet<>(targets.values()));
-            log.info("Triggered OS upgrade to " + version.toFullString() + " in cloud " +
-                     cloudName.value() + ", with upgrade budget " + upgradeBudget);
+            log.info("Triggered OS upgrade to " + version.toFullString() + " in cloud " + cloudName.value());
         }
     }
 
@@ -338,5 +338,9 @@ public class Controller extends AbstractComponent {
 
     public Notifier notifier() {
         return notifier;
+    }
+
+    public MailVerifier mailVerifier() {
+        return mailVerifier;
     }
 }

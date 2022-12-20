@@ -36,6 +36,12 @@ namespace search {
         class TransLogClient;
         class WriterFactory;
     }
+    namespace engine {
+        class SearchReply;
+        class SearchRequest;
+        class DocsumReply;
+        class DocsumRequest;
+    }
 }
 
 namespace vespa::config::search::core::internal { class InternalProtonType; }
@@ -54,6 +60,7 @@ class ITransientResourceUsageProvider;
 class ReplayThrottlingPolicy;
 class StatusReport;
 struct MetricsWireService;
+class DocumentDBMaintenanceConfig;
 
 namespace matching { class SessionManager; }
 
@@ -118,7 +125,6 @@ private:
     index::IndexConfig                               _indexCfg;
     std::unique_ptr<ReplayThrottlingPolicy>          _replay_throttling_policy;
     ConfigStore::UP                                  _config_store;
-    std::shared_ptr<matching::SessionManager>        _sessionManager; // TODO: This should not have to be a shared pointer.
     MetricsWireService                              &_metricsWireService;
     DocumentDBTaggedMetrics                          _metrics;
     std::unique_ptr<metrics::UpdateHook>             _metricsHook;
@@ -252,14 +258,6 @@ public:
            const HwInfo &hwInfo);
 
     /**
-     * Expose a cost view of the session manager. This is used by the
-     * document db explorer.
-     **/
-    const matching::SessionManager &session_manager() const {
-        return *_sessionManager;
-    }
-
-    /**
      * Frees any allocated resources. This will also stop the internal thread
      * and wait for it to finish. All pending tasks are deleted.
      */
@@ -391,6 +389,7 @@ public:
     document::BucketSpace getBucketSpace() const override;
     vespalib::string getName() const override;
     uint32_t getDistributionKey() const override;
+    matching::SessionManager &session_manager() override;
 
     /**
      * Implements IFeedHandlerOwner
@@ -422,6 +421,7 @@ public:
     ExecutorThreadingService & getWriteService() { return _writeService; }
 
     void set_attribute_usage_listener(std::unique_ptr<IAttributeUsageListener> listener);
+    const DDBState& get_state() const noexcept { return _state; }
 };
 
 } // namespace proton

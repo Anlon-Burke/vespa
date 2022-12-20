@@ -1235,12 +1235,12 @@ public class DeploymentSpecTest {
 
         assertEquals(
                 List.of("foo", "nalle", "default"),
-                spec.requireInstance("default").endpoints().stream().map(Endpoint::endpointId).collect(Collectors.toList())
+                spec.requireInstance("default").endpoints().stream().map(Endpoint::endpointId).toList()
         );
 
         assertEquals(
                 List.of("bar", "frosk", "quux"),
-                spec.requireInstance("default").endpoints().stream().map(Endpoint::containerId).collect(Collectors.toList())
+                spec.requireInstance("default").endpoints().stream().map(Endpoint::containerId).toList()
         );
 
         assertEquals(List.of(RegionName.from("us-east")), spec.requireInstance("default").endpoints().get(0).regions());
@@ -1588,31 +1588,34 @@ public class DeploymentSpecTest {
 
     @Test
     public void cloudAccount() {
-        StringReader r = new StringReader(
-                "<deployment version='1.0' cloud-account='100000000000'>" +
-                "    <instance id='alpha'>" +
-                "      <prod cloud-account='800000000000'>" +
-                "          <region>us-east-1</region>" +
-                "      </prod>" +
-                "    </instance>" +
-                "    <instance id='beta' cloud-account='200000000000'>" +
-                "      <staging cloud-account='600000000000'/>" +
-                "      <perf cloud-account='700000000000'/>" +
-                "      <prod>" +
-                "          <region>us-west-1</region>" +
-                "      </prod>" +
-                "    </instance>" +
-                "    <instance id='main'>" +
-                "      <test cloud-account='500000000000'/>" +
-                "      <dev cloud-account='400000000000'/>" +
-                "      <prod>" +
-                "          <region cloud-account='300000000000'>us-east-1</region>" +
-                "          <region>eu-west-1</region>" +
-                "      </prod>" +
-                "    </instance>" +
-                "</deployment>"
-        );
+        String r =
+                """
+                <deployment version='1.0' cloud-account='100000000000'>
+                    <instance id='alpha'>
+                      <prod cloud-account='800000000000'>
+                          <region>us-east-1</region>
+                      </prod>
+                    </instance>
+                    <instance id='beta' cloud-account='200000000000'>
+                      <staging cloud-account='600000000000'/>
+                      <perf cloud-account='700000000000'/>
+                      <prod>
+                          <region>us-west-1</region>
+                          <region cloud-account='default'>us-west-2</region>
+                      </prod>
+                    </instance>
+                    <instance id='main'>
+                      <test cloud-account='500000000000'/>
+                      <dev cloud-account='400000000000'/>
+                      <prod>
+                          <region cloud-account='300000000000'>us-east-1</region>
+                          <region>eu-west-1</region>
+                      </prod>
+                    </instance>
+                </deployment>
+                """;
         DeploymentSpec spec = DeploymentSpec.fromXml(r);
+        assertEquals(Optional.of(CloudAccount.from("100000000000")), spec.cloudAccount());
         assertCloudAccount("800000000000", spec.requireInstance("alpha"), Environment.prod, "us-east-1");
         assertCloudAccount("200000000000", spec.requireInstance("beta"), Environment.prod, "us-west-1");
         assertCloudAccount("600000000000", spec.requireInstance("beta"), Environment.staging, "");
@@ -1623,10 +1626,11 @@ public class DeploymentSpecTest {
         assertCloudAccount("400000000000", spec.requireInstance("main"), Environment.dev, "");
         assertCloudAccount("500000000000", spec.requireInstance("main"), Environment.test, "");
         assertCloudAccount("100000000000", spec.requireInstance("main"), Environment.staging, "");
+        assertCloudAccount("default", spec.requireInstance("beta"), Environment.prod, "us-west-2");
     }
 
     private void assertCloudAccount(String expected, DeploymentInstanceSpec instance, Environment environment, String region) {
-        assertEquals(Optional.of(expected).map(CloudAccount::new), instance.cloudAccount(environment, Optional.of(region).filter(s -> !s.isEmpty()).map(RegionName::from)));
+        assertEquals(Optional.of(expected).map(CloudAccount::from), instance.cloudAccount(environment, Optional.of(region).filter(s -> !s.isEmpty()).map(RegionName::from)));
     }
 
     private static void assertInvalid(String deploymentSpec, String errorMessagePart) {
@@ -1673,7 +1677,7 @@ public class DeploymentSpecTest {
 
         return DeploymentSpec.fromXml(xml).requireInstance("default").endpoints().stream()
                              .map(Endpoint::endpointId)
-                             .collect(Collectors.toList());
+                             .toList();
     }
 
 }

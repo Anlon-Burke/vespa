@@ -89,7 +89,7 @@ public class InfraDeployerImpl implements InfraDeployer {
         public void prepare() {
             if (prepared) return;
 
-            try (Mutex lock = nodeRepository.nodes().lock(application.getApplicationId())) {
+            try (Mutex lock = nodeRepository.applications().lock(application.getApplicationId())) {
                 NodeType nodeType = application.getCapacity().type();
                 Version targetVersion = infrastructureVersions.getTargetVersionFor(nodeType);
                 hostSpecs = provisioner.prepare(application.getApplicationId(),
@@ -116,7 +116,7 @@ public class InfraDeployerImpl implements InfraDeployer {
 
                     duperModel.infraApplicationActivated(
                             application.getApplicationId(),
-                            hostSpecs.stream().map(HostSpec::hostname).map(HostName::of).collect(Collectors.toList()));
+                            hostSpecs.stream().map(HostSpec::hostname).map(HostName::of).toList());
 
                     logger.log(Level.FINE, () -> generateActivationLogMessage(hostSpecs, application.getApplicationId()));
                 }

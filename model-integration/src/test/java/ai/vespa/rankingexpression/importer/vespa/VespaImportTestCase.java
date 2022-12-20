@@ -4,14 +4,14 @@ package ai.vespa.rankingexpression.importer.vespa;
 import ai.vespa.rankingexpression.importer.ImportedModel;
 import ai.vespa.rankingexpression.importer.configmodelview.ImportedMlFunction;
 import com.yahoo.searchlib.rankingexpression.RankingExpression;
-import com.yahoo.searchlib.rankingexpression.evaluation.Context;
 import com.yahoo.searchlib.rankingexpression.evaluation.MapContext;
 import com.yahoo.searchlib.rankingexpression.evaluation.TensorValue;
 import com.yahoo.searchlib.rankingexpression.parser.ParseException;
 import com.yahoo.tensor.Tensor;
 import org.junit.Test;
 
-import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -39,12 +39,12 @@ public class VespaImportTestCase {
         assertEquals("tensor(name{},x[3])", model.inputs().get("input1").toString());
         assertEquals("tensor(x[3])", model.inputs().get("input2").toString());
 
-        assertEquals(2, model.smallConstants().size());
-        assertEquals("tensor(x[3]):[0.5, 1.5, 2.5]", model.smallConstants().get("constant1"));
-        assertEquals("tensor():{3.0}", model.smallConstants().get("constant2"));
+        assertEquals(2, model.smallConstantTensors().size());
+        assertEquals("tensor(x[3]):[0.5, 1.5, 2.5]", model.smallConstantTensors().get("constant1").toString());
+        assertEquals("tensor():{3.0}", model.smallConstantTensors().get("constant2").toString());
 
-        assertEquals(1, model.largeConstants().size());
-        assertEquals("tensor(x[3]):[0.5, 1.5, 2.5]", model.largeConstants().get("constant1asLarge"));
+        assertEquals(1, model.largeConstantTensors().size());
+        assertEquals("tensor(x[3]):[0.5, 1.5, 2.5]", model.largeConstantTensors().get("constant1asLarge").toString());
 
         assertEquals(2, model.expressions().size());
         assertEquals("reduce(reduce(input1 * input2, sum, name) * constant1, max, x) * constant2",
@@ -52,9 +52,12 @@ public class VespaImportTestCase {
         assertEquals("reduce(reduce(input1 * input2, sum, name) * constant(constant1asLarge), max, x) * constant2",
                      model.expressions().get("foo2").getRoot().toString());
 
-        List<ImportedMlFunction> functions = model.outputExpressions();
-        assertEquals(2, functions.size());
-        ImportedMlFunction foo1Function = functions.get(0);
+        Map<String, ImportedMlFunction> byName = model.outputExpressions().stream()
+                .collect(Collectors.toUnmodifiableMap(ImportedMlFunction::name, f -> f));
+        assertEquals(2, byName.size());
+        assertTrue(byName.containsKey("foo1"));
+        assertTrue(byName.containsKey("foo2"));
+        ImportedMlFunction foo1Function = byName.get("foo1");
         assertEquals("foo1", foo1Function.name());
         assertEquals("reduce(reduce(input1 * input2, sum, name) * constant1, max, x) * constant2", foo1Function.expression());
         assertEquals("tensor():{202.5}", evaluate(foo1Function, "{{name:a, x:0}: 1, {name:a, x:1}: 2, {name:a, x:2}: 3}").toString());
@@ -72,8 +75,8 @@ public class VespaImportTestCase {
         assertTrue(model.expressions().isEmpty());
         assertTrue(model.functions().isEmpty());
         assertTrue(model.inputs().isEmpty());
-        assertTrue(model.largeConstants().isEmpty());
-        assertTrue(model.smallConstants().isEmpty());
+        assertTrue(model.largeConstantTensors().isEmpty());
+        assertTrue(model.smallConstantTensors().isEmpty());
     }
 
     @Test

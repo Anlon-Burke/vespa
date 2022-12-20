@@ -7,11 +7,13 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+// TODO:
+// - make all items subclasses of "Query" rather than QueryChain and remove all content from QueryChain
 public class Rank extends QueryChain {
 
-    private List<Query> queries = new ArrayList<>();
+    private final List<QueryChain> queries = new ArrayList<>();
 
-    Rank(Query query, Query... ranks) {
+    Rank(Query query, QueryChain... ranks) {
         this.query = query;
         this.nonEmpty = query.nonEmpty();
         queries.add(query);
@@ -47,4 +49,5 @@ public class Rank extends QueryChain {
     boolean hasNegativeSearchField(String fieldName, Object value) {
         return queries.get(0).hasNegativeSearchField(fieldName, value);
     }
+
 }

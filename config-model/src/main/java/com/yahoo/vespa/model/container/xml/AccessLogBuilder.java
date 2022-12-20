@@ -7,14 +7,11 @@ import com.yahoo.vespa.model.builder.xml.dom.VespaDomBuilder;
 import com.yahoo.vespa.model.container.ContainerCluster;
 import com.yahoo.vespa.model.container.component.AccessLogComponent;
 import com.yahoo.vespa.model.container.component.AccessLogComponent.AccessLogType;
-import com.yahoo.vespa.model.container.component.AccessLogComponent.CompressionType;
 import org.w3c.dom.Element;
-
 import java.util.Optional;
 
 import static com.yahoo.collections.CollectionUtil.firstMatching;
 import static com.yahoo.config.model.builder.xml.XmlHelper.getOptionalAttribute;
-
 import static com.yahoo.config.model.builder.xml.XmlHelper.nullIfEmpty;
 
 /**
@@ -102,16 +99,11 @@ public class AccessLogBuilder {
     }
 
     private static AccessLogType logTypeFor(AccessLogTypeLiteral typeLiteral) {
-        switch (typeLiteral) {
-            case DISABLED:
-                return null;
-            case VESPA:
-                return AccessLogType.queryAccessLog;
-            case JSON:
-                return AccessLogType.jsonAccessLog;
-            default:
-                throw new InconsistentSchemaAndCodeError();
-        }
+        return switch (typeLiteral) {
+            case DISABLED -> null;
+            case VESPA -> AccessLogType.queryAccessLog;
+            case JSON -> AccessLogType.jsonAccessLog;
+        };
     }
 
     public static Optional<AccessLogComponent> buildIfNotDisabled(DeployState deployState, ContainerCluster<?> cluster, Element accessLogSpec) {

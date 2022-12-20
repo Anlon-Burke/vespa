@@ -13,7 +13,6 @@ import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.zone.RoutingMethod;
 import com.yahoo.config.provision.zone.ZoneId;
-import com.yahoo.log.LogLevel;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.Instance;
@@ -21,9 +20,9 @@ import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.integration.LogEntry;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateException;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServerException;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.DeploymentResult;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Node;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.NodeFilter;
-import com.yahoo.vespa.hosted.controller.api.integration.configserver.PrepareResponse;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ServiceConvergence;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
@@ -31,11 +30,10 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.TesterCloud;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.DeploymentFailureMails;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.Mail;
-import com.yahoo.vespa.hosted.controller.application.ActivateResult;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.Endpoint;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
-import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
+import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackageStream;
 import com.yahoo.vespa.hosted.controller.application.pkg.TestPackage;
 import com.yahoo.vespa.hosted.controller.maintenance.JobRunner;
 import com.yahoo.vespa.hosted.controller.notification.Notification;
@@ -127,31 +125,28 @@ public class InternalStepRunner implements StepRunner {
     public Optional<RunStatus> run(LockedStep step, RunId id) {
         DualLogger logger = new DualLogger(id, step.get());
         try {
-            switch (step.get()) {
-                case deployTester: return deployTester(id, logger);
-                case deployInitialReal: return deployInitialReal(id, logger);
-                case installInitialReal: return installInitialReal(id, logger);
-                case deployReal: return deployReal(id, logger);
-                case installTester: return installTester(id, logger);
-                case installReal: return installReal(id, logger);
-                case startStagingSetup: return startTests(id, true, logger);
-                case endStagingSetup: return endTests(id, true, logger);
-                case endTests: return endTests(id, false, logger);
-                case startTests: return startTests(id, false, logger);
-                case copyVespaLogs: return copyVespaLogs(id, logger);
-                case deactivateReal: return deactivateReal(id, logger);
-                case deactivateTester: return deactivateTester(id, logger);
-                case report: return report(id, logger);
-                default: throw new AssertionError("Unknown step '" + step + "'!");
-            }
-        }
-        catch (UncheckedIOException e) {
+            return switch (step.get()) {
+                case deployTester -> deployTester(id, logger);
+                case deployInitialReal -> deployInitialReal(id, logger);
+                case installInitialReal -> installInitialReal(id, logger);
+                case deployReal -> deployReal(id, logger);
+                case installTester -> installTester(id, logger);
+                case installReal -> installReal(id, logger);
+                case startStagingSetup -> startTests(id, true, logger);
+                case endStagingSetup -> endTests(id, true, logger);
+                case endTests -> endTests(id, false, logger);
+                case startTests -> startTests(id, false, logger);
+                case copyVespaLogs -> copyVespaLogs(id, logger);
+                case deactivateReal -> deactivateReal(id, logger);
+                case deactivateTester -> deactivateTester(id, logger);
+                case report -> report(id, logger);
+            };
+        } catch (UncheckedIOException e) {
             logger.logWithInternalException(INFO, "IO exception running " + id + ": " + Exceptions.toMessageString(e), e);
             return Optional.empty();
-        }
-        catch (RuntimeException e) {
+        } catch (RuntimeException|LinkageError e) {
             logger.log(WARNING, "Unexpected exception running " + id, e);
-            if (step.get().alwaysRun()) {
+            if (step.get().alwaysRun() && !(e instanceof LinkageError)) {
                 logger.log("Will keep trying, as this is a cleanup step.");
                 return Optional.empty();
             }
@@ -181,6 +176,7 @@ public class InternalStepRunner implements StepRunner {
                       controller.jobController().run(id)
                                 .stepInfo(setTheStage ? deployInitialReal : deployReal).get()
                                 .startTime().get(),
+                      id,
                       logger)
                 .filter(result -> {
                     // If no tester cert, or deployment failed, propagate original result.
@@ -202,24 +198,22 @@ public class InternalStepRunner implements StepRunner {
                       controller.jobController().run(id)
                                 .stepInfo(deployTester).get()
                                 .startTime().get(),
+                      id,
                       logger);
     }
 
-    @SuppressWarnings("deprecation")
-    private Optional<RunStatus> deploy(Supplier<ActivateResult> deployment, Instant startTime, DualLogger logger) {
+    private Optional<RunStatus> deploy(Supplier<DeploymentResult> deployment, Instant startTime, RunId id, DualLogger logger) {
         try {
-            PrepareResponse prepareResponse = deployment.get().prepareResponse();
-            if (prepareResponse.log != null)
-                logger.logAll(prepareResponse.log.stream()
-                                                 .map(entry -> new LogEntry(0, // Sequenced by BufferedLogStore.
-                                                                            Instant.ofEpochMilli(entry.time),
-                                                                            LogEntry.typeOf(LogLevel.parse(entry.level)),
-                                                                            entry.message))
-                                                 .collect(toList()));
+            DeploymentResult result = deployment.get();
+                logger.logAll(result.log().stream()
+                                    .map(entry -> new LogEntry(0, // Sequenced by BufferedLogStore.
+                                                               Instant.ofEpochMilli(entry.epochMillis()),
+                                                               LogEntry.typeOf(entry.level()),
+                                                               entry.message()))
+                                    .collect(toList()));
 
             logger.log("Deployment successful.");
-            if (prepareResponse.message != null)
-                logger.log(prepareResponse.message);
+            logger.log(result.message());
 
             return Optional.of(running);
         }
@@ -231,38 +225,45 @@ public class InternalStepRunner implements StepRunner {
                 logger.log(WARNING, "Deployment failed for one hour; giving up now!");
 
             switch (e.code()) {
-                case CERTIFICATE_NOT_READY:
+                case CERTIFICATE_NOT_READY -> {
                     logger.log("No valid CA signed certificate for app available to config server");
                     if (startTime.plus(timeouts.endpointCertificate()).isBefore(controller.clock().instant())) {
                         logger.log(WARNING, "CA signed certificate for app not available to config server within " + timeouts.endpointCertificate());
                         return Optional.of(RunStatus.endpointCertificateTimeout);
                     }
                     return result;
-                case ACTIVATION_CONFLICT:
-                case APPLICATION_LOCK_FAILURE:
-                case CONFIG_NOT_CONVERGED:
+                }
+                case ACTIVATION_CONFLICT, APPLICATION_LOCK_FAILURE, CONFIG_NOT_CONVERGED -> {
                     logger.log("Deployment failed with possibly transient error " + e.code() +
                                ", will retry: " + e.getMessage());
                     return result;
-                case INTERNAL_SERVER_ERROR:
+                }
+                case INTERNAL_SERVER_ERROR -> {
                     // Log only error code, to avoid exposing internal data in error message
                     logger.log("Deployment failed with possibly transient error " + e.code() + ", will retry");
                     return result;
-                case LOAD_BALANCER_NOT_READY:
-                case PARENT_HOST_NOT_READY:
+                }
+                case LOAD_BALANCER_NOT_READY, PARENT_HOST_NOT_READY -> {
                     logger.log(e.message()); // Consider splitting these messages in summary and details, on config server.
+                    Instant someTimeAfterStart = startTime.plusSeconds(450);
+                    Instant inALittleWhile = controller.clock().instant().plusSeconds(90);
+                    controller.jobController().locked(id, run -> run.sleepingUntil(someTimeAfterStart.isAfter(inALittleWhile) ? someTimeAfterStart : inALittleWhile));
                     return result;
-                case NODE_ALLOCATION_FAILURE:
+                }
+                case NODE_ALLOCATION_FAILURE -> {
                     logger.log(e.message());
                     return controller.system().isCd() && startTime.plus(timeouts.capacity()).isAfter(controller.clock().instant())
                            ? result
                            : Optional.of(nodeAllocationFailure);
-                case INVALID_APPLICATION_PACKAGE:
+                }
+                case INVALID_APPLICATION_PACKAGE -> {
                     logger.log(WARNING, e.getMessage());
                     return Optional.of(invalidApplication);
-                case BAD_REQUEST:
+                }
+                case BAD_REQUEST -> {
                     logger.log(WARNING, e.getMessage());
                     return Optional.of(deploymentFailed);
+                }
             }
 
             throw e;
@@ -924,14 +925,13 @@ public class InternalStepRunner implements StepRunner {
     }
 
     /** Returns the application package for the tester application, assembled from a generated config, fat-jar and services.xml. */
-    private ApplicationPackage testerPackage(RunId id) {
+    private ApplicationPackageStream testerPackage(RunId id) {
         RevisionId revision = controller.jobController().run(id).versions().targetRevision();
         DeploymentSpec spec = controller.applications().requireApplication(TenantAndApplicationId.from(id.application())).deploymentSpec();
-        byte[] testZip = controller.applications().applicationStore().getTester(id.application().tenant(),
-                                                                                id.application().application(), revision);
         boolean useTesterCertificate = useTesterCertificate(id);
 
-        TestPackage testPackage = new TestPackage(testZip,
+        TestPackage testPackage = new TestPackage(() -> controller.applications().applicationStore().streamTester(id.application().tenant(),
+                                                                                                                  id.application().application(), revision),
                                                   controller.system().isPublic(),
                                                   id,
                                                   controller.controllerConfig().steprunner().testerapp(),

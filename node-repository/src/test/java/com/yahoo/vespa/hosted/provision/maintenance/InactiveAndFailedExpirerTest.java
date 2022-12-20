@@ -75,10 +75,10 @@ public class InactiveAndFailedExpirerTest {
         assertEquals(2, dirty.size());
 
         // One node is set back to ready
-        Node ready = tester.nodeRepository().nodes().setReady(List.of(dirty.asList().get(0)), Agent.system, getClass().getSimpleName()).get(0);
+        Node ready = tester.move(Node.State.ready, dirty.asList().get(0));
         assertEquals("Allocated history is removed on readying",
                 List.of(History.Event.Type.provisioned, History.Event.Type.readied),
-                ready.history().events().stream().map(History.Event::type).collect(Collectors.toList()));
+                ready.history().events().stream().map(History.Event::type).toList());
 
         // Dirty times out for the other one
         tester.advanceTime(Duration.ofMinutes(14));
@@ -175,10 +175,14 @@ public class InactiveAndFailedExpirerTest {
         List<Node> inactiveNodes = tester.getNodes(applicationId, Node.State.inactive).asList();
         assertEquals(2, inactiveNodes.size());
 
-        // Nodes marked for deprovisioning are moved to parked
+        // Nodes marked for deprovisioning are moved to dirty and then parked when readied by host-admin
         tester.patchNodes(inactiveNodes, (node) -> node.withWantToRetire(true, true, Agent.system, tester.clock().instant()));
         tester.advanceTime(Duration.ofMinutes(11));
         new InactiveExpirer(tester.nodeRepository(), Duration.ofMinutes(10), Map.of(), new TestMetric()).run();
+
+        NodeList expired = tester.nodeRepository().nodes().list(Node.State.dirty);
+        assertEquals(2, expired.size());
+        expired.forEach(node -> tester.nodeRepository().nodes().markNodeAvailableForNewAllocation(node.hostname(), Agent.operator, "Readied by host-admin"));
         assertEquals(2, tester.nodeRepository().nodes().list(Node.State.parked).size());
     }
 

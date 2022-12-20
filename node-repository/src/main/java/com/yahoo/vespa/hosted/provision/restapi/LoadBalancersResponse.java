@@ -75,8 +75,14 @@ public class LoadBalancersResponse extends SlimeJsonResponse {
                     realObject.setLong("port", real.port());
                 });
             });
+            lb.instance().ifPresent(instance -> {
+                if ( ! instance.settings().isEmpty())
+                    instance.settings().allowedUrns().forEach(lbObject.setObject("settings").setArray("allowedUrns")::addString);
+                instance.serviceId().ifPresent(serviceId -> lbObject.setString("serviceId", serviceId.value()));
+            });
             lb.instance()
-              .flatMap(LoadBalancerInstance::cloudAccount)
+              .map(LoadBalancerInstance::cloudAccount)
+              .filter(cloudAccount -> !cloudAccount.isUnspecified())
               .ifPresent(cloudAccount -> lbObject.setString("cloudAccount", cloudAccount.value()));
         });
     }

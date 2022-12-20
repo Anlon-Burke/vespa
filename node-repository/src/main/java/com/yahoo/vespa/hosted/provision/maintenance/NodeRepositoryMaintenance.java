@@ -69,11 +69,13 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
                                 .map(lbService -> new LoadBalancerExpirer(nodeRepository, defaults.loadBalancerExpirerInterval, lbService, metric))
                                 .ifPresent(maintainers::add);
         provisionServiceProvider.getHostProvisioner()
-                                .map(hostProvisioner -> new DynamicProvisioningMaintainer(nodeRepository, defaults.dynamicProvisionerInterval, hostProvisioner, flagSource, metric))
-                                .ifPresent(maintainers::add);
-        provisionServiceProvider.getHostProvisioner()
-                                .map(hostProvisioner -> new HostRetirer(nodeRepository, defaults.hostRetirerInterval, metric, hostProvisioner))
-                                .ifPresent(maintainers::add);
+                                .map(hostProvisioner -> List.of(
+                                        new HostCapacityMaintainer(nodeRepository, defaults.dynamicProvisionerInterval, hostProvisioner, flagSource, metric),
+                                        new HostDeprovisioner(nodeRepository, defaults.hostDeprovisionerInterval, metric, hostProvisioner),
+                                        new HostResumeProvisioner(nodeRepository, defaults.hostResumeProvisionerInterval, metric, hostProvisioner),
+                                        new HostRetirer(nodeRepository, defaults.hostRetirerInterval, metric, hostProvisioner),
+                                        new DiskReplacer(nodeRepository, defaults.diskReplacerInterval, metric, hostProvisioner)))
+                                .ifPresent(maintainers::addAll);
         // The DuperModel is filled with infrastructure applications by the infrastructure provisioner, so explicitly run that now
         infrastructureProvisioner.maintainButThrowOnException();
     }
@@ -112,6 +114,9 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
         private final Duration infrastructureProvisionInterval;
         private final Duration loadBalancerExpirerInterval;
         private final Duration dynamicProvisionerInterval;
+        private final Duration hostDeprovisionerInterval;
+        private final Duration hostResumeProvisionerInterval;
+        private final Duration diskReplacerInterval;
         private final Duration osUpgradeActivatorInterval;
         private final Duration rebalancerInterval;
         private final Duration nodeMetricsCollectionInterval;
@@ -125,19 +130,22 @@ public class NodeRepositoryMaintenance extends AbstractComponent {
         DefaultTimes(Zone zone, Deployer deployer) {
             autoscalingInterval = Duration.ofMinutes(5);
             dynamicProvisionerInterval = Duration.ofMinutes(3);
+            hostDeprovisionerInterval = Duration.ofMinutes(3);
+            hostResumeProvisionerInterval = Duration.ofMinutes(3);
+            diskReplacerInterval = Duration.ofMinutes(3);
             failedExpirerInterval = Duration.ofMinutes(10);
-            failGrace = Duration.ofMinutes(30);
+            failGrace = Duration.ofMinutes(20);
             infrastructureProvisionInterval = Duration.ofMinutes(3);
             loadBalancerExpirerInterval = Duration.ofMinutes(5);
             metricsInterval = Duration.ofMinutes(1);
-            nodeFailerInterval = Duration.ofMinutes(9);
+            nodeFailerInterval = Duration.ofMinutes(7);
             nodeFailureStatusUpdateInterval = Duration.ofMinutes(2);
             nodeMetricsCollectionInterval = Duration.ofMinutes(1);
             expeditedChangeRedeployInterval = Duration.ofMinutes(3);
             // Vespa upgrade frequency is higher in CD so (de)activate OS upgrades more frequently as well
             osUpgradeActivatorInterval = zone.system().isCd() ? Duration.ofSeconds(30) : Duration.ofMinutes(5);
             periodicRedeployInterval = Duration.ofMinutes(60);
-            provisionedExpiry = zone.getCloud().dynamicProvisioning() ? Duration.ofMinutes(40) : Duration.ofHours(4);
+            provisionedExpiry = zone.cloud().dynamicProvisioning() ? Duration.ofMinutes(40) : Duration.ofHours(4);
             rebalancerInterval = Duration.ofMinutes(120);
             redeployMaintainerInterval = Duration.ofMinutes(1);
             // Need to be long enough for deployment to be finished for all config model versions

@@ -30,6 +30,7 @@
 #include <vespa/searchcore/proton/persistenceengine/commit_and_wait_document_retriever.h>
 #include <vespa/searchcore/proton/reference/document_db_reference_resolver.h>
 #include <vespa/searchcore/proton/reference/i_document_db_reference_registry.h>
+#include <vespa/searchcore/proton/summaryengine/isearchhandler.h>
 #include <vespa/searchcore/proton/bucketdb/bucket_db_owner.h>
 #include <vespa/searchlib/attribute/configconverter.h>
 #include <vespa/searchlib/engine/docsumreply.h>
@@ -110,11 +111,12 @@ public:
     explicit DocumentDBResourceUsageProvider(const DocumentDB& doc_db) noexcept
         : _doc_db(doc_db)
     {}
+
     TransientResourceUsage get_transient_resource_usage() const override {
-        // Transient disk usage is measured as the total disk usage of all current fusion indexes.
-        // Transient memory usage is measured as the total memory usage of all memory indexes.
-        auto stats = _doc_db.getReadySubDB()->getSearchableStats();
-        return {stats.fusion_size_on_disk(), stats.memoryUsage().allocatedBytes()};
+        if (!_doc_db.get_state().get_load_done()) {
+            return {0, 0};
+        }
+        return _doc_db.getReadySubDB()->get_transient_resource_usage();
     }
 };
 
@@ -205,7 +207,6 @@ DocumentDB::DocumentDB(const vespalib::string &baseDir,
       _indexCfg(makeIndexConfig(protonCfg.index)),
       _replay_throttling_policy(std::make_unique<ReplayThrottlingPolicy>(make_replay_throttling_policy(protonCfg.replayThrottlingPolicy))),
       _config_store(std::move(config_store)),
-      _sessionManager(std::make_shared<matching::SessionManager>(protonCfg.grouping.sessionmanager.maxentries)),
       _metricsWireService(metricsWireService),
       _metrics(_docTypeName.getName(), protonCfg.numthreadspersearch),
       _metricsHook(std::make_unique<MetricsUpdateHook>(*this)),
@@ -222,10 +223,10 @@ DocumentDB::DocumentDB(const vespalib::string &baseDir,
               _writeService, shared_service.warmup(), fileHeaderContext, std::move(attribute_interlock),
               metricsWireService, getMetrics(), queryLimiter, shared_service.clock(),
               _configMutex, _baseDir, hwInfo),
-      _maintenanceController(shared_service.transport(), _writeService.master(), shared_service.shared(), _refCount, _docTypeName),
+      _maintenanceController(shared_service.transport(), _writeService.master(), _refCount, _docTypeName),
       _jobTrackers(),
       _calc(),
-      _metricsUpdater(_subDBs, _writeService, _jobTrackers, *_sessionManager, _writeFilter, *_feedHandler)
+      _metricsUpdater(_subDBs, _writeService, _jobTrackers, _writeFilter, *_feedHandler)
 {
     assert(configSnapshot);
 
@@ -339,7 +340,7 @@ DocumentDB::initFinish(DocumentDBConfig::SP configSnapshot)
     // Called by executor thread
     assert(_writeService.master().isCurrentThread());
     _bucketHandler.setReadyBucketHandler(_subDBs.getReadySubDB()->getDocumentMetaStoreContext().get());
-    _subDBs.initViews(*configSnapshot, _sessionManager);
+    _subDBs.initViews(*configSnapshot);
     syncFeedView();
     // Check that feed view has been activated.
     assert(_feedView.get());
@@ -474,9 +475,7 @@ DocumentDB::applyConfig(DocumentDBConfig::SP configSnapshot, SerialNum serialNum
 
     // Save config via config manager if replay is done.
     auto replay_config = DocumentDBConfig::makeReplayConfig(configSnapshot);
-    bool equalReplayConfig =
-        *replay_config ==
-        *DocumentDBConfig::makeReplayConfig(_activeConfigSnapshot);
+    bool equalReplayConfig = (*replay_config == *DocumentDBConfig::makeReplayConfig(_activeConfigSnapshot));
     bool tlsReplayDone = _feedHandler->getTransactionLogReplayDone();
     FeedHandler::CommitResult commit_result;
     if (!equalReplayConfig && tlsReplayDone) {
@@ -594,7 +593,6 @@ DocumentDB::close()
     // matching, summary fetch, flushing and reconfig.
     _feedView.clear();
     _subDBs.clearViews();
-    _sessionManager->close();
     _state.enterDeadState();
 }
 
@@ -946,7 +944,6 @@ DocumentDB::injectMaintenanceJobs(const DocumentDBMaintenanceConfig &config)
             config,
             _bucketExecutor,
             *_feedHandler, // IHeartBeatHandler
-            *_sessionManager, // ISessionCachePruner
             *_feedHandler, // IOperationStorer
             _subDBs.getBucketCreateNotifier(),
             _bucketSpace,
@@ -982,7 +979,7 @@ DocumentDB::performStartMaintenance()
     }
     auto maintenanceConfig = activeConfig->getMaintenanceConfigSP();
     injectMaintenanceJobs(*maintenanceConfig);
-    _maintenanceController.start(maintenanceConfig);
+    _maintenanceController.start();
 }
 
 void
@@ -1002,7 +999,7 @@ DocumentDB::forwardMaintenanceConfig()
         if (_maintenanceController.getPaused()) {
             injectMaintenanceJobs(*maintenanceConfig);
         }
-        _maintenanceController.newConfig(maintenanceConfig);
+        _maintenanceController.newConfig();
     }
 }
 
@@ -1119,6 +1116,11 @@ void
 DocumentDB::set_attribute_usage_listener(std::unique_ptr<IAttributeUsageListener> listener)
 {
     _writeFilter.set_listener(std::move(listener));
+}
+
+matching::SessionManager &
+DocumentDB::session_manager() {
+    return _owner.session_manager();
 }
 
 } // namespace proton

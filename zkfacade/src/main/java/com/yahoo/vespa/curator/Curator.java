@@ -61,14 +61,14 @@ import java.util.logging.Logger;
 public class Curator extends AbstractComponent implements AutoCloseable {
 
     private static final Logger LOG = Logger.getLogger(Curator.class.getName());
-    private static final File ZK_CLIENT_CONFIG_FILE = new File(Defaults.getDefaults().underVespaHome("conf/zookeeper/zookeeper-client.cfg"));
+    private static final File ZK_CLIENT_CONFIG_FILE = new File(Defaults.getDefaults().underVespaHome("var/zookeeper/conf/zookeeper-client.cfg"));
 
     // Note that session timeout has min and max values are related to tickTime defined by server, see zookeeper-server.def
     static final Duration DEFAULT_ZK_SESSION_TIMEOUT = Duration.ofSeconds(120);
 
     private static final Duration ZK_CONNECTION_TIMEOUT = Duration.ofSeconds(30);
     private static final Duration BASE_SLEEP_TIME = Duration.ofSeconds(1);
-    private static final int MAX_RETRIES = 10;
+    private static final int MAX_RETRIES = 4;
     private static final RetryPolicy DEFAULT_RETRY_POLICY = new ExponentialBackoffRetry((int) BASE_SLEEP_TIME.toMillis(), MAX_RETRIES);
     // Default value taken from ZookeeperServerConfig
     static final long defaultJuteMaxBuffer = Long.parseLong(System.getProperty("jute.maxbuffer", "52428800"));
@@ -120,6 +120,7 @@ public class Curator extends AbstractComponent implements AutoCloseable {
                      .connectString(connectionSpec.local())
                      .zookeeperFactory(new VespaZooKeeperFactory(createClientConfig(clientConfigFile)))
                      .dontUseContainerParents() // TODO: Consider changing this in Vespa 9
+                     .ensembleTracker(false)
                      .build(),
              juteMaxBuffer,
              sessionTimeout);

@@ -24,7 +24,6 @@ import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
-import com.yahoo.vespa.hosted.provision.NodeMutex;
 import com.yahoo.vespa.hosted.provision.maintenance.ReservationExpirer;
 import com.yahoo.vespa.hosted.provision.maintenance.TestMetric;
 import com.yahoo.vespa.hosted.provision.node.Agent;
@@ -99,7 +98,8 @@ public class ProvisioningTest {
 
         // remove nodes before deploying
         SystemState state5 = prepare(application1, 2, 2, 3, 3, defaultResources, tester);
-        HostSpec removed = tester.removeOne(state5.allHosts);
+        HostSpec removed = tester.removeOne(state5.content0);
+        state5.allHosts.remove(removed);
         tester.activate(application1, state5.allHosts);
         assertEquals(removed.hostname(),
                      tester.nodeRepository().nodes().list(Node.State.inactive).owner(application1).first().get().hostname());
@@ -132,7 +132,7 @@ public class ProvisioningTest {
         tester.activate(application2, state2App2.allHosts);
 
         // deploy first app again
-        tester.nodeRepository().nodes().setReady(tester.nodeRepository().nodes().list(Node.State.dirty).asList(), Agent.system, "recycled");
+        tester.move(Node.State.ready, tester.nodeRepository().nodes().list(Node.State.dirty).asList());
         SystemState state7 = prepare(application1, 2, 2, 3, 3, defaultResources, tester);
         state7.assertEquals(state1);
         tester.activate(application1, state7.allHosts);
@@ -165,10 +165,10 @@ public class ProvisioningTest {
         Set<Integer> state1Indexes = state1.allHosts.stream().map(hostSpec -> hostSpec.membership().get().index()).collect(Collectors.toSet());
 
         // deallocate 2 nodes with index 0
-        NodeMutex node1 = tester.nodeRepository().nodes().lockAndGet(tester.removeOne(state1.container0).hostname()).get();
-        NodeMutex node2 = tester.nodeRepository().nodes().lockAndGet(tester.removeOne(state1.content0).hostname()).get();
-        tester.nodeRepository().nodes().write(node1.node().withoutAllocation(), node1);
-        tester.nodeRepository().nodes().write(node2.node().withoutAllocation(), node1);
+        Node node1 = tester.nodeRepository().nodes().node(tester.removeOne(state1.container0).hostname()).get();
+        Node node2 = tester.nodeRepository().nodes().node(tester.removeOne(state1.content0).hostname()).get();
+        tester.nodeRepository().nodes().removeRecursively(node1, true);
+        tester.nodeRepository().nodes().removeRecursively(node2, true);
 
         // redeploy to get new nodes
         SystemState state2 = prepare(app1, 2, 2, 3, 3, defaultResources, tester);
@@ -923,7 +923,7 @@ public class ProvisioningTest {
                 Node.create("cfghost2", new IP.Config(Set.of("::2:0"), Set.of("::2:1")), "cfghost2", flavor, NodeType.confighost).ipConfig(IP.Config.of(Set.of("::2:0"), Set.of("::2:1"), List.of())).build(),
                 Node.create("cfg1", new IP.Config(Set.of("::1:1"), Set.of()), "cfg1", flavor, NodeType.config).parentHostname("cfghost1").build(),
                 Node.create("cfg2", new IP.Config(Set.of("::2:1"), Set.of()), "cfg2", flavor, NodeType.config).parentHostname("cfghost2").build());
-        tester.nodeRepository().nodes().setReady(tester.nodeRepository().nodes().addNodes(nodes, Agent.system), Agent.system, ProvisioningTest.class.getSimpleName());
+        tester.move(Node.State.ready, tester.nodeRepository().nodes().addNodes(nodes, Agent.system));
 
         InfraApplication cfgHostApp = new ConfigServerHostApplication();
         InfraApplication cfgApp = new ConfigServerApplication();
@@ -1102,11 +1102,11 @@ public class ProvisioningTest {
 
     private static class SystemState {
 
-        private Set<HostSpec> allHosts;
-        private Set<HostSpec> container0;
-        private Set<HostSpec> container1;
-        private Set<HostSpec> content0;
-        private Set<HostSpec> content1;
+        private final Set<HostSpec> allHosts;
+        private final Set<HostSpec> container0;
+        private final Set<HostSpec> container1;
+        private final Set<HostSpec> content0;
+        private final Set<HostSpec> content1;
 
         public SystemState(Set<HostSpec> allHosts,
                            Set<HostSpec> container1,

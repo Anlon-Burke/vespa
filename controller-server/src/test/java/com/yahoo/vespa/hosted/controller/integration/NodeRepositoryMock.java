@@ -20,10 +20,8 @@ import com.yahoo.vespa.hosted.controller.api.integration.configserver.NodeReposi
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.TargetVersions;
 
 import java.net.URI;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,7 +37,6 @@ public class NodeRepositoryMock implements NodeRepository {
     private final Map<ZoneId, Map<HostName, Node>> nodeRepository = new ConcurrentHashMap<>();
     private final Map<ZoneId, Map<ApplicationId, Application>> applications = new ConcurrentHashMap<>();
     private final Map<ZoneId, TargetVersions> targetVersions = new ConcurrentHashMap<>();
-    private final Map<Integer, Duration> osUpgradeBudgets = new ConcurrentHashMap<>();
     private final Map<DeploymentId, Pair<Double, Double>> trafficFractions = new ConcurrentHashMap<>();
     private final Map<ZoneId, Map<TenantName, URI>> archiveUris = new ConcurrentHashMap<>();
 
@@ -84,7 +81,7 @@ public class NodeRepositoryMock implements NodeRepository {
                                              (node.owner().isPresent() && filter.applications().contains(node.owner().get())))
                              .filter(node -> filter.hostnames().isEmpty() || filter.hostnames().contains(node.hostname()))
                              .filter(node -> filter.states().isEmpty() || filter.states().contains(node.state()))
-                             .collect(Collectors.toList());
+                             .toList();
     }
 
     @Override
@@ -104,7 +101,7 @@ public class NodeRepositoryMock implements NodeRepository {
                 applications.containsKey(zone)
                         ? applications.get(zone).keySet().stream()
                                       .map(id -> new ApplicationStats(id, Load.zero(), 0, 0))
-                                      .collect(Collectors.toList())
+                                      .toList()
                         : List.of();
 
         return new NodeRepoStats(0.0, 0.0, Load.zero(), Load.zero(), applicationStats);
@@ -148,8 +145,7 @@ public class NodeRepositoryMock implements NodeRepository {
     }
 
     @Override
-    public void upgradeOs(ZoneId zone, NodeType type, Version version, Duration upgradeBudget) {
-        this.osUpgradeBudgets.put(Objects.hash(zone, type, version), upgradeBudget);
+    public void upgradeOs(ZoneId zone, NodeType type, Version version) {
         this.targetVersions.compute(zone, (ignored, targetVersions) -> {
             if (targetVersions == null) {
                 targetVersions = TargetVersions.EMPTY;
@@ -280,10 +276,6 @@ public class NodeRepositoryMock implements NodeRepository {
         putNodes(zone, List.of(nodeA, nodeB));
     }
 
-    public Optional<Duration> osUpgradeBudget(ZoneId zone, NodeType type, Version version) {
-        return Optional.ofNullable(osUpgradeBudgets.get(Objects.hash(zone, type, version)));
-    }
-
     public void doUpgrade(DeploymentId deployment, Optional<HostName> hostName, Version version) {
         patchNodes(deployment, hostName, node -> {
             return Node.builder(node)
@@ -344,7 +336,7 @@ public class NodeRepositoryMock implements NodeRepository {
         } else {
             nodes = list(zone, NodeFilter.all());
         }
-        putNodes(zone, nodes.stream().map(patcher).collect(Collectors.toList()));
+        putNodes(zone, nodes.stream().map(patcher).toList());
     }
 
 }

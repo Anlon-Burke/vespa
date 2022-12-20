@@ -10,10 +10,8 @@ import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.Zone;
-import com.yahoo.vespa.flags.JacksonFlag;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.flags.StringFlag;
-import com.yahoo.vespa.flags.custom.SharedHost;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import java.util.Map;
 import java.util.TreeMap;
@@ -30,13 +28,13 @@ import static java.util.Objects.requireNonNull;
  */
 public class CapacityPolicies {
 
+    private final NodeRepository nodeRepository;
     private final Zone zone;
-    private final JacksonFlag<SharedHost> sharedHosts;
     private final StringFlag adminClusterNodeArchitecture;
 
     public CapacityPolicies(NodeRepository nodeRepository) {
+        this.nodeRepository = nodeRepository;
         this.zone = nodeRepository.zone();
-        this.sharedHosts = PermanentFlags.SHARED_HOST.bindTo(nodeRepository.flagSource());
         this.adminClusterNodeArchitecture = PermanentFlags.ADMIN_CLUSTER_NODE_ARCHITECTURE.bindTo(nodeRepository.flagSource());
     }
 
@@ -56,13 +54,12 @@ public class CapacityPolicies {
         if (isTester) return 1;
 
         if (required) return requested;
-        switch(zone.environment()) {
-            case dev : case test : return 1;
-            case perf : return Math.min(requested, 3);
-            case staging: return requested <= 1 ? requested : Math.max(2, requested / 10);
-            case prod : return requested;
-            default : throw new IllegalArgumentException("Unsupported environment " + zone.environment());
-        }
+        return switch (zone.environment()) {
+            case dev, test -> 1;
+            case perf -> Math.min(requested, 3);
+            case staging -> requested <= 1 ? requested : Math.max(2, requested / 10);
+            case prod -> requested;
+        };
     }
 
     private NodeResources decideNodeResources(NodeResources target, boolean required, boolean exclusive) {
@@ -70,7 +67,7 @@ public class CapacityPolicies {
         if (target.isUnspecified()) return target; // Cannot be modified
 
         // Dev does not cap the cpu or network of containers since usage is spotty: Allocate just a small amount exclusively
-        if (zone.environment() == Environment.dev && !zone.getCloud().dynamicProvisioning())
+        if (zone.environment() == Environment.dev && zone.cloud().allowHostSharing())
             target = target.withVcpu(0.1).withBandwidthGbps(0.1);
 
         // Allow slow storage in zones which are not performance sensitive
@@ -80,42 +77,42 @@ public class CapacityPolicies {
         return target;
     }
 
-    public NodeResources defaultNodeResources(ClusterSpec clusterSpec, ApplicationId applicationId, boolean exclusive) {
+    public NodeResources defaultNodeResources(ClusterSpec clusterSpec, ApplicationId applicationId) {
         if (clusterSpec.type() == ClusterSpec.Type.admin) {
             Architecture architecture = adminClusterArchitecture(applicationId);
 
             if (clusterSpec.id().value().equals("cluster-controllers")) {
-                return clusterControllerResources(clusterSpec, exclusive)
-                        .with(architecture);
+                return clusterControllerResources(clusterSpec).with(architecture);
             }
 
-            return (requiresExclusiveHost(clusterSpec.type(), exclusive)
-                    ? versioned(clusterSpec, Map.of(new Version("0"), smallestExclusiveResources()))
-                    : versioned(clusterSpec, Map.of(new Version("0"), smallestSharedResources())))
+            return (nodeRepository.exclusiveAllocation(clusterSpec)
+                    ? versioned(clusterSpec, Map.of(new Version(0), smallestExclusiveResources()))
+                    : versioned(clusterSpec, Map.of(new Version(0), smallestSharedResources())))
                     .with(architecture);
         }
 
-        return zone.getCloud().dynamicProvisioning()
-               ? versioned(clusterSpec, Map.of(new Version("0"), new NodeResources(2.0, 8, 50, 0.3)))
-               : versioned(clusterSpec, Map.of(new Version("0"), new NodeResources(1.5, 8, 50, 0.3)));
+        if (clusterSpec.type() == ClusterSpec.Type.content) {
+            return zone.cloud().dynamicProvisioning()
+                   ? versioned(clusterSpec, Map.of(new Version(0), new NodeResources(2.0, 8, 50, 0.3),
+                                                   new Version(8, 75), new NodeResources(2, 16, 300, 0.3)))
+                   : versioned(clusterSpec, Map.of(new Version(0), new NodeResources(1.5, 8, 50, 0.3)));
+        }
+        else {
+            return zone.cloud().dynamicProvisioning()
+                   ? versioned(clusterSpec, Map.of(new Version(0), new NodeResources(2.0, 8, 50, 0.3)))
+                   : versioned(clusterSpec, Map.of(new Version(0), new NodeResources(1.5, 8, 50, 0.3)));
+        }
     }
 
-    private NodeResources clusterControllerResources(ClusterSpec clusterSpec, boolean exclusive) {
-        if (requiresExclusiveHost(clusterSpec.type(), exclusive)) {
-            return versioned(clusterSpec, Map.of(new Version("0"), smallestExclusiveResources()));
+    private NodeResources clusterControllerResources(ClusterSpec clusterSpec) {
+        if (nodeRepository.exclusiveAllocation(clusterSpec)) {
+            return versioned(clusterSpec, Map.of(new Version(0), smallestExclusiveResources()));
         }
-        return versioned(clusterSpec, Map.of(new Version("0"), new NodeResources(0.25, 1.14, 10, 0.3),
-                                             new Version("7.586.50"), new NodeResources(0.25, 1.333, 10, 0.3),
-                                             new Version("7.586.54"), new NodeResources(0.25, 1.14, 10, 0.3)));
+        return versioned(clusterSpec, Map.of(new Version(0), new NodeResources(0.25, 1.14, 10, 0.3)));
     }
 
     private Architecture adminClusterArchitecture(ApplicationId instance) {
         return Architecture.valueOf(adminClusterNodeArchitecture.with(APPLICATION_ID, instance.serializedForm()).value());
-    }
-
-    /** Returns whether an exclusive host is required for given cluster type and exclusivity requirement */
-    private boolean requiresExclusiveHost(ClusterSpec.Type type, boolean exclusive) {
-        return zone.getCloud().dynamicProvisioning() && (exclusive || !sharedHosts.value().isEnabled(type.name()));
     }
 
     /** Returns the resources for the newest version not newer than that requested in the cluster spec. */
@@ -127,22 +124,23 @@ public class CapacityPolicies {
 
     // The lowest amount resources that can be exclusive allocated (i.e. a matching host flavor for this exists)
     private NodeResources smallestExclusiveResources() {
-        return (zone.getCloud().name().equals(CloudName.GCP))
+        return (zone.cloud().name().equals(CloudName.GCP))
                 ? new NodeResources(1, 4, 50, 0.3)
                 : new NodeResources(0.5, 4, 50, 0.3);
     }
 
     // The lowest amount resources that can be shared (i.e. a matching host flavor for this exists)
     private NodeResources smallestSharedResources() {
-        return (zone.getCloud().name().equals(CloudName.GCP))
+        return (zone.cloud().name().equals(CloudName.GCP))
                 ? new NodeResources(1, 4, 50, 0.3)
                 : new NodeResources(0.5, 2, 50, 0.3);
     }
 
     /** Returns whether the nodes requested can share physical host with other applications */
-    public boolean decideExclusivity(Capacity capacity, boolean requestedExclusivity) {
-        if (capacity.cloudAccount().isPresent()) return true; // Implicit exclusive when using custom cloud account
-        return requestedExclusivity && (capacity.isRequired() || zone.environment() == Environment.prod);
+    public ClusterSpec decideExclusivity(Capacity capacity, ClusterSpec requestedCluster) {
+        if (capacity.cloudAccount().isPresent()) return requestedCluster.withExclusivity(true); // Implicit exclusive
+        boolean exclusive = requestedCluster.isExclusive() && (capacity.isRequired() || zone.environment() == Environment.prod);
+        return requestedCluster.withExclusivity(exclusive);
     }
 
 }

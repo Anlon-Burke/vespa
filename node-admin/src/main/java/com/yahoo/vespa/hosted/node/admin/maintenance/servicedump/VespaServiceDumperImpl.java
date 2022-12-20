@@ -98,7 +98,7 @@ public class VespaServiceDumperImpl implements VespaServiceDumper {
             handleFailure(context, request, startedAt, "No artifacts requested");
             return;
         }
-        ContainerPath directory = context.paths().underVespaHome("tmp/vespa-service-dump-" + request.getCreatedMillisOrNull());
+        ContainerPath directory = context.paths().underVespaHome("var/tmp/vespa-service-dump-" + request.getCreatedMillisOrNull());
         UnixPath unixPathDirectory = new UnixPath(directory);
         try {
             context.log(log, Level.INFO,
@@ -139,7 +139,7 @@ public class VespaServiceDumperImpl implements VespaServiceDumper {
                     String classification = a.classification().map(Artifact.Classification::value).orElse(null);
                     return SyncFileInfo.forServiceDump(destination, a.file(), compression, owner, classification);
                 })
-                .collect(Collectors.toList());
+                .toList();
         ctx.log(log, Level.INFO,
                 "Uploading " + filesToUpload.size() + " file(s) with destination " + destination);
         if (!syncClient.sync(ctx, filesToUpload, Integer.MAX_VALUE)) {

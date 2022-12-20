@@ -126,7 +126,7 @@ public class NodeRebooterTest {
 
     /** Schedule OS upgrade for all host nodes */
     private void scheduleOsUpgrade(NodeRepository nodeRepository) {
-        nodeRepository.osVersions().setTarget(NodeType.host, Version.fromString("7.1"), Duration.ZERO, false);
+        nodeRepository.osVersions().setTarget(NodeType.host, Version.fromString("7.1"), false);
     }
 
     /** Simulate completion of an OS upgrade */
@@ -142,7 +142,7 @@ public class NodeRebooterTest {
 
     /** Returns the subset of the given nodes which have the given current reboot generation */
     private List<Node> withCurrentRebootGeneration(long generation, List<Node> nodes) {
-        return nodes.stream().filter(n -> n.status().reboot().current() == generation).collect(Collectors.toList());
+        return nodes.stream().filter(n -> n.status().reboot().current() == generation).toList();
     }
 
     private static ProvisioningTester createTester(Duration rebootInterval, InMemoryFlagSource flagSource) {

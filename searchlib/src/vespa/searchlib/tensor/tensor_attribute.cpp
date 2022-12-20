@@ -1,8 +1,12 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "tensor_attribute.h"
-#include "blob_sequence_reader.h"
-#include "tensor_store_saver.h"
+#include "nearest_neighbor_index.h"
+#include "nearest_neighbor_index_factory.h"
+#include "nearest_neighbor_index_saver.h"
+#include "tensor_attribute_constants.h"
+#include "tensor_attribute_loader.h"
+#include "tensor_attribute_saver.h"
 #include <vespa/document/base/exceptions.h>
 #include <vespa/document/datatype/tensor_data_type.h>
 #include <vespa/searchlib/attribute/address_space_components.h>
@@ -31,8 +35,6 @@ namespace search::tensor {
 
 namespace {
 
-constexpr uint32_t TENSOR_ATTRIBUTE_VERSION = 0;
-
 Value::UP
 createEmptyTensor(const ValueType &type)
 {
@@ -50,14 +52,22 @@ vespalib::string makeWrongTensorTypeMsg(const ValueType &fieldTensorType, const 
 
 }
 
-TensorAttribute::TensorAttribute(vespalib::stringref name, const Config &cfg, TensorStore &tensorStore)
+TensorAttribute::TensorAttribute(vespalib::stringref name, const Config &cfg, TensorStore &tensorStore, const NearestNeighborIndexFactory& index_factory)
     : NotImplementedAttribute(name, cfg),
       _refVector(cfg.getGrowStrategy(), getGenerationHolder()),
       _tensorStore(tensorStore),
+      _index(),
       _is_dense(cfg.tensorType().is_dense()),
       _emptyTensor(createEmptyTensor(cfg.tensorType())),
-      _compactGeneration(0)
+      _compactGeneration(0),
+      _subspace_type(cfg.tensorType()),
+      _comp(cfg.tensorType())
 {
+    if (cfg.hnsw_index_params().has_value()) {
+        auto tensor_type = cfg.tensorType();
+        size_t vector_size = tensor_type.dense_subspace_size();
+        _index = index_factory.make(*this, vector_size, !_is_dense, tensor_type.cell_type(), cfg.hnsw_index_params().value());
+    }
 }
 
 TensorAttribute::~TensorAttribute() = default;
@@ -71,6 +81,7 @@ TensorAttribute::asTensorAttribute() const
 uint32_t
 TensorAttribute::clearDoc(DocId docId)
 {
+    consider_remove_from_index(docId);
     EntryRef oldRef(_refVector[docId].load_relaxed());
     updateUncommittedDocIdLimit(docId);
     _refVector[docId] = AtomicEntryRef();
@@ -95,6 +106,12 @@ TensorAttribute::onCommit()
         incGeneration();
         updateStat(true);
     }
+    if (_index) {
+        if (_index->consider_compact(getConfig().getCompactionStrategy())) {
+            incGeneration();
+            updateStat(true);
+        }
+    }
 }
 
 void
@@ -114,6 +131,9 @@ TensorAttribute::reclaim_memory(generation_t oldest_used_gen)
 {
     _tensorStore.reclaim_memory(oldest_used_gen);
     getGenerationHolder().reclaim(oldest_used_gen);
+    if (_index) {
+        _index->reclaim_memory(oldest_used_gen);
+    }
 }
 
 void
@@ -121,6 +141,9 @@ TensorAttribute::before_inc_generation(generation_t current_gen)
 {
     getGenerationHolder().assign_generation(current_gen);
     _tensorStore.assign_generation(current_gen);
+    if (_index) {
+        _index->assign_generation(current_gen);
+    }
 }
 
 bool
@@ -164,21 +187,32 @@ TensorAttribute::setTensorRef(DocId docId, EntryRef ref)
     }
 }
 
+void
+TensorAttribute::internal_set_tensor(DocId docid, const Value& tensor)
+{
+    consider_remove_from_index(docid);
+    EntryRef ref = _tensorStore.store_tensor(tensor);
+    assert(ref.valid());
+    setTensorRef(docid, ref);
+}
+
+void
+TensorAttribute::consider_remove_from_index(DocId docid)
+{
+    if (_index && _refVector[docid].load_relaxed().valid()) {
+        _index->remove_document(docid);
+    }
+}
+
 vespalib::MemoryUsage
 TensorAttribute::update_stat()
 {
     vespalib::MemoryUsage result = _refVector.getMemoryUsage();
     result.merge(_tensorStore.update_stat(getConfig().getCompactionStrategy()));
     result.mergeGenerationHeldBytes(getGenerationHolder().get_held_bytes());
-    return result;
-}
-
-vespalib::MemoryUsage
-TensorAttribute::memory_usage() const
-{
-    vespalib::MemoryUsage result = _refVector.getMemoryUsage();
-    result.merge(_tensorStore.getMemoryUsage());
-    result.mergeGenerationHeldBytes(getGenerationHolder().get_held_bytes());
+    if (_index) {
+        result.merge(_index->update_stat(getConfig().getCompactionStrategy()));
+    }
     return result;
 }
 
@@ -200,6 +234,9 @@ TensorAttribute::populate_address_space_usage(AddressSpaceUsage& usage) const
         auto stats = vespalib::SharedStringRepo::stats();
         usage.set(AddressSpaceComponents::shared_string_repo,
                   vespalib::AddressSpace(stats.max_part_usage, 0, stats.part_limit()));
+    }
+    if (_index) {
+        _index->populate_address_space_usage(usage);
     }
 }
 
@@ -225,6 +262,22 @@ const vespalib::eval::ValueType &
 TensorAttribute::getTensorType() const
 {
     return getConfig().tensorType();
+}
+
+const NearestNeighborIndex*
+TensorAttribute::nearest_neighbor_index() const
+{
+    return _index.get();
+}
+
+std::unique_ptr<Value>
+TensorAttribute::getTensor(DocId docId) const
+{
+    EntryRef ref;
+    if (docId < getCommittedDocIdLimit()) {
+        ref = acquire_entry_ref(docId);
+    }
+    return _tensorStore.get_tensor(ref);
 }
 
 void
@@ -257,12 +310,15 @@ TensorAttribute::onShrinkLidSpace()
     assert(_refVector.size() >= committedDocIdLimit);
     _refVector.shrink(committedDocIdLimit);
     setNumDocs(committedDocIdLimit);
+    if (_index) {
+        _index->shrink_lid_space(committedDocIdLimit);
+    }
 }
 
 uint32_t
 TensorAttribute::getVersion() const
 {
-    return TENSOR_ATTRIBUTE_VERSION;
+    return (_tensorStore.as_dense() != nullptr) ? DENSE_TENSOR_ATTRIBUTE_VERSION : TENSOR_ATTRIBUTE_VERSION;
 }
 
 TensorAttribute::RefCopyVector
@@ -280,36 +336,10 @@ TensorAttribute::getRefCopy() const
 }
 
 bool
-TensorAttribute::onLoad(vespalib::Executor*)
+TensorAttribute::onLoad(vespalib::Executor* executor)
 {
-    BlobSequenceReader tensorReader(*this);
-    if (!tensorReader.hasData()) {
-        return false;
-    }
-    setCreateSerialNum(tensorReader.getCreateSerialNum());
-    assert(tensorReader.getVersion() == getVersion());
-    uint32_t numDocs = tensorReader.getDocIdLimit();
-    _refVector.reset();
-    _refVector.unsafe_reserve(numDocs);
-    vespalib::Array<char> buffer(1024);
-    for (uint32_t lid = 0; lid < numDocs; ++lid) {
-        uint32_t tensorSize = tensorReader.getNextSize();
-        if (tensorSize != 0) {
-            if (tensorSize > buffer.size()) {
-                buffer.resize(tensorSize + 1024);
-            }
-            tensorReader.readBlob(&buffer[0], tensorSize);
-            vespalib::nbostream source(&buffer[0], tensorSize);
-            EntryRef ref = _tensorStore.store_encoded_tensor(source);
-            _refVector.push_back(AtomicEntryRef(ref));
-        } else {
-            EntryRef invalid;
-            _refVector.push_back(AtomicEntryRef(invalid));
-        }
-    }
-    setNumDocs(numDocs);
-    setCommittedDocIdLimit(numDocs);
-    return true;
+    TensorAttributeLoader loader(*this, getGenerationHandler(), _refVector, _tensorStore, _index.get());
+    return loader.on_load(executor);
 }
 
 std::unique_ptr<AttributeSaver>
@@ -317,11 +347,23 @@ TensorAttribute::onInitSave(vespalib::stringref fileName)
 {
     vespalib::GenerationHandler::Guard guard(getGenerationHandler().
                                              takeGuard());
-    return std::make_unique<TensorStoreSaver>
+    auto index_saver = (_index ? _index->make_saver() : std::unique_ptr<NearestNeighborIndexSaver>());
+    return std::make_unique<TensorAttributeSaver>
         (std::move(guard),
          this->createAttributeHeader(fileName),
          getRefCopy(),
-         _tensorStore);
+         _tensorStore,
+         std::move(index_saver));
+}
+
+void
+TensorAttribute::setTensor(DocId docId, const Value& tensor)
+{
+    checkTensorType(tensor);
+    internal_set_tensor(docId, tensor);
+    if (_index) {
+        _index->add_document(docId);
+    }
 }
 
 void
@@ -347,23 +389,61 @@ TensorAttribute::update_tensor(DocId docId,
 std::unique_ptr<PrepareResult>
 TensorAttribute::prepare_set_tensor(DocId docid, const vespalib::eval::Value& tensor) const
 {
-    (void) docid;
-    (void) tensor;
-    return std::unique_ptr<PrepareResult>();
+    checkTensorType(tensor);
+    if (_index) {
+        VectorBundle vectors(tensor.cells().data, tensor.index().size(), _subspace_type);
+        if (tensor_cells_are_unchanged(docid, vectors)) {
+            // Don't make changes to the nearest neighbor index when the inserted tensor cells are unchanged.
+            // With this optimization we avoid doing unnecessary costly work, first removing the vector point, then inserting the same point.
+            return {};
+        }
+        return _index->prepare_add_document(docid, vectors, getGenerationHandler().takeGuard());
+    }
+    return {};
 }
 
 void
 TensorAttribute::complete_set_tensor(DocId docid, const vespalib::eval::Value& tensor,
                                      std::unique_ptr<PrepareResult> prepare_result)
 {
-    (void) docid;
-    (void) tensor;
-    (void) prepare_result;
+    if (_index && !prepare_result) {
+        // The tensor cells are unchanged
+        if (!_is_dense) {
+            // but labels might have changed.
+            EntryRef ref = _tensorStore.store_tensor(tensor);
+            assert(ref.valid());
+            setTensorRef(docid, ref);
+        }
+        return;
+    }
+    internal_set_tensor(docid, tensor);
+    if (_index) {
+        _index->complete_add_document(docid, std::move(prepare_result));
+    }
 }
 
 attribute::DistanceMetric
 TensorAttribute::distance_metric() const {
     return getConfig().distance_metric();
+}
+
+bool
+TensorAttribute::tensor_cells_are_unchanged(DocId docid, VectorBundle vectors) const
+{
+    if (docid >= getCommittedDocIdLimit()) {
+        return false;
+    }
+    auto old_vectors = get_vectors(docid);
+    auto old_subspaces = old_vectors.subspaces();
+    if (old_subspaces != vectors.subspaces()) {
+        return false;
+    }
+    for (uint32_t subspace = 0; subspace < old_subspaces; ++subspace) {
+        if (!_comp.equals(old_vectors.cells(subspace), vectors.cells(subspace))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }

@@ -132,7 +132,7 @@ public class YqlParser implements Parser {
     public static final String USER_INPUT_LANGUAGE = "language";
     private static final String USER_INPUT_GRAMMAR_RAW = "raw";
     private static final String USER_INPUT_GRAMMAR_SEGMENT = "segment";
-    private static final String USER_INPUT_GRAMMAR_WEAKAND = "weakAnd";
+    private static final Set<String> WEAKAND_GRAMMARS = Set.of("weakAnd", "tokenize");
     private static final String USER_INPUT = "userInput";
     private static final String USER_QUERY = "userQuery";
     private static final String NON_EMPTY = "nonEmpty";
@@ -707,7 +707,7 @@ public class YqlParser implements Parser {
     }
 
     private Item buildUserInput(OperatorNode<ExpressionOperator> ast) {
-        // TODO add support for default arguments if property results in nothing
+        // TODO: Add support for default arguments if property results in nothing
         List<OperatorNode<ExpressionOperator>> args = ast.getArgument(1);
         String wordData = getStringContents(args.get(0));
 
@@ -727,12 +727,13 @@ public class YqlParser implements Parser {
             item = instantiateWordItem(defaultIndex, wordData, ast, null, SegmentWhen.ALWAYS, false, language);
         } else {
             item = parseUserInput(grammar, defaultIndex, wordData, language, allowEmpty);
-            propagateUserInputAnnotations(ast, item);
+            propagateUserInputAnnotationsRecursively(ast, item);
         }
 
         // Set grammar-specific annotations
-        if (USER_INPUT_GRAMMAR_WEAKAND.equals(grammar) && item instanceof WeakAndItem weakAndItem) {
-            weakAndItem.setN(getAnnotation(ast, TARGET_HITS, Integer.class, WeakAndItem.defaultN, "'targetHits' (N) for weak and"));
+        if (WEAKAND_GRAMMARS.contains(grammar) && item instanceof WeakAndItem weakAndItem) {
+            weakAndItem.setN(getAnnotation(ast, TARGET_HITS, Integer.class, WeakAndItem.defaultN,
+                                           "'targetHits' (N) for weak and"));
         }
         return item;
     }
@@ -767,7 +768,7 @@ public class YqlParser implements Parser {
         }
     }
 
-    private void propagateUserInputAnnotations(OperatorNode<ExpressionOperator> ast, Item item) {
+    private void propagateUserInputAnnotationsRecursively(OperatorNode<ExpressionOperator> ast, Item item) {
         ToolBox.visit(new AnnotationPropagator(ast), item);
     }
 

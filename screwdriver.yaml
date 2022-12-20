@@ -125,12 +125,7 @@ jobs:
           git clone -q https://github.com/vespa-engine/system-test
           (cd system-test && git checkout $SYSTEM_TEST_REF)
           # Set correct version in pom.xml files
-          (cd vespa && \
-           find . -name "pom.xml" -exec sed -i'' \
-                -e "s,<version>.*SNAPSHOT.*</version>,<version>$VESPA_VERSION</version>," \
-                -e "s,<vespaversion>.*project.version.*</vespaversion>,<vespaversion>$VESPA_VERSION</vespaversion>," \
-                -e "s,<test-framework.version>.*project.version.*</test-framework.version>,<test-framework.version>$VESPA_VERSION</test-framework.version>," \
-                {} \;)
+          (cd vespa && screwdriver/replace-vespa-version-in-poms.sh $VESPA_VERSION $(pwd) )
       - make-srpm: |
           make -C $WORKDIR/vespa -f .copr/Makefile srpm outdir=$WORKDIR
       - *restore-cache
@@ -138,10 +133,11 @@ jobs:
           cd $WORKDIR/vespa
           export FACTORY_VESPA_VERSION=$VESPA_VERSION
           NUM_THREADS=$(( $(nproc) + 2 ))
+          VESPA_CMAKE_SANITIZERS_OPTION=""
           time make -C client/go BIN=$WORKDIR/vespa-install/opt/vespa/bin SHARE=$WORKDIR/vespa-install/usr/share install-all
           time ./bootstrap.sh java
           time mvn -T $NUM_THREADS $VESPA_MAVEN_EXTRA_OPTS install
-          cmake3 -DVESPA_UNPRIVILEGED=no .
+          cmake3 -DVESPA_UNPRIVILEGED=no $VESPA_CMAKE_SANITIZERS_OPTION .
           time make -j ${NUM_THREADS}
           time ctest3 --output-on-failure -j ${NUM_THREADS}
           ccache --show-stats
@@ -154,7 +150,10 @@ jobs:
                         --define "installdir $WORKDIR/vespa-install" *.src.rpm
           mkdir -p $WORKDIR/system-test/docker/rpms
           mv $WORKDIR/vespa-rpmbuild/RPMS/x86_64/*.rpm $WORKDIR/system-test/docker/rpms
-          rm -f $WORKDIR/system-test/docker/rpms/*debuginfo*rpm
+          if test -z "$VESPA_CMAKE_SANITIZERS_OPTION"
+          then
+              rm -f $WORKDIR/system-test/docker/rpms/*debuginfo*rpm
+          fi
           ls -la $WORKDIR/system-test/docker/rpms
       - build-test-image: |
           cd $WORKDIR/system-test
@@ -164,7 +163,7 @@ jobs:
           cd docker
           docker build --file Dockerfile.systemtest \
                        --build-arg VESPA_BASE_IMAGE=vespaengine/vespa-systemtest-base-centos-stream8:latest \
-                       --build-arg SYSTEMTEST_BASE_IMAGE=vespa --build-arg SKIP_M2_POPULATE=true \
+                       --build-arg SYSTEMTEST_BASE_IMAGE=vespa --build-arg SKIP_M2_POPULATE=false \
                        --target systemtest \
                        --tag vespaengine/vespa-systemtest-centos-stream8:$VESPA_VERSION \
                        --tag vespaengine/vespa-systemtest-centos-stream8:latest .
@@ -203,6 +202,7 @@ jobs:
       - GPG_ENCPHRASE
       - SAMPLE_APPS_DEPLOY_KEY
       - VESPA_DEPLOY_KEY
+      - DOCKER_IMAGE_DEPLOY_KEY
       - DOCKER_HUB_DEPLOY_KEY
       - GHCR_DEPLOY_KEY
 
@@ -221,12 +221,12 @@ jobs:
           dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
           dnf install -y docker-ce docker-ce-cli containerd.io
           docker system info
+      - release-java-artifacts: |
+          screwdriver/release-java-artifacts.sh $VESPA_VERSION $VESPA_REF
       - release-rpms: |
           screwdriver/release-rpms.sh $VESPA_VERSION $VESPA_REF
       - release-container-image: |
           screwdriver/release-container-image.sh $VESPA_VERSION
-      - release-java-artifacts: |
-          screwdriver/release-java-artifacts.sh $VESPA_VERSION $VESPA_REF
       - update-sample-apps: |
           screwdriver/update-vespa-version-in-sample-apps.sh $VESPA_VERSION
 

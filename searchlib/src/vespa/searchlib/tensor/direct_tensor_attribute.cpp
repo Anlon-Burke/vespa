@@ -3,13 +3,15 @@
 #include "direct_tensor_attribute.h"
 #include <vespa/eval/eval/fast_value.h>
 #include <vespa/eval/eval/value.h>
+#include <vespa/searchcommon/attribute/config.h>
 
 using vespalib::eval::FastValueBuilderFactory;
 
 namespace search::tensor {
 
-DirectTensorAttribute::DirectTensorAttribute(stringref name, const Config &cfg)
-    : TensorAttribute(name, cfg, _direct_store)
+DirectTensorAttribute::DirectTensorAttribute(stringref name, const Config &cfg, const NearestNeighborIndexFactory& index_factory)
+    : TensorAttribute(name, cfg, _direct_store, index_factory),
+      _direct_store(cfg.tensorType())
 {
 }
 
@@ -60,23 +62,6 @@ DirectTensorAttribute::update_tensor(DocId docId,
     }
 }
 
-std::unique_ptr<vespalib::eval::Value>
-DirectTensorAttribute::getTensor(DocId docId) const
-{
-    EntryRef ref;
-    if (docId < getCommittedDocIdLimit()) {
-        ref = acquire_entry_ref(docId);
-    }
-    if (ref.valid()) {
-        auto ptr = _direct_store.get_tensor_ptr(ref);
-        if (ptr) {
-            return FastValueBuilderFactory::get().copy(*ptr);
-        }
-    }
-    std::unique_ptr<vespalib::eval::Value> empty;
-    return empty;
-}
-
 const vespalib::eval::Value &
 DirectTensorAttribute::get_tensor_ref(DocId docId) const
 {
@@ -86,6 +71,21 @@ DirectTensorAttribute::get_tensor_ref(DocId docId) const
     if ( ptr == nullptr) { return *_emptyTensor; }
 
     return *ptr;
+}
+
+vespalib::eval::TypedCells
+DirectTensorAttribute::get_vector(uint32_t docid, uint32_t subspace) const
+{
+    EntryRef ref = acquire_entry_ref(docid);
+    auto vectors = _direct_store.get_vectors(ref);
+    return (subspace < vectors.subspaces()) ? vectors.cells(subspace) : _direct_store.get_empty_subspace();
+}
+
+VectorBundle
+DirectTensorAttribute::get_vectors(uint32_t docid) const
+{
+    EntryRef ref = acquire_entry_ref(docid);
+    return _direct_store.get_vectors(ref);
 }
 
 } // namespace

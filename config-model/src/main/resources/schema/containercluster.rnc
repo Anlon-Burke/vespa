@@ -6,7 +6,8 @@ ContainerCluster = element container {
     ContainerServices &    
     DocumentBinding* &
     NodesOfContainerCluster? &
-    ClientAuthorize?
+    ClientAuthorize? &
+    LoadBalancer?
 }
 
 ContainerServices =
@@ -23,7 +24,8 @@ ContainerServices =
     AccessLog* &
     SecretStore? &
     ZooKeeper? &
-    GenericConfig*
+    GenericConfig* &
+    Clients?
 
 # TODO(ogronnesby): Change this configuration syntax
 ClientAuthorize = element client-authorize { empty }
@@ -92,7 +94,7 @@ SecretStore = element secret-store {
 }
 
 ZooKeeper = element zookeeper {
-    empty
+    attribute session-timeout-seconds { string }?
 }
 
 ModelEvaluation = element model-evaluation {
@@ -125,6 +127,18 @@ Threadpool = element threadpool {
     element max-threads { xsd:nonNegativeInteger } &
     element min-threads { xsd:nonNegativeInteger } &
     element queue-size { xsd:nonNegativeInteger }
+}
+
+Clients = element clients {
+    Client*
+}
+
+Client = element client {
+    ComponentId &
+    attribute permissions { string } &
+    element certificate {
+        attribute file { string }
+    }+
 }
 
 # SEARCH:
@@ -253,6 +267,14 @@ NodesOfContainerCluster = element nodes {
         GenericConfig*
       }+
     )
+}
+
+LoadBalancer = element load-balancer {
+    element private-access {
+        element allow-urn {
+            xsd:string
+        }*
+    }?
 }
 
 

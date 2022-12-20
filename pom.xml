@@ -26,7 +26,6 @@
     <modules>
         <module>application</module>
         <module>application-model</module>
-        <module>application-preprocessor</module>
         <module>athenz-identity-provider-service</module>
         <module>bundle-plugin-test</module>
         <module>client</module>
@@ -50,7 +49,6 @@
         <module>config-proxy</module>
         <module>configserver</module>
         <module>configserver-flags</module>
-        <module>config_test</module>
         <module>container</module>
         <module>container-apache-http-client-bundle</module>
         <module>container-core</module>
@@ -60,6 +58,7 @@
         <module>container-disc</module>
         <module>container-documentapi</module>
         <module>container-messagebus</module>
+        <module>container-onnxruntime</module>
         <module>container-search-and-docproc</module>
         <module>container-search</module>
         <module>container-spifly</module>
@@ -92,6 +91,7 @@
         <module>jdisc_core_test</module>
         <module>jrt</module>
         <module>linguistics</module>
+        <module>opennlp-linguistics</module>
         <module>linguistics-components</module>
         <module>logd</module>
         <module>logserver</module>
@@ -112,7 +112,6 @@
         <module>searchcore</module>
         <module>searchlib</module>
         <module>searchsummary</module>
-        <module>security-tools</module>
         <module>security-utils</module>
         <module>service-monitor</module>
         <module>socket_test</module>
@@ -128,15 +127,14 @@
         <module>vespaclient-container-plugin</module>
         <module>vespaclient-java</module>
         <module>vespa-athenz</module>
+        <module>vespa-dependencies-enforcer</module>
         <module>vespa-documentgen-plugin</module>
         <module>vespa-feed-client</module>
         <module>vespa-feed-client-api</module>
         <module>vespa-feed-client-cli</module>
-        <module>vespa-hadoop</module>
         <module>vespa-maven-plugin</module>
         <module>vespa-osgi-testrunner</module>
         <module>vespa-testrunner-components</module>
-        <module>vespa_feed_perf</module>
         <module>vespa-3party-bundles</module>
         <module>vespajlib</module>
         <module>vespalog</module>

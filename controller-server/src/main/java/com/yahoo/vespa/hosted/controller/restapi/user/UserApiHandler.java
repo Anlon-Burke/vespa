@@ -112,6 +112,7 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
 
     private HttpResponse handlePOST(Path path, HttpRequest request) {
         if (path.matches("/user/v1/tenant/{tenant}")) return addTenantRoleMember(path.get("tenant"), request);
+        if (path.matches("/user/v1/email/verify")) return verifyEmail(request);
 
         return ErrorResponse.notFoundError(Text.format("No '%s' handler at '%s'", request.getMethod(),
                                                          request.getUri().getPath()));
@@ -311,6 +312,16 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
         return new MessageResponse(user + " is now a member of " + roles.stream().map(Role::toString).collect(Collectors.joining(", ")));
     }
 
+    private HttpResponse verifyEmail(HttpRequest request) {
+        var inspector = bodyInspector(request);
+        var verificationCode = require("verificationCode", Inspector::asString, inspector);
+        var verified = controller.mailVerifier().verifyMail(verificationCode);
+
+        if (verified)
+            return new MessageResponse("Email with verification code " + verificationCode + " has been verified");
+        return ErrorResponse.notFoundError("No pending email verification with code " + verificationCode + " found");
+    }
+
     private HttpResponse removeTenantRoleMember(String tenantName, HttpRequest request) {
         Inspector requestObject = bodyInspector(request);
         var tenant = TenantName.from(tenantName);
@@ -357,7 +368,7 @@ public class UserApiHandler extends ThreadedHttpRequestHandler {
 
     private boolean hasTrialCapacity() {
         if (! controller.system().isPublic()) return true;
-        var existing = controller.tenants().asList().stream().map(Tenant::name).collect(Collectors.toList());
+        var existing = controller.tenants().asList().stream().map(Tenant::name).toList();
         var trialTenants = controller.serviceRegistry().billingController().tenantsWithPlan(existing, PlanId.from("trial"));
         return maxTrialTenants.value() < 0 || trialTenants.size() < maxTrialTenants.value();
     }

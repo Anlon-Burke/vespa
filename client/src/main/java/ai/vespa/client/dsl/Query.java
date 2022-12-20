@@ -11,14 +11,13 @@ import java.util.stream.Collectors;
  */
 public class Query extends QueryChain {
 
-    Annotation annotation;
-    Sources sources;
-    List<QueryChain> queries = new ArrayList<>();
+    final List<QueryChain> queries = new ArrayList<>();
+    private Annotation annotation;
 
     Query(Sources sources, QueryChain queryChain) {
         this.sources = sources;
-        queries.add(queryChain);
-        nonEmpty = queryChain.nonEmpty;
+        this.queries.add(queryChain);
+        this.nonEmpty = queryChain.nonEmpty;
     }
 
     Query(Sources sources) {
@@ -290,13 +289,27 @@ public class Query extends QueryChain {
     }
 
     /**
-     * Semicolon.
-     * turn a query into fixed query.
+     * Calls fix()
      *
      * @return the fixed query
+     * @deprecated use {@link #fix()}, {@link #end()} or {@link #build} instead
      */
-    public FixedQuery semicolon() {
-        return new FixedQuery(new EndQuery(this));
+    @Deprecated // TODO: Remove on Vespa 9
+    public FixedQuery semicolon() { return fix(); }
+
+    /** Returns this as an ended query. */
+    public EndQuery end() {
+        return new EndQuery(this);
+    }
+
+    /** Calls end().fix(). */
+    public FixedQuery fix() {
+        return end().fix();
+    }
+
+    /** Calls fix().build(). */
+    public String build() {
+        return fix().build();
     }
 
     @Override
@@ -355,4 +368,5 @@ public class Query extends QueryChain {
                && (!"andnot".equals(this.op) && hasNegativeInSubqueries)
                || ("andnot".equals(this.op) && hasPositiveInSubqueries);
     }
+
 }

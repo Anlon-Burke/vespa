@@ -41,7 +41,7 @@ public class ConfigserverClusterTest {
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::hostname, "localhost");
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::id, 0);
         assertEquals(0, config.myid());
-        assertEquals("/opt/vespa/conf/zookeeper/tls.conf.json", config.vespaTlsConfigFile());
+        assertEquals("/opt/vespa/var/zookeeper/conf/tls.conf.json", config.vespaTlsConfigFile());
     }
 
     @Test
@@ -52,7 +52,7 @@ public class ConfigserverClusterTest {
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::id, 0, 1, 2);
         assertEquals(1, config.myid());
         assertEquals("gz", config.snapshotMethod());
-        assertEquals("/opt/vespa/conf/zookeeper/tls.conf.json", config.vespaTlsConfigFile());
+        assertEquals("/opt/vespa/var/zookeeper/conf/tls.conf.json", config.vespaTlsConfigFile());
     }
 
     @Test
@@ -62,7 +62,7 @@ public class ConfigserverClusterTest {
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::hostname, "cfg1", "localhost", "cfg3");
         assertZookeeperServerProperty(config.server(), ZookeeperServerConfig.Server::id, 4, 2, 3);
         assertEquals(2, config.myid());
-        assertEquals("/opt/vespa/conf/zookeeper/tls.conf.json", config.vespaTlsConfigFile());
+        assertEquals("/opt/vespa/var/zookeeper/conf/tls.conf.json", config.vespaTlsConfigFile());
     }
 
     @Test
@@ -121,6 +121,7 @@ public class ConfigserverClusterTest {
         assertEquals(1, config.server().size());
         assertEquals("localhost", config.server().get(0).hostname());
         assertEquals(2181, config.server().get(0).port());
+        assertEquals(120, config.zookeeperSessionTimeoutSeconds());
         assertTrue(config.zookeeperLocalhostAffinity());
     }
 
@@ -135,7 +136,7 @@ public class ConfigserverClusterTest {
     @SuppressWarnings("varargs")
     private static <T> void assertZookeeperServerProperty(
             List<ZookeeperServerConfig.Server> zkServers, Function<ZookeeperServerConfig.Server, T> propertyMapper, T... expectedProperties) {
-        List<T> actualPropertyValues = zkServers.stream().map(propertyMapper).collect(Collectors.toList());
+        List<T> actualPropertyValues = zkServers.stream().map(propertyMapper).toList();
         List<T> expectedPropertyValues = Arrays.asList(expectedProperties);
         assertEquals(expectedPropertyValues, actualPropertyValues);
     }

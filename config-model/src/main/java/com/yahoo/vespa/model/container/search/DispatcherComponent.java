@@ -4,6 +4,7 @@ package com.yahoo.vespa.model.container.search;
 import com.yahoo.config.model.producer.AbstractConfigProducer;
 import com.yahoo.osgi.provider.model.ComponentModel;
 import com.yahoo.vespa.config.search.DispatchConfig;
+import com.yahoo.vespa.config.search.DispatchNodesConfig;
 import com.yahoo.vespa.model.container.component.Component;
 import com.yahoo.vespa.model.container.PlatformBundles;
 import com.yahoo.vespa.model.search.IndexedSearchCluster;
@@ -14,22 +15,20 @@ import com.yahoo.vespa.model.search.IndexedSearchCluster;
  *
  * @author bratseth
  */
-public class DispatcherComponent extends Component<AbstractConfigProducer<?>, ComponentModel>
-        implements DispatchConfig.Producer {
+public class DispatcherComponent extends Component<AbstractConfigProducer<?>, ComponentModel> implements
+        DispatchConfig.Producer,
+        DispatchNodesConfig.Producer
+{
 
     private final IndexedSearchCluster indexedSearchCluster;
 
     public DispatcherComponent(IndexedSearchCluster indexedSearchCluster) {
-        super(toComponentModel(indexedSearchCluster));
+        super(toComponentModel(indexedSearchCluster.getClusterName()));
         this.indexedSearchCluster = indexedSearchCluster;
-        String clusterName = indexedSearchCluster.getClusterName();
-        var rpcResoucePool = new RpcResourcePoolComponent(clusterName);
-        inject(rpcResoucePool);
-        addComponent(rpcResoucePool);
     }
 
-    private static ComponentModel toComponentModel(IndexedSearchCluster indexedSearchCluster) {
-        String dispatcherComponentId = "dispatcher." + indexedSearchCluster.getClusterName(); // used by ClusterSearcher
+    private static ComponentModel toComponentModel(String clusterName) {
+        String dispatcherComponentId = "dispatcher." + clusterName; // used by ClusterSearcher
         return new ComponentModel(dispatcherComponentId,
                                   com.yahoo.search.dispatch.Dispatcher.class.getName(),
                                   PlatformBundles.SEARCH_AND_DOCPROC_BUNDLE);
@@ -37,6 +36,11 @@ public class DispatcherComponent extends Component<AbstractConfigProducer<?>, Co
 
     @Override
     public void getConfig(DispatchConfig.Builder builder) {
+        indexedSearchCluster.getConfig(builder);
+    }
+
+    @Override
+    public void getConfig(DispatchNodesConfig.Builder builder) {
         indexedSearchCluster.getConfig(builder);
     }
 

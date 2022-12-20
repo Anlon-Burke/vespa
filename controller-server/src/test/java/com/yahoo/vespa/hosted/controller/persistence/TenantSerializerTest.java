@@ -17,6 +17,7 @@ import com.yahoo.vespa.hosted.controller.tenant.ArchiveAccess;
 import com.yahoo.vespa.hosted.controller.tenant.AthenzTenant;
 import com.yahoo.vespa.hosted.controller.tenant.CloudTenant;
 import com.yahoo.vespa.hosted.controller.tenant.DeletedTenant;
+import com.yahoo.vespa.hosted.controller.tenant.Email;
 import com.yahoo.vespa.hosted.controller.tenant.LastLoginInfo;
 import com.yahoo.vespa.hosted.controller.tenant.TenantAddress;
 import com.yahoo.vespa.hosted.controller.tenant.TenantBilling;
@@ -88,7 +89,8 @@ public class TenantSerializerTest {
                 Optional.of(new PropertyId("1")),
                 Optional.of(contact()),
                 Instant.EPOCH,
-                lastLoginInfo(321L, 654L, 987L));
+                lastLoginInfo(321L, 654L, 987L),
+                Instant.EPOCH);
         AthenzTenant serialized = (AthenzTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(tenant.contact(), serialized.contact());
     }
@@ -104,7 +106,8 @@ public class TenantSerializerTest {
                 TenantInfo.empty(),
                 List.of(),
                 new ArchiveAccess(),
-                Optional.empty());
+                Optional.empty(),
+                Instant.EPOCH);
         CloudTenant serialized = (CloudTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(tenant.name(), serialized.name());
         assertEquals(tenant.creator(), serialized.creator());
@@ -126,7 +129,8 @@ public class TenantSerializerTest {
                         new TenantSecretStore("ss2", "124", "role2")
                 ),
                 new ArchiveAccess().withAWSRole("arn:aws:iam::123456789012:role/my-role"),
-                Optional.of(Instant.ofEpochMilli(1234567)));
+                Optional.of(Instant.ofEpochMilli(1234567)),
+                Instant.EPOCH);
         CloudTenant serialized = (CloudTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(tenant.info(), serialized.info());
         assertEquals(tenant.tenantSecretStores(), serialized.tenantSecretStores());
@@ -176,7 +180,8 @@ public class TenantSerializerTest {
                 TenantInfo.empty(),
                 List.of(),
                 new ArchiveAccess().withAWSRole("arn:aws:iam::123456789012:role/my-role").withGCPMember("user:foo@example.com"),
-                Optional.empty());
+                Optional.empty(),
+                Instant.EPOCH);
         CloudTenant serialized = (CloudTenant) serializer.tenantFrom(serializer.toSlime(tenant));
         assertEquals(serialized.archiveAccess().awsRole().get(), "arn:aws:iam::123456789012:role/my-role");
         assertEquals(serialized.archiveAccess().gcpMember().get(), "user:foo@example.com");
@@ -190,7 +195,7 @@ public class TenantSerializerTest {
         Slime slime = new Slime();
         Cursor parentObject = slime.setObject();
         serializer.toSlime(partialInfo, parentObject);
-        assertEquals("{\"info\":{\"name\":\"\",\"email\":\"\",\"website\":\"\",\"contactName\":\"\",\"contactEmail\":\"\",\"address\":{\"addressLines\":\"\",\"postalCodeOrZip\":\"\",\"city\":\"Hønefoss\",\"stateRegionProvince\":\"\",\"country\":\"\"}}}", slime.toString());
+        assertEquals("{\"info\":{\"name\":\"\",\"email\":\"\",\"website\":\"\",\"contactName\":\"\",\"contactEmail\":\"\",\"contactEmailVerified\":true,\"address\":{\"addressLines\":\"\",\"postalCodeOrZip\":\"\",\"city\":\"Hønefoss\",\"stateRegionProvince\":\"\",\"country\":\"\"}}}", slime.toString());
     }
 
     @Test
@@ -199,7 +204,7 @@ public class TenantSerializerTest {
                 .withName("My Company")
                 .withEmail("email@mycomp.any")
                 .withWebsite("http://mycomp.any")
-                .withContact(TenantContact.from("My Name", "ceo@mycomp.any"))
+                .withContact(TenantContact.from("My Name", new Email("ceo@mycomp.any", true)))
                 .withAddress(TenantAddress.empty()
                         .withCity("Hønefoss")
                         .withAddress("Riperbakken 2")
@@ -207,7 +212,7 @@ public class TenantSerializerTest {
                         .withCode("3510")
                         .withRegion("Viken"))
                 .withBilling(TenantBilling.empty()
-                        .withContact(TenantContact.from("Thomas The Tank Engine", "thomas@sodor.com", "NA"))
+                        .withContact(TenantContact.from("Thomas The Tank Engine", new Email("ceo@mycomp.any", true), "NA"))
                         .withAddress(TenantAddress.empty()
                                 .withCity("Suddery")
                                 .withCountry("Sodor")
@@ -226,8 +231,8 @@ public class TenantSerializerTest {
     void cloud_tenant_with_tenant_info_contacts() {
         TenantInfo tenantInfo = TenantInfo.empty()
                 .withContacts(new TenantContacts(List.of(
-                        new TenantContacts.EmailContact(List.of(TenantContacts.Audience.TENANT), "email1@email.com"),
-                        new TenantContacts.EmailContact(List.of(TenantContacts.Audience.TENANT, TenantContacts.Audience.NOTIFICATIONS), "email2@email.com"))));
+                        new TenantContacts.EmailContact(List.of(TenantContacts.Audience.TENANT), new Email("email1@email.com", true)),
+                        new TenantContacts.EmailContact(List.of(TenantContacts.Audience.TENANT, TenantContacts.Audience.NOTIFICATIONS), new Email("email2@email.com", true)))));
         Slime slime = new Slime();
         Cursor parentCursor = slime.setObject();
         serializer.toSlime(tenantInfo, parentCursor);
@@ -243,6 +248,19 @@ public class TenantSerializerTest {
         assertEquals(tenant.name(), serialized.name());
         assertEquals(tenant.createdAt(), serialized.createdAt());
         assertEquals(tenant.deletedAt(), serialized.deletedAt());
+    }
+
+    @Test
+    void tenant_with_roles_maintained() {
+        AthenzTenant tenant = new AthenzTenant(TenantName.from("athenz-tenant"),
+                new AthenzDomain("domain1"),
+                new Property("property1"),
+                Optional.of(new PropertyId("1")),
+                Optional.of(contact()),
+                Instant.EPOCH,
+                lastLoginInfo(321L, 654L, 987L),
+                Instant.ofEpochMilli(1_000_000));
+        assertEquals(tenant, serializer.tenantFrom(serializer.toSlime(tenant)));
     }
 
     private static Contact contact() {

@@ -1,7 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.filedistribution;
 
-import com.google.common.io.ByteStreams;
 import net.jpountz.lz4.LZ4BlockInputStream;
 import net.jpountz.lz4.LZ4BlockOutputStream;
 import org.apache.commons.compress.archivers.ArchiveEntry;
@@ -56,7 +55,7 @@ public class FileReferenceCompressor {
                         Files.find(Paths.get(directory.getAbsolutePath()),
                                    recurseDepth,
                                    (p, basicFileAttributes) -> basicFileAttributes.isRegularFile())
-                             .map(Path::toFile).collect(Collectors.toList()),
+                             .map(Path::toFile).toList(),
                         outputFile);
     }
 
@@ -87,9 +86,9 @@ public class FileReferenceCompressor {
                 if (!parent.exists() && !parent.mkdirs()) {
                     log.log(Level.WARNING, "Could not create dir " + parent.getAbsolutePath());
                 }
-                FileOutputStream fos = new FileOutputStream(outFile);
-                ByteStreams.copy(archiveInputStream, fos);
-                fos.close();
+                try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                    archiveInputStream.transferTo(fos);
+                }
             }
             entries++;
         }
@@ -111,9 +110,10 @@ public class FileReferenceCompressor {
     }
 
     private static void writeFileToTar(ArchiveOutputStream taos, File baseDir, File file) throws IOException {
-        log.log(Level.FINEST, () -> "Adding file to tar: " + baseDir.toPath().relativize(file.toPath()).toString());
         taos.putArchiveEntry(taos.createArchiveEntry(file, baseDir.toPath().relativize(file.toPath()).toString()));
-        ByteStreams.copy(new FileInputStream(file), taos);
+        try (FileInputStream inputStream = new FileInputStream(file)) {
+            inputStream.transferTo(taos);
+        }
         taos.closeArchiveEntry();
     }
 
@@ -121,14 +121,11 @@ public class FileReferenceCompressor {
         switch (type) {
             case compressed:
                 log.log(Level.FINE, () -> "Compressing with compression type " + compressionType);
-                switch (compressionType) {
-                    case gzip:
-                        return new GZIPOutputStream(new FileOutputStream(outputFile));
-                    case lz4:
-                        return new LZ4BlockOutputStream(new FileOutputStream(outputFile));
-                    default:
-                        throw new RuntimeException("Unknown compression type " + compressionType);
-                }
+                return switch (compressionType) {
+                    case gzip -> new GZIPOutputStream(new FileOutputStream(outputFile));
+                    case lz4 -> new LZ4BlockOutputStream(new FileOutputStream(outputFile));
+                    default -> throw new RuntimeException("Unknown compression type " + compressionType);
+                };
             case file:
                 return new FileOutputStream(outputFile);
             default:
@@ -140,14 +137,11 @@ public class FileReferenceCompressor {
         switch (type) {
             case compressed:
                 log.log(Level.FINE, () -> "Decompressing with compression type " + compressionType);
-                switch (compressionType) {
-                    case gzip:
-                        return new GZIPInputStream(new FileInputStream(inputFile));
-                    case lz4:
-                        return new LZ4BlockInputStream(new FileInputStream(inputFile));
-                    default:
-                        throw new RuntimeException("Unknown compression type " + compressionType);
-                }
+                return switch (compressionType) {
+                    case gzip -> new GZIPInputStream(new FileInputStream(inputFile));
+                    case lz4 -> new LZ4BlockInputStream(new FileInputStream(inputFile));
+                    default -> throw new RuntimeException("Unknown compression type " + compressionType);
+                };
             case file:
                 return new FileInputStream(inputFile);
             default:

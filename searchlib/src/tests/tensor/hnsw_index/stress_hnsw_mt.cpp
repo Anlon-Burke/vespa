@@ -9,12 +9,14 @@
 #include <vector>
 
 #include <vespa/eval/eval/typed_cells.h>
+#include <vespa/eval/eval/value_type.h>
 #include <vespa/searchlib/common/bitvector.h>
 #include <vespa/searchlib/tensor/distance_functions.h>
 #include <vespa/searchlib/tensor/doc_vector_access.h>
 #include <vespa/searchlib/tensor/hnsw_index.h>
 #include <vespa/searchlib/tensor/inv_log_level_generator.h>
 #include <vespa/searchlib/tensor/random_level_generator.h>
+#include <vespa/searchlib/tensor/vector_bundle.h>
 #include <vespa/vespalib/data/input.h>
 #include <vespa/vespalib/data/memory_input.h>
 #include <vespa/vespalib/data/slime/slime.h>
@@ -31,6 +33,8 @@ LOG_SETUP("stress_hnsw_mt");
 using namespace search::tensor;
 using namespace vespalib::slime;
 using search::BitVector;
+using vespalib::eval::CellType;
+using vespalib::eval::ValueType;
 using vespalib::GenerationHandler;
 using vespalib::MemoryUsage;
 using vespalib::Slime;
@@ -39,6 +43,12 @@ using vespalib::Slime;
 #define NUM_POSSIBLE_V 1000000
 #define NUM_POSSIBLE_DOCS 30000
 #define NUM_OPS 1000000
+
+namespace {
+
+SubspaceType subspace_type(ValueType::make_type(CellType::FLOAT, {{"dims", NUM_DIMS }}));
+
+}
 
 class RndGen {
 private:
@@ -110,16 +120,23 @@ public:
         memcpy(&_vectors[docid], vec.cbegin(), sizeof(MallocPointVector));
         return *this;
     }
-    vespalib::eval::TypedCells get_vector(uint32_t docid) const override {
+    vespalib::eval::TypedCells get_vector(uint32_t docid, uint32_t subspace) const override {
         assert(docid < NUM_POSSIBLE_DOCS);
+        (void) subspace;
         ConstVectorRef ref(_vectors[docid]);
         return vespalib::eval::TypedCells(ref);
+    }
+    VectorBundle get_vectors(uint32_t docid) const override {
+        assert(docid < NUM_POSSIBLE_DOCS);
+        ConstVectorRef ref(_vectors[docid]);
+        assert(subspace_type.size() == ref.size());
+        return VectorBundle(ref.data(), 1, subspace_type);
     }
 };
 
 using FloatSqEuclideanDistance = SquaredEuclideanDistanceHW<float>;
-using HnswIndexUP = std::unique_ptr<HnswIndex>;
 
+template <typename IndexType>
 class Stressor : public ::testing::Test {
 private:
     struct LoadedVectors {
@@ -140,7 +157,7 @@ public:
     RndGen rng;
     MyDocVectorStore vectors;
     GenerationHandler gen_handler;
-    HnswIndexUP index;
+    std::unique_ptr<IndexType> index;
     vespalib::BlockingThreadStackExecutor multi_prepare_workers;
     vespalib::BlockingThreadStackExecutor write_thread;
 
@@ -171,12 +188,17 @@ public:
 
     struct PrepareAddTask  : TaskBase {
         using TaskBase::TaskBase;
+        using TaskBase::docid;
+        using TaskBase::parent;
+        using TaskBase::read_guard;
+        using TaskBase::vec;
         std::promise<PrepUP> result_promise;
         auto get_result_future() {
             return result_promise.get_future();
         }
         void run() override {
-            auto v = vespalib::eval::TypedCells(vec);
+            assert(subspace_type.size() == vec.size());
+            VectorBundle v(vec.data(), 1, subspace_type);
             auto up = parent.index->prepare_add_document(docid, v, read_guard);
             result_promise.set_value(std::move(up));
         }
@@ -184,6 +206,10 @@ public:
 
     struct CompleteAddTask : TaskBase {
         using TaskBase::TaskBase;
+        using TaskBase::docid;
+        using TaskBase::parent;
+        using TaskBase::prepare_future;
+        using TaskBase::vec;
         void run() override {
             auto prepare_result = prepare_future.get();
             parent.vectors.set(docid, vec);
@@ -195,6 +221,8 @@ public:
 
     struct CompleteRemoveTask : TaskBase {
         using TaskBase::TaskBase;
+        using TaskBase::docid;
+        using TaskBase::parent;
         void run() override {
             parent.index->remove_document(docid);
             parent.existing_ids->clearBit(docid);
@@ -204,6 +232,10 @@ public:
 
     struct CompleteUpdateTask : TaskBase {
         using TaskBase::TaskBase;
+        using TaskBase::docid;
+        using TaskBase::parent;
+        using TaskBase::prepare_future;
+        using TaskBase::vec;
         void run() override {
             auto prepare_result = prepare_future.get();
             parent.index->remove_document(docid);
@@ -232,9 +264,9 @@ public:
 
     void init() {
         uint32_t m = 16;
-        index = std::make_unique<HnswIndex>(vectors, std::make_unique<FloatSqEuclideanDistance>(),
+        index = std::make_unique<IndexType>(vectors, std::make_unique<FloatSqEuclideanDistance>(),
                                             std::make_unique<InvLogLevelGenerator>(m),
-                                            HnswIndex::Config(2*m, m, 200, 10, true));
+                                            HnswIndexConfig(2*m, m, 200, 10, true));
     }
     size_t get_rnd(size_t size) {
         return rng.nextUniform() * size;
@@ -317,30 +349,33 @@ public:
     }
 };
 
+using StressorTypes = ::testing::Types<HnswIndex<HnswIndexType::SINGLE>>;
 
-TEST_F(Stressor, stress)
+TYPED_TEST_SUITE(Stressor, StressorTypes);
+
+TYPED_TEST(Stressor, stress)
 {
-    init();
+    this->init();
     for (int i = 0; i < NUM_OPS; ++i) {
-        gen_operation();
+        this->gen_operation();
         if (i % 1000 == 0) {
-            uint32_t cnt = count_in_progress();
+            uint32_t cnt = this->count_in_progress();
             fprintf(stderr, "generating operations %d / %d; in progress: %u ops\n",
                     i, NUM_OPS, cnt);
-            auto r = write_thread.execute(vespalib::makeLambdaTask([&]() {
-                        EXPECT_TRUE(index->check_link_symmetry());
+            auto r = this->write_thread.execute(vespalib::makeLambdaTask([&]() {
+                        EXPECT_TRUE(this->index->check_link_symmetry());
             }));
             EXPECT_EQ(r.get(), nullptr);
         }
     }
     fprintf(stderr, "waiting for queued operations...\n");
-    multi_prepare_workers.sync();
-    write_thread.sync();
-    EXPECT_EQ(count_in_progress(), 0);
-    EXPECT_TRUE(index->check_link_symmetry());
-    fprintf(stderr, "HNSW index state after test:\n%s\n", json_state().c_str());
-    existing_ids->invalidateCachedCount();
-    fprintf(stderr, "Expected valid nodes: %u\n", existing_ids->countTrueBits());
+    this->multi_prepare_workers.sync();
+    this->write_thread.sync();
+    EXPECT_EQ(this->count_in_progress(), 0);
+    EXPECT_TRUE(this->index->check_link_symmetry());
+    fprintf(stderr, "HNSW index state after test:\n%s\n", this->json_state().c_str());
+    this->existing_ids->invalidateCachedCount();
+    fprintf(stderr, "Expected valid nodes: %u\n", this->existing_ids->countTrueBits());
     fprintf(stderr, "all done.\n");
 }
 

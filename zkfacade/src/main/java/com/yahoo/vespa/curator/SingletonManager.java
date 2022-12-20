@@ -1,5 +1,6 @@
 package com.yahoo.vespa.curator;
 
+import com.yahoo.concurrent.UncheckedTimeoutException;
 import com.yahoo.jdisc.Metric;
 import com.yahoo.path.Path;
 import com.yahoo.protect.Process;
@@ -172,6 +173,8 @@ class SingletonManager {
                         updateStatus();
                         // Process the next pending, externally triggered task, if any.
                         doTask();
+                        // Write isActive metric regularly.
+                        metrics.ping();
                     }
                     catch (InterruptedException e) {
                         if ( ! shutdown.get()) {
@@ -281,8 +284,14 @@ class SingletonManager {
                 lock = curator.lock(path.append("lock"), tickTimeout);
                 logger.log(INFO, "Acquired lock for ID: " + id);
             }
+            catch (UncheckedTimeoutException e) {
+                logger.log(FINE, e, () -> "Timed out acquiring lock for '" + path + "' within " + tickTimeout);
+                cleanOrphans();
+                return;
+            }
             catch (RuntimeException e) {
-                logger.log(FINE, e, () -> "Failed acquiring lock for '" + path + "' within " + tickTimeout);
+                logger.log(WARNING, e, () -> "Failed acquiring lock for '" + path + "' within " + tickTimeout);
+                cleanOrphans();
                 return;
             }
             try {
@@ -297,15 +306,27 @@ class SingletonManager {
             }
         }
 
+        /** This is a work-around for a bug where Curator leaks lock nodes, through "protection mode", probably because unexpected KeeperException children are thrown? */
+        private void cleanOrphans() {
+            List<String> orphans = null;
+            try {
+                // Only the ephemerals owned by this client session are listed here, and this client should only ever attempt this lock from this thread, i.e., 0 or 1 nodes. 
+                for (String orphan : orphans = curator.framework().getZookeeperClient().getZooKeeper().getEphemerals(path.getAbsolute()))
+                    curator.delete(path.append(orphan));
+            }
+            catch (Exception e) {
+                logger.log(WARNING, "Failed cleaning orphans: " + orphans, e);
+            }
+        }
+
         /**
          * Attempt to activate or deactivate if status has changed.
-         * If activation fails, we release the lock, to a different container may acquire it.
+         * If activation fails, we release the lock, so a different container may acquire it.
          */
         private void updateStatus() {
             Instant ourDoom = doom.get();
             boolean shouldBeActive = ourDoom != null && ourDoom != INVALID && ! clock.instant().isAfter(ourDoom);
             if ( ! active && shouldBeActive) {
-                logger.log(INFO, "Activating singleton for ID: " + id);
                 try {
                     active = true;
                     if ( ! singletons.isEmpty()) metrics.activation(singletons.peek()::activate);
@@ -316,7 +337,6 @@ class SingletonManager {
                 }
             }
             if (active && ! shouldBeActive) {
-                logger.log(INFO, "Deactivating singleton for ID: " + id);
                 logger.log(FINE, () -> "Doom value is " + doom);
                 try  {
                     if ( ! singletons.isEmpty()) metrics.deactivation(singletons.peek()::deactivate);
@@ -379,15 +399,21 @@ class SingletonManager {
             static final String DEACTIVATION_FAILURES = PREFIX + "deactivation.failure.count";
 
             final Metric.Context context;
+            boolean isActive;
 
             MetricHelper() {
                 this.context = metric.createContext(Map.of("singletonId", id));
+            }
+
+            void ping() {
+                metric.set(IS_ACTIVE, isActive ? 1 : 0, context);
             }
 
             void activation(Runnable activation) {
                 Instant start = clock.instant();
                 boolean failed = false;
                 metric.add(ACTIVATION, 1, context);
+                logger.log(INFO, "Activating singleton for ID: " + id);
                 try {
                     activation.run();
                 }
@@ -396,9 +422,12 @@ class SingletonManager {
                     throw e;
                 }
                 finally {
-                    metric.set(ACTIVATION_MILLIS, Duration.between(start, clock.instant()).toMillis(), context);
+                    long durationMillis = Duration.between(start, clock.instant()).toMillis();
+                    metric.set(ACTIVATION_MILLIS, durationMillis, context);
+                    logger.log(INFO, "Activation completed in %.3f seconds".formatted(durationMillis * 1e-3));
                     if (failed) metric.add(ACTIVATION_FAILURES, 1, context);
-                    else metric.set(IS_ACTIVE, 1, context);
+                    else isActive = true;
+                    ping();
                 }
             }
 
@@ -406,6 +435,7 @@ class SingletonManager {
                 Instant start = clock.instant();
                 boolean failed = false;
                 metric.add(DEACTIVATION, 1, context);
+                logger.log(INFO, "Deactivating singleton for ID: " + id);
                 try {
                     deactivation.run();
                 }
@@ -414,9 +444,12 @@ class SingletonManager {
                     throw e;
                 }
                 finally {
-                    metric.set(DEACTIVATION_MILLIS, Duration.between(start, clock.instant()).toMillis(), context);
+                    long durationMillis = Duration.between(start, clock.instant()).toMillis();
+                    metric.set(DEACTIVATION_MILLIS, durationMillis, context);
+                    logger.log(INFO, "Deactivation completed in %.3f seconds".formatted(durationMillis * 1e-3));
                     if (failed) metric.add(DEACTIVATION_FAILURES, 1, context);
-                    metric.set(IS_ACTIVE, 0, context);
+                    isActive = false;
+                    ping();
                 }
             }
 

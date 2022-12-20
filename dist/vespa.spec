@@ -62,7 +62,7 @@ BuildRequires: gcc-toolset-11-libatomic-devel
 %endif
 BuildRequires: maven
 BuildRequires: maven-openjdk17
-BuildRequires: pybind11-devel
+BuildRequires: vespa-pybind11-devel
 BuildRequires: python3-pytest
 BuildRequires: python36-devel
 BuildRequires: glibc-langpack-en
@@ -94,14 +94,8 @@ BuildRequires: cmake >= 3.11.4-3
 BuildRequires: libarchive
 %endif
 %define _command_cmake cmake
-%if 0%{?_centos_stream}
-BuildRequires: (llvm-devel >= 14.0.0 and llvm-devel < 15)
-%else
-BuildRequires: (llvm-devel >= 13.0.1 and llvm-devel < 14)
 %endif
-%else
-BuildRequires: (llvm-devel >= 13.0.1 and llvm-devel < 14)
-%endif
+BuildRequires: llvm-devel
 BuildRequires: vespa-boost-devel >= 1.76.0-1
 BuildRequires: vespa-openssl-devel >= 1.1.1o-1
 %define _use_vespa_openssl 1
@@ -121,11 +115,7 @@ BuildRequires: vespa-lz4-devel >= 1.9.4-1
 BuildRequires: vespa-onnxruntime-devel = 1.12.1
 BuildRequires: vespa-libzstd-devel >= 1.5.2-1
 BuildRequires: protobuf-devel
-%if 0%{?_centos_stream}
-BuildRequires: (llvm-devel >= 14.0.0 and llvm-devel < 15)
-%else
-BuildRequires: (llvm-devel >= 13.0.0 and llvm-devel < 14)
-%endif
+BuildRequires: llvm-devel
 BuildRequires: boost-devel >= 1.75
 BuildRequires: gtest-devel
 BuildRequires: gmock-devel
@@ -145,34 +135,11 @@ BuildRequires: openssl-devel
 BuildRequires: vespa-lz4-devel >= 1.9.4-1
 BuildRequires: vespa-onnxruntime-devel = 1.12.1
 BuildRequires: vespa-libzstd-devel >= 1.5.2-1
-%if 0%{?amzn2022}
 BuildRequires: protobuf-devel
-BuildRequires: llvm-devel >= 14.0.5
-BuildRequires: boost-devel >= 1.75
+BuildRequires: llvm-devel
+BuildRequires: boost-devel
 BuildRequires: gtest-devel
 BuildRequires: gmock-devel
-%endif
-%if 0%{?fc36}
-BuildRequires: protobuf-devel
-BuildRequires: llvm-devel >= 14.0.0
-BuildRequires: boost-devel >= 1.76
-BuildRequires: gtest-devel
-BuildRequires: gmock-devel
-%endif
-%if 0%{?fc37}
-BuildRequires: protobuf-devel
-BuildRequires: llvm-devel >= 15.0.0
-BuildRequires: boost-devel >= 1.78
-BuildRequires: gtest-devel
-BuildRequires: gmock-devel
-%endif
-%if 0%{?fc38}
-BuildRequires: protobuf-devel
-BuildRequires: llvm-devel >= 15.0.0
-BuildRequires: boost-devel >= 1.78
-BuildRequires: gtest-devel
-BuildRequires: gmock-devel
-%endif
 %endif
 %if 0%{?amzn2022}
 BuildRequires: vespa-xxhash-devel >= 0.8.1
@@ -238,7 +205,6 @@ BuildRequires: perf
 %if 0%{?amzn2022}
 Requires: vespa-xxhash >= 0.8.1
 %else
-Requires: xxhash
 Requires: xxhash-libs >= 0.8.1
 %endif
 Requires: gdb
@@ -344,39 +310,16 @@ Requires: vespa-openssl >= 1.1.1o-1
 Requires: openssl-libs
 %endif
 %if 0%{?el8}
-%if 0%{?centos} || 0%{?rocky} || 0%{?oraclelinux}
-%if 0%{?_centos_stream}
-Requires: (llvm-libs >= 14.0.0 and llvm-libs < 15)
-%else
-Requires: (llvm-libs >= 13.0.1 and llvm-libs < 14)
-%endif
-%else
-Requires: (llvm-libs >= 13.0.1 and llvm-libs < 14)
-%endif
+Requires: llvm-libs
 Requires: vespa-protobuf = 3.21.7
 %endif
 %if 0%{?el9}
-%if 0%{?_centos_stream}
-Requires: (llvm-libs >= 14.0.0 and llvm-libs < 15)
-%else
-Requires: (llvm-libs >= 13.0.0 and llvm-libs < 14)
-%endif
+Requires: llvm-libs
 Requires: protobuf
 %endif
 %if 0%{?fedora}
 Requires: protobuf
-%if 0%{?amzn2022}
-Requires: llvm-libs >= 14.0.5
-%endif
-%if 0%{?fc36}
-Requires: llvm-libs >= 14.0.0
-%endif
-%if 0%{?fc37}
-Requires: llvm-libs >= 15.0.0
-%endif
-%if 0%{?fc38}
-Requires: llvm-libs >= 15.0.0
-%endif
+Requires: llvm-libs
 %endif
 Requires: vespa-onnxruntime = 1.12.1
 
@@ -586,6 +529,10 @@ exit 0
 %systemd_postun_with_restart vespa-configserver.service
 %endif
 
+%post base
+
+ln -sf %{_prefix}/var/tmp %{_prefix}/tmp
+
 %postun base
 if [ $1 -eq 0 ]; then # this is an uninstallation
     rm -f /etc/profile.d/vespa.sh
@@ -602,6 +549,10 @@ then
     else
 	mv %{_prefix}/conf/vespa/default-env.txt.rpmsave %{_prefix}/conf/vespa/default-env.txt
     fi
+fi
+if test -L %{_prefix}/tmp
+then
+    rm -f %{_prefix}/tmp
 fi
 
 %files
@@ -636,7 +587,7 @@ fi
 %dir %{_prefix}/conf/logd
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/conf/telegraf
 %dir %{_prefix}/conf/vespa
-%dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/conf/zookeeper
+%dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/zookeeper/conf
 %dir %{_prefix}/etc
 %{_prefix}/etc/systemd
 %{_prefix}/etc/vespa
@@ -644,7 +595,6 @@ fi
 %{_prefix}/include
 %dir %{_prefix}/lib
 %dir %{_prefix}/lib/jars
-%{_prefix}/lib/jars/application-preprocessor-jar-with-dependencies.jar
 %{_prefix}/lib/jars/athenz-identity-provider-service-jar-with-dependencies.jar
 %{_prefix}/lib/jars/cloud-tenant-cd-jar-with-dependencies.jar
 %{_prefix}/lib/jars/clustercontroller-apps-jar-with-dependencies.jar
@@ -666,7 +616,6 @@ fi
 %{_prefix}/lib/jars/searchlib.jar
 %{_prefix}/lib/jars/service-monitor-jar-with-dependencies.jar
 %{_prefix}/lib/jars/tenant-cd-api-jar-with-dependencies.jar
-%{_prefix}/lib/jars/vespa_feed_perf-jar-with-dependencies.jar
 %{_prefix}/lib/jars/vespa-osgi-testrunner-jar-with-dependencies.jar
 %{_prefix}/lib/jars/vespa-testrunner-components.jar
 %{_prefix}/lib/jars/vespa-testrunner-components-jar-with-dependencies.jar
@@ -690,8 +639,6 @@ fi
 %{_prefix}/man
 %{_prefix}/sbin
 %{_prefix}/share
-%dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/tmp
-%dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/tmp/vespa
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/crash
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/db
@@ -707,6 +654,8 @@ fi
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/db/vespa/tmp
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/jdisc_container
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/run
+%dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/tmp
+%dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/tmp/vespa
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/vespa
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/vespa/application
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/vespa/bundlecache
@@ -737,7 +686,6 @@ fi
 %{_prefix}/jdk
 %dir %{_prefix}/lib
 %dir %{_prefix}/lib/jars
-%{_prefix}/lib/jars/security-tools-jar-with-dependencies.jar
 %dir %{_prefix}/libexec
 %dir %{_prefix}/libexec/vespa
 %{_prefix}/libexec/vespa/common-env.sh
@@ -828,6 +776,7 @@ fi
 %{_prefix}/lib/jars/config-provisioning-jar-with-dependencies.jar
 %{_prefix}/lib/jars/container-apache-http-client-bundle-jar-with-dependencies.jar
 %{_prefix}/lib/jars/container-disc-jar-with-dependencies.jar
+%{_prefix}/lib/jars/container-onnxruntime.jar
 %{_prefix}/lib/jars/container-search-and-docproc-jar-with-dependencies.jar
 %{_prefix}/lib/jars/container-spifly.jar
 %{_prefix}/lib/jars/docprocs-jar-with-dependencies.jar

@@ -2,9 +2,9 @@
 package com.yahoo.vespa.config.server.tenant;
 
 import com.google.common.collect.ImmutableSet;
-import com.yahoo.component.annotation.Inject;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.cloud.config.ZookeeperServerConfig;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.concurrent.DaemonThreadFactory;
 import com.yahoo.concurrent.Lock;
 import com.yahoo.concurrent.Locks;
@@ -18,11 +18,11 @@ import com.yahoo.container.jdisc.secretstore.SecretStore;
 import com.yahoo.path.Path;
 import com.yahoo.text.Utf8;
 import com.yahoo.transaction.Transaction;
-import com.yahoo.vespa.config.server.ConfigServerDB;
 import com.yahoo.vespa.config.server.ConfigActivationListener;
-import com.yahoo.vespa.config.server.application.PermanentApplicationPackage;
+import com.yahoo.vespa.config.server.ConfigServerDB;
 import com.yahoo.vespa.config.server.application.TenantApplications;
 import com.yahoo.vespa.config.server.deploy.TenantFileSystemDirs;
+import com.yahoo.vespa.config.server.filedistribution.FileDirectory;
 import com.yahoo.vespa.config.server.filedistribution.FileDistributionFactory;
 import com.yahoo.vespa.config.server.host.HostRegistry;
 import com.yahoo.vespa.config.server.modelfactory.ModelFactoryRegistry;
@@ -40,7 +40,6 @@ import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
 import org.apache.curator.framework.state.ConnectionState;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.data.Stat;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -138,13 +137,14 @@ public class TenantRepository {
                             ConfigDefinitionRepo configDefinitionRepo,
                             ConfigActivationListener configActivationListener,
                             TenantListener tenantListener,
-                            ZookeeperServerConfig zookeeperServerConfig) {
+                            ZookeeperServerConfig zookeeperServerConfig,
+                            FileDirectory fileDirectory) {
         this(hostRegistry,
              curator,
              metrics,
              new StripedExecutor<>(),
              new StripedExecutor<>(),
-             new FileDistributionFactory(configserverConfig),
+             new FileDistributionFactory(configserverConfig, fileDirectory),
              flagSource,
              Executors.newFixedThreadPool(1, ThreadFactoryFactory.getThreadFactory(TenantRepository.class.getName())),
              secretStore,
@@ -344,12 +344,10 @@ public class TenantRepository {
                                        new TenantFileSystemDirs(configServerDB, tenantName),
                                        clock,
                                        flagSource);
-        PermanentApplicationPackage permanentApplicationPackage = new PermanentApplicationPackage(configserverConfig);
         SessionPreparer sessionPreparer = new SessionPreparer(modelFactoryRegistry,
                                                               fileDistributionFactory,
                                                               deployHelperExecutor,
                                                               hostProvisionerProvider,
-                                                              permanentApplicationPackage,
                                                               configserverConfig,
                                                               configDefinitionRepo,
                                                               curator,
@@ -363,7 +361,6 @@ public class TenantRepository {
                                                                     metrics,
                                                                     zkSessionWatcherExecutor,
                                                                     fileDistributionFactory,
-                                                                    permanentApplicationPackage,
                                                                     flagSource,
                                                                     zkCacheExecutor,
                                                                     secretStore,

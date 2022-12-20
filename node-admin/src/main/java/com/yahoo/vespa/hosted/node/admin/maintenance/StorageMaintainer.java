@@ -90,7 +90,7 @@ public class StorageMaintainer {
                 .stream()
                 .sorted(Comparator.comparing(FileFinder.FileAttributes::lastModifiedTime))
                 .flatMap(fa -> SyncFileInfo.forLogFile(archiveUri.get(), fa.path(), throttle, owner).stream())
-                .collect(Collectors.toList());
+                .toList();
 
         return syncClient.sync(context, syncFileInfos, throttle ? 1 : 100);
     }
@@ -151,10 +151,13 @@ public class StorageMaintainer {
 
         rules.add(CoredumpCleanupRule.forContainer(context.paths().underVespaHome("var/crash")));
 
-        if (context.node().membership().map(m -> m.type().hasContainer()).orElse(false))
+        rules.add(new LinearCleanupRule(() -> FileFinder.files(context.paths().underVespaHome("var/tmp")).list(),
+                fa -> monthNormalizer.apply(fa.lastModifiedTime()), Priority.LOWEST, Priority.HIGHEST));
+
+        if (context.node().membership().map(m -> m.type().hasContainer()).orElse(false)) {
             rules.add(new LinearCleanupRule(() -> FileFinder.files(context.paths().underVespaHome("logs/vespa/access")).list(),
                     fa -> monthNormalizer.apply(fa.lastModifiedTime()), Priority.LOWEST, Priority.HIGHEST));
-
+        }
         if (context.nodeType() == NodeType.tenant && context.node().membership().map(m -> m.type().isAdmin()).orElse(false))
             rules.add(new LinearCleanupRule(() -> FileFinder.files(context.paths().underVespaHome("logs/vespa/logarchive")).list(),
                     fa -> monthNormalizer.apply(fa.lastModifiedTime()), Priority.LOWEST, Priority.HIGHEST));
@@ -169,7 +172,8 @@ public class StorageMaintainer {
     /** Checks if container has any new coredumps, reports and archives them if so */
     public void handleCoreDumpsForContainer(NodeAgentContext context, Optional<Container> container, boolean throwIfCoreBeingWritten) {
         if (context.isDisabled(NodeAgentTask.CoreDumps)) return;
-        coredumpHandler.converge(context, () -> getCoredumpNodeAttributes(context, container), throwIfCoreBeingWritten);
+        coredumpHandler.converge(context, () -> getCoredumpNodeAttributes(context, container),
+                                 container.map(Container::image), throwIfCoreBeingWritten);
     }
 
     private Map<String, Object> getCoredumpNodeAttributes(NodeAgentContext context, Optional<Container> container) {

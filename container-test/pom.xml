@@ -51,6 +51,10 @@
       <artifactId>icu4j</artifactId>
     </dependency>
     <dependency>
+      <groupId>com.microsoft.onnxruntime</groupId>
+      <artifactId>onnxruntime</artifactId>
+    </dependency>
+    <dependency>
       <groupId>io.airlift</groupId>
       <artifactId>airline</artifactId>
       <exclusions>
@@ -65,6 +69,10 @@
           <artifactId>guava</artifactId>
         </exclusion>
       </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>net.openhft</groupId>
+      <artifactId>zero-allocation-hashing</artifactId>
     </dependency>
     <dependency>
       <groupId>org.antlr</groupId>
@@ -95,16 +103,10 @@
       <artifactId>aircompressor</artifactId>
       <scope>compile</scope>
     </dependency>
-    <dependency>
-      <groupId>org.apache.commons</groupId>
-      <artifactId>commons-compress</artifactId>
-      <scope>compile</scope>
-    </dependency>
-    <dependency>
-      <!-- required for container-search code using org.json -->
+    <dependency> <!-- TODO: Remove on Vespa 9 -->
+      <!-- not used by Vespa, but was historically on test classpath -->
       <groupId>org.json</groupId>
       <artifactId>json</artifactId>
-      <scope>compile</scope>
     </dependency>
     <dependency>
       <!-- TODO: this, and probably others, could be removed from here if we make the fat jar the default artifact for jdisc_core -->

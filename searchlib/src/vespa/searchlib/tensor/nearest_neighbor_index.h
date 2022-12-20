@@ -4,6 +4,7 @@
 
 #include "distance_function.h"
 #include "prepare_result.h"
+#include "vector_bundle.h"
 #include <vespa/vespalib/util/generationhandler.h>
 #include <vespa/vespalib/util/memoryusage.h>
 #include <cstdint>
@@ -44,6 +45,9 @@ public:
           : docid(id), distance(dist)
         {}
         Neighbor() noexcept : docid(0), distance(0.0) {}
+        bool operator==(const Neighbor& rhs) const {
+            return docid == rhs.docid && distance == rhs.distance;
+        }
     };
     virtual ~NearestNeighborIndex() = default;
     virtual void add_document(uint32_t docid) = 0;
@@ -57,7 +61,7 @@ public:
      * The given read guard must be kept in the result.
      */
     virtual std::unique_ptr<PrepareResult> prepare_add_document(uint32_t docid,
-                                                                vespalib::eval::TypedCells vector,
+                                                                VectorBundle vectors,
                                                                 vespalib::GenerationHandler::Guard read_guard) const = 0;
     /**
      * Performs the complete step in a two-phase operation to add a document to the index.

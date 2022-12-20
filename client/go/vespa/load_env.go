@@ -6,61 +6,44 @@ package vespa
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"strings"
+
+	"github.com/vespa-engine/vespa/client/go/envvars"
+	"github.com/vespa-engine/vespa/client/go/trace"
+	"github.com/vespa-engine/vespa/client/go/util"
+)
+
+const (
+	CURRENT_GCC_TOOLSET = "/opt/rh/gcc-toolset-11/root/usr/bin"
 )
 
 // backwards-compatible parsing of default-env.txt
 func LoadDefaultEnv() error {
-	return loadDefaultEnvTo(new(osEnvReceiver))
+	receiver := new(osEnvReceiver)
+	err := loadDefaultEnvTo(receiver)
+	ensureGoodPath(receiver)
+	return err
 }
 
 // parse default-env.txt, then dump export statements for "sh" to stdout
 func ExportDefaultEnvToSh() error {
 	holder := newShellEnvExporter()
 	err := loadDefaultEnvTo(holder)
+	holder.fallbackVar(envvars.VESPA_HOME, FindHome())
+	holder.fallbackVar(envvars.VESPA_USER, FindVespaUser())
+	ensureGoodPath(holder)
 	holder.dump()
 	return err
-}
-
-// Which user should vespa services run as?  If current user is root,
-// we want to change to some non-privileged user.
-// Should be run after LoadDefaultEnv() which possibly loads VESPA_USER
-func FindVespaUser() string {
-	uName := os.Getenv("VESPA_USER")
-	if uName != "" {
-		// no check here, assume valid
-		return uName
-	}
-	if os.Getuid() == 0 {
-		u, err := user.Lookup("vespa")
-		if err == nil {
-			uName = u.Username
-		} else {
-			u, err = user.Lookup("nobody")
-			if err == nil {
-				uName = u.Username
-			}
-		}
-	}
-	if uName == "" {
-		u, err := user.Current()
-		if err == nil {
-			uName = u.Username
-		}
-	}
-	if uName != "" {
-		os.Setenv("VESPA_USER", uName)
-	}
-	return uName
 }
 
 type loadEnvReceiver interface {
 	fallbackVar(varName, varVal string)
 	overrideVar(varName, varVal string)
 	unsetVar(varName string)
+	currentValue(varName string) string
 }
 
 type osEnvReceiver struct {
@@ -77,12 +60,18 @@ func (p *osEnvReceiver) overrideVar(varName, varVal string) {
 func (p *osEnvReceiver) unsetVar(varName string) {
 	os.Unsetenv(varName)
 }
+func (p *osEnvReceiver) currentValue(varName string) string {
+	return os.Getenv(varName)
+}
 
 func loadDefaultEnvTo(r loadEnvReceiver) error {
 	const defEnvTxt = "/conf/vespa/default-env.txt"
 	vespaHome := FindHome()
 	f, err := os.Open(vespaHome + defEnvTxt)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return err
 	}
 	defer f.Close()
@@ -184,9 +173,9 @@ func newShellEnvExporter() *shellEnvExporter {
 	}
 }
 func (p *shellEnvExporter) fallbackVar(varName, varVal string) {
-	if os.Getenv(varName) == "" || p.unsetVars[varName] != "" {
-		delete(p.unsetVars, varName)
-		p.exportVars[varName] = shellQuote(varVal)
+	old := p.currentValue(varName)
+	if old == "" || old == varVal {
+		p.overrideVar(varName, varVal)
 	}
 }
 func (p *shellEnvExporter) overrideVar(varName, varVal string) {
@@ -196,6 +185,15 @@ func (p *shellEnvExporter) overrideVar(varName, varVal string) {
 func (p *shellEnvExporter) unsetVar(varName string) {
 	delete(p.exportVars, varName)
 	p.unsetVars[varName] = "unset"
+}
+func (p *shellEnvExporter) currentValue(varName string) string {
+	if p.unsetVars[varName] != "" {
+		return ""
+	}
+	if val, ok := p.exportVars[varName]; ok {
+		return val
+	}
+	return os.Getenv(varName)
 }
 
 func shellQuote(s string) string {
@@ -247,7 +245,7 @@ func shellQuote(s string) string {
 	}
 	if i != l {
 		err := fmt.Errorf("expected length %d but was %d", l, i)
-		panic(err)
+		util.JustExitWith(err)
 	}
 	return string(res)
 }
@@ -260,4 +258,51 @@ func (p *shellEnvExporter) dump() {
 	for vn, _ := range p.unsetVars {
 		fmt.Printf("unset %s\n", vn)
 	}
+}
+
+type pathBuilder struct {
+	curPath []string
+}
+
+func (builder *pathBuilder) applyTo(receiver loadEnvReceiver) {
+	newPath := strings.Join(builder.curPath, ":")
+	if newPath != receiver.currentValue(envvars.PATH) {
+		trace.Trace("updating PATH in environment =>", newPath)
+	}
+	receiver.overrideVar(envvars.PATH, newPath)
+}
+
+func (builder *pathBuilder) appendPath(p string) {
+	if !util.IsDirectory(p) {
+		return
+	}
+	for _, elem := range builder.curPath {
+		if elem == p {
+			return
+		}
+	}
+	builder.curPath = append(builder.curPath, p)
+}
+
+func ensureGoodPath(receiver loadEnvReceiver) {
+	var builder pathBuilder
+	builder.curPath = make([]string, 0, 15)
+	builder.appendPath(FindHome() + "/bin")
+	builder.appendPath(FindHome() + "/bin64")
+	// Prefer newer gdb and pstack:
+	builder.appendPath("/opt/rh/gcc-toolset-11/root/usr/bin")
+	// how to find the "java" program?
+	if javaHome := os.Getenv(envvars.JAVA_HOME); javaHome != "" {
+		builder.appendPath(javaHome + "/bin")
+	}
+	envPath := receiver.currentValue(envvars.PATH)
+	for _, p := range strings.Split(envPath, ":") {
+		builder.appendPath(p)
+	}
+	builder.appendPath("/opt/vespa-deps/bin")
+	builder.appendPath("/usr/local/bin")
+	builder.appendPath("/usr/local/sbin")
+	builder.appendPath("/usr/bin")
+	builder.appendPath("/usr/sbin")
+	builder.applyTo(receiver)
 }

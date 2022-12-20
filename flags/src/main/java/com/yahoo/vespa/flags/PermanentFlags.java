@@ -44,6 +44,18 @@ public class PermanentFlags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
+    public static final UnboundIntFlag HEAP_SIZE_PERCENTAGE = defineIntFlag(
+            "heap-size-percentage", 70,
+            "Sets default jvm heap size percentage",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundDoubleFlag QUERY_DISPATCH_WARMUP = defineDoubleFlag(
+            "query-dispatch-warmup", 5,
+            "Warmup duration for query dispatcher",
+            "Takes effect at redeployment (requires restart)",
+            ZONE_ID, APPLICATION_ID);
+
     public static final UnboundBooleanFlag FLEET_CANARY = defineFeatureFlag(
             "fleet-canary", false,
             "Whether the host is a fleet canary.",
@@ -55,7 +67,7 @@ public class PermanentFlags {
             "Specifies the resources that ought to be immediately available for additional cluster " +
                     "allocations.  If the resources are not available, additional hosts will be provisioned. " +
                     "Only applies to dynamically provisioned zones.",
-            "Takes effect on next iteration of DynamicProvisioningMaintainer.");
+            "Takes effect on next iteration of HostCapacityMaintainer.");
 
     public static final UnboundIntFlag REBOOT_INTERVAL_IN_DAYS = defineIntFlag(
             "reboot-interval-in-days", 15,
@@ -67,7 +79,13 @@ public class PermanentFlags {
             "shared-host", SharedHost.createDisabled(), SharedHost.class,
             "Specifies whether shared hosts can be provisioned, and if so, the advertised " +
                     "node resources of the host, the maximum number of containers, etc.",
-            "Takes effect on next iteration of DynamicProvisioningMaintainer.");
+            "Takes effect on next iteration of HostCapacityMaintainer.");
+
+    public static final UnboundStringFlag HOST_FLAVOR = defineStringFlag(
+            "host-flavor", "",
+            "Specifies the Vespa flavor name that the hosts of the matching nodes should have.",
+            "Takes effect on next deployment (including internal redeployment).",
+            APPLICATION_ID, CLUSTER_TYPE);
 
     public static final UnboundBooleanFlag SKIP_MAINTENANCE_DEPLOYMENT = defineFeatureFlag(
             "node-repository-skip-maintenance-deployment", false,
@@ -165,10 +183,10 @@ public class PermanentFlags {
             "Takes effect on redeployment",
             APPLICATION_ID);
 
-    public static final UnboundIntFlag MAX_REBUILDS = defineIntFlag(
-            "max-host-rebuilds", 10,
-            "The maximum number of hosts allowed to rebuild at a time",
-            "Takes effect immediately, but any current excess rebuilds will not be cancelled"
+    public static final UnboundIntFlag MAX_OS_UPGRADES = defineIntFlag(
+            "max-os-upgrades", 30,
+            "The maximum number hosts that can perform OS upgrade at a time",
+            "Takes effect immediately, but any current excess upgrades will not be cancelled"
     );
 
     public static final UnboundListFlag<String> EXTENDED_TRIAL_TENANTS = defineListFlag(
@@ -289,6 +307,13 @@ public class PermanentFlags {
             "Whether to log or fail for deployments when app has a file with unknown extension (valid values: LOG, FAIL)",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundListFlag<String> DISABLED_DEPLOYMENT_ZONES = defineListFlag(
+            "disabled-deployment-zones", List.of(), String.class,
+            "The zones, e.g., prod.norway-71, where deployments jobs are currently disabled",
+            "Takes effect immediately",
+            APPLICATION_ID
+    );
 
     private PermanentFlags() {}
 

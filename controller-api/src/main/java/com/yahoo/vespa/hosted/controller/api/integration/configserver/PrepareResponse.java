@@ -2,11 +2,7 @@
 package com.yahoo.vespa.hosted.controller.api.integration.configserver;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbindings.ConfigChangeActions;
-import com.yahoo.vespa.hosted.controller.api.identifiers.TenantId;
 
-import java.net.URI;
 import java.util.List;
 
 /**
@@ -14,8 +10,8 @@ import java.util.List;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class PrepareResponse {
-    public TenantId tenant;
+
     public String message;
     public List<Log> log;
-    public ConfigChangeActions configChangeActions;
+
 }

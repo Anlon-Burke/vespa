@@ -12,7 +12,6 @@ import com.yahoo.jrt.StringValue;
 import com.yahoo.jrt.Supervisor;
 import com.yahoo.jrt.Transport;
 import com.yahoo.vespa.config.ConnectionPool;
-import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.filedistribution.EmptyFileReferenceData;
 import com.yahoo.vespa.filedistribution.FileDistributionConnectionPool;
 import com.yahoo.vespa.filedistribution.FileDownloader;
@@ -35,7 +34,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -43,8 +41,8 @@ import java.util.stream.Collectors;
 import static com.yahoo.vespa.config.server.filedistribution.FileDistributionUtil.getOtherConfigServersInCluster;
 import static com.yahoo.vespa.filedistribution.FileReferenceData.CompressionType;
 import static com.yahoo.vespa.filedistribution.FileReferenceData.CompressionType.gzip;
-import static com.yahoo.vespa.filedistribution.FileReferenceData.Type.compressed;
 import static com.yahoo.vespa.filedistribution.FileReferenceData.Type;
+import static com.yahoo.vespa.filedistribution.FileReferenceData.Type.compressed;
 
 public class FileServer {
 
@@ -53,7 +51,7 @@ public class FileServer {
     // Set this low, to make sure we don't wait for a long time trying to download file
     private static final Duration timeout = Duration.ofSeconds(10);
 
-    private final FileDirectory root;
+    private final FileDirectory fileDirectory;
     private final ExecutorService executor;
     private final FileDownloader downloader;
     private final List<CompressionType> compressionTypes; // compression types to use, in preferred order
@@ -91,21 +89,21 @@ public class FileServer {
 
     @SuppressWarnings("WeakerAccess") // Created by dependency injection
     @Inject
-    public FileServer(ConfigserverConfig configserverConfig, FlagSource flagSource) {
-        this(new File(Defaults.getDefaults().underVespaHome(configserverConfig.fileReferencesDir())),
-             createFileDownloader(getOtherConfigServersInCluster(configserverConfig),
+    public FileServer(ConfigserverConfig configserverConfig, FlagSource flagSource, FileDirectory fileDirectory) {
+        this(createFileDownloader(getOtherConfigServersInCluster(configserverConfig),
                                   compressionTypes(Flags.FILE_DISTRIBUTION_ACCEPTED_COMPRESSION_TYPES.bindTo(flagSource).value())),
-             compressionTypesAsList(Flags.FILE_DISTRIBUTION_COMPRESSION_TYPES_TO_SERVE.bindTo(flagSource).value()));
+             compressionTypesAsList(Flags.FILE_DISTRIBUTION_COMPRESSION_TYPES_TO_SERVE.bindTo(flagSource).value()),
+             fileDirectory);
     }
 
     // For testing only
-    public FileServer(File rootDir) {
-        this(rootDir, createFileDownloader(List.of(), Set.of(gzip)), List.of(gzip));
+    public FileServer(FileDirectory fileDirectory) {
+        this(createFileDownloader(List.of(), Set.of(gzip)), List.of(gzip), fileDirectory);
     }
 
-    FileServer(File rootDir, FileDownloader fileDownloader, List<CompressionType> compressionTypes) {
+    FileServer(FileDownloader fileDownloader, List<CompressionType> compressionTypes, FileDirectory fileDirectory) {
         this.downloader = fileDownloader;
-        this.root = new FileDirectory(rootDir);
+        this.fileDirectory = fileDirectory;
         this.executor = Executors.newFixedThreadPool(Math.max(8, Runtime.getRuntime().availableProcessors()),
                                                      new DaemonThreadFactory("file-server-"));
         this.compressionTypes = compressionTypes;
@@ -117,19 +115,19 @@ public class FileServer {
 
     private boolean hasFile(FileReference reference) {
         try {
-            return root.getFile(reference).exists();
+            return fileDirectory.getFile(reference).exists();
         } catch (IllegalArgumentException e) {
             log.log(Level.FINE, () -> "Failed locating " + reference + ": " + e.getMessage());
         }
         return false;
     }
 
-    FileDirectory getRootDir() { return root; }
+    FileDirectory getRootDir() { return fileDirectory; }
 
     void startFileServing(FileReference reference, Receiver target, Set<CompressionType> acceptedCompressionTypes) {
-        if ( ! root.getFile(reference).exists()) return;
+        if ( ! fileDirectory.getFile(reference).exists()) return;
 
-        File file = root.getFile(reference);
+        File file = this.fileDirectory.getFile(reference);
         log.log(Level.FINE, () -> "Start serving " + reference + " with file '" + file.getAbsolutePath() + "'");
         FileReferenceData fileData = EmptyFileReferenceData.empty(reference, file.getName());
         try {
@@ -148,7 +146,7 @@ public class FileServer {
     }
 
     private FileReferenceData readFileReferenceData(FileReference reference, Set<CompressionType> acceptedCompressionTypes) throws IOException {
-        File file = root.getFile(reference);
+        File file = this.fileDirectory.getFile(reference);
 
         if (file.isDirectory()) {
             Path tempFile = Files.createTempFile("filereferencedata", reference.value());
@@ -165,9 +163,6 @@ public class FileServer {
                           boolean downloadFromOtherSourceIfNotFound,
                           Set<CompressionType> acceptedCompressionTypes,
                           Request request, Receiver receiver) {
-        if (executor instanceof ThreadPoolExecutor)
-            log.log(Level.FINE, () -> "Active threads: " + ((ThreadPoolExecutor) executor).getActiveCount());
-
         log.log(Level.FINE, () -> "Received request for file reference '" + fileReference + "' from " + request.target());
         Instant deadline = Instant.now().plus(timeout);
         String client = request.target().toString();
@@ -262,7 +257,7 @@ public class FileServer {
     private static List<CompressionType> compressionTypesAsList(List<String> compressionTypes) {
         return compressionTypes.stream()
                                .map(CompressionType::valueOf)
-                               .collect(Collectors.toList());
+                               .toList();
     }
 
     private static ConnectionPool createConnectionPool(List<String> configServers, Supervisor supervisor) {

@@ -25,6 +25,18 @@ public class Loader {
         this.fixture = fixture;
     }
 
+    /** Assign measured zero traffic in the same way as the system will. */
+    public Duration zeroTraffic(int measurements, int prodRegions) {
+        try (var lock = fixture.tester().nodeRepository().applications().lock(fixture.applicationId())) {
+            var statusWithZeroLoad = fixture.application().status()
+                                            .withCurrentReadShare(0)
+                                            // the line below from TrafficShareUpdater
+                                            .withMaxReadShare(prodRegions < 2 ? 1.0 : 1.0 / ( prodRegions - 1.0));
+            fixture.tester().nodeRepository().applications().put(fixture.application().with(statusWithZeroLoad), lock);
+        }
+        return addQueryRateMeasurements(measurements, (n) -> 0.0);
+    }
+
     /**
      * Adds measurements with the given resource value and ideal values for the other resources,
      * scaled to take one node redundancy into account.
@@ -70,13 +82,13 @@ public class Loader {
     public void applyCpuLoad(double cpuLoad, int measurements) {
         addCpuMeasurements((float)cpuLoad, measurements);
         fixture.tester().clock().advance(samplingInterval.negated().multipliedBy(measurements));
-        addQueryRateMeasurements(measurements, t -> t == 0 ? 20.0 : 10.0); // Query traffic only
+        addQueryRateMeasurements(measurements, t -> t == 0 ? 200.0 : 100.0); // Query traffic only
     }
 
     public void applyMemLoad(double memLoad, int measurements) {
         addMemMeasurements(memLoad, measurements);
         fixture.tester().clock().advance(samplingInterval.negated().multipliedBy(measurements));
-        addQueryRateMeasurements(measurements, t -> t == 0 ? 20.0 : 10.0); // Query traffic only
+        addQueryRateMeasurements(measurements, t -> t == 0 ? 200.0 : 100.0); // Query traffic only
     }
 
     /**
@@ -128,13 +140,13 @@ public class Loader {
     public void applyLoad(Load load, int measurements) {
         addMeasurements(load, measurements);
         fixture.tester().clock().advance(samplingInterval.negated().multipliedBy(measurements));
-        addQueryRateMeasurements(measurements, t -> t == 0 ? 20.0 : 10.0); // Query traffic only
+        addQueryRateMeasurements(measurements, t -> t == 0 ? 200.0 : 100.0); // Query traffic only
     }
 
     public void applyLoad(Load load, int generation, boolean inService, boolean stable, int measurements) {
         addMeasurements(load, generation, inService, stable, measurements);
         fixture.tester().clock().advance(samplingInterval.negated().multipliedBy(measurements));
-        addQueryRateMeasurements(measurements, t -> t == 0 ? 20.0 : 10.0); // Query traffic only
+        addQueryRateMeasurements(measurements, t -> t == 0 ? 200.0 : 100.0); // Query traffic only
     }
 
     public Duration addQueryRateMeasurements(int measurements, IntFunction<Double> queryRate) {

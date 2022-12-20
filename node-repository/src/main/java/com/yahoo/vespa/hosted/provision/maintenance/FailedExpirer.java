@@ -86,7 +86,7 @@ public class FailedExpirer extends NodeRepositoryMaintainer {
 
     /** Recycle the nodes matching condition, and remove those nodes from the nodes list. */
     private void recycleIf(Predicate<Node> condition, List<Node> failedNodes, NodeList allNodes) {
-        List<Node> nodesToRecycle = failedNodes.stream().filter(condition).collect(Collectors.toList());
+        List<Node> nodesToRecycle = failedNodes.stream().filter(condition).toList();
         failedNodes.removeAll(nodesToRecycle);
         recycle(nodesToRecycle, allNodes);
     }
@@ -102,7 +102,7 @@ public class FailedExpirer extends NodeRepositoryMaintainer {
                                                         .mapToList(Node::hostname);
 
                 if (unparkedChildren.isEmpty()) {
-                    nodeRepository.nodes().park(candidate.hostname(), false, Agent.FailedExpirer,
+                    nodeRepository.nodes().park(candidate.hostname(), true, Agent.FailedExpirer,
                                                 "Parked by FailedExpirer due to hardware issue or high fail count");
                 } else {
                     log.info(String.format("Expired failed node %s with hardware issue was not parked because of " +

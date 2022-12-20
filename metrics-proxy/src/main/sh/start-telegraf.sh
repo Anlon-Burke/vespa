@@ -72,6 +72,9 @@ findhost () {
 findroot
 findhost
 
+ROOT=${VESPA_HOME%/}
+export ROOT
+
 # END environment bootstrap section
 
 fixddir () {
@@ -79,7 +82,7 @@ fixddir () {
        echo "Creating data directory $1"
        mkdir -p $1 || exit 1
     fi
-    if [ "${VESPA_USER}" ] && [ "${VESPA_UNPRIVILEGED}" != yes ]; then
+    if [ "${VESPA_USER}" ] && [ "$(id -u)" -eq 0 ]; then
        chown ${VESPA_USER} $1
     fi
     chmod 755 $1

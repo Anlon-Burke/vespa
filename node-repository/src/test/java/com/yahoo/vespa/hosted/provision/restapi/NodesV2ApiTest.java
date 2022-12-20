@@ -4,6 +4,7 @@ package com.yahoo.vespa.hosted.provision.restapi;
 import com.yahoo.application.container.handler.Request;
 import com.yahoo.application.container.handler.Response;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.text.Utf8;
@@ -40,7 +41,7 @@ public class NodesV2ApiTest {
 
     @Before
     public void createTester() {
-        tester = new RestApiTester();
+        tester = new RestApiTester(CloudAccount.from("111222333444"));
     }
 
     @After
@@ -59,6 +60,8 @@ public class NodesV2ApiTest {
         assertFile(new Request("http://localhost:8080/nodes/v2/node/"), "nodes.json");
         assertFile(new Request("http://localhost:8080/nodes/v2/node/?recursive=true"), "nodes-recursive.json");
         assertFile(new Request("http://localhost:8080/nodes/v2/node/?recursive=true&includeDeprovisioned=true"), "nodes-recursive-include-deprovisioned.json");
+        assertFile(new Request("http://localhost:8080/nodes/v2/node/?enclave=true"), "enclave-nodes.json");
+        assertFile(new Request("http://localhost:8080/nodes/v2/node/?recursive=true&enclave=true"), "enclave-nodes-recursive.json");
         assertFile(new Request("http://localhost:8080/nodes/v2/node/host2.yahoo.com"), "node2.json");
         assertFile(new Request("http://localhost:8080/nodes/v2/stats"), "stats.json");
         assertFile(new Request("http://localhost:8080/nodes/v2/maintenance/"), "maintenance.json");
@@ -92,10 +95,10 @@ public class NodesV2ApiTest {
 
         // POST new nodes
         assertResponse(new Request("http://localhost:8080/nodes/v2/node",
-                                   ("[" + asNodeJson("host8.yahoo.com", "default", "127.0.8.1") + "," + // test with only 1 ip address
-                                   asHostJson("host9.yahoo.com", "large-variant", List.of("node9-1.yahoo.com"), "127.0.9.1", "::9:1") + "," +
+                                   ("[" + asHostJson("host8.yahoo.com", "default", List.of("127.0.8.2"), List.of(), "127.0.8.1") + "," + // test with only 1 ip address
+                                   asHostJson("host9.yahoo.com", "large-variant", List.of(), List.of("node9-1.yahoo.com"), "127.0.9.1", "::9:1") + "," +
                                    asNodeJson("parent2.yahoo.com", NodeType.host, "large-variant", Optional.of(TenantName.from("myTenant")),
-                                           Optional.of(ApplicationId.from("tenant1", "app1", "instance1")), Optional.empty(), List.of(), "127.0.127.1", "::127:1") + "," +
+                                           Optional.of(ApplicationId.from("tenant1", "app1", "instance1")), Optional.empty(), List.of(), List.of(), "127.0.127.1", "::127:1") + "," +
                                    asDockerNodeJson("host11.yahoo.com", "parent.host.yahoo.com", "::11") + "]").
                                    getBytes(StandardCharsets.UTF_8),
                                    Request.Method.POST),
@@ -140,11 +143,6 @@ public class NodesV2ApiTest {
         assertResponse(new Request("http://localhost:8080/nodes/v2/state/active/host2.yahoo.com",
                                    new byte[0], Request.Method.PUT),
                        "{\"message\":\"Moved host2.yahoo.com to active\"}");
-
-        // Delete a ready node
-        assertResponse(new Request("http://localhost:8080/nodes/v2/node/host8.yahoo.com",
-                                   new byte[0], Request.Method.DELETE),
-                       "{\"message\":\"Removed host8.yahoo.com\"}");
 
         // or, PUT a node in failed ...
         assertResponse(new Request("http://localhost:8080/nodes/v2/state/failed/test-node-pool-102-2",
@@ -331,7 +329,7 @@ public class NodesV2ApiTest {
 
         // Attempt to POST host node with already assigned IP
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node",
-                                         "[" + asHostJson("host200.yahoo.com", "default", List.of(), "127.0.2.1") + "]",
+                                         "[" + asHostJson("host200.yahoo.com", "default", List.of(), List.of(), "127.0.2.1") + "]",
                                           Request.Method.POST), 400,
                        "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Cannot assign [127.0.2.1] to host200.yahoo.com: [127.0.2.1] already assigned to host2.yahoo.com\"}");
 
@@ -343,7 +341,7 @@ public class NodesV2ApiTest {
 
         // Node types running a single container can share their IP address with child node
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node",
-                                         "[" + asNodeJson("cfghost42.yahoo.com", NodeType.confighost, "default", Optional.empty(), Optional.empty(), Optional.empty(), List.of(), "127.0.42.1") + "]",
+                                         "[" + asNodeJson("cfghost42.yahoo.com", NodeType.confighost, "default", Optional.empty(), Optional.empty(), Optional.empty(), List.of(), List.of(), "127.0.42.1") + "]",
                                          Request.Method.POST), 200,
                        "{\"message\":\"Added 1 nodes to the provisioned state\"}");
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node",
@@ -359,7 +357,7 @@ public class NodesV2ApiTest {
 
         // ... nor with child node on different host
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node",
-                                         "[" + asNodeJson("cfghost43.yahoo.com", NodeType.confighost, "default", Optional.empty(), Optional.empty(), Optional.empty(), List.of(), "127.0.43.1") + "]",
+                                         "[" + asNodeJson("cfghost43.yahoo.com", NodeType.confighost, "default", Optional.empty(), Optional.empty(), Optional.empty(), List.of(), List.of(), "127.0.43.1") + "]",
                                           Request.Method.POST), 200,
                        "{\"message\":\"Added 1 nodes to the provisioned state\"}");
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node/cfg42.yahoo.com",
@@ -401,7 +399,7 @@ public class NodesV2ApiTest {
     @Test
     public void fails_to_ready_node_with_hard_fail() throws Exception {
         assertResponse(new Request("http://localhost:8080/nodes/v2/node",
-                        ("[" + asHostJson("host12.yahoo.com", "default", List.of()) + "]").
+                        ("[" + asHostJson("host12.yahoo.com", "default", List.of(), List.of()) + "]").
                                 getBytes(StandardCharsets.UTF_8),
                         Request.Method.POST),
                 "{\"message\":\"Added 1 nodes to the provisioned state\"}");
@@ -440,18 +438,7 @@ public class NodesV2ApiTest {
 
     @Test
     public void acl_request_by_tenant_node() throws Exception {
-        String hostname = "foo.yahoo.com";
-        assertResponse(new Request("http://localhost:8080/nodes/v2/node",
-                                   ("[" + asNodeJson(hostname, "default", "127.0.222.1") + "]").getBytes(StandardCharsets.UTF_8),
-                        Request.Method.POST),
-                "{\"message\":\"Added 1 nodes to the provisioned state\"}");
-        assertResponse(new Request("http://localhost:8080/nodes/v2/state/dirty/" + hostname,
-                        new byte[0], Request.Method.PUT),
-                "{\"message\":\"Moved foo.yahoo.com to dirty\"}");
-        assertResponse(new Request("http://localhost:8080/nodes/v2/state/ready/" + hostname,
-                                   new byte[0], Request.Method.PUT),
-                       "{\"message\":\"Moved foo.yahoo.com to ready\"}");
-        assertFile(new Request("http://localhost:8080/nodes/v2/acl/" + hostname), "acl-tenant-node.json");
+        assertFile(new Request("http://localhost:8080/nodes/v2/acl/host3.yahoo.com"), "acl-tenant-node.json");
     }
 
     @Test
@@ -720,13 +707,13 @@ public class NodesV2ApiTest {
 
         // Upgrade OS for confighost and host
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/confighost",
-                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\", \"upgradeBudget\": \"PT0S\"}"),
+                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\"}"),
                                    Request.Method.PATCH),
-                       "{\"message\":\"Set osVersion to 7.5.2, upgradeBudget to PT0S for nodes of type confighost\"}");
+                       "{\"message\":\"Set osVersion to 7.5.2 for nodes of type confighost\"}");
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/host",
-                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\", \"upgradeBudget\": \"PT0S\"}"),
+                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\"}"),
                                    Request.Method.PATCH),
-                       "{\"message\":\"Set osVersion to 7.5.2, upgradeBudget to PT0S for nodes of type host\"}");
+                       "{\"message\":\"Set osVersion to 7.5.2 for nodes of type host\"}");
 
         // OS versions are set
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/"),
@@ -734,29 +721,29 @@ public class NodesV2ApiTest {
 
         // Upgrade OS and Vespa together
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/confighost",
-                                   Utf8.toBytes("{\"version\": \"6.124.42\", \"osVersion\": \"7.5.2\", \"upgradeBudget\": \"PT0S\"}"),
+                                   Utf8.toBytes("{\"version\": \"6.124.42\", \"osVersion\": \"7.5.2\"}"),
                                    Request.Method.PATCH),
-                       "{\"message\":\"Set version to 6.124.42, osVersion to 7.5.2, upgradeBudget to PT0S for nodes of type confighost\"}");
+                       "{\"message\":\"Set version to 6.124.42, osVersion to 7.5.2 for nodes of type confighost\"}");
 
         // Attempt to upgrade unsupported node type
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/config",
-                                          Utf8.toBytes("{\"osVersion\": \"7.5.2\", \"upgradeBudget\": \"PT0S\"}"),
+                                          Utf8.toBytes("{\"osVersion\": \"7.5.2\"}"),
                                           Request.Method.PATCH),
                               400,
                               "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Node type 'config' does not support OS upgrades\"}");
 
         // Attempt to downgrade OS
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/confighost",
-                                          Utf8.toBytes("{\"osVersion\": \"7.4.2\", \"upgradeBudget\": \"PT0S\"}"),
+                                          Utf8.toBytes("{\"osVersion\": \"7.4.2\"}"),
                                           Request.Method.PATCH),
                               400,
                               "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Cannot set target OS version to 7.4.2 without setting 'force', as it's lower than the current version: 7.5.2\"}");
 
         // Downgrading OS with force succeeds
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/confighost",
-                                   Utf8.toBytes("{\"osVersion\": \"7.4.2\", \"force\": true, \"upgradeBudget\": \"PT0S\"}"),
+                                   Utf8.toBytes("{\"osVersion\": \"7.4.2\", \"force\": true}"),
                                    Request.Method.PATCH),
-                       "{\"message\":\"Set osVersion to 7.4.2, upgradeBudget to PT0S for nodes of type confighost\"}");
+                       "{\"message\":\"Set osVersion to 7.4.2 for nodes of type confighost\"}");
 
         // Current target is considered bad, remove it
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/confighost",
@@ -770,9 +757,9 @@ public class NodesV2ApiTest {
     public void test_os_version() throws Exception {
         // Schedule OS upgrade
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/host",
-                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\", \"upgradeBudget\": \"PT0S\"}"),
+                                   Utf8.toBytes("{\"osVersion\": \"7.5.2\"}"),
                                    Request.Method.PATCH),
-                       "{\"message\":\"Set osVersion to 7.5.2, upgradeBudget to PT0S for nodes of type host\"}");
+                       "{\"message\":\"Set osVersion to 7.5.2 for nodes of type host\"}");
 
         var nodeRepository = (NodeRepository) tester.container().components().getComponent(MockNodeRepository.class.getName());
 
@@ -813,19 +800,6 @@ public class NodesV2ApiTest {
                        "{\"url\":\"http://localhost:8080/nodes/v2/node/dockerhost2.yahoo.com\"}," +
                        "{\"url\":\"http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com\"}" +
                        "]}");
-
-        // Schedule OS upgrade with budget
-        assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/host",
-                                   Utf8.toBytes("{\"osVersion\": \"7.42.1\", \"upgradeBudget\": \"PT24H\"}"),
-                                   Request.Method.PATCH),
-                       "{\"message\":\"Set osVersion to 7.42.1, upgradeBudget to PT24H for nodes of type host\"}");
-
-        // Invalid budget
-        tester.assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/host",
-                                          Utf8.toBytes("{\"osVersion\": \"7.42.1\", \"upgradeBudget\": \"foo\"}"),
-                                          Request.Method.PATCH),
-                              400,
-                              "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Invalid duration 'foo': Text cannot be parsed to a Duration\"}");
     }
 
     @Test
@@ -962,7 +936,7 @@ public class NodesV2ApiTest {
         String hostname = "host42.yahoo.com";
         // Add host with switch hostname
         String json = asNodeJson(hostname, NodeType.host, "default", Optional.empty(), Optional.empty(),
-                Optional.of("switch0"), List.of(), "127.0.42.1", "::42:1");
+                Optional.of("switch0"), List.of(), List.of(), "127.0.42.1", "::42:1");
         assertResponse(new Request("http://localhost:8080/nodes/v2/node",
                                    ("[" + json + "]").getBytes(StandardCharsets.UTF_8),
                                    Request.Method.POST),
@@ -1055,22 +1029,22 @@ public class NodesV2ApiTest {
                 "\"flavor\":\"" + flavor + "\"}";
     }
 
-    private static String asHostJson(String hostname, String flavor, List<String> additionalHostnames, String... ipAddress) {
+    private static String asHostJson(String hostname, String flavor, List<String> additionalIpAddresses, List<String> additionalHostnames, String... ipAddress) {
         return asNodeJson(hostname, NodeType.host, flavor, Optional.empty(), Optional.empty(), Optional.empty(),
-                additionalHostnames, ipAddress);
+                additionalIpAddresses, additionalHostnames, ipAddress);
     }
 
     private static String asNodeJson(String hostname, NodeType nodeType, String flavor, Optional<TenantName> reservedTo,
                                      Optional<ApplicationId> exclusiveTo, Optional<String> switchHostname,
-                                     List<String> additionalHostnames, String... ipAddress) {
+                                     List<String> additionalIpAddresses, List<String> additionalHostnames, String... ipAddress) {
         return "{\"hostname\":\"" + hostname + "\", \"id\":\"" + hostname + "\"," +
                createIpAddresses(ipAddress) +
                "\"flavor\":\"" + flavor + "\"" +
                (reservedTo.map(tenantName -> ", \"reservedTo\":\"" + tenantName.value() + "\"").orElse("")) +
                (exclusiveTo.map(appId -> ", \"exclusiveTo\":\"" + appId.serializedForm() + "\"").orElse("")) +
                (switchHostname.map(s -> ", \"switchHostname\":\"" + s + "\"").orElse("")) +
-               (additionalHostnames.isEmpty() ? "" : ", \"additionalHostnames\":[\"" +
-                        String.join("\",\"", additionalHostnames) + "\"]") +
+               (additionalIpAddresses.isEmpty() ? "" : ", \"additionalIpAddresses\":[\"" + String.join("\",\"", additionalIpAddresses) + "\"]") +
+               (additionalHostnames.isEmpty() ? "" : ", \"additionalHostnames\":[\"" + String.join("\",\"", additionalHostnames) + "\"]") +
                ", \"type\":\"" + nodeType + "\"}";
     }
 

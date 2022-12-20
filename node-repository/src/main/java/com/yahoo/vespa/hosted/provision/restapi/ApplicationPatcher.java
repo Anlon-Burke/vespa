@@ -35,7 +35,7 @@ public class ApplicationPatcher implements AutoCloseable {
             throw new UncheckedIOException("Error reading request body", e);
         }
         // Use same timeout for acquiring lock as client timeout for patch request
-        this.lock = nodeRepository.nodes().lock(applicationId, Duration.ofSeconds(30));
+        this.lock = nodeRepository.applications().lock(applicationId, Duration.ofSeconds(30));
         try {
             this.application = nodeRepository.applications().require(applicationId);
         }
@@ -68,14 +68,12 @@ public class ApplicationPatcher implements AutoCloseable {
     }
 
     private Application applyField(Application application, String name, Inspector value) {
-        switch (name) {
-            case "currentReadShare" :
-                return application.with(application.status().withCurrentReadShare(asDouble(value)));
-            case "maxReadShare" :
-                return application.with(application.status().withMaxReadShare(asDouble(value)));
-            default :
-                throw new IllegalArgumentException("Could not apply field '" + name + "' on an application: No such modifiable field");
-        }
+        return switch (name) {
+            case "currentReadShare" -> application.with(application.status().withCurrentReadShare(asDouble(value)));
+            case "maxReadShare" -> application.with(application.status().withMaxReadShare(asDouble(value)));
+            default -> throw new IllegalArgumentException("Could not apply field '" + name +
+                                                          "' on an application: No such modifiable field");
+        };
     }
 
     private Double asDouble(Inspector field) {

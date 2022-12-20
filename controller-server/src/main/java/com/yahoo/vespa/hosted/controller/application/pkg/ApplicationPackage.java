@@ -2,11 +2,12 @@
 package com.yahoo.vespa.hosted.controller.application.pkg;
 
 import com.google.common.hash.Funnel;
+import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import com.yahoo.component.Version;
-import com.yahoo.compress.ArchiveStreamReader;
-import com.yahoo.compress.ArchiveStreamReader.ArchiveFile;
-import com.yahoo.compress.ArchiveStreamReader.Options;
+import com.yahoo.vespa.archive.ArchiveStreamReader;
+import com.yahoo.vespa.archive.ArchiveStreamReader.ArchiveFile;
+import com.yahoo.vespa.archive.ArchiveStreamReader.Options;
 import com.yahoo.config.application.FileSystemWrapper;
 import com.yahoo.config.application.FileSystemWrapper.FileWrapper;
 import com.yahoo.config.application.XmlPreProcessor;
@@ -26,7 +27,6 @@ import com.yahoo.vespa.hosted.controller.deployment.ZipBuilder;
 import com.yahoo.yolean.Exceptions;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.file.NoSuchFileException;
@@ -37,7 +37,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -58,21 +57,21 @@ import static java.util.stream.Collectors.toMap;
  * A representation of the content of an application package.
  * Only meta-data content can be accessed as anything other than compressed data.
  * A package is identified by a hash of the content.
- * 
- * This is immutable.
- * 
+ *
  * @author bratseth
  * @author jonmv
  */
 public class ApplicationPackage {
 
-    private static final String trustedCertificatesFile = "security/clients.pem";
-    private static final String buildMetaFile = "build-meta.json";
+    static final String trustedCertificatesFile = "security/clients.pem";
+    static final String buildMetaFile = "build-meta.json";
     static final String deploymentFile = "deployment.xml";
-    private static final String validationOverridesFile = "validation-overrides.xml";
+    static final String validationOverridesFile = "validation-overrides.xml";
     static final String servicesFile = "services.xml";
+    static final Set<String> prePopulated = Set.of(deploymentFile, validationOverridesFile, servicesFile, buildMetaFile, trustedCertificatesFile);
 
-    private final String contentHash;
+    private static Hasher hasher() { return Hashing.murmur3_128().newHasher(); }
+
     private final String bundleHash;
     private final byte[] zippedContent;
     private final DeploymentSpec deploymentSpec;
@@ -98,11 +97,9 @@ public class ApplicationPackage {
      * it must not be further changed by the caller.
      * If 'requireFiles' is true, files needed by deployment orchestration must be present.
      */
-    @SuppressWarnings("deprecation") // for Hashing.sha1()
     public ApplicationPackage(byte[] zippedContent, boolean requireFiles) {
         this.zippedContent = Objects.requireNonNull(zippedContent, "The application package content cannot be null");
-        this.contentHash = Hashing.sha1().hashBytes(zippedContent).toString();
-        this.files = new ZipArchiveCache(zippedContent, Set.of(deploymentFile, validationOverridesFile, servicesFile, buildMetaFile, trustedCertificatesFile));
+        this.files = new ZipArchiveCache(zippedContent, prePopulated);
 
         Optional<DeploymentSpec> deploymentSpec = files.get(deploymentFile).map(bytes -> new String(bytes, UTF_8)).map(DeploymentSpec::fromXml);
         if (requireFiles && deploymentSpec.isEmpty())
@@ -122,20 +119,6 @@ public class ApplicationPackage {
 
         preProcessAndPopulateCache();
     }
-
-    /** Returns a copy of this with the given certificate appended. */
-    public ApplicationPackage withTrustedCertificate(X509Certificate certificate) {
-        List<X509Certificate> trustedCertificates = new ArrayList<>(this.trustedCertificates);
-        trustedCertificates.add(certificate);
-        byte[] certificatesBytes = X509CertificateUtils.toPem(trustedCertificates).getBytes(UTF_8);
-
-        ByteArrayOutputStream modified = new ByteArrayOutputStream(zippedContent.length + certificatesBytes.length);
-        ZipEntries.transferAndWrite(modified, new ByteArrayInputStream(zippedContent), trustedCertificatesFile, certificatesBytes);
-        return new ApplicationPackage(modified.toByteArray());
-    }
-
-    /** Returns a hash of the content of this package */
-    public String hash() { return contentHash; }
 
     /** Hash of all files and settings that influence what is deployed to config servers. */
     public String bundleHash() {
@@ -242,7 +225,6 @@ public class ApplicationPackage {
     }
 
     // Hashes all files and settings that require a deployment to be forwarded to configservers
-    @SuppressWarnings("deprecation") // for Hashing.sha1()
     private String calculateBundleHash(byte[] zippedContent) {
         Predicate<String> entryMatcher = name -> ! name.endsWith(deploymentFile) && ! name.endsWith(buildMetaFile);
         SortedMap<String, Long> crcByEntry = new TreeMap<>();
@@ -258,17 +240,14 @@ public class ApplicationPackage {
             into.putBytes(key.getBytes());
             into.putLong(value);
         });
-        return Hashing.sha1().newHasher()
-                      .putObject(crcByEntry, funnel)
-                      .putInt(deploymentSpec.deployableHashCode())
-                      .hash().toString();
+        return hasher().putObject(crcByEntry, funnel)
+                       .putInt(deploymentSpec.deployableHashCode())
+                       .hash().toString();
     }
 
-    @SuppressWarnings("deprecation") // for Hashing.sha1()
     public static String calculateHash(byte[] bytes) {
-        return Hashing.sha1().newHasher()
-                      .putBytes(bytes)
-                      .hash().toString();
+        return hasher().putBytes(bytes)
+                       .hash().toString();
     }
 
 
@@ -303,7 +282,7 @@ public class ApplicationPackage {
 
         private Map<Path, Optional<byte[]>> read(Collection<String> names) {
             var entries = ZipEntries.from(zip,
-                                          name -> names.contains(name),
+                                          names::contains,
                                           maxSize,
                                           true)
                                     .asList().stream()

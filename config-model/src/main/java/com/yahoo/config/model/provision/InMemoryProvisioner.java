@@ -25,6 +25,7 @@ import java.util.ListIterator;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -67,6 +68,7 @@ public class InMemoryProvisioner implements HostProvisioner {
     private final boolean alwaysReturnOneNode;
 
     private Provisioned provisioned = new Provisioned();
+    private final Set<ClusterSpec> clusters = new TreeSet<>(Comparator.comparing(cluster -> cluster.id().value()));
 
     private Environment environment = Environment.prod;
 
@@ -125,11 +127,11 @@ public class InMemoryProvisioner implements HostProvisioner {
     }
 
     private static Collection<Host> toHostInstances(String[] hostnames) {
-        return Arrays.stream(hostnames).map(Host::new).collect(Collectors.toList());
+        return Arrays.stream(hostnames).map(Host::new).toList();
     }
 
     private static Collection<Host> createHostInstances(int hostCount) {
-        return IntStream.range(1, hostCount + 1).mapToObj(i -> new Host("host" + i)).collect(Collectors.toList());
+        return IntStream.range(1, hostCount + 1).mapToObj(i -> new Host("host" + i)).toList();
     }
 
     /** Returns the current allocations of this as a mutable map */
@@ -146,6 +148,7 @@ public class InMemoryProvisioner implements HostProvisioner {
     @Override
     public List<HostSpec> prepare(ClusterSpec cluster, Capacity requested, ProvisionLogger logger) {
         provisioned.add(cluster.id(), requested);
+        clusters.add(cluster);
         if (environment == Environment.dev) {
             requested = requested.withLimits(requested.minResources().withNodes(1),
                                              requested.maxResources().withNodes(1));
@@ -197,6 +200,7 @@ public class InMemoryProvisioner implements HostProvisioner {
     /** Create a new provisioned instance to record provision requests to this and returns it */
     public Provisioned startProvisionedRecording() {
         provisioned = new Provisioned();
+        clusters.clear();
         return provisioned;
     }
 
@@ -261,7 +265,7 @@ public class InMemoryProvisioner implements HostProvisioner {
     }
 
     private List<HostSpec> nonRetiredIn(List<HostSpec> hosts) {
-        return hosts.stream().filter(host -> ! retiredHostNames.contains(host.hostname())).collect(Collectors.toList());
+        return hosts.stream().filter(host -> ! retiredHostNames.contains(host.hostname())).toList();
     }
 
     private int totalAllocatedTo(ClusterSpec cluster) {
@@ -287,4 +291,7 @@ public class InMemoryProvisioner implements HostProvisioner {
             return 0;
         }
     }
+
+    public Set<ClusterSpec> provisionedClusters() { return clusters; }
+
 }

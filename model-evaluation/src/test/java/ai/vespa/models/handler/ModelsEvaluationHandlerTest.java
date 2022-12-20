@@ -49,16 +49,30 @@ public class ModelsEvaluationHandlerTest {
     @Test
     public void testListModels() {
         String url = "http://localhost/model-evaluation/v1";
-        String expected =
-                "{\"mnist_softmax\":\"http://localhost/model-evaluation/v1/mnist_softmax\",\"xgboost_non_standalone\":\"http://localhost/model-evaluation/v1/xgboost_non_standalone\",\"mnist_saved\":\"http://localhost/model-evaluation/v1/mnist_saved\",\"mnist_softmax_saved\":\"http://localhost/model-evaluation/v1/mnist_softmax_saved\",\"vespa_model\":\"http://localhost/model-evaluation/v1/vespa_model\",\"xgboost_2_2\":\"http://localhost/model-evaluation/v1/xgboost_2_2\",\"lightgbm_regression\":\"http://localhost/model-evaluation/v1/lightgbm_regression\"}";
+        String expected = "{" +
+                "\"lightgbm_regression\":\"http://localhost/model-evaluation/v1/lightgbm_regression\"," +
+                "\"mnist_saved\":\"http://localhost/model-evaluation/v1/mnist_saved\"," +
+                "\"mnist_softmax\":\"http://localhost/model-evaluation/v1/mnist_softmax\"," +
+                "\"mnist_softmax_saved\":\"http://localhost/model-evaluation/v1/mnist_softmax_saved\"," +
+                "\"vespa_model\":\"http://localhost/model-evaluation/v1/vespa_model\"," +
+                "\"xgboost_2_2\":\"http://localhost/model-evaluation/v1/xgboost_2_2\"," +
+                "\"xgboost_non_standalone\":\"http://localhost/model-evaluation/v1/xgboost_non_standalone\"" +
+                "}";
         handler.assertResponse(url, 200, expected);
     }
 
     @Test
     public void testListModelsWithDifferentHost() {
         String url = "http://localhost/model-evaluation/v1";
-        String expected =
-                "{\"mnist_softmax\":\"http://localhost:8088/model-evaluation/v1/mnist_softmax\",\"xgboost_non_standalone\":\"http://localhost:8088/model-evaluation/v1/xgboost_non_standalone\",\"mnist_saved\":\"http://localhost:8088/model-evaluation/v1/mnist_saved\",\"mnist_softmax_saved\":\"http://localhost:8088/model-evaluation/v1/mnist_softmax_saved\",\"vespa_model\":\"http://localhost:8088/model-evaluation/v1/vespa_model\",\"xgboost_2_2\":\"http://localhost:8088/model-evaluation/v1/xgboost_2_2\",\"lightgbm_regression\":\"http://localhost:8088/model-evaluation/v1/lightgbm_regression\"}";
+        String expected = "{" +
+                "\"lightgbm_regression\":\"http://localhost:8088/model-evaluation/v1/lightgbm_regression\"," +
+                "\"mnist_saved\":\"http://localhost:8088/model-evaluation/v1/mnist_saved\"," +
+                "\"mnist_softmax\":\"http://localhost:8088/model-evaluation/v1/mnist_softmax\"," +
+                "\"mnist_softmax_saved\":\"http://localhost:8088/model-evaluation/v1/mnist_softmax_saved\"," +
+                "\"vespa_model\":\"http://localhost:8088/model-evaluation/v1/vespa_model\"," +
+                "\"xgboost_2_2\":\"http://localhost:8088/model-evaluation/v1/xgboost_2_2\"," +
+                "\"xgboost_non_standalone\":\"http://localhost:8088/model-evaluation/v1/xgboost_non_standalone\"" +
+                "}";
         handler.assertResponse(url, 200, expected, Map.of("Host", "localhost:8088"));
     }
 
@@ -252,8 +266,19 @@ public class ModelsEvaluationHandlerTest {
         assumeTrue(OnnxEvaluator.isRuntimeAvailable());
         Map<String, String> properties = new HashMap<>();
         properties.put("input", inputTensor());
+        properties.put("format.tensors", "long");
         String url = "http://localhost/model-evaluation/v1/mnist_saved/serving_default.y/eval";
-        String expected = "{\"cells\":[{\"address\":{\"d0\":\"0\",\"d1\":\"0\"},\"value\":-0.6319251673007533},{\"address\":{\"d0\":\"0\",\"d1\":\"1\"},\"value\":-7.577770600619843E-4},{\"address\":{\"d0\":\"0\",\"d1\":\"2\"},\"value\":-0.010707969042025622},{\"address\":{\"d0\":\"0\",\"d1\":\"3\"},\"value\":-0.6344759233540788},{\"address\":{\"d0\":\"0\",\"d1\":\"4\"},\"value\":-0.17529455385847528},{\"address\":{\"d0\":\"0\",\"d1\":\"5\"},\"value\":0.7490809723192187},{\"address\":{\"d0\":\"0\",\"d1\":\"6\"},\"value\":-0.022790284182901716},{\"address\":{\"d0\":\"0\",\"d1\":\"7\"},\"value\":0.26799240657608936},{\"address\":{\"d0\":\"0\",\"d1\":\"8\"},\"value\":-0.3152438845465862},{\"address\":{\"d0\":\"0\",\"d1\":\"9\"},\"value\":0.05949304847735276}]}";
+        Tensor expected = Tensor.from("tensor(d0[1],d1[10]):{"+
+                                      "{d0:0,d1:0}:-0.6319251673007533,"+
+                                      "{d0:0,d1:1}:-0.0007577770600619843,"+
+                                      "{d0:0,d1:2}:-0.010707969042025622,"+
+                                      "{d0:0,d1:3}:-0.6344759233540788,"+
+                                      "{d0:0,d1:4}:-0.17529455385847528,"+
+                                      "{d0:0,d1:5}:0.7490809723192187,"+
+                                      "{d0:0,d1:6}:-0.022790284182901716,"+
+                                      "{d0:0,d1:7}:0.26799240657608936,"+
+                                      "{d0:0,d1:8}:-0.3152438845465862,"+
+                                      "{d0:0,d1:9}:0.05949304847735276}");
         handler.assertResponse(url, properties, 200, expected);
     }
 

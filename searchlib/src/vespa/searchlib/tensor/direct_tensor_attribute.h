@@ -3,6 +3,7 @@
 #pragma once
 
 #include "tensor_attribute.h"
+#include "default_nearest_neighbor_index_factory.h"
 #include "direct_tensor_store.h"
 
 namespace vespalib::eval { struct Value; }
@@ -14,16 +15,19 @@ class DirectTensorAttribute final : public TensorAttribute
     DirectTensorStore _direct_store;
 
 public:
-    DirectTensorAttribute(vespalib::stringref baseFileName, const Config &cfg);
+    DirectTensorAttribute(vespalib::stringref baseFileName, const Config &cfg, const NearestNeighborIndexFactory& index_factory = DefaultNearestNeighborIndexFactory());
     ~DirectTensorAttribute() override;
     void setTensor(DocId docId, const vespalib::eval::Value &tensor) override;
     void update_tensor(DocId docId,
                        const document::TensorUpdate &update,
                        bool create_empty_if_non_existing) override;
-    std::unique_ptr<vespalib::eval::Value> getTensor(DocId docId) const override;
     void set_tensor(DocId docId, std::unique_ptr<vespalib::eval::Value> tensor);
     const vespalib::eval::Value &get_tensor_ref(DocId docId) const override;
     bool supports_get_tensor_ref() const override { return true; }
+
+    // Implements DocVectorAccess
+    vespalib::eval::TypedCells get_vector(uint32_t docid, uint32_t subspace) const override;
+    VectorBundle get_vectors(uint32_t docid) const override;
 };
 
 }  // namespace search::tensor

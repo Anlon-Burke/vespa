@@ -47,6 +47,7 @@ import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
 import com.yahoo.text.Text;
 import com.yahoo.vespa.athenz.api.OAuthCredentials;
+import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.Instance;
@@ -54,16 +55,16 @@ import com.yahoo.vespa.hosted.controller.LockedTenant;
 import com.yahoo.vespa.hosted.controller.NotExistsException;
 import com.yahoo.vespa.hosted.controller.api.application.v4.EnvironmentResource;
 import com.yahoo.vespa.hosted.controller.api.application.v4.model.ProtonMetrics;
-import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbindings.RefeedAction;
-import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbindings.RestartAction;
-import com.yahoo.vespa.hosted.controller.api.application.v4.model.configserverbindings.ServiceInfo;
+import com.yahoo.vespa.hosted.controller.api.identifiers.ClusterId;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.identifiers.TenantId;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.TenantRoles;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ApplicationReindexing;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Cluster;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServerException;
-import com.yahoo.vespa.hosted.controller.api.integration.configserver.Log;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.DeploymentResult;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.DeploymentResult.LogEntry;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.LoadBalancer;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Node;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.NodeFilter;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.NodeRepository;
@@ -73,13 +74,12 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.SourceRevision;
+import com.yahoo.vespa.hosted.controller.api.integration.dns.VpcEndpointService.VpcEndpoint;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartFilter;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
-import com.yahoo.vespa.hosted.controller.api.integration.zone.ZoneRegistry;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
 import com.yahoo.vespa.hosted.controller.api.role.RoleDefinition;
 import com.yahoo.vespa.hosted.controller.api.role.SecurityContext;
-import com.yahoo.vespa.hosted.controller.application.ActivateResult;
 import com.yahoo.vespa.hosted.controller.application.AssignedRotation;
 import com.yahoo.vespa.hosted.controller.application.Change;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
@@ -115,7 +115,9 @@ import com.yahoo.vespa.hosted.controller.tenant.ArchiveAccess;
 import com.yahoo.vespa.hosted.controller.tenant.AthenzTenant;
 import com.yahoo.vespa.hosted.controller.tenant.CloudTenant;
 import com.yahoo.vespa.hosted.controller.tenant.DeletedTenant;
+import com.yahoo.vespa.hosted.controller.tenant.Email;
 import com.yahoo.vespa.hosted.controller.tenant.LastLoginInfo;
+import com.yahoo.vespa.hosted.controller.tenant.PendingMailVerification;
 import com.yahoo.vespa.hosted.controller.tenant.Tenant;
 import com.yahoo.vespa.hosted.controller.tenant.TenantAddress;
 import com.yahoo.vespa.hosted.controller.tenant.TenantBilling;
@@ -278,6 +280,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/clusters")) return clusters(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/content/{*}")) return content(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.getRest(), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/logs")) return logs(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request.propertyMap());
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/private-service")) return getPrivateServiceInfo(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/access/support")) return supportAccess(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request.propertyMap());
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/node/{node}/service-dump")) return getServiceDump(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("node"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/scaling")) return scaling(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
@@ -305,7 +308,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/info/profile")) return withCloudTenant(path.get("tenant"), request, this::putTenantInfoProfile);
         if (path.matches("/application/v4/tenant/{tenant}/info/billing")) return withCloudTenant(path.get("tenant"), request, this::putTenantInfoBilling);
         if (path.matches("/application/v4/tenant/{tenant}/info/contacts")) return withCloudTenant(path.get("tenant"), request, this::putTenantInfoContacts);
-        if (path.matches("/application/v4/tenant/{tenant}/archive-access")) return allowAwsArchiveAccess(path.get("tenant"), request); // TODO(enygaard, 2022-05-25) Remove when no longer used by console
+        if (path.matches("/application/v4/tenant/{tenant}/info/resend-mail-verification")) return withCloudTenant(path.get("tenant"), request, this::resendEmailVerification);
         if (path.matches("/application/v4/tenant/{tenant}/archive-access/aws")) return allowAwsArchiveAccess(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/archive-access/gcp")) return allowGcpArchiveAccess(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}")) return addSecretStore(path.get("tenant"), path.get("name"), request);
@@ -331,16 +334,16 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/submit")) return submit(path.get("tenant"), path.get("application"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/job/{jobtype}")) return trigger(appIdFromPath(path), jobTypeFromPath(path), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/job/{jobtype}/pause")) return pause(appIdFromPath(path), jobTypeFromPath(path));
-        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}")) return deploy(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/deploy")) return deploy(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request); // legacy synonym of the above
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}")) return deploySystemApplication(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/deploy")) return deploySystemApplication(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request); // legacy synonym of the above
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/reindex")) return reindex(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/reindexing")) return enableReindexing(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/restart")) return restart(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/suspend")) return suspend(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), true);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/access/support")) return allowSupportAccess(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/node/{node}/service-dump")) return requestServiceDump(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("node"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}")) return deploy(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/deploy")) return deploy(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request); // legacy synonym of the above
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}")) return deploySystemApplication(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/deploy")) return deploySystemApplication(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request); // legacy synonym of the above
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/environment/{environment}/region/{region}/instance/{instance}/restart")) return restart(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
         return ErrorResponse.notFoundError("Nothing at " + path);
     }
@@ -355,7 +358,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}")) return deleteTenant(path.get("tenant"), request);
         if (path.matches("/application/v4/tenant/{tenant}/access/managed/operator")) return removeManagedAccess(path.get("tenant"));
         if (path.matches("/application/v4/tenant/{tenant}/key")) return removeDeveloperKey(path.get("tenant"), request);
-        if (path.matches("/application/v4/tenant/{tenant}/archive-access")) return removeAwsArchiveAccess(path.get("tenant"));  // TODO(enygaard, 2022-05-25) Remove when no longer used by console
         if (path.matches("/application/v4/tenant/{tenant}/archive-access/aws")) return removeAwsArchiveAccess(path.get("tenant"));
         if (path.matches("/application/v4/tenant/{tenant}/archive-access/gcp")) return removeGcpArchiveAccess(path.get("tenant"));
         if (path.matches("/application/v4/tenant/{tenant}/secret-store/{name}")) return deleteSecretStore(path.get("tenant"), path.get("name"), request);
@@ -526,7 +528,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             infoCursor.setString("email", info.email());
             infoCursor.setString("website", info.website());
             infoCursor.setString("contactName", info.contact().name());
-            infoCursor.setString("contactEmail", info.contact().email());
+            infoCursor.setString("contactEmail", info.contact().email().getEmailAddress());
+            infoCursor.setBool("contactEmailVerified", info.contact().email().isVerified());
             toSlime(info.address(), infoCursor);
             toSlime(info.billingContact(), infoCursor);
             toSlime(info.contacts(), infoCursor);
@@ -543,7 +546,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (!info.isEmpty()) {
             var contact = root.setObject("contact");
             contact.setString("name", info.contact().name());
-            contact.setString("email", info.contact().email());
+            contact.setString("email", info.contact().email().getEmailAddress());
+            contact.setBool("emailVerified", info.contact().email().isVerified());
 
             var tenant = root.setObject("tenant");
             tenant.setString("company", info.name());
@@ -564,9 +568,20 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     private SlimeJsonResponse putTenantInfoProfile(CloudTenant cloudTenant, Inspector inspector) {
         var info = cloudTenant.info();
 
+        var mergedEmail = optional("email", inspector.field("contact"))
+                .filter(address -> !address.equals(info.contact().email().getEmailAddress()))
+                .map(address -> {
+                    if (emailVerificationEnabled()) {
+                        controller.mailVerifier().sendMailVerification(cloudTenant.name(), address, PendingMailVerification.MailType.TENANT_CONTACT);
+                        return new Email(address, false);
+                    }
+                    return new Email(address, true);
+                })
+                .orElse(info.contact().email());
+
         var mergedContact = TenantContact.empty()
                 .withName(getString(inspector.field("contact").field("name"), info.contact().name()))
-                .withEmail(getString(inspector.field("contact").field("email"), info.contact().email()));
+                .withEmail(mergedEmail);
 
         var mergedAddress = updateTenantInfoAddress(inspector.field("address"), info.address());
 
@@ -596,7 +611,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
             var contact = root.setObject("contact");
             contact.setString("name", billingContact.contact().name());
-            contact.setString("email", billingContact.contact().email());
+            contact.setString("email", billingContact.contact().email().getEmailAddress());
             contact.setString("phone", billingContact.contact().phone());
 
             toSlime(billingContact.address(), root); // will create "address" on the parent
@@ -610,7 +625,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         var contact = info.billingContact().contact();
         var address = info.billingContact().address();
 
-        var mergedContact = updateTenantInfoContact(inspector.field("contact"), contact);
+        var mergedContact = updateTenantInfoContact(inspector.field("contact"), cloudTenant.name(), contact, false);
         var mergedAddress = updateTenantInfoAddress(inspector.field("address"), info.billingContact().address());
 
         var mergedBilling = info.billingContact()
@@ -637,7 +652,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
     private SlimeJsonResponse putTenantInfoContacts(CloudTenant cloudTenant, Inspector inspector) {
         var mergedInfo = cloudTenant.info()
-                .withContacts(updateTenantInfoContacts(inspector.field("contacts"), cloudTenant.info().contacts()));
+                .withContacts(updateTenantInfoContacts(inspector.field("contacts"), cloudTenant.name(), cloudTenant.info().contacts()));
 
         // Store changes
         controller.tenants().lockOrThrow(cloudTenant.name(), LockedTenant.Cloud.class, lockedTenant -> {
@@ -653,10 +668,10 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (mergedInfo.contact().name().isBlank()) {
             throw new IllegalArgumentException("'contactName' cannot be empty");
         }
-        if (mergedInfo.contact().email().isBlank()) {
+        if (mergedInfo.contact().email().getEmailAddress().isBlank()) {
             throw new IllegalArgumentException("'contactEmail' cannot be empty");
         }
-        if (! mergedInfo.contact().email().contains("@")) {
+        if (! mergedInfo.contact().email().getEmailAddress().contains("@")) {
             // email address validation is notoriously hard - we should probably just try to send a
             // verification email to this address.  checking for @ is a simple best-effort.
             throw new IllegalArgumentException("'contactEmail' needs to be an email address");
@@ -686,7 +701,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
         Cursor addressCursor = parentCursor.setObject("billingContact");
         addressCursor.setString("name", billingContact.contact().name());
-        addressCursor.setString("email", billingContact.contact().email());
+        addressCursor.setString("email", billingContact.contact().email().getEmailAddress());
         addressCursor.setString("phone", billingContact.contact().phone());
         toSlime(billingContact.address(), addressCursor);
     }
@@ -700,7 +715,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             switch (contact.type()) {
                 case EMAIL:
                     var email = (TenantContacts.EmailContact) contact;
-                    contactCursor.setString("email", email.email());
+                    contactCursor.setString("email", email.email().getEmailAddress());
+                    contactCursor.setBool("emailVerified", email.email().isVerified());
                     return;
                 default:
                     throw new IllegalArgumentException("Serialization for contact type not implemented: " + contact.type());
@@ -741,9 +757,20 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         // Merge info from request with the existing info
         Inspector insp = toSlime(request.getData()).get();
 
+        var mergedEmail = optional("contactEmail", insp)
+                .filter(address -> !address.equals(oldInfo.contact().email().getEmailAddress()))
+                .map(address -> {
+                    if (emailVerificationEnabled()) {
+                        controller.mailVerifier().sendMailVerification(tenant.name(), address, PendingMailVerification.MailType.TENANT_CONTACT);
+                        return new Email(address, false);
+                    }
+                    return new Email(address, true);
+                })
+                .orElse(oldInfo.contact().email());
+
         TenantContact mergedContact = TenantContact.empty()
                 .withName(getString(insp.field("contactName"), oldInfo.contact().name()))
-                .withEmail(getString(insp.field("contactEmail"), oldInfo.contact().email()));
+                .withEmail(mergedEmail);
 
         TenantInfo mergedInfo = TenantInfo.empty()
                 .withName(getString(insp.field("name"), oldInfo.name()))
@@ -751,8 +778,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                 .withWebsite(getString(insp.field("website"), oldInfo.website()))
                 .withContact(mergedContact)
                 .withAddress(updateTenantInfoAddress(insp.field("address"), oldInfo.address()))
-                .withBilling(updateTenantInfoBillingContact(insp.field("billingContact"), oldInfo.billingContact()))
-                .withContacts(updateTenantInfoContacts(insp.field("contacts"), oldInfo.contacts()));
+                .withBilling(updateTenantInfoBillingContact(insp.field("billingContact"), tenant.name(), oldInfo.billingContact()))
+                .withContacts(updateTenantInfoContacts(insp.field("contacts"), tenant.name(), oldInfo.contacts()));
 
         validateMergedTenantInfo(mergedInfo);
 
@@ -786,32 +813,34 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         throw new IllegalArgumentException("All address fields must be set");
     }
 
-    private TenantContact updateTenantInfoContact(Inspector insp, TenantContact oldContact) {
+    private TenantContact updateTenantInfoContact(Inspector insp, TenantName tenantName, TenantContact oldContact, boolean isBillingContact) {
         if (!insp.valid()) return oldContact;
 
-        String email = getString(insp.field("email"), oldContact.email());
-
-        if (!email.isBlank() && !email.contains("@")) {
-            // email address validation is notoriously hard - we should probably just try to send a
-            // verification email to this address.  checking for @ is a simple best-effort.
-            throw new IllegalArgumentException("'email' needs to be an email address");
-        }
+        var mergedEmail = optional("email", insp)
+                .filter(address -> !address.equals(oldContact.email().getEmailAddress()))
+                .map(address -> {
+                    if (isBillingContact || !emailVerificationEnabled())
+                        return new Email(address, true);
+                    controller.mailVerifier().sendMailVerification(tenantName, address, PendingMailVerification.MailType.TENANT_CONTACT);
+                    return new Email(address, false);
+                })
+                .orElse(oldContact.email());
 
         return TenantContact.empty()
                 .withName(getString(insp.field("name"), oldContact.name()))
-                .withEmail(getString(insp.field("email"), oldContact.email()))
+                .withEmail(mergedEmail)
                 .withPhone(getString(insp.field("phone"), oldContact.phone()));
     }
 
-    private TenantBilling updateTenantInfoBillingContact(Inspector insp, TenantBilling oldContact) {
+    private TenantBilling updateTenantInfoBillingContact(Inspector insp, TenantName tenantName, TenantBilling oldContact) {
         if (!insp.valid()) return oldContact;
 
         return TenantBilling.empty()
-                .withContact(updateTenantInfoContact(insp, oldContact.contact()))
+                .withContact(updateTenantInfoContact(insp, tenantName, oldContact.contact(), true))
                 .withAddress(updateTenantInfoAddress(insp.field("address"), oldContact.address()));
     }
 
-    private TenantContacts updateTenantInfoContacts(Inspector insp, TenantContacts oldContacts) {
+    private TenantContacts updateTenantInfoContacts(Inspector insp, TenantName tenantName, TenantContacts oldContacts) {
         if (!insp.valid()) return oldContacts;
 
         List<TenantContacts.EmailContact> contacts = SlimeUtils.entriesStream(insp).map(inspector -> {
@@ -820,11 +849,19 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                             .map(audience -> fromAudience(audience.asString()))
                             .toList();
 
-                if (!email.contains("@")) {
-                    throw new IllegalArgumentException("'email' needs to be an email address");
-                }
-
-                return new TenantContacts.EmailContact(audiences, email);
+                // If contact exists, update audience. Otherwise, create new unverified contact
+                return oldContacts.ofType(TenantContacts.EmailContact.class)
+                        .stream()
+                        .filter(contact -> contact.email().getEmailAddress().equals(email))
+                        .findAny()
+                        .map(emailContact -> new TenantContacts.EmailContact(audiences, emailContact.email()))
+                        .orElseGet(() -> {
+                            if (emailVerificationEnabled()) {
+                                controller.mailVerifier().sendMailVerification(tenantName, email, PendingMailVerification.MailType.NOTIFICATIONS);
+                                return new TenantContacts.EmailContact(audiences, new Email(email, false));
+                            }
+                            return new TenantContacts.EmailContact(audiences, new Email(email, true));
+                        });
             }).toList();
 
         return new TenantContacts(contacts);
@@ -1503,6 +1540,21 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         return new MessageResponse(type.jobName() + " for " + id + " resumed");
     }
 
+    private SlimeJsonResponse resendEmailVerification(CloudTenant tenant, Inspector inspector) {
+        var mail = mandatory("mail", inspector).asString();
+        var type = mandatory("mailType", inspector).asString();
+
+        var mailType = switch (type) {
+            case "contact" -> PendingMailVerification.MailType.TENANT_CONTACT;
+            case "notifications" -> PendingMailVerification.MailType.NOTIFICATIONS;
+            default -> throw new IllegalArgumentException("Unknown mail type " + type);
+        };
+
+        var pendingVerification = controller.mailVerifier().resendMailVerification(tenant.name(), mail, mailType);
+        return pendingVerification.isPresent() ? new MessageResponse("Re-sent verification mail to " + mail) :
+                ErrorResponse.notFoundError("No pending mail verification found for " + mail);
+    }
+
     private void toSlime(Cursor object, Application application, HttpRequest request) {
         object.setString("tenant", application.id().tenant().value());
         object.setString("application", application.id().application().value());
@@ -1818,6 +1870,12 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
         application.projectId().ifPresent(i -> response.setString("screwdriverId", String.valueOf(i)));
 
+        controller.applications().decideCloudAccountOf(deploymentId, application.deploymentSpec()).ifPresent(cloudAccount -> {
+            Cursor enclave = response.setObject("enclave");
+            enclave.setString("cloudAccount", cloudAccount.value());
+            controller.zoneRegistry().cloudAccountAthenzDomain(cloudAccount).ifPresent(domain -> enclave.setString("athensDomain", domain.value()));
+        });
+
         var instance = application.instances().get(deploymentId.applicationId().instance());
         if (instance != null) {
             if (!instance.rotations().isEmpty() && deployment.zone().environment() == Environment.prod)
@@ -1904,6 +1962,32 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         controller.routing().of(deploymentId).setRoutingStatus(status, agent);
         return new MessageResponse(Text.format("Successfully set %s in %s %s service",
                                                  instance.id().toShortString(), zone, inService ? "in" : "out of"));
+    }
+
+    private HttpResponse getPrivateServiceInfo(String tenantName, String applicationName, String instanceName, String environment, String region) {
+        DeploymentId id = new DeploymentId(ApplicationId.from(tenantName, applicationName, instanceName),
+                                           ZoneId.from(environment, region));
+        List<LoadBalancer> lbs = controller.serviceRegistry().configServer().getLoadBalancers(id.applicationId(), id.zoneId());
+        Slime slime = new Slime();
+        Cursor lbArray = slime.setObject().setArray("loadBalancers");
+        for (LoadBalancer lb : lbs) {
+            Cursor lbObject = lbArray.addObject();
+            lbObject.setString("cluster", lb.cluster().value());
+            lb.service().ifPresent(service -> {
+                lbObject.setString("serviceId", service.id()); // Really the "serviceName", but this is what the user needs >_<
+                service.allowedUrns().forEach(lbObject.setArray("allowedUrns")::addString);
+                Cursor endpointsArray = lbObject.setArray("endpoints");
+                controller.serviceRegistry().vpcEndpointService()
+                          .getConnections(new ClusterId(id, lb.cluster()),
+                                          controller.applications().decideCloudAccountOf(id, controller.applications().requireApplication(TenantAndApplicationId.from(tenantName, applicationName)).deploymentSpec()))
+                        .forEach(endpoint -> {
+                            Cursor endpointObject = endpointsArray.addObject();
+                            endpointObject.setString("endpointId", endpoint.endpointId());
+                            endpointObject.setString("state", endpoint.state());
+                        });
+            });
+        }
+        return new SlimeJsonResponse(slime);
     }
 
     private HttpResponse getGlobalRotationOverride(String tenantName, String applicationName, String instanceName, String environment, String region) {
@@ -2010,7 +2094,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             User user = getAttribute(request, User.ATTRIBUTE_NAME, User.class);
             TenantInfo info = controller.tenants().require(tenant, CloudTenant.class)
                     .info()
-                    .withContact(TenantContact.from(user.name(), user.email()));
+                    .withContact(TenantContact.from(user.name(), new Email(user.email(), true)));
             // Store changes
             controller.tenants().lockOrThrow(tenant, LockedTenant.Cloud.class, lockedTenant -> {
                 lockedTenant = lockedTenant.withInfo(info);
@@ -2145,7 +2229,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
         Double speed = request.hasProperty("speed") ? Double.parseDouble(request.getProperty("speed")) : null;
         boolean indexedOnly = request.getBooleanProperty("indexedOnly");
-        controller.applications().reindex(id, zone, clusterNames, documentTypes, indexedOnly, speed);
+        controller.applications().reindex(id, zone, clusterNames, documentTypes, indexedOnly, speed, "reindexing triggered by " + requireUserPrincipal(request).getName());
         return new MessageResponse("Requested reindexing of " + id + " in " + zone +
                                    (clusterNames.isEmpty() ? "" : ", on clusters " + String.join(", ", clusterNames)) +
                                    (documentTypes.isEmpty() ? "" : ", for types " + String.join(", ", documentTypes)) +
@@ -2197,6 +2281,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         status.message().ifPresent(message -> statusObject.setString("message", message));
         status.progress().ifPresent(progress -> statusObject.setDouble("progress", progress));
         status.speed().ifPresent(speed -> statusObject.setDouble("speed", speed));
+        status.cause().ifPresent(cause -> statusObject.setString("cause", cause));
     }
 
     private static String toString(ApplicationReindexing.State state) {
@@ -2283,7 +2368,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         return new SlimeJsonResponse(slime);
     }
 
-    private HttpResponse deploy(String tenantName, String applicationName, String instanceName, String environment, String region, HttpRequest request) {
+    private HttpResponse deploySystemApplication(String tenantName, String applicationName, String instanceName, String environment, String region, HttpRequest request) {
         ApplicationId applicationId = ApplicationId.from(tenantName, applicationName, instanceName);
         ZoneId zone = requireZone(environment, region);
 
@@ -2295,18 +2380,18 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
         // Resolve system application
         Optional<SystemApplication> systemApplication = SystemApplication.matching(applicationId);
-        if (systemApplication.isEmpty() || !systemApplication.get().hasApplicationPackage()) {
+        if (systemApplication.isEmpty() || ! systemApplication.get().hasApplicationPackage()) {
             return ErrorResponse.badRequest("Deployment of " + applicationId + " is not supported through this API");
         }
 
         // Make it explicit that version is not yet supported here
         String vespaVersion = deployOptions.field("vespaVersion").asString();
-        if (!vespaVersion.isEmpty() && !vespaVersion.equals("null")) {
+        if ( ! vespaVersion.isEmpty()) {
             return ErrorResponse.badRequest("Specifying version for " + applicationId + " is not permitted");
         }
 
-        // To avoid second guessing the orchestrated upgrades of system applications
-        // we don't allow to deploy these during an system upgrade (i.e when new vespa is being rolled out)
+        // To avoid second guessing the orchestrated upgrades of system applications we don't allow
+        // deploying these during a system upgrade, i.e., when a new Vespa version is being rolled out
         VersionStatus versionStatus = controller.readVersionStatus();
         if (versionStatus.isUpgrading()) {
             throw new IllegalArgumentException("Deployment of system applications during a system upgrade is not allowed");
@@ -2315,14 +2400,26 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (systemVersion.isEmpty()) {
             throw new IllegalArgumentException("Deployment of system applications is not permitted until system version is determined");
         }
-        ActivateResult result = controller.applications()
-                                          .deploySystemApplicationPackage(systemApplication.get(), zone, systemVersion.get().versionNumber());
-        return new SlimeJsonResponse(toSlime(result));
+        DeploymentResult result = controller.applications()
+                                            .deploySystemApplicationPackage(systemApplication.get(), zone, systemVersion.get().versionNumber());
+        Slime slime = new Slime();
+        Cursor root = slime.setObject();
+        root.setString("message", "Deployed " + systemApplication.get() + " in " + zone + " on " + systemVersion.get().versionNumber());
+
+        Cursor logArray = root.setArray("prepareMessages");
+        for (LogEntry logMessage : result.log()) {
+            Cursor logObject = logArray.addObject();
+            logObject.setLong("time", logMessage.epochMillis());
+            logObject.setString("level", logMessage.level().getName());
+            logObject.setString("message", logMessage.message());
+        }
+
+        return new SlimeJsonResponse(slime);
     }
 
     private HttpResponse deleteTenant(String tenantName, HttpRequest request) {
         boolean forget = request.getBooleanProperty("forget");
-        if (forget && !isOperator(request))
+        if (forget && ! isOperator(request))
             return ErrorResponse.forbidden("Only operators can forget a tenant");
 
         controller.tenants().delete(TenantName.from(tenantName),
@@ -2558,8 +2655,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                     log.warning(String.format("Failed to get quota for tenant %s: %s", tenant.name(), Exceptions.toMessageString(e)));
                 }
 
-                // TODO(enygaard, 2022-05-25) Remove when console is using new archive access structure
-                cloudTenant.archiveAccess().awsRole().ifPresent(role -> object.setString("archiveAccessRole", role));
                 toSlime(cloudTenant.archiveAccess(), object.setObject("archiveAccess"));
 
                 break;
@@ -2610,19 +2705,13 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private void utilizationToSlime(Cluster.Utilization utilization, Cursor utilizationObject) {
-        utilizationObject.setDouble("cpu", utilization.cpu());
         utilizationObject.setDouble("idealCpu", utilization.idealCpu());
-        utilizationObject.setDouble("currentCpu", utilization.currentCpu());
         utilizationObject.setDouble("peakCpu", utilization.peakCpu());
 
-        utilizationObject.setDouble("memory", utilization.memory());
         utilizationObject.setDouble("idealMemory", utilization.idealMemory());
-        utilizationObject.setDouble("currentMemory", utilization.currentMemory());
         utilizationObject.setDouble("peakMemory", utilization.peakMemory());
 
-        utilizationObject.setDouble("disk", utilization.disk());
         utilizationObject.setDouble("idealDisk", utilization.idealDisk());
-        utilizationObject.setDouble("currentDisk", utilization.currentDisk());
         utilizationObject.setDouble("peakDisk", utilization.peakDisk());
     }
 
@@ -2777,55 +2866,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                                          request.getUri()).toString());
     }
 
-    private Slime toSlime(ActivateResult result) {
-        Slime slime = new Slime();
-        Cursor object = slime.setObject();
-        object.setString("revisionId", result.revisionId().id());
-        object.setLong("applicationZipSize", result.applicationZipSizeBytes());
-        Cursor logArray = object.setArray("prepareMessages");
-        if (result.prepareResponse().log != null) {
-            for (Log logMessage : result.prepareResponse().log) {
-                Cursor logObject = logArray.addObject();
-                logObject.setLong("time", logMessage.time);
-                logObject.setString("level", logMessage.level);
-                logObject.setString("message", logMessage.message);
-            }
-        }
-
-        Cursor changeObject = object.setObject("configChangeActions");
-
-        Cursor restartActionsArray = changeObject.setArray("restart");
-        for (RestartAction restartAction : result.prepareResponse().configChangeActions.restartActions) {
-            Cursor restartActionObject = restartActionsArray.addObject();
-            restartActionObject.setString("clusterName", restartAction.clusterName);
-            restartActionObject.setString("clusterType", restartAction.clusterType);
-            restartActionObject.setString("serviceType", restartAction.serviceType);
-            serviceInfosToSlime(restartAction.services, restartActionObject.setArray("services"));
-            stringsToSlime(restartAction.messages, restartActionObject.setArray("messages"));
-        }
-
-        Cursor refeedActionsArray = changeObject.setArray("refeed");
-        for (RefeedAction refeedAction : result.prepareResponse().configChangeActions.refeedActions) {
-            Cursor refeedActionObject = refeedActionsArray.addObject();
-            refeedActionObject.setString("name", refeedAction.name);
-            refeedActionObject.setString("documentType", refeedAction.documentType);
-            refeedActionObject.setString("clusterName", refeedAction.clusterName);
-            serviceInfosToSlime(refeedAction.services, refeedActionObject.setArray("services"));
-            stringsToSlime(refeedAction.messages, refeedActionObject.setArray("messages"));
-        }
-        return slime;
-    }
-
-    private void serviceInfosToSlime(List<ServiceInfo> serviceInfoList, Cursor array) {
-        for (ServiceInfo serviceInfo : serviceInfoList) {
-            Cursor serviceInfoObject = array.addObject();
-            serviceInfoObject.setString("serviceName", serviceInfo.serviceName);
-            serviceInfoObject.setString("serviceType", serviceInfo.serviceType);
-            serviceInfoObject.setString("configId", serviceInfo.configId);
-            serviceInfoObject.setString("hostName", serviceInfo.hostName);
-        }
-    }
-
     private void stringsToSlime(List<String> strings, Cursor array) {
         for (String string : strings)
             array.addString(string);
@@ -2926,7 +2966,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
 
         ApplicationPackage applicationPackage = new ApplicationPackage(dataParts.get(EnvironmentResource.APPLICATION_ZIP), true);
 
-        byte[] testPackage = dataParts.get(EnvironmentResource.APPLICATION_TEST_ZIP);
+        byte[] testPackage = dataParts.getOrDefault(EnvironmentResource.APPLICATION_TEST_ZIP, new byte[0]);
         Submission submission = new Submission(applicationPackage, testPackage, sourceUrl, sourceRevision, authorEmail, description, risk);
 
         controller.applications().verifyApplicationIdentityConfiguration(TenantName.from(tenant),
@@ -3065,5 +3105,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                           .collect(collectingAndThen(Collectors.toList(), Collections::unmodifiableList));
     }
 
+    public boolean emailVerificationEnabled() {
+        return Flags.ENABLED_MAIL_VERIFICATION.bindTo(controller.flagSource()).value();
+    }
 }
 

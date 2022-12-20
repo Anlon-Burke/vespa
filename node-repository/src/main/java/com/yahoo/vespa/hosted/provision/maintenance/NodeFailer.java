@@ -137,7 +137,7 @@ public class NodeFailer extends NodeRepositoryMaintainer {
                 .filter(report -> report.getType().hostShouldBeFailed())
                 // The generated string is built from the report's ID, created time, and description only.
                 .map(report -> report.getReportId() + " reported " + report.getCreatedTime() + ": " + report.getDescription())
-                .collect(Collectors.toList());
+                .toList();
     }
 
     /** Returns whether node has any kind of hardware issue */
@@ -170,16 +170,11 @@ public class NodeFailer extends NodeRepositoryMaintainer {
      * But we refuse to fail out config(host)/controller(host)
      */
     private boolean failAllowedFor(NodeType nodeType) {
-        switch (nodeType) {
-            case tenant:
-            case host:
-                return true;
-            case proxy:
-            case proxyhost:
-                return nodeRepository().nodes().list(Node.State.failed).nodeType(nodeType).isEmpty();
-            default:
-                return false;
-        }
+        return switch (nodeType) {
+            case tenant, host -> true;
+            case proxy, proxyhost -> nodeRepository().nodes().list(Node.State.failed).nodeType(nodeType).isEmpty();
+            default -> false;
+        };
     }
 
     /**
@@ -286,7 +281,7 @@ public class NodeFailer extends NodeRepositoryMaintainer {
 
     public enum ThrottlePolicy {
 
-        hosted(Duration.ofDays(1), 0.03, 2),
+        hosted(Duration.ofDays(1), 0.04, 2),
         disabled(Duration.ZERO, 0, 0);
 
         private final Duration throttleWindow;

@@ -4,6 +4,7 @@ package com.yahoo.vespa.config.server.filedistribution;
 
 import com.yahoo.config.FileReference;
 import com.yahoo.io.IOUtils;
+import com.yahoo.vespa.flags.InMemoryFlagSource;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -30,7 +31,7 @@ public class FileDirectoryTest {
 
     @Before
     public void setup() {
-        fileDirectory = new FileDirectory(temporaryFolder.getRoot());
+        fileDirectory = new FileDirectory(temporaryFolder.getRoot(), new InMemoryFlagSource());
     }
 
     @Test
@@ -46,8 +47,6 @@ public class FileDirectoryTest {
 
     @Test
     public void requireThatFileReferenceWithSubDirectoriesWorks() throws IOException {
-        FileDirectory fileDirectory = new FileDirectory(temporaryFolder.getRoot());
-
         String subdirName = "subdir";
         File subDirectory = new File(temporaryFolder.getRoot(), subdirName);
         createFileInSubDir(subDirectory, "foo", "some content");
@@ -77,8 +76,6 @@ public class FileDirectoryTest {
 
     @Test
     public void requireThatExistingDirWithInvalidContentIsDeleted() throws IOException {
-        FileDirectory fileDirectory = new FileDirectory(temporaryFolder.getRoot());
-
         String subdirName = "subdir";
         File subDirectory = new File(temporaryFolder.getRoot(), subdirName);
         createFileInSubDir(subDirectory, "foo", "some content");
@@ -104,6 +101,36 @@ public class FileDirectoryTest {
         assertTrue(foo2CreatedTimestamp.compareTo(fooCreatedTimestamp) > 0);
         assertFalse(new File(dir, "doesnotexist").exists());
         assertEquals("bebc5a1aee74223d", fileReference.value());
+    }
+
+    @Test
+    public void requireThatNothingIsDoneIfFileReferenceExists() throws IOException {
+        String subdirName = "subdir";
+        File subDirectory = new File(temporaryFolder.getRoot(), subdirName);
+        createFileInSubDir(subDirectory, "foo", "some content");
+        FileReference fileReference = fileDirectory.addFile(subDirectory);
+        File dir = fileDirectory.getFile(fileReference);
+        assertTrue(dir.exists());
+        File foo = new File(dir, "foo");
+        assertTrue(foo.exists());
+        FileTime fooCreatedTimestamp = Files.readAttributes(foo.toPath(), BasicFileAttributes.class).creationTime();
+        assertFalse(new File(dir, "doesnotexist").exists());
+        assertEquals("bebc5a1aee74223d", fileReference.value());
+
+        try { Thread.sleep(1000);} catch (InterruptedException e) { /*ignore */ } // Needed since we have timestamp resolution of 1 second
+        // Add a file that already exists, nothing should happen
+        createFileInSubDir(subDirectory, "foo", "some content"); // same as before, nothing should happen
+        FileReference fileReference3 = fileDirectory.addFile(subDirectory);
+        dir = fileDirectory.getFile(fileReference3);
+        assertTrue(new File(dir, "foo").exists());
+        assertEquals("bebc5a1aee74223d", fileReference3.value()); // same hash
+
+        File foo2 = new File(dir, "foo");
+        assertTrue(dir.exists());
+        assertTrue(foo2.exists());
+        FileTime barCreatedTimestamp = Files.readAttributes(foo2.toPath(), BasicFileAttributes.class).creationTime();
+        // Check that creation timestamp is newer than the old one to be sure that a new file was written
+        assertEquals(barCreatedTimestamp, fooCreatedTimestamp);
     }
 
     // Content in created file is equal to the filename string

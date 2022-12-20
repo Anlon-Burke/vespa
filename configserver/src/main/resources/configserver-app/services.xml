@@ -26,7 +26,6 @@
     <component id="com.yahoo.vespa.config.server.deploy.InfraDeployerProvider" bundle="configserver" />
     <component id="com.yahoo.vespa.curator.Curator" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.tenant.TenantRepository" bundle="configserver" />
-    <component id="com.yahoo.vespa.config.server.application.PermanentApplicationPackage" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.host.HostRegistry" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.ApplicationRepository" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.version.VersionState" bundle="configserver" />
@@ -34,6 +33,7 @@
     <component id="com.yahoo.vespa.config.server.application.ConfigConvergenceChecker" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.application.HttpProxy" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.filedistribution.FileServer" bundle="configserver" />
+    <component id="com.yahoo.vespa.config.server.filedistribution.FileDirectory" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.rpc.RpcRequestHandlerProvider" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.rpc.security.DummyNodeIdentifierProvider" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.rpc.security.DummyNodeHostnameVerifierProvider" bundle="configserver" />

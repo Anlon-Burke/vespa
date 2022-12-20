@@ -36,6 +36,7 @@ import com.yahoo.vespa.config.protocol.VespaVersion;
 import com.yahoo.vespa.config.server.application.OrchestratorMock;
 import com.yahoo.vespa.config.server.deploy.DeployTester;
 import com.yahoo.vespa.config.server.deploy.TenantFileSystemDirs;
+import com.yahoo.vespa.config.server.filedistribution.FileDirectory;
 import com.yahoo.vespa.config.server.filedistribution.MockFileDistributionFactory;
 import com.yahoo.vespa.config.server.http.v2.PrepareResult;
 import com.yahoo.vespa.config.server.session.LocalSession;
@@ -61,7 +62,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -105,6 +105,7 @@ public class ApplicationRepositoryTest {
     private TimeoutBudget timeoutBudget;
     private Curator curator;
     private ConfigserverConfig configserverConfig;
+    private FileDirectory fileDirectory;
 
     @Rule
     public TemporaryFolder temporaryFolder = new TemporaryFolder();
@@ -122,12 +123,15 @@ public class ApplicationRepositoryTest {
                 .configDefinitionsDir(temporaryFolder.newFolder().getAbsolutePath())
                 .fileReferencesDir(temporaryFolder.newFolder().getAbsolutePath())
                 .build();
+        InMemoryFlagSource flagSource = new InMemoryFlagSource();
+        fileDirectory = new FileDirectory(configserverConfig, flagSource);
         tenantRepository = new TestTenantRepository.Builder()
                 .withClock(clock)
                 .withConfigserverConfig(configserverConfig)
                 .withCurator(curator)
-                .withFileDistributionFactory(new MockFileDistributionFactory(configserverConfig))
-                .withFlagSource(new InMemoryFlagSource())
+                .withFileDistributionFactory(
+                        new MockFileDistributionFactory(configserverConfig, fileDirectory))
+                .withFlagSource(flagSource)
                 .build();
         tenantRepository.addTenant(TenantRepository.HOSTED_VESPA_TENANT);
         tenantRepository.addTenant(tenant1);
@@ -261,27 +265,23 @@ public class ApplicationRepositoryTest {
     }
 
     @Test
-    public void deleteUnusedFileReferences() throws IOException {
-        File fileReferencesDir = temporaryFolder.newFolder();
+    public void deleteUnusedFileReferences() {
+        File fileReferencesDir = new File(configserverConfig.fileReferencesDir());
         Duration keepFileReferencesDuration = Duration.ofSeconds(4);
 
         // Add file reference that is not in use and should be deleted (older than 'keepFileReferencesDuration')
-        File filereferenceDirOldest = createFilereferenceOnDisk(new File(fileReferencesDir, "foo"));
+        File filereferenceDirOldest = createFileReferenceOnDisk(new File(fileReferencesDir, "bar"));
         clock.advance(Duration.ofSeconds(1));
 
-        // Add file references that are not in use and could be deleted
-        IntStream.range(0, 3).forEach(i -> {
-            try {
-                createFilereferenceOnDisk(new File(fileReferencesDir, "bar" + i));
-            } catch (IOException e) {
-                fail(e.getMessage());
-            }
+        // Add file references that are not in use should be deleted (baz0 and baz1)
+        IntStream.range(0, 2).forEach(i -> {
+            createFileReferenceOnDisk(new File(fileReferencesDir, "baz" + i));
             clock.advance(Duration.ofSeconds(1));
         });
         clock.advance(keepFileReferencesDuration);
 
         // Add file reference that is not in use, but should not be deleted (newer than 'keepFileReferencesDuration')
-        File filereferenceDirNewest = createFilereferenceOnDisk(new File(fileReferencesDir, "baz"));
+        File filereferenceDirNewest = createFileReferenceOnDisk(new File(fileReferencesDir, "foo"));
 
         applicationRepository = new ApplicationRepository.Builder()
                 .withTenantRepository(tenantRepository)
@@ -291,26 +291,25 @@ public class ApplicationRepositoryTest {
                 .build();
 
         // TODO: Deploy an app with a bundle or file that will be a file reference, too much missing in test setup to get this working now
-        PrepareParams prepareParams = new PrepareParams.Builder().applicationId(applicationId()).ignoreValidationErrors(true).build();
-        deployApp(new File("src/test/apps/app"), prepareParams);
+        // PrepareParams prepareParams = new PrepareParams.Builder().applicationId(applicationId()).ignoreValidationErrors(true).build();
+        // deployApp(new File("src/test/apps/app"), prepareParams);
 
-        List<String> toBeDeleted = applicationRepository.deleteUnusedFileDistributionReferences(fileReferencesDir,
-                                                                                                keepFileReferencesDuration,
-                                                                                                2);
-        Collections.sort(toBeDeleted);
-        assertEquals(List.of("bar0", "foo"), toBeDeleted);
-        // bar0 and foo are the only ones that will be deleted (keeps 2 newest no matter how old they are)
+        List<String> deleted = applicationRepository.deleteUnusedFileDistributionReferences(fileDirectory, keepFileReferencesDuration);
+        List<String> expected = List.of("bar", "baz0", "baz1");
+        assertEquals(expected.stream().sorted().toList(), deleted.stream().sorted().toList());
+        // bar, baz0 and baz1 will be deleted and foo is not old enough to be considered
         assertFalse(filereferenceDirOldest.exists());
-        assertFalse(new File(fileReferencesDir, "bar0").exists());
+        assertFalse(new File(fileReferencesDir, "baz0").exists());
+        assertFalse(new File(fileReferencesDir, "baz1").exists());
         assertTrue(filereferenceDirNewest.exists());
     }
 
-    private File createFilereferenceOnDisk(File filereferenceDir) throws IOException {
-        assertTrue(filereferenceDir.mkdir());
-        File file = new File(filereferenceDir, "bar");
-        IOUtils.writeFile(file, Utf8.toBytes("test"));
-        Files.setAttribute(filereferenceDir.toPath(), "lastAccessTime", FileTime.from(clock.instant()));
-        return filereferenceDir;
+    private File createFileReferenceOnDisk(File filereference) {
+        File fileReferenceDir = filereference.getParentFile();
+        fileReferenceDir.mkdir();
+        IOUtils.writeFile(filereference, Utf8.toBytes("test"));
+        filereference.setLastModified(clock.instant().toEpochMilli());
+        return filereference;
     }
 
     @Test

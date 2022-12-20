@@ -37,18 +37,18 @@ public class AllocatableClusterResources {
                                        NodeRepository nodeRepository) {
         this.nodes = requested.nodes();
         this.groups = requested.groups();
-        this.realResources = nodeRepository.resourcesCalculator().requestToReal(requested.nodeResources(), clusterSpec.isExclusive());
+        this.realResources = nodeRepository.resourcesCalculator().requestToReal(requested.nodeResources(), nodeRepository.exclusiveAllocation(clusterSpec));
         this.advertisedResources = requested.nodeResources();
         this.clusterSpec = clusterSpec;
         this.fulfilment = 1;
     }
 
-    public AllocatableClusterResources(List<Node> nodes, NodeRepository nodeRepository) {
+    public AllocatableClusterResources(NodeList nodes, NodeRepository nodeRepository) {
         this.nodes = nodes.size();
         this.groups = (int)nodes.stream().map(node -> node.allocation().get().membership().cluster().group()).distinct().count();
-        this.realResources = averageRealResourcesOf(nodes, nodeRepository); // Average since we average metrics over nodes
-        this.advertisedResources = nodes.get(0).allocation().get().requestedResources();
-        this.clusterSpec = nodes.get(0).allocation().get().membership().cluster();
+        this.realResources = averageRealResourcesOf(nodes.asList(), nodeRepository); // Average since we average metrics over nodes
+        this.advertisedResources = nodes.requestedResources();
+        this.clusterSpec = nodes.clusterSpec();
         this.fulfilment = 1;
     }
 
@@ -132,10 +132,6 @@ public class AllocatableClusterResources {
         if (this.fulfilment < 1 || other.fulfilment < 1) // always fulfil as much as possible
             return this.fulfilment > other.fulfilment;
 
-        if (clusterSpec.type().isContent() // always prefer local storage on content nodes
-            && this.realResources.storageType() != other.realResources().nodeResources().storageType())
-            return this.realResources.storageType() == NodeResources.StorageType.local;
-
         return this.cost() < other.cost(); // otherwise, prefer lower cost
     }
 
@@ -148,8 +144,9 @@ public class AllocatableClusterResources {
 
     private static NodeResources averageRealResourcesOf(List<Node> nodes, NodeRepository nodeRepository) {
         NodeResources sum = new NodeResources(0, 0, 0, 0).justNumbers();
-        for (Node node : nodes)
+        for (Node node : nodes) {
             sum = sum.add(nodeRepository.resourcesCalculator().realResourcesOf(node, nodeRepository).justNumbers());
+        }
         return nodes.get(0).allocation().get().requestedResources().justNonNumbers()
                                        .withVcpu(sum.vcpu() / nodes.size())
                                        .withMemoryGb(sum.memoryGb() / nodes.size())
@@ -160,24 +157,28 @@ public class AllocatableClusterResources {
     public static Optional<AllocatableClusterResources> from(ClusterResources wantedResources,
                                                              ClusterSpec clusterSpec,
                                                              Limits applicationLimits,
-                                                             NodeList hosts,
+                                                             List<NodeResources> availableRealHostResources,
                                                              NodeRepository nodeRepository) {
         var systemLimits = new NodeResourceLimits(nodeRepository);
-        boolean exclusive = clusterSpec.isExclusive();
-        if ( !clusterSpec.isExclusive() && !nodeRepository.zone().getCloud().dynamicProvisioning()) {
+        boolean exclusive = nodeRepository.exclusiveAllocation(clusterSpec);
+        if (! exclusive) {
             // We decide resources: Add overhead to what we'll request (advertised) to make sure real becomes (at least) cappedNodeResources
             var advertisedResources = nodeRepository.resourcesCalculator().realToRequest(wantedResources.nodeResources(), exclusive);
-            advertisedResources = systemLimits.enlargeToLegal(advertisedResources, clusterSpec.type(), exclusive); // Ask for something legal
+            advertisedResources = systemLimits.enlargeToLegal(advertisedResources, clusterSpec, exclusive); // Ask for something legal
             advertisedResources = applicationLimits.cap(advertisedResources); // Overrides other conditions, even if it will then fail
             var realResources = nodeRepository.resourcesCalculator().requestToReal(advertisedResources, exclusive); // What we'll really get
-            if ( ! systemLimits.isWithinRealLimits(realResources, clusterSpec.type()))
+            if ( ! systemLimits.isWithinRealLimits(realResources, clusterSpec) && advertisedResources.storageType() == NodeResources.StorageType.any) {
+                // Since local disk resreves some of the storage, try to constrain to remote disk
+                advertisedResources = advertisedResources.with(NodeResources.StorageType.remote);
+                realResources = nodeRepository.resourcesCalculator().requestToReal(advertisedResources, exclusive);
+            }
+            if ( ! systemLimits.isWithinRealLimits(realResources, clusterSpec))
                 return Optional.empty();
-
-            if (matchesAny(hosts, advertisedResources))
-                    return Optional.of(new AllocatableClusterResources(wantedResources.with(realResources),
-                                                                       advertisedResources,
-                                                                       wantedResources,
-                                                                       clusterSpec));
+            if (anySatisfies(realResources, availableRealHostResources))
+                return Optional.of(new AllocatableClusterResources(wantedResources.with(realResources),
+                                                                   advertisedResources,
+                                                                   wantedResources,
+                                                                   clusterSpec));
             else
                 return Optional.empty();
         }
@@ -191,7 +192,7 @@ public class AllocatableClusterResources {
 
                 // Adjust where we don't need exact match to the flavor
                 if (flavor.resources().storageType() == NodeResources.StorageType.remote) {
-                    double diskGb = systemLimits.enlargeToLegal(cappedWantedResources, clusterSpec.type(), exclusive).diskGb();
+                    double diskGb = systemLimits.enlargeToLegal(cappedWantedResources, clusterSpec, exclusive).diskGb();
                     advertisedResources = advertisedResources.withDiskGb(diskGb);
                     realResources = realResources.withDiskGb(diskGb);
                 }
@@ -201,24 +202,22 @@ public class AllocatableClusterResources {
                 }
 
                 if ( ! between(applicationLimits.min().nodeResources(), applicationLimits.max().nodeResources(), advertisedResources)) continue;
-                if ( ! systemLimits.isWithinRealLimits(realResources, clusterSpec.type())) continue;
+                if ( ! systemLimits.isWithinRealLimits(realResources, clusterSpec)) continue;
                 var candidate = new AllocatableClusterResources(wantedResources.with(realResources),
                                                                 advertisedResources,
                                                                 wantedResources,
                                                                 clusterSpec);
-                if (best.isEmpty() || candidate.preferableTo(best.get()))
+                if (best.isEmpty() || candidate.preferableTo(best.get())) {
                     best = Optional.of(candidate);
+                }
             }
             return best;
         }
     }
 
     /** Returns true if the given resources could be allocated on any of the given host flavors */
-    private static boolean matchesAny(NodeList hosts, NodeResources advertisedResources) {
-        // Tenant nodes should not consume more than half the resources of the biggest hosts
-        // to make it easier to shift them between hosts.
-        return hosts.stream().anyMatch(host -> host.resources().withVcpu(host.resources().vcpu() / 2)
-                                                   .satisfies(advertisedResources));
+    private static boolean anySatisfies(NodeResources realResources, List<NodeResources> availableRealHostResources) {
+        return availableRealHostResources.stream().anyMatch(realHostResources -> realHostResources.satisfies(realResources));
     }
 
     private static boolean between(NodeResources min, NodeResources max, NodeResources r) {

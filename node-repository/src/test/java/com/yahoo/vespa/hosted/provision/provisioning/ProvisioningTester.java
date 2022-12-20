@@ -80,6 +80,7 @@ public class ProvisioningTester {
     private final NodeFlavors nodeFlavors;
     private final ManualClock clock;
     private final NodeRepository nodeRepository;
+    private final HostProvisioner hostProvisioner;
     private final NodeRepositoryProvisioner provisioner;
     private final CapacityPolicies capacityPolicies;
     private final ProvisionLogger provisionLogger;
@@ -102,6 +103,7 @@ public class ProvisioningTester {
         this.curator = curator;
         this.nodeFlavors = nodeFlavors;
         this.clock = new ManualClock();
+        this.hostProvisioner = hostProvisioner;
         ProvisionServiceProvider provisionServiceProvider = new MockProvisionServiceProvider(loadBalancerService, hostProvisioner, resourcesCalculator);
         this.nodeRepository = new NodeRepository(nodeFlavors,
                                                  provisionServiceProvider,
@@ -110,6 +112,7 @@ public class ProvisioningTester {
                                                  zone,
                                                  nameResolver,
                                                  containerImage,
+                                                 Optional.empty(),
                                                  Optional.empty(),
                                                  flagSource,
                                                  new MemoryMetricsDb(clock),
@@ -144,6 +147,7 @@ public class ProvisioningTester {
     public Orchestrator orchestrator() { return nodeRepository.orchestrator(); }
     public ManualClock clock() { return clock; }
     public NodeRepositoryProvisioner provisioner() { return provisioner; }
+    public HostProvisioner hostProvisioner() { return hostProvisioner; }
     public LoadBalancerServiceMock loadBalancerService() { return loadBalancerService; }
     public CapacityPolicies capacityPolicies() { return capacityPolicies; }
     public NodeList getNodes(ApplicationId id, Node.State ... inState) { return nodeRepository.nodes().list(inState).owner(id); }
@@ -250,7 +254,7 @@ public class ProvisioningTester {
     }
 
     public void deactivate(ApplicationId applicationId) {
-        try (var lock = nodeRepository.nodes().lock(applicationId)) {
+        try (var lock = nodeRepository.applications().lock(applicationId)) {
             NestedTransaction deactivateTransaction = new NestedTransaction();
             nodeRepository.remove(new ApplicationTransaction(new ProvisionLock(applicationId, lock),
                                                              deactivateTransaction));
@@ -421,6 +425,7 @@ public class ProvisioningTester {
             }
 
             String hostname = nodeNamer.apply(nextHost);
+            String[] hostnameParts = hostname.split("\\.", 2);
             String ipv4 = String.format("127.0.%d.%d", nextIP / 256, nextIP % 256);
             String ipv6 = String.format("::%x", nextIP);
 
@@ -432,13 +437,14 @@ public class ProvisioningTester {
             Set<String> ipAddressPool = new LinkedHashSet<>();
             for (int poolIp = 1; poolIp <= ipAddressPoolSize; poolIp++) {
                 nextIP++;
+                String nodeHostname = hostnameParts[0] + "-" + poolIp + (hostnameParts.length > 1 ? "." + hostnameParts[1] : "");
                 String ipv6Addr = String.format("::%x", nextIP);
                 ipAddressPool.add(ipv6Addr);
-                nameResolver.addRecord(String.format("node-%d-of-%s", poolIp, hostname), ipv6Addr);
+                nameResolver.addRecord(nodeHostname, ipv6Addr);
                 if (dualStack) {
                     String ipv4Addr = String.format("127.0.%d.%d", (127 + (nextIP / 256)), nextIP % 256);
                     ipAddressPool.add(ipv4Addr);
-                    nameResolver.addRecord(String.format("node-%d-of-%s", poolIp, hostname), ipv4Addr);
+                    nameResolver.addRecord(nodeHostname, ipv4Addr);
                 }
             }
             Node.Builder builder = Node.create(hostname, new IP.Config(hostIps, ipAddressPool), hostname, flavor, type);
@@ -465,7 +471,7 @@ public class ProvisioningTester {
 
         nodes = nodeRepository.nodes().addNodes(nodes, Agent.system);
         nodes = nodeRepository.nodes().deallocate(nodes, Agent.system, getClass().getSimpleName());
-        nodeRepository.nodes().setReady(nodes, Agent.system, getClass().getSimpleName());
+        move(Node.State.ready, nodes);
 
         ConfigServerApplication application = new ConfigServerApplication();
         List<HostSpec> hosts = prepare(application.getApplicationId(),
@@ -492,7 +498,7 @@ public class ProvisioningTester {
         List<Node> nodes = makeProvisionedNodes(n, flavor, reservedTo, type, ipAddressPoolSize, dualStack);
         nodes = nodeRepository.nodes().deallocate(nodes, Agent.system, getClass().getSimpleName());
         nodes.forEach(node -> { if (node.resources().isUnspecified()) throw new IllegalArgumentException(); });
-        return nodeRepository.nodes().setReady(nodes, Agent.system, getClass().getSimpleName());
+        return move(Node.State.ready, nodes);
     }
 
     public Flavor asFlavor(String flavorString, NodeType type) {
@@ -534,8 +540,7 @@ public class ProvisioningTester {
         }
         nodes = nodeRepository.nodes().addNodes(nodes, Agent.system);
         nodes = nodeRepository.nodes().deallocate(nodes, Agent.system, getClass().getSimpleName());
-        nodeRepository.nodes().setReady(nodes, Agent.system, getClass().getSimpleName());
-        return nodes;
+        return move(Node.State.ready, nodes);
     }
 
     /** Create one or more child nodes on given parent host */
@@ -568,7 +573,7 @@ public class ProvisioningTester {
 
     /** Returns the hosts from the input list which are not retired */
     public List<HostSpec> nonRetired(Collection<HostSpec> hosts) {
-        return hosts.stream().filter(host -> ! host.membership().get().retired()).collect(Collectors.toList());
+        return hosts.stream().filter(host -> ! host.membership().get().retired()).toList();
     }
 
     public void assertAllocatedOn(String explanation, String hostFlavor, ApplicationId app) {
@@ -591,7 +596,7 @@ public class ProvisioningTester {
             Optional<String> allocatedSwitchHostname = allNodes.parentOf(node).flatMap(Node::switchHostname);
             return allocatedSwitchHostname.isPresent() &&
                    allocatedSwitchHostname.get().equals(switchHostname);
-        }).collect(Collectors.toList());
+        }).toList();
     }
 
     public Set<String> switchesOf(NodeList applicationNodes, NodeList allNodes) {
@@ -610,6 +615,16 @@ public class ProvisioningTester {
                                     .map(n -> nodeRepository().nodes().node(n.parentHostname().get()).get())
                                     .filter(p -> p.flavor().name().equals(hostFlavor))
                                     .count();
+    }
+
+    public Node move(Node.State toState, String hostname) {
+        return move(toState, nodeRepository.nodes().node(hostname).orElseThrow());
+    }
+    public Node move(Node.State toState, Node node) {
+        return move(toState, List.of(node)).get(0);
+    }
+    public List<Node> move(Node.State toState, List<Node> nodes) {
+        return nodeRepository.database().writeTo(toState, nodes, Agent.operator, Optional.of("ProvisionTester"));
     }
 
     public static final class Builder {
@@ -720,6 +735,9 @@ public class ProvisioningTester {
             flavor.bandwidth(resources.bandwidthGbps() * 1000);
             flavor.fastDisk(resources.diskSpeed().compatibleWith(NodeResources.DiskSpeed.fast));
             flavor.remoteStorage(resources.storageType().compatibleWith(NodeResources.StorageType.remote));
+            flavor.architecture(resources.architecture().toString());
+            flavor.gpuCount(resources.gpuResources().count());
+            flavor.gpuMemoryGb(resources.gpuResources().memoryGb());
             return flavor;
         }
 

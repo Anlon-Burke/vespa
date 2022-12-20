@@ -109,7 +109,7 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
                                               .map(Version::getMajor)
                                               .distinct()
                                               .sorted(Comparator.reverseOrder())
-                                              .collect(Collectors.toList());
+                                              .toList();
 
         List<MODELRESULT> allApplicationModels = new ArrayList<>();
         // Build latest model for latest major only, if that fails build latest model for previous major
@@ -134,7 +134,7 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
                 }
                 else {
                     if (e instanceof IllegalArgumentException) {
-                        var wrapped = new InvalidApplicationException("Error loading " + applicationId, e);
+                        var wrapped = new InvalidApplicationException("Invalid application", e);
                         deployLogger.logApplicationPackage(Level.SEVERE, Exceptions.toMessageString(wrapped));
                         throw wrapped;
                     }

@@ -1,0 +1,25 @@
+usage: vespa-security decrypt <encrypted file> <options>
+Decrypts a file using a provided token and a secret private key. The file
+must previously have been encrypted using the public key component of the
+given private key.
+
+To decrypt the contents of STDIN, specify an input file of '-' (without
+the quotes).
+ -d,--private-key-dir <arg>    Private key file directory used for
+                               automatically looking up private keys based
+                               on the key ID specified as part of a token.
+ -e,--expected-key-id <arg>    Expected key ID in token. If this is not
+                               provided, the key ID is not verified.
+ -h,--help                     Show help
+ -k,--private-key-file <arg>   Private key file in Base58 encoded format
+    --no-interactive           Never ask for private key interactively if
+                               no private key file or directory is
+                               provided, even if process is running in a
+                               console
+ -o,--output-file <arg>        Output file for decrypted plaintext.
+                               Specify '-' (without the quotes) to write
+                               plaintext to STDOUT instead of a file.
+ -t,--token <arg>              Token generated when the input file was
+                               encrypted
+Note: this is a BETA tool version; its interface may be changed at any
+time

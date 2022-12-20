@@ -3,6 +3,7 @@ package com.yahoo.vespa.hosted.controller.api.integration.stubs;
 
 import com.yahoo.vespa.hosted.controller.api.integration.organization.Mail;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.Mailer;
+import com.yahoo.vespa.hosted.controller.tenant.PendingMailVerification;
 
 import java.util.ArrayList;
 import java.util.HashMap;

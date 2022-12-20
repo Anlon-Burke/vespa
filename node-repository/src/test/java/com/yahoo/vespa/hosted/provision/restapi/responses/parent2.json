@@ -13,7 +13,7 @@
   "environment": "BARE_METAL",
   "rebootGeneration": 0,
   "currentRebootGeneration": 0,
-  "deferOsUpgrade": false,
+  "deferOsUpgrade": true,
   "failCount": 0,
   "wantToRetire": false,
   "preferToRetire": false,
@@ -38,5 +38,6 @@
     "127.0.127.1",
     "::127:1"
   ],
-  "additionalIpAddresses": []
+  "additionalIpAddresses": [],
+  "cloudAccount":"111222333444"
 }

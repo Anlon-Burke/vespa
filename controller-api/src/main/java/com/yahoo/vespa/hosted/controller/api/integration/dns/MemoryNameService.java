@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.stream.Collectors;
 
 /**
@@ -17,7 +18,7 @@ import java.util.stream.Collectors;
  */
 public class MemoryNameService implements NameService {
 
-    private final Set<Record> records = new TreeSet<>();
+    private final Set<Record> records = new ConcurrentSkipListSet<>();
 
     public Set<Record> records() {
         return Collections.unmodifiableSet(records);
@@ -44,7 +45,7 @@ public class MemoryNameService implements NameService {
         var records = targets.stream()
                              .sorted((a, b) -> Comparator.comparing(AliasTarget::name).compare(a, b))
                              .map(d -> new Record(Record.Type.ALIAS, name, d.pack()))
-                             .collect(Collectors.toList());
+                             .toList();
         // Satisfy idempotency contract of interface
         for (var r1 : records) {
             this.records.removeIf(r2 -> conflicts(r1, r2));
@@ -58,7 +59,7 @@ public class MemoryNameService implements NameService {
         var records = targets.stream()
                 .sorted((a, b) -> Comparator.comparing((DirectTarget target) -> target.recordData().asString()).compare(a, b))
                 .map(d -> new Record(Record.Type.DIRECT, name, d.pack()))
-                .collect(Collectors.toList());
+                .toList();
         // Satisfy idempotency contract of interface
         for (var r1 : records) {
             this.records.removeIf(r2 -> conflicts(r1, r2));
@@ -71,7 +72,7 @@ public class MemoryNameService implements NameService {
     public List<Record> createTxtRecords(RecordName name, List<RecordData> txtData) {
         var records = txtData.stream()
                              .map(data -> new Record(Record.Type.TXT, name, data))
-                             .collect(Collectors.toList());
+                             .toList();
         records.forEach(this::add);
         return records;
     }

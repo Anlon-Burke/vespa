@@ -4,12 +4,14 @@ package com.yahoo.vespa.hosted.provision.restapi;
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationLockException;
+import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.HostFilter;
 import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.TenantName;
+import com.yahoo.config.provision.security.NodePrincipal;
 import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
@@ -36,6 +38,7 @@ import com.yahoo.vespa.hosted.provision.node.Address;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.node.filter.ApplicationFilter;
+import com.yahoo.vespa.hosted.provision.node.filter.CloudAccountFilter;
 import com.yahoo.vespa.hosted.provision.node.filter.NodeFilter;
 import com.yahoo.vespa.hosted.provision.node.filter.NodeHostFilter;
 import com.yahoo.vespa.hosted.provision.node.filter.NodeOsVersionFilter;
@@ -50,8 +53,8 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -88,14 +91,14 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
     @Override
     public HttpResponse handle(HttpRequest request) {
         try {
-            switch (request.getMethod()) {
-                case GET: return handleGET(request);
-                case PUT: return handlePUT(request);
-                case POST: return isPatchOverride(request) ? handlePATCH(request) : handlePOST(request);
-                case DELETE: return handleDELETE(request);
-                case PATCH: return handlePATCH(request);
-                default: return ErrorResponse.methodNotAllowed("Method '" + request.getMethod() + "' is not supported");
-            }
+            return switch (request.getMethod()) {
+                case GET -> handleGET(request);
+                case PUT -> handlePUT(request);
+                case POST -> isPatchOverride(request) ? handlePATCH(request) : handlePOST(request);
+                case DELETE -> handleDELETE(request);
+                case PATCH -> handlePATCH(request);
+                default -> ErrorResponse.methodNotAllowed("Method '" + request.getMethod() + "' is not supported");
+            };
         }
         catch (NotFoundException | NoSuchNodeException e) {
             return ErrorResponse.notFoundError(Exceptions.toMessageString(e));
@@ -171,7 +174,11 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
         if (path.matches("/nodes/v2/node/{hostname}")) {
             NodePatcher patcher = new NodePatcher(nodeFlavors, nodeRepository);
             String hostname = path.get("hostname");
-            patcher.patch(hostname, request.getData());
+            if (isTenantPeer(request)) {
+                patcher.patchFromUntrustedTenantHost(hostname, request.getData());
+            } else {
+                patcher.patch(hostname, request.getData());
+            }
             return new MessageResponse("Updated " + hostname);
         }
         else if (path.matches("/nodes/v2/application/{applicationId}")) {
@@ -191,6 +198,15 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
         }
 
         throw new NotFoundException("Nothing at '" + path + "'");
+    }
+
+    /** Returns true if the peer is a tenant host or node. */
+    private boolean isTenantPeer(HttpRequest request) {
+        return request.getJDiscRequest().getUserPrincipal() instanceof NodePrincipal nodePrincipal &&
+               switch (nodePrincipal.getIdentity().nodeType()) {
+                   case host, tenant -> true;
+                   default -> false;
+               };
     }
 
     private HttpResponse handlePOST(HttpRequest request) {
@@ -275,7 +291,8 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
                                            IP.Config.of(ipAddresses, ipAddressPool, addressPool),
                                            inspector.field("hostname").asString(),
                                            flavorFromSlime(inspector),
-                                           nodeTypeFromSlime(inspector.field("type")));
+                                           nodeTypeFromSlime(inspector.field("type")))
+                                   .cloudAccount(nodeRepository.zone().cloud().account());
         optionalString(inspector.field("parentHostname")).ifPresent(builder::parentHostname);
         optionalString(inspector.field("modelName")).ifPresent(builder::modelName);
         optionalString(inspector.field("reservedTo")).map(TenantName::from).ifPresent(builder::reservedTo);
@@ -295,7 +312,8 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
                     requiredField(resourcesInspector, "bandwidthGbps", Inspector::asDouble),
                     optionalString(resourcesInspector.field("diskSpeed")).map(NodeResourcesSerializer::diskSpeedFrom).orElse(NodeResources.DiskSpeed.getDefault()),
                     optionalString(resourcesInspector.field("storageType")).map(NodeResourcesSerializer::storageTypeFrom).orElse(NodeResources.StorageType.getDefault()),
-                    optionalString(resourcesInspector.field("architecture")).map(NodeResourcesSerializer::architectureFrom).orElse(NodeResources.Architecture.getDefault())));
+                    optionalString(resourcesInspector.field("architecture")).map(NodeResourcesSerializer::architectureFrom).orElse(NodeResources.Architecture.getDefault()),
+                    NodeResourcesSerializer.gpuResourcesFromSlime(inspector.field("gpu"))));
         }
 
         Flavor flavor = nodeFlavors.getFlavorOrThrow(flavorInspector.asString());
@@ -314,6 +332,8 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
                 flavor = flavor.with(flavor.resources().with(NodeResourcesSerializer.storageTypeFrom(resourcesInspector.field("storageType").asString())));
             if (resourcesInspector.field("architecture").valid())
                 flavor = flavor.with(flavor.resources().with(NodeResourcesSerializer.architectureFrom(resourcesInspector.field("architecture").asString())));
+            if (resourcesInspector.field("gpu").valid())
+                flavor = flavor.with(flavor.resources().with(NodeResourcesSerializer.gpuResourcesFromSlime(resourcesInspector.field("gpu"))));
         }
         return flavor;
     }
@@ -330,6 +350,10 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
     }
 
     public static NodeFilter toNodeFilter(HttpRequest request) {
+        return toNodeFilter(request, Set.of());
+    }
+
+    public static NodeFilter toNodeFilter(HttpRequest request, Collection<CloudAccount> nonEnclaveAccounts) {
         return NodeFilter.in(request.getProperty("state"),
                              request.getBooleanProperty("includeDeprovisioned"))
                          .matching(NodeHostFilter.from(HostFilter.from(request.getProperty("hostname"),
@@ -339,7 +363,8 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
                                                  .and(ApplicationFilter.from(request.getProperty("application")))
                                                  .and(NodeTypeFilter.from(request.getProperty("type")))
                                                  .and(ParentHostFilter.from(request.getProperty("parentHost")))
-                                                 .and(NodeOsVersionFilter.from(request.getProperty("osVersion"))));
+                                                 .and(NodeOsVersionFilter.from(request.getProperty("osVersion")))
+                                                 .and(CloudAccountFilter.from(nonEnclaveAccounts, request.getBooleanProperty("enclave"))));
     }
 
     private static boolean isPatchOverride(HttpRequest request) {
@@ -363,7 +388,6 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
         boolean force = inspector.field("force").asBool();
         Inspector versionField = inspector.field("version");
         Inspector osVersionField = inspector.field("osVersion");
-        Inspector upgradeBudgetField = inspector.field("upgradeBudget");
 
         if (versionField.valid()) {
             Version version = Version.fromString(versionField.asString());
@@ -378,20 +402,8 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
                 messageParts.add("osVersion to null");
             } else {
                 Version osVersion = Version.fromString(v);
-                Optional<Duration> upgradeBudget = Optional.of(upgradeBudgetField)
-                                                           .filter(Inspector::valid)
-                                                           .map(Inspector::asString)
-                                                           .map(s -> {
-                                                               try {
-                                                                   return Duration.parse(s);
-                                                               } catch (Exception e) {
-                                                                   throw new IllegalArgumentException("Invalid duration '" + s + "'", e);
-                                                               }
-                                                           });
-                if (upgradeBudget.isEmpty()) throw new IllegalArgumentException("upgradeBudget must be set");
-                nodeRepository.osVersions().setTarget(nodeType, osVersion, upgradeBudget.get(), force);
+                nodeRepository.osVersions().setTarget(nodeType, osVersion, force);
                 messageParts.add("osVersion to " + osVersion.toFullString());
-                messageParts.add("upgradeBudget to " + upgradeBudget.get());
             }
         }
 

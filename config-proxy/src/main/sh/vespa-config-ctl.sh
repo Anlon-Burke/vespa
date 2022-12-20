@@ -72,22 +72,23 @@ findhost () {
 findroot
 findhost
 
-# END environment bootstrap section
-
 ROOT=${VESPA_HOME%/}
 export ROOT
-cd $ROOT || { echo "Cannot cd to $ROOT" 1>&2; exit 1; }
+
+# END environment bootstrap section
+
+cd ${VESPA_HOME} || { echo "Cannot cd to ${VESPA_HOME}" 1>&2; exit 1; }
 
 P_SENTINEL=var/run/sentinel.pid
 P_CONFIG_PROXY=var/run/configproxy.pid
 
 export P_SENTINEL P_CONFIG_PROXY
 
-LOGDIR="$ROOT/logs/vespa"
+LOGDIR="${VESPA_HOME}/logs/vespa"
 LOGFILE="$LOGDIR/vespa.log"
 VESPA_LOG_TARGET="file:$LOGFILE"
-VESPA_LOG_CONTROL_DIR="$ROOT/var/db/vespa/logcontrol"
-cp="libexec/vespa/patches/configproxy:lib/jars/config-proxy-jar-with-dependencies.jar"
+VESPA_LOG_CONTROL_DIR="${VESPA_HOME}/var/db/vespa/logcontrol"
+cp="lib/jars/config-proxy-jar-with-dependencies.jar"
 
 VESPA_LOG_LEVEL="all -debug -spam"
 
@@ -101,7 +102,7 @@ hname=$(vespa-print-default hostname)
 CONFIG_ID="hosts/$hname"
 export CONFIG_ID
 export MALLOC_ARENA_MAX=1 #Does not need fast allocation
-export LD_LIBRARY_PATH="$VESPA_HOME/lib64"
+export LD_LIBRARY_PATH="${VESPA_HOME}/lib64"
 
 
 case $1 in
@@ -119,12 +120,12 @@ case $1 in
         echo "Starting config proxy using $configsources as config source(s)"
         vespa-runserver -r 10 -s configproxy -p $P_CONFIG_PROXY -- \
             java ${jvmopts} \
-                 -XX:+ExitOnOutOfMemoryError $(getJavaOptionsIPV46) \
-                 -Dproxyconfigsources="${configsources}" \
-		 -Djava.io.tmpdir=${VESPA_HOME}/tmp \
-		 ${userargs} \
-                 -XX:ActiveProcessorCount=2 \
-                 -cp $cp com.yahoo.vespa.config.proxy.ProxyServer 19090
+                -XX:+ExitOnOutOfMemoryError $(getJavaOptionsIPV46) \
+                -Dproxyconfigsources="${configsources}" \
+                -Djava.io.tmpdir=${VESPA_HOME}/var/tmp \
+                ${userargs} \
+                -XX:ActiveProcessorCount=2 \
+                -cp $cp com.yahoo.vespa.config.proxy.ProxyServer 19090
 
         echo "Waiting for config proxy to start"
         fail=true

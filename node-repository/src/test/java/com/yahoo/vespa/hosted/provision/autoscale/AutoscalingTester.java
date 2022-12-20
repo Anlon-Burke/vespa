@@ -3,6 +3,7 @@ package com.yahoo.vespa.hosted.provision.autoscale;
 
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.Capacity;
+import com.yahoo.config.provision.Cloud;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Flavor;
@@ -12,13 +13,13 @@ import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.test.ManualClock;
 import com.yahoo.transaction.Mutex;
+import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.Nodelike;
 import com.yahoo.vespa.hosted.provision.applications.Application;
 import com.yahoo.vespa.hosted.provision.applications.Cluster;
 import com.yahoo.vespa.hosted.provision.applications.ScalingEvent;
-import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.provisioning.CapacityPolicies;
 import com.yahoo.vespa.hosted.provision.provisioning.HostResourcesCalculator;
@@ -27,6 +28,7 @@ import com.yahoo.vespa.hosted.provision.provisioning.ProvisioningTester;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
@@ -42,22 +44,19 @@ class AutoscalingTester {
     private final HostResourcesCalculator hostResourcesCalculator;
     private final CapacityPolicies capacityPolicies;
 
-    public AutoscalingTester(Zone zone, HostResourcesCalculator resourcesCalculator, List<NodeResources> hostResources) {
-        this(zone, hostResources, resourcesCalculator, 20);
-    }
-
-    private AutoscalingTester(Zone zone, List<NodeResources> hostResources, HostResourcesCalculator resourcesCalculator, int hostCount) {
-        this(zone, toFlavors(hostResources), resourcesCalculator);
-        for (Flavor flavor : toFlavors(hostResources))
+    public AutoscalingTester(Zone zone, HostResourcesCalculator resourcesCalculator, List<Flavor> hostFlavors, InMemoryFlagSource flagSource, int hostCount) {
+        this(zone, hostFlavors, resourcesCalculator, flagSource);
+        for (Flavor flavor : hostFlavors)
             provisioningTester.makeReadyNodes(hostCount, flavor.name(), NodeType.host, 8);
         provisioningTester.activateTenantHosts();
     }
 
-    private AutoscalingTester(Zone zone, List<Flavor> flavors, HostResourcesCalculator resourcesCalculator) {
+    private AutoscalingTester(Zone zone, List<Flavor> flavors, HostResourcesCalculator resourcesCalculator, InMemoryFlagSource flagSource) {
         provisioningTester = new ProvisioningTester.Builder().zone(zone)
                                                              .flavors(flavors)
                                                              .resourcesCalculator(resourcesCalculator)
-                                                             .hostProvisioner(zone.getCloud().dynamicProvisioning() ? new MockHostProvisioner(flavors) : null)
+                                                             .flagSource(flagSource)
+                                                             .hostProvisioner(zone.cloud().dynamicProvisioning() ? new MockHostProvisioner(flavors) : null)
                                                              .build();
 
         hostResourcesCalculator = resourcesCalculator;
@@ -73,6 +72,10 @@ class AutoscalingTester {
     }
 
     public static Fixture.Builder fixture() { return new Fixture.Builder(); }
+
+    public static Fixture.Builder fixture(ClusterResources min, ClusterResources now, ClusterResources max) {
+        return new Fixture.Builder().initialResources(Optional.of(now)).capacity(Capacity.from(min, max));
+    }
 
     public ProvisioningTester provisioning() { return provisioningTester; }
 
@@ -107,11 +110,11 @@ class AutoscalingTester {
         Node host = nodeRepository().nodes().node(node.parentHostname().get()).get();
         host = host.with(new IP.Config(Set.of("::" + 0 + ":0"), Set.of("::" + 0 + ":2")));
         if (host.state() == Node.State.provisioned)
-            nodeRepository().nodes().setReady(List.of(host), Agent.system, getClass().getSimpleName());
+            provisioningTester.move(Node.State.ready, host);
     }
 
     public void deactivateRetired(ApplicationId application, ClusterSpec cluster, Capacity capacity) {
-        try (Mutex lock = nodeRepository().nodes().lock(application)) {
+        try (Mutex lock = nodeRepository().applications().lock(application)) {
             for (Node node : nodeRepository().nodes().list(Node.State.active).owner(application)) {
                 if (node.allocation().get().membership().retired())
                     nodeRepository().nodes().write(node.with(node.allocation().get().removable(true, true)), lock);
@@ -129,22 +132,22 @@ class AutoscalingTester {
                               cluster.minResources(),
                               cluster.maxResources(),
                               cluster.required(),
-                              cluster.suggestedResources(),
-                              cluster.targetResources(),
+                              cluster.suggested(),
+                              cluster.target(),
                               List.of(), // Remove scaling events
                               cluster.autoscalingStatus());
         cluster = cluster.with(ScalingEvent.create(cluster.minResources(), cluster.minResources(),
                                                    0,
                                                    clock().instant().minus(Duration.ofDays(1).minus(duration))).withCompletion(clock().instant().minus(Duration.ofDays(1))));
         application = application.with(cluster);
-        nodeRepository().applications().put(application, nodeRepository().nodes().lock(applicationId));
+        nodeRepository().applications().put(application, nodeRepository().applications().lock(applicationId));
     }
 
     public Autoscaler.Advice autoscale(ApplicationId applicationId, ClusterSpec cluster, Capacity capacity) {
-        capacity = capacityPolicies.applyOn(capacity, applicationId, capacityPolicies.decideExclusivity(capacity, cluster.isExclusive()));
+        capacity = capacityPolicies.applyOn(capacity, applicationId, capacityPolicies.decideExclusivity(capacity, cluster).isExclusive());
         Application application = nodeRepository().applications().get(applicationId).orElse(Application.empty(applicationId))
                                                   .withCluster(cluster.id(), false, capacity);
-        try (Mutex lock = nodeRepository().nodes().lock(applicationId)) {
+        try (Mutex lock = nodeRepository().applications().lock(applicationId)) {
             nodeRepository().applications().put(application, lock);
         }
         return autoscaler.autoscale(application, application.clusters().get(cluster.id()),
@@ -155,7 +158,7 @@ class AutoscalingTester {
                                      ClusterResources min, ClusterResources max) {
         Application application = nodeRepository().applications().get(applicationId).orElse(Application.empty(applicationId))
                                                   .withCluster(clusterId, false, Capacity.from(min, max));
-        try (Mutex lock = nodeRepository().nodes().lock(applicationId)) {
+        try (Mutex lock = nodeRepository().applications().lock(applicationId)) {
             nodeRepository().applications().put(application, lock);
         }
         return autoscaler.suggest(application, application.clusters().get(clusterId),
@@ -205,40 +208,39 @@ class AutoscalingTester {
 
     public MetricsDb nodeMetricsDb() { return nodeRepository().metricsDb(); }
 
+    // TODO: Discontinue use of this
     public static class MockHostResourcesCalculator implements HostResourcesCalculator {
 
         private final Zone zone;
-        private double memoryTax = 0;
 
-        public MockHostResourcesCalculator(Zone zone, double memoryTax) {
+        public MockHostResourcesCalculator(Zone zone) {
             this.zone = zone;
-            this.memoryTax = memoryTax;
         }
 
         @Override
         public NodeResources realResourcesOf(Nodelike node, NodeRepository nodeRepository) {
-            if (zone.getCloud().dynamicProvisioning())
-                return node.resources().withMemoryGb(node.resources().memoryGb() - memoryTax);
+            if (zone.cloud().dynamicProvisioning())
+                return node.resources().withMemoryGb(node.resources().memoryGb());
             else
                 return node.resources();
         }
 
         @Override
         public NodeResources advertisedResourcesOf(Flavor flavor) {
-            if (zone.getCloud().dynamicProvisioning())
-                return flavor.resources().withMemoryGb(flavor.resources().memoryGb() + memoryTax);
+            if (zone.cloud().dynamicProvisioning())
+                return flavor.resources().withMemoryGb(flavor.resources().memoryGb());
             else
                 return flavor.resources();
         }
 
         @Override
         public NodeResources requestToReal(NodeResources resources, boolean exclusive) {
-            return resources.withMemoryGb(resources.memoryGb() - memoryTax);
+            return resources.withMemoryGb(resources.memoryGb());
         }
 
         @Override
         public NodeResources realToRequest(NodeResources resources, boolean exclusive) {
-            return resources.withMemoryGb(resources.memoryGb() + memoryTax);
+            return resources.withMemoryGb(resources.memoryGb());
         }
 
         @Override
@@ -259,7 +261,10 @@ class AutoscalingTester {
                 && resources.diskGb() <= flavorResources.diskGb())
                 flavorResources = flavorResources.withDiskGb(resources.diskGb());
 
-            return flavorResources.justNumbers().equals(resources.justNumbers());
+            if (flavorResources.bandwidthGbps() >= resources.bandwidthGbps())
+                flavorResources = flavorResources.withBandwidthGbps(resources.bandwidthGbps());
+
+            return flavorResources.compatibleWith(resources);
         }
 
     }

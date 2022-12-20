@@ -10,6 +10,7 @@ import com.yahoo.vespa.hosted.provision.applications.Application;
 import com.yahoo.vespa.hosted.provision.applications.Cluster;
 import com.yahoo.vespa.hosted.provision.applications.ScalingEvent;
 import com.yahoo.vespa.hosted.provision.autoscale.ClusterModel;
+import com.yahoo.vespa.hosted.provision.autoscale.Limits;
 import com.yahoo.vespa.hosted.provision.autoscale.Load;
 import com.yahoo.vespa.hosted.provision.autoscale.MetricsDb;
 
@@ -62,15 +63,22 @@ public class ApplicationSerializer {
         NodeList nodes = applicationNodes.not().retired().cluster(cluster.id());
         if (nodes.isEmpty()) return;
         ClusterResources currentResources = nodes.toResources();
-        Optional<ClusterModel> clusterModel = ClusterModel.create(application, nodes.clusterSpec(), cluster, nodes, metricsDb, nodeRepository.clock());
+        Optional<ClusterModel> clusterModel = ClusterModel.create(nodeRepository.zone(),
+                                                                  application,
+                                                                  nodes.clusterSpec(),
+                                                                  cluster,
+                                                                  nodes,
+                                                                  metricsDb,
+                                                                  nodeRepository.clock());
         Cursor clusterObject = clustersObject.setObject(cluster.id().value());
         clusterObject.setString("type", nodes.clusterSpec().type().name());
-        toSlime(cluster.minResources(), clusterObject.setObject("min"));
-        toSlime(cluster.maxResources(), clusterObject.setObject("max"));
+        Limits limits = Limits.of(cluster).fullySpecified(nodes.clusterSpec(), nodeRepository, application.id());
+        toSlime(limits.min(), clusterObject.setObject("min"));
+        toSlime(limits.max(), clusterObject.setObject("max"));
         toSlime(currentResources, clusterObject.setObject("current"));
         if (cluster.shouldSuggestResources(currentResources))
-            cluster.suggestedResources().ifPresent(suggested -> toSlime(suggested.resources(), clusterObject.setObject("suggested")));
-        cluster.targetResources().ifPresent(target -> toSlime(target, clusterObject.setObject("target")));
+            cluster.suggested().resources().ifPresent(suggested -> toSlime(suggested, clusterObject.setObject("suggested")));
+        cluster.target().resources().ifPresent(target -> toSlime(target, clusterObject.setObject("target")));
         clusterModel.ifPresent(model -> clusterUtilizationToSlime(model, clusterObject.setObject("utilization")));
         scalingEventsToSlime(cluster.scalingEvents(), clusterObject.setArray("scalingEvents"));
         clusterObject.setString("autoscalingStatusCode", cluster.autoscalingStatus().status().name());
@@ -88,23 +96,15 @@ public class ApplicationSerializer {
 
     private static void clusterUtilizationToSlime(ClusterModel clusterModel, Cursor utilizationObject) {
         Load idealLoad = clusterModel.idealLoad();
-        Load averageLoad = clusterModel.averageLoad();
-        Load currentLoad = clusterModel.currentLoad();
         Load peakLoad = clusterModel.peakLoad();
 
-        utilizationObject.setDouble("cpu", averageLoad.cpu());
         utilizationObject.setDouble("idealCpu", idealLoad.cpu());
-        utilizationObject.setDouble("currentCpu", currentLoad.cpu());
         utilizationObject.setDouble("peakCpu", peakLoad.cpu());
 
-        utilizationObject.setDouble("memory", averageLoad.memory());
         utilizationObject.setDouble("idealMemory", idealLoad.memory());
-        utilizationObject.setDouble("currentMemory", currentLoad.memory());
         utilizationObject.setDouble("peakMemory", peakLoad.memory());
 
-        utilizationObject.setDouble("disk", averageLoad.disk());
         utilizationObject.setDouble("idealDisk", idealLoad.disk());
-        utilizationObject.setDouble("currentDisk", currentLoad.disk());
         utilizationObject.setDouble("peakDisk", peakLoad.disk());
     }
 

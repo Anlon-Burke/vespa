@@ -113,11 +113,11 @@ public class ContainerClusterTest {
         assertEquals("cd", config.system());
     }
 
-    private void verifyHeapSizeAsPercentageOfPhysicalMemory(boolean isHosted,
+    private void verifyHeapSizeAsPercentageOfPhysicalMemory(MockRoot root,
                                                             boolean isCombinedCluster,
                                                             Integer explicitMemoryPercentage,
                                                             int expectedMemoryPercentage) {
-        ApplicationContainerCluster cluster = newClusterWithSearch(createRoot(isHosted), isCombinedCluster, explicitMemoryPercentage);
+        ApplicationContainerCluster cluster = newClusterWithSearch(root, isCombinedCluster, explicitMemoryPercentage);
         QrStartConfig.Builder qsB = new QrStartConfig.Builder();
         cluster.getConfig(qsB);
         QrStartConfig qsC= new QrStartConfig(qsB);
@@ -127,28 +127,24 @@ public class ContainerClusterTest {
 
     @Test
     void requireThatHeapSizeAsPercentageOfPhysicalMemoryForHostedAndNot() {
+        int heapSizeInFlag = 89;
         boolean hosted = true;
         boolean combined = true; // a cluster running on content nodes (only relevant with hosted)
-        verifyHeapSizeAsPercentageOfPhysicalMemory(  hosted, !combined, null, 70);
-        verifyHeapSizeAsPercentageOfPhysicalMemory(  hosted,   combined, null, 18);
-        verifyHeapSizeAsPercentageOfPhysicalMemory(!hosted, !combined, null, 0);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted), !combined, null, ApplicationContainerCluster.defaultHeapSizePercentageOfTotalNodeMemory);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag), !combined, null, heapSizeInFlag);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted),   combined, null, 18);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag),   combined, null, 18);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(!hosted), !combined, null, 0);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(!hosted, heapSizeInFlag), !combined, null, 0);
 
         // Explicit value overrides all defaults
-        verifyHeapSizeAsPercentageOfPhysicalMemory(  hosted, !combined, 67, 67);
-        verifyHeapSizeAsPercentageOfPhysicalMemory(  hosted,   combined, 68, 68);
-        verifyHeapSizeAsPercentageOfPhysicalMemory(!hosted, !combined, 69, 69);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag), !combined, 67, 67);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(hosted, heapSizeInFlag),   combined, 68, 68);
+        verifyHeapSizeAsPercentageOfPhysicalMemory(createRoot(!hosted, heapSizeInFlag), !combined, 69, 69);
     }
 
-    private void verifyJvmArgs(boolean isHosted, boolean hasDocproc, String expectedArgs, String jvmArgs) {
-        if (isHosted && hasDocproc) {
-            String defaultHostedJVMArgs = "-XX:+SuppressFatalErrorMessage";
-            if ( ! "".equals(expectedArgs)) {
-                defaultHostedJVMArgs = defaultHostedJVMArgs + " ";
-            }
-            assertEquals(defaultHostedJVMArgs + expectedArgs, jvmArgs);
-        } else {
-            assertEquals(expectedArgs, jvmArgs);
-        }
+    private void verifyJvmArgs(boolean isHosted, String expectedArgs, String jvmArgs) {
+        assertEquals(expectedJvmArgs(isHosted, expectedArgs), jvmArgs);
     }
 
     private void verifyJvmArgs(boolean isHosted, boolean hasDocProc) {
@@ -160,15 +156,15 @@ public class ContainerClusterTest {
         addContainer(root, cluster, "c1", "host-c1");
         assertEquals(1, cluster.getContainers().size());
         ApplicationContainer container = cluster.getContainers().get(0);
-        verifyJvmArgs(isHosted, hasDocProc, expectedJvmArgs(isHosted, ""), container.getJvmOptions());
+        verifyJvmArgs(isHosted, "", container.getJvmOptions());
         container.setJvmOptions("initial");
-        verifyJvmArgs(isHosted, hasDocProc, expectedJvmArgs(isHosted, "initial"), container.getJvmOptions());
+        verifyJvmArgs(isHosted, "initial", container.getJvmOptions());
         container.prependJvmOptions("ignored");
-        verifyJvmArgs(isHosted, hasDocProc, expectedJvmArgs(isHosted, "ignored initial"), container.getJvmOptions());
+        verifyJvmArgs(isHosted,  "ignored initial", container.getJvmOptions());
         container.appendJvmOptions("override");
-        verifyJvmArgs(isHosted, hasDocProc, expectedJvmArgs(isHosted, "ignored initial override"), container.getJvmOptions());
+        verifyJvmArgs(isHosted, "ignored initial override", container.getJvmOptions());
         container.setJvmOptions(null);
-        verifyJvmArgs(isHosted, hasDocProc, expectedJvmArgs(isHosted, ""), container.getJvmOptions());
+        verifyJvmArgs(isHosted,  "", container.getJvmOptions());
     }
 
     @Test
@@ -341,9 +337,9 @@ public class ContainerClusterTest {
         cluster.getConfig(configBuilder);
         CuratorConfig config = configBuilder.build();
         assertEquals(List.of("host-c1", "host-c2"),
-                config.server().stream().map(CuratorConfig.Server::hostname).collect(Collectors.toList()));
+                config.server().stream().map(CuratorConfig.Server::hostname).toList());
         assertTrue(config.zookeeperLocalhostAffinity());
-        assertEquals(12, config.zookeeperSessionTimeoutSeconds());
+        assertEquals(30, config.zookeeperSessionTimeoutSeconds());
     }
 
     @Test
@@ -364,7 +360,7 @@ public class ContainerClusterTest {
         cluster.getConfig(configBuilder);
         assertEquals(0, configBuilder.build().myid());
         assertEquals(List.of("host-c1", "host-c2", "host-c3"),
-                configBuilder.build().server().stream().map(ZookeeperServerConfig.Server::hostname).collect(Collectors.toList()));
+                configBuilder.build().server().stream().map(ZookeeperServerConfig.Server::hostname).toList());
 
     }
 
@@ -444,11 +440,11 @@ public class ContainerClusterTest {
         cluster.doPrepare(state);
         List<ApplicationClusterEndpoint> endpoints = cluster.endpoints();
 
-        assertNames(List.of(), endpoints.stream().filter(e -> e.routingMethod() == shared).collect(Collectors.toList()));
-        assertNames(expectedSharedL4Names, endpoints.stream().filter(e -> e.routingMethod() == sharedLayer4).collect(Collectors.toList()));
+        assertNames(List.of(), endpoints.stream().filter(e -> e.routingMethod() == shared).toList());
+        assertNames(expectedSharedL4Names, endpoints.stream().filter(e -> e.routingMethod() == sharedLayer4).toList());
 
         List<ContainerEndpoint> endpointsWithWeight =
-                globalEndpoints.stream().filter(endpoint -> endpoint.weight().isPresent()).collect(Collectors.toList());
+                globalEndpoints.stream().filter(endpoint -> endpoint.weight().isPresent()).toList();
         endpointsWithWeight.stream()
                 .filter(ce -> ce.weight().isPresent())
                 .forEach(ce -> assertTrue(endpointsMatch(ce, endpoints)));
@@ -500,6 +496,13 @@ public class ContainerClusterTest {
 
     private static MockRoot createRoot(boolean isHosted) {
         DeployState state = new DeployState.Builder().properties(new TestProperties().setHostedVespa(isHosted)).build();
+        return createRoot(state);
+    }
+    private static MockRoot createRoot(boolean isHosted, int heapSizePercentage) {
+        DeployState state = new DeployState.Builder().properties(
+                new TestProperties()
+                        .setHostedVespa(isHosted)
+                        .setHeapSizePercentage(heapSizePercentage)).build();
         return createRoot(state);
     }
 

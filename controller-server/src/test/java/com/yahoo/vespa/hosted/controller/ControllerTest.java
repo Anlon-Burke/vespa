@@ -15,12 +15,15 @@ import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.RegionName;
+import com.yahoo.config.provision.Tags;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.zone.RoutingMethod;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.path.Path;
 import com.yahoo.vespa.flags.PermanentFlags;
+import com.yahoo.vespa.hosted.controller.api.application.v4.model.DeploymentData;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
+import com.yahoo.vespa.hosted.controller.api.integration.billing.Quota;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateMetadata;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ContainerEndpoint;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationVersion;
@@ -53,10 +56,10 @@ import com.yahoo.vespa.hosted.controller.versions.VespaVersion.Confidence;
 import com.yahoo.vespa.hosted.rotation.config.RotationsConfig;
 import org.junit.jupiter.api.Test;
 
+import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -664,22 +667,22 @@ public class ControllerTest {
         ZoneId east1a = ZoneId.from("prod", "aws-us-east-1a");
         ZoneId east1b = ZoneId.from("prod", "aws-us-east-1b");
         // Expected container endpoints are passed to each deployment
-        Map<DeploymentId, Map<String, Integer>> deploymentEndpoints = Map.of(
+        Map<DeploymentId, Map<List<String>, Integer>> deploymentEndpoints = Map.of(
                 new DeploymentId(beta, east3), Map.of(),
-                new DeploymentId(main, east3), Map.of("e.app1.tenant1.us-east-3-r.vespa.oath.cloud", 3),
-                new DeploymentId(beta, west1), Map.of("d.app1.tenant1.us-west-1-r.vespa.oath.cloud", 3),
-                new DeploymentId(main, west1), Map.of("d.app1.tenant1.us-west-1-r.vespa.oath.cloud", 7),
-                new DeploymentId(beta, east1a), Map.of("a.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud", 2,
-                                                       "b.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud", 1),
-                new DeploymentId(main, east1a), Map.of("a.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud", 8,
-                                                       "b.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud", 1),
-                new DeploymentId(beta, east1b), Map.of("c.app1.tenant1.aws-us-east-1b-r.vespa.oath.cloud", 4),
-                new DeploymentId(main, east1b), Map.of("a.app1.tenant1.aws-us-east-1b-r.vespa.oath.cloud", 1)
+                new DeploymentId(main, east3), Map.of(List.of("e.app1.tenant1.a.vespa.oath.cloud", "e.app1.tenant1.us-east-3-r.vespa.oath.cloud"), 3),
+                new DeploymentId(beta, west1), Map.of(List.of("d.app1.tenant1.a.vespa.oath.cloud", "d.app1.tenant1.us-west-1-r.vespa.oath.cloud"), 3),
+                new DeploymentId(main, west1), Map.of(List.of("d.app1.tenant1.a.vespa.oath.cloud", "d.app1.tenant1.us-west-1-r.vespa.oath.cloud"), 7),
+                new DeploymentId(beta, east1a), Map.of(List.of("a.app1.tenant1.a.vespa.oath.cloud", "a.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud"), 2,
+                                                       List.of("b.app1.tenant1.a.vespa.oath.cloud", "b.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud"), 1),
+                new DeploymentId(main, east1a), Map.of(List.of("a.app1.tenant1.a.vespa.oath.cloud", "a.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud"), 8,
+                                                       List.of("b.app1.tenant1.a.vespa.oath.cloud", "b.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud"), 1),
+                new DeploymentId(beta, east1b), Map.of(List.of("c.app1.tenant1.a.vespa.oath.cloud", "c.app1.tenant1.aws-us-east-1b-r.vespa.oath.cloud"), 4),
+                new DeploymentId(main, east1b), Map.of(List.of("a.app1.tenant1.a.vespa.oath.cloud", "a.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud"), 1)
         );
         deploymentEndpoints.forEach((deployment, endpoints) -> {
             Set<ContainerEndpoint> expected = endpoints.entrySet().stream()
                                                        .map(kv -> new ContainerEndpoint("default", "application",
-                                                                                        List.of(kv.getKey()),
+                                                                                        kv.getKey(),
                                                                                         OptionalInt.of(kv.getValue()),
                                                                                         tester.controller().zoneRegistry().routingMethod(deployment.zoneId())))
                                                        .collect(Collectors.toSet());
@@ -704,13 +707,37 @@ public class ControllerTest {
                                                      RecordName.from("main.app1.tenant1.aws-us-east-1b.vespa.oath.cloud"),
                                                      RecordData.from("lb-0--tenant1.app1.main--prod.aws-us-east-1b.")),
                                           new Record(Record.Type.ALIAS,
+                                                     RecordName.from("a.app1.tenant1.a.vespa.oath.cloud"),
+                                                     RecordData.from("weighted/lb-0--tenant1.app1.beta--prod.aws-us-east-1a/dns-zone-1/prod.aws-us-east-1a/2")),
+                                          new Record(Record.Type.ALIAS,
+                                                     RecordName.from("a.app1.tenant1.a.vespa.oath.cloud"),
+                                                     RecordData.from("weighted/lb-0--tenant1.app1.main--prod.aws-us-east-1a/dns-zone-1/prod.aws-us-east-1a/8")),
+                                          new Record(Record.Type.ALIAS,
+                                                     RecordName.from("a.app1.tenant1.a.vespa.oath.cloud"),
+                                                     RecordData.from("weighted/lb-0--tenant1.app1.main--prod.aws-us-east-1b/dns-zone-1/prod.aws-us-east-1b/1")),
+                                          new Record(Record.Type.ALIAS,
+                                                     RecordName.from("b.app1.tenant1.a.vespa.oath.cloud"),
+                                                     RecordData.from("weighted/lb-0--tenant1.app1.beta--prod.aws-us-east-1a/dns-zone-1/prod.aws-us-east-1a/1")),
+                                          new Record(Record.Type.ALIAS,
+                                                     RecordName.from("b.app1.tenant1.a.vespa.oath.cloud"),
+                                                     RecordData.from("weighted/lb-0--tenant1.app1.main--prod.aws-us-east-1a/dns-zone-1/prod.aws-us-east-1a/1")),
+                                          new Record(Record.Type.ALIAS,
+                                                     RecordName.from("c.app1.tenant1.a.vespa.oath.cloud"),
+                                                     RecordData.from("weighted/lb-0--tenant1.app1.beta--prod.aws-us-east-1b/dns-zone-1/prod.aws-us-east-1b/4")),
+                                          new Record(Record.Type.CNAME,
+                                                     RecordName.from("d.app1.tenant1.a.vespa.oath.cloud"),
+                                                     RecordData.from("vip.prod.us-west-1.")),
+                                          new Record(Record.Type.CNAME,
+                                                     RecordName.from("e.app1.tenant1.a.vespa.oath.cloud"),
+                                                     RecordData.from("vip.prod.us-east-3.")),
+                                          new Record(Record.Type.ALIAS,
                                                      RecordName.from("a.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud"),
                                                      RecordData.from("weighted/lb-0--tenant1.app1.beta--prod.aws-us-east-1a/dns-zone-1/prod.aws-us-east-1a/2")),
                                           new Record(Record.Type.ALIAS,
                                                      RecordName.from("a.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud"),
                                                      RecordData.from("weighted/lb-0--tenant1.app1.main--prod.aws-us-east-1a/dns-zone-1/prod.aws-us-east-1a/8")),
                                           new Record(Record.Type.ALIAS,
-                                                     RecordName.from("a.app1.tenant1.aws-us-east-1b-r.vespa.oath.cloud"),
+                                                     RecordName.from("a.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud"),
                                                      RecordData.from("weighted/lb-0--tenant1.app1.main--prod.aws-us-east-1b/dns-zone-1/prod.aws-us-east-1b/1")),
                                           new Record(Record.Type.ALIAS,
                                                      RecordName.from("b.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud"),
@@ -732,12 +759,11 @@ public class ControllerTest {
                                               .scope(Endpoint.Scope.application)
                                               .sortedBy(comparing(Endpoint::dnsName))
                                               .mapToList(Endpoint::dnsName);
-        assertEquals(List.of("a.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud",
-                             "a.app1.tenant1.aws-us-east-1b-r.vespa.oath.cloud",
-                             "b.app1.tenant1.aws-us-east-1a-r.vespa.oath.cloud",
-                             "c.app1.tenant1.aws-us-east-1b-r.vespa.oath.cloud",
-                             "d.app1.tenant1.us-west-1-r.vespa.oath.cloud",
-                             "e.app1.tenant1.us-east-3-r.vespa.oath.cloud"),
+        assertEquals(List.of("a.app1.tenant1.a.vespa.oath.cloud",
+                             "b.app1.tenant1.a.vespa.oath.cloud",
+                             "c.app1.tenant1.a.vespa.oath.cloud",
+                             "d.app1.tenant1.a.vespa.oath.cloud",
+                             "e.app1.tenant1.a.vespa.oath.cloud"),
                      endpointDnsNames);
     }
 
@@ -1297,23 +1323,32 @@ public class ControllerTest {
                 .cloudAccount(cloudAccount)
                 .region(prodZone.region())
                 .build();
-        // Prod and dev deployments fail because cloud account is not declared for this tenant
-        context.submit(applicationPackage).runJobExpectingFailure(systemTest, "Requested cloud account '012345678912' is not valid for tenant 'tenant'");
+
+        // Submission fails because cloud account is not declared for this tenant
+        assertEquals("cloud accounts [012345678912] are not valid for tenant tenant",
+                     assertThrows(IllegalArgumentException.class,
+                                  () -> context.submit(applicationPackage))
+                             .getMessage());
+        assertEquals("cloud accounts [012345678912] are not valid for tenant tenant",
+                     assertThrows(IllegalArgumentException.class,
+                                  () -> context.runJob(devUsEast1, applicationPackage))
+                             .getMessage());
 
         // Deployment fails because zone is not configured in requested cloud account
         tester.controllerTester().flagSource().withListFlag(PermanentFlags.CLOUD_ACCOUNTS.id(), List.of(cloudAccount), String.class);
-        context.runJobExpectingFailure(systemTest, "Zone test.us-east-1 is not configured in requested cloud account '012345678912'")
+        context.submit(applicationPackage)
+               .runJobExpectingFailure(systemTest, "Zone test.us-east-1 is not configured in requested cloud account '012345678912'")
                .abortJob(stagingTest);
 
         // Deployment to prod succeeds once all zones are configured in requested account
-        tester.controllerTester().zoneRegistry().configureCloudAccount(new CloudAccount(cloudAccount),
+        tester.controllerTester().zoneRegistry().configureCloudAccount(CloudAccount.from(cloudAccount),
                                                                        systemTest.zone(),
                                                                        stagingTest.zone(),
                                                                        prodZone);
         context.submit(applicationPackage).deploy();
 
         // Dev zone is added as a configured zone and deployment succeeds
-        tester.controllerTester().zoneRegistry().configureCloudAccount(new CloudAccount(cloudAccount), devZone);
+        tester.controllerTester().zoneRegistry().configureCloudAccount(CloudAccount.from(cloudAccount), devZone);
         context.runJob(devZone, applicationPackage);
 
         // All deployments use the custom account
@@ -1322,6 +1357,33 @@ public class ControllerTest {
                                              .cloudAccount(context.deploymentIdIn(zoneId))
                                              .get().value());
         }
+    }
+
+    @Test
+    void testCloudAccountWithDefaultOverride() {
+        var context = tester.newDeploymentContext();
+        var prodZone1 = productionUsEast3.zone();
+        var prodZone2 = productionUsWest1.zone();
+        var cloudAccount = "012345678912";
+        var application = new ApplicationPackageBuilder()
+                .cloudAccount(cloudAccount)
+                .region(prodZone1.region())
+                .region(prodZone2.region(), "default")
+                .build();
+
+        // Allow use of custom account (test, staging and zone 1)
+        tester.controllerTester().flagSource().withListFlag(PermanentFlags.CLOUD_ACCOUNTS.id(), List.of(cloudAccount), String.class);
+
+        // Deployment to prod succeeds once all zones are configured in requested account
+        tester.controllerTester().zoneRegistry().configureCloudAccount(CloudAccount.from(cloudAccount),
+                systemTest.zone(),
+                stagingTest.zone(),
+                prodZone1);
+
+        context.submit(application).deploy();
+
+        assertEquals(cloudAccount, tester.controllerTester().configServer().cloudAccount(context.deploymentIdIn(prodZone1)).get().value());
+        assertEquals(Optional.empty(), tester.controllerTester().configServer().cloudAccount(context.deploymentIdIn(prodZone2)));
     }
 
     @Test
@@ -1338,6 +1400,19 @@ public class ControllerTest {
         } catch (IllegalArgumentException e) {
             assertTrue(e.getMessage().contains("Element 'prod' contains attribute 'global-service-id' deprecated since major version 7"));
         }
+    }
+
+    @Test
+    void testDeactivateDeploymentUnknownByController() {
+        DeploymentContext context = tester.newDeploymentContext();
+        DeploymentId deployment = context.deploymentIdIn(ZoneId.from("prod", "us-west-1"));
+        DeploymentData deploymentData = new DeploymentData(deployment.applicationId(), Tags.empty(), deployment.zoneId(), InputStream::nullInputStream, Version.fromString("6.1"),
+                                                           Set.of(), Optional::empty, Optional.empty(), Optional.empty(),
+                                                           Quota::unlimited, List.of(), List.of(), Optional::empty, false);
+        tester.configServer().deploy(deploymentData);
+        assertTrue(tester.configServer().application(deployment.applicationId(), deployment.zoneId()).isPresent());
+        tester.controller().applications().deactivate(deployment.applicationId(), deployment.zoneId());
+        assertFalse(tester.configServer().application(deployment.applicationId(), deployment.zoneId()).isPresent());
     }
 
 }

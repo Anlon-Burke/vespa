@@ -8,17 +8,22 @@
 #include "field_spec.hpp"
 #include "andsearch.h"
 #include "orsearch.h"
+#include "andnotsearch.h"
 #include "matching_elements_search.h"
 #include <vespa/searchlib/fef/termfieldmatchdataarray.h>
 #include <vespa/vespalib/objects/visit.hpp>
 #include <vespa/vespalib/objects/objectdumper.h>
 #include <vespa/vespalib/objects/object2slime.h>
 #include <vespa/vespalib/util/classname.h>
+#include <vespa/vespalib/util/require.h>
 #include <vespa/vespalib/data/slime/inserter.h>
+#include <type_traits>
 #include <map>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".queryeval.blueprint");
+
+using vespalib::Trinary;
 
 namespace search::queryeval {
 
@@ -139,17 +144,6 @@ Blueprint::root() const
     return *bp;
 }
 
-SearchIterator::UP
-Blueprint::createFilterSearch(bool /*strict*/, FilterConstraint constraint) const
-{
-    if (constraint == FilterConstraint::UPPER_BOUND) {
-        return std::make_unique<FullSearch>();
-    } else {
-        LOG_ASSERT(constraint == FilterConstraint::LOWER_BOUND);
-        return std::make_unique<EmptySearch>();
-    }
-}
-
 std::unique_ptr<MatchingElementsSearch>
 Blueprint::create_matching_elements_search(const MatchingElementsFields &fields) const
 {
@@ -159,34 +153,142 @@ Blueprint::create_matching_elements_search(const MatchingElementsFields &fields)
 
 namespace {
 
+Blueprint::FilterConstraint invert(Blueprint::FilterConstraint constraint) {
+    if (constraint == Blueprint::FilterConstraint::UPPER_BOUND) {
+        return Blueprint::FilterConstraint::LOWER_BOUND;
+    }
+    if (constraint == Blueprint::FilterConstraint::LOWER_BOUND) {
+        return Blueprint::FilterConstraint::UPPER_BOUND;
+    }
+    abort();
+}
+
+template <typename Op> bool inherit_strict(size_t);
+template <> bool inherit_strict<AndSearch>(size_t i) { return (i == 0); }
+template <> bool inherit_strict<OrSearch>(size_t) { return true; }
+
+template <typename Op> bool should_short_circuit(Trinary);
+template <> bool should_short_circuit<AndSearch>(Trinary matches_any) { return (matches_any == Trinary::False); }
+template <> bool should_short_circuit<OrSearch>(Trinary matches_any) { return (matches_any == Trinary::True); }
+
+template <typename Op> bool should_prune(Trinary, bool, bool);
+template <> bool should_prune<AndSearch>(Trinary matches_any, bool strict, bool first_child) {
+    return (matches_any == Trinary::True) && !(strict && first_child);
+}
+template <> bool should_prune<OrSearch>(Trinary matches_any, bool, bool) { return (matches_any == Trinary::False); }
+
 template <typename Op>
 std::unique_ptr<SearchIterator>
-create_op_filter(const std::vector<Blueprint *>& children, bool strict, Blueprint::FilterConstraint constraint)
+create_op_filter(const Blueprint::Children &children, bool strict, Blueprint::FilterConstraint constraint)
 {
-    MultiSearch::Children sub_searches;
-    sub_searches.reserve(children.size());
+    REQUIRE(children.size() > 0);
+    MultiSearch::Children list;
+    std::unique_ptr<SearchIterator> spare;
+    list.reserve(children.size());
     for (size_t i = 0; i < children.size(); ++i) {
-        bool child_strict = strict && (std::is_same_v<Op,AndSearch> ? (i == 0) : true);
-        auto search = children[i]->createFilterSearch(child_strict, constraint);
-        sub_searches.push_back(std::move(search));
+        auto strict_child = strict && inherit_strict<Op>(i);
+        auto filter = children[i]->createFilterSearch(strict_child, constraint);
+        auto matches_any = filter->matches_any();
+        if (should_short_circuit<Op>(matches_any)) {
+            return filter;
+        }
+        if (should_prune<Op>(matches_any, strict, list.empty())) {
+            spare = std::move(filter);
+        } else {
+            list.push_back(std::move(filter));
+        }
+    }
+    if (list.empty()) {
+        assert(spare);
+        return spare;
+    }
+    if (list.size() == 1) {
+        return std::move(list[0]);
     }
     UnpackInfo unpack_info;
-    auto search = Op::create(std::move(sub_searches), strict, unpack_info);
-    return search;
+    return Op::create(std::move(list), strict, unpack_info);
 }
 
 }
 
 std::unique_ptr<SearchIterator>
-Blueprint::create_and_filter(const std::vector<Blueprint *>& children, bool strict, Blueprint::FilterConstraint constraint)
+Blueprint::create_and_filter(const Children &children, bool strict, Blueprint::FilterConstraint constraint)
 {
     return create_op_filter<AndSearch>(children, strict, constraint);
 }
 
 std::unique_ptr<SearchIterator>
-Blueprint::create_or_filter(const std::vector<Blueprint *>& children, bool strict, Blueprint::FilterConstraint constraint)
+Blueprint::create_or_filter(const Children &children, bool strict, Blueprint::FilterConstraint constraint)
 {
     return create_op_filter<OrSearch>(children, strict, constraint);
+}
+
+std::unique_ptr<SearchIterator>
+Blueprint::create_atmost_and_filter(const Children &children, bool strict, Blueprint::FilterConstraint constraint)
+{
+    if (constraint == FilterConstraint::UPPER_BOUND) {
+        return create_and_filter(children, strict, constraint);
+    } else {
+        return std::make_unique<EmptySearch>();
+    }
+}
+
+std::unique_ptr<SearchIterator>
+Blueprint::create_atmost_or_filter(const Children &children, bool strict, Blueprint::FilterConstraint constraint)
+{
+    if (constraint == FilterConstraint::UPPER_BOUND) {
+        return create_or_filter(children, strict, constraint);
+    } else {
+        return std::make_unique<EmptySearch>();
+    }
+}
+
+std::unique_ptr<SearchIterator>
+Blueprint::create_andnot_filter(const Children &children, bool strict, Blueprint::FilterConstraint constraint)
+{
+    REQUIRE(children.size() > 0);
+    MultiSearch::Children list;
+    list.reserve(children.size());
+    {
+        auto filter = children[0]->createFilterSearch(strict, constraint);
+        if (filter->matches_any() == Trinary::False) {
+            return filter;
+        }
+        list.push_back(std::move(filter));
+    }
+    for (size_t i = 1; i < children.size(); ++i) {
+        auto filter = children[i]->createFilterSearch(false, invert(constraint));
+        auto matches_any = filter->matches_any();
+        if (matches_any == Trinary::True) {
+            return std::make_unique<EmptySearch>();
+        }
+        if (matches_any == Trinary::Undefined) {
+            list.push_back(std::move(filter));
+        }
+    }
+    assert(!list.empty());
+    if (list.size() == 1) {
+        return std::move(list[0]);
+    }
+    return AndNotSearch::create(std::move(list), strict);
+}
+
+std::unique_ptr<SearchIterator>
+Blueprint::create_first_child_filter(const Children &children, bool strict, Blueprint::FilterConstraint constraint)
+{
+    REQUIRE(children.size() > 0);
+    return children[0]->createFilterSearch(strict, constraint);
+}
+
+std::unique_ptr<SearchIterator>
+Blueprint::create_default_filter(bool, FilterConstraint constraint)
+{
+    if (constraint == FilterConstraint::UPPER_BOUND) {
+        return std::make_unique<FullSearch>();
+    } else {
+        REQUIRE_EQ(constraint, FilterConstraint::LOWER_BOUND);
+        return std::make_unique<EmptySearch>();
+    }
 }
 
 vespalib::string
@@ -234,7 +336,7 @@ Blueprint::visitMembers(vespalib::ObjectVisitor &visitor) const
     visitor.visitInt("estHits", state.estimate().estHits);
     visitor.visitInt("cost_tier", state.cost_tier());
     visitor.visitInt("tree_size", state.tree_size());
-    visitor.visitInt("allow_termwise_eval", state.allow_termwise_eval());
+    visitor.visitBool("allow_termwise_eval", state.allow_termwise_eval());
     visitor.closeStruct();
     visitor.visitInt("sourceId", _sourceId);
     visitor.visitInt("docid_limit", _docid_limit);
@@ -263,19 +365,13 @@ StateCache::notifyChange() {
 
 //-----------------------------------------------------------------------------
 
-IntermediateBlueprint::~IntermediateBlueprint()
-{
-    while (!_children.empty()) {
-        delete _children.back();
-        _children.pop_back();
-    }
-}
+IntermediateBlueprint::~IntermediateBlueprint() = default;
 
 void
 IntermediateBlueprint::setDocIdLimit(uint32_t limit)
 {
     Blueprint::setDocIdLimit(limit);
-    for (Blueprint * child : _children) {
+    for (Blueprint::UP &child : _children) {
         child->setDocIdLimit(limit);
     }
 }
@@ -285,7 +381,7 @@ IntermediateBlueprint::calculateEstimate() const
 {
     std::vector<HitEstimate> estimates;
     estimates.reserve(_children.size());
-    for (const Blueprint * child : _children) {
+    for (const Blueprint::UP &child : _children) {
         estimates.push_back(child->getState().estimate());
     }
     return combine(estimates);
@@ -295,7 +391,7 @@ uint32_t
 IntermediateBlueprint::calculate_cost_tier() const
 {
     uint32_t cost_tier = State::COST_TIER_MAX;
-    for (const Blueprint * child : _children) {
+    for (const Blueprint::UP &child : _children) {
         cost_tier = std::min(cost_tier, child->getState().cost_tier());
     }
     return cost_tier;
@@ -305,7 +401,7 @@ uint32_t
 IntermediateBlueprint::calculate_tree_size() const
 {
     uint32_t nodes = 1;
-    for (const Blueprint * child : _children) {
+    for (const Blueprint::UP &child : _children) {
         nodes += child->getState().tree_size();
     }
     return nodes;
@@ -317,7 +413,7 @@ IntermediateBlueprint::infer_allow_termwise_eval() const
     if (!supports_termwise_children()) {
         return false;
     }
-    for (const Blueprint * child : _children) {
+    for (const Blueprint::UP &child : _children) {
         if (!child->getState().allow_termwise_eval()) {
             return false;
         }
@@ -328,7 +424,7 @@ IntermediateBlueprint::infer_allow_termwise_eval() const
 bool
 IntermediateBlueprint::infer_want_global_filter() const
 {
-    for (const Blueprint * child : _children) {
+    for (const Blueprint::UP &child : _children) {
         if (child->getState().want_global_filter()) {
             return true;
         }
@@ -371,7 +467,7 @@ IntermediateBlueprint::mixChildrenFields() const
 
     Map fieldMap;
     FieldSpecBaseList fieldList;
-    for (const Blueprint * child : _children) {
+    for (const Blueprint::UP &child : _children) {
         const State &childState = child->getState();
         if (!childState.isTermLike()) {
             return fieldList; // empty: non-term-like child
@@ -431,8 +527,10 @@ IntermediateBlueprint::optimize(Blueprint* &self)
 {
     assert(self == this);
     if (should_optimize_children()) {
-        for (auto & child : _children) {
-            child->optimize(child);
+        for (auto &child : _children) {
+            auto *child_ptr = child.release();
+            child_ptr->optimize(child_ptr);
+            child.reset(child_ptr);
         }
     }
     optimize_self();
@@ -467,8 +565,8 @@ IntermediateBlueprint::IntermediateBlueprint() = default;
 IntermediateBlueprint &
 IntermediateBlueprint::addChild(Blueprint::UP child)
 {
-    _children.push_back(child.get());
-    child.release()->setParent(this);
+    child->setParent(this);
+    _children.push_back(std::move(child));
     notifyChange();
     return *this;
 }
@@ -477,9 +575,9 @@ Blueprint::UP
 IntermediateBlueprint::removeChild(size_t n)
 {
     assert(n < _children.size());
-    Blueprint::UP ret(_children[n]);
+    Blueprint::UP ret = std::move(_children[n]);
     _children.erase(_children.begin() + n);
-    ret->setParent(0);
+    ret->setParent(nullptr);
     notifyChange();
     return ret;
 }
@@ -488,8 +586,8 @@ IntermediateBlueprint &
 IntermediateBlueprint::insertChild(size_t n, Blueprint::UP child)
 {
     assert(n <= _children.size());
-    _children.insert(_children.begin() + n, child.get());
-    child.release()->setParent(this);
+    child->setParent(this);
+    _children.insert(_children.begin() + n, std::move(child));
     notifyChange();
     return *this;
 }
@@ -515,7 +613,7 @@ IntermediateBlueprint::fetchPostings(const ExecuteInfo &execInfo)
 void
 IntermediateBlueprint::freeze()
 {
-    for (Blueprint * child : _children) {
+    for (Blueprint::UP &child: _children) {
         child->freeze();
     }
     freeze_self();

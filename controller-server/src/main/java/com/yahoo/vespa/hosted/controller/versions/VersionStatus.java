@@ -155,7 +155,7 @@ public record VersionStatus(List<VespaVersion> versions) {
                 boolean isReleased = Collections.binarySearch(releasedVersions, statistics.version()) >= 0;
                 List<NodeVersion> nodeVersions = systemApplicationVersions.stream()
                                                                           .filter(nodeVersion -> nodeVersion.currentVersion().equals(statistics.version()))
-                                                                          .collect(Collectors.toList());
+                                                                          .toList();
                 VespaVersion vespaVersion = createVersion(statistics,
                                                           controllerVersions.keySet(),
                                                           systemVersion,
@@ -224,9 +224,9 @@ public record VersionStatus(List<VespaVersion> versions) {
                                               Controller controller,
                                               VersionStatus versionStatus) {
         ControllerVersion latestVersion = controllerVersions.stream().max(Comparator.naturalOrder()).get();
-        ControllerVersion controllerVersion = controllerVersions.stream().min(Comparator.naturalOrder()).get();
         boolean isSystemVersion = statistics.version().equals(systemVersion);
-        boolean isControllerVersion = statistics.version().equals(controllerVersion.version());
+        boolean isControllerVersion = controllerVersions.size() == 1 &&
+                                      statistics.version().equals(controllerVersions.iterator().next().version());
         VespaVersion.Confidence confidence = controller.curator().readConfidenceOverrides().get(statistics.version());
         boolean confidenceIsOverridden = confidence != null;
         VespaVersion existingVespaVersion = versionStatus.version(statistics.version());

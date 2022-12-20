@@ -1,10 +1,12 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.integration;
 
+import ai.vespa.http.DomainName;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.AbstractComponent;
 import com.yahoo.component.Version;
 import com.yahoo.component.annotation.Inject;
+import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.SystemName;
@@ -15,10 +17,9 @@ import com.yahoo.vespa.hosted.controller.api.integration.archive.ArchiveService;
 import com.yahoo.vespa.hosted.controller.api.integration.archive.MockArchiveService;
 import com.yahoo.vespa.hosted.controller.api.integration.athenz.AccessControlService;
 import com.yahoo.vespa.hosted.controller.api.integration.athenz.MockAccessControlService;
+import com.yahoo.vespa.hosted.controller.api.integration.aws.MockEnclaveAccessService;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.MockResourceTagger;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.MockRoleService;
-import com.yahoo.vespa.hosted.controller.api.integration.aws.ResourceTagger;
-import com.yahoo.vespa.hosted.controller.api.integration.aws.RoleService;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingController;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingDatabaseClient;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingDatabaseClientMock;
@@ -29,6 +30,11 @@ import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCe
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateValidator;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateValidatorMock;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.MemoryNameService;
+import com.yahoo.vespa.hosted.controller.api.integration.dns.MockVpcEndpointService;
+import com.yahoo.vespa.hosted.controller.api.integration.dns.RecordData;
+import com.yahoo.vespa.hosted.controller.api.integration.dns.RecordName;
+import com.yahoo.vespa.hosted.controller.api.integration.dns.VpcEndpointService;
+import com.yahoo.vespa.hosted.controller.api.integration.dns.VpcEndpointService.DnsChallenge;
 import com.yahoo.vespa.hosted.controller.api.integration.entity.MemoryEntityService;
 import com.yahoo.vespa.hosted.controller.api.integration.horizon.HorizonClient;
 import com.yahoo.vespa.hosted.controller.api.integration.horizon.MockHorizonClient;
@@ -65,6 +71,7 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     private final ZoneRegistryMock zoneRegistryMock;
     private final ConfigServerMock configServerMock;
     private final MemoryNameService memoryNameService = new MemoryNameService();
+    private final MockVpcEndpointService vpcEndpointService = new MockVpcEndpointService();
     private final MockMailer mockMailer = new MockMailer();
     private final EndpointCertificateMock endpointCertificateMock = new EndpointCertificateMock(clock);
     private final EndpointCertificateValidatorMock endpointCertificateValidatorMock = new EndpointCertificateValidatorMock();
@@ -79,8 +86,9 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     private final MockTesterCloud mockTesterCloud;
     private final ApplicationStoreMock applicationStoreMock = new ApplicationStoreMock();
     private final MockRunDataStore mockRunDataStore = new MockRunDataStore();
+    private final MockEnclaveAccessService mockAMIService = new MockEnclaveAccessService();
     private final MockResourceTagger mockResourceTagger = new MockResourceTagger();
-    private final RoleService roleService = new MockRoleService();
+    private final MockRoleService roleService = new MockRoleService();
     private final BillingController billingController = new MockBillingController(clock);
     private final ArtifactRegistryMock containerRegistry = new ArtifactRegistryMock();
     private final NoopTenantSecretService tenantSecretService = new NoopTenantSecretService();
@@ -201,17 +209,27 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     }
 
     @Override
+    public MockVpcEndpointService vpcEndpointService() {
+        return vpcEndpointService;
+    }
+
+    @Override
     public ZoneRegistryMock zoneRegistry() {
         return zoneRegistryMock;
     }
 
     @Override
-    public ResourceTagger resourceTagger() {
+    public MockResourceTagger resourceTagger() {
         return mockResourceTagger;
     }
 
     @Override
-    public RoleService roleService() {
+    public MockEnclaveAccessService enclaveAccessService() {
+        return mockAMIService;
+    }
+
+    @Override
+    public MockRoleService roleService() {
         return roleService;
     }
 

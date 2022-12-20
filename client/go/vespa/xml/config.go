@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/vespa-engine/vespa/client/go/util"
 	"github.com/vespa-engine/vespa/client/go/vespa"
 )
 
@@ -23,7 +24,7 @@ func init() {
 </deployment>`
 	d, err := ReadDeployment(strings.NewReader(defaultDeploymentRaw))
 	if err != nil {
-		panic(err)
+		util.JustExitWith(err)
 	}
 	DefaultDeployment = d
 }
@@ -227,7 +228,8 @@ func IsProdRegion(s string, system vespa.System) bool {
 	}
 	switch s {
 	case "aws-us-east-1c", "aws-us-west-2a",
-		"aws-eu-west-1a", "aws-ap-northeast-1a":
+		"aws-eu-west-1a", "aws-ap-northeast-1a",
+		"gcp-us-central1-f":
 		return true
 	}
 	return false

@@ -294,7 +294,7 @@ public class HostedDeployTest {
         DeployTester tester = createTester(hosts, modelFactories, prodZone);
 
         // Not OK when failing version is requested.
-        assertEquals("Invalid application package",
+        assertEquals("Invalid application",
                      assertThrows(IllegalArgumentException.class,
                                   () -> tester.deployApp("src/test/apps/hosted/", wantedVersion.toFullString()))
                              .getMessage());
@@ -512,7 +512,7 @@ public class HostedDeployTest {
 
     @Test
     public void testRedeployWithCloudAccount() {
-        CloudAccount cloudAccount = new CloudAccount("012345678912");
+        CloudAccount cloudAccount = CloudAccount.from("012345678912");
         DeployTester tester = new DeployTester.Builder(temporaryFolder)
                 .modelFactory(createHostedModelFactory(Version.fromString("4.5.6"), Clock.systemUTC()))
                 .build();

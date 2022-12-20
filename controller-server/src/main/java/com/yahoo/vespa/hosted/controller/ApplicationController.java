@@ -15,7 +15,6 @@ import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.Tags;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.zone.ZoneId;
-import com.yahoo.log.LogLevel;
 import com.yahoo.text.Text;
 import com.yahoo.transaction.Mutex;
 import com.yahoo.vespa.athenz.api.AthenzDomain;
@@ -37,7 +36,8 @@ import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCe
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ApplicationReindexing;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServer;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ContainerEndpoint;
-import com.yahoo.vespa.hosted.controller.api.integration.configserver.Log;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.DeploymentResult;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.DeploymentResult.LogEntry;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Node;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.NodeFilter;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationStore;
@@ -48,14 +48,15 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.TesterId;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartFilter;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
-import com.yahoo.vespa.hosted.controller.application.ActivateResult;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.DeploymentMetrics;
+import com.yahoo.vespa.hosted.controller.application.DeploymentMetrics.Warning;
 import com.yahoo.vespa.hosted.controller.application.DeploymentQuotaCalculator;
 import com.yahoo.vespa.hosted.controller.application.QuotaUsage;
 import com.yahoo.vespa.hosted.controller.application.SystemApplication;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackage;
+import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackageStream;
 import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackageValidator;
 import com.yahoo.vespa.hosted.controller.athenz.impl.AthenzFacade;
 import com.yahoo.vespa.hosted.controller.certificate.EndpointCertificates;
@@ -77,6 +78,7 @@ import com.yahoo.vespa.hosted.controller.versions.VespaVersion;
 import com.yahoo.vespa.hosted.controller.versions.VespaVersion.Confidence;
 import com.yahoo.yolean.Exceptions;
 
+import java.io.ByteArrayInputStream;
 import java.security.Principal;
 import java.security.cert.X509Certificate;
 import java.time.Clock;
@@ -85,7 +87,6 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -96,9 +97,11 @@ import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
 import static com.yahoo.vespa.hosted.controller.api.integration.configserver.Node.State.active;
@@ -108,6 +111,9 @@ import static com.yahoo.vespa.hosted.controller.versions.VespaVersion.Confidence
 import static com.yahoo.vespa.hosted.controller.versions.VespaVersion.Confidence.low;
 import static com.yahoo.vespa.hosted.controller.versions.VespaVersion.Confidence.normal;
 import static java.util.Comparator.naturalOrder;
+import static java.util.stream.Collectors.collectingAndThen;
+import static java.util.stream.Collectors.counting;
+import static java.util.stream.Collectors.groupingBy;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
@@ -186,6 +192,13 @@ public class ApplicationController {
         applicationPackageValidator.validate(application, applicationPackage, clock.instant());
     }
 
+    public Set<CloudAccount> accountsOf(TenantName tenant) {
+        return cloudAccountsFlag.with(FetchVector.Dimension.TENANT_ID, tenant.value())
+                                .value().stream()
+                                .map(CloudAccount::from)
+                                .collect(Collectors.toSet());
+    }
+
     /** Returns the application with the given id, or null if it is not present */
     public Optional<Application> getApplication(TenantAndApplicationId id) {
         return curator.readApplication(id);
@@ -198,13 +211,13 @@ public class ApplicationController {
 
     /**
      * Triggers reindexing for the given document types in the given clusters, for the given application.
-     *
+     * <p>
      * If no clusters are given, reindexing is triggered for the entire application; otherwise
      * if no documents types are given, reindexing is triggered for all given clusters; otherwise
      * reindexing is triggered for the cartesian product of the given clusters and document types.
      */
-    public void reindex(ApplicationId id, ZoneId zoneId, List<String> clusterNames, List<String> documentTypes, boolean indexedOnly, Double speed) {
-        configServer.reindex(new DeploymentId(id, zoneId), clusterNames, documentTypes, indexedOnly, speed);
+    public void reindex(ApplicationId id, ZoneId zoneId, List<String> clusterNames, List<String> documentTypes, boolean indexedOnly, Double speed, String cause) {
+        configServer.reindex(new DeploymentId(id, zoneId), clusterNames, documentTypes, indexedOnly, speed, cause);
     }
 
     /** Returns the reindexing status for the given application in the given zone. */
@@ -415,14 +428,6 @@ public class ApplicationController {
                                            (wantedMajor.isPresent() ? " for specified major: " + wantedMajor.getAsInt() : ""));
     }
 
-    private OptionalInt firstNonEmpty(OptionalInt... choices) {
-        for (OptionalInt choice : choices)
-            if (choice.isPresent())
-                return choice;
-
-        return OptionalInt.empty();
-    }
-
     /**
      * Creates a new application for an existing tenant.
      *
@@ -475,7 +480,7 @@ public class ApplicationController {
     }
 
     /** Deploys an application package for an existing application instance. */
-    public ActivateResult deploy(JobId job, boolean deploySourceVersions, Consumer<String> deployLogger) {
+    public DeploymentResult deploy(JobId job, boolean deploySourceVersions, Consumer<String> deployLogger) {
         if (job.application().instance().isTester())
             throw new IllegalArgumentException("'" + job.application() + "' is a tester application!");
 
@@ -484,9 +489,6 @@ public class ApplicationController {
         DeploymentId deployment = new DeploymentId(job.application(), zone);
 
         try (Mutex deploymentLock = lockForDeployment(job.application(), zone)) {
-            Set<ContainerEndpoint> containerEndpoints;
-            Optional<EndpointCertificateMetadata> endpointCertificateMetadata;
-
             Run run = controller.jobController().last(job)
                                 .orElseThrow(() -> new IllegalStateException("No known run of '" + job + "'"));
 
@@ -495,30 +497,31 @@ public class ApplicationController {
 
             Version platform = run.versions().sourcePlatform().filter(__ -> deploySourceVersions).orElse(run.versions().targetPlatform());
             RevisionId revision = run.versions().sourceRevision().filter(__ -> deploySourceVersions).orElse(run.versions().targetRevision());
-            ApplicationPackage applicationPackage = new ApplicationPackage(applicationStore.get(deployment, revision));
-
+            ApplicationPackageStream applicationPackage = new ApplicationPackageStream(() -> applicationStore.stream(deployment, revision));
             AtomicReference<RevisionId> lastRevision = new AtomicReference<>();
             Instance instance;
+            Set<ContainerEndpoint> containerEndpoints;
             try (Mutex lock = lock(applicationId)) {
                 LockedApplication application = new LockedApplication(requireApplication(applicationId), lock);
                 application.get().revisions().last().map(ApplicationVersion::id).ifPresent(lastRevision::set);
                 instance = application.get().require(job.application().instance());
 
-                if (   ! applicationPackage.trustedCertificates().isEmpty()
-                    &&   run.testerCertificate().isPresent())
-                    applicationPackage = applicationPackage.withTrustedCertificate(run.testerCertificate().get());
-
-                endpointCertificateMetadata = endpointCertificates.getMetadata(instance, zone, applicationPackage.deploymentSpec());
-
                 containerEndpoints = controller.routing().of(deployment).prepare(application);
 
             } // Release application lock while doing the deployment, which is a lengthy task.
 
-            // Carry out deployment without holding the application lock.
-            ActivateResult result = deploy(job.application(), instance.tags(), applicationPackage, zone, platform, containerEndpoints,
-                                           endpointCertificateMetadata, run.isDryRun());
+            Supplier<Optional<EndpointCertificateMetadata>> endpointCertificateMetadata = () -> {
+                try (Mutex lock = lock(applicationId)) {
+                    Optional<EndpointCertificateMetadata> data = endpointCertificates.getMetadata(instance, zone, applicationPackage.truncatedPackage().deploymentSpec());
+                    data.ifPresent(e -> deployLogger.accept("Using CA signed certificate version %s".formatted(e.version())));
+                    return data;
+                }
+            };
 
-            endpointCertificateMetadata.ifPresent(e -> deployLogger.accept("Using CA signed certificate version %s".formatted(e.version())));
+            // Carry out deployment without holding the application lock.
+            DeploymentResult result = deploy(job.application(), instance.tags(), applicationPackage, zone, platform, containerEndpoints,
+                                             endpointCertificateMetadata, run.isDryRun(), run.testerCertificate());
+
 
             // Record the quota usage for this application
             var quotaUsage = deploymentQuotaUsage(zone, job.application());
@@ -530,24 +533,25 @@ public class ApplicationController {
                                         ? NotificationSource.from(deployment)
                                         : revision.equals(lastRevision.get()) ? NotificationSource.from(applicationId) : null;
             if (source != null) {
-                @SuppressWarnings("deprecation")
-                List<String> warnings = Optional.ofNullable(result.prepareResponse().log)
+                List<String> warnings = Optional.ofNullable(result.log())
                                                 .map(logs -> logs.stream()
-                                                                 .filter(log -> log.applicationPackage)
-                                                                 .filter(log -> LogLevel.parse(log.level).intValue() >= Level.WARNING.intValue())
-                                                                 .map(log -> log.message)
+                                                                 .filter(LogEntry::concernsPackage)
+                                                                 .filter(log -> log.level().intValue() >= Level.WARNING.intValue())
+                                                                 .map(LogEntry::message)
                                                                  .sorted()
                                                                  .distinct()
-                                                                 .collect(Collectors.toList()))
+                                                                 .toList())
                                                 .orElseGet(List::of);
-                if (warnings.isEmpty()) controller.notificationsDb().removeNotification(source, Notification.Type.applicationPackage);
-                else controller.notificationsDb().setNotification(source, Notification.Type.applicationPackage, Notification.Level.warning, warnings);
+                if (warnings.isEmpty())
+                    controller.notificationsDb().removeNotification(source, Notification.Type.applicationPackage);
+                else
+                    controller.notificationsDb().setNotification(source, Notification.Type.applicationPackage, Notification.Level.warning, warnings);
             }
 
             lockApplicationOrThrow(applicationId, application ->
                     store(application.with(job.application().instance(),
                                            i -> i.withNewDeployment(zone, revision, platform,
-                                                                    clock.instant(), warningsFrom(result),
+                                                                    clock.instant(), warningsFrom(result.log()),
                                                                     quotaUsage))));
             return result;
         }
@@ -600,26 +604,26 @@ public class ApplicationController {
     }
 
     /** Deploy a system application to given zone */
-    public ActivateResult deploySystemApplicationPackage(SystemApplication application, ZoneId zone, Version version) {
+    public DeploymentResult deploySystemApplicationPackage(SystemApplication application, ZoneId zone, Version version) {
         if (application.hasApplicationPackage()) {
-            ApplicationPackage applicationPackage = new ApplicationPackage(
-                    artifactRepository.getSystemApplicationPackage(application.id(), zone, version)
+            ApplicationPackageStream applicationPackage = new ApplicationPackageStream(
+                    () -> new ByteArrayInputStream(artifactRepository.getSystemApplicationPackage(application.id(), zone, version))
             );
-            return deploy(application.id(), Tags.empty(), applicationPackage, zone, version, Set.of(), /* No application cert */ Optional.empty(), false);
+            return deploy(application.id(), Tags.empty(), applicationPackage, zone, version, Set.of(), Optional::empty, false, Optional.empty());
         } else {
            throw new RuntimeException("This system application does not have an application package: " + application.id().toShortString());
         }
     }
 
     /** Deploys the given tester application to the given zone. */
-    public ActivateResult deployTester(TesterId tester, ApplicationPackage applicationPackage, ZoneId zone, Version platform) {
-        return deploy(tester.id(), Tags.empty(), applicationPackage, zone, platform, Set.of(), /* No application cert for tester*/ Optional.empty(), false);
+    public DeploymentResult deployTester(TesterId tester, ApplicationPackageStream applicationPackage, ZoneId zone, Version platform) {
+        return deploy(tester.id(), Tags.empty(), applicationPackage, zone, platform, Set.of(), Optional::empty, false, Optional.empty());
     }
 
-    private ActivateResult deploy(ApplicationId application, Tags tags, ApplicationPackage applicationPackage,
-                                  ZoneId zone, Version platform, Set<ContainerEndpoint> endpoints,
-                                  Optional<EndpointCertificateMetadata> endpointCertificateMetadata,
-                                  boolean dryRun) {
+    private DeploymentResult deploy(ApplicationId application, Tags tags, ApplicationPackageStream applicationPackage,
+                                    ZoneId zone, Version platform, Set<ContainerEndpoint> endpoints,
+                                    Supplier<Optional<EndpointCertificateMetadata>> endpointCertificateMetadata,
+                                    boolean dryRun, Optional<X509Certificate> testerCertificate) {
         DeploymentId deployment = new DeploymentId(application, zone);
         try {
             Optional<DockerImage> dockerImageRepo = Optional.ofNullable(
@@ -634,13 +638,8 @@ public class ApplicationController {
                     .filter(tenant-> tenant instanceof AthenzTenant)
                     .map(tenant -> ((AthenzTenant)tenant).domain());
 
-            if (zone.environment().isManuallyDeployed())
-                controller.applications().applicationStore().putMeta(deployment,
-                                                                     clock.instant(),
-                                                                     applicationPackage.metaDataZip());
-
-            Quota deploymentQuota = DeploymentQuotaCalculator.calculate(billingController.getQuota(application.tenant()),
-                    asList(application.tenant()), application, zone, applicationPackage.deploymentSpec());
+            Supplier<Quota> deploymentQuota = () -> DeploymentQuotaCalculator.calculate(billingController.getQuota(application.tenant()),
+                                                                                        asList(application.tenant()), application, zone, applicationPackage.truncatedPackage().deploymentSpec());
 
             List<TenantSecretStore> tenantSecretStores = controller.tenants()
                     .get(application.tenant())
@@ -650,36 +649,41 @@ public class ApplicationController {
             List<X509Certificate> operatorCertificates = controller.supportAccess().activeGrantsFor(deployment).stream()
                                                                    .map(SupportAccessGrant::certificate)
                                                                    .collect(toList());
-            Optional<CloudAccount> cloudAccount = decideCloudAccountOf(deployment, applicationPackage.deploymentSpec());
+            if (testerCertificate.isPresent()) {
+                operatorCertificates = Stream.concat(operatorCertificates.stream(), testerCertificate.stream()).toList();
+            }
+            Supplier<Optional<CloudAccount>> cloudAccount = () -> decideCloudAccountOf(deployment, applicationPackage.truncatedPackage().deploymentSpec());
             ConfigServer.PreparedApplication preparedApplication =
-                    configServer.deploy(new DeploymentData(application, tags, zone, applicationPackage.zippedContent(), platform,
+                    configServer.deploy(new DeploymentData(application, tags, zone, applicationPackage::zipStream, platform,
                                                            endpoints, endpointCertificateMetadata, dockerImageRepo, domain,
                                                            deploymentQuota, tenantSecretStores, operatorCertificates,
                                                            cloudAccount, dryRun));
 
-            return new ActivateResult(new com.yahoo.vespa.hosted.controller.api.identifiers.RevisionId(applicationPackage.hash()), preparedApplication.prepareResponse(),
-                                      applicationPackage.zippedContent().length);
+            return preparedApplication.deploymentResult();
         } finally {
             // Even if prepare fails, routing configuration may need to be updated
             if ( ! application.instance().isTester()) {
-                controller.routing().of(deployment).configure(applicationPackage.deploymentSpec());
+                controller.routing().of(deployment).configure(applicationPackage.truncatedPackage().deploymentSpec());
+                if (zone.environment().isManuallyDeployed())
+                    controller.applications().applicationStore().putMeta(deployment,
+                                                                         clock.instant(),
+                                                                         applicationPackage.truncatedPackage().metaDataZip());
+
             }
         }
     }
 
-    private Optional<CloudAccount> decideCloudAccountOf(DeploymentId deployment, DeploymentSpec spec) {
+    public Optional<CloudAccount> decideCloudAccountOf(DeploymentId deployment, DeploymentSpec spec) {
         ZoneId zoneId = deployment.zoneId();
         Optional<CloudAccount> requestedAccount = spec.instance(deployment.applicationId().instance())
                                                       .flatMap(instanceSpec -> instanceSpec.cloudAccount(zoneId.environment(),
-                                                                                                         Optional.of(zoneId.region())));
-        if (requestedAccount.isEmpty()) {
+                                                                                                         Optional.of(zoneId.region())))
+                                                      .or(spec::cloudAccount);
+        if (requestedAccount.isEmpty() || requestedAccount.get().isUnspecified()) {
             return Optional.empty();
         }
         TenantName tenant = deployment.applicationId().tenant();
-        Set<CloudAccount> tenantAccounts = cloudAccountsFlag.with(FetchVector.Dimension.TENANT_ID, tenant.value())
-                                                            .value().stream()
-                                                            .map(CloudAccount::new)
-                                                            .collect(Collectors.toSet());
+        Set<CloudAccount> tenantAccounts = accountsOf(tenant);
         if (!tenantAccounts.contains(requestedAccount.get())) {
             throw new IllegalArgumentException("Requested cloud account '" + requestedAccount.get().value() +
                                                "' is not valid for tenant '" + tenant + "'");
@@ -717,10 +721,12 @@ public class ApplicationController {
         // Remove the instance as well, if it is no longer referenced, and contains only production deployments that are removed now.
         boolean removeInstance =    ! deploymentSpec.instanceNames().contains(instance)
                                  &&   application.get().require(instance).deployments().size() == deploymentsToRemove.size();
-        for (ZoneId zone : deploymentsToRemove)
-            application = deactivate(application, instance, zone);
-        if (removeInstance)
+        for (ZoneId zone : deploymentsToRemove) {
+            application = deactivate(application.get().id().instance(instance), zone, Optional.of(application)).get();
+        }
+        if (removeInstance) {
             application = application.without(instance);
+        }
         return application;
     }
 
@@ -859,10 +865,13 @@ public class ApplicationController {
         configServer.setSuspension(deploymentId, suspend);
     }
 
-    /** Deactivate application in the given zone */
-    public void deactivate(ApplicationId id, ZoneId zone) {
-        lockApplicationOrThrow(TenantAndApplicationId.from(id),
-                               application -> store(deactivate(application, id.instance(), zone)));
+    /** Deactivate application in the given zone. Even if the application itself does not exist, deactivation of the deployment will still be attempted */
+    public void deactivate(ApplicationId instanceId, ZoneId zone) {
+        TenantAndApplicationId applicationId = TenantAndApplicationId.from(instanceId);
+        try (Mutex lock = lock(applicationId)) {
+            Optional<LockedApplication> application = getApplication(applicationId).map(app -> new LockedApplication(app, lock));
+            deactivate(instanceId, zone, application).ifPresent(this::store);
+        }
     }
 
     /**
@@ -870,18 +879,18 @@ public class ApplicationController {
      *
      * @return the application with the deployment in the given zone removed
      */
-    private LockedApplication deactivate(LockedApplication application, InstanceName instanceName, ZoneId zone) {
-        DeploymentId id = new DeploymentId(application.get().id().instance(instanceName), zone);
+    private Optional<LockedApplication> deactivate(ApplicationId instanceId, ZoneId zone, Optional<LockedApplication> application) {
+        DeploymentId id = new DeploymentId(instanceId, zone);
         try {
             configServer.deactivate(id);
         } finally {
-            controller.routing().of(id).configure(application.get().deploymentSpec());
-            if (zone.environment().isManuallyDeployed())
+            application.ifPresent(app -> controller.routing().of(id).configure(app.get().deploymentSpec()));
+            if (id.zoneId().environment().isManuallyDeployed())
                 applicationStore.putMetaTombstone(id, clock.instant());
-            if (!zone.environment().isTest())
+            if (!id.zoneId().environment().isTest())
                 controller.notificationsDb().removeNotifications(NotificationSource.from(id));
         }
-        return application.with(instanceName, instance -> instance.withoutDeploymentIn(zone));
+        return application.map(app -> app.with(instanceId.instance(), instance -> instance.withoutDeploymentIn(id.zoneId())));
     }
 
     public DeploymentTrigger deploymentTrigger() { return deploymentTrigger; }
@@ -1020,16 +1029,13 @@ public class ApplicationController {
     }
 
     /** Extract deployment warnings metric from deployment result */
-    private static Map<DeploymentMetrics.Warning, Integer> warningsFrom(ActivateResult result) {
-        if (result.prepareResponse().log == null) return Map.of();
-        Map<DeploymentMetrics.Warning, Integer> warnings = new HashMap<>();
-        for (Log log : result.prepareResponse().log) {
-            // TODO: Categorize warnings. Response from config server should be updated to include the appropriate
-            //  category and typed log level
-            if (!"warn".equalsIgnoreCase(log.level) && !"warning".equalsIgnoreCase(log.level)) continue;
-            warnings.merge(DeploymentMetrics.Warning.all, 1, Integer::sum);
-        }
-        return Map.copyOf(warnings);
+    private static Map<DeploymentMetrics.Warning, Integer> warningsFrom(List<DeploymentResult.LogEntry> log) {
+        return log.stream()
+                  .filter(entry -> entry.level().intValue() >= Level.WARNING.intValue())
+                  // TODO: Categorize warnings. Response from config server should be updated to include the appropriate
+                  //  category and typed log level
+                  .collect(groupingBy(__ -> Warning.all,
+                                      collectingAndThen(counting(), Long::intValue)));
     }
 
 }

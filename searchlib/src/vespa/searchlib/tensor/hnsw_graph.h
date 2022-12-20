@@ -2,6 +2,9 @@
 
 #pragma once
 
+#include "hnsw_index_traits.h"
+#include "hnsw_simple_node.h"
+#include "hnsw_node.h"
 #include <vespa/vespalib/datastore/array_store.h>
 #include <vespa/vespalib/datastore/atomic_entry_ref.h>
 #include <vespa/vespalib/datastore/entryref.h>
@@ -13,6 +16,7 @@ namespace search::tensor {
  * Storage of a hierarchical navigable small world graph (HNSW)
  * that is used for approximate K-nearest neighbor search.
  */
+template <HnswIndexType type>
 struct HnswGraph {
     using AtomicEntryRef = vespalib::datastore::AtomicEntryRef;
 
@@ -23,9 +27,12 @@ struct HnswGraph {
     // This uses 12 bits for buffer id -> 4096 buffers.
     using LinkArrayEntryRefType = vespalib::datastore::EntryRefT<20>;
 
+    static constexpr HnswIndexType index_type = type;
+    using NodeType = typename HnswIndexTraits<type>::NodeType;
+
     // Provides mapping from document id -> node reference.
     // The reference is used to lookup the node data in NodeStore.
-    using NodeRefVector = vespalib::RcuVector<AtomicEntryRef>;
+    using NodeRefVector = vespalib::RcuVector<NodeType>;
     using NodeRef = vespalib::datastore::EntryRef;
 
     // This stores the level arrays for all nodes.
@@ -43,27 +50,31 @@ struct HnswGraph {
     NodeStore     nodes;
     LinkStore     links;
 
-    std::atomic<uint64_t> entry_docid_and_level;
+    std::atomic<uint64_t> entry_nodeid_and_level;
 
     HnswGraph();
     ~HnswGraph();
 
-    NodeRef make_node_for_document(uint32_t docid, uint32_t num_levels);
+    NodeRef make_node(uint32_t nodeid, uint32_t docid, uint32_t subspace, uint32_t num_levels);
 
-    void remove_node_for_document(uint32_t docid);
+    void remove_node(uint32_t nodeid);
 
     void trim_node_refs_size();
 
-    NodeRef get_node_ref(uint32_t docid) const {
-        return node_refs.get_elem_ref(docid).load_relaxed(); // Called from writer only
+    NodeRef get_node_ref(uint32_t nodeid) const {
+        return node_refs.get_elem_ref(nodeid).ref().load_relaxed(); // Called from writer only
     }
 
-    NodeRef acquire_node_ref(uint32_t docid) const {
-        return node_refs.acquire_elem_ref(docid).load_acquire();
+    const NodeType& acquire_node_refs_elem_ref(uint32_t nodeid) const {
+        return node_refs.acquire_elem_ref(nodeid);
     }
 
-    bool still_valid(uint32_t docid, NodeRef node_ref) const {
-        return node_ref.valid() && (acquire_node_ref(docid) == node_ref);
+    NodeRef acquire_node_ref(uint32_t nodeid) const {
+        return node_refs.acquire_elem_ref(nodeid).ref().load_acquire();
+    }
+
+    bool still_valid(uint32_t nodeid, NodeRef node_ref) const {
+        return node_ref.valid() && (acquire_node_ref(nodeid) == node_ref);
     }
 
     LevelArrayRef get_level_array(NodeRef node_ref) const {
@@ -73,13 +84,13 @@ struct HnswGraph {
         return LevelArrayRef();
     }
 
-    LevelArrayRef get_level_array(uint32_t docid) const {
-        auto node_ref = get_node_ref(docid);
+    LevelArrayRef get_level_array(uint32_t nodeid) const {
+        auto node_ref = get_node_ref(nodeid);
         return get_level_array(node_ref);
     }
 
-    LevelArrayRef acquire_level_array(uint32_t docid) const {
-        auto node_ref = acquire_node_ref(docid);
+    LevelArrayRef acquire_level_array(uint32_t nodeid) const {
+        auto node_ref = acquire_node_ref(nodeid);
         return get_level_array(node_ref);
     }
 
@@ -93,13 +104,13 @@ struct HnswGraph {
         return LinkArrayRef();
     }
 
-    LinkArrayRef get_link_array(uint32_t docid, uint32_t level) const {
-        auto levels = get_level_array(docid);
+    LinkArrayRef get_link_array(uint32_t nodeid, uint32_t level) const {
+        auto levels = get_level_array(nodeid);
         return get_link_array(levels, level);
     }
 
-    LinkArrayRef acquire_link_array(uint32_t docid, uint32_t level) const {
-        auto levels = acquire_level_array(docid);
+    LinkArrayRef acquire_link_array(uint32_t nodeid, uint32_t level) const {
+        auto levels = acquire_level_array(nodeid);
         return get_link_array(levels, level);
     }
 
@@ -108,19 +119,19 @@ struct HnswGraph {
         return get_link_array(levels, level);
     }
 
-    void set_link_array(uint32_t docid, uint32_t level, const LinkArrayRef& new_links);
+    void set_link_array(uint32_t nodeid, uint32_t level, const LinkArrayRef& new_links);
 
     struct EntryNode {
-        uint32_t docid;
+        uint32_t nodeid;
         NodeRef node_ref;
         int32_t level;
         EntryNode()
-          : docid(0), // Note that docid 0 is reserved and never used
+          : nodeid(0), // Note that nodeid 0 is reserved and never used
             node_ref(),
             level(-1)
         {}
-        EntryNode(uint32_t docid_in, NodeRef node_ref_in, int32_t level_in)
-          : docid(docid_in),
+        EntryNode(uint32_t nodeid_in, NodeRef node_ref_in, int32_t level_in)
+          : nodeid(nodeid_in),
             node_ref(node_ref_in),
             level(level_in)
         {}
@@ -129,24 +140,24 @@ struct HnswGraph {
     void set_entry_node(EntryNode node);
 
     uint64_t get_entry_atomic() const {
-        return entry_docid_and_level.load(std::memory_order_acquire);
+        return entry_nodeid_and_level.load(std::memory_order_acquire);
     }
 
     EntryNode get_entry_node() const {
         EntryNode entry;
         while (true) {
             uint64_t value = get_entry_atomic();
-            entry.docid = (uint32_t)value;
-            entry.node_ref = acquire_node_ref(entry.docid);
+            entry.nodeid = (uint32_t)value;
+            entry.node_ref = acquire_node_ref(entry.nodeid);
             entry.level = (int32_t)(value >> 32);
-            if ((entry.docid == 0)
+            if ((entry.nodeid == 0)
                 && (entry.level == -1)
                 && ! entry.node_ref.valid())
             {
                 // invalid in every way
                 return entry;
             }
-            if ((entry.docid > 0)
+            if ((entry.nodeid > 0)
                 && (entry.level > -1)
                 && entry.node_ref.valid()
                 && (get_entry_atomic() == value))

@@ -28,8 +28,6 @@ import java.util.Set;
  */
 public class AccessControl {
 
-
-
     public enum ClientAuthentication { want, need;}
     public static final ComponentId ACCESS_CONTROL_CHAIN_ID = ComponentId.fromString("access-control-chain");
 

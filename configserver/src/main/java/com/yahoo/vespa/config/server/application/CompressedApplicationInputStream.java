@@ -1,8 +1,8 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.application;
 
-import com.yahoo.compress.ArchiveStreamReader;
-import com.yahoo.compress.ArchiveStreamReader.Options;
+import com.yahoo.vespa.archive.ArchiveStreamReader;
+import com.yahoo.vespa.archive.ArchiveStreamReader.Options;
 import com.yahoo.vespa.config.server.http.BadRequestException;
 import com.yahoo.vespa.config.server.http.InternalServerException;
 import com.yahoo.vespa.config.server.http.v2.ApplicationApiHandler;
@@ -45,14 +45,13 @@ public class CompressedApplicationInputStream implements AutoCloseable {
     public static CompressedApplicationInputStream createFromCompressedStream(InputStream is, String contentType, long maxSizeInBytes) {
         try {
             Options options = Options.standard().maxSize(maxSizeInBytes).allowDotSegment(true);
-            switch (contentType) {
-                case ApplicationApiHandler.APPLICATION_X_GZIP:
-                    return new CompressedApplicationInputStream(ArchiveStreamReader.ofTarGzip(is, options));
-                case ApplicationApiHandler.APPLICATION_ZIP:
-                    return new CompressedApplicationInputStream(ArchiveStreamReader.ofZip(is, options));
-                default:
-                    throw new BadRequestException("Unable to decompress");
-            }
+            return switch (contentType) {
+                case ApplicationApiHandler.APPLICATION_X_GZIP ->
+                        new CompressedApplicationInputStream(ArchiveStreamReader.ofTarGzip(is, options));
+                case ApplicationApiHandler.APPLICATION_ZIP ->
+                        new CompressedApplicationInputStream(ArchiveStreamReader.ofZip(is, options));
+                default -> throw new BadRequestException("Unable to decompress");
+            };
         } catch (UncheckedIOException e) {
             throw new InternalServerException("Unable to create compressed application stream", e);
         }

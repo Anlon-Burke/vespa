@@ -85,7 +85,7 @@ public class ExpeditedChangeApplicationMaintainer extends ApplicationMaintainer 
                                                             .map(event -> event.type() + (event.agent() == Agent.system ? "" : " by " + event.agent())))
                                     .sorted()
                                     .distinct()
-                                    .collect(Collectors.toList());
+                                    .toList();
 
         return reasons.isEmpty() ?
                 Optional.empty() :
@@ -107,12 +107,10 @@ public class ExpeditedChangeApplicationMaintainer extends ApplicationMaintainer 
 
     /** Returns whether to expedite changes performed by agent */
     private boolean expediteChangeBy(Agent agent) {
-        switch (agent) {
-            case operator:
-            case RebuildingOsUpgrader:
-            case HostEncrypter: return true;
-        }
-        return false;
+        return switch (agent) {
+            case operator, HostEncrypter, HostResumeProvisioner, RebuildingOsUpgrader -> true;
+            default -> false;
+        };
     }
 
 }

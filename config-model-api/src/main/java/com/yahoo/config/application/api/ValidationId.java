@@ -15,7 +15,7 @@ public enum ValidationId {
     fieldTypeChange("field-type-change"), // Field type changes
     clusterSizeReduction("cluster-size-reduction"), // Large reductions in cluster size
     tensorTypeChange("tensor-type-change"), // Tensor type change
-    resourcesReduction("resources-reduction"), // Large reductions in node resources
+    resourcesReduction("resources-reduction"), // Large reductions in node resources (> 50% of the current min resources)
     contentTypeRemoval("schema-removal"), // Removal of a schema (causes deletion of all documents)
     contentClusterRemoval("content-cluster-removal"), // Removal (or id change) of content clusters
     deploymentRemoval("deployment-removal"), // Removal of production zones from deployment.xml
@@ -26,7 +26,8 @@ public enum ValidationId {
     globalEndpointChange("global-endpoint-change"), // Changing global endpoints
     redundancyIncrease("redundancy-increase"), // Increasing redundancy - may easily cause feed blocked
     redundancyOne("redundancy-one"), // redundancy=1 requires a validation override on first deployment
-    pagedSettingRemoval("paged-setting-removal"); // May cause content nodes to run out of memory
+    pagedSettingRemoval("paged-setting-removal"), // May cause content nodes to run out of memory
+    certificateRemoval("certificate-removal"); // Remove data plane certificates
 
     private final String id;
 

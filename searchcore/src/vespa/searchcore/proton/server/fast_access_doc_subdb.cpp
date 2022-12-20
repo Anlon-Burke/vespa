@@ -11,9 +11,7 @@
 #include <vespa/searchcore/proton/attribute/attribute_factory.h>
 #include <vespa/searchcore/proton/attribute/attribute_manager_initializer.h>
 #include <vespa/searchcore/proton/attribute/filter_attribute_manager.h>
-#include <vespa/searchcore/proton/attribute/sequential_attributes_initializer.h>
 #include <vespa/searchcore/proton/common/alloc_config.h>
-#include <vespa/searchcore/proton/matching/sessionmanager.h>
 #include <vespa/searchcore/proton/reprocessing/attribute_reprocessing_initializer.h>
 #include <vespa/searchcore/proton/reprocessing/reprocess_documents_task.h>
 #include <vespa/vespalib/util/destructor_callbacks.h>
@@ -21,7 +19,6 @@
 #include <vespa/log/log.h>
 LOG_SETUP(".proton.server.fast_access_doc_subdb");
 
-using proton::matching::SessionManager;
 using search::AttributeGuard;
 using search::AttributeVector;
 using search::SerialNum;
@@ -231,11 +228,9 @@ FastAccessDocSubDB::setup(const DocumentSubDbInitializerResult &initResult)
 }
 
 void
-FastAccessDocSubDB::initViews(const DocumentDBConfig &configSnapshot,
-                              const SessionManager::SP &sessionManager)
+FastAccessDocSubDB::initViews(const DocumentDBConfig &configSnapshot)
 {
     // Called by executor thread
-    (void) sessionManager;
     _iSearchView.set(std::make_shared<EmptySearchView>());
     auto writer = std::make_shared<AttributeWriter>(getAndResetInitAttributeManager());
     {
@@ -246,10 +241,8 @@ FastAccessDocSubDB::initViews(const DocumentDBConfig &configSnapshot,
 
 IReprocessingTask::List
 FastAccessDocSubDB::applyConfig(const DocumentDBConfig &newConfigSnapshot, const DocumentDBConfig &oldConfigSnapshot,
-                                SerialNum serialNum, const ReconfigParams &params, IDocumentDBReferenceResolver &resolver)
+                                SerialNum serialNum, const ReconfigParams &params, IDocumentDBReferenceResolver &)
 {
-    (void) resolver;
-
     AllocStrategy alloc_strategy = newConfigSnapshot.get_alloc_config().make_alloc_strategy(_subDbType);
     reconfigure(newConfigSnapshot.getStoreConfig(), alloc_strategy);
     IReprocessingTask::List tasks;
@@ -350,6 +343,14 @@ FastAccessDocSubDB::getNewestFlushedSerial()
     proton::IAttributeManager::SP attrMgr(getAttributeManager());
     highest = std::max(highest, attrMgr->getNewestFlushedSerialNumber());
     return highest;
+}
+
+TransientResourceUsage
+FastAccessDocSubDB::get_transient_resource_usage() const
+{
+    auto result = StoreOnlyDocSubDB::get_transient_resource_usage();
+    result.merge(getAttributeManager()->get_transient_resource_usage());
+    return result;
 }
 
 } // namespace proton

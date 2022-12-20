@@ -71,17 +71,19 @@ public class LbServicesProducer implements LbServicesConfig.Producer {
 
         Set<ApplicationClusterInfo> applicationClusterInfos = app.getModel().applicationClusterInfo();
         List<LbServicesConfig.Tenants.Applications.Endpoints.Builder> endpointBuilder = applicationClusterInfos.stream()
+                .sorted(Comparator.comparing(ApplicationClusterInfo::name))
                 .map(ApplicationClusterInfo::endpoints)
                 .flatMap(endpoints -> getEndpointConfig(endpoints).stream())
-                .collect(Collectors.toList());
+                .toList();
         ab.endpoints(endpointBuilder);
         return ab;
     }
 
     private List<LbServicesConfig.Tenants.Applications.Endpoints.Builder> getEndpointConfig(List<ApplicationClusterEndpoint> clusterEndpoints) {
         return clusterEndpoints.stream()
+                .sorted(Comparator.comparing(ApplicationClusterEndpoint::dnsName))
                 .map(this::getEndpointConfig)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     private LbServicesConfig.Tenants.Applications.Endpoints.Builder getEndpointConfig(ApplicationClusterEndpoint clusterEndpoints) {

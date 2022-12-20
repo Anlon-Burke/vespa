@@ -59,7 +59,7 @@ import static org.junit.Assert.assertTrue;
  */
 public class NodeSerializerTest {
 
-    private final NodeFlavors nodeFlavors = FlavorConfigBuilder.createDummies("default", "large", "ugccloud-container", "arm64");
+    private final NodeFlavors nodeFlavors = FlavorConfigBuilder.createDummies("default", "large", "ugccloud-container", "arm64", "gpu");
     private final NodeSerializer nodeSerializer = new NodeSerializer(nodeFlavors, 1000);
     private final ManualClock clock = new ManualClock();
 
@@ -79,7 +79,8 @@ public class NodeSerializerTest {
     public void reserved_node_serialization() {
         Node node = createNode();
         NodeResources requestedResources = new NodeResources(1.2, 3.4, 5.6, 7.8,
-                                                             DiskSpeed.any, StorageType.any, Architecture.arm64);
+                                                             DiskSpeed.any, StorageType.any, Architecture.arm64,
+                                                             new NodeResources.GpuResources(1, 16));
 
         assertEquals(0, node.history().events().size());
         node = node.allocate(ApplicationId.from(TenantName.from("myTenant"),
@@ -166,7 +167,7 @@ public class NodeSerializerTest {
         assertEquals(3, node.allocation().get().restartGeneration().wanted());
         assertEquals(4, node.allocation().get().restartGeneration().current());
         assertEquals(List.of(History.Event.Type.provisioned, History.Event.Type.reserved),
-                     node.history().events().stream().map(History.Event::type).collect(Collectors.toList()));
+                     node.history().events().stream().map(History.Event::type).toList());
         assertTrue(node.allocation().get().removable());
         assertEquals(NodeType.tenant, node.type());
     }
@@ -367,7 +368,7 @@ public class NodeSerializerTest {
         assertEquals(Version.fromString("7.2"), serialized.status().osVersion().current().get());
         var osUpgradedEvents = serialized.history().events().stream()
                                          .filter(event -> event.type() == History.Event.Type.osUpgraded)
-                                         .collect(Collectors.toList());
+                                         .toList();
         assertEquals("OS upgraded event is added", 1, osUpgradedEvents.size());
         assertEquals("Duplicate updates of same version uses earliest instant", Instant.ofEpochMilli(123),
                      osUpgradedEvents.get(0).at());
@@ -492,13 +493,13 @@ public class NodeSerializerTest {
 
     @Test
     public void cloud_account_serialization() {
-        CloudAccount account = new CloudAccount("012345678912");
+        CloudAccount account = CloudAccount.from("012345678912");
         Node node = Node.create("id", "host1.example.com", nodeFlavors.getFlavorOrThrow("default"), State.provisioned, NodeType.host)
                         .cloudAccount(account)
                         .exclusiveToApplicationId(ApplicationId.defaultId())
                         .build();
         node = nodeSerializer.fromJson(State.provisioned, nodeSerializer.toJson(node));
-        assertEquals(account, node.cloudAccount().get());
+        assertEquals(account, node.cloudAccount());
     }
 
     private byte[] createNodeJson(String hostname, String... ipAddress) {

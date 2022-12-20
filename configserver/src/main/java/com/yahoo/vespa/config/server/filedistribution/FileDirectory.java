@@ -1,34 +1,55 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.filedistribution;
 
+import com.yahoo.cloud.config.ConfigserverConfig;
+import com.yahoo.component.AbstractComponent;
+import com.yahoo.component.annotation.Inject;
+import com.yahoo.concurrent.Lock;
+import com.yahoo.concurrent.Locks;
 import com.yahoo.config.FileReference;
 import com.yahoo.io.IOUtils;
 import com.yahoo.text.Utf8;
+import com.yahoo.vespa.defaults.Defaults;
+import com.yahoo.vespa.flags.BooleanFlag;
+import com.yahoo.vespa.flags.FlagSource;
+import com.yahoo.vespa.flags.Flags;
 import net.jpountz.xxhash.XXHash64;
 import net.jpountz.xxhash.XXHashFactory;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.nio.file.attribute.FileTime;
-import java.time.Instant;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class FileDirectory  {
+import static com.yahoo.yolean.Exceptions.uncheck;
+
+public class FileDirectory extends AbstractComponent {
 
     private static final Logger log = Logger.getLogger(FileDirectory.class.getName());
-    private final File root;
 
-    public FileDirectory(File rootDir) {
-        root = rootDir;
+    private final Locks<FileReference> locks = new Locks<>(1, TimeUnit.MINUTES);
+
+    private final File root;
+    private final BooleanFlag useLock;
+
+    @Inject
+    public FileDirectory(ConfigserverConfig configserverConfig, FlagSource flagSource) {
+        this(new File(Defaults.getDefaults().underVespaHome(configserverConfig.fileReferencesDir())), flagSource);
+    }
+
+    public FileDirectory(File rootDir, FlagSource flagSource) {
+        this.root = rootDir;
+        this.useLock = Flags.USE_LOCKS_IN_FILEDISTRIBUTION.bindTo(flagSource);
         try {
             ensureRootExist();
         } catch (IllegalArgumentException e) {
@@ -70,9 +91,7 @@ public class FileDirectory  {
         return files[0];
     }
 
-    File getRoot() {
-        return root;
-    }
+    public File getRoot() { return root; }
 
     private Long computeHash(File file) throws IOException {
         XXHash64 hasher = XXHashFactory.fastestInstance().hash64();
@@ -98,30 +117,51 @@ public class FileDirectory  {
 
     public FileReference addFile(File source) throws IOException {
         Long hash = computeHash(source);
-        verifyExistingFile(source, hash);
         FileReference fileReference = fileReferenceFromHash(hash);
-        return addFile(source, fileReference);
+
+        if (useLock.value())
+            try (Lock lock = locks.lock(fileReference)) {
+                return addFile(source, fileReference, hash);
+            }
+        else
+            return addFile(source, fileReference, hash);
     }
 
-    // If there exists a directory for a file reference, but content does not have correct hash or the file we want to add
-    // does not exist in the directory, delete it
-    private void verifyExistingFile(File source, Long hashOfFileToBeAdded) throws IOException {
+    public void delete(FileReference fileReference, Function<FileReference, Boolean> isInUse) {
+        if (useLock.value())
+            try (Lock lock = locks.lock(fileReference)) {
+                if (isInUse.apply(fileReference))
+                    log.log(Level.FINE, "Unable to delete file reference '" + fileReference.value() + "' since it is still in use");
+                else
+                    deleteDirRecursively(destinationDir(fileReference));
+            }
+        else
+            deleteDirRecursively(destinationDir(fileReference));
+    }
+
+    private void deleteDirRecursively(File dir) {
+        log.log(Level.FINE, "Will delete dir " + dir);
+        if ( ! IOUtils.recursiveDeleteDir(dir))
+            log.log(Level.INFO, "Failed to delete " + dir);
+    }
+
+    // Check if we should add file, it might already exist
+    private boolean shouldAddFile(File source, Long hashOfFileToBeAdded) throws IOException {
         FileReference fileReference = fileReferenceFromHash(hashOfFileToBeAdded);
         File destinationDir = destinationDir(fileReference);
-        if (!destinationDir.exists()) return;
+        if ( ! destinationDir.exists()) return true;
 
         File existingFile = destinationDir.toPath().resolve(source.getName()).toFile();
         if ( ! existingFile.exists() || ! computeHash(existingFile).equals(hashOfFileToBeAdded)) {
-            log.log(Level.SEVERE, "Directory for file reference '" + fileReference.value() +
+            log.log(Level.WARNING, "Directory for file reference '" + fileReference.value() +
                     "' has content that does not match its hash, deleting everything in " +
                     destinationDir.getAbsolutePath());
-            IOUtils.recursiveDeleteDir(destinationDir);
-        } else {
-            // Update last access time (used to keep track of when we can delete unused file references
-            // so update when adding and it already exists)
-            FileTime fileTime = FileTime.from(Instant.now());
-            Files.setAttribute(destinationDir.toPath(), "basic:lastAccessTime", fileTime);
+            deleteDirRecursively(destinationDir);
+            return true;
         }
+
+        log.log(Level.FINE, "Directory for file reference '" + fileReference.value() + "' already exists and has all content");
+        return false;
     }
 
     private File destinationDir(FileReference fileReference) {
@@ -132,35 +172,37 @@ public class FileDirectory  {
         return new FileReference(Long.toHexString(hash));
     }
 
-    private FileReference addFile(File source, FileReference reference) {
+    // Pre-condition: Destination dir does not exist
+    private FileReference addFile(File source, FileReference reference, Long hash) throws IOException {
+        if ( ! shouldAddFile(source, hash)) return reference;
+
         ensureRootExist();
+        Path tempDestinationDir = uncheck(() -> Files.createTempDirectory(root.toPath(), "writing"));
         try {
+            // Prepare and verify
             logfileInfo(source);
             File destinationDir = destinationDir(reference);
-            Path tempDestinationDir = Files.createTempDirectory(root.toPath(), "writing");
-            File destination = new File(tempDestinationDir.toFile(), source.getName());
-            if (!destinationDir.exists()) {
-                destinationDir.mkdir();
-                log.log(Level.FINE, () -> "file reference '" + reference.value() + "', source: " + source.getAbsolutePath() );
-                if (source.isDirectory()) {
-                    log.log(Level.FINE, () -> "Copying source " + source.getAbsolutePath() + " to " + destination.getAbsolutePath());
-                    IOUtils.copyDirectory(source, destination, -1);
-                } else {
-                    copyFile(source, destination);
-                }
-                if (!destinationDir.exists()) {
-                    log.log(Level.FINE, () -> "Moving from " + tempDestinationDir + " to " + destinationDir.getAbsolutePath());
-                    if ( ! tempDestinationDir.toFile().renameTo(destinationDir)) {
-                        log.log(Level.WARNING, "Failed moving '" + tempDestinationDir.toFile().getAbsolutePath() + "' to '" + destination.getAbsolutePath() + "'.");
-                    }
-                } else {
-                    IOUtils.copyDirectory(tempDestinationDir.toFile(), destinationDir, -1);
-                }
-            }
-            IOUtils.recursiveDeleteDir(tempDestinationDir.toFile());
+            File tempDestination = new File(tempDestinationDir.toFile(), source.getName());
+            if ( ! destinationDir.mkdir())
+                log.log(Level.WARNING, () -> "destination dir " + destinationDir + " already exists");
+
+            // Copy files
+            log.log(Level.FINE, () -> "Copying " + source.getAbsolutePath() + " to " + tempDestination.getAbsolutePath());
+            if (source.isDirectory())
+                IOUtils.copyDirectory(source, tempDestination, -1);
+            else
+                copyFile(source, tempDestination);
+
+            // Move to final destination
+            log.log(Level.FINE, () -> "Moving " + tempDestinationDir + " to " + destinationDir.getAbsolutePath());
+            if ( ! tempDestinationDir.toFile().renameTo(destinationDir))
+                log.log(Level.WARNING, "Failed moving '" + tempDestinationDir.toFile().getAbsolutePath() +
+                        "' to '" + tempDestination.getAbsolutePath() + "'.");
             return reference;
         } catch (IOException e) {
-            throw new IllegalArgumentException(e);
+            throw new UncheckedIOException(e);
+        } finally {
+            IOUtils.recursiveDeleteDir(tempDestinationDir.toFile());
         }
     }
 

@@ -46,15 +46,6 @@ public class Flags {
 
     private static volatile TreeMap<FlagId, FlagDefinition> flags = new TreeMap<>();
 
-    public static final UnboundBooleanFlag ROOT_CHAIN_GRAPH = defineFeatureFlag(
-            "root-chain-graph", true,
-            List.of("hakonhall"), "2022-10-05", "2022-11-04",
-            "Whether to run all tasks in the root task chain up to the one failing to converge (false), or " +
-            "run all tasks in the root task chain whose dependencies have converged (true).  And when suspending, " +
-            "whether to run the tasks in sequence (false) or in reverse sequence (true).",
-            "On first tick of the root chain after (re)start of host admin.",
-            ZONE_ID, NODE_TYPE, HOSTNAME);
-
     public static final UnboundDoubleFlag DEFAULT_TERM_WISE_LIMIT = defineDoubleFlag(
             "default-term-wise-limit", 1.0,
             List.of("baldersheim"), "2020-12-02", "2023-01-01",
@@ -75,13 +66,6 @@ public class Flags {
             List.of("baldersheim"), "2020-12-02", "2023-01-01",
             "Selects type of sequenced executor used for feeding in proton, valid values are LATENCY, ADAPTIVE, THROUGHPUT",
             "Takes effect at redeployment (requires restart)",
-            ZONE_ID, APPLICATION_ID);
-
-    public static final UnboundBooleanFlag KEEP_STORAGE_NODE_UP = defineFeatureFlag(
-            "keep-storage-node-up", true,
-            List.of("hakonhall"), "2022-07-07", "2022-11-07",
-            "Whether to leave the storage node (with wanted state) UP while the node is permanently down.",
-            "Takes effect immediately for nodes transitioning to permanently down.",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundIntFlag MAX_UNCOMMITTED_MEMORY = defineIntFlag(
@@ -221,13 +205,13 @@ public class Flags {
 
     public static final UnboundListFlag<String> ALLOWED_ATHENZ_PROXY_IDENTITIES = defineListFlag(
             "allowed-athenz-proxy-identities", List.of(), String.class,
-            List.of("bjorncs", "tokle"), "2021-02-10", "2022-11-01",
+            List.of("bjorncs", "tokle"), "2021-02-10", "2023-03-01",
             "Allowed Athenz proxy identities",
             "takes effect at redeployment");
 
     public static final UnboundIntFlag MAX_ACTIVATION_INHIBITED_OUT_OF_SYNC_GROUPS = defineIntFlag(
             "max-activation-inhibited-out-of-sync-groups", 0,
-            List.of("vekterli"), "2021-02-19", "2022-12-01",
+            List.of("vekterli"), "2021-02-19", "2023-02-01",
             "Allows replicas in up to N content groups to not be activated " +
             "for query visibility if they are out of sync with a majority of other replicas",
             "Takes effect at redeployment",
@@ -235,7 +219,7 @@ public class Flags {
 
     public static final UnboundDoubleFlag MIN_NODE_RATIO_PER_GROUP = defineDoubleFlag(
             "min-node-ratio-per-group", 0.0,
-            List.of("geirst", "vekterli"), "2021-07-16", "2022-11-01",
+            List.of("geirst", "vekterli"), "2021-07-16", "2023-02-01",
             "Minimum ratio of nodes that have to be available (i.e. not Down) in any hierarchic content cluster group for the group to be Up",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
@@ -250,7 +234,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag IGNORE_THREAD_STACK_SIZES = defineFeatureFlag(
             "ignore-thread-stack-sizes", false,
-            List.of("arnej"), "2021-11-12", "2022-12-01",
+            List.of("arnej"), "2021-11-12", "2023-12-31",
             "Whether C++ thread creation should ignore any requested stack size",
             "Triggers restart, takes effect immediately",
             ZONE_ID, APPLICATION_ID);
@@ -292,28 +276,28 @@ public class Flags {
 
     public static final UnboundBooleanFlag ENABLE_PROXY_PROTOCOL_MIXED_MODE = defineFeatureFlag(
             "enable-proxy-protocol-mixed-mode", true,
-            List.of("tokle"), "2022-05-09", "2022-11-01",
+            List.of("tokle"), "2022-05-09", "2023-01-31",
             "Enable or disable proxy protocol mixed mode",
             "Takes effect on redeployment",
             APPLICATION_ID);
 
     public static final UnboundListFlag<String> FILE_DISTRIBUTION_ACCEPTED_COMPRESSION_TYPES = defineListFlag(
             "file-distribution-accepted-compression-types", List.of("gzip", "lz4"), String.class,
-            List.of("hmusum"), "2022-07-05", "2022-12-01",
+            List.of("hmusum"), "2022-07-05", "2023-02-01",
             "´List of accepted compression types used when asking for a file reference. Valid values: gzip, lz4",
             "Takes effect on restart of service",
             APPLICATION_ID);
 
     public static final UnboundListFlag<String> FILE_DISTRIBUTION_COMPRESSION_TYPES_TO_SERVE = defineListFlag(
             "file-distribution-compression-types-to-use", List.of("lz4", "gzip"), String.class,
-            List.of("hmusum"), "2022-07-05", "2022-12-01",
+            List.of("hmusum"), "2022-07-05", "2023-02-01",
             "List of compression types to use (in preferred order), matched with accepted compression types when serving file references. Valid values: gzip, lz4",
             "Takes effect on restart of service",
             APPLICATION_ID);
 
     public static final UnboundBooleanFlag USE_YUM_PROXY_V2 = defineFeatureFlag(
             "use-yumproxy-v2", false,
-            List.of("tokle"), "2022-05-05", "2022-11-01",
+            List.of("tokle"), "2022-05-05", "2023-01-31",
             "Use yumproxy-v2",
             "Takes effect on host admin restart",
             HOSTNAME);
@@ -327,7 +311,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag SEPARATE_METRIC_CHECK_CONFIG = defineFeatureFlag(
             "separate-metric-check-config", false,
-            List.of("olaa"), "2022-07-04", "2022-11-01",
+            List.of("olaa"), "2022-07-04", "2023-01-01",
             "Determines whether one metrics config check should be written per Vespa node",
             "Takes effect on next tick",
             HOSTNAME);
@@ -349,14 +333,14 @@ public class Flags {
 
     public static final UnboundBooleanFlag USE_TWO_PHASE_DOCUMENT_GC = defineFeatureFlag(
             "use-two-phase-document-gc", false,
-            List.of("vekterli"), "2022-08-24", "2022-11-01",
+            List.of("vekterli"), "2022-08-24", "2023-02-01",
             "Use two-phase document GC in content clusters",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
     public static final UnboundBooleanFlag RESTRICT_DATA_PLANE_BINDINGS = defineFeatureFlag(
             "restrict-data-plane-bindings", false,
-            List.of("mortent"), "2022-09-08", "2022-11-01",
+            List.of("mortent"), "2022-09-08", "2023-02-01",
             "Use restricted data plane bindings",
             "Takes effect at redeployment",
             APPLICATION_ID);
@@ -366,13 +350,6 @@ public class Flags {
             List.of("bjorncs", "tokle"), "2022-09-22", "2023-06-01",
             "Set mode for CSRF filter ('disabled', 'log_only', 'enabled')",
             "Takes effect on controller restart/redeployment");
-
-    public static final UnboundBooleanFlag SOFT_REBUILD = defineFeatureFlag(
-            "soft-rebuild", true,
-            List.of("mpolden"), "2022-09-27", "2022-12-01",
-            "Whether soft rebuild can be used to rebuild hosts with remote disk",
-            "Takes effect on next run of OsUpgradeActivator"
-    );
 
     public static final UnboundListFlag<String> CSRF_USERS = defineListFlag(
             "csrf-users", List.of(), String.class,
@@ -413,6 +390,40 @@ public class Flags {
             List.of("bjorncs", "tokle"), "2022-10-17", "2023-06-01",
             "Set mode for Auth0 session logout ('disabled', 'log_only', 'enabled')",
             "Takes effect on controller restart/redeployment");
+
+    public static final UnboundBooleanFlag ENABLED_MAIL_VERIFICATION = defineFeatureFlag(
+            "enabled-mail-verification", false,
+            List.of("olaa"), "2022-10-28", "2023-01-01",
+            "Enable mail verification",
+            "Takes effect immediately");
+
+    public static final UnboundStringFlag CORE_ENCRYPTION_PUBLIC_KEY_ID = defineStringFlag(
+            "core-encryption-public-key-id", "",
+            List.of("vekterli"), "2022-11-03", "2023-02-01",
+            "Specifies which public key to use for core dump encryption.",
+            "Takes effect on the next tick.",
+            ZONE_ID, NODE_TYPE, HOSTNAME);
+
+    public static final UnboundBooleanFlag USE_OLD_JDISC_CONTAINER_STARTUP = defineFeatureFlag(
+            "use-old-jdisc-container-startup", true,
+            List.of("arnej", "baldersheim"), "2022-11-09", "2023-01-31",
+            "If true, use the old vespa-start-container-daemon script.",
+            "Takes effect immediately?",
+            ZONE_ID, APPLICATION_ID);
+    
+    public static final UnboundBooleanFlag ENABLE_DATAPLANE_FILTER = defineFeatureFlag(
+            "enable-dataplane-filter", false, 
+            List.of("tokle", "bjorncs"), "2022-11-15", "2023-01-31",
+            "Setup data plane filter from clients configuration",
+            "Takes effect on redeployment",
+            APPLICATION_ID);
+
+    public static final UnboundBooleanFlag USE_LOCKS_IN_FILEDISTRIBUTION = defineFeatureFlag(
+            "use-locks-in-filedistribution", false,
+            List.of("hmusum"), "2022-11-16", "2023-01-31",
+            "If true, use locks when writing and deleting file references.",
+            "Takes effect immediately",
+            ZONE_ID, APPLICATION_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

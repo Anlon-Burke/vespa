@@ -1,7 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.cluster;
 
-import com.google.common.collect.ImmutableList;
 import com.yahoo.component.ComponentId;
 import com.yahoo.component.provider.ComponentRegistry;
 import com.yahoo.concurrent.InThreadExecutorService;
@@ -14,19 +13,19 @@ import com.yahoo.prelude.SearchDefinition;
 import com.yahoo.prelude.fastsearch.DocumentdbInfoConfig;
 import com.yahoo.prelude.fastsearch.FastHit;
 import com.yahoo.prelude.fastsearch.VespaBackEndSearcher;
-import com.yahoo.prelude.fastsearch.test.MockMetric;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
 import com.yahoo.search.config.ClusterConfig;
 import com.yahoo.search.dispatch.Dispatcher;
-import com.yahoo.search.dispatch.rpc.RpcResourcePool;
 import com.yahoo.search.result.Hit;
 import com.yahoo.search.schema.RankProfile;
 import com.yahoo.search.schema.Schema;
 import com.yahoo.search.schema.SchemaInfo;
 import com.yahoo.search.searchchain.Execution;
 import com.yahoo.vespa.config.search.DispatchConfig;
+import com.yahoo.vespa.config.search.DispatchNodesConfig;
 import org.junit.jupiter.api.Test;
+
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -38,7 +37,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests cluster monitoring
@@ -51,13 +54,13 @@ public class ClusterSearcherTestCase {
 
     @Test
     void testNoBackends() {
-        ClusterSearcher cluster = new ClusterSearcher(new LinkedHashSet<>(Arrays.asList("dummy")));
+        ClusterSearcher cluster = new ClusterSearcher(new LinkedHashSet<>(List.of("dummy")));
         try {
             Execution execution = new Execution(cluster, Execution.Context.createContextStub());
             Query query = new Query("query=hello");
             query.setHits(10);
             com.yahoo.search.Result result = execution.search(query);
-            assertTrue(result.hits().getError() != null);
+            assertNotNull(result.hits().getError());
             assertEquals("No backends in service. Try later", result.hits().getError().getMessage());
         } finally {
             cluster.deconstruct();
@@ -66,10 +69,10 @@ public class ClusterSearcherTestCase {
 
     private IndexFacts createIndexFacts() {
         Map<String, List<String>> clusters = new LinkedHashMap<>();
-        clusters.put("cluster1", Arrays.asList("type1", "type2", "type3"));
-        clusters.put("cluster2", Arrays.asList("type4", "type5"));
-        clusters.put("type1", Arrays.asList("type6"));
-        Collection<SearchDefinition> searchDefs = ImmutableList.of(
+        clusters.put("cluster1", List.of("type1", "type2", "type3"));
+        clusters.put("cluster2", List.of("type4", "type5"));
+        clusters.put("type1", List.of("type6"));
+        Collection<SearchDefinition> searchDefs = List.of(
                 new SearchDefinition("type1"),
                 new SearchDefinition("type2"),
                 new SearchDefinition("type3"),
@@ -85,34 +88,34 @@ public class ClusterSearcherTestCase {
 
     @Test
     void testThatDocumentTypesAreResolved() {
-        ClusterSearcher cluster1 = new ClusterSearcher(new LinkedHashSet<>(Arrays.asList("type1", "type2", "type3")));
+        ClusterSearcher cluster1 = new ClusterSearcher(new LinkedHashSet<>(List.of("type1", "type2", "type3")));
         try {
-            ClusterSearcher type1 = new ClusterSearcher(new LinkedHashSet<>(Arrays.asList("type6")));
+            ClusterSearcher type1 = new ClusterSearcher(new LinkedHashSet<>(List.of("type6")));
             try {
-                assertEquals(new LinkedHashSet<>(Arrays.asList("type1", "type2", "type3")), resolve(cluster1, ""));
-                assertEquals(new LinkedHashSet<>(Arrays.asList("type6")), resolve(type1, ""));
+                assertEquals(new LinkedHashSet<>(List.of("type1", "type2", "type3")), resolve(cluster1, ""));
+                assertEquals(new LinkedHashSet<>(List.of("type6")), resolve(type1, ""));
                 { // specify restrict
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type1")), resolve(cluster1, "&restrict=type1"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type2")), resolve(cluster1, "&restrict=type2"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type2", "type3")), resolve(cluster1, "&restrict=type2,type3"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type2")), resolve(cluster1, "&restrict=type2,type4"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList()), resolve(cluster1, "&restrict=type4"));
+                    assertEquals(new LinkedHashSet<>(List.of("type1")), resolve(cluster1, "&restrict=type1"));
+                    assertEquals(new LinkedHashSet<>(List.of("type2")), resolve(cluster1, "&restrict=type2"));
+                    assertEquals(new LinkedHashSet<>(List.of("type2", "type3")), resolve(cluster1, "&restrict=type2,type3"));
+                    assertEquals(new LinkedHashSet<>(List.of("type2")), resolve(cluster1, "&restrict=type2,type4"));
+                    assertEquals(new LinkedHashSet<>(List.of()), resolve(cluster1, "&restrict=type4"));
                 }
                 { // specify sources
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type1", "type2", "type3")), resolve(cluster1, "&sources=cluster1"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList()), resolve(cluster1, "&sources=cluster2"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList()), resolve(cluster1, "&sources=type1"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type6")), resolve(type1, "&sources=type1"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type2")), resolve(cluster1, "&sources=type2"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type2", "type3")), resolve(cluster1, "&sources=type2,type3"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type2")), resolve(cluster1, "&sources=type2,type4"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList()), resolve(cluster1, "&sources=type4"));
+                    assertEquals(new LinkedHashSet<>(List.of("type1", "type2", "type3")), resolve(cluster1, "&sources=cluster1"));
+                    assertEquals(new LinkedHashSet<>(List.of()), resolve(cluster1, "&sources=cluster2"));
+                    assertEquals(new LinkedHashSet<>(List.of()), resolve(cluster1, "&sources=type1"));
+                    assertEquals(new LinkedHashSet<>(List.of("type6")), resolve(type1, "&sources=type1"));
+                    assertEquals(new LinkedHashSet<>(List.of("type2")), resolve(cluster1, "&sources=type2"));
+                    assertEquals(new LinkedHashSet<>(List.of("type2", "type3")), resolve(cluster1, "&sources=type2,type3"));
+                    assertEquals(new LinkedHashSet<>(List.of("type2")), resolve(cluster1, "&sources=type2,type4"));
+                    assertEquals(new LinkedHashSet<>(List.of()), resolve(cluster1, "&sources=type4"));
                 }
                 { // specify both
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type1")), resolve(cluster1, "&sources=cluster1&restrict=type1"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type2")), resolve(cluster1, "&sources=cluster1&restrict=type2"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type2", "type3")), resolve(cluster1, "&sources=cluster1&restrict=type2,type3"));
-                    assertEquals(new LinkedHashSet<>(Arrays.asList("type2")), resolve(cluster1, "&sources=cluster2&restrict=type2"));
+                    assertEquals(new LinkedHashSet<>(List.of("type1")), resolve(cluster1, "&sources=cluster1&restrict=type1"));
+                    assertEquals(new LinkedHashSet<>(List.of("type2")), resolve(cluster1, "&sources=cluster1&restrict=type2"));
+                    assertEquals(new LinkedHashSet<>(List.of("type2", "type3")), resolve(cluster1, "&sources=cluster1&restrict=type2,type3"));
+                    assertEquals(new LinkedHashSet<>(List.of("type2")), resolve(cluster1, "&sources=cluster2&restrict=type2"));
                 }
             } finally {
                 type1.deconstruct();
@@ -181,15 +184,15 @@ public class ClusterSearcherTestCase {
         }
 
         private void init() {
-            results.put(type1, Arrays.asList(createHit(getId(type1, 0), 9),
+            results.put(type1, List.of(createHit(getId(type1, 0), 9),
                                              createHit(getId(type1, 1), 6),
                                              createHit(getId(type1, 2), 3)));
 
-            results.put(type2, Arrays.asList(createHit(getId(type2, 0), 10),
+            results.put(type2, List.of(createHit(getId(type2, 0), 10),
                                              createHit(getId(type2, 1), 7),
                                              createHit(getId(type2, 2), 4)));
 
-            results.put(type3, Arrays.asList(createHit(getId(type3, 0), 11),
+            results.put(type3, List.of(createHit(getId(type3, 0), 11),
                                              createHit(getId(type3, 1), 8),
                                              createHit(getId(type3, 2), 5)));
         }
@@ -253,11 +256,11 @@ public class ClusterSearcherTestCase {
     }
 
     private Execution createExecution() {
-        return createExecution(Arrays.asList("type1", "type2", "type3"), false);
+        return createExecution(List.of("type1", "type2", "type3"), false);
     }
 
     private Execution createExecution(boolean expectAttributePrefetch) {
-        return createExecution(Arrays.asList("type1", "type2", "type3"), expectAttributePrefetch);
+        return createExecution(List.of("type1", "type2", "type3"), expectAttributePrefetch);
     }
 
     private Execution createExecution(List<String> docTypesList, boolean expectAttributePrefetch) {
@@ -297,7 +300,7 @@ public class ClusterSearcherTestCase {
             // NB ! Empty restrict sets does not exist below the cluster searcher.
             // restrict set is set by cluster searcher to tell which documentdb is used.
             // Modify test to mirror that change.
-            Execution execution = createExecution(Arrays.asList("type1"), false);
+            Execution execution = createExecution(List.of("type1"), false);
             Query query = new Query("?query=hello");
             com.yahoo.search.Result result = execution.search(query);
             assertEquals(3, result.getTotalHitCount());
@@ -387,24 +390,24 @@ public class ClusterSearcherTestCase {
         Execution ex = createExecution();
 
         // all types
-        assertResult(9, Arrays.asList(11.0, 10.0), getResult(0, 2, ex));
-        assertResult(9, Arrays.asList(10.0, 9.0),  getResult(1, 2, ex));
-        assertResult(9, Arrays.asList(9.0, 8.0),   getResult(2, 2, ex));
-        assertResult(9, Arrays.asList(8.0, 7.0),   getResult(3, 2, ex));
-        assertResult(9, Arrays.asList(7.0, 6.0),   getResult(4, 2, ex));
-        assertResult(9, Arrays.asList(6.0, 5.0),   getResult(5, 2, ex));
-        assertResult(9, Arrays.asList(5.0, 4.0),   getResult(6, 2, ex));
-        assertResult(9, Arrays.asList(4.0, 3.0),   getResult(7, 2, ex));
-        assertResult(9, Arrays.asList(3.0),        getResult(8, 2, ex));
-        assertResult(9, new ArrayList<>(), getResult(9, 2, ex));
-        assertResult(9, Arrays.asList(11.0, 10.0, 9.0, 8.0, 7.0), getResult(0, 5, ex));
-        assertResult(9, Arrays.asList(6.0, 5.0, 4.0, 3.0),        getResult(5, 5, ex));
+        assertResult(9, List.of(11.0, 10.0), getResult(0, 2, ex));
+        assertResult(9, List.of(10.0, 9.0),  getResult(1, 2, ex));
+        assertResult(9, List.of(9.0, 8.0),   getResult(2, 2, ex));
+        assertResult(9, List.of(8.0, 7.0),   getResult(3, 2, ex));
+        assertResult(9, List.of(7.0, 6.0),   getResult(4, 2, ex));
+        assertResult(9, List.of(6.0, 5.0),   getResult(5, 2, ex));
+        assertResult(9, List.of(5.0, 4.0),   getResult(6, 2, ex));
+        assertResult(9, List.of(4.0, 3.0),   getResult(7, 2, ex));
+        assertResult(9, List.of(3.0),        getResult(8, 2, ex));
+        assertResult(9, List.of(), getResult(9, 2, ex));
+        assertResult(9, List.of(11.0, 10.0, 9.0, 8.0, 7.0), getResult(0, 5, ex));
+        assertResult(9, List.of(6.0, 5.0, 4.0, 3.0),        getResult(5, 5, ex));
 
         // restrict=type1
-        assertResult(3, Arrays.asList(9.0, 6.0), getResult(0, 2, "&restrict=type1", ex));
-        assertResult(3, Arrays.asList(6.0, 3.0), getResult(1, 2, "&restrict=type1", ex));
-        assertResult(3, Arrays.asList(3.0),      getResult(2, 2, "&restrict=type1", ex));
-        assertResult(3, new ArrayList<>(), getResult(3, 2, "&restrict=type1", ex));
+        assertResult(3, List.of(9.0, 6.0), getResult(0, 2, "&restrict=type1", ex));
+        assertResult(3, List.of(6.0, 3.0), getResult(1, 2, "&restrict=type1", ex));
+        assertResult(3, List.of(3.0),      getResult(2, 2, "&restrict=type1", ex));
+        assertResult(3, List.of(), getResult(3, 2, "&restrict=type1", ex));
     }
 
     @Test
@@ -415,13 +418,13 @@ public class ClusterSearcherTestCase {
         com.yahoo.search.Result result = getResult(0, 2, extra, ex);
         assertEquals(3.0, result.hits().asList().get(0).getField("asc-score"));
         assertEquals(4.0, result.hits().asList().get(1).getField("asc-score"));
-        assertResult(6, Arrays.asList(3.0, 4.0),  getResult(0, 2, extra, ex));
-        assertResult(6, Arrays.asList(4.0, 6.0),  getResult(1, 2, extra, ex));
-        assertResult(6, Arrays.asList(6.0, 7.0),  getResult(2, 2, extra, ex));
-        assertResult(6, Arrays.asList(7.0, 9.0),  getResult(3, 2, extra, ex));
-        assertResult(6, Arrays.asList(9.0, 10.0), getResult(4, 2, extra, ex));
-        assertResult(6, Arrays.asList(10.0),      getResult(5, 2, extra, ex));
-        assertResult(6, new ArrayList<>(),  getResult(6, 2, extra, ex));
+        assertResult(6, List.of(3.0, 4.0),  getResult(0, 2, extra, ex));
+        assertResult(6, List.of(4.0, 6.0),  getResult(1, 2, extra, ex));
+        assertResult(6, List.of(6.0, 7.0),  getResult(2, 2, extra, ex));
+        assertResult(6, List.of(7.0, 9.0),  getResult(3, 2, extra, ex));
+        assertResult(6, List.of(9.0, 10.0), getResult(4, 2, extra, ex));
+        assertResult(6, List.of(10.0),      getResult(5, 2, extra, ex));
+        assertResult(6, List.of(),  getResult(6, 2, extra, ex));
     }
 
     private static ClusterSearcher createSearcher(String clusterName, Double maxQueryTimeout, Double maxQueryCacheTimeout,
@@ -446,11 +449,11 @@ public class ClusterSearcherTestCase {
         var schema = new Schema.Builder("type1");
 
         DispatchConfig dispatchConfig = new DispatchConfig.Builder().build();
-        Dispatcher dispatcher = new Dispatcher(new RpcResourcePool(dispatchConfig),
-                                               ComponentId.createAnonymousComponentId("test-id"),
+        DispatchNodesConfig nodesConfig = new DispatchNodesConfig.Builder().build();
+        Dispatcher dispatcher = new Dispatcher(ComponentId.createAnonymousComponentId("test-id"),
                                                dispatchConfig,
-                                               vipStatus,
-                                               new MockMetric());
+                                               nodesConfig,
+                                               vipStatus);
         ComponentRegistry<Dispatcher> dispatchers = new ComponentRegistry<>();
         dispatchers.register(new ComponentId("dispatcher." + clusterName), dispatcher);
 

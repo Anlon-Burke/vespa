@@ -5,12 +5,16 @@ import com.yahoo.component.annotation.Inject;
 import com.yahoo.component.AbstractComponent;
 import com.yahoo.concurrent.maintenance.JobControl;
 import com.yahoo.config.provision.ApplicationTransaction;
+import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.config.provisioning.NodeRepositoryConfig;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.flags.FlagSource;
+import com.yahoo.vespa.flags.JacksonFlag;
+import com.yahoo.vespa.flags.PermanentFlags;
+import com.yahoo.vespa.flags.custom.SharedHost;
 import com.yahoo.vespa.hosted.provision.Node.State;
 import com.yahoo.vespa.hosted.provision.applications.Applications;
 import com.yahoo.vespa.hosted.provision.autoscale.MetricsDb;
@@ -61,6 +65,7 @@ public class NodeRepository extends AbstractComponent {
     private final MetricsDb metricsDb;
     private final Orchestrator orchestrator;
     private final int spareCount;
+    private final JacksonFlag<SharedHost> sharedHosts;
 
     /**
      * Creates a node repository from a zookeeper provider.
@@ -82,12 +87,13 @@ public class NodeRepository extends AbstractComponent {
              zone,
              new DnsNameResolver(),
              DockerImage.fromString(config.containerImage()),
-             Optional.of(config.tenantContainerImage()).filter(s -> !s.isEmpty()).map(DockerImage::fromString),
+             optionalImage(config.tenantContainerImage()),
+             optionalImage(config.tenantGpuContainerImage()),
              flagSource,
              metricsDb,
              orchestrator,
              config.useCuratorClientCache(),
-             zone.environment().isProduction() && !zone.getCloud().dynamicProvisioning() && !zone.system().isCd() ? 1 : 0,
+             zone.environment().isProduction() && !zone.cloud().dynamicProvisioning() && !zone.system().isCd() ? 1 : 0,
              config.nodeCacheSize());
     }
 
@@ -103,36 +109,38 @@ public class NodeRepository extends AbstractComponent {
                           NameResolver nameResolver,
                           DockerImage containerImage,
                           Optional<DockerImage> tenantContainerImage,
+                          Optional<DockerImage> tenantGpuContainerImage,
                           FlagSource flagSource,
                           MetricsDb metricsDb,
                           Orchestrator orchestrator,
                           boolean useCuratorClientCache,
                           int spareCount,
                           long nodeCacheSize) {
-        if (provisionServiceProvider.getHostProvisioner().isPresent() != zone.getCloud().dynamicProvisioning())
+        if (provisionServiceProvider.getHostProvisioner().isPresent() != zone.cloud().dynamicProvisioning())
             throw new IllegalArgumentException(String.format(
                     "dynamicProvisioning property must be 1-to-1 with availability of HostProvisioner, was: dynamicProvisioning=%s, hostProvisioner=%s",
-                    zone.getCloud().dynamicProvisioning(), provisionServiceProvider.getHostProvisioner().map(__ -> "present").orElse("empty")));
+                    zone.cloud().dynamicProvisioning(), provisionServiceProvider.getHostProvisioner().map(__ -> "present").orElse("empty")));
 
         this.flagSource = flagSource;
         this.db = new CuratorDatabaseClient(flavors, curator, clock, useCuratorClientCache, nodeCacheSize);
         this.zone = zone;
         this.clock = clock;
-        this.nodes = new Nodes(db, zone, clock, orchestrator);
+        this.applications = new Applications(db);
+        this.nodes = new Nodes(db, zone, clock, orchestrator, applications);
         this.flavors = flavors;
         this.resourcesCalculator = provisionServiceProvider.getHostResourcesCalculator();
         this.nameResolver = nameResolver;
         this.osVersions = new OsVersions(this);
         this.infrastructureVersions = new InfrastructureVersions(db);
         this.firmwareChecks = new FirmwareChecks(db, clock);
-        this.containerImages = new ContainerImages(containerImage, tenantContainerImage);
+        this.containerImages = new ContainerImages(containerImage, tenantContainerImage, tenantGpuContainerImage);
         this.archiveUris = new ArchiveUris(db);
         this.jobControl = new JobControl(new JobControlFlags(db, flagSource));
-        this.applications = new Applications(db);
         this.loadBalancers = new LoadBalancers(db);
         this.metricsDb = metricsDb;
         this.orchestrator = orchestrator;
         this.spareCount = spareCount;
+        this.sharedHosts = PermanentFlags.SHARED_HOST.bindTo(flagSource());
         nodes.rewrite();
     }
 
@@ -191,6 +199,16 @@ public class NodeRepository extends AbstractComponent {
     public int spareCount() { return spareCount; }
 
     /**
+     * Returns whether nodes are allocated exclusively in this instance given this cluster spec.
+     * Exclusive allocation requires that the wanted node resources matches the advertised resources of the node
+     * perfectly.
+     */
+    public boolean exclusiveAllocation(ClusterSpec clusterSpec) {
+        return clusterSpec.isExclusive() ||
+               ( !zone().cloud().allowHostSharing() && !sharedHosts.value().isEnabled(clusterSpec.type().name()));
+    }
+
+    /**
      * Returns ACLs for the children of the given host.
      *
      * @param host node for which to generate ACLs
@@ -212,6 +230,10 @@ public class NodeRepository extends AbstractComponent {
                    Optional.of("Application is removed"),
                    transaction.nested());
         applications.remove(transaction);
+    }
+
+    private static Optional<DockerImage> optionalImage(String image) {
+        return Optional.of(image).filter(s -> !s.isEmpty()).map(DockerImage::fromString);
     }
 
 }

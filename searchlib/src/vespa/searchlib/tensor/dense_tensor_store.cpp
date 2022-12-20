@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "dense_tensor_store.h"
+#include "subspace_type.h"
 #include <vespa/eval/eval/value.h>
 #include <vespa/vespalib/datastore/compacting_buffers.h>
 #include <vespa/vespalib/datastore/compaction_context.h>
@@ -79,9 +80,9 @@ DenseTensorStore::DenseTensorStore(const ValueType &type, std::shared_ptr<vespal
       _tensorSizeCalc(type),
       _bufferType(_tensorSizeCalc, std::move(allocator)),
       _type(type),
-      _emptySpace()
+      _subspace_type(type),
+      _empty(_subspace_type)
 {
-    _emptySpace.resize(getBufSize(), 0);
     _store.addType(&_bufferType);
     _store.init_primary_buffers();
     _store.enableFreeLists();
@@ -182,6 +183,18 @@ DenseTensorStore::encode_stored_tensor(EntryRef ref, vespalib::nbostream& target
     (void) ref;
     (void) target;
     abort();
+}
+
+const DenseTensorStore*
+DenseTensorStore::as_dense() const
+{
+    return this;
+}
+
+DenseTensorStore*
+DenseTensorStore::as_dense()
+{
+    return this;
 }
 
 }

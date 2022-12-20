@@ -196,7 +196,7 @@ public:
                       const IndexConfig & indexCfg) const override;
 
     void setup(const DocumentSubDbInitializerResult &initResult) override;
-    void initViews(const DocumentDBConfig &configSnapshot, const std::shared_ptr<matching::SessionManager> &sessionManager) override;
+    void initViews(const DocumentDBConfig &configSnapshot) override;
 
     void validateDocStore(FeedHandler & feedHandler, SerialNum serialNum) const override;
 
@@ -236,6 +236,7 @@ public:
     PendingLidTrackerBase & getUncommittedLidsTracker() override { return *_pendingLidsForCommit; }
     vespalib::datastore::CompactionStrategy computeCompactionStrategy(vespalib::datastore::CompactionStrategy strategy) const;
     bool isNodeRetired() const { return _nodeRetired; }
+    TransientResourceUsage get_transient_resource_usage() const override;
 
 };
 

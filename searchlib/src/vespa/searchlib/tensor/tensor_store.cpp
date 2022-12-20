@@ -11,4 +11,16 @@ TensorStore::TensorStore(vespalib::datastore::DataStoreBase &store)
 
 TensorStore::~TensorStore() = default;
 
+const DenseTensorStore*
+TensorStore::as_dense() const
+{
+    return nullptr;
+}
+
+DenseTensorStore*
+TensorStore::as_dense()
+{
+    return nullptr;
+}
+
 }

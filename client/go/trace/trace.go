@@ -1,19 +1,19 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // Author: arnej
 
+// handling of informational output
 package trace
 
 import (
 	"fmt"
-	"os"
 )
-
-// handling of informational output
 
 type outputLevel int
 
 const (
-	levelNone outputLevel = iota
+	levelError outputLevel = iota - 2
+	levelWarning
+	levelNone
 	levelInfo
 	levelTrace
 	levelDebug
@@ -30,25 +30,26 @@ func Silent() {
 	currentOutputLevel = levelNone
 }
 
-func outputStderr(l outputLevel, v ...interface{}) {
+func outputTracing(l outputLevel, v ...interface{}) {
 	if l > currentOutputLevel {
 		return
 	}
-	fmt.Fprintln(os.Stderr, v...)
+	msg := fmt.Sprintln(v...)
+	logMessage(l, msg)
 }
 
 func Info(v ...interface{}) {
-	outputStderr(levelInfo, v...)
+	outputTracing(levelInfo, v...)
 }
 
 func Trace(v ...interface{}) {
-	outputStderr(levelTrace, v...)
+	outputTracing(levelTrace, v...)
 }
 
 func Debug(v ...interface{}) {
-	outputStderr(levelDebug, v...)
+	outputTracing(levelDebug, v...)
 }
 
 func Warning(v ...interface{}) {
-	fmt.Fprintln(os.Stderr, v...)
+	outputTracing(levelWarning, v...)
 }

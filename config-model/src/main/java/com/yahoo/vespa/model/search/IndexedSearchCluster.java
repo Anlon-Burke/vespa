@@ -14,6 +14,7 @@ import com.yahoo.schema.derived.SchemaInfo;
 import com.yahoo.vespa.config.search.AttributesConfig;
 import com.yahoo.vespa.config.search.DispatchConfig;
 import com.yahoo.vespa.config.search.DispatchConfig.DistributionPolicy;
+import com.yahoo.vespa.config.search.DispatchNodesConfig;
 import com.yahoo.vespa.config.search.RankProfilesConfig;
 import com.yahoo.vespa.config.search.core.ProtonConfig;
 import com.yahoo.vespa.configdefinition.IlscriptsConfig;
@@ -38,6 +39,7 @@ public class IndexedSearchCluster extends SearchCluster
         SchemaInfoConfig.Producer,
         IlscriptsConfig.Producer,
         DispatchConfig.Producer,
+        DispatchNodesConfig.Producer,
         ConfigInstance.Producer {
 
     private String indexingClusterName = null; // The name of the docproc cluster to run indexing, by config.
@@ -60,6 +62,7 @@ public class IndexedSearchCluster extends SearchCluster
     private DispatchSpec dispatchSpec;
     private final List<SearchNode> searchNodes = new ArrayList<>();
     private final DispatchTuning.DispatchPolicy defaultDispatchPolicy;
+    private final double dispatchWarmup;
     /**
      * Returns the document selector that is able to resolve what documents are to be routed to this search cluster.
      * This string uses the document selector language as defined in the "document" module.
@@ -75,6 +78,7 @@ public class IndexedSearchCluster extends SearchCluster
         documentDbsConfigProducer = new MultipleDocumentDatabasesConfigProducer(this, documentDbs);
         rootDispatch =  new DispatchGroup(this);
         defaultDispatchPolicy = DispatchTuning.Builder.toDispatchPolicy(featureFlags.queryDispatchPolicy());
+        dispatchWarmup = featureFlags.queryDispatchWarmup();
     }
 
     @Override
@@ -295,15 +299,18 @@ public class IndexedSearchCluster extends SearchCluster
         };
     }
     @Override
-    public void getConfig(DispatchConfig.Builder builder) {
+    public void getConfig(DispatchNodesConfig.Builder builder) {
         for (SearchNode node : getSearchNodes()) {
-            DispatchConfig.Node.Builder nodeBuilder = new DispatchConfig.Node.Builder();
+            DispatchNodesConfig.Node.Builder nodeBuilder = new DispatchNodesConfig.Node.Builder();
             nodeBuilder.key(node.getDistributionKey());
             nodeBuilder.group(node.getNodeSpec().groupIndex());
             nodeBuilder.host(node.getHostName());
             nodeBuilder.port(node.getRpcPort());
             builder.node(nodeBuilder);
         }
+    }
+    @Override
+    public void getConfig(DispatchConfig.Builder builder) {
         if (tuning.dispatch.getTopkProbability() != null) {
             builder.topKProbability(tuning.dispatch.getTopkProbability());
         }
@@ -317,7 +324,6 @@ public class IndexedSearchCluster extends SearchCluster
         if (tuning.dispatch.getMaxHitsPerPartition() != null)
             builder.maxHitsPerNode(tuning.dispatch.getMaxHitsPerPartition());
 
-        builder.searchableCopies(rootDispatch.getSearchableCopies());
         builder.redundancy(rootDispatch.getRedundancy());
         if (searchCoverage != null) {
             if (searchCoverage.getMinimum() != null)
@@ -327,7 +333,7 @@ public class IndexedSearchCluster extends SearchCluster
             if (searchCoverage.getMaxWaitAfterCoverageFactor() != null)
                 builder.maxWaitAfterCoverageFactor(searchCoverage.getMaxWaitAfterCoverageFactor());
         }
-        builder.warmuptime(5.0);
+        builder.warmuptime(dispatchWarmup);
     }
 
     @Override

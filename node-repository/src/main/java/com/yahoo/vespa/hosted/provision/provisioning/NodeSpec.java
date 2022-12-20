@@ -25,14 +25,11 @@ public interface NodeSpec {
     /** The node type this requests */
     NodeType type();
 
-    /**
-     * Returns whether the physical hosts running the nodes of this application can
-     * also run nodes of other applications.
-     */
+    /** Returns whether the hosts running the nodes of this application can also run nodes of other applications. */
     boolean isExclusive();
 
-    /** Returns whether the given flavor is compatible with this spec */
-    boolean isCompatible(Flavor flavor, NodeFlavors flavors);
+    /** Returns whether the given node resources is compatible with this spec */
+    boolean isCompatible(NodeResources resources);
 
     /** Returns whether the given node count is sufficient to consider this spec fulfilled to the maximum amount */
     boolean saturatedBy(int count);
@@ -69,8 +66,8 @@ public interface NodeSpec {
     /** Returns true if nodes with non-active parent hosts should be rejected */
     boolean rejectNonActiveParent();
 
-    /** Returns the cloud account to use when fulfilling this spec or empty if none is explicitly requested */
-    Optional<CloudAccount> cloudAccount();
+    /** Returns the cloud account to use when fulfilling this spec */
+    CloudAccount cloudAccount();
 
     /**
      * Returns true if a node with given current resources and current spare host resources can be resized
@@ -81,12 +78,12 @@ public interface NodeSpec {
         return false;
     }
 
-    static NodeSpec from(int nodeCount, NodeResources resources, boolean exclusive, boolean canFail, Optional<CloudAccount> cloudAccount) {
+    static NodeSpec from(int nodeCount, NodeResources resources, boolean exclusive, boolean canFail, CloudAccount cloudAccount) {
         return new CountNodeSpec(nodeCount, resources, exclusive, canFail, cloudAccount);
     }
 
-    static NodeSpec from(NodeType type) {
-        return new TypeNodeSpec(type);
+    static NodeSpec from(NodeType type, CloudAccount cloudAccount) {
+        return new TypeNodeSpec(type, cloudAccount);
     }
 
     /** A node spec specifying a node count and a flavor */
@@ -96,17 +93,14 @@ public interface NodeSpec {
         private final NodeResources requestedNodeResources;
         private final boolean exclusive;
         private final boolean canFail;
-        private final Optional<CloudAccount> cloudAccount;
+        private final CloudAccount cloudAccount;
 
-        private CountNodeSpec(int count, NodeResources resources, boolean exclusive, boolean canFail, Optional<CloudAccount> cloudAccount) {
+        private CountNodeSpec(int count, NodeResources resources, boolean exclusive, boolean canFail, CloudAccount cloudAccount) {
             this.count = count;
             this.requestedNodeResources = Objects.requireNonNull(resources, "Resources must be specified");
             this.exclusive = exclusive;
             this.canFail = canFail;
             this.cloudAccount = Objects.requireNonNull(cloudAccount);
-            if (cloudAccount.isPresent() && !exclusive) {
-                throw new IllegalArgumentException("Node spec with custom cloud account requires exclusive=true");
-            }
         }
 
         @Override
@@ -121,12 +115,8 @@ public interface NodeSpec {
         public NodeType type() { return NodeType.tenant; }
 
         @Override
-        public boolean isCompatible(Flavor flavor, NodeFlavors flavors) {
-            if (flavor.isDocker()) { // Docker nodes can satisfy a request for parts of their resources
-                return flavor.resources().compatibleWith(requestedNodeResources);
-            } else { // Other nodes must be matched exactly
-                return requestedNodeResources.equals(flavor.resources());
-            }
+        public boolean isCompatible(NodeResources resources) {
+            return resources.equalsWhereSpecified(requestedNodeResources);
         }
 
         @Override
@@ -158,12 +148,14 @@ public interface NodeSpec {
 
         @Override
         public boolean needsResize(Node node) {
-            return ! node.resources().compatibleWith(requestedNodeResources);
+            return ! node.resources().equalsWhereSpecified(requestedNodeResources);
         }
 
         @Override
         public boolean canResize(NodeResources currentNodeResources, NodeResources currentSpareHostResources,
                                  ClusterSpec.Type type, boolean hasTopologyChange, int currentClusterSize) {
+            if (exclusive) return false; // exclusive resources must match the host
+
             // Never allow in-place resize when also changing topology or decreasing cluster size
             if (hasTopologyChange || count < currentClusterSize) return false;
 
@@ -184,7 +176,7 @@ public interface NodeSpec {
         }
 
         @Override
-        public Optional<CloudAccount> cloudAccount() {
+        public CloudAccount cloudAccount() {
             return cloudAccount;
         }
 
@@ -200,9 +192,11 @@ public interface NodeSpec {
                                                                                NodeType.controller, 3);
 
         private final NodeType type;
+        private final CloudAccount cloudAccount;
 
-        public TypeNodeSpec(NodeType type) {
+        public TypeNodeSpec(NodeType type, CloudAccount cloudAccount) {
             this.type = type;
+            this.cloudAccount = cloudAccount;
         }
 
         @Override
@@ -212,7 +206,7 @@ public interface NodeSpec {
         public boolean isExclusive() { return false; }
 
         @Override
-        public boolean isCompatible(Flavor flavor, NodeFlavors flavors) { return true; }
+        public boolean isCompatible(NodeResources resources) { return true; }
 
         @Override
         public boolean saturatedBy(int count) { return false; }
@@ -257,8 +251,8 @@ public interface NodeSpec {
         }
 
         @Override
-        public Optional<CloudAccount> cloudAccount() {
-            return Optional.empty(); // Type spec does not support custom cloud accounts
+        public CloudAccount cloudAccount() {
+            return cloudAccount;
         }
 
         @Override

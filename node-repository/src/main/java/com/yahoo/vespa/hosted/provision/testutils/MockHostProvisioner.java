@@ -3,6 +3,7 @@ package com.yahoo.vespa.hosted.provision.testutils;
 
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.Cloud;
 import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Flavor;
@@ -26,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -60,16 +62,18 @@ public class MockHostProvisioner implements HostProvisioner {
     }
 
     @Override
-    public List<ProvisionedHost> provisionHosts(List<Integer> provisionIndices, NodeType hostType, NodeResources resources,
-                                                ApplicationId applicationId, Version osVersion, HostSharing sharing,
-                                                Optional<ClusterSpec.Type> clusterType,
-                                                Optional<CloudAccount> cloudAccount) {
-        Flavor hostFlavor = this.hostFlavor.orElseGet(() -> flavors.stream().filter(f -> compatible(f, resources))
+    public void provisionHosts(List<Integer> provisionIndices, NodeType hostType, NodeResources resources,
+                               ApplicationId applicationId, Version osVersion, HostSharing sharing,
+                               Optional<ClusterSpec.Type> clusterType, CloudAccount cloudAccount,
+                               Consumer<List<ProvisionedHost>> provisionedHostsConsumer) {
+        Flavor hostFlavor = this.hostFlavor.orElseGet(() -> flavors.stream()
+                                                                   .filter(f -> sharing == HostSharing.exclusive ? compatible(f, resources)
+                                                                                                                 : f.resources().satisfies(resources))
                                                                    .findFirst()
                                                                    .orElseThrow(() -> new NodeAllocationException("No host flavor matches " + resources, true)));
         List<ProvisionedHost> hosts = new ArrayList<>();
         for (int index : provisionIndices) {
-            String hostHostname = hostType == NodeType.host ? "hostname" + index : hostType.name() + index;
+            String hostHostname = hostType == NodeType.host ? "host" + index : hostType.name() + index;
             hosts.add(new ProvisionedHost("id-of-" + hostType.name() + index,
                                           hostHostname,
                                           hostFlavor,
@@ -82,7 +86,7 @@ public class MockHostProvisioner implements HostProvisioner {
                                           cloudAccount));
         }
         provisionedHosts.addAll(hosts);
-        return hosts;
+        provisionedHostsConsumer.accept(hosts);
     }
 
     @Override
@@ -142,8 +146,8 @@ public class MockHostProvisioner implements HostProvisioner {
         return this;
     }
 
-    public MockHostProvisioner completeRebuildOf(Node host) {
-        rebuildsCompleted.add(host.hostname());
+    public MockHostProvisioner completeRebuildOf(String hostname) {
+        rebuildsCompleted.add(hostname);
         return this;
     }
 
@@ -172,18 +176,18 @@ public class MockHostProvisioner implements HostProvisioner {
     }
 
     private List<Address> createAddressesForHost(NodeType hostType, Flavor flavor, int hostIndex) {
-        long numAddresses = Math.max(1, Math.round(flavor.resources().bandwidthGbps()));
-        return IntStream.range(0, (int) numAddresses)
+        long numAddresses = Math.max(2, Math.round(flavor.resources().bandwidthGbps()));
+        return IntStream.range(1, (int) numAddresses)
                         .mapToObj(i -> {
                             String hostname = hostType == NodeType.host
-                                    ? "nodename" + hostIndex + "_" + i
+                                    ? "host" + hostIndex + "-" + i
                                     : hostType.childNodeType().name() + i;
                             return new Address(hostname);
                         })
-                        .collect(Collectors.toList());
+                        .toList();
     }
 
-    private Node withIpAssigned(Node node) {
+    public Node withIpAssigned(Node node) {
         if (!node.type().isHost()) {
             return node.with(node.ipConfig().withPrimary(nameResolver.resolveAll(node.hostname())));
         }

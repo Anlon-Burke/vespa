@@ -44,7 +44,6 @@ import com.yahoo.search.query.profile.types.QueryProfileType;
 import com.yahoo.search.result.Hit;
 import com.yahoo.search.searchchain.Execution;
 import com.yahoo.yolean.Exceptions;
-import org.json.JSONObject;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
@@ -57,23 +56,19 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * @author bratseth
  */
 public class QueryTestCase {
-
-    @Test
-    void testIt() {
-        JSONObject newroot = new JSONObject("{\"key\": 3}");
-        var hit = new FastHit();
-        hit.setField("data", (JsonProducer) s -> s.append(newroot));
-        var field = hit.getField("data");
-        if (field instanceof JsonProducer) {
-            System.out.println((((JsonProducer) field).toJson()));
-        }
-    }
 
     @Test
     void testSimpleFunctionality() {
@@ -150,8 +145,8 @@ public class QueryTestCase {
     @Test
     void testCloneWithConnectivity() {
         List<String> l = List.of("a", "b", "c", "a");
-        printIt(l.stream().filter(i -> isA(i)).collect(Collectors.toList()));
-        printIt(l.stream().filter(i -> !isA(i)).collect(Collectors.toList()));
+        printIt(l.stream().filter(i -> isA(i)).toList());
+        printIt(l.stream().filter(i -> !isA(i)).toList());
 
         Query q = new Query();
         WordItem a = new WordItem("a");

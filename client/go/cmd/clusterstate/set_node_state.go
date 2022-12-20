@@ -14,7 +14,9 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/vespa-engine/vespa/client/go/build"
+	"github.com/vespa-engine/vespa/client/go/envvars"
 	"github.com/vespa-engine/vespa/client/go/trace"
+	"github.com/vespa-engine/vespa/client/go/util"
 )
 
 const (
@@ -73,12 +75,12 @@ func runSetNodeState(opts *Options, args []string) {
 	if opts.Silent {
 		trace.Silent()
 	}
-	if opts.NoColors || os.Getenv("TERM") == "" {
+	if opts.NoColors || os.Getenv(envvars.TERM) == "" {
 		color.NoColor = true
 	}
 	wanted, err := knownState(args[0])
 	if err != nil {
-		panic(err)
+		util.JustExitWith(err)
 	}
 	reason := ""
 	if len(args) > 1 {
@@ -136,7 +138,7 @@ func (cc *ClusterControllerSpec) setNodeUserState(s serviceSpec, wanted KnownSta
 	}
 	jsonBytes, err := json.Marshal(request)
 	if err != nil {
-		panic(err)
+		util.JustExitWith(err)
 	}
 	url := fmt.Sprintf("http://%s:%d/cluster/v2/%s/%s/%d",
 		cc.host, cc.port,

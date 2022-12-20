@@ -72,6 +72,9 @@ findhost () {
 findroot
 findhost
 
+ROOT=${VESPA_HOME%/}
+export ROOT
+
 # END environment bootstrap section
 
 [ "$VESPA_HOME" ] || { echo "Missing VESPA_HOME variable" 1>&2; exit 1; }
@@ -85,8 +88,9 @@ fi
 if [ "$VESPA_GROUP" = "" ]; then
     VESPA_GROUP=$(id -rgn)
 fi
+IS_ROOT=$([ "$(id -ru)" == "0" ] && echo true || echo false)
 
-cd $VESPA_HOME || { echo "Cannot cd to $VESPA_HOME" 1>&2; exit 1; }
+cd ${VESPA_HOME} || { echo "Cannot cd to ${VESPA_HOME}" 1>&2; exit 1; }
 
 fixdir () {
     if [ $# != 4 ]; then
@@ -94,9 +98,21 @@ fixdir () {
         exit 1
     fi
     mkdir -p "$4"
-    if [ "${VESPA_UNPRIVILEGED}" != yes ]; then
-      chown $1 "$4"
-      chgrp $2 "$4"
+    if ! $IS_ROOT; then
+        local stat="$(stat -c "%U %G" $4)"
+        local user=${stat% *}
+        local group=${stat#* }
+        if [ "$1" != "$user" ]; then
+            echo "Wrong owner for ${VESPA_HOME}/$4, expected $1, was $user"
+            exit 1
+        fi
+        if [ "$2" != "$group" ]; then
+            echo "Wrong group for ${VESPA_HOME}/$4, expected $2, was $group"
+            exit 1
+        fi
+    else
+        chown $1 "$4"
+        chgrp $2 "$4"
     fi
     chmod $3 "$4"
 }
@@ -108,10 +124,9 @@ fixdir ${VESPA_USER} ${VESPA_GROUP}   755  logs/vespa
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  logs/vespa/access
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  logs/vespa/configserver
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  logs/vespa/search
-fixdir ${VESPA_USER} ${VESPA_GROUP}   755  tmp
-fixdir ${VESPA_USER} ${VESPA_GROUP}   755  tmp/vespa
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/crash
+fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/db
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/db/vespa
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/db/vespa/config_server
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/db/vespa/config_server/serverdb
@@ -124,15 +139,18 @@ fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/db/vespa/search
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/db/vespa/tmp
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/jdisc_container
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/run
+fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/tmp
+fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/tmp/vespa
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/vespa
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/vespa/application
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/vespa/bundlecache
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/vespa/bundlecache/configserver
+fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/vespa/cache
 fixdir ${VESPA_USER} ${VESPA_GROUP}   755  var/vespa/cache/config
 
-if [ "${VESPA_UNPRIVILEGED}" != yes ]; then
-  chown -hR ${VESPA_USER} logs/vespa
-  chown -hR ${VESPA_USER} var/db/vespa
+if $IS_ROOT; then
+    chown -hR ${VESPA_USER} logs/vespa
+    chown -hR ${VESPA_USER} var/db/vespa
 fi
 
 # END directory fixups

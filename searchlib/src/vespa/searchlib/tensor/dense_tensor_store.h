@@ -3,6 +3,8 @@
 #pragma once
 
 #include "tensor_store.h"
+#include "empty_subspace.h"
+#include "vector_bundle.h"
 #include <vespa/eval/eval/value_type.h>
 #include <vespa/eval/eval/typed_cells.h>
 #include <vespa/vespalib/datastore/datastore.h>
@@ -50,7 +52,8 @@ private:
     TensorSizeCalc _tensorSizeCalc;
     BufferType _bufferType;
     ValueType _type; // type of dense tensor
-    std::vector<char> _emptySpace;
+    SubspaceType  _subspace_type;
+    EmptySubspace _empty;
 public:
     DenseTensorStore(const ValueType &type, std::shared_ptr<vespalib::alloc::MemoryAllocator> allocator);
     ~DenseTensorStore() override;
@@ -70,11 +73,23 @@ public:
     EntryRef store_encoded_tensor(vespalib::nbostream &encoded) override;
     std::unique_ptr<vespalib::eval::Value> get_tensor(EntryRef ref) const override;
     bool encode_stored_tensor(EntryRef ref, vespalib::nbostream &target) const override;
+    const DenseTensorStore* as_dense() const override;
+    DenseTensorStore* as_dense() override;
 
     vespalib::eval::TypedCells get_typed_cells(EntryRef ref) const {
-        return vespalib::eval::TypedCells(ref.valid() ? getRawBuffer(ref) : &_emptySpace[0],
+        if (!ref.valid()) {
+            return _empty.cells();
+        }
+        return vespalib::eval::TypedCells(getRawBuffer(ref),
                                           _type.cell_type(), getNumCells());
     }
+    VectorBundle get_vectors(EntryRef ref) const {
+        if (!ref.valid()) {
+            return VectorBundle();
+        }
+        return VectorBundle(getRawBuffer(ref), 1, _subspace_type);
+    }
+    const SubspaceType& get_subspace_type() const noexcept { return _subspace_type; }
     // The following method is meant to be used only for unit tests.
     uint32_t getArraySize() const { return _bufferType.getArraySize(); }
 };

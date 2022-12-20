@@ -670,12 +670,12 @@ public class DeploymentSpecWithoutInstanceTest {
 
         assertEquals(
                 List.of("foo", "nalle", "default"),
-                spec.requireInstance("default").endpoints().stream().map(Endpoint::endpointId).collect(Collectors.toList())
+                spec.requireInstance("default").endpoints().stream().map(Endpoint::endpointId).toList()
         );
 
         assertEquals(
                 List.of("bar", "frosk", "quux"),
-                spec.requireInstance("default").endpoints().stream().map(Endpoint::containerId).collect(Collectors.toList())
+                spec.requireInstance("default").endpoints().stream().map(Endpoint::containerId).toList()
         );
 
         assertEquals(List.of(RegionName.from("us-east")), spec.requireInstance("default").endpoints().get(0).regions());
@@ -715,9 +715,10 @@ public class DeploymentSpecWithoutInstanceTest {
         );
         DeploymentSpec spec = DeploymentSpec.fromXml(r);
         DeploymentInstanceSpec instance = spec.requireInstance("default");
-        assertEquals(Optional.of(new CloudAccount("219876543210")), instance.cloudAccount(Environment.prod, Optional.of(RegionName.from("us-east-1"))));
-        assertEquals(Optional.of(new CloudAccount("012345678912")), instance.cloudAccount(Environment.prod, Optional.of(RegionName.from("us-west-1"))));
-        assertEquals(Optional.of(new CloudAccount("012345678912")), instance.cloudAccount(Environment.staging, Optional.empty()));
+        assertEquals(Optional.of(CloudAccount.from("012345678912")), spec.cloudAccount());
+        assertEquals(Optional.of(CloudAccount.from("219876543210")), instance.cloudAccount(Environment.prod, Optional.of(RegionName.from("us-east-1"))));
+        assertEquals(Optional.of(CloudAccount.from("012345678912")), instance.cloudAccount(Environment.prod, Optional.of(RegionName.from("us-west-1"))));
+        assertEquals(Optional.of(CloudAccount.from("012345678912")), instance.cloudAccount(Environment.staging, Optional.empty()));
 
         r = new StringReader(
                 "<deployment version='1.0'>" +
@@ -728,7 +729,8 @@ public class DeploymentSpecWithoutInstanceTest {
                 "</deployment>"
         );
         spec = DeploymentSpec.fromXml(r);
-        assertEquals(Optional.of(new CloudAccount("219876543210")), spec.requireInstance("default").cloudAccount(Environment.prod, Optional.of(RegionName.from("us-east-1"))));
+        assertEquals(Optional.empty(), spec.cloudAccount());
+        assertEquals(Optional.of(CloudAccount.from("219876543210")), spec.requireInstance("default").cloudAccount(Environment.prod, Optional.of(RegionName.from("us-east-1"))));
         assertEquals(Optional.empty(), spec.requireInstance("default").cloudAccount(Environment.prod, Optional.of(RegionName.from("us-west-1"))));
     }
 

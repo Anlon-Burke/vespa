@@ -2,7 +2,6 @@
 package com.yahoo.search.dispatch.searchcluster;
 
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -14,17 +13,17 @@ import java.util.concurrent.atomic.AtomicLong;
 public class Node {
 
     private final int key;
-    private int pathIndex;
     private final String hostname;
     private final int group;
+    private int pathIndex;
 
-    private final AtomicBoolean statusIsKnown = new AtomicBoolean(false);
-    private final AtomicBoolean working = new AtomicBoolean(true);
-    private final AtomicLong activeDocuments = new AtomicLong(0);
-    private final AtomicLong targetActiveDocuments = new AtomicLong(0);
     private final AtomicLong pingSequence = new AtomicLong(0);
     private final AtomicLong lastPong = new AtomicLong(0);
-    private final AtomicBoolean isBlockingWrites = new AtomicBoolean(false);
+    private volatile long activeDocuments = 0;
+    private volatile long targetActiveDocuments = 0;
+    private volatile boolean statusIsKnown = false;
+    private volatile boolean working = true;
+    private volatile boolean isBlockingWrites = false;
 
     public Node(int key, String hostname, int group) {
         this.key = key;
@@ -55,37 +54,41 @@ public class Node {
 
     public String hostname() { return hostname; }
 
-    /** Returns the id of the group this node belongs to */
+    /**
+     * Returns the index of the group this node belongs to.
+     * This is a 0-base continuous integer id, not necessarily the same as the group id assigned by the
+     * application/node repo.
+     */
     public int group() { return group; }
 
     public void setWorking(boolean working) {
-        this.statusIsKnown.lazySet(true);
-        this.working.lazySet(working);
+        this.statusIsKnown = true;
+        this.working = working;
         if ( ! working ) {
-            activeDocuments.set(0);
-            targetActiveDocuments.set(0);
+            activeDocuments = 0;
+            targetActiveDocuments = 0;
         }
     }
 
     /** Returns whether this node is currently responding to requests, or null if status is not known */
     public Boolean isWorking() {
-        return statusIsKnown.get() ? working.get() : null;
+        return statusIsKnown ? working : null;
     }
 
     /** Updates the active documents on this node */
-    public void setActiveDocuments(long documents) { this.activeDocuments.set(documents); }
-    public void setTargetActiveDocuments(long documents) { this.targetActiveDocuments.set(documents); }
+    public void setActiveDocuments(long documents) { this.activeDocuments = documents; }
+    public void setTargetActiveDocuments(long documents) { this.targetActiveDocuments = documents; }
 
     /** Returns the active documents on this node. If unknown, 0 is returned. */
-    long getActiveDocuments() { return activeDocuments.get(); }
-    long getTargetActiveDocuments() { return targetActiveDocuments.get(); }
+    long getActiveDocuments() { return activeDocuments; }
+    long getTargetActiveDocuments() { return targetActiveDocuments; }
 
-    public void setBlockingWrites(boolean isBlockingWrites) { this.isBlockingWrites.set(isBlockingWrites); }
+    public void setBlockingWrites(boolean isBlockingWrites) { this.isBlockingWrites = isBlockingWrites; }
 
-    boolean isBlockingWrites() { return isBlockingWrites.get(); }
+    boolean isBlockingWrites() { return isBlockingWrites; }
 
     @Override
-    public int hashCode() { return Objects.hash(hostname, key, pathIndex, group); }
+    public int hashCode() { return Objects.hash(hostname, key, group); }
 
     @Override
     public boolean equals(Object o) {
@@ -93,7 +96,6 @@ public class Node {
         if ( ! (o instanceof Node other)) return false;
         if ( ! Objects.equals(this.hostname, other.hostname)) return false;
         if ( ! Objects.equals(this.key, other.key)) return false;
-        if ( ! Objects.equals(this.pathIndex, other.pathIndex)) return false;
         if ( ! Objects.equals(this.group, other.group)) return false;
 
         return true;
@@ -102,7 +104,7 @@ public class Node {
     @Override
     public String toString() {
         return "search node key = " + key + " hostname = "+ hostname + " path = " + pathIndex + " in group " + group +
-               " statusIsKnown = " + statusIsKnown.get() + " working = " + working.get() +
+               " statusIsKnown = " + statusIsKnown + " working = " + working +
                " activeDocs = " + getActiveDocuments() + " targetActiveDocs = " + getTargetActiveDocuments();
     }
 

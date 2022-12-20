@@ -72,19 +72,20 @@ findhost () {
 findroot
 findhost
 
-# END environment bootstrap section
-
 ROOT=${VESPA_HOME%/}
 export ROOT
-cd $ROOT || { echo "Cannot cd to $ROOT" 1>&2; exit 1; }
+
+# END environment bootstrap section
+
+cd ${VESPA_HOME} || { echo "Cannot cd to ${VESPA_HOME}" 1>&2; exit 1; }
 
 heap_min=32
 heap_max=256
-addopts="-server -Xms${heap_min}m -Xmx${heap_max}m -XX:+PreserveFramePointer $(get_jvm_hugepage_settings $heap_max) -XX:CompressedClassSpaceSize=32m -XX:MaxDirectMemorySize=32m -XX:ThreadStackSize=448 -XX:MaxJavaStackTraceDepth=1000 -XX:ActiveProcessorCount=2 -XX:-OmitStackTraceInFastThrow -Djava.io.tmpdir=${VESPA_HOME}/tmp"
+addopts="-server -Xms${heap_min}m -Xmx${heap_max}m -XX:+PreserveFramePointer $(get_jvm_hugepage_settings $heap_max) -XX:CompressedClassSpaceSize=32m -XX:MaxDirectMemorySize=32m -XX:ThreadStackSize=448 -XX:MaxJavaStackTraceDepth=1000 -XX:ActiveProcessorCount=2 -XX:-OmitStackTraceInFastThrow -Djava.io.tmpdir=${VESPA_HOME}/var/tmp"
 
 oomopt="-XX:+ExitOnOutOfMemoryError"
 
-jar="-jar $ROOT/lib/jars/logserver-jar-with-dependencies.jar"
+jar="-jar ${VESPA_HOME}/lib/jars/logserver-jar-with-dependencies.jar"
 
 export MALLOC_ARENA_MAX=1 #Does not need fast allocation
 

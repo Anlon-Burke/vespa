@@ -31,6 +31,7 @@ import com.yahoo.vespa.config.search.core.OnnxModelsConfig;
 import com.yahoo.vespa.config.search.core.RankingConstantsConfig;
 import com.yahoo.vespa.config.search.core.RankingExpressionsConfig;
 import com.yahoo.vespa.model.AbstractService;
+import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.admin.metricsproxy.MetricsProxyContainer;
 import com.yahoo.vespa.model.container.component.BindingPattern;
 import com.yahoo.vespa.model.container.component.Component;
@@ -76,7 +77,7 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
     private static final BindingPattern PROMETHEUS_V1_HANDLER_BINDING_1 = SystemBindingPattern.fromHttpPath(PrometheusV1Handler.V1_PATH);
     private static final BindingPattern PROMETHEUS_V1_HANDLER_BINDING_2 = SystemBindingPattern.fromHttpPath(PrometheusV1Handler.V1_PATH + "/*");
 
-    public static final int heapSizePercentageOfTotalNodeMemory = 70;
+    public static final int defaultHeapSizePercentageOfTotalNodeMemory = 70;
     public static final int heapSizePercentageOfTotalNodeMemoryWhenCombinedCluster = 18;
 
     private final Set<FileReference> applicationBundles = new LinkedHashSet<>();
@@ -89,8 +90,10 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
 
     private MbusParams mbusParams;
     private boolean messageBusEnabled = true;
+    private int zookeeperSessionTimeoutSeconds = 30;
     private final int transport_events_before_wakeup;
     private final int transport_connections_per_target;
+    private final int heapSizePercentageOfTotalNodeMemory;
 
     private Integer memoryPercentage = null;
 
@@ -118,6 +121,16 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
         addTestrunnerComponentsIfTester(deployState);
         transport_connections_per_target = deployState.featureFlags().mbusJavaRpcNumTargets();
         transport_events_before_wakeup = deployState.featureFlags().mbusJavaEventsBeforeWakeup();
+        heapSizePercentageOfTotalNodeMemory = deployState.featureFlags().heapSizePercentage() > 0
+                ? Math.min(99, deployState.featureFlags().heapSizePercentage())
+                : defaultHeapSizePercentageOfTotalNodeMemory;
+    }
+
+    private void wireLogctlSpecs() {
+        getAdmin().ifPresent(admin -> {
+            for (var c : getContainers()) {
+                c.setLogctlSpecs(admin.getLogctlSpecs());
+            }});
     }
 
     @Override
@@ -125,6 +138,7 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
         addAndSendApplicationBundles(deployState);
         sendUserConfiguredFiles(deployState);
         createEndpointList(deployState);
+        wireLogctlSpecs();
     }
 
     private void addAndSendApplicationBundles(DeployState deployState) {
@@ -169,8 +183,7 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
         this.modelEvaluation = modelEvaluation;
     }
 
-    public void setMemoryPercentage(Integer memoryPercentage) { this.memoryPercentage = memoryPercentage;
-    }
+    public void setMemoryPercentage(Integer memoryPercentage) { this.memoryPercentage = memoryPercentage; }
 
     @Override
     public Optional<Integer> getMemoryPercentage() {
@@ -193,7 +206,8 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
         // Add zone local endpoints using zone dns suffixes, tenant, application and cluster id.
         List<String> hosts = getContainers().stream()
                 .map(AbstractService::getHostName)
-                .collect(Collectors.toList());
+                .sorted()
+                .toList();
 
         for (String suffix : deployState.getProperties().zoneDnsSuffixes()) {
             ApplicationClusterEndpoint.DnsName l4Name = ApplicationClusterEndpoint.DnsName.sharedL4NameFrom(
@@ -308,11 +322,11 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
 
     @Override
     public void getConfig(CuratorConfig.Builder builder) {
-        if (getParent() instanceof ConfigserverCluster) return; // Produces its own config
         super.getConfig(builder);
+        if (getParent() instanceof ConfigserverCluster) return; // Produces its own config
 
-        // 12s is 2x the current ZookeeperServerConfig.tickTime() of 6s, and the default minimum the server will accept.
-        builder.zookeeperSessionTimeoutSeconds(12); // TODO jonmv: make configurable
+        // Will be bounded by 2x and 20x ZookeeperServerConfig.tickTime(), which is currently 6s.
+        builder.zookeeperSessionTimeoutSeconds(zookeeperSessionTimeoutSeconds);
     }
 
     public Optional<String> getTlsClientAuthority() {
@@ -324,6 +338,10 @@ public final class ApplicationContainerCluster extends ContainerCluster<Applicat
     }
 
     public void setMessageBusEnabled(boolean messageBusEnabled) { this.messageBusEnabled = messageBusEnabled; }
+
+    public void setZookeeperSessionTimeoutSeconds(int timeoutSeconds) {
+        this.zookeeperSessionTimeoutSeconds = timeoutSeconds;
+    }
 
     protected boolean messageBusEnabled() { return messageBusEnabled; }
 

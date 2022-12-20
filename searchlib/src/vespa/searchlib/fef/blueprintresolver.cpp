@@ -3,17 +3,13 @@
 #include "blueprintresolver.h"
 #include "blueprintfactory.h"
 #include "featurenameparser.h"
-#include <vespa/vespalib/util/lambdatask.h>
+#include "blueprint.h"
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/util/size_literals.h>
-#include <vespa/vespalib/util/threadstackexecutor.h>
 #include <cassert>
 #include <set>
-#include <thread>
 
 using vespalib::make_string_short::fmt;
-using vespalib::ThreadStackExecutor;
-using vespalib::makeLambdaTask;
 
 namespace search::fef {
 
@@ -297,21 +293,17 @@ BlueprintResolver::compile()
 {
     assert(_executorSpecs.empty()); // only one compilation allowed
     Compiler compiler(_factory, _indexEnv, _executorSpecs, _featureMap);
-    auto compile_task = makeLambdaTask([&]() {
-                                   compiler.probe_stack();
-                                   for (const auto &seed: _seeds) {
-                                       auto ref = compiler.resolve_feature(seed, Blueprint::AcceptInput::ANY);
-                                       if (compiler.failed()) {
-                                           _warnings = std::move(compiler.errors);
-                                           return;
-                                       }
-                                       _seedMap.emplace(FeatureNameParser(seed).featureName(), ref);
-                                   }
-                               });
-    ThreadStackExecutor executor(1, 8_Mi);
-    executor.execute(std::move(compile_task));
-    executor.sync();
-    executor.shutdown();
+
+    compiler.probe_stack();
+    for (const auto &seed: _seeds) {
+       auto ref = compiler.resolve_feature(seed, Blueprint::AcceptInput::ANY);
+       if (compiler.failed()) {
+           _warnings = std::move(compiler.errors);
+           break;
+       }
+       _seedMap.emplace(FeatureNameParser(seed).featureName(), ref);
+    }
+
     size_t stack_usage = compiler.stack_usage();
     if (stack_usage > (128_Ki)) {
         _warnings.emplace_back(fmt("high stack usage: %zu bytes", stack_usage));

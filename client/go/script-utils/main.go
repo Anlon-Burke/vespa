@@ -11,7 +11,11 @@ import (
 	"github.com/vespa-engine/vespa/client/go/cmd/clusterstate"
 	"github.com/vespa-engine/vespa/client/go/cmd/deploy"
 	"github.com/vespa-engine/vespa/client/go/cmd/logfmt"
+	"github.com/vespa-engine/vespa/client/go/jvm"
+	"github.com/vespa-engine/vespa/client/go/script-utils/configserver"
+	"github.com/vespa-engine/vespa/client/go/script-utils/standalone"
 	"github.com/vespa-engine/vespa/client/go/script-utils/startcbinary"
+	"github.com/vespa-engine/vespa/client/go/util"
 	"github.com/vespa-engine/vespa/client/go/vespa"
 )
 
@@ -22,23 +26,38 @@ func basename(s string) string {
 
 func main() {
 	defer handleSimplePanic()
+	_ = vespa.FindAndVerifyVespaHome()
 	action := basename(os.Args[0])
 	if action == "script-utils" && len(os.Args) > 1 {
 		action = os.Args[1]
 		os.Args = os.Args[1:]
 	}
-	_ = vespa.FindHome()
 	switch action {
+	case "vespa-start-configserver":
+		os.Exit(configserver.StartConfigserverEtc())
+	case "just-start-configserver":
+		os.Exit(configserver.JustStartConfigserver())
+	case "vespa-start-container-daemon":
+		os.Exit(jvm.RunApplicationContainer(os.Args[1:]))
+	case "run-standalone-container":
+		os.Exit(standalone.StartStandaloneContainer(os.Args[1:]))
 	case "start-c-binary":
 		os.Exit(startcbinary.Run(os.Args[1:]))
 	case "export-env":
 		vespa.ExportDefaultEnvToSh()
-	case "security-env":
+	case "security-env", "vespa-security-env":
 		vespa.ExportSecurityEnvToSh()
 	case "ipv6-only":
 		if vespa.HasOnlyIpV6() {
 			os.Exit(0)
 		} else {
+			os.Exit(1)
+		}
+	case "detect-hostname":
+		myName, err := vespa.FindOurHostname()
+		fmt.Println(myName)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 	case "vespa-deploy":
@@ -61,15 +80,15 @@ func main() {
 			os.Exit(startcbinary.Run(os.Args))
 		}
 		fmt.Fprintf(os.Stderr, "unknown action '%s'\n", action)
-		fmt.Fprintln(os.Stderr, "actions: export-env, ipv6-only, security-env")
+		fmt.Fprintln(os.Stderr, "actions: export-env, ipv6-only, security-env, detect-hostname")
 		fmt.Fprintln(os.Stderr, "(also: vespa-deploy, vespa-logfmt)")
 	}
 }
 
 func handleSimplePanic() {
 	if r := recover(); r != nil {
-		if je, ok := r.(error); ok {
-			fmt.Fprintln(os.Stderr, je)
+		if jee, ok := r.(*util.JustExitError); ok {
+			fmt.Fprintln(os.Stderr, jee)
 			os.Exit(1)
 		} else {
 			panic(r)

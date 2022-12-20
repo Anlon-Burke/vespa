@@ -71,6 +71,7 @@ public class ControllerMaintenance extends AbstractComponent {
         maintainers.add(new ArchiveUriUpdater(controller, intervals.archiveUriUpdater));
         maintainers.add(new ArchiveAccessMaintainer(controller, metric, intervals.archiveAccessMaintainer));
         maintainers.add(new TenantRoleMaintainer(controller, intervals.tenantRoleMaintainer));
+        maintainers.add(new TenantRoleCleanupMaintainer(controller, intervals.tenantRoleMaintainer));
         maintainers.add(new ChangeRequestMaintainer(controller, intervals.changeRequestMaintainer));
         maintainers.add(new VcmrMaintainer(controller, intervals.vcmrMaintainer, metric));
         maintainers.add(new CloudTrialExpirer(controller, intervals.defaultInterval));
@@ -78,6 +79,7 @@ public class ControllerMaintenance extends AbstractComponent {
         maintainers.add(new UserManagementMaintainer(controller, intervals.userManagementMaintainer, controller.serviceRegistry().roleMaintainer()));
         maintainers.add(new BillingDatabaseMaintainer(controller, intervals.billingDatabaseMaintainer));
         maintainers.add(new MeteringMonitorMaintainer(controller, intervals.meteringMonitorMaintainer, controller.serviceRegistry().resourceDatabase(), metric));
+        maintainers.add(new EnclaveAccessMaintainer(controller, intervals.defaultInterval));
     }
 
     public Upgrader upgrader() { return upgrader; }

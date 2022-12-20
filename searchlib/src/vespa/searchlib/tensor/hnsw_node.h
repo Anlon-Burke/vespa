@@ -2,34 +2,37 @@
 
 #pragma once
 
-#include <vector>
+#include <vespa/vespalib/datastore/atomic_entry_ref.h>
+#include <vespa/vespalib/datastore/atomic_value_wrapper.h>
 
 namespace search::tensor {
 
 /**
- * Represents a snapshot of a graph node with all its levels and links.
- * Should only be used by unit tests.
+ * Represents a graph node for non-dense tensors (multiple nodes per document).
  */
 class HnswNode {
-public:
-    using LinkArray = std::vector<uint32_t>;
-    using LevelArray = std::vector<LinkArray>;
+    using AtomicEntryRef = vespalib::datastore::AtomicEntryRef;
+    using EntryRef = vespalib::datastore::EntryRef;
 
-private:
-    LevelArray _levels;
+    AtomicEntryRef _ref;
+    vespalib::datastore::AtomicValueWrapper<uint32_t> _docid;
+    vespalib::datastore::AtomicValueWrapper<uint32_t> _subspace;
 
 public:
-    HnswNode() : _levels() {}
-    HnswNode(const LinkArray& level_0) : _levels() { _levels.push_back(level_0); }
-    HnswNode(const LevelArray& levels_in) : _levels(levels_in) {}
-    bool empty() const { return _levels.empty(); }
-    size_t size() const { return _levels.size(); }
-    const LevelArray& levels() const { return _levels; }
-    const LinkArray& level(size_t idx) const { return _levels[idx]; }
-    bool operator==(const HnswNode& rhs) {
-        return _levels == rhs._levels;
+    HnswNode() noexcept
+        : _ref(),
+          _docid(),
+          _subspace()
+    {
     }
+    AtomicEntryRef& ref() noexcept { return _ref; }
+    const AtomicEntryRef& ref() const noexcept { return _ref; }
+    void store_docid(uint32_t docid) noexcept { _docid.store_release(docid); }
+    void store_subspace(uint32_t subspace) noexcept { _subspace.store_release(subspace); }
+    // Mapping from nodeid to docid and subspace.
+    uint32_t acquire_docid() const noexcept { return _docid.load_acquire(); }
+    uint32_t acquire_subspace() const noexcept { return _subspace.load_acquire(); }
+    static constexpr bool identity_mapping = false;
 };
 
 }
-

@@ -6,10 +6,11 @@ import com.yahoo.prelude.fastsearch.VespaBackEndSearcher;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
 import com.yahoo.search.dispatch.searchcluster.Group;
+import com.yahoo.search.dispatch.searchcluster.SearchGroups;
 import com.yahoo.search.dispatch.searchcluster.Node;
-import com.yahoo.search.dispatch.searchcluster.SearchCluster;
 import com.yahoo.search.result.Coverage;
 import com.yahoo.search.result.ErrorMessage;
+import com.yahoo.vespa.config.search.DispatchConfig;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -21,11 +22,16 @@ import java.util.Set;
  * @author ollivir
  */
 public abstract class InvokerFactory {
+    private static final double SKEW_FACTOR = 0.05;
 
-    protected final SearchCluster searchCluster;
+    private final SearchGroups cluster;
+    private final DispatchConfig dispatchConfig;
+    private final TopKEstimator hitEstimator;
 
-    public InvokerFactory(SearchCluster searchCluster) {
-        this.searchCluster = searchCluster;
+    public InvokerFactory(SearchGroups searchCluster, DispatchConfig dispatchConfig) {
+        this.cluster = searchCluster;
+        this.dispatchConfig = dispatchConfig;
+        this.hitEstimator = new TopKEstimator(30.0, dispatchConfig.topKProbability(), SKEW_FACTOR);
     }
 
     protected abstract Optional<SearchInvoker> createNodeSearchInvoker(VespaBackEndSearcher searcher,
@@ -51,7 +57,7 @@ public abstract class InvokerFactory {
                                                 List<Node> nodes,
                                                 boolean acceptIncompleteCoverage,
                                                 int maxHits) {
-        Group group = searchCluster.group(nodes.get(0).group()).get(); // Nodes must be of the same group
+        Group group = cluster.get(nodes.get(0).group()); // Nodes must be of the same group
         List<SearchInvoker> invokers = new ArrayList<>(nodes.size());
         Set<Integer> failed = null;
         for (Node node : nodes) {
@@ -79,7 +85,7 @@ public abstract class InvokerFactory {
                     success.add(node);
                 }
             }
-            if ( ! searchCluster.isPartialGroupCoverageSufficient(success) && !acceptIncompleteCoverage) {
+            if ( ! cluster.isPartialGroupCoverageSufficient(success) && !acceptIncompleteCoverage) {
                 return Optional.empty();
             }
             if (invokers.isEmpty()) {
@@ -90,7 +96,7 @@ public abstract class InvokerFactory {
         if (invokers.size() == 1 && failed == null) {
             return Optional.of(invokers.get(0));
         } else {
-            return Optional.of(new InterleavedSearchInvoker(Timer.monotonic, invokers, searchCluster, group, failed));
+            return Optional.of(new InterleavedSearchInvoker(Timer.monotonic, invokers, hitEstimator, dispatchConfig, group, failed));
         }
     }
 
@@ -110,7 +116,5 @@ public abstract class InvokerFactory {
         coverage.setNodesTried(count);
         return new SearchErrorInvoker(ErrorMessage.createBackendCommunicationError(down.toString()), coverage);
     }
-
-    public void release() {}
 
 }

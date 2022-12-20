@@ -20,7 +20,10 @@ import java.io.OutputStream;
 import java.net.URI;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
@@ -102,9 +105,8 @@ public class ModelsEvaluationHandler extends ThreadedHttpRequestHandler {
     private HttpResponse listAllModels(HttpRequest request) {
         Slime slime = new Slime();
         Cursor root = slime.setObject();
-        for (String modelName: modelsEvaluator.models().keySet()) {
-            root.setString(modelName, baseUrl(request) + modelName);
-        }
+        modelsEvaluator.models().keySet().stream().sorted()
+                .forEach(name -> root.setString(name, baseUrl(request) + name));
         return new Response(200, com.yahoo.slime.JsonFormat.toJsonBytes(slime));
     }
 
@@ -135,10 +137,13 @@ public class ModelsEvaluationHandler extends ThreadedHttpRequestHandler {
         cursor.setString("info", baseUrl(request) + model.name() + "/" + compactedFunction);
         cursor.setString("eval", baseUrl(request) + model.name() + "/" + compactedFunction + "/" + EVALUATE);
         Cursor bindings = cursor.setArray("arguments");
-        for (Map.Entry<String, TensorType> argument : evaluator.function().argumentTypes().entrySet()) {
+        var argTypes = evaluator.function().argumentTypes();
+        List<String> argNames = new ArrayList<>(argTypes.keySet());
+        Collections.sort(argNames);
+        for (String name : argNames) {
             Cursor binding = bindings.addObject();
-            binding.setString("name", argument.getKey());
-            binding.setString("type", argument.getValue().toString());
+            binding.setString("name", name);
+            binding.setString("type", argTypes.get(name).toString());
         }
     }
 

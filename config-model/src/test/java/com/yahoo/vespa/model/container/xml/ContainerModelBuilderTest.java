@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container.xml;
 
+import com.yahoo.cloud.config.CuratorConfig;
 import com.yahoo.cloud.config.ZookeeperServerConfig;
 import com.yahoo.component.ComponentId;
 import com.yahoo.config.application.api.ApplicationPackage;
@@ -16,6 +17,7 @@ import com.yahoo.config.model.provision.InMemoryProvisioner;
 import com.yahoo.config.model.provision.SingleNodeProvisioner;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.config.model.test.MockRoot;
+import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.RegionName;
@@ -34,7 +36,6 @@ import com.yahoo.container.usability.BindingsOverviewHandler;
 import com.yahoo.net.HostName;
 import com.yahoo.prelude.cluster.QrMonitorConfig;
 import com.yahoo.search.config.QrStartConfig;
-import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.model.AbstractService;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.container.ApplicationContainer;
@@ -66,7 +67,13 @@ import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Tests for "core functionality" of the container model, e.g. ports, or the 'components' and 'bundles' configs.
@@ -123,7 +130,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
                 "</container>");
         createModel(root, clusterElem);
         AbstractService container = (AbstractService) root.getProducer("container/container.0");
-        assertEquals(Defaults.getDefaults().vespaWebServicePort(), container.getRelativePort(0));
+        assertEquals(getDefaults().vespaWebServicePort(), container.getRelativePort(0));
     }
 
     @Test
@@ -153,7 +160,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
         }
         catch (IllegalArgumentException e) {
             // Success
-            assertEquals("Illegal port 9000 in http server 'foo': Port must be set to " + Defaults.getDefaults().vespaWebServicePort(),
+            assertEquals("Illegal port 9000 in http server 'foo': Port must be set to " + getDefaults().vespaWebServicePort(),
                     e.getMessage());
         }
     }
@@ -187,6 +194,57 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
         } catch (RuntimeException e) {
             assertThat(e.getMessage(), containsString("cannot reserve port"));
         }
+    }
+
+    @Test
+    void load_balancers_can_be_set() throws IOException, SAXException {
+        // No load-balancer or nodes elements
+        verifyAllowedUrns("");
+
+        // No load-balancer element
+        verifyAllowedUrns("<nodes count='2' />");
+
+        // No nodes element
+        verifyAllowedUrns("""
+                          <load-balancer>
+                            <private-access>
+                              <allow-urn>foo</allow-urn>
+                              <allow-urn>bar</allow-urn>
+                            </private-access>
+                          </load-balancer>
+                          """);
+
+        // Both load-balancer and nodes
+        verifyAllowedUrns("""
+                          <load-balancer>
+                            <private-access>
+                              <allow-urn>foo</allow-urn>
+                              <allow-urn>bar</allow-urn>
+                            </private-access>
+                          </load-balancer>
+                          <nodes count='2' />
+                          """,
+                          "foo", "bar");
+    }
+
+    private void verifyAllowedUrns(String containerXml, String... expectedAllowedUrns) throws IOException, SAXException {
+        String servicesXml = """
+                             <container id='default' version='1.0'>
+                               %s
+                             </container>
+                             """.formatted(containerXml);
+        ApplicationPackage applicationPackage = new MockApplicationPackage.Builder().withServices(servicesXml).build();
+        InMemoryProvisioner provisioner = new InMemoryProvisioner(true, false, "host1.yahoo.com", "host2.yahoo.com");
+        VespaModel model = new VespaModel(new NullConfigModelRegistry(), new DeployState.Builder()
+                .modelHostProvisioner(provisioner)
+                .provisioned(provisioner.startProvisionedRecording())
+                .applicationPackage(applicationPackage)
+                .properties(new TestProperties().setMultitenant(true).setHostedVespa(true))
+                .build());
+        assertEquals(2, model.hostSystem().getHosts().size());
+        assertEquals(1, provisioner.provisionedClusters().size());
+        assertEquals(List.of(expectedAllowedUrns),
+                     provisioner.provisionedClusters().iterator().next().loadBalancerSettings().allowedUrns());
     }
 
     @Test
@@ -396,7 +454,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
         final var model = new VespaModel(new NullConfigModelRegistry(), deployState);
         final var containers = model.getContainerClusters().values().stream()
                 .flatMap(cluster -> cluster.getContainers().stream())
-                .collect(Collectors.toList());
+                .toList();
 
         assertFalse(containers.isEmpty(), "Missing container objects based on configuration");
 
@@ -419,6 +477,27 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
                         .setHostedVespa(true))
                 .build());
         assertEquals(2, model.hostSystem().getHosts().size());
+    }
+
+    @Test
+    void cloud_account_without_nodes_tag() throws Exception {
+        String servicesXml = "<container id='default' version='1.0' />";
+        ApplicationPackage applicationPackage = new MockApplicationPackage.Builder().withServices(servicesXml).build();
+        CloudAccount cloudAccount = CloudAccount.from("000000000000");
+        InMemoryProvisioner provisioner = new InMemoryProvisioner(true, false, "host1.yahoo.com", "host2.yahoo.com");
+        VespaModel model = new VespaModel(new NullConfigModelRegistry(), new DeployState.Builder()
+                .modelHostProvisioner(provisioner)
+                .provisioned(provisioner.startProvisionedRecording())
+                .applicationPackage(applicationPackage)
+                .properties(new TestProperties().setMultitenant(true)
+                                                .setHostedVespa(true)
+                                                .setCloudAccount(cloudAccount))
+                .build());
+        assertEquals(2, model.hostSystem().getHosts().size());
+        assertEquals(List.of(cloudAccount), model.provisioned().all().values()
+                                                 .stream()
+                                                 .map(capacity -> capacity.cloudAccount().get())
+                                                 .toList());
     }
 
     @Test
@@ -561,7 +640,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
     void cluster_with_zookeeper() {
         Function<Integer, String> servicesXml = (nodeCount) -> "<container version='1.0' id='default'>" +
                 "<nodes count='" + nodeCount + "'/>" +
-                "<zookeeper/>" +
+                "<zookeeper session-timeout-seconds='30'/>" +
                 "</container>";
         VespaModelTester tester = new VespaModelTester();
         tester.addHosts(3);
@@ -571,6 +650,7 @@ public class ContainerModelBuilderTest extends ContainerModelBuilderTestBase {
             assertNotNull(cluster);
             assertComponentConfigured(cluster, "com.yahoo.vespa.curator.Curator");
             assertComponentConfigured(cluster, "com.yahoo.vespa.curator.CuratorWrapper");
+            assertEquals(30, model.getConfig(CuratorConfig.class, cluster.getConfigId()).zookeeperSessionTimeoutSeconds());
             cluster.getContainers().forEach(container -> {
                 assertComponentConfigured(container, "com.yahoo.vespa.zookeeper.ReconfigurableVespaZooKeeperServer");
                 assertComponentConfigured(container, "com.yahoo.vespa.zookeeper.Reconfigurer");

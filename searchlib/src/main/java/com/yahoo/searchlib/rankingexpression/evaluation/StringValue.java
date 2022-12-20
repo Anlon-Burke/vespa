@@ -1,10 +1,12 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.searchlib.rankingexpression.evaluation;
 
+import com.yahoo.compress.Hasher;
 import com.yahoo.javacc.UnicodeUtilities;
 import com.yahoo.searchlib.rankingexpression.rule.Function;
 import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
+import java.nio.charset.StandardCharsets;
 
 /**
  * A string value.
@@ -31,10 +33,20 @@ public class StringValue extends Value {
     @Override
     public TensorType type() { return TensorType.empty; }
 
-    /** Returns the hashcode of this, to enable strings to be encoded (with reasonable safely) as doubles for optimization */
+    /**
+     * Returns the XXHash hashcode of this, to enable strings to be encoded (with reasonable safely)
+     * as doubles for optimization.
+     */
     @Override
     public double asDouble() {
-        return value.hashCode();
+        // Hash using the xxh3 algorithm which is also used on content nodes
+        byte[] data = value.getBytes(StandardCharsets.UTF_8);
+        long h = Hasher.xxh3(data);
+        if ((h & 0x7ff0000000000000L) == 0x7ff0000000000000L) {
+            // Avoid nan and inf
+            h = h & 0xffefffffffffffffL;
+        }
+        return Double.longBitsToDouble(h);
     }
 
     @Override

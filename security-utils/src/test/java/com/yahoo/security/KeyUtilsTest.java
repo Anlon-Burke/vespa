@@ -1,7 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.security;
 
-import org.bouncycastle.util.encoders.Hex;
 import org.junit.jupiter.api.Test;
 
 import java.security.KeyPair;
@@ -10,6 +9,8 @@ import java.security.PublicKey;
 import java.security.interfaces.XECPrivateKey;
 import java.security.interfaces.XECPublicKey;
 
+import static com.yahoo.security.ArrayUtils.hex;
+import static com.yahoo.security.ArrayUtils.unhex;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -87,19 +88,19 @@ public class KeyUtilsTest {
     }
 
     private static XECPrivateKey xecPrivFromHex(String hex) {
-        return KeyUtils.fromRawX25519PrivateKey(Hex.decode(hex));
+        return KeyUtils.fromRawX25519PrivateKey(unhex(hex));
     }
 
     private static String xecHexFromPriv(XECPrivateKey privateKey) {
-        return Hex.toHexString(KeyUtils.toRawX25519PrivateKeyBytes(privateKey));
+        return hex(KeyUtils.toRawX25519PrivateKeyBytes(privateKey));
     }
 
     private static XECPublicKey xecPubFromHex(String hex) {
-        return KeyUtils.fromRawX25519PublicKey(Hex.decode(hex));
+        return KeyUtils.fromRawX25519PublicKey(unhex(hex));
     }
 
     private static String xecHexFromPub(XECPublicKey publicKey) {
-        return Hex.toHexString(KeyUtils.toRawX25519PublicKeyBytes(publicKey));
+        return hex(KeyUtils.toRawX25519PublicKeyBytes(publicKey));
     }
 
     /**
@@ -115,10 +116,10 @@ public class KeyUtilsTest {
         var expectedShared = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742";
 
         byte[] sharedAliceToBob = KeyUtils.ecdh(alice_priv, bob_public);
-        assertEquals(expectedShared, Hex.toHexString(sharedAliceToBob));
+        assertEquals(expectedShared, hex(sharedAliceToBob));
 
         byte[] sharedBobToAlice = KeyUtils.ecdh(bob_priv, alice_pub);
-        assertEquals(expectedShared, Hex.toHexString(sharedBobToAlice));
+        assertEquals(expectedShared, hex(sharedBobToAlice));
     }
 
     // From https://github.com/google/wycheproof/blob/master/testvectors/x25519_test.json (tcId 32)
@@ -145,7 +146,7 @@ public class KeyUtilsTest {
         var bob_public = xecPubFromHex( "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882bcf"); // note msb toggled in last byte
         var expectedShared = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742";
         byte[] sharedAliceToBob = KeyUtils.ecdh(alice_priv, bob_public);
-        assertEquals(expectedShared, Hex.toHexString(sharedAliceToBob));
+        assertEquals(expectedShared, hex(sharedAliceToBob));
     }
 
     @Test
@@ -154,9 +155,15 @@ public class KeyUtilsTest {
         var priv = xecPrivFromHex(privHex);
         assertEquals(privHex, xecHexFromPriv(priv));
 
+        // Base 64
         var privB64 = KeyUtils.toBase64EncodedX25519PrivateKey(priv);
         var priv2 = KeyUtils.fromBase64EncodedX25519PrivateKey(privB64);
         assertEquals(privHex, xecHexFromPriv(priv2));
+
+        // Base 58
+        var privB58 = KeyUtils.toBase58EncodedX25519PrivateKey(priv);
+        var priv3 = KeyUtils.fromBase58EncodedX25519PrivateKey(privB58);
+        assertEquals(privHex, xecHexFromPriv(priv3));
     }
 
     @Test
@@ -165,9 +172,15 @@ public class KeyUtilsTest {
         var pub = xecPubFromHex(pubHex);
         assertEquals(pubHex, xecHexFromPub(pub));
 
+        // Base 64
         var pubB64 = KeyUtils.toBase64EncodedX25519PublicKey(pub);
         var pub2 = KeyUtils.fromBase64EncodedX25519PublicKey(pubB64);
         assertEquals(pubHex, xecHexFromPub(pub2));
+
+        // Base 58
+        var pubB58 = KeyUtils.toBase58EncodedX25519PublicKey(pub);
+        var pub3 = KeyUtils.fromBase58EncodedX25519PublicKey(pubB58);
+        assertEquals(pubHex, xecHexFromPub(pub3));
     }
 
     @Test

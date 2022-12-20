@@ -3,6 +3,7 @@ package com.yahoo.vespa.hosted.provision.persistence;
 
 import ai.vespa.http.DomainName;
 import com.yahoo.config.provision.CloudAccount;
+import com.yahoo.config.provision.LoadBalancerSettings;
 import com.yahoo.slime.ArrayTraverser;
 import com.yahoo.slime.Cursor;
 import com.yahoo.slime.Inspector;
@@ -12,6 +13,7 @@ import com.yahoo.vespa.hosted.provision.lb.DnsZone;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancer;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancerId;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancerInstance;
+import com.yahoo.vespa.hosted.provision.lb.PrivateServiceId;
 import com.yahoo.vespa.hosted.provision.lb.Real;
 
 import java.io.IOException;
@@ -47,7 +49,10 @@ public class LoadBalancerSerializer {
     private static final String realsField = "reals";
     private static final String ipAddressField = "ipAddress";
     private static final String portField = "port";
+    private static final String serviceIdField = "serviceId";
     private static final String cloudAccountField = "cloudAccount";
+    private static final String settingsField = "settings";
+    private static final String allowedUrnsField = "allowedUrns";
 
     public static byte[] toJson(LoadBalancer loadBalancer) {
         Slime slime = new Slime();
@@ -70,7 +75,18 @@ public class LoadBalancerSerializer {
             realObject.setString(ipAddressField, real.ipAddress());
             realObject.setLong(portField, real.port());
         }));
-        loadBalancer.instance().flatMap(LoadBalancerInstance::cloudAccount).ifPresent(cloudAccount -> root.setString(cloudAccountField, cloudAccount.value()));
+        loadBalancer.instance()
+                    .map(LoadBalancerInstance::settings)
+                    .filter(settings -> ! settings.isEmpty())
+                    .ifPresent(settings -> settings.allowedUrns().forEach(root.setObject(settingsField)
+                                                                              .setArray(allowedUrnsField)::addString));
+        loadBalancer.instance()
+                    .flatMap(LoadBalancerInstance::serviceId)
+                    .ifPresent(serviceId -> root.setString(serviceIdField, serviceId.value()));
+        loadBalancer.instance()
+                    .map(LoadBalancerInstance::cloudAccount)
+                    .filter(cloudAccount -> !cloudAccount.isUnspecified())
+                    .ifPresent(cloudAccount -> root.setString(cloudAccountField, cloudAccount.value()));
         try {
             return SlimeUtils.toJsonBytes(slime);
         } catch (IOException e) {
@@ -98,14 +114,23 @@ public class LoadBalancerSerializer {
         Optional<DomainName> hostname = optionalString(object.field(hostnameField), Function.identity()).filter(s -> !s.isEmpty()).map(DomainName::of);
         Optional<String> ipAddress = optionalString(object.field(lbIpAddressField), Function.identity()).filter(s -> !s.isEmpty());
         Optional<DnsZone> dnsZone = optionalString(object.field(dnsZoneField), DnsZone::new);
-        Optional<CloudAccount> cloudAccount = optionalString(object.field(cloudAccountField), CloudAccount::new);
+        LoadBalancerSettings settings = loadBalancerSettings(object.field(settingsField));
+        Optional<PrivateServiceId> serviceId = optionalString(object.field(serviceIdField), PrivateServiceId::of);
+        CloudAccount cloudAccount = optionalString(object.field(cloudAccountField), CloudAccount::from).orElse(CloudAccount.empty);
         Optional<LoadBalancerInstance> instance = hostname.isEmpty() && ipAddress.isEmpty() ? Optional.empty() :
-                Optional.of(new LoadBalancerInstance(hostname, ipAddress, dnsZone, ports, networks, reals, cloudAccount));
+                Optional.of(new LoadBalancerInstance(hostname, ipAddress, dnsZone, ports, networks, reals, settings, serviceId, cloudAccount));
 
         return new LoadBalancer(LoadBalancerId.fromSerializedForm(object.field(idField).asString()),
                                 instance,
                                 stateFromString(object.field(stateField).asString()),
                                 Instant.ofEpochMilli(object.field(changedAtField).asLong()));
+    }
+
+    private static LoadBalancerSettings loadBalancerSettings(Inspector settingsObject) {
+        if ( ! settingsObject.valid()) return LoadBalancerSettings.empty;
+        return new LoadBalancerSettings(SlimeUtils.entriesStream(settingsObject.field(allowedUrnsField))
+                                                  .map(Inspector::asString)
+                                                  .toList());
     }
 
     private static <T> Optional<T> optionalValue(Inspector field, Function<Inspector, T> fieldMapper) {
@@ -117,21 +142,22 @@ public class LoadBalancerSerializer {
     }
 
     private static String asString(LoadBalancer.State state) {
-        switch (state) {
-            case active: return "active";
-            case inactive: return "inactive";
-            case reserved: return "reserved";
-            default: throw new IllegalArgumentException("No serialization defined for state enum '" + state + "'");
-        }
+        return switch (state) {
+            case active -> "active";
+            case inactive -> "inactive";
+            case reserved -> "reserved";
+            case removable -> "removable";
+        };
     }
 
     private static LoadBalancer.State stateFromString(String state) {
-        switch (state) {
-            case "active": return LoadBalancer.State.active;
-            case "inactive": return LoadBalancer.State.inactive;
-            case "reserved": return LoadBalancer.State.reserved;
-            default: throw new IllegalArgumentException("No serialization defined for state string '" + state + "'");
-        }
+        return switch (state) {
+            case "active" -> LoadBalancer.State.active;
+            case "inactive" -> LoadBalancer.State.inactive;
+            case "reserved" -> LoadBalancer.State.reserved;
+            case "removable" -> LoadBalancer.State.removable;
+            default -> throw new IllegalArgumentException("No serialization defined for state string '" + state + "'");
+        };
     }
 
 }

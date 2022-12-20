@@ -34,6 +34,7 @@ import com.yahoo.vespa.hosted.controller.routing.RoutingPolicy;
 import com.yahoo.vespa.hosted.controller.routing.RoutingStatus;
 import com.yahoo.vespa.hosted.controller.routing.ZoneRoutingPolicy;
 import com.yahoo.vespa.hosted.controller.support.access.SupportAccess;
+import com.yahoo.vespa.hosted.controller.tenant.PendingMailVerification;
 import com.yahoo.vespa.hosted.controller.tenant.Tenant;
 import com.yahoo.vespa.hosted.controller.versions.OsVersionStatus;
 import com.yahoo.vespa.hosted.controller.versions.OsVersionTarget;
@@ -55,6 +56,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.logging.Level;
@@ -94,6 +96,7 @@ public class CuratorDb {
     private static final Path changeRequestsRoot = root.append("changeRequests");
     private static final Path notificationsRoot = root.append("notifications");
     private static final Path supportAccessRoot = root.append("supportAccess");
+    private static final Path mailVerificationRoot = root.append("mailVerification");
 
     private final NodeVersionSerializer nodeVersionSerializer = new NodeVersionSerializer();
     private final VersionStatusSerializer versionStatusSerializer = new VersionStatusSerializer(nodeVersionSerializer);
@@ -121,6 +124,9 @@ public class CuratorDb {
 
     // For each job id (path), store the ZK node version and its deserialised data - update when version changes.
     private final Map<Path, Pair<Integer, NavigableMap<RunId, Run>>> cachedHistoricRuns = new ConcurrentHashMap<>();
+
+    // Store the ZK node version and its deserialised data - update when version changes.
+    private final AtomicReference<Pair<Integer, VersionStatus>> cachedVersionStatus = new AtomicReference<>();
 
     @Inject
     public CuratorDb(Curator curator) {
@@ -231,6 +237,10 @@ public class CuratorDb {
         return curator.lock(lockRoot.append("deploymentRetriggerQueue"), defaultLockTimeout);
     }
 
+    public Mutex lockPendingMailVerification(String verificationCode) {
+        return curator.lock(lockRoot.append("pendingMailVerification").append(verificationCode), defaultLockTimeout);
+    }
+
     // -------------- Helpers ------------------------------------------
 
     /** Try locking with a low timeout, meaning it is OK to fail lock acquisition.
@@ -277,7 +287,13 @@ public class CuratorDb {
     }
 
     public VersionStatus readVersionStatus() {
-        return readSlime(versionStatusPath()).map(versionStatusSerializer::fromSlime).orElseGet(VersionStatus::empty);
+        Path path = versionStatusPath();
+        return curator.getStat(path)
+                      .map(stat -> cachedVersionStatus.updateAndGet(old ->
+                          old != null && old.getFirst() == stat.getVersion()
+                                 ? old
+                                 : new Pair<>(stat.getVersion(), read(path, bytes -> versionStatusSerializer.fromSlime(SlimeUtils.jsonToSlime(bytes))).get())).getSecond())
+                      .orElseGet(VersionStatus::empty);
     }
 
     public void writeConfidenceOverrides(Map<Version, VespaVersion.Confidence> overrides) {
@@ -337,7 +353,7 @@ public class CuratorDb {
     public List<TenantName> readTenantNames() {
         return curator.getChildren(tenantRoot).stream()
                       .map(TenantName::from)
-                      .collect(Collectors.toList());
+                      .toList();
     }
 
     public void removeTenant(TenantName name) {
@@ -434,7 +450,7 @@ public class CuratorDb {
     public List<ApplicationId> applicationsWithJobs() {
         return curator.getChildren(jobRoot).stream()
                       .map(ApplicationId::fromSerializedForm)
-                      .collect(Collectors.toList());
+                      .toList();
     }
 
 
@@ -602,7 +618,7 @@ public class CuratorDb {
                 .stream()
                 .map(this::readChangeRequest)
                 .flatMap(Optional::stream)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     public void writeChangeRequest(VespaChangeRequest changeRequest) {
@@ -653,6 +669,28 @@ public class CuratorDb {
 
     public void writeRetriggerEntries(List<RetriggerEntry> retriggerEntries) {
         curator.set(deploymentRetriggerPath(), asJson(retriggerEntrySerializer.toSlime(retriggerEntries)));
+    }
+
+    // -------------- Pending mail verification -------------------------------
+
+    public Optional<PendingMailVerification> getPendingMailVerification(String verificationCode) {
+        return readSlime(mailVerificationPath(verificationCode)).map(MailVerificationSerializer::fromSlime);
+    }
+
+    public List<PendingMailVerification> listPendingMailVerifications() {
+        return curator.getChildren(mailVerificationRoot)
+                .stream()
+                .map(this::getPendingMailVerification)
+                .flatMap(Optional::stream)
+                .toList();
+    }
+
+    public void writePendingMailVerification(PendingMailVerification pendingMailVerification) {
+        curator.set(mailVerificationPath(pendingMailVerification.getVerificationCode()), asJson(MailVerificationSerializer.toSlime(pendingMailVerification)));
+    }
+
+    public void deletePendingMailVerification(PendingMailVerification pendingMailVerification) {
+        curator.delete(mailVerificationPath(pendingMailVerification.getVerificationCode()));
     }
 
     // -------------- Paths ---------------------------------------------------
@@ -753,6 +791,10 @@ public class CuratorDb {
 
     private static Path deploymentRetriggerPath() {
         return root.append("deploymentRetriggerQueue");
+    }
+
+    private static Path mailVerificationPath(String verificationCode) {
+        return mailVerificationRoot.append(verificationCode);
     }
 
 }

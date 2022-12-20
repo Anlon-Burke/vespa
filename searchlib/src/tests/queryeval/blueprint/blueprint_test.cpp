@@ -30,7 +30,7 @@ public:
         return mixChildrenFields();
     }
 
-    virtual void sort(std::vector<Blueprint*> &children) const override {
+    virtual void sort(Children &children) const override {
         std::sort(children.begin(), children.end(), TieredGreaterEstimate());
     }
 
@@ -45,7 +45,9 @@ public:
     {
         return std::make_unique<MySearch>("or", std::move(subSearches), &md, strict);
     }
-
+    SearchIteratorUP createFilterSearch(bool strict, FilterConstraint constraint) const override {
+        return create_default_filter(strict, constraint);
+    }
     static MyOr& create() { return *(new MyOr()); }
     MyOr& add(Blueprint *n) { addChild(UP(n)); return *this; }
     MyOr& add(Blueprint &n) { addChild(UP(&n)); return *this; }
@@ -139,6 +141,9 @@ struct MyTerm : SimpleLeafBlueprint {
     }
     virtual SearchIterator::UP createLeafSearch(const search::fef::TermFieldMatchDataArray &, bool) const override {
         return SearchIterator::UP();
+    }
+    SearchIteratorUP createFilterSearch(bool strict, FilterConstraint constraint) const override {
+        return create_default_filter(strict, constraint);
     }
 };
 
@@ -674,7 +679,7 @@ getExpectedBlueprint()
            "        estHits: 9\n"
            "        cost_tier: 1\n"
            "        tree_size: 2\n"
-           "        allow_termwise_eval: 0\n"
+           "        allow_termwise_eval: false\n"
            "    }\n"
            "    sourceId: 4294967295\n"
            "    docid_limit: 0\n"
@@ -693,7 +698,7 @@ getExpectedBlueprint()
            "                estHits: 9\n"
            "                cost_tier: 1\n"
            "                tree_size: 1\n"
-           "                allow_termwise_eval: 1\n"
+           "                allow_termwise_eval: true\n"
            "            }\n"
            "            sourceId: 4294967295\n"
            "            docid_limit: 0\n"
@@ -722,7 +727,7 @@ getExpectedSlimeBlueprint() {
            "        estHits: 9,"
            "        cost_tier: 1,"
            "        tree_size: 2,"
-           "        allow_termwise_eval: 0"
+           "        allow_termwise_eval: false"
            "    },"
            "    sourceId: 4294967295,"
            "    docid_limit: 0,"
@@ -746,7 +751,7 @@ getExpectedSlimeBlueprint() {
            "                estHits: 9,"
            "                cost_tier: 1,"
            "                tree_size: 1,"
-           "                allow_termwise_eval: 1"
+           "                allow_termwise_eval: true"
            "            },"
            "            sourceId: 4294967295,"
            "            docid_limit: 0"

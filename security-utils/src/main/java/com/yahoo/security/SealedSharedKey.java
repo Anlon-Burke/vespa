@@ -2,7 +2,6 @@
 package com.yahoo.security;
 
 import java.nio.ByteBuffer;
-import java.util.Base64;
 
 /**
  * A SealedSharedKey represents the public part of a secure one-way ephemeral key exchange.
@@ -15,36 +14,39 @@ import java.util.Base64;
  * This token representation is expected to be used as a convenient serialization
  * form when communicating shared keys.
  */
-public record SealedSharedKey(int keyId, byte[] enc, byte[] ciphertext) {
+public record SealedSharedKey(KeyId keyId, byte[] enc, byte[] ciphertext) {
 
     /** Current encoding version of opaque sealed key tokens. Must be less than 256. */
     public static final int CURRENT_TOKEN_VERSION = 1;
+    /** Encryption context for v1 tokens is always a 32-byte X25519 public key */
+    public static final int MAX_ENC_CONTEXT_LENGTH = 255;
 
-    private static final int MAX_ENC_CONTEXT_LENGTH = Short.MAX_VALUE;
+    public SealedSharedKey {
+        if (enc.length > MAX_ENC_CONTEXT_LENGTH) {
+            throw new IllegalArgumentException("Encryption context is too large to be encoded (max is %d, got %d)"
+                    .formatted(MAX_ENC_CONTEXT_LENGTH, enc.length));
+        }
+    }
 
     /**
      * Creates an opaque URL-safe string token that contains enough information to losslessly
      * reconstruct the SealedSharedKey instance when passed verbatim to fromTokenString().
      */
     public String toTokenString() {
-        if (keyId >= (1 << 24)) {
-            throw new IllegalArgumentException("Key id is too large to be encoded");
-        }
-        if (enc.length > MAX_ENC_CONTEXT_LENGTH) {
-            throw new IllegalArgumentException("Encryption context is too large to be encoded");
-        }
-
-        // i32 header || i16 length(enc) || enc || ciphertext
-        ByteBuffer encoded = ByteBuffer.allocate(4 + 2 + enc.length + ciphertext.length);
-        encoded.putInt((CURRENT_TOKEN_VERSION << 24) | keyId);
-        encoded.putShort((short)enc.length);
+        byte[] keyIdBytes = keyId.asBytes();
+        // u8 token version || u8 length(key id) || key id || u8 length(enc) || enc || ciphertext
+        ByteBuffer encoded = ByteBuffer.allocate(1 + 1 + keyIdBytes.length + 1 + enc.length + ciphertext.length);
+        encoded.put((byte)CURRENT_TOKEN_VERSION);
+        encoded.put((byte)keyIdBytes.length);
+        encoded.put(keyIdBytes);
+        encoded.put((byte)enc.length);
         encoded.put(enc);
         encoded.put(ciphertext);
         encoded.flip();
 
         byte[] encBytes = new byte[encoded.remaining()];
         encoded.get(encBytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(encBytes);
+        return Base62.codec().encode(encBytes);
     }
 
     /**
@@ -52,28 +54,38 @@ public record SealedSharedKey(int keyId, byte[] enc, byte[] ciphertext) {
      * created by a call to toTokenString().
      */
     public static SealedSharedKey fromTokenString(String tokenString) {
-        byte[] rawTokenBytes = Base64.getUrlDecoder().decode(tokenString);
-        if (rawTokenBytes.length < 4) {
-            throw new IllegalArgumentException("Decoded token too small to contain a header");
+        verifyInputTokenStringNotTooLarge(tokenString);
+        byte[] rawTokenBytes = Base62.codec().decode(tokenString);
+        if (rawTokenBytes.length < 1) {
+            throw new IllegalArgumentException("Decoded token too small to contain a version");
         }
         ByteBuffer decoded = ByteBuffer.wrap(rawTokenBytes);
-        int versionAndKeyId = decoded.getInt();
-        int version = versionAndKeyId >>> 24;
+        // u8 token version || u8 length(key id) || key id || u8 length(enc) || enc || ciphertext
+        int version = Byte.toUnsignedInt(decoded.get());
         if (version != CURRENT_TOKEN_VERSION) {
             throw new IllegalArgumentException("Token had unexpected version. Expected %d, was %d"
                                                .formatted(CURRENT_TOKEN_VERSION, version));
         }
-        short encLen = decoded.getShort();
-        if (encLen <= 0) {
-            throw new IllegalArgumentException("Token encryption context does not have a valid length");
-        }
+        int keyIdLen = Byte.toUnsignedInt(decoded.get());
+        byte[] keyIdBytes = new byte[keyIdLen];
+        decoded.get(keyIdBytes);
+        int encLen = Byte.toUnsignedInt(decoded.get());
         byte[] enc = new byte[encLen];
         decoded.get(enc);
         byte[] ciphertext = new byte[decoded.remaining()];
         decoded.get(ciphertext);
 
-        int keyId = versionAndKeyId & 0xffffff;
-        return new SealedSharedKey(keyId, enc, ciphertext);
+        return new SealedSharedKey(KeyId.ofBytes(keyIdBytes), enc, ciphertext);
+    }
+
+    public int tokenVersion() { return CURRENT_TOKEN_VERSION; }
+
+    private static void verifyInputTokenStringNotTooLarge(String tokenString) {
+        // Expected max decoded size for v1 is 3 + 255 + 32 + 32 = 322. For simplicity, round this
+        // up to 512 to effectively not have to care about the overhead of any reasonably chosen encoding.
+        if (tokenString.length() > 512) {
+            throw new IllegalArgumentException("Token string is too long to possibly be a valid token");
+        }
     }
 
 }

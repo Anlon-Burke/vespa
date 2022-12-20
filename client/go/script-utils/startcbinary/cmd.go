@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/vespa-engine/vespa/client/go/envvars"
 	"github.com/vespa-engine/vespa/client/go/trace"
 	"github.com/vespa-engine/vespa/client/go/util"
 	"github.com/vespa-engine/vespa/client/go/vespa"
@@ -21,7 +22,7 @@ func Run(args []string) int {
 	spec := NewProgSpec(args)
 	err := vespa.LoadDefaultEnv()
 	if err != nil {
-		panic(err)
+		util.JustExitWith(err)
 	}
 	hostname, err := vespa.FindOurHostname()
 	if err != nil {
@@ -35,7 +36,7 @@ func IsCandidate(program string) bool {
 	if strings.Contains(binary, "/") {
 		return util.IsRegularFile(binary)
 	} else {
-		path := strings.Split(os.Getenv(ENV_PATH), ":")
+		path := strings.Split(os.Getenv(envvars.PATH), ":")
 		for _, dir := range path {
 			fn := dir + "/" + binary
 			if util.IsRegularFile(fn) {

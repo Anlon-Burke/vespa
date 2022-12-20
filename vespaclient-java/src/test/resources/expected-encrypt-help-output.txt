@@ -1,0 +1,16 @@
+usage: vespa-security encrypt <input file> <options>
+One-way encrypts a file using the public key of a recipient. A public
+token is printed on standard out. The recipient can use this token to
+decrypt the file using their private key. The token does not have to be
+kept secret.
+
+To encrypt the contents of STDIN, specify an input file of '-' (without
+the quotes).
+ -h,--help                         Show help
+ -i,--key-id <arg>                 ID of recipient key
+ -o,--output-file <arg>            Output file (will be truncated if it
+                                   already exists)
+ -r,--recipient-public-key <arg>   Recipient X25519 public key in Base58
+                                   encoded format
+Note: this is a BETA tool version; its interface may be changed at any
+time

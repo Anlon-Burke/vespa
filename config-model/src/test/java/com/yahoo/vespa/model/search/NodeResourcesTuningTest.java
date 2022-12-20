@@ -85,12 +85,21 @@ public class NodeResourcesTuningTest {
     }
 
     @Test
-    void require_that_num_search_threads_and_considers_explict_num_threads_per_search() {
+    void require_that_num_search_threads_considers_explict_num_threads_per_search() {
         ProtonConfig cfg = configFromNumCoresSetting(4.5, 3);
         assertEquals(15, cfg.numsearcherthreads());
         assertEquals(5, cfg.numsummarythreads());
         assertEquals(3, cfg.numthreadspersearch());
     }
+
+    @Test
+    void require_that_num_search_threads_can_only_have_4x_overcommit_rounded_up_to_num_threads_per_search() {
+        ProtonConfig cfg = configFromNumCoresSetting(9, 8);
+        assertEquals(40, cfg.numsearcherthreads());
+        assertEquals(9, cfg.numsummarythreads());
+        assertEquals(8, cfg.numthreadspersearch());
+    }
+
 
     @Test
     void require_that_fast_disk_is_reflected_in_proton_config() {
@@ -168,10 +177,15 @@ public class NodeResourcesTuningTest {
         assertSharedDisk(true, true);
     }
 
+    private static ProtonConfig fromMemAndCpu(int gb, int vcpu) {
+        return getConfig(new FlavorsConfig.Flavor.Builder().minMainMemoryAvailableGb(gb).minCpuCores(vcpu));
+    }
     @Test
     public void require_that_concurrent_flush_threads_is_1_with_low_memory() {
-        assertEquals(2, configFromMemorySetting(13, 0).flush().maxconcurrent());
-        assertEquals(1, configFromMemorySetting(11, 0).flush().maxconcurrent());
+        assertEquals(2, fromMemAndCpu(17, 9).flush().maxconcurrent());
+        assertEquals(1, fromMemAndCpu(15, 8).flush().maxconcurrent());
+        assertEquals(1, fromMemAndCpu(17, 8).flush().maxconcurrent());
+        assertEquals(1, fromMemAndCpu(15, 8).flush().maxconcurrent());
     }
 
     private static void assertDocumentStoreMaxFileSize(long expFileSizeBytes, int wantedMemoryGb) {

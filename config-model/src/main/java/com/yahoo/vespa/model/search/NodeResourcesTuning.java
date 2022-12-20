@@ -17,11 +17,12 @@ public class NodeResourcesTuning implements ProtonConfig.Producer {
     private final static double SUMMARY_FILE_SIZE_AS_FRACTION_OF_MEMORY = 0.02;
     private final static double SUMMARY_CACHE_SIZE_AS_FRACTION_OF_MEMORY = 0.04;
     private final static double MEMORY_GAIN_AS_FRACTION_OF_MEMORY = 0.08;
-    private final static double MIN_MEMORY_PER_FLUSH_THREAD_GB = 12.0;
+    private final static double MIN_MEMORY_PER_FLUSH_THREAD_GB = 16.0;
+    private final static double MAX_FLUSH_THREAD_RATIO = 1.0/8;
     private final static double TLS_SIZE_FRACTION = 0.02;
     final static long MB = 1024 * 1024;
     public final static long GB = MB * 1024;
-    // This is an approximate number base on observation of a node using 33G memory with 765M docs
+    // This is an approximate number based on observation of a node using 33G memory with 765M docs
     private final static long MEMORY_COST_PER_DOCUMENT_STORE_ONLY = 46L;
     private final NodeResources resources;
     private final int threadsPerSearch;
@@ -96,6 +97,8 @@ public class NodeResourcesTuning implements ProtonConfig.Producer {
         if (usableMemoryGb() < MIN_MEMORY_PER_FLUSH_THREAD_GB) {
             builder.maxconcurrent(1);
         }
+        builder.maxconcurrent(Math.min(builder.build().maxconcurrent(),
+                                       Math.max(1, (int)Math.ceil(resources.vcpu()*MAX_FLUSH_THREAD_RATIO))));
     }
 
     private void tuneFlushStrategyTlsSize(ProtonConfig.Flush.Memory.Builder builder) {
@@ -118,7 +121,7 @@ public class NodeResourcesTuning implements ProtonConfig.Producer {
 
     private void tuneRequestThreads(ProtonConfig.Builder builder) {
         int numCores = (int)Math.ceil(resources.vcpu());
-        builder.numsearcherthreads(numCores*threadsPerSearch);
+        builder.numsearcherthreads(Math.min(((numCores*4 + threadsPerSearch - 1)/threadsPerSearch)*threadsPerSearch, numCores*threadsPerSearch));
         builder.numsummarythreads(numCores);
         builder.numthreadspersearch(threadsPerSearch);
     }

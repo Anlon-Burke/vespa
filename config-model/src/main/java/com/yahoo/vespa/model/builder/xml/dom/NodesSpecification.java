@@ -11,6 +11,7 @@ import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.DockerImage;
+import com.yahoo.config.provision.LoadBalancerSettings;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.text.XML;
 import com.yahoo.vespa.model.HostResource;
@@ -18,13 +19,10 @@ import com.yahoo.vespa.model.HostSystem;
 import com.yahoo.vespa.model.container.xml.ContainerModelBuilder;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
-
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
-
-import static java.util.stream.Collectors.toList;
 
 /**
  * A common utility class to represent a requirement for nodes during model building.
@@ -258,6 +256,15 @@ public class NodesSpecification {
                                                           ClusterSpec.Id clusterId,
                                                           DeployLogger logger,
                                                           boolean stateful) {
+        return provision(hostSystem, clusterType, clusterId, LoadBalancerSettings.empty, logger, stateful);
+    }
+
+    public Map<HostResource, ClusterMembership> provision(HostSystem hostSystem,
+                                                          ClusterSpec.Type clusterType,
+                                                          ClusterSpec.Id clusterId,
+                                                          LoadBalancerSettings loadBalancerSettings,
+                                                          DeployLogger logger,
+                                                          boolean stateful) {
         if (combinedId.isPresent())
             clusterType = ClusterSpec.Type.combined;
         ClusterSpec cluster = ClusterSpec.request(clusterType, clusterId)
@@ -265,6 +272,7 @@ public class NodesSpecification {
                                          .exclusive(exclusive)
                                          .combinedId(combinedId.map(ClusterSpec.Id::from))
                                          .dockerImageRepository(dockerImageRepo)
+                                         .loadBalancerSettings(loadBalancerSettings)
                                          .stateful(stateful)
                                          .build();
         return hostSystem.allocateHosts(cluster, Capacity.from(min, max, required, canFail, cloudAccount), logger);
@@ -292,10 +300,20 @@ public class NodesSpecification {
         NodeResources.DiskSpeed   diskSpeed     = parseOptionalDiskSpeed(element.stringAttribute("disk-speed"));
         NodeResources.StorageType storageType   = parseOptionalStorageType(element.stringAttribute("storage-type"));
         NodeResources.Architecture architecture = parseOptionalArchitecture(element.stringAttribute("architecture"));
+        NodeResources.GpuResources gpuResources = parseOptionalGpuResources(element.child("gpu"));
 
-        var min = new NodeResources(vcpu.getFirst(),  memory.getFirst(),  disk.getFirst(),  bandwith.getFirst(),  diskSpeed, storageType, architecture);
-        var max = new NodeResources(vcpu.getSecond(), memory.getSecond(), disk.getSecond(), bandwith.getSecond(), diskSpeed, storageType, architecture);
+        var min = new NodeResources(vcpu.getFirst(),  memory.getFirst(),  disk.getFirst(),  bandwith.getFirst(),
+                                    diskSpeed, storageType, architecture, gpuResources);
+        var max = new NodeResources(vcpu.getSecond(), memory.getSecond(), disk.getSecond(), bandwith.getSecond(),
+                                    diskSpeed, storageType, architecture, gpuResources);
         return new Pair<>(min, max);
+    }
+
+    private static NodeResources.GpuResources parseOptionalGpuResources(ModelElement element) {
+        if (element == null) return NodeResources.GpuResources.getDefault();
+        int count = element.requiredIntegerAttribute("count");
+        double memory = parseGbAmount(element.requiredStringAttribute("memory"), "B");
+        return new NodeResources.GpuResources(count, memory);
     }
 
     private static double parseGbAmount(String byteAmount, String unit) {

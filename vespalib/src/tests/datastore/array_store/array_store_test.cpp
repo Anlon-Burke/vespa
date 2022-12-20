@@ -193,15 +193,15 @@ TEST(BasicStoreTest, test_with_trivial_and_non_trivial_types)
     EXPECT_FALSE(vespalib::can_skip_destruction<StringStoreTest::value_type>);
 }
 
-VESPA_GTEST_INSTANTIATE_TEST_SUITE_P(NumberStoreMultiTest,
-                                     NumberStoreTest,
-                                     testing::Values(TestParam(false), TestParam(true)),
-                                     testing::PrintToStringParamName());
+INSTANTIATE_TEST_SUITE_P(NumberStoreMultiTest,
+                         NumberStoreTest,
+                         testing::Values(TestParam(false), TestParam(true)),
+                         testing::PrintToStringParamName());
 
-VESPA_GTEST_INSTANTIATE_TEST_SUITE_P(NumberStoreFreeListsDisabledMultiTest,
-                                     NumberStoreFreeListsDisabledTest,
-                                     testing::Values(TestParam(false), TestParam(true)),
-                                     testing::PrintToStringParamName());
+INSTANTIATE_TEST_SUITE_P(NumberStoreFreeListsDisabledMultiTest,
+                         NumberStoreFreeListsDisabledTest,
+                         testing::Values(TestParam(false), TestParam(true)),
+                         testing::PrintToStringParamName());
 
 TEST_P(NumberStoreTest, control_static_sizes) {
 #ifdef _LIBCPP_VERSION
@@ -480,7 +480,8 @@ struct ByteStoreTest : public ArrayStoreTest<testing::Test, uint8_t> {
     ByteStoreTest() : ArrayStoreTest<testing::Test, uint8_t>(ByteStoreTest::ArrayStoreType::
                                               optimizedConfigForHugePage(1023,
                                                                          vespalib::alloc::MemoryAllocator::HUGEPAGE_SIZE,
-                                                                         4_Ki, 8_Ki, ALLOC_GROW_FACTOR)) {}
+                                                                         vespalib::alloc::MemoryAllocator::PAGE_SIZE,
+                                                                         8_Ki, ALLOC_GROW_FACTOR)) {}
 };
 
 TEST_F(ByteStoreTest, offset_in_EntryRefT_is_within_bounds_when_allocating_memory_buffers_where_wanted_number_of_bytes_is_not_a_power_of_2_and_less_than_huge_page_size)

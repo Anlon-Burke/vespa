@@ -6,8 +6,6 @@ import com.yahoo.security.tls.ConfigFileBasedTlsContext;
 import com.yahoo.security.tls.MixedMode;
 import com.yahoo.security.tls.TlsContext;
 import com.yahoo.security.tls.TransportSecurityUtils;
-import com.yahoo.vespa.defaults.Defaults;
-
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -156,15 +154,12 @@ public class Configurator {
         return zookeeperServerConfig.server().stream()
                                     .map(ZookeeperServerConfig.Server::hostname)
                                     .distinct()
-                                    .collect(Collectors.toList());
+                                    .toList();
     }
 
     Path makeAbsolutePath(String filename) {
         Path path = Paths.get(filename);
-        if (path.isAbsolute())
-            return path;
-        else
-            return Paths.get(Defaults.getDefaults().underVespaHome(filename));
+        return path.isAbsolute() ? path : Paths.get(getDefaults().underVespaHome(filename));
     }
 
     private interface TlsConfig {

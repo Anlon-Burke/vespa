@@ -190,6 +190,7 @@ vespa_define_module(
     src/tests/queryeval/dot_product
     src/tests/queryeval/equiv
     src/tests/queryeval/fake_searchable
+    src/tests/queryeval/filter_search
     src/tests/queryeval/getnodeweight
     src/tests/queryeval/global_filter
     src/tests/queryeval/matching_elements_search
@@ -218,8 +219,11 @@ vespa_define_module(
     src/tests/sortspec
     src/tests/tensor/dense_tensor_store
     src/tests/tensor/direct_tensor_store
+    src/tests/tensor/distance_calculator
     src/tests/tensor/distance_functions
+    src/tests/tensor/hnsw_best_neighbors
     src/tests/tensor/hnsw_index
+    src/tests/tensor/hnsw_nodeid_mapping
     src/tests/tensor/hnsw_saver
     src/tests/tensor/tensor_buffer_operations
     src/tests/tensor/tensor_buffer_store

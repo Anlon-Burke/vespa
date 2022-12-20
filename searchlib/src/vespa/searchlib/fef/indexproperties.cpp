@@ -399,7 +399,7 @@ GlobalFilterLowerLimit::lookup(const Properties &props, double defaultValue)
 
 const vespalib::string GlobalFilterUpperLimit::NAME("vespa.matching.global_filter.upper_limit");
 
-const double GlobalFilterUpperLimit::DEFAULT_VALUE(2.0);
+const double GlobalFilterUpperLimit::DEFAULT_VALUE(1.0);
 
 double
 GlobalFilterUpperLimit::lookup(const Properties &props)
@@ -587,7 +587,13 @@ const uint32_t ArraySize::DEFAULT_VALUE(10000);
 uint32_t
 ArraySize::lookup(const Properties &props)
 {
-    return lookupUint32(props, NAME, DEFAULT_VALUE);
+    return lookup(props, DEFAULT_VALUE);
+}
+
+uint32_t
+ArraySize::lookup(const Properties &props, uint32_t defaultValue)
+{
+    return lookupUint32(props, NAME, defaultValue);
 }
 
 const vespalib::string EstimatePoint::NAME("vespa.hitcollector.estimatepoint");

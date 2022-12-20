@@ -7,6 +7,7 @@ import com.yahoo.vespa.hosted.controller.api.identifiers.ControllerVersion;
 import com.yahoo.vespa.hosted.controller.api.integration.archive.ArchiveService;
 import com.yahoo.vespa.hosted.controller.api.integration.artifact.ArtifactRegistry;
 import com.yahoo.vespa.hosted.controller.api.integration.athenz.AccessControlService;
+import com.yahoo.vespa.hosted.controller.api.integration.aws.EnclaveAccessService;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.ResourceTagger;
 import com.yahoo.vespa.hosted.controller.api.integration.aws.RoleService;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingController;
@@ -19,6 +20,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationS
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ArtifactRepository;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.TesterCloud;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.NameService;
+import com.yahoo.vespa.hosted.controller.api.integration.dns.VpcEndpointService;
 import com.yahoo.vespa.hosted.controller.api.integration.entity.EntityService;
 import com.yahoo.vespa.hosted.controller.api.integration.horizon.HorizonClient;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.ContactRetriever;
@@ -56,6 +58,8 @@ public interface ServiceRegistry {
 
     NameService nameService();
 
+    VpcEndpointService vpcEndpointService();
+
     Mailer mailer();
 
     EndpointCertificateProvider endpointCertificateProvider();
@@ -85,6 +89,8 @@ public interface ServiceRegistry {
     ZoneRegistry zoneRegistry();
 
     ResourceTagger resourceTagger();
+
+    EnclaveAccessService enclaveAccessService();
 
     RoleService roleService();
 
