@@ -17,8 +17,8 @@ bool useful(search::ParseItem::ItemCreator creator)
 }
 
 
-KeywordExtractor::KeywordExtractor(const IDocsumEnvironment * env)
-    : _env(env),
+KeywordExtractor::KeywordExtractor()
+    : IKeywordExtractor(),
       _legalPrefixes(),
       _legalIndexes()
 {
@@ -114,15 +114,10 @@ KeywordExtractor::isLegalIndex(vespalib::stringref idx) const
 {
     vespalib::string resolvedIdxName;
 
-    if (_env != nullptr) {
-        resolvedIdxName = _env->lookupIndex(idx);
+    if ( ! idx.empty() ) {
+        resolvedIdxName = idx;
     } else {
-
-        if ( ! idx.empty() ) {
-            resolvedIdxName = idx;
-        } else {
-            resolvedIdxName = "__defaultindex";
-        }
+        resolvedIdxName = "__defaultindex";
     }
 
     if (resolvedIdxName.empty())

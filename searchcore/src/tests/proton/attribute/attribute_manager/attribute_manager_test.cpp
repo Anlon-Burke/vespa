@@ -72,9 +72,9 @@ using vespa::config::search::AttributesConfig;
 using vespa::config::search::AttributesConfigBuilder;
 using vespalib::eval::ValueType;
 
-typedef search::attribute::Config AVConfig;
-typedef proton::AttributeCollectionSpec::AttributeList AttrSpecList;
-typedef proton::AttributeCollectionSpec AttrMgrSpec;
+using AVConfig = search::attribute::Config;
+using AttrSpecList = proton::AttributeCollectionSpec::AttributeList;
+using AttrMgrSpec = proton::AttributeCollectionSpec;
 
 namespace {
 
@@ -253,7 +253,7 @@ ParallelAttributeManager::ParallelAttributeManager(search::SerialNum configSeria
       alloc_strategy(),
       fastAccessAttributesOnly(false),
       mgr(std::make_shared<AttributeManager::SP>()),
-      masterExecutor(1, 128_Ki),
+      masterExecutor(1),
       master(masterExecutor),
       initializer(std::make_shared<AttributeManagerInitializer>(configSerialNum, documentMetaStoreInitTask,
                                                                 documentMetaStore, *baseAttrMgr, attrCfg,
@@ -261,7 +261,7 @@ ParallelAttributeManager::ParallelAttributeManager(search::SerialNum configSeria
                                                                 fastAccessAttributesOnly, master, mgr))
 {
     documentMetaStore->setCommittedDocIdLimit(docIdLimit);
-    vespalib::ThreadStackExecutor executor(3, 128_Ki);
+    vespalib::ThreadStackExecutor executor(3);
     initializer::TaskRunner taskRunner(executor);
     taskRunner.runTask(initializer);
 }

@@ -43,7 +43,6 @@ public:
         search::docsummary::IDocsumStore::UP createDocsumStore() override;
 
         const search::IAttributeManager * getAttributeManager() const override { return _attributeMgr.get(); }
-        vespalib::string lookupIndex(const vespalib::string & s) const override { (void) s; return ""; }
         const juniper::Juniper * getJuniper() const override { return _juniperConfig.get(); }
     };
 
@@ -52,7 +51,7 @@ private:
     std::shared_ptr<search::IDocumentStore> _docStore;
 
 public:
-    typedef std::shared_ptr<SummaryManager> SP;
+    using SP = std::shared_ptr<SummaryManager>;
     SummaryManager(vespalib::Executor &shared_executor,
                    const search::LogDocumentStore::Config & summary,
                    const search::GrowStrategy & growStrategy,

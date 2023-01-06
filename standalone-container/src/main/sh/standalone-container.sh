@@ -124,6 +124,7 @@ StartCommand() {
     fi
 
     local pidfile="${VESPA_HOME}/var/run/$service.pid"
+    FixDataDirectory "$(dirname "$pidfile")"
     if [ "$force" = false ] && test -r "$pidfile"; then
         echo "$service is already running as PID $(< "$pidfile") according to $pidfile"
         return
@@ -132,7 +133,7 @@ StartCommand() {
     # common setup
     export VESPA_SERVICE_NAME="$service"
 
-    if grep -q 'region.*us-west' /etc/vespa/host-admin.json; then
+    if true; then
         ${VESPA_HOME}/libexec/vespa/script-utils run-standalone-container "${jvm_arguments[@]}" &
         echo $! > "$pidfile"
         return
@@ -152,7 +153,6 @@ StartCommand() {
     # may be invoked w/o path.  In any case, checkjava verifies bare 'java'.
     checkjava
 
-    FixDataDirectory "$(dirname "$pidfile")"
 
     local vespa_log="${VESPA_HOME}/logs/vespa/vespa.log"
     export VESPA_LOG_TARGET="file:$vespa_log"

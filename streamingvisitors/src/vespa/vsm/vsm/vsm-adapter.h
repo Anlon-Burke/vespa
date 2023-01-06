@@ -84,11 +84,10 @@ public:
 
     // inherit doc from IDocsumEnvironment
     const search::IAttributeManager * getAttributeManager() const override { return nullptr; }
-    vespalib::string lookupIndex(const vespalib::string&) const override { return ""; }
     const juniper::Juniper * getJuniper() const override { return _juniper.get(); }
 };
 
-typedef std::shared_ptr<DocsumTools> DocsumToolsPtr;
+using DocsumToolsPtr = std::shared_ptr<DocsumTools>;
 
 class VSMConfigSnapshot {
 private:

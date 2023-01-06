@@ -109,6 +109,9 @@ public class GroupPreparer {
                 HostSharing sharing = hostSharing(cluster, hostType);
                 Version osVersion = nodeRepository.osVersions().targetFor(hostType).orElse(Version.emptyVersion);
                 NodeAllocation.HostDeficit deficit = allocation.hostDeficit().get();
+                // TODO: Remove
+                log.info("In " + application + ": " + deficit + ": " +
+                         allocation.lastOffered().stream().map(n -> n.toString() + "[resizable: " + n.isResizable).collect(Collectors.joining(", ")));
 
                 List<Node> hosts = new ArrayList<>();
                 Consumer<List<ProvisionedHost>> provisionedHostsConsumer = provisionedHosts -> {
@@ -165,7 +168,8 @@ public class GroupPreparer {
                                                           nodeRepository.nameResolver(),
                                                           nodeRepository.nodes(),
                                                           nodeRepository.resourcesCalculator(),
-                                                          nodeRepository.spareCount());
+                                                          nodeRepository.spareCount(),
+                                                          requestedNodes.cloudAccount().isEnclave(nodeRepository.zone()));
         allocation.offer(prioritizer.collect(surplusActiveNodes));
         return allocation;
     }

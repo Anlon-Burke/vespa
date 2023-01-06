@@ -34,7 +34,6 @@
 #include <vespa/document/config/documenttypes_config_fwd.h>
 #include <vespa/document/repo/documenttyperepo.h>
 #include <vespa/document/test/make_bucket_space.h>
-#include <vespa/vespalib/util/size_literals.h>
 #include <filesystem>
 
 #include <vespa/log/log.h>
@@ -62,10 +61,10 @@ using search::transactionlog::TransLogServer;
 using storage::spi::ConformanceTest;
 using storage::spi::PersistenceProvider;
 
-typedef ConformanceTest::PersistenceFactory         PersistenceFactory;
-typedef DocumentDBConfig::DocumenttypesConfigSP     DocumenttypesConfigSP;
-typedef std::map<DocTypeName, DocumentDB::SP>       DocumentDBMap;
-typedef std::vector<DocTypeName>                    DocTypeVector;
+using PersistenceFactory = ConformanceTest::PersistenceFactory;
+using DocumenttypesConfigSP = DocumentDBConfig::DocumenttypesConfigSP;
+using DocumentDBMap = std::map<DocTypeName, DocumentDB::SP>;
+using DocTypeVector = std::vector<DocTypeName>;
 
 void
 storeDocType(DocTypeVector *types, const DocumentType &type)
@@ -75,8 +74,8 @@ storeDocType(DocTypeVector *types, const DocumentType &type)
 
 
 struct SchemaConfigFactory {
-    typedef DocumentDBConfig CS;
-    typedef std::shared_ptr<SchemaConfigFactory> SP;
+    using CS = DocumentDBConfig;
+    using SP = std::shared_ptr<SchemaConfigFactory>;
     virtual ~SchemaConfigFactory() = default;
     static SchemaConfigFactory::SP get() { return std::make_shared<SchemaConfigFactory>(); }
     virtual CS::IndexschemaConfigSP createIndexSchema(const DocumentType &docType) {
@@ -118,7 +117,7 @@ public:
         if (docType == nullptr) {
             return DocumentDBConfig::SP();
         }
-        typedef DocumentDBConfig CS;
+        using CS = DocumentDBConfig;
         CS::IndexschemaConfigSP indexschema = _schemaFactory->createIndexSchema(*docType);
         CS::AttributesConfigSP attributes = _schemaFactory->createAttributes(*docType);
         CS::SummaryConfigSP summary = _schemaFactory->createSummary(*docType);
@@ -203,7 +202,7 @@ public:
                                   _shared_service, _tls, _metricsWireService,
                                   _fileHeaderContext, std::make_shared<search::attribute::Interlock>(),
                                   _config_stores.getConfigStore(docType.toString()),
-                                  std::make_shared<vespalib::ThreadStackExecutor>(16, 128_Ki), HwInfo());
+                                  std::make_shared<vespalib::ThreadStackExecutor>(16), HwInfo());
     }
 };
 
@@ -214,7 +213,7 @@ DocumentDBFactory::DocumentDBFactory(const vespalib::string &baseDir, int tlsLis
       _tlsSpec(vespalib::make_string("tcp/localhost:%d", tlsListenPort)),
       _queryLimiter(),
       _metricsWireService(),
-      _summaryExecutor(8, 128_Ki),
+      _summaryExecutor(8),
       _shared_service(_summaryExecutor, _summaryExecutor),
       _tls(_shared_service.transport(), "tls", tlsListenPort, baseDir, _fileHeaderContext)
 {}
@@ -224,7 +223,7 @@ class DocumentDBRepo {
 private:
     DocumentDBMap _docDbs;
 public:
-    typedef std::unique_ptr<DocumentDBRepo> UP;
+    using UP = std::unique_ptr<DocumentDBRepo>;
     DocumentDBRepo(const ConfigFactory &cfgFactory, DocumentDBFactory &docDbFactory)
         : _docDbs()
     {

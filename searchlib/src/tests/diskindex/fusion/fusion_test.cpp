@@ -184,9 +184,9 @@ assert_interleaved_features(DiskIndex &d, const vespalib::string &field, const v
 void
 validateDiskIndex(DiskIndex &dw, bool f2HasElements, bool f3HasWeights)
 {
-    typedef DiskIndex::LookupResult LR;
-    typedef index::PostingListHandle PH;
-    typedef search::queryeval::SearchIterator SB;
+    using LR = DiskIndex::LookupResult;
+    using PH = index::PostingListHandle;
+    using SB = search::queryeval::SearchIterator;
 
     const Schema &schema(dw.getSchema());
 
@@ -385,12 +385,12 @@ FusionTest::requireThatFusionIsWorking(const vespalib::string &prefix, bool dire
     ib.close();
 
     vespalib::string tsName = dump2dir + "/.teststamp";
-    typedef search::FileKit FileKit;
+    using FileKit = search::FileKit;
     ASSERT_TRUE(FileKit::createStamp(tsName));
     ASSERT_TRUE(FileKit::hasStamp(tsName));
     ASSERT_TRUE(FileKit::removeStamp(tsName));
     ASSERT_FALSE(FileKit::hasStamp(tsName));
-    vespalib::ThreadStackExecutor executor(4, 0x10000);
+    vespalib::ThreadStackExecutor executor(4);
 
     do {
         DiskIndex dw2(prefix + "dump2");
@@ -499,7 +499,7 @@ FusionTest::make_simple_index(const vespalib::string &dump_dir, const IFieldLeng
 bool
 FusionTest::try_merge_simple_indexes(const vespalib::string &dump_dir, const std::vector<vespalib::string> &sources, std::shared_ptr<IFlushToken> flush_token)
 {
-    vespalib::ThreadStackExecutor executor(4, 0x10000);
+    vespalib::ThreadStackExecutor executor(4);
     TuneFileIndexing tuneFileIndexing;
     DummyFileHeaderContext fileHeaderContext;
     SelectorArray selector(20, 0);

@@ -31,6 +31,7 @@ import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
 import com.yahoo.io.IOUtils;
+import com.yahoo.jdisc.Response;
 import com.yahoo.jdisc.http.filter.security.misc.User;
 import com.yahoo.restapi.ByteArrayResponse;
 import com.yahoo.restapi.ErrorResponse;
@@ -47,6 +48,7 @@ import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
 import com.yahoo.text.Text;
 import com.yahoo.vespa.athenz.api.OAuthCredentials;
+import com.yahoo.vespa.athenz.client.zms.ZmsClientException;
 import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
@@ -64,6 +66,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.configserver.Cluster;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServerException;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.DeploymentResult;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.DeploymentResult.LogEntry;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.Load;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.LoadBalancer;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Node;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.NodeFilter;
@@ -74,7 +77,6 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.SourceRevision;
-import com.yahoo.vespa.hosted.controller.api.integration.dns.VpcEndpointService.VpcEndpoint;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartFilter;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
 import com.yahoo.vespa.hosted.controller.api.role.Role;
@@ -228,10 +230,10 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         }
         catch (ConfigServerException e) {
             return switch (e.code()) {
-                case NOT_FOUND: yield ErrorResponse.notFoundError(Exceptions.toMessageString(e));
-                case ACTIVATION_CONFLICT: yield new ErrorResponse(CONFLICT, e.code().name(), Exceptions.toMessageString(e));
-                case INTERNAL_SERVER_ERROR: yield ErrorResponses.logThrowing(request, log, e);
-                default: yield new ErrorResponse(BAD_REQUEST, e.code().name(), Exceptions.toMessageString(e));
+                case NOT_FOUND -> ErrorResponse.notFoundError(Exceptions.toMessageString(e));
+                case ACTIVATION_CONFLICT -> new ErrorResponse(CONFLICT, e.code().name(), Exceptions.toMessageString(e));
+                case INTERNAL_SERVER_ERROR -> ErrorResponses.logThrowing(request, log, e);
+                default -> new ErrorResponse(BAD_REQUEST, e.code().name(), Exceptions.toMessageString(e));
             };
         }
         catch (RuntimeException e) {
@@ -434,26 +436,31 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             return ErrorResponse.badRequest("Can only see access requests for cloud tenants");
 
         var accessControlService = controller.serviceRegistry().accessControlService();
-        var accessRoleInformation = accessControlService.getAccessRoleInformation(tenant);
-        var managedAccess = accessControlService.getManagedAccess(tenant);
         var slime = new Slime();
         var cursor = slime.setObject();
-        cursor.setBool("managedAccess", managedAccess);
-        accessRoleInformation.getPendingRequest()
-                .ifPresent(membershipRequest -> {
-                    var requestCursor = cursor.setObject("pendingRequest");
-                    requestCursor.setString("requestTime", membershipRequest.getCreationTime());
-                    requestCursor.setString("reason", membershipRequest.getReason());
-                });
-        var auditLogCursor = cursor.setArray("auditLog");
-        accessRoleInformation.getAuditLog()
-                .forEach(auditLogEntry -> {
-                    var entryCursor = auditLogCursor.addObject();
-                    entryCursor.setString("created", auditLogEntry.getCreationTime());
-                    entryCursor.setString("approver", auditLogEntry.getApprover());
-                    entryCursor.setString("reason", auditLogEntry.getReason());
-                    entryCursor.setString("status", auditLogEntry.getAction());
-                });
+        try {
+            var accessRoleInformation = accessControlService.getAccessRoleInformation(tenant);
+            var managedAccess = accessControlService.getManagedAccess(tenant);
+            cursor.setBool("managedAccess", managedAccess);
+            accessRoleInformation.getPendingRequest()
+                                 .ifPresent(membershipRequest -> {
+                                     var requestCursor = cursor.setObject("pendingRequest");
+                                     requestCursor.setString("requestTime", membershipRequest.getCreationTime());
+                                     requestCursor.setString("reason", membershipRequest.getReason());
+                                 });
+            var auditLogCursor = cursor.setArray("auditLog");
+            accessRoleInformation.getAuditLog()
+                                 .forEach(auditLogEntry -> {
+                                     var entryCursor = auditLogCursor.addObject();
+                                     entryCursor.setString("created", auditLogEntry.getCreationTime());
+                                     entryCursor.setString("approver", auditLogEntry.getApprover());
+                                     entryCursor.setString("reason", auditLogEntry.getReason());
+                                     entryCursor.setString("status", auditLogEntry.getAction());
+                                 });
+        }
+        catch (ZmsClientException e) {
+            if (e.getErrorCode() == 404) cursor.setBool("managedAccess", false);
+        }
         return new SlimeJsonResponse(slime);
     }
 
@@ -500,10 +507,16 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (controller.tenants().require(tenant).type() != Tenant.Type.cloud)
             return ErrorResponse.badRequest("Can only set access privel for cloud tenants");
 
-        controller.serviceRegistry().accessControlService().setManagedAccess(tenant, managedAccess);
-        var slime = new Slime();
-        slime.setObject().setBool("managedAccess", managedAccess);
-        return new SlimeJsonResponse(slime);
+        try {
+            controller.serviceRegistry().accessControlService().setManagedAccess(tenant, managedAccess);
+            var slime = new Slime();
+            slime.setObject().setBool("managedAccess", managedAccess);
+            return new SlimeJsonResponse(slime);
+        }
+        catch (ZmsClientException e) {
+            if (e.getErrorCode() == 404) return ErrorResponse.conflict("Configuration not yet ready, please try again in a few minutes");
+            throw e;
+        }
     }
 
     private HttpResponse tenantInfo(String tenantName, HttpRequest request) {
@@ -1348,17 +1361,13 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             toSlime(cluster.min(), clusterObject.setObject("min"));
             toSlime(cluster.max(), clusterObject.setObject("max"));
             toSlime(cluster.current(), clusterObject.setObject("current"));
-            if (cluster.target().isPresent()
-                && ! cluster.target().get().justNumbers().equals(cluster.current().justNumbers()))
-                toSlime(cluster.target().get(), clusterObject.setObject("target"));
-            cluster.suggested().ifPresent(suggested -> toSlime(suggested, clusterObject.setObject("suggested")));
-            utilizationToSlime(cluster.utilization(), clusterObject.setObject("utilization"));
+            toSlime(cluster.target(), cluster, clusterObject.setObject("target"));
+            toSlime(cluster.suggested(), cluster, clusterObject.setObject("suggested"));
+            legacyUtilizationToSlime(cluster.target().peak(), cluster.target().ideal(), clusterObject.setObject("utilization")); // TODO: Remove after January 2023
             scalingEventsToSlime(cluster.scalingEvents(), clusterObject.setArray("scalingEvents"));
-            clusterObject.setString("autoscalingStatusCode", cluster.autoscalingStatusCode());
-            clusterObject.setString("autoscalingStatus", cluster.autoscalingStatus());
+            clusterObject.setString("autoscalingStatusCode", cluster.target().status()); // TODO: Remove after January 2023
+            clusterObject.setString("autoscalingStatus", cluster.target().description()); // TODO: Remove after January 2023
             clusterObject.setLong("scalingDuration", cluster.scalingDuration().toMillis());
-            clusterObject.setDouble("maxQueryGrowthRate", cluster.maxQueryGrowthRate());
-            clusterObject.setDouble("currentQueryFractionOfMax", cluster.currentQueryFractionOfMax());
         }
         return new SlimeJsonResponse(slime);
     }
@@ -2704,15 +2713,35 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         object.setDouble("cost", cost);
     }
 
-    private void utilizationToSlime(Cluster.Utilization utilization, Cursor utilizationObject) {
-        utilizationObject.setDouble("idealCpu", utilization.idealCpu());
-        utilizationObject.setDouble("peakCpu", utilization.peakCpu());
+    private void toSlime(Cluster.Autoscaling autoscaling, Cluster cluster, Cursor autoscalingObject) {
+        // TODO: Remove after January 2023
+        if (autoscaling.resources().isPresent()
+            && ! autoscaling.resources().get().justNumbers().equals(cluster.current().justNumbers()))
+            toSlime(autoscaling.resources().get(), autoscalingObject);
 
-        utilizationObject.setDouble("idealMemory", utilization.idealMemory());
-        utilizationObject.setDouble("peakMemory", utilization.peakMemory());
+        autoscalingObject.setString("status", autoscaling.status());
+        autoscalingObject.setString("description", autoscaling.description());
+        autoscaling.resources().ifPresent(resources -> toSlime(resources, autoscalingObject.setObject("resources")));
+        autoscalingObject.setLong("at", autoscaling.at().toEpochMilli());
+        toSlime(autoscaling.peak(), autoscalingObject.setObject("peak"));
+        toSlime(autoscaling.ideal(), autoscalingObject.setObject("ideal"));
+    }
 
-        utilizationObject.setDouble("idealDisk", utilization.idealDisk());
-        utilizationObject.setDouble("peakDisk", utilization.peakDisk());
+    private void toSlime(Load load, Cursor loadObject) {
+        loadObject.setDouble("cpu", load.cpu());
+        loadObject.setDouble("memory", load.memory());
+        loadObject.setDouble("disk", load.disk());
+    }
+
+    private void legacyUtilizationToSlime(Load peak, Load ideal, Cursor utilizationObject) {
+        utilizationObject.setDouble("idealCpu", ideal.cpu());
+        utilizationObject.setDouble("peakCpu", peak.cpu());
+
+        utilizationObject.setDouble("idealMemory", ideal.memory());
+        utilizationObject.setDouble("peakMemory", peak.memory());
+
+        utilizationObject.setDouble("idealDisk", ideal.disk());
+        utilizationObject.setDouble("peakDisk", peak.disk());
     }
 
     private void scalingEventsToSlime(List<Cluster.ScalingEvent> scalingEvents, Cursor scalingEventsArray) {

@@ -122,6 +122,7 @@ private:
     vespalib::eval::CompileCache::ExecutorBinding::UP _compile_cache_executor_binding;
     matching::QueryLimiter          _queryLimiter;
     uint32_t                        _distributionKey;
+    uint32_t                        _numThreadsPerSearch;
     bool                            _isInitializing;
     bool                            _abortInit;
     bool                            _initStarted;
@@ -152,8 +153,8 @@ private:
     bool updateNodeUp(BucketSpace bucketSpace, bool nodeUpInBucketSpace);
     void closeDocumentDBs(vespalib::ThreadStackExecutorBase & executor);
 public:
-    typedef std::unique_ptr<Proton> UP;
-    typedef std::shared_ptr<Proton> SP;
+    using UP = std::unique_ptr<Proton>;
+    using SP = std::shared_ptr<Proton>;
 
     Proton(FastOS_ThreadPool & threadPool, FNET_Transport & transport, const config::ConfigUri & configUri,
            const vespalib::string &progName, vespalib::duration subscribeTimeout);
@@ -222,6 +223,7 @@ public:
 
     bool hasAbortedInit() const { return _abortInit; }
     storage::spi::PersistenceProvider & getPersistence();
+    uint32_t getNumThreadsPerSearch() const override { return _numThreadsPerSearch; }
 
     void get_state(const vespalib::slime::Inserter &inserter, bool full) const override;
     std::vector<vespalib::string> get_children_names() const override;

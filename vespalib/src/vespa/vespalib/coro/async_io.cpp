@@ -16,20 +16,16 @@ namespace {
 
 using Handle = std::coroutine_handle<>;
 
-template <typename F>
-struct await_void {
-    bool ready;
-    F on_suspend;
-    await_void(bool ready_in, F on_suspend_in)
-      : ready(ready_in), on_suspend(on_suspend_in) {}
-    bool await_ready() const noexcept { return ready; }
-    auto await_suspend(Handle handle) const { return on_suspend(handle); }
-    constexpr void await_resume() noexcept {}
-};
-template <typename F>
-await_void(bool ready_in, F on_suspend_in) -> await_void<F>;
-
 struct SelectorThread : AsyncIo {
+
+    struct awaiter_base {
+        SelectorThread &self;
+        awaiter_base(SelectorThread &self_in) noexcept : self(self_in) {}
+        awaiter_base(const awaiter_base &) = delete;
+        awaiter_base &operator=(const awaiter_base &) = delete;
+        awaiter_base(awaiter_base &&) = delete;
+        awaiter_base &operator=(awaiter_base &&) = delete;
+    };
 
     struct FdContext {
         int    _fd;
@@ -42,70 +38,108 @@ struct SelectorThread : AsyncIo {
             _epoll_read(false), _epoll_write(false),
             _reader(nullptr), _writer(nullptr) {}
     };
-    std::map<int,FdContext> _state;
-    std::set<int> _check;
+    struct RunGuard;
+    using ThreadId = std::atomic<std::thread::id>;
 
-    Selector<FdContext> _selector;
-    bool                _shutdown;
-    std::thread         _thread;
-    bool                _check_queue;
-    std::vector<Handle> _todo;
-    std::mutex          _lock;
-    std::vector<Handle> _queue;
+    std::map<int,FdContext> _state;
+    std::set<int>           _check;
+    Selector<FdContext>     _selector;
+    std::thread             _thread;
+    ThreadId                _thread_id;
+    bool                    _check_queue;
+    std::vector<Handle>     _todo;
+    std::mutex              _lock;
+    std::vector<Handle>     _queue;
 
     SelectorThread()
       : _state(),
         _check(),
         _selector(),
-        _shutdown(false),
-        _thread(&SelectorThread::main, this),
+        _thread(),
+        _thread_id(std::thread::id()),
         _check_queue(false),
         _todo(),
         _lock(),
-        _queue() {}
+        _queue()
+    {
+        static_assert(ThreadId::is_always_lock_free);
+    }
+    void start() override;
     void main();
+    void init_shutdown() override;
+    void fini_shutdown() override;
     ~SelectorThread();
-    bool is_my_thread() const { return (std::this_thread::get_id() == _thread.get_id()); }
+    bool running() const noexcept {
+        return (_thread_id.load(std::memory_order_relaxed) != std::thread::id());
+    }
+    bool stopped() const noexcept {
+        return (_thread_id.load(std::memory_order_relaxed) == std::thread::id());
+    }
+    bool in_thread() const noexcept {
+        return (std::this_thread::get_id() == _thread_id.load(std::memory_order_relaxed));
+    }
     auto protect() { return std::lock_guard(_lock); }
     auto queue_self_unless(bool ready) {
-        return await_void(ready,
-                          [this](Handle handle)
-                          {
-                              bool need_wakeup = false;
-                              {
-                                  auto guard = protect();
-                                  need_wakeup = _queue.empty();
-                                  _queue.push_back(handle);
-                              }
-                              if (need_wakeup) {
-                                  _selector.wakeup();
-                              }
-                          });
+        struct awaiter : awaiter_base {
+            bool ready;
+            awaiter(SelectorThread &self_in, bool ready_in) noexcept
+              : awaiter_base(self_in), ready(ready_in) {}
+            bool await_ready() const noexcept { return ready; }
+            bool await_resume() const noexcept { return self.in_thread(); }
+            bool await_suspend(Handle handle) __attribute__((noinline)) {
+                bool need_wakeup = false;
+                {
+                    auto guard = self.protect();
+                    if (self.stopped()) {
+                        return false;
+                    }
+                    need_wakeup = self._queue.empty();
+                    self._queue.push_back(handle);
+                }
+                if (need_wakeup) {
+                    self._selector.wakeup();
+                }
+                return true;
+            }
+        };
+        return awaiter(*this, ready);
     }
-    auto enter_thread() { return queue_self_unless(is_my_thread()); }
+    auto enter_thread() { return queue_self_unless(in_thread()); }
     auto readable(int fd) {
-        REQUIRE(is_my_thread());
-        return await_void((fd < 0),
-                          [this, fd](Handle handle)
-                          {
-                              auto [pos, ignore] = _state.try_emplace(fd, fd);
-                              FdContext &state = pos->second;
-                              REQUIRE(!state._reader && "conflicting reads detected");
-                              state._reader = handle;
-                              _check.insert(state._fd);
-                          });
+        struct awaiter : awaiter_base {
+            int fd;
+            awaiter(SelectorThread &self_in, int fd_in) noexcept
+              : awaiter_base(self_in), fd(fd_in) {}
+            bool await_ready() const noexcept { return (fd < 0) || self.stopped(); }
+            bool await_resume() const noexcept { return self.running(); }
+            void await_suspend(Handle handle) __attribute__((noinline)) {
+                auto [pos, ignore] = self._state.try_emplace(fd, fd);
+                FdContext &state = pos->second;
+                REQUIRE(!state._reader && "conflicting reads detected");
+                state._reader = handle;
+                self._check.insert(state._fd);
+            }
+        };
+        REQUIRE(in_thread());
+        return awaiter(*this, fd);
     }
     auto writable(int fd) {
-        REQUIRE(is_my_thread());
-        return await_void((fd < 0),
-                          [this, fd](Handle handle)
-                          {
-                              auto [pos, ignore] = _state.try_emplace(fd, fd);
-                              FdContext &state = pos->second;
-                              REQUIRE(!state._writer && "conflicting write detected");
-                              state._writer = handle;
-                              _check.insert(state._fd);
-                          });
+        struct awaiter : awaiter_base {
+            int fd;
+            awaiter(SelectorThread &self_in, int fd_in) noexcept
+              : awaiter_base(self_in), fd(fd_in) {}
+            bool await_ready() const noexcept { return (fd < 0) || self.stopped(); }
+            bool await_resume() const noexcept { return self.running(); }
+            void await_suspend(Handle handle) __attribute__((noinline)) {
+                auto [pos, ignore] = self._state.try_emplace(fd, fd);
+                FdContext &state = pos->second;
+                REQUIRE(!state._writer && "conflicting reads detected");
+                state._writer = handle;
+                self._check.insert(state._fd);
+            }
+        };
+        REQUIRE(in_thread());
+        return awaiter(*this, fd);
     }
     void update_epoll_state() {
         for (int fd: _check) {
@@ -165,56 +199,130 @@ struct SelectorThread : AsyncIo {
         return "selector-thread";
     }
     Lazy<SocketHandle> accept(ServerSocket &server_socket) override {
-        co_await enter_thread();
-        co_await readable(server_socket.get_fd());
-        co_return server_socket.accept();
+        bool in_thread = co_await enter_thread();
+        if (in_thread) {
+            bool can_read = co_await readable(server_socket.get_fd());
+            if (can_read) {
+                co_return server_socket.accept();
+            }
+        }
+        co_return SocketHandle(-ECANCELED);
     }
     Lazy<SocketHandle> connect(const SocketAddress &addr) override {
-        co_await enter_thread();
-        auto tweak = [](SocketHandle &handle){ return handle.set_blocking(false); };
-        auto socket = addr.connect(tweak);
-        co_await writable(socket.get());
-        co_return std::move(socket);
+        bool in_thread = co_await enter_thread();
+        if (in_thread) {
+            auto tweak = [](SocketHandle &handle){ return handle.set_blocking(false); };
+            auto socket = addr.connect(tweak);
+            bool can_write = co_await writable(socket.get());
+            if (can_write) {
+                co_return std::move(socket);
+            }
+        }
+        co_return SocketHandle(-ECANCELED);
     }
     Lazy<ssize_t> read(SocketHandle &socket, char *buf, size_t len) override {
-        co_await enter_thread();
-        co_await readable(socket.get());
-        co_return socket.read(buf, len);
+        bool in_thread = co_await enter_thread();
+        if (in_thread) {
+            bool can_read = co_await readable(socket.get());
+            if (can_read) {
+                ssize_t res = socket.read(buf, len);
+                co_return (res < 0) ? -errno : res;
+            }
+        }
+        co_return -ECANCELED;
     }
     Lazy<ssize_t> write(SocketHandle &socket, const char *buf, size_t len) override {
-        co_await enter_thread();
-        co_await writable(socket.get());
-        co_return socket.write(buf, len);
+        bool in_thread = co_await enter_thread();
+        if (in_thread) {
+            bool can_write = co_await writable(socket.get());
+            if (can_write) {
+                ssize_t res = socket.write(buf, len);
+                co_return (res < 0) ? -errno : res;
+            }
+        }
+        co_return -ECANCELED;
     }
-    Work schedule() override {
-        co_await queue_self_unless(false);
-        co_return Done{};
+    Lazy<bool> schedule() override {
+        co_return co_await queue_self_unless(false);
     }
-    Detached shutdown() {
-        co_await enter_thread();
+    Detached async_shutdown() {
+        bool in_thread = co_await enter_thread();
+        REQUIRE(in_thread && "unable to initialize shutdown of internal thread");
         {
             auto guard = protect();
-            _shutdown = true;
+            _thread_id = std::thread::id();
         }
+    }
+};
+
+void
+SelectorThread::start()
+{
+    _thread = std::thread(&SelectorThread::main, this);
+    _thread_id.wait(std::thread::id());
+}
+
+struct SelectorThread::RunGuard {
+    SelectorThread &self;
+    RunGuard(SelectorThread &self_in) noexcept : self(self_in) {
+        self._thread_id = std::this_thread::get_id();
+        self._thread_id.notify_all();
+    }
+    ~RunGuard() {
+        REQUIRE(self.stopped());
+        self._check.clear();
+        for (auto &entry: self._state) {
+            FdContext &ctx = entry.second;
+            const bool was_added = (ctx._epoll_read || ctx._epoll_write);
+            if (was_added) {
+                self._selector.remove(ctx._fd);
+            }
+            if (ctx._reader) {
+                auto reader = std::exchange(ctx._reader, nullptr);
+                reader.resume();
+            }
+            if (ctx._writer) {
+                auto writer = std::exchange(ctx._writer, nullptr);
+                writer.resume();
+            }
+        }
+        self._state.clear();
+        REQUIRE(self._check.empty());
+        self._check_queue = true;
+        self.handle_queue();
     }
 };
 
 void
 SelectorThread::main()
 {
-    const int ms_timeout = 100;
-    while (!_shutdown) {
+    RunGuard guard(*this);
+    while (running()) {
         update_epoll_state();
-        _selector.poll(ms_timeout);
+        _selector.poll(1000);
         _selector.dispatch(*this);
         handle_queue();
     }
 }
 
-SelectorThread::~SelectorThread() {
-    shutdown();
-    REQUIRE(!is_my_thread());
+void
+SelectorThread::init_shutdown()
+{
+    async_shutdown();
+}
+
+void
+SelectorThread::fini_shutdown()
+{
     _thread.join();
+}
+
+SelectorThread::~SelectorThread()
+{
+    REQUIRE(_state.empty());
+    REQUIRE(_check.empty());
+    REQUIRE(_todo.empty());
+    REQUIRE(_queue.empty());
 }
 
 }
@@ -222,9 +330,45 @@ SelectorThread::~SelectorThread() {
 AsyncIo::~AsyncIo() = default;
 AsyncIo::AsyncIo() = default;
 
-std::shared_ptr<AsyncIo>
+AsyncIo::Owner::Owner(std::shared_ptr<AsyncIo> async_io)
+  : _async_io(std::move(async_io)),
+    _init_shutdown_called(false),
+    _fini_shutdown_called(false)
+{
+    _async_io->start();
+}
+
+void
+AsyncIo::Owner::init_shutdown()
+{
+    if (!_init_shutdown_called) {
+        if (_async_io) {
+            _async_io->init_shutdown();
+        }
+        _init_shutdown_called = true;
+    }
+}
+
+void
+AsyncIo::Owner::fini_shutdown()
+{
+    if (!_fini_shutdown_called) {
+        init_shutdown();
+        if (_async_io) {
+            _async_io->fini_shutdown();
+        }
+        _fini_shutdown_called = true;
+    }
+}
+
+AsyncIo::Owner::~Owner()
+{
+    fini_shutdown();
+}
+
+AsyncIo::Owner
 AsyncIo::create() {
-    return std::make_shared<SelectorThread>();
+    return Owner(std::make_shared<SelectorThread>());
 }
 
 }

@@ -54,6 +54,8 @@ public class VespaMetricSet {
         Set<Metric> metrics = new LinkedHashSet<>();
 
         metrics.add(new Metric("slobrok.heartbeats.failed.count"));
+        metrics.add(new Metric("slobrok.missing.consensus.count"));
+
         metrics.add(new Metric("logd.processed.lines.count"));
         metrics.add(new Metric("worker.connections.max"));
         metrics.add(new Metric("endpoint.certificate.expiry.seconds"));
@@ -326,6 +328,12 @@ public class VespaMetricSet {
         metrics.add(new Metric("query_latency.count"));
         metrics.add(new Metric("query_latency.95percentile"));
         metrics.add(new Metric("query_latency.99percentile"));
+        metrics.add(new Metric("query_timeout.min"));
+        metrics.add(new Metric("query_timeout.max"));
+        metrics.add(new Metric("query_timeout.sum"));
+        metrics.add(new Metric("query_timeout.count"));
+        metrics.add(new Metric("query_timeout.95percentile"));
+        metrics.add(new Metric("query_timeout.99percentile"));
         metrics.add(new Metric("failed_queries.rate"));
         metrics.add(new Metric("degraded_queries.rate"));
         metrics.add(new Metric("hits_per_query.max"));
