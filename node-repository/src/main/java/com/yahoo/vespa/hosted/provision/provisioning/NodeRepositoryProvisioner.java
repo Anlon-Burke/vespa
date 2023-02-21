@@ -88,8 +88,8 @@ public class NodeRepositoryProvisioner implements Provisioner {
 
         if (cluster.group().isPresent()) throw new IllegalArgumentException("Node requests cannot specify a group");
 
-        nodeResourceLimits.ensureWithinAdvertisedLimits("Min", requested.minResources().nodeResources(), cluster);
-        nodeResourceLimits.ensureWithinAdvertisedLimits("Max", requested.maxResources().nodeResources(), cluster);
+        nodeResourceLimits.ensureWithinAdvertisedLimits("Min", requested.minResources().nodeResources(), application, cluster);
+        nodeResourceLimits.ensureWithinAdvertisedLimits("Max", requested.maxResources().nodeResources(), application, cluster);
 
         int groups;
         NodeResources resources;
@@ -98,7 +98,7 @@ public class NodeRepositoryProvisioner implements Provisioner {
             cluster = capacityPolicies.decideExclusivity(requested, cluster);
             Capacity actual = capacityPolicies.applyOn(requested, application, cluster.isExclusive());
             ClusterResources target = decideTargetResources(application, cluster, actual);
-            ensureRedundancy(target.nodes(), cluster, actual.canFail(), application);
+            validate(actual, target, cluster, application);
             logIfDownscaled(requested.minResources().nodes(), actual.minResources().nodes(), cluster, logger);
 
             groups = target.groups();
@@ -204,18 +204,17 @@ public class NodeRepositoryProvisioner implements Provisioner {
                                   .advertisedResources();
     }
 
-    /**
-     * Throw if the node count is 1 for container and content clusters and we're in a production zone
-     *
-     * @throws IllegalArgumentException if only one node is requested and we can fail
-     */
-    private void ensureRedundancy(int nodeCount, ClusterSpec cluster, boolean canFail, ApplicationId application) {
-        if (! application.instance().isTester() &&
-            canFail &&
-            nodeCount == 1 &&
-            requiresRedundancy(cluster.type()) &&
-            zone.environment().isProduction())
-            throw new IllegalArgumentException("Deployments to prod require at least 2 nodes per cluster for redundancy. Not fulfilled for " + cluster);
+    private void validate(Capacity actual, ClusterResources target, ClusterSpec cluster, ApplicationId application) {
+        if ( ! actual.canFail()) return;
+
+        if (! application.instance().isTester() && zone.environment().isProduction() &&
+            requiresRedundancy(cluster.type()) && target.nodes() == 1)
+            throw new IllegalArgumentException("In " + cluster +
+                                               ": Deployments to prod require at least 2 nodes per cluster for redundancy.");
+
+        if ( ! actual.groupSize().includes(target.nodes() / target.groups()))
+            throw new IllegalArgumentException("In " + cluster + ": Group size with " + target +
+                                               " is not within allowed group size " + actual.groupSize());
     }
 
     private static boolean requiresRedundancy(ClusterSpec.Type clusterType) {

@@ -48,9 +48,9 @@ class ApacheClusterTest {
                                                  Map.of("name1", () -> "value1",
                                                         "name2", () -> "value2"),
                                                  "content".getBytes(UTF_8),
-                                                 Duration.ofSeconds(1)),
+                                                 Duration.ofSeconds(20)),
                                  vessel);
-                HttpResponse response = vessel.get(5, TimeUnit.SECONDS);
+                HttpResponse response = vessel.get(15, TimeUnit.SECONDS);
                 assertEquals("{}", new String(response.body(), UTF_8));
                 assertEquals(200, response.code());
 
@@ -62,7 +62,7 @@ class ApacheClusterTest {
                                                                       .withHeader("Content-Type", equalTo("application/json; charset=UTF-8"))
                                                                       .withRequestBody(equalTo("content"));
                 expected = switch (compression) {
-                    case none -> expected.withoutHeader("Content-Encoding");
+                    case auto, none -> expected.withoutHeader("Content-Encoding");
                     case gzip -> expected.withHeader("Content-Encoding", equalTo("gzip"));
                 };
                 server.verify(1, expected);

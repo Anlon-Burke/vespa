@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
+import com.yahoo.config.provision.IntRange;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterResources;
@@ -61,10 +62,10 @@ public class AutoscalingMaintainerTest {
 
         tester.deploy(app1, cluster1, Capacity.from(new ClusterResources(5, 1, new NodeResources(4, 4, 10, 0.1)),
                                                     new ClusterResources(5, 1, new NodeResources(4, 4, 10, 0.1)),
-                                                    false, true));
+                                                    IntRange.empty(), false, true, Optional.empty()));
         tester.deploy(app2, cluster2, Capacity.from(new ClusterResources(5, 1, new NodeResources(4, 4, 10, 0.1)),
                                                     new ClusterResources(10, 1, new NodeResources(6.5, 9, 20, 0.1)),
-                                                    false, true));
+                                                    IntRange.empty(), false, true, Optional.empty()));
 
         tester.clock().advance(Duration.ofMinutes(10));
         tester.maintainer().maintain(); // noop
@@ -78,6 +79,20 @@ public class AutoscalingMaintainerTest {
         tester.maintainer().maintain();
         assertTrue(tester.deployer().lastDeployTime(app1).isEmpty()); // since autoscaling is off
         assertTrue(tester.deployer().lastDeployTime(app2).isPresent());
+        Load peakAt90 = tester.nodeRepository().applications().require(app1).cluster(cluster1.id()).get().target().peak();
+        Load idealAt90 = tester.nodeRepository().applications().require(app1).cluster(cluster1.id()).get().target().ideal();
+        assertNotEquals(Load.zero(), peakAt90);
+        assertNotEquals(Load.zero(), idealAt90);
+
+        // Verify that load is updated even when there's no other change
+        tester.clock().advance(Duration.ofMinutes(10));
+        tester.addMeasurements(0.8f, 0.8f, 0.8f, 0, 500, app1, cluster1.id());
+        tester.maintainer().maintain();
+
+        Load peakAt80 = tester.nodeRepository().applications().require(app1).cluster(cluster1.id()).get().target().peak();
+        Load idealAt80 = tester.nodeRepository().applications().require(app1).cluster(cluster1.id()).get().target().ideal();
+        assertNotEquals(peakAt90, peakAt80);
+        assertNotEquals(idealAt90, idealAt80);
     }
 
     @Test

@@ -6,8 +6,7 @@ ContainerCluster = element container {
     ContainerServices &    
     DocumentBinding* &
     NodesOfContainerCluster? &
-    ClientAuthorize? &
-    LoadBalancer?
+    ClientAuthorize?
 }
 
 ContainerServices =
@@ -104,7 +103,12 @@ ModelEvaluation = element model-evaluation {
                 attribute name { string } &
                 element intraop-threads { xsd:nonNegativeInteger }? &
                 element interop-threads { xsd:nonNegativeInteger }? &
-                element execution-mode { string "sequential" | string "parallel" }?
+                element execution-mode { string "sequential" | string "parallel" }? &
+                element gpu-device {
+                  # TODO(mpolden): Remove this after 2023-02-01
+                  attribute required { xsd:boolean }? &
+                  xsd:nonNegativeInteger
+                }?
             }*
         }?
     }?
@@ -311,16 +315,6 @@ NodesOfContainerCluster = element nodes {
       }+
     )
 }
-
-LoadBalancer = element load-balancer {
-    element private-access {
-        element allow-urn {
-            xsd:string
-        }*
-    }?
-}
-
-
 
 #DOCUMENT BINDINGS:
 

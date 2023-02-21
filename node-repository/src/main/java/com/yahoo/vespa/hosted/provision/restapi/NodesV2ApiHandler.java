@@ -7,6 +7,7 @@ import com.yahoo.config.provision.ApplicationLockException;
 import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.HostFilter;
+import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
@@ -33,7 +34,6 @@ import com.yahoo.vespa.hosted.provision.NodeMutex;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.applications.Application;
 import com.yahoo.vespa.hosted.provision.autoscale.Load;
-import com.yahoo.vespa.hosted.provision.node.Address;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.node.filter.ApplicationFilter;
@@ -77,8 +77,7 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
     private final NodeFlavors nodeFlavors;
 
     @Inject
-    public NodesV2ApiHandler(ThreadedHttpRequestHandler.Context parentCtx, Orchestrator orchestrator,
-                             NodeRepository nodeRepository, NodeFlavors flavors) {
+    public NodesV2ApiHandler(Context parentCtx, Orchestrator orchestrator, NodeRepository nodeRepository, NodeFlavors flavors) {
         super(parentCtx);
         this.orchestrator = orchestrator;
         this.nodeRepository = nodeRepository;
@@ -116,7 +115,7 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
     private HttpResponse handleGET(HttpRequest request) {
         Path path = new Path(request.getUri());
         String pathS = request.getUri().getPath();
-        if (path.matches(    "/nodes/v2")) return new ResourceResponse(request.getUri(), "node", "state", "acl", "command", "archive", "locks", "maintenance", "upgrade", "capacity", "application", "stats");
+        if (path.matches(    "/nodes/v2")) return new ResourceResponse(request.getUri(), "node", "state", "acl", "command", "archive", "locks", "maintenance", "upgrade", "capacity", "application", "stats", "wireguard");
         if (path.matches(    "/nodes/v2/node")) return new NodesResponse(ResponseType.nodeList, request, orchestrator, nodeRepository);
         if (pathS.startsWith("/nodes/v2/node/")) return new NodesResponse(ResponseType.singleNode, request, orchestrator, nodeRepository);
         if (path.matches(    "/nodes/v2/state")) return new NodesResponse(ResponseType.stateList, request, orchestrator, nodeRepository);
@@ -131,6 +130,7 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
         if (path.matches(    "/nodes/v2/application")) return applicationList(request.getUri());
         if (path.matches(    "/nodes/v2/application/{applicationId}")) return application(path.get("applicationId"), request.getUri());
         if (path.matches(    "/nodes/v2/stats")) return stats();
+        if (path.matches(    "/nodes/v2/wireguard")) return new WireguardResponse(nodeRepository);
         throw new NotFoundException("Nothing at " + path);
     }
 
@@ -280,12 +280,12 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
         Set<String> ipAddressPool = new HashSet<>();
         inspector.field("additionalIpAddresses").traverse((ArrayTraverser) (i, item) -> ipAddressPool.add(item.asString()));
 
-        List<Address> addressPool = new ArrayList<>();
+        List<HostName> hostnames = new ArrayList<>();
         inspector.field("additionalHostnames").traverse((ArrayTraverser) (i, item) ->
-                addressPool.add(new Address(item.asString())));
+                hostnames.add(HostName.of(item.asString())));
 
         Node.Builder builder = Node.create(inspector.field("id").asString(),
-                                           IP.Config.of(ipAddresses, ipAddressPool, addressPool),
+                                           IP.Config.of(ipAddresses, ipAddressPool, hostnames),
                                            inspector.field("hostname").asString(),
                                            flavorFromSlime(inspector),
                                            nodeTypeFromSlime(inspector.field("type")))

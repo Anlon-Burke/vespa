@@ -14,7 +14,6 @@ import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
-import com.yahoo.vespa.hosted.provision.NodesAndHosts;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.Allocation;
 
@@ -43,7 +42,7 @@ class NodeAllocation {
     private static final Logger LOG = Logger.getLogger(NodeAllocation.class.getName());
 
     /** List of all nodes in node-repository */
-    private final NodesAndHosts<? extends NodeList> allNodesAndHosts;
+    private final NodeList allNodes;
 
     /** The application this list is for */
     private final ApplicationId application;
@@ -84,11 +83,9 @@ class NodeAllocation {
     private final NodeResourceLimits nodeResourceLimits;
     private final Optional<String> requiredHostFlavor;
 
-    private List<NodeCandidate> lastOffered;
-
-    NodeAllocation(NodesAndHosts<? extends NodeList> allNodesAndHosts, ApplicationId application, ClusterSpec cluster, NodeSpec requestedNodes,
+    NodeAllocation(NodeList allNodes, ApplicationId application, ClusterSpec cluster, NodeSpec requestedNodes,
                    Supplier<Integer> nextIndex, NodeRepository nodeRepository) {
-        this.allNodesAndHosts = allNodesAndHosts;
+        this.allNodes = allNodes;
         this.application = application;
         this.cluster = cluster;
         this.requestedNodes = requestedNodes;
@@ -100,7 +97,6 @@ class NodeAllocation {
                         .with(FetchVector.Dimension.CLUSTER_TYPE, cluster.type().name())
                         .value())
                 .filter(s -> !s.isBlank());
-        this.lastOffered = List.of();
     }
 
     /**
@@ -113,7 +109,6 @@ class NodeAllocation {
      * @param candidates the nodes which are potentially on offer. These may belong to a different application etc.
      */
     void offer(List<NodeCandidate> candidates) {
-        lastOffered = List.copyOf(candidates);
         for (NodeCandidate candidate : candidates) {
             if (candidate.allocation().isPresent()) {
                 Allocation allocation = candidate.allocation().get();
@@ -136,7 +131,7 @@ class NodeAllocation {
                 }
             }
             else if (! saturated() && hasCompatibleResources(candidate)) {
-                if (! nodeResourceLimits.isWithinRealLimits(candidate, cluster)) {
+                if (! nodeResourceLimits.isWithinRealLimits(candidate, application, cluster)) {
                     ++rejectedDueToInsufficientRealResources;
                     continue;
                 }
@@ -162,15 +157,13 @@ class NodeAllocation {
         }
     }
 
-    public List<NodeCandidate> lastOffered() { return lastOffered; }
-
     /** Returns the cause of retirement for given candidate */
     private Retirement shouldRetire(NodeCandidate candidate, List<NodeCandidate> candidates) {
         if ( ! requestedNodes.considerRetiring()) {
             boolean alreadyRetired = candidate.allocation().map(a -> a.membership().retired()).orElse(false);
             return alreadyRetired ? Retirement.alreadyRetired : Retirement.none;
         }
-        if ( ! nodeResourceLimits.isWithinRealLimits(candidate, cluster)) return Retirement.outsideRealLimits;
+        if ( ! nodeResourceLimits.isWithinRealLimits(candidate, application, cluster)) return Retirement.outsideRealLimits;
         if (violatesParentHostPolicy(candidate)) return Retirement.violatesParentHostPolicy;
         if ( ! hasCompatibleResources(candidate)) return Retirement.incompatibleResources;
         if (candidate.wantToRetire()) return Retirement.hardRequest;
@@ -214,7 +207,7 @@ class NodeAllocation {
 
         // In zones with shared hosts we require that if either of the nodes on the host requires exclusivity,
         // then all the nodes on the host must have the same owner
-        for (Node nodeOnHost : allNodesAndHosts.childrenOf(candidate.parentHostname().get())) {
+        for (Node nodeOnHost : allNodes.childrenOf(candidate.parentHostname().get())) {
             if (nodeOnHost.allocation().isEmpty()) continue;
             if (requestedNodes.isExclusive() || nodeOnHost.allocation().get().membership().cluster().isExclusive()) {
                 if ( ! nodeOnHost.allocation().get().owner().equals(application)) return true;
@@ -289,7 +282,7 @@ class NodeAllocation {
     }
 
     private Node resize(Node node) {
-        NodeResources hostResources = allNodesAndHosts.parentOf(node).get().flavor().resources();
+        NodeResources hostResources = allNodes.parentOf(node).get().flavor().resources();
         return node.with(new Flavor(requestedNodes.resources().get()
                                                   .with(hostResources.diskSpeed())
                                                   .with(hostResources.storageType())
@@ -341,7 +334,7 @@ class NodeAllocation {
         if (hostType == NodeType.host) return nodeRepository.database().readProvisionIndices(count);
 
         // Infrastructure hosts have fixed indices, starting at 1
-        Set<Integer> currentIndices = allNodesAndHosts.nodes().nodeType(hostType)
+        Set<Integer> currentIndices = allNodes.nodeType(hostType)
                                               .hostnames()
                                               .stream()
                                               // TODO(mpolden): Use cluster index instead of parsing hostname, once all
@@ -441,7 +434,7 @@ class NodeAllocation {
         if (nodeType() == NodeType.tenant) return accepted;
         // Infrastructure nodes are always allocated by type. Count all nodes as accepted so that we never exceed
         // the wanted number of nodes for the type.
-        return allNodesAndHosts.nodes().nodeType(nodeType()).size();
+        return allNodes.nodeType(nodeType()).size();
     }
 
     /** Prefer to retire nodes we want the least */

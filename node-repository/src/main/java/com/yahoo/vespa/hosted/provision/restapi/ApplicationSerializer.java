@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.restapi;
 
+import com.yahoo.config.provision.IntRange;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.slime.Cursor;
 import com.yahoo.slime.Slime;
@@ -62,6 +63,8 @@ public class ApplicationSerializer {
         Limits limits = Limits.of(cluster).fullySpecified(nodes.clusterSpec(), nodeRepository, application.id());
         toSlime(limits.min(), clusterObject.setObject("min"));
         toSlime(limits.max(), clusterObject.setObject("max"));
+        if ( ! cluster.groupSize().isEmpty())
+            toSlime(cluster.groupSize(), clusterObject.setObject("groupSize"));
         toSlime(currentResources, clusterObject.setObject("current"));
         if (cluster.shouldSuggestResources(currentResources))
             toSlime(cluster.suggested(), clusterObject.setObject("suggested"));
@@ -77,6 +80,7 @@ public class ApplicationSerializer {
         autoscalingObject.setLong("at", autoscaling.at().toEpochMilli());
         toSlime(autoscaling.peak(), autoscalingObject.setObject("peak"));
         toSlime(autoscaling.ideal(), autoscalingObject.setObject("ideal"));
+        toSlime(autoscaling.metrics(), autoscalingObject.setObject("metrics"));
     }
 
     private static void toSlime(ClusterResources resources, Cursor clusterResourcesObject) {
@@ -85,10 +89,21 @@ public class ApplicationSerializer {
         NodeResourcesSerializer.toSlime(resources.nodeResources(), clusterResourcesObject.setObject("resources"));
     }
 
-    private static void toSlime(Load load, Cursor utilizationObject) {
-        utilizationObject.setDouble("cpu", load.cpu());
-        utilizationObject.setDouble("memory", load.memory());
-        utilizationObject.setDouble("disk", load.disk());
+    private static void toSlime(IntRange range, Cursor rangeObject) {
+        range.from().ifPresent(from -> rangeObject.setLong("from", range.from().getAsInt()));
+        range.to().ifPresent(to -> rangeObject.setLong("to", range.to().getAsInt()));
+    }
+
+    private static void toSlime(Load load, Cursor loadObject) {
+        loadObject.setDouble("cpu", load.cpu());
+        loadObject.setDouble("memory", load.memory());
+        loadObject.setDouble("disk", load.disk());
+    }
+
+    private static void toSlime(Autoscaling.Metrics metrics, Cursor metricsObject) {
+        metricsObject.setDouble("queryRate", metrics.queryRate());
+        metricsObject.setDouble("growthRateHeadroom", metrics.growthRateHeadroom());
+        metricsObject.setDouble("cpuCostPerQuery", metrics.cpuCostPerQuery());
     }
 
     private static void scalingEventsToSlime(List<ScalingEvent> scalingEvents, Cursor scalingEventsArray) {

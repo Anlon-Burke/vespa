@@ -12,7 +12,6 @@ import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.InstanceName;
-import com.yahoo.config.provision.Tags;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.text.Text;
@@ -94,6 +93,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -115,7 +115,6 @@ import static java.util.stream.Collectors.collectingAndThen;
 import static java.util.stream.Collectors.counting;
 import static java.util.stream.Collectors.groupingBy;
 import static java.util.stream.Collectors.joining;
-import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
 import static java.util.stream.Collectors.toSet;
 
@@ -146,6 +145,7 @@ public class ApplicationController {
     private final ListFlag<String> incompatibleVersions;
     private final BillingController billingController;
     private final ListFlag<String> cloudAccountsFlag;
+    private final Map<DeploymentId, com.yahoo.vespa.hosted.controller.api.integration.configserver.Application> deploymentInfo = new ConcurrentHashMap<>();
 
     ApplicationController(Controller controller, CuratorDb curator, AccessControl accessControl, Clock clock,
                           FlagSource flagSource, BillingController billingController) {
@@ -175,9 +175,7 @@ public class ApplicationController {
                 lockApplicationIfPresent(id, application -> {
                     for (var declaredInstance : application.get().deploymentSpec().instances())
                         if ( ! application.get().instances().containsKey(declaredInstance.name()))
-                            application = withNewInstance(application,
-                                                          id.instance(declaredInstance.name()),
-                                                          declaredInstance.tags());
+                            application = withNewInstance(application, id.instance(declaredInstance.name()));
                     store(application);
                 });
                 count++;
@@ -208,6 +206,15 @@ public class ApplicationController {
     public Optional<Instance> getInstance(ApplicationId id) {
         return getApplication(TenantAndApplicationId.from(id)).flatMap(application -> application.get(id.instance()));
     }
+
+    /**
+     * Returns in-memory info for the given deployment pulled from the node repo.
+     * Info on any existing deployment can be missing if it has not yet been fetched since this instance was started.
+     * This is kept up to date by DeploymentInfoMaintainer.
+     * Accessing this is thread safe.
+     */
+    // TODO: Replace the wire level Application by a DeploymentInfo class in the model
+    public Map<DeploymentId, com.yahoo.vespa.hosted.controller.api.integration.configserver.Application> deploymentInfo() { return deploymentInfo; }
 
     /**
      * Triggers reindexing for the given document types in the given clusters, for the given application.
@@ -459,14 +466,14 @@ public class ApplicationController {
      *
      * @throws IllegalArgumentException if the instance already exists, or has an invalid instance name.
      */
-    public void createInstance(ApplicationId id, Tags tags) {
+    public void createInstance(ApplicationId id) {
         lockApplicationOrThrow(TenantAndApplicationId.from(id), application -> {
-            store(withNewInstance(application, id, tags));
+            store(withNewInstance(application, id));
         });
     }
 
     /** Returns given application with a new instance */
-    public LockedApplication withNewInstance(LockedApplication application, ApplicationId instance, Tags tags) {
+    public LockedApplication withNewInstance(LockedApplication application, ApplicationId instance) {
         if (instance.instance().isTester())
             throw new IllegalArgumentException("'" + instance + "' is a tester application!");
         InstanceId.validate(instance.instance().value());
@@ -477,7 +484,7 @@ public class ApplicationController {
             throw new IllegalArgumentException("Could not create '" + instance + "': Instance " + dashToUnderscore(instance) + " already exists");
 
         log.info("Created " + instance);
-        return application.withNewInstance(instance.instance(), tags);
+        return application.withNewInstance(instance.instance());
     }
 
     /** Deploys an application package for an existing application instance. */
@@ -508,7 +515,6 @@ public class ApplicationController {
                 instance = application.get().require(job.application().instance());
 
                 containerEndpoints = controller.routing().of(deployment).prepare(application);
-
             } // Release application lock while doing the deployment, which is a lengthy task.
 
             Supplier<Optional<EndpointCertificateMetadata>> endpointCertificateMetadata = () -> {
@@ -520,7 +526,7 @@ public class ApplicationController {
             };
 
             // Carry out deployment without holding the application lock.
-            DeploymentResult result = deploy(job.application(), instance.tags(), applicationPackage, zone, platform, containerEndpoints,
+            DeploymentResult result = deploy(job.application(), applicationPackage, zone, platform, containerEndpoints,
                                              endpointCertificateMetadata, run.isDryRun(), run.testerCertificate());
 
 
@@ -558,8 +564,8 @@ public class ApplicationController {
         }
     }
 
-    /** Stores the deployment spec and validation overrides from the application package, and runs cleanup. */
-    public void storeWithUpdatedConfig(LockedApplication application, ApplicationPackage applicationPackage) {
+    /** Stores the deployment spec and validation overrides from the application package, and runs cleanup. Returns new instances. */
+    public List<InstanceName> storeWithUpdatedConfig(LockedApplication application, ApplicationPackage applicationPackage) {
         validatePackage(applicationPackage, application.get());
 
         application = application.with(applicationPackage.deploymentSpec());
@@ -569,9 +575,7 @@ public class ApplicationController {
         var declaredInstances = applicationPackage.deploymentSpec().instances();
         for (var declaredInstance : declaredInstances) {
             if ( ! existingInstances.containsKey(declaredInstance.name()))
-                application = withNewInstance(application, application.get().id().instance(declaredInstance.name()), declaredInstance.tags());
-            else if ( ! existingInstances.get(declaredInstance.name()).tags().equals(declaredInstance.tags()))
-                application = application.with(declaredInstance.name(), instance -> instance.with(declaredInstance.tags()));
+                application = withNewInstance(application, application.get().id().instance(declaredInstance.name()));
         }
 
         // Delete zones not listed in DeploymentSpec, if allowed
@@ -592,6 +596,10 @@ public class ApplicationController {
         }
 
         store(application);
+        return declaredInstances.stream()
+                                .map(DeploymentInstanceSpec::name)
+                                .filter(instance -> ! existingInstances.containsKey(instance))
+                                .toList();
     }
 
     /** Deploy a system application to given zone */
@@ -610,7 +618,7 @@ public class ApplicationController {
             ApplicationPackageStream applicationPackage = new ApplicationPackageStream(
                     () -> new ByteArrayInputStream(artifactRepository.getSystemApplicationPackage(application.id(), zone, version))
             );
-            return deploy(application.id(), Tags.empty(), applicationPackage, zone, version, Set.of(), Optional::empty, false, Optional.empty());
+            return deploy(application.id(), applicationPackage, zone, version, Set.of(), Optional::empty, false, Optional.empty());
         } else {
            throw new RuntimeException("This system application does not have an application package: " + application.id().toShortString());
         }
@@ -618,10 +626,10 @@ public class ApplicationController {
 
     /** Deploys the given tester application to the given zone. */
     public DeploymentResult deployTester(TesterId tester, ApplicationPackageStream applicationPackage, ZoneId zone, Version platform) {
-        return deploy(tester.id(), Tags.empty(), applicationPackage, zone, platform, Set.of(), Optional::empty, false, Optional.empty());
+        return deploy(tester.id(), applicationPackage, zone, platform, Set.of(), Optional::empty, false, Optional.empty());
     }
 
-    private DeploymentResult deploy(ApplicationId application, Tags tags, ApplicationPackageStream applicationPackage,
+    private DeploymentResult deploy(ApplicationId application, ApplicationPackageStream applicationPackage,
                                     ZoneId zone, Version platform, Set<ContainerEndpoint> endpoints,
                                     Supplier<Optional<EndpointCertificateMetadata>> endpointCertificateMetadata,
                                     boolean dryRun, Optional<X509Certificate> testerCertificate) {
@@ -649,13 +657,13 @@ public class ApplicationController {
                     .orElse(List.of());
             List<X509Certificate> operatorCertificates = controller.supportAccess().activeGrantsFor(deployment).stream()
                                                                    .map(SupportAccessGrant::certificate)
-                                                                   .collect(toList());
+                                                                   .toList();
             if (testerCertificate.isPresent()) {
                 operatorCertificates = Stream.concat(operatorCertificates.stream(), testerCertificate.stream()).toList();
             }
             Supplier<Optional<CloudAccount>> cloudAccount = () -> decideCloudAccountOf(deployment, applicationPackage.truncatedPackage().deploymentSpec());
             ConfigServer.PreparedApplication preparedApplication =
-                    configServer.deploy(new DeploymentData(application, tags, zone, applicationPackage::zipStream, platform,
+                    configServer.deploy(new DeploymentData(application, zone, applicationPackage::zipStream, platform,
                                                            endpoints, endpointCertificateMetadata, dockerImageRepo, domain,
                                                            deploymentQuota, tenantSecretStores, operatorCertificates,
                                                            cloudAccount, dryRun));
@@ -869,9 +877,11 @@ public class ApplicationController {
     /** Deactivate application in the given zone. Even if the application itself does not exist, deactivation of the deployment will still be attempted */
     public void deactivate(ApplicationId instanceId, ZoneId zone) {
         TenantAndApplicationId applicationId = TenantAndApplicationId.from(instanceId);
-        try (Mutex lock = lock(applicationId)) {
-            Optional<LockedApplication> application = getApplication(applicationId).map(app -> new LockedApplication(app, lock));
-            deactivate(instanceId, zone, application).ifPresent(this::store);
+        try (Mutex deploymentLock = lockForDeployment(instanceId, zone)) {
+            try (Mutex lock = lock(applicationId)) {
+                Optional<LockedApplication> application = getApplication(applicationId).map(app -> new LockedApplication(app, lock));
+                deactivate(instanceId, zone, application).ifPresent(this::store);
+            }
         }
     }
 
@@ -948,7 +958,7 @@ public class ApplicationController {
         // Either the user is member of the domain admin role, or is given the "launch" privilege on the service.
         Optional<AthenzUser> athenzUser = getUser(deployer);
         if (athenzUser.isPresent()) {
-            // We only need to validate the root and instance in deployment.xml. Not possible to add dev or perf tags to deployment.xml
+            // We only need to validate the root and instance in deployment.xml. Dev/perf entries are found at the instance level as well.
             var zone = zoneId.orElseThrow(() -> new IllegalArgumentException("Unable to evaluate access, no zone provided in deployment"));
             var serviceToLaunch = instanceName
                     .flatMap(instance -> applicationPackage.deploymentSpec().instance(instance))
@@ -956,7 +966,7 @@ public class ApplicationController {
                     .or(() -> applicationPackage.deploymentSpec().athenzService())
                     .map(service -> new AthenzService(identityDomain.get(), service.value()));
 
-            if(serviceToLaunch.isPresent()) {
+            if (serviceToLaunch.isPresent()) {
                 if (
                         ! ((AthenzFacade) accessControl).canLaunch(athenzUser.get(), serviceToLaunch.get()) && // launch privilege
                         ! ((AthenzFacade) accessControl).hasTenantAdminAccess(athenzUser.get(), identityDomain.get()) // tenant admin

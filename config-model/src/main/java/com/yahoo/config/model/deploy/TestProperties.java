@@ -37,7 +37,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private ApplicationId applicationId = ApplicationId.defaultId();
     private List<ConfigServerSpec> configServerSpecs = Collections.emptyList();
     private boolean hostedVespa = false;
-    private Zone zone;
+    private Zone zone = Zone.defaultZone();
     private final Set<ContainerEndpoint> endpoints = Collections.emptySet();
     private boolean useDedicatedNodeForLogserver = false;
     private double defaultTermwiseLimit = 1.0;
@@ -70,12 +70,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private List<String> environmentVariables = List.of();
     private boolean loadCodeAsHugePages = false;
     private boolean sharedStringRepoNoReclaim = false;
-    private boolean useTwoPhaseDocumentGc = false;
-    private int mbus_java_num_targets = 1;
+    private int mbus_java_num_targets = 2;
     private int mbus_java_events_before_wakeup = 1;
-    private int mbus_cpp_num_targets = 1;
+    private int mbus_cpp_num_targets = 2;
     private int mbus_cpp_events_before_wakeup = 1;
-    private int rpc_num_targets = 1;
+    private int rpc_num_targets = 2;
     private int rpc_events_before_wakeup = 1;
     private int mbus_network_threads = 1;
     private int heapSizePercentage = ApplicationContainerCluster.defaultHeapSizePercentageOfTotalNodeMemory;
@@ -135,7 +134,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public int heapSizePercentage() { return heapSizePercentage; }
     @Override public int rpcEventsBeforeWakeup() { return rpc_events_before_wakeup; }
     @Override public String queryDispatchPolicy() { return queryDispatchPolicy; }
-    @Override public boolean useTwoPhaseDocumentGc() { return useTwoPhaseDocumentGc; }
     @Override public boolean useRestrictedDataPlaneBindings() { return useRestrictedDataPlaneBindings; }
     @Override public Optional<CloudAccount> cloudAccount() { return cloudAccount; }
     @Override public boolean allowUserFilters() { return allowUserFilters; }
@@ -350,11 +348,6 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setAdminClusterNodeResourcesArchitecture(Architecture architecture) {
         this.adminClusterNodeResourcesArchitecture = architecture;
-        return this;
-    }
-
-    public TestProperties setUseTwoPhaseDocumentGc(boolean useTwoPhase) {
-        this.useTwoPhaseDocumentGc = useTwoPhase;
         return this;
     }
 

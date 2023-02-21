@@ -4,7 +4,6 @@ package com.yahoo.vespa.hosted.node.admin.maintenance.coredump;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.security.KeyId;
 import com.yahoo.security.SecretSharedKey;
-import com.yahoo.security.SharedKeyGenerator;
 import com.yahoo.vespa.flags.FetchVector;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.Flags;
@@ -29,11 +28,9 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Clock;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Predicate;
@@ -101,8 +98,7 @@ public class CoredumpHandler {
     }
 
 
-    public void converge(NodeAgentContext context, Supplier<Map<String, Object>> nodeAttributesSupplier,
-                         Optional<DockerImage> dockerImage, boolean throwIfCoreBeingWritten) {
+    public void converge(NodeAgentContext context, Optional<DockerImage> dockerImage, boolean throwIfCoreBeingWritten) {
         ContainerPath containerCrashPath = context.paths().of(crashPatchInContainer, context.users().vespa());
         ContainerPath containerProcessingPath = containerCrashPath.resolve(PROCESSING_DIRECTORY_NAME);
 
@@ -184,23 +180,21 @@ public class CoredumpHandler {
         return coreEncryptionPublicKeyIdFlag.with(FetchVector.Dimension.NODE_TYPE, context.nodeType().name()).value();
     }
 
-    static OutputStream maybeWrapWithEncryption(OutputStream wrappedStream, Optional<SecretSharedKey> sharedCoreKey) {
-        return sharedCoreKey
-                .map(key -> key.makeEncryptionCipher().wrapOutputStream(wrappedStream))
-                .orElse(wrappedStream);
+    static OutputStream wrapWithEncryption(OutputStream wrappedStream, SecretSharedKey sharedCoreKey) {
+        return sharedCoreKey.makeEncryptionCipher().wrapOutputStream(wrappedStream);
     }
 
     /**
      * Compresses and, if a key is provided, encrypts core file (and deletes the uncompressed core), then moves
      * the entire core dump processing directory to {@link #doneCoredumpsPath} for archive
      */
-    private void finishProcessing(NodeAgentContext context, ContainerPath coredumpDirectory, Optional<SecretSharedKey> sharedCoreKey) {
+    private void finishProcessing(NodeAgentContext context, ContainerPath coredumpDirectory, SecretSharedKey sharedCoreKey) {
         ContainerPath coreFile = findCoredumpFileInProcessingDirectory(coredumpDirectory);
-        String extension = COMPRESSED_EXTENSION + (sharedCoreKey.isPresent() ? ENCRYPTED_EXTENSION : "");
+        String extension = COMPRESSED_EXTENSION + ENCRYPTED_EXTENSION;
         ContainerPath compressedCoreFile = coreFile.resolveSibling(coreFile.getFileName() + extension);
 
         try (ZstdCompressingInputStream zcis = new ZstdCompressingInputStream(Files.newInputStream(coreFile));
-             OutputStream fos = maybeWrapWithEncryption(Files.newOutputStream(compressedCoreFile), sharedCoreKey)) {
+             OutputStream fos = wrapWithEncryption(Files.newOutputStream(compressedCoreFile), sharedCoreKey)) {
             zcis.transferTo(fos);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -291,11 +285,12 @@ public class CoredumpHandler {
         dockerImage.ifPresent(metadata::setDockerImage);
         dockerImage.flatMap(DockerImage::tag).ifPresent(metadata::setVespaVersion);
         dockerImage.ifPresent(metadata::setDockerImage);
-        Optional<SecretSharedKey> sharedCoreKey = Optional.of(corePublicKeyFlagValue(context))
+        SecretSharedKey sharedCoreKey = Optional.of(corePublicKeyFlagValue(context))
                 .filter(k -> !k.isEmpty())
                 .map(KeyId::ofString)
-                .flatMap(secretSharedKeySupplier::create);
-        sharedCoreKey.map(key -> key.sealedSharedKey().toTokenString()).ifPresent(metadata::setDecryptionToken);
+                .flatMap(secretSharedKeySupplier::create)
+                .orElseThrow(() -> ConvergenceException.ofError("No core dump encryption key provided"));
+        metadata.setDecryptionToken(sharedCoreKey.sealedSharedKey().toTokenString());
 
         String coreDumpId = coreDumpDirectory.getFileName().toString();
         cores.report(context.hostname(), coreDumpId, metadata);
@@ -328,7 +323,7 @@ public class CoredumpHandler {
     }
 
     private String getMicrocodeVersion() {
-        String output = uncheck(() -> Files.readAllLines(Paths.get("/proc/cpuinfo")).stream()
+        String output = uncheck(() -> Files.readAllLines(doneCoredumpsPath.getFileSystem().getPath("/proc/cpuinfo")).stream()
                                            .filter(line -> line.startsWith("microcode"))
                                            .findFirst()
                                            .orElse("microcode : UNKNOWN"));

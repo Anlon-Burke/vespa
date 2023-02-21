@@ -11,6 +11,7 @@
     </parent>
     <artifactId>vespaclient-java</artifactId>
     <version>8-SNAPSHOT</version>
+    <packaging>jar</packaging>
     <dependencies>
         <dependency>
             <!-- Due to com.yahoo.search.query.profile.DumpTool ... -->
@@ -67,13 +68,11 @@
             <groupId>commons-cli</groupId>
             <artifactId>commons-cli</artifactId>
         </dependency>
-            <dependency>
-            <groupId>org.apache.httpcomponents.client5</groupId>
-            <artifactId>httpclient5</artifactId>
-        </dependency>
         <dependency>
-            <groupId>org.apache.httpcomponents.core5</groupId>
-            <artifactId>httpcore5</artifactId>
+            <groupId>com.yahoo.vespa</groupId>
+            <artifactId>container-apache-http-client-bundle</artifactId>
+            <version>${project.version}</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -94,16 +93,35 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <configuration>
-                    <finalName>${project.artifactId}-jar-with-dependencies</finalName>
-                    <createDependencyReducedPom>false</createDependencyReducedPom>
-                </configuration>
+                <artifactId>maven-install-plugin</artifactId>
+                <configuration><skip>true</skip></configuration>
+            </plugin>
+            <plugin>
+                <!-- For installation in vespa-home/lib/jars/ -->
+                <groupId>com.yahoo.vespa</groupId>
+                <artifactId>bundle-plugin</artifactId>
                 <executions>
                     <execution>
                         <phase>package</phase>
+                        <goals><goal>assemble-fat-jar</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <!-- For local dev usage -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <configuration>
+                    <descriptors>
+                        <descriptor>assembly.xml</descriptor>
+                    </descriptors>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>make-assembly</id>
+                        <phase>package</phase>
                         <goals>
-                            <goal>shade</goal>
+                            <goal>single</goal>
                         </goals>
                     </execution>
                 </executions>

@@ -6,9 +6,11 @@ import com.yahoo.config.provision.AllocatedHosts;
 import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.HostSpec;
-import com.yahoo.config.provision.LoadBalancerSettings;
 import com.yahoo.config.provision.NetworkPorts;
 import com.yahoo.config.provision.NodeResources;
+import com.yahoo.config.provision.ZoneEndpoint;
+import com.yahoo.config.provision.ZoneEndpoint.AccessType;
+import com.yahoo.config.provision.ZoneEndpoint.AllowedUrn;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -20,7 +22,6 @@ import java.util.Set;
 import static com.yahoo.config.provision.serialization.AllocatedHostsSerializer.fromJson;
 import static com.yahoo.config.provision.serialization.AllocatedHostsSerializer.toJson;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * @author bratseth
@@ -36,8 +37,8 @@ public class AllocatedHostsSerializerTest {
     @Test
     void testAllocatedHostsSerialization() throws IOException {
         Set<HostSpec> hosts = new LinkedHashSet<>();
-        hosts.add(new HostSpec("empty", List.of(), Optional.empty()));
-        hosts.add(new HostSpec("with-aliases", List.of("alias1", "alias2"), Optional.empty()));
+        hosts.add(new HostSpec("empty", Optional.empty()));
+        hosts.add(new HostSpec("with-aliases", Optional.empty()));
         hosts.add(new HostSpec("allocated",
                                smallSlowDiskSpeedNode,
                                bigSlowDiskSpeedNode,
@@ -69,7 +70,7 @@ public class AllocatedHostsSerializerTest {
                                bigSlowDiskSpeedNode,
                                anyDiskSpeedNode,
                                ClusterMembership.from("container/test/0/0", Version.fromString("6.73.1"),
-                                                      Optional.empty(), new LoadBalancerSettings(List.of("burn"))),
+                                                      Optional.empty(), new ZoneEndpoint(true, true, List.of(new AllowedUrn(AccessType.awsPrivateLink, "burn")))),
                                Optional.empty(),
                                Optional.empty(),
                                Optional.empty()));

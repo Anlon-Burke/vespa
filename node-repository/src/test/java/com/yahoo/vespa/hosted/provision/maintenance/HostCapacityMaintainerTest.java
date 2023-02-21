@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
+import com.yahoo.config.provision.IntRange;
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.Capacity;
@@ -25,7 +26,6 @@ import com.yahoo.vespa.flags.custom.ClusterCapacity;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
-import com.yahoo.vespa.hosted.provision.node.Address;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.Allocation;
 import com.yahoo.vespa.hosted.provision.node.Generation;
@@ -122,7 +122,7 @@ public class HostCapacityMaintainerTest {
     public void preprovision_with_shared_host() {
         var tester = new DynamicProvisioningTester().addInitialNodes();
         // Makes provisioned hosts 48-128-1000-10
-        tester.hostProvisioner.overrideHostFlavor("host4");
+        tester.hostProvisioner.setHostFlavor("host4");
         var clusterCapacity = new ClusterCapacity(2, 1.0, 30.0, 20.0, 3.0, "fast", "local", "x86_64");
         tester.flagSource.withListFlag(PermanentFlags.PREPROVISION_CAPACITY.id(),
                 List.of(clusterCapacity),
@@ -235,7 +235,7 @@ public class HostCapacityMaintainerTest {
 
         // Pretend shared-host flag has been set to host4's flavor
         var sharedHostNodeResources = new NodeResources(48, 128, 1000, 10, NodeResources.DiskSpeed.fast, NodeResources.StorageType.remote);
-        tester.hostProvisioner.overrideHostFlavor("host4");
+        tester.hostProvisioner.setHostFlavor("host4");
 
         // Next maintenance run does nothing
         tester.assertNodesUnchanged();
@@ -365,7 +365,7 @@ public class HostCapacityMaintainerTest {
         Cloud cloud = Cloud.builder().dynamicProvisioning(true).build();
         DynamicProvisioningTester dynamicProvisioningTester = new DynamicProvisioningTester(cloud, new MockNameResolver().mockAnyLookup());
         ProvisioningTester tester = dynamicProvisioningTester.provisioningTester;
-        dynamicProvisioningTester.hostProvisioner.overrideHostFlavor("default");
+        dynamicProvisioningTester.hostProvisioner.setHostFlavor("default");
 
         // Initial config server hosts are provisioned manually
         List<Node> provisionedHosts = tester.makeReadyNodes(3, "default", hostType, 1).stream()
@@ -466,7 +466,7 @@ public class HostCapacityMaintainerTest {
         ClusterSpec spec = ProvisioningTester.contentClusterSpec();
         ClusterResources resources = new ClusterResources(2, 1, new NodeResources(16, 24, 100, 1));
         CloudAccount cloudAccount0 = CloudAccount.from("000000000000");
-        Capacity capacity0 = Capacity.from(resources, resources, false, true, Optional.of(cloudAccount0));
+        Capacity capacity0 = Capacity.from(resources, resources, IntRange.empty(), false, true, Optional.of(cloudAccount0));
         List<HostSpec> prepared = provisioningTester.prepare(applicationId, spec, capacity0);
 
         // Hosts are provisioned in requested account
@@ -476,7 +476,7 @@ public class HostCapacityMaintainerTest {
 
         // Redeployment in different account provisions a new set of hosts
         CloudAccount cloudAccount1 = CloudAccount.from("100000000000");
-        Capacity capacity1 = Capacity.from(resources, resources, false, true, Optional.of(cloudAccount1));
+        Capacity capacity1 = Capacity.from(resources, resources, IntRange.empty(), false, true, Optional.of(cloudAccount1));
         prepared = provisioningTester.prepare(applicationId, spec, capacity1);
         provisionHostsIn(cloudAccount1, 2, tester);
         assertEquals(2, provisioningTester.activate(applicationId, prepared).size());
@@ -649,9 +649,9 @@ public class HostCapacityMaintainerTest {
                             flavor.resources(),
                             Generation.initial(),
                             false));
-            List<Address> addresses = Stream.of(additionalHostnames).map(Address::new).toList();
+            List<com.yahoo.config.provision.HostName> hostnames = Stream.of(additionalHostnames).map(com.yahoo.config.provision.HostName::of).toList();
             Node.Builder builder = Node.create("fake-id-" + hostname, hostname, flavor, state, nodeType)
-                    .ipConfig(new IP.Config(state == Node.State.active ? Set.of("::1") : Set.of(), Set.of(), addresses));
+                    .ipConfig(IP.Config.of(state == Node.State.active ? Set.of("::1") : Set.of(), Set.of(), hostnames));
             parentHostname.ifPresent(builder::parentHostname);
             allocation.ifPresent(builder::allocation);
             if (hostname.equals("host2-1"))

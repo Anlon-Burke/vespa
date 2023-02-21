@@ -30,9 +30,15 @@
         }
       ],
       "settings": {
-        "allowedUrns": [ "arne" ]
+        "allowedUrns": [
+          {
+            "type": "aws-private-link",
+            "urn": "arne"
+          }
+        ]
       },
-      "serviceId": "service"
+      "serviceId": "service",
+      "public": false
     },
     {
       "id": "cfg:cfg:cfg:configservers",
@@ -51,7 +57,8 @@
       "ports": [
         4443
       ],
-      "reals": []
+      "reals": [],
+      "public": true
     },
     {
       "id": "tenant4:application4:instance4:id4",
@@ -81,7 +88,8 @@
           "ipAddress": "127.0.14.1",
           "port": 4443
         }
-      ]
+      ],
+      "public": true
     }
   ]
 }

@@ -1,7 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model;
 
-import com.yahoo.config.model.producer.AbstractConfigProducer;
+import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.config.model.test.MockRoot;
 import com.yahoo.config.provision.NetworkPorts;
 
@@ -30,7 +30,7 @@ public class HostPortsTest {
     void next_available_baseport_is_BASE_PORT_plus_one_when_one_port_has_been_reserved() {
         HostPorts host = new HostPorts("myhostname");
         MockRoot root = new MockRoot();
-        host.reservePort(new TestService(root, 1), HostPorts.BASE_PORT, "foo");
+        host.reservePort(new TestService(root, 1), HostPorts.BASE_PORT);
         assertThat(host.nextAvailableBaseport(1), is(HostPorts.BASE_PORT + 1));
     }
 
@@ -40,12 +40,12 @@ public class HostPortsTest {
         MockRoot root = new MockRoot();
 
         for (int p = HostPorts.BASE_PORT; p < HostPorts.BASE_PORT + HostPorts.MAX_PORTS; p += 2) {
-            host.reservePort(new TestService(root, 1), p, "foo");
+            host.reservePort(new TestService(root, 1), p);
         }
         assertThat(host.nextAvailableBaseport(2), is(0));
 
         try {
-            host.reservePort(new TestService(root, 2), HostPorts.BASE_PORT, "bar");
+            host.reservePort(new TestService(root, 2), HostPorts.BASE_PORT);
         } catch (RuntimeException e) {
             assertThat(e.getMessage(), containsString("Too many ports are reserved"));
         }
@@ -115,7 +115,7 @@ public class HostPortsTest {
     }
 
     private static class MockSlobrok extends AbstractService {
-        MockSlobrok(AbstractConfigProducer parent, int number) {
+        MockSlobrok(TreeConfigProducer parent, int number) {
             super(parent, "slobrok."+number);
         }
         @Override public int getPortCount() { return 1; }
@@ -133,7 +133,7 @@ public class HostPortsTest {
     private class TestService extends AbstractService {
         private final int portCount;
 
-        TestService(AbstractConfigProducer parent, int portCount) {
+        TestService(TreeConfigProducer parent, int portCount) {
             super(parent, "testService" + getCounter());
             this.portCount = portCount;
         }

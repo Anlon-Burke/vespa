@@ -55,8 +55,6 @@
 #include <malloc.h>
 #endif
 
-#include <vespa/searchlib/aggregation/forcelink.hpp>
-#include <vespa/searchlib/expression/forcelink.hpp>
 #include <sstream>
 
 #include <vespa/log/log.h>
@@ -473,7 +471,9 @@ Proton::~Proton()
         _diskMemUsageSampler->notifier().removeDiskMemUsageListener(_memoryFlushConfigUpdater.get());
     }
     _sessionPruneHandle.reset();
-    _diskMemUsageSampler->close();
+    if (_diskMemUsageSampler) {
+        _diskMemUsageSampler->close();
+    }
     _scheduler.reset();
     _executor.shutdown();
     _executor.sync();
@@ -499,7 +499,7 @@ Proton::~Proton()
                                                 CpuUsage::wrap(proton_close_executor, CpuCategory::SETUP));
         closeDocumentDBs(closePool);
     }
-    _sessionManager->close();
+    _sessionManager.reset();
     _documentDBMap.clear();
     _persistenceEngine.reset();
     _tls.reset();
@@ -796,6 +796,7 @@ Proton::updateMetrics(const metrics::MetricLockGuard &)
 {
     {
         ContentProtonMetrics &metrics = _metricsEngine->root();
+        metrics.configGeneration.set(getConfigGeneration());
         auto tls = _tls->getTransLogServer();
         if (tls) {
             metrics.transactionLog.update(tls->getDomainStats());

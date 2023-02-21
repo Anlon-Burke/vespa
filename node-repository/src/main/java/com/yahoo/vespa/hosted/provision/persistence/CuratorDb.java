@@ -50,7 +50,7 @@ import static java.util.stream.Collectors.collectingAndThen;
 /**.
  * A persistent database for the contents of the node repository, backed by {@link CachingCurator}.
  *
- * Nodes are stored in files named /provision/v1/[nodestate]/[hostname].
+ * Nodes are stored in /provision/v1/nodes/[hostname].
  *
  * The responsibility of this class is to turn operations on the level of node states, applications and nodes
  * into operations on the level of file paths and bytes.
@@ -93,11 +93,7 @@ public class CuratorDb {
 
     private void initZK() {
         db.create(root);
-        db.deleteRecursively(nodesPath); // TODO(mpolden): Remove before we start reading from this path
         db.create(nodesPath);
-        // TODO(mpolden): Remove state paths after migration to nodesPath
-        for (Node.State state : Node.State.values())
-            db.create(toPath(state));
         db.create(applicationsPath);
         db.create(inactiveJobsPath);
         db.create(infrastructureVersionsPath);
@@ -116,15 +112,10 @@ public class CuratorDb {
                 throw new IllegalArgumentException(node + " is not in the " + expectedState + " state");
 
             node = node.with(node.history().recordStateTransition(null, expectedState, agent, clock.instant()));
-            // TODO(mpolden): Remove after migration to nodesPath
             byte[] serialized = nodeSerializer.toJson(node);
-            curatorTransaction.add(CuratorOperations.create(toPath(node).getAbsolute(), serialized));
             curatorTransaction.add(CuratorOperations.create(nodePath(node).getAbsolute(), serialized));
         }
-
-        for (Node node : nodes)
-            log.log(Level.INFO, "Added " + node);
-
+        transaction.onCommitted(() -> nodes.forEach(node -> log.log(Level.INFO, "Added " + node)));
         return nodes;
     }
 
@@ -138,15 +129,10 @@ public class CuratorDb {
     /** Removes given nodes in transaction */
     public void removeNodes(List<Node> nodes, NestedTransaction transaction) {
         for (Node node : nodes) {
-            Path path = toPath(node.state(), node.hostname());
             CuratorTransaction curatorTransaction = db.newCuratorTransactionIn(transaction);
-            // TODO(mpolden): Remove after migration to nodesPath
-            curatorTransaction.add(CuratorOperations.delete(path.getAbsolute()));
-            if (db.exists(nodePath(node))) {
-                curatorTransaction.add(CuratorOperations.delete(nodePath(node).getAbsolute()));
-            }
+            curatorTransaction.add(CuratorOperations.delete(nodePath(node).getAbsolute()));
         }
-        nodes.forEach(node -> log.log(Level.INFO, "Removed node " + node.hostname() + " in state " + node.state()));
+        transaction.onCommitted(() -> nodes.forEach(node -> log.log(Level.INFO, "Removed node " + node.hostname() + " in state " + node.state())));
     }
 
     /**
@@ -222,7 +208,7 @@ public class CuratorDb {
                                     node.type(), node.reports(), node.modelName(), node.reservedTo(),
                                     node.exclusiveToApplicationId(), node.exclusiveToClusterType(), node.switchHostname(),
                                     node.trustedCertificates(), node.cloudAccount(), node.wireguardPubKey());
-            writeNode(toState, curatorTransaction, node, newNode);
+            curatorTransaction.add(createOrSet(nodePath(newNode), nodeSerializer.toJson(newNode)));
             writtenNodes.add(newNode);
         }
 
@@ -235,82 +221,35 @@ public class CuratorDb {
         return writtenNodes;
     }
 
-    private void writeNode(Node.State toState, CuratorTransaction curatorTransaction, Node node, Node newNode) {
-        byte[] nodeData = nodeSerializer.toJson(newNode);
-        { // TODO(mpolden): Remove this after migration to nodesPath
-            String currentNodePath = toPath(node).getAbsolute();
-            String newNodePath = toPath(toState, newNode.hostname()).getAbsolute();
-            if (newNodePath.equals(currentNodePath)) {
-                curatorTransaction.add(CuratorOperations.setData(currentNodePath, nodeData));
-            } else {
-                curatorTransaction.add(CuratorOperations.delete(currentNodePath))
-                                  .add(CuratorOperations.create(newNodePath, nodeData));
-            }
-        }
-        curatorTransaction.add(createOrSet(nodePath(newNode), nodeData));
-    }
-
     private Status newNodeStatus(Node node, Node.State toState) {
         if (node.state() != Node.State.failed && toState == Node.State.failed) return node.status().withIncreasedFailCount();
         if (node.state() == Node.State.failed && toState == Node.State.active) return node.status().withDecreasedFailCount(); // fail undo
         return node.status();
     }
 
-    /**
-     * Returns all nodes which are in one of the given states.
-     * If no states are given this returns all nodes.
-     *
-     * @return the nodes in a mutable list owned by the caller
-     */
-    public List<Node> readNodes(Node.State ... states) {
-        List<Node> nodes = new ArrayList<>();
-        if (states.length == 0)
-            states = Node.State.values();
+    /** Returns all existing nodes */
+    public List<Node> readNodes() {
         CachingCurator.Session session = db.getSession();
-        for (Node.State state : states) {
-            for (String hostname : session.getChildren(toPath(state))) {
-                Optional<Node> node = readNode(session, hostname, state);
-                node.ifPresent(nodes::add); // node might disappear between getChildren and getNode
-            }
-        }
-        return nodes;
+        return session.getChildren(nodesPath).stream()
+                      .flatMap(hostname -> readNode(session, hostname).stream())
+                      .toList();
     }
 
-    /**
-     * Returns a particular node, or empty if this node is not in any of the given states.
-     * If no states are given this returns the node if it is present in any state.
-     */
-    public Optional<Node> readNode(CachingCurator.Session session, String hostname, Node.State ... states) {
-        if (states.length == 0)
-            states = Node.State.values();
-        for (Node.State state : states) {
-            Optional<byte[]> nodeData = session.getData(toPath(state, hostname));
-            if (nodeData.isPresent())
-                return nodeData.map((data) -> nodeSerializer.fromJson(state, data));
-        }
-        return Optional.empty();
+    private Optional<Node> readNode(CachingCurator.Session session, String hostname) {
+        return session.getData(nodePath(hostname)).map(nodeSerializer::fromJson);
     }
 
-    /** 
-     * Returns a particular node, or empty if this noe is not in any of the given states.
-     * If no states are given this returns the node if it is present in any state.
-     */
-    public Optional<Node> readNode(String hostname, Node.State ... states) {
-        return readNode(db.getSession(), hostname, states);
-    }
-
-    private Path toPath(Node.State nodeState) { return root.append(toDir(nodeState)); }
-
-    private Path toPath(Node node) {
-        return root.append(toDir(node.state())).append(node.hostname());
-    }
-
-    private Path toPath(Node.State nodeState, String nodeName) {
-        return root.append(toDir(nodeState)).append(nodeName);
+    /** Read node with given hostname, if any such node exists */
+    public Optional<Node> readNode(String hostname) {
+        return readNode(db.getSession(), hostname);
     }
 
     private Path nodePath(Node node) {
-        return nodesPath.append(node.hostname());
+        return nodePath(node.hostname());
+    }
+
+    private Path nodePath(String hostname) {
+        return nodesPath.append(hostname);
     }
 
     /** Creates and returns the path to the lock for this application */
@@ -320,21 +259,6 @@ public class CuratorDb {
                                           .append(application.instance().value());
         db.create(lockPath);
         return lockPath;
-    }
-
-    private String toDir(Node.State state) {
-        return switch (state) {
-            case active -> "allocated"; // legacy name
-            case dirty -> "dirty";
-            case failed -> "failed";
-            case inactive -> "deallocated"; // legacy name
-            case parked -> "parked";
-            case provisioned -> "provisioned";
-            case ready -> "ready";
-            case reserved -> "reserved";
-            case deprovisioned -> "deprovisioned";
-            case breakfixed -> "breakfixed";
-        };
     }
 
     /** Acquires the single cluster-global, reentrant lock for all non-active nodes */

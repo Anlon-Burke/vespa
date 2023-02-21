@@ -6,9 +6,11 @@ import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.DockerImage;
+import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.TenantName;
+import com.yahoo.config.provision.WireguardKey;
 import com.yahoo.slime.Inspector;
 import com.yahoo.slime.ObjectTraverser;
 import com.yahoo.slime.SlimeUtils;
@@ -18,7 +20,6 @@ import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeMutex;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
-import com.yahoo.vespa.hosted.provision.node.Address;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.Allocation;
 import com.yahoo.vespa.hosted.provision.node.IP;
@@ -39,7 +40,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.stream.Collectors;
 
 import static com.yahoo.config.provision.NodeResources.DiskSpeed.fast;
 import static com.yahoo.config.provision.NodeResources.DiskSpeed.slow;
@@ -100,7 +100,8 @@ public class NodePatcher {
                                               "currentRestartGeneration",
                                               "reports",
                                               "trustStore",
-                                              "vespaVersion"));
+                                              "vespaVersion",
+                                              "wireguardPubkey"));
             if (!disallowedFields.isEmpty()) {
                 throw new IllegalArgumentException("Patching fields not supported: " + disallowedFields);
             }
@@ -192,12 +193,13 @@ public class NodePatcher {
             case WANT_TO_RETIRE:
             case WANT_TO_DEPROVISION:
             case WANT_TO_REBUILD:
-                boolean wantToRetire = asOptionalBoolean(root.field(WANT_TO_RETIRE)).orElse(node.status().wantToRetire());
-                boolean wantToDeprovision = asOptionalBoolean(root.field(WANT_TO_DEPROVISION)).orElse(node.status().wantToDeprovision());
-                boolean wantToRebuild = asOptionalBoolean(root.field(WANT_TO_REBUILD)).orElse(node.status().wantToRebuild());
-                return node.withWantToRetire(wantToRetire,
-                                             wantToDeprovision && !applyingAsChild,
-                                             wantToRebuild && !applyingAsChild,
+                // These needs to be handled as one, because certain combinations are not allowed.
+                return node.withWantToRetire(asOptionalBoolean(root.field(WANT_TO_RETIRE)).orElseGet(node.status()::wantToRetire),
+                                             asOptionalBoolean(root.field(WANT_TO_DEPROVISION))
+                                                     .orElseGet(node.status()::wantToDeprovision),
+                                             asOptionalBoolean(root.field(WANT_TO_REBUILD))
+                                                     .filter(want -> !applyingAsChild)
+                                                     .orElseGet(node.status()::wantToRebuild),
                                              Agent.operator,
                                              clock.instant());
             case "reports" :
@@ -234,6 +236,8 @@ public class NodePatcher {
                 return value.type() == Type.NIX ? node.withoutSwitchHostname() : node.withSwitchHostname(value.asString());
             case "trustStore":
                 return nodeWithTrustStore(node, value);
+            case "wireguardPubkey":
+                return node.withWireguardPubkey(SlimeUtils.optionalString(value).map(WireguardKey::new).orElse(null));
             default :
                 throw new IllegalArgumentException("Could not apply field '" + name + "' on a node: No such modifiable field");
         }
@@ -241,12 +245,15 @@ public class NodePatcher {
 
     private Node applyIpconfigField(Node node, String name, Inspector value, LockedNodeList nodes) {
         switch (name) {
-            case "ipAddresses":
+            case "ipAddresses" -> {
                 return IP.Config.verify(node.with(node.ipConfig().withPrimary(asStringSet(value))), nodes);
-            case "additionalIpAddresses":
+            }
+            case "additionalIpAddresses" -> {
                 return IP.Config.verify(node.with(node.ipConfig().withPool(node.ipConfig().pool().withIpAddresses(asStringSet(value)))), nodes);
-            case "additionalHostnames":
-                return IP.Config.verify(node.with(node.ipConfig().withPool(node.ipConfig().pool().withAddresses(asAddressList(value)))), nodes);
+            }
+            case "additionalHostnames" -> {
+                return IP.Config.verify(node.with(node.ipConfig().withPool(node.ipConfig().pool().withHostnames(asHostnames(value)))), nodes);
+            }
         }
         throw new IllegalArgumentException("Could not apply field '" + name + "' on a node: No such modifiable field");
     }
@@ -313,20 +320,19 @@ public class NodePatcher {
         return strings;
     }
 
-    private List<Address> asAddressList(Inspector field) {
+    private List<HostName> asHostnames(Inspector field) {
         if ( ! field.type().equals(Type.ARRAY))
             throw new IllegalArgumentException("Expected an ARRAY value, got a " + field.type());
 
-        List<Address> addresses = new ArrayList<>(field.entries());
+        List<HostName> hostnames = new ArrayList<>(field.entries());
         for (int i = 0; i < field.entries(); i++) {
             Inspector entry = field.entry(i);
             if ( ! entry.type().equals(Type.STRING))
                 throw new IllegalArgumentException("Expected a STRING value, got a " + entry.type());
-            Address address = new Address(entry.asString());
-            addresses.add(address);
+            hostnames.add(HostName.of(entry.asString()));
         }
 
-        return addresses;
+        return hostnames;
     }
 
     private Node patchRequiredDiskSpeed(Node node, String value) {

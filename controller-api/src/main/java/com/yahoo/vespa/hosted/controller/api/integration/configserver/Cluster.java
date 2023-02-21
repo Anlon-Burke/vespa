@@ -3,6 +3,7 @@ package com.yahoo.vespa.hosted.controller.api.integration.configserver;
 
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
+import com.yahoo.config.provision.IntRange;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -19,6 +20,7 @@ public class Cluster {
     private final ClusterSpec.Type type;
     private final ClusterResources min;
     private final ClusterResources max;
+    private final IntRange groupSize;
     private final ClusterResources current;
     private final Autoscaling target;
     private final Autoscaling suggested;
@@ -29,6 +31,7 @@ public class Cluster {
                    ClusterSpec.Type type,
                    ClusterResources min,
                    ClusterResources max,
+                   IntRange groupSize,
                    ClusterResources current,
                    Autoscaling target,
                    Autoscaling suggested,
@@ -38,6 +41,7 @@ public class Cluster {
         this.type = type;
         this.min = min;
         this.max = max;
+        this.groupSize = groupSize;
         this.current = current;
         this.target = target;
         this.suggested = suggested;
@@ -53,6 +57,8 @@ public class Cluster {
 
     public ClusterResources max() { return max; }
 
+    public IntRange groupSize() { return groupSize; }
+
     public ClusterResources current() { return current; }
 
     public Autoscaling target() { return target; }
@@ -65,7 +71,7 @@ public class Cluster {
 
     @Override
     public String toString() {
-        return "cluster '" + id + "'";
+        return id.toString();
     }
 
     public static class ScalingEvent {
@@ -121,15 +127,17 @@ public class Cluster {
         private final Instant at;
         private final Load peak;
         private final Load ideal;
+        private final Metrics metrics;
 
         public Autoscaling(String status, String description, Optional<ClusterResources> resources, Instant at,
-                           Load peak, Load ideal) {
+                           Load peak, Load ideal, Metrics metrics) {
             this.status = status;
             this.description = description;
             this.resources = resources;
             this.at = at;
             this.peak = peak;
             this.ideal = ideal;
+            this.metrics = metrics;
         }
 
         public String status() {return status;}
@@ -140,6 +148,7 @@ public class Cluster {
         public Instant at() {return at;}
         public Load peak() {return peak;}
         public Load ideal() {return ideal;}
+        public Metrics metrics() { return metrics; }
 
         @Override
         public boolean equals(Object o) {
@@ -150,6 +159,7 @@ public class Cluster {
             if (!this.at.equals(other.at)) return false;
             if (!this.peak.equals(other.peak)) return false;
             if (!this.ideal.equals(other.ideal)) return false;
+            if (!this.metrics.equals(other.metrics)) return false;
             return true;
         }
 
@@ -170,7 +180,17 @@ public class Cluster {
                                    Optional.empty(),
                                    Instant.EPOCH,
                                    Load.zero(),
-                                   Load.zero());
+                                   Load.zero(),
+                                   Metrics.zero());
+        }
+
+        // Used to create BcpGroupInfo
+        public record Metrics(double queryRate, double growthRateHeadroom, double cpuCostPerQuery) {
+
+            public static Metrics zero() {
+                return new Metrics(0, 0, 0);
+            }
+
         }
 
     }

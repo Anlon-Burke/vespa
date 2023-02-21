@@ -182,7 +182,7 @@ public class RankProfilesConfigImporter {
             options.setExecutionMode(onnxModelConfig.stateless_execution_mode());
             options.setInterOpThreads(onnxModelConfig.stateless_interop_threads());
             options.setIntraOpThreads(onnxModelConfig.stateless_intraop_threads());
-
+            options.setGpuDevice(onnxModelConfig.gpu_device(), onnxModelConfig.gpu_device_required());
             return new OnnxModel(name, file, options);
         } catch (InterruptedException e) {
             throw new IllegalStateException("Gave up waiting for ONNX model " + onnxModelConfig.name());
@@ -232,13 +232,16 @@ public class RankProfilesConfigImporter {
     protected Tensor readTensorFromFile(String name, TensorType type, FileReference fileReference) {
         try {
             File file = fileAcquirer.waitFor(fileReference, 7, TimeUnit.DAYS);
-            if (file.getName().endsWith(".tbf"))
+            if (file.getName().endsWith(".tbf")) {
                 return TypedBinaryFormat.decode(Optional.of(type),
                                                 GrowableByteBuffer.wrap(IOUtils.readFileBytes(file)));
-            else
+            } else if (file.getName().endsWith(".json")) {
+                return com.yahoo.tensor.serialization.JsonFormat.decode(type, IOUtils.readFileBytes(file));
+            } else {
                 throw new IllegalArgumentException("Constant files on other formats than .tbf are not supported, got " +
                                                    file + " for constant " + name);
-            // TODO: Support json and json.lz4
+            }
+            // TODO: Support json.lz4
         }
         catch (InterruptedException e) {
             throw new IllegalStateException("Gave up waiting for constant " + name);

@@ -21,15 +21,15 @@ import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.applications.Application;
 import com.yahoo.vespa.hosted.provision.applications.Cluster;
+import com.yahoo.vespa.hosted.provision.applications.BcpGroupInfo;
 import com.yahoo.vespa.hosted.provision.autoscale.awsnodes.AwsHostResourcesCalculatorImpl;
 import com.yahoo.vespa.hosted.provision.autoscale.awsnodes.AwsNodeTypes;
+import com.yahoo.vespa.hosted.provision.provisioning.DynamicProvisioningTester;
 import com.yahoo.vespa.hosted.provision.provisioning.HostResourcesCalculator;
-
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 /**
  * Fixture for autoscaling tests.
@@ -38,7 +38,7 @@ import java.util.stream.Collectors;
  */
 public class Fixture {
 
-    final AutoscalingTester tester;
+    final DynamicProvisioningTester tester;
     final Zone zone;
     final ApplicationId applicationId;
     final ClusterSpec clusterSpec;
@@ -50,13 +50,13 @@ public class Fixture {
         applicationId = builder.application;
         clusterSpec = builder.cluster;
         capacity = builder.capacity;
-        tester = new AutoscalingTester(builder.zone, builder.resourceCalculator, builder.hostFlavors, builder.flagSource, hostCount);
+        tester = new DynamicProvisioningTester(builder.zone, builder.resourceCalculator, builder.hostFlavors, builder.flagSource, hostCount);
         var deployCapacity = initialResources.isPresent() ? Capacity.from(initialResources.get()) : capacity;
         tester.deploy(builder.application, builder.cluster, deployCapacity);
         this.loader = new Loader(this);
     }
 
-    public AutoscalingTester tester() { return tester; }
+    public DynamicProvisioningTester tester() { return tester; }
 
     public ApplicationId applicationId() { return applicationId; }
 
@@ -134,9 +134,15 @@ public class Fixture {
         tester.nodeRepository().applications().put(application, tester.nodeRepository().applications().lock(applicationId));
     }
 
+    public void store(BcpGroupInfo bcpGroupInfo) {
+        var application = application();
+        application = application.with(application.cluster(clusterId()).get().with(bcpGroupInfo));
+        tester.nodeRepository().applications().put(application, tester.nodeRepository().applications().lock(applicationId));
+    }
+
     public static class Builder {
 
-        ApplicationId application = AutoscalingTester.applicationId("application1");
+        ApplicationId application = DynamicProvisioningTester.applicationId("application1");
         ClusterSpec cluster = ClusterSpec.request(ClusterSpec.Type.content, ClusterSpec.Id.from("cluster1")).vespaVersion("7").build();
         Zone zone = new Zone(Environment.prod, RegionName.from("us-east"));
         List<Flavor> hostFlavors = List.of(new Flavor(new NodeResources(100, 100, 100, 1)));
@@ -145,7 +151,7 @@ public class Fixture {
                                                                new NodeResources(1, 4, 10, 1, NodeResources.DiskSpeed.any)),
                                           new ClusterResources(20, 1,
                                                                new NodeResources(100, 1000, 1000, 1, NodeResources.DiskSpeed.any)));
-        HostResourcesCalculator resourceCalculator = new AutoscalingTester.MockHostResourcesCalculator(zone);
+        HostResourcesCalculator resourceCalculator = new DynamicProvisioningTester.MockHostResourcesCalculator(zone);
         final InMemoryFlagSource flagSource = new InMemoryFlagSource();
         int hostCount = 0;
 
@@ -246,7 +252,7 @@ public class Fixture {
 
         public Fixture.Builder hostSharingFlag() {
             var resources = new HostResources(8.0, 32.0, 100.0, 10.0, "fast", "local", null, 6, "x86_64");
-            flagSource.withJacksonFlag(PermanentFlags.SHARED_HOST.id(), new SharedHost(List.of(resources), null), SharedHost.class);
+            flagSource.withJacksonFlag(PermanentFlags.SHARED_HOST.id(), new SharedHost(List.of(resources)), SharedHost.class);
             return this;
         }
 

@@ -1,7 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "fast_access_doc_subdb.h"
-#include "attribute_writer_factory.h"
+#include "document_subdb_reconfig.h"
 #include "emptysearchview.h"
 #include "fast_access_document_retriever.h"
 #include "document_subdb_initializer.h"
@@ -10,6 +10,7 @@
 #include <vespa/searchcore/proton/attribute/attribute_collection_spec_factory.h>
 #include <vespa/searchcore/proton/attribute/attribute_factory.h>
 #include <vespa/searchcore/proton/attribute/attribute_manager_initializer.h>
+#include <vespa/searchcore/proton/attribute/attribute_writer.h>
 #include <vespa/searchcore/proton/attribute/filter_attribute_manager.h>
 #include <vespa/searchcore/proton/common/alloc_config.h>
 #include <vespa/searchcore/proton/reprocessing/attribute_reprocessing_initializer.h>
@@ -100,14 +101,6 @@ FastAccessDocSubDB::setupAttributeManager(AttributeManager::SP attrMgrResult)
 }
 
 
-std::unique_ptr<AttributeCollectionSpec>
-FastAccessDocSubDB::createAttributeSpec(const AttributesConfig &attrCfg, const AllocStrategy& alloc_strategy, SerialNum serialNum) const
-{
-    uint32_t docIdLimit(_dms->getCommittedDocIdLimit());
-    AttributeCollectionSpecFactory factory(alloc_strategy, _fastAccessAttributesOnly);
-    return factory.create(attrCfg, docIdLimit, serialNum);
-}
-
 void
 FastAccessDocSubDB::initFeedView(IAttributeWriter::SP writer, const DocumentDBConfig &configSnapshot)
 {
@@ -196,6 +189,8 @@ FastAccessDocSubDB::FastAccessDocSubDB(const Config &cfg, const Context &ctx)
       _fastAccessAttributesOnly(cfg._fastAccessAttributesOnly),
       _initAttrMgr(),
       _fastAccessFeedView(),
+      _configurer(_fastAccessFeedView,
+                  getSubDbName()),
       _subAttributeMetrics(ctx._subAttributeMetrics),
       _addMetrics(cfg._addMetrics),
       _metricsWireService(ctx._metricsWireService),
@@ -239,9 +234,18 @@ FastAccessDocSubDB::initViews(const DocumentDBConfig &configSnapshot)
     }
 }
 
+std::unique_ptr<DocumentSubDBReconfig>
+FastAccessDocSubDB::prepare_reconfig(const DocumentDBConfig& new_config_snapshot, const ReconfigParams& reconfig_params, std::optional<SerialNum> serial_num)
+{
+    auto alloc_strategy = new_config_snapshot.get_alloc_config().make_alloc_strategy(_subDbType);
+    AttributeCollectionSpecFactory attr_spec_factory(alloc_strategy, _fastAccessAttributesOnly);
+    auto docid_limit = _dms->getCommittedDocIdLimit();
+    return _configurer.prepare_reconfig(new_config_snapshot, attr_spec_factory, reconfig_params, docid_limit, serial_num);
+}
+
 IReprocessingTask::List
 FastAccessDocSubDB::applyConfig(const DocumentDBConfig &newConfigSnapshot, const DocumentDBConfig &oldConfigSnapshot,
-                                SerialNum serialNum, const ReconfigParams &params, IDocumentDBReferenceResolver &)
+                                SerialNum serialNum, const ReconfigParams &params, IDocumentDBReferenceResolver &, const DocumentSubDBReconfig& prepared_reconfig)
 {
     AllocStrategy alloc_strategy = newConfigSnapshot.get_alloc_config().make_alloc_strategy(_subDbType);
     reconfigure(newConfigSnapshot.getStoreConfig(), alloc_strategy);
@@ -256,13 +260,9 @@ FastAccessDocSubDB::applyConfig(const DocumentDBConfig &newConfigSnapshot, const
     if (params.shouldAttributeManagerChange() ||
         params.shouldAttributeWriterChange() ||
         newConfigSnapshot.getDocumentTypeRepoSP().get() != oldConfigSnapshot.getDocumentTypeRepoSP().get()) {
-        FastAccessDocSubDBConfigurer configurer(_fastAccessFeedView,
-                std::make_unique<AttributeWriterFactory>(), getSubDbName());
         proton::IAttributeManager::SP oldMgr = extractAttributeManager(_fastAccessFeedView.get());
-        std::unique_ptr<AttributeCollectionSpec> attrSpec =
-            createAttributeSpec(newConfigSnapshot.getAttributesConfig(), alloc_strategy, serialNum);
         IReprocessingInitializer::UP initializer =
-                configurer.reconfigure(newConfigSnapshot, oldConfigSnapshot, std::move(*attrSpec));
+            _configurer.reconfigure(newConfigSnapshot, oldConfigSnapshot, prepared_reconfig, serialNum);
         if (initializer->hasReprocessors()) {
             tasks.push_back(IReprocessingTask::SP(createReprocessingTask(*initializer,
                     newConfigSnapshot.getDocumentTypeRepoSP()).release()));

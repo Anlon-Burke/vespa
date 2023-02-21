@@ -3,7 +3,7 @@ package com.yahoo.container.core.config;
 
 import com.yahoo.config.FileReference;
 import com.yahoo.container.di.Osgi.GenerationStatus;
-import com.yahoo.jdisc.core.BsnVersion;
+import com.yahoo.jdisc.application.BsnVersion;
 import com.yahoo.osgi.Osgi;
 import org.osgi.framework.Bundle;
 
@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 
 /**
  * Manages the set of installed and active/inactive bundles.
@@ -55,7 +54,7 @@ public class ApplicationBundleLoader {
      */
     public synchronized List<BsnVersion> activeBundlesBsnVersion() {
         return activeBundles.values().stream().map(BsnVersion::new)
-                .collect(Collectors.toList());
+                .toList();
     }
 
     /**

@@ -71,7 +71,10 @@ struct Server : public Base {
     {
         // empty
     }
+    ~Server() override;
 };
+
+Server::~Server() = default;
 
 struct DocProc : public Server {
     using UP = std::unique_ptr<DocProc>;

@@ -3,8 +3,8 @@ package com.yahoo.document.restapi.resource;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
-import com.yahoo.component.annotation.Inject;
 import com.yahoo.cloud.config.ClusterListConfig;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.concurrent.DaemonThreadFactory;
 import com.yahoo.concurrent.SystemTimer;
 import com.yahoo.container.core.HandlerMetricContextUtil;
@@ -116,7 +116,6 @@ import static com.yahoo.jdisc.http.HttpRequest.Method.GET;
 import static com.yahoo.jdisc.http.HttpRequest.Method.OPTIONS;
 import static com.yahoo.jdisc.http.HttpRequest.Method.POST;
 import static com.yahoo.jdisc.http.HttpRequest.Method.PUT;
-import static com.yahoo.vespa.http.server.Headers.CLIENT_VERSION;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.logging.Level.FINE;
@@ -750,14 +749,25 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         private boolean tensorShortForm() {
             if (request != null &&
                 request.parameters().containsKey("format.tensors") &&
-                request.parameters().get("format.tensors").contains("long")) {
+                ( request.parameters().get("format.tensors").contains("long")
+                  || request.parameters().get("format.tensors").contains("long-value"))) {
                 return false;
             }
             return true;  // default
         }
 
+        private boolean tensorDirectValues() {
+            if (request != null &&
+                request.parameters().containsKey("format.tensors") &&
+                ( request.parameters().get("format.tensors").contains("short-value")
+                  || request.parameters().get("format.tensors").contains("long-value"))) {
+                return true;
+            }
+            return false;  // TODO: Flip default on Vespa 9
+        }
+
         synchronized void writeSingleDocument(Document document) throws IOException {
-            new JsonWriter(json, tensorShortForm()).writeFields(document);
+            new JsonWriter(json, tensorShortForm(), tensorDirectValues()).writeFields(document);
         }
 
         synchronized void writeDocumentsArrayStart() throws IOException {
@@ -776,7 +786,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
             ByteArrayOutputStream myOut = new ByteArrayOutputStream(1);
             myOut.write(','); // Prepend rather than append, to avoid double memory copying.
             try (JsonGenerator myJson = jsonFactory.createGenerator(myOut)) {
-                new JsonWriter(myJson, tensorShortForm()).write(document);
+                new JsonWriter(myJson, tensorShortForm(), tensorDirectValues()).write(document);
             }
             docs.add(myOut);
 
@@ -1029,7 +1039,7 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         }
     }
 
-    static class DocumentOperationParser {
+    class DocumentOperationParser {
 
         private final DocumentTypeManager manager;
 
@@ -1046,7 +1056,12 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         }
 
         private ParsedDocumentOperation parse(InputStream inputStream, String docId, DocumentOperationType operation) {
-            return new JsonReader(manager, inputStream, jsonFactory).readSingleDocument(operation, docId);
+            try {
+                return new JsonReader(manager, inputStream, jsonFactory).readSingleDocument(operation, docId);
+            } catch (IllegalArgumentException e) {
+                incrementMetricParseError();
+                throw e;
+            }
         }
 
     }
@@ -1100,8 +1115,11 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         incrementMetricNumOperations(); incrementMetricNumPuts(); sampleLatency(latency);
         switch (outcome) {
             case SUCCESS -> incrementMetricSucceeded();
+            case NOT_FOUND -> incrementMetricNotFound();
             case CONDITION_FAILED -> incrementMetricConditionNotMet();
-            default -> incrementMetricFailed();
+            case TIMEOUT -> { incrementMetricFailedTimeout(); incrementMetricFailed();}
+            case INSUFFICIENT_STORAGE -> { incrementMetricFailedInsufficientStorage(); incrementMetricFailed(); }
+            case ERROR -> { incrementMetricFailedUnknown(); incrementMetricFailed(); }
         }
     }
 
@@ -1112,7 +1130,9 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
             case SUCCESS -> incrementMetricSucceeded();
             case NOT_FOUND -> incrementMetricNotFound();
             case CONDITION_FAILED -> incrementMetricConditionNotMet();
-            default -> incrementMetricFailed();
+            case TIMEOUT -> { incrementMetricFailedTimeout(); incrementMetricFailed();}
+            case INSUFFICIENT_STORAGE -> { incrementMetricFailedInsufficientStorage(); incrementMetricFailed(); }
+            case ERROR -> { incrementMetricFailedUnknown(); incrementMetricFailed(); }
         }
     }
 
@@ -1121,7 +1141,9 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         switch (outcome) {
             case SUCCESS,NOT_FOUND -> incrementMetricSucceeded();
             case CONDITION_FAILED -> incrementMetricConditionNotMet();
-            default -> incrementMetricFailed();
+            case TIMEOUT -> { incrementMetricFailedTimeout(); incrementMetricFailed();}
+            case INSUFFICIENT_STORAGE -> { incrementMetricFailedInsufficientStorage(); incrementMetricFailed(); }
+            case ERROR -> { incrementMetricFailedUnknown(); incrementMetricFailed(); }
         }
     }
 
@@ -1134,6 +1156,10 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
     private void incrementMetricConditionNotMet() { incrementMetric(MetricNames.CONDITION_NOT_MET); }
     private void incrementMetricSucceeded() { incrementMetric(MetricNames.SUCCEEDED); }
     private void incrementMetricNotFound() { incrementMetric(MetricNames.NOT_FOUND); }
+    private void incrementMetricParseError() { incrementMetric(MetricNames.PARSE_ERROR); }
+    private void incrementMetricFailedUnknown() { incrementMetric(MetricNames.FAILED_UNKNOWN); }
+    private void incrementMetricFailedTimeout() { incrementMetric(MetricNames.FAILED_TIMEOUT); }
+    private void incrementMetricFailedInsufficientStorage() { incrementMetric(MetricNames.FAILED_INSUFFICIENT_STORAGE); }
     private void incrementMetric(String n) { metric.add(n, 1, null); }
     private void setMetric(String n, Number v) { metric.set(n, v, null); }
 

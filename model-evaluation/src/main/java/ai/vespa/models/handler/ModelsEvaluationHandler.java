@@ -4,6 +4,8 @@ package ai.vespa.models.handler;
 import ai.vespa.models.evaluation.FunctionEvaluator;
 import ai.vespa.models.evaluation.Model;
 import ai.vespa.models.evaluation.ModelsEvaluator;
+import com.yahoo.component.annotation.Inject;
+import com.yahoo.component.provider.ComponentRegistry;
 import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
@@ -39,9 +41,19 @@ public class ModelsEvaluationHandler extends ThreadedHttpRequestHandler {
 
     private final ModelsEvaluator modelsEvaluator;
 
+    @Inject
+    public ModelsEvaluationHandler(ComponentRegistry<ModelsEvaluator> registry,
+                                   Executor executor)
+    {
+        this(registry.getComponent(ModelsEvaluator.class.getName()), executor);
+    }
+
     public ModelsEvaluationHandler(ModelsEvaluator modelsEvaluator, Executor executor) {
         super(executor);
         this.modelsEvaluator = modelsEvaluator;
+        if (modelsEvaluator == null) {
+            throw new IllegalArgumentException("missing ModelsEvaluator");
+        }
     }
 
     @Override
@@ -91,15 +103,15 @@ public class ModelsEvaluationHandler extends ThreadedHttpRequestHandler {
             }
         }
         Tensor result = evaluator.evaluate();
-
-        Optional<String> format = property(request, "format.tensors");
-        if (format.isPresent() && format.get().equalsIgnoreCase("long")) {
-            return new Response(200, JsonFormat.encode(result));
-        }
-        else if (format.isPresent() && format.get().equalsIgnoreCase("string")) {
-            return new Response(200, result.toString().getBytes(StandardCharsets.UTF_8));
-        }
-        return new Response(200, JsonFormat.encodeShortForm(result));
+        return switch (property(request, "format.tensors").orElse("short").toLowerCase()) {
+            case "short"        -> new Response(200, JsonFormat.encode(result, true,  false));
+            case "long"         -> new Response(200, JsonFormat.encode(result, false, false));
+            case "short-value"  -> new Response(200, JsonFormat.encode(result, true,  true));
+            case "long-value"   -> new Response(200, JsonFormat.encode(result, false, true));
+            case "string"       -> new Response(200, result.toString(true, true).getBytes(StandardCharsets.UTF_8));
+            case "string-long " -> new Response(200, result.toString(true, false ).getBytes(StandardCharsets.UTF_8));
+            default             -> new ErrorResponse(400, "Unknown tensor format '" + property(request, "format.tensors") + "'");
+        };
     }
 
     private HttpResponse listAllModels(HttpRequest request) {

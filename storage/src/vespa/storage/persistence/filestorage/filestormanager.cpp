@@ -2,6 +2,7 @@
 
 #include "filestormanager.h"
 #include "filestorhandlerimpl.h"
+#include <vespa/storageframework/generic/thread/thread.h>
 #include <vespa/storage/bucketdb/minimumusedbitstracker.h>
 #include <vespa/storage/common/bucketmessages.h>
 #include <vespa/storage/common/content_bucket_space_repo.h>
@@ -78,6 +79,10 @@ FileStorManager(const config::ConfigUri & configUri, spi::PersistenceProvider& p
       _configFetcher(std::make_unique<config::ConfigFetcher>(configUri.getContext())),
       _use_async_message_handling_on_schedule(false),
       _metrics(std::make_unique<FileStorMetrics>()),
+      _mem_trap_1(std::make_unique<vespalib::HeapMemoryTrap>(1)),
+      _mem_trap_2(std::make_unique<vespalib::HeapMemoryTrap>(2)),
+      _mem_trap_3(std::make_unique<vespalib::HeapMemoryTrap>(3)),
+      _mem_trap_4(std::make_unique<vespalib::HeapMemoryTrap>(16)),
       _filestorHandler(),
       _sequencedExecutor(),
       _closed(false),

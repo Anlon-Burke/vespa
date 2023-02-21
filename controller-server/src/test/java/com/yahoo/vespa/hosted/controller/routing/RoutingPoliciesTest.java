@@ -26,6 +26,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.dns.Record.Type;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.RecordData;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.RecordName;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.VpcEndpointService.DnsChallenge;
+import com.yahoo.vespa.hosted.controller.api.integration.dns.VpcEndpointService.State;
 import com.yahoo.vespa.hosted.controller.application.Endpoint;
 import com.yahoo.vespa.hosted.controller.application.EndpointId;
 import com.yahoo.vespa.hosted.controller.application.EndpointList;
@@ -57,8 +58,8 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * @author mortent
@@ -497,7 +498,9 @@ public class RoutingPoliciesTest {
                                             Optional.empty(),
                                             LoadBalancer.State.active,
                                             Optional.of("dns-zone-1"),
-                                            Optional.empty());
+                                            Optional.empty(),
+                                            Optional.empty(),
+                                            true);
         tester.controllerTester().configServer().putLoadBalancers(zone1, List.of(loadBalancer));
 
         // Application redeployment preserves DNS record
@@ -514,41 +517,33 @@ public class RoutingPoliciesTest {
     void private_dns_for_vpc_endpoint() {
         // Challenge answered for endpoint
         RoutingPoliciesTester tester = new RoutingPoliciesTester();
-        Map<RecordName, RecordData> challenges = new ConcurrentHashMap<>();
-        tester.tester.controllerTester().serviceRegistry().vpcEndpointService().delegate = (name, cluster, account) -> {
-                RecordName recordName = RecordName.from("challenge--" + name.value());
-                if (challenges.containsKey(recordName)) return Optional.empty();
-                RecordData recordData = RecordData.from(account.map(CloudAccount::value).orElse("system"));
-                return Optional.of(new DnsChallenge(recordName, recordData, () -> challenges.put(recordName, recordData)));
-            };
+        tester.tester.controllerTester().serviceRegistry().vpcEndpointService().enabled.set(true);
 
         DeploymentContext app = tester.newDeploymentContext("t", "a", "default");
         ApplicationPackage appPackage = applicationPackageBuilder().region(zone3.region()).build();
         app.submit(appPackage);
 
-        AtomicBoolean done = new AtomicBoolean();
-        new Thread(() -> {
-            while ( ! done.get()) {
-                app.flushDnsUpdates(Integer.MAX_VALUE);
-                try { Thread.sleep(10); } catch (InterruptedException e) { break; }
-            }
-        }).start();
         app.deploy();
-        done.set(true);
 
+        // TXT records are cleaned up as we go—the last challenge is the last to go here, and we must flush it ourselves.
+        assertEquals(Set.of("a.t.aws-us-east-1a.vespa.oath.cloud",
+                            "challenge--a.t.aws-us-east-1a.vespa.oath.cloud"),
+                     tester.recordNames());
+        app.flushDnsUpdates();
         assertEquals(Set.of(new Record(Type.CNAME,
                                        RecordName.from("a.t.aws-us-east-1a.vespa.oath.cloud"),
-                                       RecordData.from("lb-0--t.a.default--prod.aws-us-east-1a.")),
-                            new Record(Type.TXT,
-                                       RecordName.from("challenge--a.t.aws-us-east-1a.vespa.oath.cloud"),
-                                       RecordData.from("system")),
-                            new Record(Type.TXT,
-                                       RecordName.from("challenge--a.t.us-east-1.test.vespa.oath.cloud"),
-                                       RecordData.from("system")),
-                            new Record(Type.TXT,
-                                       RecordName.from("challenge--a.t.us-east-3.staging.vespa.oath.cloud"),
-                                       RecordData.from("system"))),
+                                       RecordData.from("lb-0--t.a.default--prod.aws-us-east-1a."))),
                      tester.controllerTester().nameService().records());
+
+
+        tester.tester.controllerTester().serviceRegistry().vpcEndpointService().outcomes
+                .put(RecordName.from("challenge--a.t.aws-us-east-1a.vespa.oath.cloud"), State.running);
+
+        // Deployment fails because challenge is not answered (immediately).
+        assertEquals("Status of run 2 of production-aws-us-east-1a for t.a ==> expected: <succeeded> but was: <unfinished>",
+                     assertThrows(AssertionError.class,
+                                  () -> app.submit(appPackage).deploy())
+                             .getMessage());
     }
 
     @Test
@@ -953,7 +948,9 @@ public class RoutingPoliciesTest {
                                      ipAddress,
                                      LoadBalancer.State.active,
                                      Optional.of("dns-zone-1").filter(__ -> lbHostname.isPresent()),
-                                     Optional.empty()));
+                                     Optional.empty(),
+                                     Optional.empty(),
+                                     true));
         }
         return loadBalancers;
     }
@@ -1070,13 +1067,13 @@ public class RoutingPoliciesTest {
                 deploymentsByDnsName.computeIfAbsent(dnsName, (k) -> new ArrayList<>())
                                     .add(deployment);
             }
-            assertTrue(1 <= deploymentsByDnsName.size(), "Found " + endpointId + " for " + application);
+            assertTrue(deploymentsByDnsName.size() >= 1, "Found " + endpointId + " for " + application);
             deploymentsByDnsName.forEach((dnsName, deployments) -> {
                 Set<String> weightedTargets = deployments.stream()
-                                                           .map(d -> "weighted/lb-" + loadBalancerId + "--" +
-                                                                     d.applicationId().toFullString() + "--" + d.zoneId().value() +
-                                                                     "/dns-zone-1/" + d.zoneId().value() + "/" + deploymentWeights.get(d))
-                                                           .collect(Collectors.toSet());
+                                                         .map(d -> "weighted/lb-" + loadBalancerId + "--" +
+                                                                   d.applicationId().toFullString() + "--" + d.zoneId().value() +
+                                                                   "/dns-zone-1/" + d.zoneId().value() + "/" + deploymentWeights.get(d))
+                                                         .collect(Collectors.toSet());
                 assertEquals(weightedTargets, aliasDataOf(dnsName), dnsName + " has expected targets");
             });
         }

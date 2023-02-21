@@ -77,12 +77,14 @@ MetricManager::MetricManager(std::unique_ptr<Timer> timer)
       _lastProcessedTime(0),
       _snapshotUnsetMetrics(false),
       _consumerConfigChanged(false),
-      _metricManagerMetrics("metricmanager", {}, "Metrics for the metric manager upkeep tasks"),
+      _metricManagerMetrics("metricmanager", {}, "Metrics for the metric manager upkeep tasks", nullptr),
       _periodicHookLatency("periodichooklatency", {}, "Time in ms used to update a single periodic hook", &_metricManagerMetrics),
       _snapshotHookLatency("snapshothooklatency", {}, "Time in ms used to update a single snapshot hook", &_metricManagerMetrics),
       _resetLatency("resetlatency", {}, "Time in ms used to reset all metrics.", &_metricManagerMetrics),
       _snapshotLatency("snapshotlatency", {}, "Time in ms used to take a snapshot", &_metricManagerMetrics),
-      _sleepTimes("sleeptime", {}, "Time in ms worker thread is sleeping", &_metricManagerMetrics)
+      _sleepTimes("sleeptime", {}, "Time in ms worker thread is sleeping", &_metricManagerMetrics),
+      _stop_requested(false),
+      _thread()
 {
     registerMetric(getMetricLock(), _metricManagerMetrics);
 }
@@ -95,15 +97,14 @@ MetricManager::~MetricManager()
 void
 MetricManager::stop()
 {
-    if (!running()) {
-        return; // Let stop() be idempotent.
-    }
-    Runnable::stop();
+    request_stop();
     {
         MetricLockGuard sync(_waiter);
         _cond.notify_all();
     }
-    join();
+    if (_thread.joinable()) {
+        _thread.join();
+    }
 }
 
 void
@@ -161,7 +162,7 @@ MetricManager::isInitialized() const {
 }
 
 void
-MetricManager::init(const config::ConfigUri & uri, FastOS_ThreadPool& pool, bool startThread)
+MetricManager::init(const config::ConfigUri & uri, bool startThread)
 {
     if (isInitialized()) {
         throw vespalib::IllegalStateException(
@@ -175,7 +176,7 @@ MetricManager::init(const config::ConfigUri & uri, FastOS_ThreadPool& pool, bool
     configure(getMetricLock(), _configHandle->getConfig());
     LOG(debug, "Starting worker thread, waiting for first iteration to complete.");
     if (startThread) {
-        Runnable::start(pool);
+        _thread = std::thread([this](){run();});
         // Wait for first iteration to have completed, such that it is safe
         // to access snapshots afterwards.
         MetricLockGuard sync(_waiter);
@@ -383,11 +384,9 @@ MetricManager::handleMetricsAltered(const MetricLockGuard & guard)
         configMap[consumer.name] = std::make_shared<ConsumerSpec>(std::move(consumerMetricBuilder._matchedMetrics));
     }
     LOG(debug, "Recreating snapshots to include altered metrics");
-    _totalMetrics->recreateSnapshot(_activeMetrics.getMetrics(),
-                                    _snapshotUnsetMetrics);
+    _totalMetrics->recreateSnapshot(_activeMetrics.getMetrics(), _snapshotUnsetMetrics);
     for (uint32_t i=0; i<_snapshots.size(); ++i) {
-        _snapshots[i]->recreateSnapshot(_activeMetrics.getMetrics(),
-                                        _snapshotUnsetMetrics);
+        _snapshots[i]->recreateSnapshot(_activeMetrics.getMetrics(), _snapshotUnsetMetrics);
     }
     LOG(debug, "Setting new consumer config. Clearing dirty flag");
     _consumerConfig.swap(configMap);
@@ -395,8 +394,7 @@ MetricManager::handleMetricsAltered(const MetricLockGuard & guard)
 }
 
 namespace {
-    bool setSnapshotName(std::ostream& out, const char* name,
-                         uint32_t length, uint32_t period)
+    bool setSnapshotName(std::ostream& out, const char* name, uint32_t length, uint32_t period)
     {
         if (length % period != 0) return false;
         out << (length / period) << ' ' << name;
@@ -412,9 +410,8 @@ MetricManager::createSnapshotPeriods(const Config& config)
     try{
         for (uint32_t i=0; i<config.snapshot.periods.size(); ++i) {
             uint32_t length = config.snapshot.periods[i];
-            if (length < 1) throw vespalib::IllegalStateException(
-                    "Snapshot periods must be positive numbers",
-                    VESPA_STRLOC);
+            if (length < 1)
+                throw vespalib::IllegalStateException("Snapshot periods must be positive numbers", VESPA_STRLOC);
             std::ostringstream name;
             if (setSnapshotName(name, "week", length, 60 * 60 * 24 * 7)) {
             } else if (setSnapshotName(name, "day", length, 60 * 60 * 24)) {
@@ -483,15 +480,13 @@ MetricManager::configure(const MetricLockGuard & , std::unique_ptr<Config> confi
                             VESPA_STRLOC);
                 }
             }
-            _snapshots.push_back(MetricSnapshotSet::SP(new MetricSnapshotSet(
+            _snapshots.push_back(std::make_shared<MetricSnapshotSet>(
                     snapshotPeriods[i].second, snapshotPeriods[i].first, count,
-                    _activeMetrics.getMetrics(), _snapshotUnsetMetrics)));
+                    _activeMetrics.getMetrics(), _snapshotUnsetMetrics));
             count = nextCount;
         }
             // Add all time snapshot.
-        _totalMetrics = MetricSnapshot::SP(new MetricSnapshot(
-                "All time snapshot", 0, _activeMetrics.getMetrics(),
-                _snapshotUnsetMetrics));
+        _totalMetrics = std::make_shared<MetricSnapshot>("All time snapshot", 0, _activeMetrics.getMetrics(), _snapshotUnsetMetrics);
         _totalMetrics->reset(currentTime);
     }
     if (_config.get() == 0
@@ -769,7 +764,7 @@ MetricManager::run()
     }
     // Ensure correct time for first snapshot
     _snapshots[0]->getSnapshot().setToTime(currentTime);
-    while (!stopping()) {
+    while (!stop_requested()) {
         currentTime = _timer->getTime();
         time_t next = tick(sync, currentTime);
         if (currentTime < next) {

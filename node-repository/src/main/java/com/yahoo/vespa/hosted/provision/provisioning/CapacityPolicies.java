@@ -39,8 +39,11 @@ public class CapacityPolicies {
     }
 
     public Capacity applyOn(Capacity capacity, ApplicationId application, boolean exclusive) {
-        return capacity.withLimits(applyOn(capacity.minResources(), capacity, application, exclusive),
-                                   applyOn(capacity.maxResources(), capacity, application, exclusive));
+        var min = applyOn(capacity.minResources(), capacity, application, exclusive);
+        var max = applyOn(capacity.maxResources(), capacity, application, exclusive);
+        var groupSize = capacity.groupSize().fromAtMost(max.nodes() / min.groups())
+                                            .toAtLeast(min.nodes() / max.groups());
+        return capacity.withLimits(min, max, groupSize);
     }
 
     private ClusterResources applyOn(ClusterResources resources, Capacity capacity, ApplicationId application, boolean exclusive) {
@@ -66,9 +69,13 @@ public class CapacityPolicies {
         if (required || exclusive) return target;  // Cannot downsize if resources are required, or exclusively allocated
         if (target.isUnspecified()) return target; // Cannot be modified
 
-        // Dev does not cap the cpu or network of containers since usage is spotty: Allocate just a small amount exclusively
-        if (zone.environment() == Environment.dev && zone.cloud().allowHostSharing())
+        if (zone.environment() == Environment.dev && zone.cloud().allowHostSharing()) {
+            // Dev does not cap the cpu or network of containers since usage is spotty: Allocate just a small amount exclusively
             target = target.withVcpu(0.1).withBandwidthGbps(0.1);
+
+            // Allocate without GPU in dev
+            target = target.with(NodeResources.GpuResources.zero());
+        }
 
         // Allow slow storage in zones which are not performance sensitive
         if (zone.system().isCd() || zone.environment() == Environment.dev || zone.environment() == Environment.test)
@@ -82,7 +89,7 @@ public class CapacityPolicies {
             Architecture architecture = adminClusterArchitecture(applicationId);
 
             if (clusterSpec.id().value().equals("cluster-controllers")) {
-                return clusterControllerResources(clusterSpec).with(architecture);
+                return clusterControllerResources(clusterSpec, architecture).with(architecture);
             }
 
             return (nodeRepository.exclusiveAllocation(clusterSpec)
@@ -104,11 +111,16 @@ public class CapacityPolicies {
         }
     }
 
-    private NodeResources clusterControllerResources(ClusterSpec clusterSpec) {
+    private NodeResources clusterControllerResources(ClusterSpec clusterSpec, Architecture architecture) {
         if (nodeRepository.exclusiveAllocation(clusterSpec)) {
             return versioned(clusterSpec, Map.of(new Version(0), smallestExclusiveResources()));
         }
-        return versioned(clusterSpec, Map.of(new Version(0), new NodeResources(0.25, 1.14, 10, 0.3)));
+
+        // 1.32 fits floor(8/1.32) = 6 cluster controllers on each 8Gb host, and each will have
+        // 1.32-(0.7+0.6)*(1.32/8) = 1.1 Gb real memory given current taxes.
+        return versioned(clusterSpec, Map.of(new Version(0), new NodeResources(0.25, 1.14, 10, 0.3),
+                                             new Version(8, 127, 11), new NodeResources(0.25, 1.5, 10, 0.3),
+                                             new Version(8, 129,  4), new NodeResources(0.25, 1.32, 10, 0.3)));
     }
 
     private Architecture adminClusterArchitecture(ApplicationId instance) {

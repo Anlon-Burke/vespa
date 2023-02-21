@@ -133,19 +133,19 @@ public class Flags {
 
 
     public static final UnboundIntFlag MBUS_JAVA_NUM_TARGETS = defineIntFlag(
-            "mbus-java-num-targets", 1,
+            "mbus-java-num-targets", 2,
             List.of("baldersheim"), "2022-07-05", "2023-12-31",
             "Number of rpc targets per service",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
     public static final UnboundIntFlag MBUS_CPP_NUM_TARGETS = defineIntFlag(
-            "mbus-cpp-num-targets", 1,
+            "mbus-cpp-num-targets", 2,
             List.of("baldersheim"), "2022-07-05", "2023-12-31",
             "Number of rpc targets per service",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
     public static final UnboundIntFlag RPC_NUM_TARGETS = defineIntFlag(
-            "rpc-num-targets", 1,
+            "rpc-num-targets", 2,
             List.of("baldersheim"), "2022-07-05", "2023-12-31",
             "Number of rpc targets per content node",
             "Takes effect at redeployment",
@@ -211,7 +211,7 @@ public class Flags {
 
     public static final UnboundIntFlag MAX_ACTIVATION_INHIBITED_OUT_OF_SYNC_GROUPS = defineIntFlag(
             "max-activation-inhibited-out-of-sync-groups", 0,
-            List.of("vekterli"), "2021-02-19", "2023-02-01",
+            List.of("vekterli"), "2021-02-19", "2023-05-01",
             "Allows replicas in up to N content groups to not be activated " +
             "for query visibility if they are out of sync with a majority of other replicas",
             "Takes effect at redeployment",
@@ -219,10 +219,24 @@ public class Flags {
 
     public static final UnboundDoubleFlag MIN_NODE_RATIO_PER_GROUP = defineDoubleFlag(
             "min-node-ratio-per-group", 0.0,
-            List.of("geirst", "vekterli"), "2021-07-16", "2023-02-01",
+            List.of("geirst", "vekterli"), "2021-07-16", "2023-05-01",
             "Minimum ratio of nodes that have to be available (i.e. not Down) in any hierarchic content cluster group for the group to be Up",
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundStringFlag SYSTEM_MEMORY_HIGH = defineStringFlag(
+            "system-memory-high", "",
+            List.of("baldersheim"), "2023-02-14", "2023-06-13",
+            "The value to write to /sys/fs/cgroup/system.slice/memory.high, if non-empty.",
+            "Takes effect on next tick.",
+            ZONE_ID, NODE_TYPE);
+
+    public static final UnboundStringFlag SYSTEM_MEMORY_MAX = defineStringFlag(
+            "system-memory-max", "",
+            List.of("baldersheim"), "2023-02-14", "2023-06-13",
+            "The value to write to /sys/fs/cgroup/system.slice/memory.max, if non-empty.",
+            "Takes effect on next tick.",
+            ZONE_ID, NODE_TYPE);
 
     public static final UnboundBooleanFlag ENABLED_HORIZON_DASHBOARD = defineFeatureFlag(
             "enabled-horizon-dashboard", false,
@@ -269,38 +283,17 @@ public class Flags {
 
     public static final UnboundBooleanFlag NOTIFICATION_DISPATCH_FLAG = defineFeatureFlag(
             "dispatch-notifications", false,
-            List.of("enygaard"), "2022-05-02", "2023-02-01",
+            List.of("enygaard"), "2022-05-02", "2023-03-01",
             "Whether we should send notification for a given tenant",
             "Takes effect immediately",
             TENANT_ID);
 
     public static final UnboundBooleanFlag ENABLE_PROXY_PROTOCOL_MIXED_MODE = defineFeatureFlag(
             "enable-proxy-protocol-mixed-mode", true,
-            List.of("tokle"), "2022-05-09", "2023-01-31",
+            List.of("tokle"), "2022-05-09", "2023-03-31",
             "Enable or disable proxy protocol mixed mode",
             "Takes effect on redeployment",
             APPLICATION_ID);
-
-    public static final UnboundListFlag<String> FILE_DISTRIBUTION_ACCEPTED_COMPRESSION_TYPES = defineListFlag(
-            "file-distribution-accepted-compression-types", List.of("gzip", "lz4"), String.class,
-            List.of("hmusum"), "2022-07-05", "2023-02-01",
-            "´List of accepted compression types used when asking for a file reference. Valid values: gzip, lz4",
-            "Takes effect on restart of service",
-            APPLICATION_ID);
-
-    public static final UnboundListFlag<String> FILE_DISTRIBUTION_COMPRESSION_TYPES_TO_SERVE = defineListFlag(
-            "file-distribution-compression-types-to-use", List.of("lz4", "gzip"), String.class,
-            List.of("hmusum"), "2022-07-05", "2023-02-01",
-            "List of compression types to use (in preferred order), matched with accepted compression types when serving file references. Valid values: gzip, lz4",
-            "Takes effect on restart of service",
-            APPLICATION_ID);
-
-    public static final UnboundBooleanFlag USE_YUM_PROXY_V2 = defineFeatureFlag(
-            "use-yumproxy-v2", false,
-            List.of("tokle"), "2022-05-05", "2023-01-31",
-            "Use yumproxy-v2",
-            "Takes effect on host admin restart",
-            HOSTNAME);
 
     public static final UnboundStringFlag LOG_FILE_COMPRESSION_ALGORITHM = defineStringFlag(
             "log-file-compression-algorithm", "",
@@ -324,23 +317,9 @@ public class Flags {
             APPLICATION_ID,HOSTNAME,NODE_TYPE,TENANT_ID,VESPA_VERSION
     );
 
-    public static final UnboundBooleanFlag CLEANUP_TENANT_ROLES = defineFeatureFlag(
-            "cleanup-tenant-roles", false,
-            List.of("olaa"), "2022-08-10", "2023-02-01",
-            "Determines whether old tenant roles should be deleted",
-            "Takes effect next maintenance run"
-    );
-
-    public static final UnboundBooleanFlag USE_TWO_PHASE_DOCUMENT_GC = defineFeatureFlag(
-            "use-two-phase-document-gc", false,
-            List.of("vekterli"), "2022-08-24", "2023-02-01",
-            "Use two-phase document GC in content clusters",
-            "Takes effect at redeployment",
-            ZONE_ID, APPLICATION_ID);
-
     public static final UnboundBooleanFlag RESTRICT_DATA_PLANE_BINDINGS = defineFeatureFlag(
             "restrict-data-plane-bindings", false,
-            List.of("mortent"), "2022-09-08", "2023-02-01",
+            List.of("mortent"), "2022-09-08", "2023-05-01",
             "Use restricted data plane bindings",
             "Takes effect at redeployment",
             APPLICATION_ID);
@@ -366,39 +345,12 @@ public class Flags {
             "Takes effect on configserver restart",
             HOSTNAME);
 
-    public static final UnboundBooleanFlag USE_WIREGUARD_ON_TENANT_HOSTS = defineFeatureFlag(
-            "use-wireguard-on-tenant-hosts", false,
-            List.of("andreer", "gjoranv"), "2022-09-28", "2023-04-01",
-            "Set up a WireGuard endpoint on tenant hosts",
-            "Takes effect on host admin restart",
-            HOSTNAME);
-
-    public static final UnboundBooleanFlag ENABLED_MAIL_VERIFICATION = defineFeatureFlag(
-            "enabled-mail-verification", false,
-            List.of("olaa"), "2022-10-28", "2023-02-01",
-            "Enable mail verification",
-            "Takes effect immediately");
-
     public static final UnboundStringFlag CORE_ENCRYPTION_PUBLIC_KEY_ID = defineStringFlag(
             "core-encryption-public-key-id", "",
-            List.of("vekterli"), "2022-11-03", "2023-02-01",
+            List.of("vekterli"), "2022-11-03", "2023-05-01",
             "Specifies which public key to use for core dump encryption.",
             "Takes effect on the next tick.",
             ZONE_ID, NODE_TYPE, HOSTNAME);
-
-    public static final UnboundBooleanFlag USE_OLD_JDISC_CONTAINER_STARTUP = defineFeatureFlag(
-            "use-old-jdisc-container-startup", true,
-            List.of("arnej", "baldersheim"), "2022-11-09", "2023-01-31",
-            "If true, use the old vespa-start-container-daemon script.",
-            "Takes effect immediately?",
-            ZONE_ID, APPLICATION_ID);
-    
-    public static final UnboundBooleanFlag ENABLE_DATAPLANE_FILTER = defineFeatureFlag(
-            "enable-dataplane-filter", false, 
-            List.of("tokle", "bjorncs"), "2022-11-15", "2023-01-31",
-            "Setup data plane filter from clients configuration",
-            "Takes effect on redeployment",
-            APPLICATION_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

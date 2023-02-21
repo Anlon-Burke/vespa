@@ -39,7 +39,9 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -65,7 +67,6 @@ import static java.util.function.BinaryOperator.maxBy;
 import static java.util.stream.Collectors.collectingAndThen;
 import static java.util.stream.Collectors.groupingBy;
 import static java.util.stream.Collectors.mapping;
-import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
 import static java.util.stream.Collectors.toSet;
 
@@ -102,7 +103,7 @@ public class DeploymentStatus {
         Map<JobId, JobStatus> jobs = new HashMap<>();
         this.jobSteps = jobDependencies(application.deploymentSpec(), allSteps, job -> jobs.computeIfAbsent(job, allJobs));
         this.allSteps = Collections.unmodifiableList(allSteps);
-        this.allJobs = JobList.from(jobSteps.keySet().stream().map(allJobs).collect(toList()));
+        this.allJobs = JobList.from(jobSteps.keySet().stream().map(allJobs).toList());
     }
 
     private JobType systemTest(JobType dependent) {
@@ -738,13 +739,16 @@ public class DeploymentStatus {
      */
     private List<JobId> prerequisiteTests(JobId prodJob, JobType testType) {
         List<JobId> tests = new ArrayList<>();
-        Deque<InstanceName> instances = new ArrayDeque<>();
-        instances.add(prodJob.application().instance());
-        while ( ! instances.isEmpty()) {
-            InstanceName instance = instances.poll();
+        Set<InstanceName> seen = new LinkedHashSet<>();
+        Deque<InstanceName> pending = new ArrayDeque<>();
+        pending.add(prodJob.application().instance());
+        while ( ! pending.isEmpty()) {
+            InstanceName instance = pending.poll();
             Optional<JobId> test = declaredTest(application().id().instance(instance), testType);
             if (test.isPresent()) tests.add(test.get());
-            else instances.addAll(instanceSteps().get(instance).dependencies().stream().map(StepStatus::instance).toList());
+            else instanceSteps().get(instance).dependencies().stream().map(StepStatus::instance).forEach(dependency -> {
+                if (seen.add(dependency)) pending.add(dependency);
+            });
         }
         if (tests.isEmpty()) tests.add(firstDeclaredOrElseImplicitTest(testType));
         return tests;

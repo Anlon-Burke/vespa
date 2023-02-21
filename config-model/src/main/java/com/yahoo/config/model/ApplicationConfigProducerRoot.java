@@ -13,7 +13,8 @@ import com.yahoo.cloud.config.log.LogdConfig;
 import com.yahoo.component.Version;
 import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.config.model.deploy.DeployState;
-import com.yahoo.config.model.producer.AbstractConfigProducer;
+import com.yahoo.config.model.producer.AnyConfigProducer;
+import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.document.config.DocumenttypesConfig;
 import com.yahoo.document.config.DocumentmanagerConfig;
@@ -49,7 +50,7 @@ import java.util.Set;
  *
  * @author gjoranv
  */
-public class ApplicationConfigProducerRoot extends AbstractConfigProducer<AbstractConfigProducer<?>> implements CommonConfigsProducer {
+public class ApplicationConfigProducerRoot extends TreeConfigProducer<AnyConfigProducer> implements CommonConfigsProducer {
 
     private final DocumentModel documentModel;
     private Routing routing = null;
@@ -68,7 +69,8 @@ public class ApplicationConfigProducerRoot extends AbstractConfigProducer<Abstra
      * @param name   the name, used as configId
      * @param documentModel DocumentModel to serve global document config from.
      */
-    public ApplicationConfigProducerRoot(AbstractConfigProducer parent, String name, DocumentModel documentModel, Version vespaVersion, ApplicationId applicationId) {
+    public ApplicationConfigProducerRoot(TreeConfigProducer<AnyConfigProducer> parent,
+                                         String name, DocumentModel documentModel, Version vespaVersion, ApplicationId applicationId) {
         super(parent, name);
         this.documentModel = documentModel;
         this.vespaVersion = vespaVersion;
@@ -100,28 +102,13 @@ public class ApplicationConfigProducerRoot extends AbstractConfigProducer<Abstra
     }
 
     /**
-     * Returns the Service with the given id, or null if no such
-     * configId exists or if it belongs to a non-Service ConfigProducer.
-     *
-     * @param configId The configId, e.g. "search.0/tld.0"
-     * @return Service with the given configId
-     */
-    public Service getService(String configId) {
-        ConfigProducer cp = getConfigProducer(configId);
-        if (cp == null || !(cp instanceof Service)) {
-            return null;
-        }
-        return (Service) cp;
-    }
-
-    /**
      * Adds the descendant (at any depth level), so it can be looked up
      * on configId in the Map.
      *
      * @param descendant The configProducer descendant to add
      */
-    // TODO: Make protected if this moves to the same package as AbstractConfigProducer
-    public void addDescendant(AbstractConfigProducer descendant) {
+    // TODO: Make protected if this moves to the same package as TreeConfigProducer
+    public void addDescendant(AnyConfigProducer descendant) {
         id2producer.put(descendant.getConfigId(), descendant);
     }
 

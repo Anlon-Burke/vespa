@@ -53,6 +53,7 @@ namespace storage::spi { struct BucketExecutor; }
 
 namespace proton {
 class AttributeConfigInspector;
+class DocumentDBReconfig;
 class ExecutorThreadingServiceStats;
 class IDocumentDBOwner;
 class ISharedThreadingService;
@@ -116,7 +117,6 @@ private:
     mutable std::mutex                      _configMutex;  // protects _active* below.
     mutable std::condition_variable         _configCV;
     DocumentDBConfigSP                      _activeConfigSnapshot;
-    int64_t                                 _activeConfigSnapshotGeneration;
     const bool                              _validateAndSanitizeDocStore;
     vespalib::Gate                          _initGate;
 
@@ -144,17 +144,18 @@ private:
     DocumentDBMetricsUpdater                         _metricsUpdater;
 
     void registerReference();
-    void setActiveConfig(DocumentDBConfigSP config, int64_t generation);
+    void setActiveConfig(DocumentDBConfigSP config);
     DocumentDBConfigSP getActiveConfig() const;
     void internalInit();
     void initManagers();
     void initFinish(DocumentDBConfigSP configSnapshot);
-    void performReconfig(DocumentDBConfigSP configSnapshot);
+    void performReconfig(DocumentDBConfigSP configSnapshot, std::unique_ptr<DocumentDBReconfig> prepared_reconfig);
     void closeSubDBs();
 
     void applySubDBConfig(const DocumentDBConfig &newConfigSnapshot,
-                          SerialNum serialNum, const ReconfigParams &params);
-    void applyConfig(DocumentDBConfigSP configSnapshot, SerialNum serialNum);
+                          SerialNum serialNum, const ReconfigParams &params,
+                          const DocumentDBReconfig& prepared_reconfig);
+    void applyConfig(DocumentDBConfigSP configSnapshot, SerialNum serialNum, std::unique_ptr<DocumentDBReconfig> prepared_reconfig);
 
     /**
      * Save initial config if we don't have any saved config snapshots.
@@ -380,7 +381,7 @@ public:
     bool getDelayedConfig() const { return _state.getDelayedConfig(); }
     void replayConfig(SerialNum serialNum) override;
     const DocTypeName & getDocTypeName() const { return _docTypeName; }
-    void newConfigSnapshot(DocumentDBConfigSP snapshot);
+    std::unique_ptr<DocumentDBReconfig> prepare_reconfig(const DocumentDBConfig& new_config_snapshot, std::optional<SerialNum> serial_num);
     void reconfigure(DocumentDBConfigSP snapshot) override;
     int64_t getActiveGeneration() const;
     /*

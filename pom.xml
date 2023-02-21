@@ -119,7 +119,6 @@
         <module>standalone-container</module>
         <module>storage</module>
         <module>streamingvisitors</module>
-        <module>tenant-base</module>
         <module>tenant-cd-api</module>
         <module>tenant-cd-commons</module>
         <module>testutil</module>
@@ -137,6 +136,7 @@
         <module>vespa-osgi-testrunner</module>
         <module>vespa-testrunner-components</module>
         <module>vespa-3party-bundles</module>
+        <module>vespa-3party-jars</module>
         <module>vespajlib</module>
         <module>vespalog</module>
         <module>zkfacade</module>

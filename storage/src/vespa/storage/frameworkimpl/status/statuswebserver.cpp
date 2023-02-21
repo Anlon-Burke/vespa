@@ -1,13 +1,16 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "statuswebserver.h"
-#include <vespa/storageframework/storageframework.h>
+#include <vespa/storageframework/generic/component/component.h>
+#include <vespa/storageframework/generic/status/htmlstatusreporter.h>
+#include <vespa/storageframework/generic/status/statusreportermap.h>
 #include <vespa/vespalib/util/host_name.h>
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/util/size_literals.h>
 #include <vespa/vespalib/component/vtag.h>
 #include <vespa/vespalib/net/connection_auth_context.h>
 #include <vespa/vespalib/net/crypto_engine.h>
+#include <vespa/vespalib/net/tls/statistics.h>
 #include <vespa/config/subscription/configuri.h>
 #include <vespa/config/helper/configfetcher.hpp>
 #include <functional>
@@ -128,18 +131,24 @@ StatusWebServer::WebServer::handle_get(vespalib::Portal::GetRequest request)
 }
 
 namespace {
-    class IndexPageReporter : public framework::HtmlStatusReporter {
-        std::ostringstream ost;
-        void reportHtmlStatus(std::ostream& out,const framework::HttpUrlPath&) const override {
-            out << ost.str();
-        }
 
-    public:
-        IndexPageReporter() : framework::HtmlStatusReporter("", "Index page") {}
+class IndexPageReporter : public framework::HtmlStatusReporter {
+    std::ostringstream ost;
+    void reportHtmlStatus(std::ostream& out,const framework::HttpUrlPath&) const override {
+        out << ost.str();
+    }
 
-        template<typename T>
-        IndexPageReporter& operator<<(const T& t) { ost << t; return *this; }
-    };
+public:
+    IndexPageReporter();
+    ~IndexPageReporter() override;
+
+    template<typename T>
+    IndexPageReporter& operator<<(const T& t) { ost << t; return *this; }
+};
+
+IndexPageReporter::IndexPageReporter() : framework::HtmlStatusReporter("", "Index page") {}
+IndexPageReporter::~IndexPageReporter() = default;
+
 }
 
 
@@ -195,6 +204,7 @@ StatusWebServer::handlePage(const framework::HttpUrlPath& urlpath, vespalib::Por
             if (auth_ctx.capabilities().contains_all(reporter->required_capabilities())) {
                 invoke_reporter(*reporter, urlpath, request);
             } else {
+                vespalib::net::tls::CapabilityStatistics::get().inc_status_capability_checks_failed();
                 // TODO should print peer address as well; not currently exposed
                 LOG(warning, "Peer with %s denied status page access to '%s' due to insufficient "
                              "credentials (had %s, needed %s)",

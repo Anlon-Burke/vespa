@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
@@ -35,6 +36,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPOutputStream;
 
+import static ai.vespa.feed.client.FeedClientBuilder.Compression.auto;
+import static ai.vespa.feed.client.FeedClientBuilder.Compression.gzip;
 import static org.apache.hc.core5.http.ssl.TlsCiphers.excludeH2Blacklisted;
 import static org.apache.hc.core5.http.ssl.TlsCiphers.excludeWeak;
 
@@ -48,17 +51,18 @@ class ApacheCluster implements Cluster {
                                                                    new BasicHeader("Vespa-Client-Version", Vespa.VERSION));
     private final Header gzipEncodingHeader = new BasicHeader(HttpHeaders.CONTENT_ENCODING, "gzip");
     private final RequestConfig requestConfig;
-    private final boolean gzip;
+    private final Compression compression;
     private int someNumber = 0;
 
-    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(t -> new Thread(t, "request-timeout-thread"));
+    private final ExecutorService dispatchExecutor = Executors.newFixedThreadPool(8, t -> new Thread(t, "request-dispatch-thread"));
+    private final ScheduledExecutorService timeoutExecutor = Executors.newSingleThreadScheduledExecutor(t -> new Thread(t, "request-timeout-thread"));
 
     ApacheCluster(FeedClientBuilderImpl builder) throws IOException {
         for (int i = 0; i < builder.connectionsPerEndpoint; i++)
             for (URI endpoint : builder.endpoints)
                 endpoints.add(new Endpoint(createHttpClient(builder), endpoint));
         this.requestConfig = createRequestConfig(builder);
-        this.gzip = builder.compression == Compression.gzip;
+        this.compression = builder.compression;
     }
 
     @Override
@@ -77,36 +81,41 @@ class ApacheCluster implements Cluster {
         Endpoint endpoint = leastBusy;
         endpoint.inflight.incrementAndGet();
 
-        try {
-            SimpleHttpRequest request = new SimpleHttpRequest(wrapped.method(), wrapped.path());
-            request.setScheme(endpoint.url.getScheme());
-            request.setAuthority(new URIAuthority(endpoint.url.getHost(), portOf(endpoint.url)));
-            request.setConfig(requestConfig);
-            defaultHeaders.forEach(request::setHeader);
-            wrapped.headers().forEach((name, value) -> request.setHeader(name, value.get()));
-            if (wrapped.body() != null) {
-                byte[] body = wrapped.body();
-                if (gzip) {
-                    request.setHeader(gzipEncodingHeader);
-                    body = gzipped(body);
+        dispatchExecutor.execute(() -> {
+            try {
+                SimpleHttpRequest request = new SimpleHttpRequest(wrapped.method(), wrapped.path());
+                request.setScheme(endpoint.url.getScheme());
+                request.setAuthority(new URIAuthority(endpoint.url.getHost(), portOf(endpoint.url)));
+                request.setConfig(requestConfig);
+                defaultHeaders.forEach(request::setHeader);
+                wrapped.headers().forEach((name, value) -> request.setHeader(name, value.get()));
+                if (wrapped.body() != null) {
+                    byte[] body = wrapped.body();
+                    if (compression == gzip || compression == auto && body.length > 512) {
+                        request.setHeader(gzipEncodingHeader);
+                        body = gzipped(body);
+                    }
+                    request.setBody(body, ContentType.APPLICATION_JSON);
                 }
-                request.setBody(body, ContentType.APPLICATION_JSON);
-            }
 
-            Future<?> future = endpoint.client.execute(request,
-                                                       new FutureCallback<SimpleHttpResponse>() {
-                                                           @Override public void completed(SimpleHttpResponse response) { vessel.complete(new ApacheHttpResponse(response)); }
-                                                           @Override public void failed(Exception ex) { vessel.completeExceptionally(ex); }
-                                                           @Override public void cancelled() { vessel.cancel(false); }
-                                                       });
-            long timeoutMillis = wrapped.timeout() == null ? 200_000 : wrapped.timeout().toMillis() * 11 / 10 + 1_000;
-            Future<?> cancellation = executor.schedule(() -> { future.cancel(true); vessel.cancel(true); }, timeoutMillis, TimeUnit.MILLISECONDS);
-            vessel.whenComplete((__, ___) -> cancellation.cancel(true));
-        }
-        catch (Throwable thrown) {
-            vessel.completeExceptionally(thrown);
-        }
-        vessel.whenComplete((__, ___) -> endpoint.inflight.decrementAndGet());
+                Future<?> future = endpoint.client.execute(request,
+                                                           new FutureCallback<SimpleHttpResponse>() {
+                                                               @Override public void completed(SimpleHttpResponse response) { vessel.complete(new ApacheHttpResponse(response)); }
+                                                               @Override public void failed(Exception ex) { vessel.completeExceptionally(ex); }
+                                                               @Override public void cancelled() { vessel.cancel(false); }
+                                                           });
+                long timeoutMillis = wrapped.timeout() == null ? 200_000 : wrapped.timeout().toMillis() * 11 / 10 + 1_000;
+                Future<?> cancellation = timeoutExecutor.schedule(() -> {
+                    future.cancel(true);
+                    vessel.cancel(true);
+                    }, timeoutMillis, TimeUnit.MILLISECONDS);
+                vessel.whenComplete((__, ___) -> cancellation.cancel(true));
+            }
+            catch (Throwable thrown) {
+                vessel.completeExceptionally(thrown);
+            }
+            vessel.whenComplete((__, ___) -> endpoint.inflight.decrementAndGet());
+        });
     }
 
     private byte[] gzipped(byte[] content) throws IOException{
@@ -120,6 +129,7 @@ class ApacheCluster implements Cluster {
     @Override
     public void close() {
         Throwable thrown = null;
+        dispatchExecutor.shutdownNow().forEach(Runnable::run);
         for (Endpoint endpoint : endpoints) {
             try {
                 endpoint.client.close();
@@ -129,7 +139,7 @@ class ApacheCluster implements Cluster {
                 else thrown.addSuppressed(t);
             }
         }
-        executor.shutdownNow().forEach(Runnable::run);
+        timeoutExecutor.shutdownNow().forEach(Runnable::run);
         if (thrown != null) throw new RuntimeException(thrown);
     }
 
@@ -149,6 +159,7 @@ class ApacheCluster implements Cluster {
 
     }
 
+    @SuppressWarnings("deprecation")
     private static CloseableHttpAsyncClient createHttpClient(FeedClientBuilderImpl builder) throws IOException {
         SSLContext sslContext = builder.constructSslContext();
         String[] allowedCiphers = excludeH2Blacklisted(excludeWeak(sslContext.getSupportedSSLParameters().getCipherSuites()));
@@ -181,6 +192,7 @@ class ApacheCluster implements Cluster {
                                    : url.getPort();
     }
 
+    @SuppressWarnings("deprecation")
     private static RequestConfig createRequestConfig(FeedClientBuilderImpl b) {
         RequestConfig.Builder builder = RequestConfig.custom()
                 .setConnectTimeout(Timeout.ofSeconds(10))

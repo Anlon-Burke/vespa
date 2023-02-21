@@ -49,19 +49,19 @@
 #include "valuemetric.h"
 #include "updatehook.h"
 #include <vespa/vespalib/stllike/hash_set.h>
-#include <vespa/vespalib/util/document_runnable.h>
 #include <vespa/vespalib/util/jsonwriter.h>
 #include <vespa/metrics/config-metricsmanager.h>
 #include <vespa/config/subscription/configsubscriber.h>
 #include <vespa/config/subscription/configuri.h>
 #include <map>
 #include <list>
+#include <thread>
 
 template class vespalib::hash_set<metrics::Metric::String>;
 
 namespace metrics {
 
-class MetricManager : private document::Runnable
+class MetricManager
 {
 public:
 
@@ -104,7 +104,6 @@ private:
     std::list<UpdateHook*> _snapshotUpdateHooks;
     mutable std::mutex _waiter;
     mutable std::condition_variable _cond;
-    using PeriodTimePair = std::pair<uint32_t, time_t>;
     std::vector<MetricSnapshotSet::SP> _snapshots;
     MetricSnapshot::SP _totalMetrics;
     std::unique_ptr<Timer> _timer;
@@ -120,10 +119,15 @@ private:
     LongAverageMetric _resetLatency;
     LongAverageMetric _snapshotLatency;
     LongAverageMetric _sleepTimes;
+    std::atomic<bool> _stop_requested;
+    std::thread       _thread;
 
+    void request_stop() { _stop_requested.store(true, std::memory_order_relaxed); }
+    bool stop_requested() const { return _stop_requested.load(std::memory_order_relaxed); }
+    
 public:
     MetricManager(std::unique_ptr<Timer> timer = std::make_unique<Timer>());
-    ~MetricManager() override;
+    ~MetricManager();
 
     void stop();
 
@@ -195,8 +199,7 @@ public:
      * of consumers. readConfig() will start a config subscription. It should
      * not be called multiple times.
      */
-    void init(const config::ConfigUri & uri, FastOS_ThreadPool&,
-              bool startThread = true);
+    void init(const config::ConfigUri & uri, bool startThread = true);
 
     /**
      * Visit a given snapshot for a given consumer. (Empty consumer name means
@@ -273,7 +276,7 @@ private:
     friend struct SnapshotTest;
 
     void configure(const MetricLockGuard & guard, std::unique_ptr<MetricsmanagerConfig> conf);
-    void run() override;
+    void run();
     time_t tick(const MetricLockGuard & guard, time_t currentTime);
     /**
      * Utility function for updating periodic metrics.

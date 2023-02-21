@@ -19,6 +19,7 @@
 #include <vespa/searchcore/proton/server/bootstrapconfig.h>
 #include <vespa/searchcore/proton/server/document_subdb_explorer.h>
 #include <vespa/searchcore/proton/server/document_subdb_initializer.h>
+#include <vespa/searchcore/proton/server/document_subdb_reconfig.h>
 #include <vespa/searchcore/proton/server/emptysearchview.h>
 #include <vespa/searchcore/proton/server/fast_access_document_retriever.h>
 #include <vespa/searchcore/proton/server/i_document_subdb_owner.h>
@@ -377,8 +378,12 @@ struct FixtureBase
         cmpResult.documenttypesChanged = true;
         cmpResult.documentTypeRepoChanged = true;
         MyDocumentDBReferenceResolver resolver;
+        ReconfigParams reconfig_params(cmpResult);
+        auto prepared_reconfig = _subDb.prepare_reconfig(*newCfg->_cfg, reconfig_params, serialNum);
+        _subDb.complete_prepare_reconfig(*prepared_reconfig, serialNum);
         auto tasks = _subDb.applyConfig(*newCfg->_cfg, *_snapshot->_cfg,
-                                        serialNum, ReconfigParams(cmpResult), resolver);
+                                        serialNum, reconfig_params, resolver, *prepared_reconfig);
+        prepared_reconfig.reset();
         _snapshot = std::move(newCfg);
         if (!tasks.empty()) {
             ReprocessingRunner runner;
@@ -851,9 +856,9 @@ struct DocumentHandler
         gate.await();
     }
     void putDocs() {
-        PutOperation putOp = createPut(std::move(createDoc(1, 22, 33)), Timestamp(10), 10);
+        PutOperation putOp = createPut(createDoc(1, 22, 33), Timestamp(10), 10);
         putDoc(putOp);
-        putOp = createPut(std::move(createDoc(2, 44, 55)), Timestamp(20), 20);
+        putOp = createPut(createDoc(2, 44, 55), Timestamp(20), 20);
         putDoc(putOp);
     }
 };

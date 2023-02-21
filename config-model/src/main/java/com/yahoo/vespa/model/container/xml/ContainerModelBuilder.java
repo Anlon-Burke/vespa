@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container.xml;
 
+import com.yahoo.config.provision.IntRange;
 import com.yahoo.component.ComponentSpecification;
 import com.yahoo.component.Version;
 import com.yahoo.component.chain.dependencies.Dependencies;
@@ -11,6 +12,8 @@ import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.application.api.DeploymentInstanceSpec;
 import com.yahoo.config.application.api.DeploymentSpec;
+import com.yahoo.config.provision.ZoneEndpoint;
+import com.yahoo.config.application.api.xml.DeploymentSpecXmlReader;
 import com.yahoo.config.model.ConfigModelContext;
 import com.yahoo.config.model.api.ApplicationClusterEndpoint;
 import com.yahoo.config.model.api.ConfigServerSpec;
@@ -21,7 +24,8 @@ import com.yahoo.config.model.application.provider.IncludeDirs;
 import com.yahoo.config.model.builder.xml.ConfigModelBuilder;
 import com.yahoo.config.model.builder.xml.ConfigModelId;
 import com.yahoo.config.model.deploy.DeployState;
-import com.yahoo.config.model.producer.AbstractConfigProducer;
+import com.yahoo.config.model.producer.AnyConfigProducer;
+import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.AthenzService;
 import com.yahoo.config.provision.Capacity;
@@ -29,10 +33,11 @@ import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.HostName;
-import com.yahoo.config.provision.LoadBalancerSettings;
+import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.Zone;
+import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.container.bundle.BundleInstantiationSpecification;
 import com.yahoo.container.logging.FileConnectionLog;
 import com.yahoo.io.IOUtils;
@@ -187,9 +192,9 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     }
 
     private ApplicationContainerCluster createContainerCluster(Element spec, ConfigModelContext modelContext) {
-        return new VespaDomBuilder.DomConfigProducerBuilder<ApplicationContainerCluster>() {
+        return new VespaDomBuilder.DomConfigProducerBuilderBase<ApplicationContainerCluster>() {
             @Override
-            protected ApplicationContainerCluster doBuild(DeployState deployState, AbstractConfigProducer<?> ancestor, Element producerSpec) {
+            protected ApplicationContainerCluster doBuild(DeployState deployState, TreeConfigProducer<AnyConfigProducer> ancestor, Element producerSpec) {
                 return new ApplicationContainerCluster(ancestor, modelContext.getProducerId(),
                                                        modelContext.getProducerId(), deployState);
             }
@@ -202,9 +207,6 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
         addConfiguredComponents(deployState, cluster, spec);
         addSecretStore(cluster, spec, deployState);
-
-        addModelEvaluation(spec, cluster, context);
-        addModelEvaluationBundles(cluster);
 
         addProcessing(deployState, spec, cluster, context);
         addSearch(deployState, spec, cluster, context);
@@ -220,6 +222,9 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
         addAccessLogs(deployState, cluster, spec);
         addNodes(cluster, spec, context);
+
+        addModelEvaluation(spec, cluster, context); // NOTE: Must be done after addNodes
+        addModelEvaluationBundles(cluster);
 
         addServerProviders(deployState, spec, cluster);
 
@@ -503,7 +508,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             legacyMode = true;
         } else {
             clients = XML.getChildren(clientsElement, "client").stream()
-                    .map(this::getCLient)
+                    .map(this::getClient)
                     .toList();
         }
 
@@ -513,7 +518,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         cluster.setClients(legacyMode, clients);
     }
 
-    private Client getCLient(Element clientElement) {
+    private Client getClient(Element clientElement) {
         String id = XML.attribute("id", clientElement).orElseThrow();
         if (id.startsWith("_")) throw new IllegalArgumentException("Invalid client id '%s', id cannot start with '_'".formatted(id));
         List<String> permissions = XML.attribute("permissions", clientElement)
@@ -681,6 +686,13 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             onnxModel.setStatelessExecutionMode(getStringValue(modelElement, "execution-mode", null));
             onnxModel.setStatelessInterOpThreads(getIntValue(modelElement, "interop-threads", -1));
             onnxModel.setStatelessIntraOpThreads(getIntValue(modelElement, "intraop-threads", -1));
+            Element gpuDeviceElement = XML.getChild(modelElement, "gpu-device");
+            if (gpuDeviceElement != null) {
+                int gpuDevice = Integer.parseInt(gpuDeviceElement.getTextContent());
+                boolean hasGpu = cluster.getContainers().stream().anyMatch(container -> container.getHostResource() != null &&
+                                                                                        !container.getHostResource().realResources().gpuResources().isZero());
+                onnxModel.setGpuDevice(gpuDevice, hasGpu);
+            }
         }
 
         cluster.setModelEvaluation(new ContainerModelEvaluation(cluster, profiles));
@@ -720,7 +732,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         SearchChains searchChains = new DomSearchChainsBuilder()
                                             .build(deployState, containerCluster, producerSpec);
 
-        ContainerSearch containerSearch = new ContainerSearch(containerCluster, searchChains, new ContainerSearch.Options());
+        ContainerSearch containerSearch = new ContainerSearch(containerCluster, searchChains);
 
         applyApplicationPackageDirectoryConfigs(deployState.getApplicationPackage(), containerSearch);
         containerSearch.setQueryProfiles(deployState.getQueryProfiles());
@@ -847,11 +859,14 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         }
     }
 
-    private LoadBalancerSettings loadBalancerSettings(Element loadBalancerElement) {
-        List<String> allowedUrnElements = XML.getChildren(XML.getChild(loadBalancerElement, "private-access"),
-                                                          "allow-urn")
-                                             .stream().map(XML::getValue).toList();
-        return new LoadBalancerSettings(allowedUrnElements);
+    private ZoneEndpoint zoneEndpoint(ConfigModelContext context, ClusterSpec.Id cluster) {
+        InstanceName instance = context.properties().applicationId().instance();
+        ZoneId zone = ZoneId.from(context.properties().zone().environment(),
+                                  context.properties().zone().region());
+        DeploymentSpec spec = context.getApplicationPackage().getDeployment()
+                                     .map(new DeploymentSpecXmlReader(false)::read)
+                                     .orElse(DeploymentSpec.empty);
+        return spec.zoneEndpoint(instance, zone, cluster);
     }
 
     private static Map<String, String> getEnvironmentVariables(Element environmentVariables) {
@@ -920,6 +935,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             ClusterResources resources = new ClusterResources(nodeCount, 1, NodeResources.unspecified());
             Capacity capacity = Capacity.from(resources,
                                               resources,
+                                              IntRange.empty(),
                                               false,
                                               !deployState.getProperties().isBootstrap(),
                                               context.getDeployState().getProperties().cloudAccount());
@@ -939,15 +955,21 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     }
 
     private List<ApplicationContainer> createNodesFromNodeCount(ApplicationContainerCluster cluster, Element containerElement, Element nodesElement, ConfigModelContext context) {
-        NodesSpecification nodesSpecification = NodesSpecification.from(new ModelElement(nodesElement), context);
-        LoadBalancerSettings loadBalancerSettings = loadBalancerSettings(XML.getChild(containerElement, "load-balancer"));
-        Map<HostResource, ClusterMembership> hosts = nodesSpecification.provision(cluster.getRoot().hostSystem(),
-                                                                                  ClusterSpec.Type.container,
-                                                                                  ClusterSpec.Id.from(cluster.getName()),
-                                                                                  loadBalancerSettings,
-                                                                                  log,
-                                                                                  getZooKeeper(containerElement) != null);
-        return createNodesFromHosts(hosts, cluster, context.getDeployState());
+        try {
+            NodesSpecification nodesSpecification = NodesSpecification.from(new ModelElement(nodesElement), context);
+            ClusterSpec.Id clusterId = ClusterSpec.Id.from(cluster.name());
+            ZoneEndpoint zoneEndpoint = zoneEndpoint(context, clusterId);
+            Map<HostResource, ClusterMembership> hosts = nodesSpecification.provision(cluster.getRoot().hostSystem(),
+                                                                                      ClusterSpec.Type.container,
+                                                                                      clusterId,
+                                                                                      zoneEndpoint,
+                                                                                      log,
+                                                                                      getZooKeeper(containerElement) != null);
+            return createNodesFromHosts(hosts, cluster, context.getDeployState());
+        }
+        catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("In " + cluster, e);
+        }
     }
 
     private List<ApplicationContainer> createNodesFromNodeType(ApplicationContainerCluster cluster, Element nodesElement, ConfigModelContext context) {
@@ -1035,7 +1057,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         cluster.addComponent(searchHandler);
 
         // Add as child to SearchHandler to get the correct chains config.
-        searchHandler.addComponent(Component.fromClassAndBundle(SearchHandler.EXECUTION_FACTORY_CLASS, PlatformBundles.SEARCH_AND_DOCPROC_BUNDLE));
+        searchHandler.addComponent(Component.fromClassAndBundle(SearchHandler.EXECUTION_FACTORY, PlatformBundles.SEARCH_AND_DOCPROC_BUNDLE));
     }
 
     private List<BindingPattern> serverBindings(DeployState deployState, ConfigModelContext context, Element searchElement, BindingPattern... defaultBindings) {

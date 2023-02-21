@@ -92,9 +92,8 @@ StripeBucketDBUpdater::flush()
 }
 
 void
-StripeBucketDBUpdater::print(std::ostream& out, bool verbose, const std::string& indent) const
+StripeBucketDBUpdater::print(std::ostream& out, bool, const std::string&) const
 {
-    (void) verbose; (void) indent;
     out << "StripeBucketDBUpdater";
 }
 
@@ -440,9 +439,7 @@ StripeBucketDBUpdater::handleSingleBucketInfoFailure(
         req.targetNode, repl->getResult().toString().c_str());
 
     if (req.bucket.getBucketId() != document::BucketId(0)) {
-        framework::MilliSecTime sendTime(_node_ctx.clock());
-        sendTime += framework::MilliSecTime(100);
-        _delayedRequests.emplace_back(sendTime, req);
+        _delayedRequests.emplace_back(_node_ctx.clock().getMonotonicTime() + 100ms, req);
     }
 }
 
@@ -452,7 +449,7 @@ StripeBucketDBUpdater::resendDelayedMessages()
     if (_delayedRequests.empty()) {
         return; // Don't fetch time if not needed
     }
-    framework::MilliSecTime currentTime(_node_ctx.clock());
+    vespalib::steady_time currentTime(_node_ctx.clock().getMonotonicTime());
     while (!_delayedRequests.empty()
            && currentTime >= _delayedRequests.front().first)
     {
@@ -463,9 +460,8 @@ StripeBucketDBUpdater::resendDelayedMessages()
 }
 
 void
-StripeBucketDBUpdater::convertBucketInfoToBucketList(
-        const std::shared_ptr<api::RequestBucketInfoReply>& repl,
-        uint16_t targetNode, BucketListMerger::BucketList& newList)
+StripeBucketDBUpdater::convertBucketInfoToBucketList(const std::shared_ptr<api::RequestBucketInfoReply>& repl,
+                                                     uint16_t targetNode, BucketListMerger::BucketList& newList)
 {
     for (const auto & entry : repl->getBucketInfo()) {
         LOG(debug, "Received bucket information from node %u for bucket %s: %s", targetNode,
@@ -494,8 +490,7 @@ StripeBucketDBUpdater::mergeBucketInfoWithDatabase(
 }
 
 bool
-StripeBucketDBUpdater::processSingleBucketInfoReply(
-        const std::shared_ptr<api::RequestBucketInfoReply> & repl)
+StripeBucketDBUpdater::processSingleBucketInfoReply(const std::shared_ptr<api::RequestBucketInfoReply> & repl)
 {
     auto iter = _sentMessages.find(repl->getMsgId());
 
@@ -522,10 +517,8 @@ StripeBucketDBUpdater::processSingleBucketInfoReply(
 }
 
 void
-StripeBucketDBUpdater::addBucketInfoForNode(
-        const BucketDatabase::Entry& e,
-        uint16_t node,
-        BucketListMerger::BucketList& existing) const
+StripeBucketDBUpdater::addBucketInfoForNode(const BucketDatabase::Entry& e, uint16_t node,
+                                            BucketListMerger::BucketList& existing)
 {
     const BucketCopy* copy(e->getNode(node));
     if (copy) {
@@ -644,7 +637,7 @@ void
 StripeBucketDBUpdater::report_delayed_single_bucket_requests(vespalib::xml::XmlOutputStream& xos) const
 {
     for (const auto& entry : _delayedRequests) {
-        entry.second.print_xml_tag(xos, XmlAttribute("resendtimestamp", entry.first.getTime()));
+        entry.second.print_xml_tag(xos, XmlAttribute("resendtimestamp", vespalib::count_ms(vespalib::to_utc(entry.first).time_since_epoch())));
     }
 }
 
@@ -677,7 +670,7 @@ StripeBucketDBUpdater::MergingNodeRemover::MergingNodeRemover(
 }
 
 void
-StripeBucketDBUpdater::MergingNodeRemover::logRemove(const document::BucketId& bucketId, const char* msg) const
+StripeBucketDBUpdater::MergingNodeRemover::logRemove(const document::BucketId& bucketId, const char* msg)
 {
     LOG(spam, "Removing bucket %s: %s", bucketId.toString().c_str(), msg);
 }
@@ -803,10 +796,10 @@ namespace {
 
 class MergingGcTimeSetter : public BucketDatabase::MergingProcessor {
     // time_point would be preferable, but the internal DB representation is seconds since epoch
-    std::chrono::seconds _last_gc_at_secs_from_epoch;
+    vespalib::system_time _last_gc;
 public:
-    explicit MergingGcTimeSetter(std::chrono::seconds gc_time_point) noexcept
-        : _last_gc_at_secs_from_epoch(gc_time_point) {
+    explicit MergingGcTimeSetter(vespalib::system_time gc_time_point) noexcept
+        : _last_gc(gc_time_point) {
     }
 
     ~MergingGcTimeSetter() override = default;
@@ -814,7 +807,7 @@ public:
     Result merge(BucketDatabase::Merger& merger) override {
         auto& entry = merger.current_entry();
         // TODO widen internal GC time type...!
-        entry->setLastGarbageCollectionTime(static_cast<uint32_t>(_last_gc_at_secs_from_epoch.count()));
+        entry->setLastGarbageCollectionTime(static_cast<uint32_t>(vespalib::count_s(_last_gc.time_since_epoch())));
         return Result::Update;
     }
 
@@ -823,10 +816,7 @@ public:
 }
 
 void StripeBucketDBUpdater::reset_all_last_gc_timestamps_to_current_time() {
-    // Epochs are expected to be identical between clock types
-    // TODO remove framework clock types in favor of std::chrono
-    auto now_from_epoch = std::chrono::seconds(_node_ctx.clock().getTimeInSeconds().getTime());
-    MergingGcTimeSetter gc_time_setter(now_from_epoch);
+    MergingGcTimeSetter gc_time_setter(_node_ctx.clock().getSystemTime());
 
     auto& repo = _op_ctx.bucket_space_repo();
     for (auto& bucket_space : repo) {

@@ -99,7 +99,7 @@ TransLogServer::TransLogServer(FNET_Transport & transport, const vespalib::strin
       _baseDir(baseDir),
       _domainConfig(cfg),
       _executor(maxThreads, CpuUsage::wrap(tls_executor, CpuUsage::Category::WRITE)),
-      _threadPool(std::make_unique<FastOS_ThreadPool>()),
+      _thread(),
       _supervisor(std::make_unique<FRT_Supervisor>(&transport)),
       _domains(),
       _reqQ(),
@@ -124,7 +124,7 @@ TransLogServer::TransLogServer(FNET_Transport & transport, const vespalib::strin
             }
             exportRPC(*_supervisor);
             char listenSpec[32];
-            sprintf(listenSpec, "tcp/%d", listenPort);
+            snprintf(listenSpec, sizeof(listenSpec), "tcp/%d", listenPort);
             bool listenOk(false);
             for (int i(600); !listenOk && i; i--) {
                 if (_supervisor->Listen(listenSpec)) {
@@ -143,25 +143,24 @@ TransLogServer::TransLogServer(FNET_Transport & transport, const vespalib::strin
     } else {
         throw std::runtime_error(make_string("Failed creating tls base dir %s r(%d), e(%d). Requires manual intervention.", _baseDir.c_str(), retval, errno));
     }
-    start(*_threadPool);
+    _thread = std::thread([this](){run();});
 }
 
 TransLogServer::~TransLogServer()
 {
-    _closed = true;
-    stop();
-    join();
+    request_stop();
+    _thread.join();
     _executor.sync();
     _executor.shutdown();
     _executor.sync();
 }
 
-bool
-TransLogServer::onStop()
+void
+TransLogServer::request_stop()
 {
+    _closed = true;
     LOG(info, "Stopping TLS");
     _reqQ.push(nullptr);
-    return true;
 }
 
 void

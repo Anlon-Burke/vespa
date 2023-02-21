@@ -67,7 +67,7 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     private final ZoneRegistryMock zoneRegistryMock;
     private final ConfigServerMock configServerMock;
     private final MemoryNameService memoryNameService = new MemoryNameService();
-    private final MockVpcEndpointService vpcEndpointService = new MockVpcEndpointService();
+    private final MockVpcEndpointService vpcEndpointService = new MockVpcEndpointService(clock, memoryNameService);
     private final MockMailer mockMailer = new MockMailer();
     private final EndpointCertificateMock endpointCertificateMock = new EndpointCertificateMock(clock);
     private final EndpointCertificateValidatorMock endpointCertificateValidatorMock = new EndpointCertificateValidatorMock();
@@ -100,8 +100,8 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
 
     public ServiceRegistryMock(SystemName system) {
         this.zoneRegistryMock = new ZoneRegistryMock(system);
-        this.configServerMock = new ConfigServerMock(zoneRegistryMock);
-        this.mockTesterCloud = new MockTesterCloud(nameService());
+        this.configServerMock = new ConfigServerMock(zoneRegistryMock, memoryNameService);
+        this.mockTesterCloud = new MockTesterCloud(memoryNameService);
         this.clock.setInstant(Instant.ofEpochSecond(1600000000));
         this.controllerVersion = new ControllerVersion(Version.fromString("6.1.0"), "badb01", clock.instant());
     }

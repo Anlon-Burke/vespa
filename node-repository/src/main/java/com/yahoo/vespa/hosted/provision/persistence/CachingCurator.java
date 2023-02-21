@@ -68,11 +68,6 @@ public class CachingCurator {
                      .toList();
     }
 
-    // TODO(mpolden): Remove this
-    public void deleteRecursively(Path path) {
-        curator.delete(path);
-    }
-
     /** Create a reentrant lock */
     public Lock lock(Path path, Duration timeout) {
         return curator.lock(path, timeout);
@@ -208,7 +203,7 @@ public class CachingCurator {
         List<String> getChildren(Path path);
 
         /**
-         * Returns the a copy of the content of this child - which may be empty.
+         * Returns a copy of the content of this child - which may be empty.
          */
         Optional<byte[]> getData(Path path);
 

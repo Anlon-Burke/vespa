@@ -9,7 +9,8 @@ import com.yahoo.config.model.builder.xml.XmlHelper;
 import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.graph.ModelGraphBuilder;
 import com.yahoo.config.model.graph.ModelNode;
-import com.yahoo.config.model.producer.AbstractConfigProducer;
+import com.yahoo.config.model.producer.AnyConfigProducer;
+import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.config.model.provision.HostsXmlProvisioner;
 import com.yahoo.text.XML;
 import com.yahoo.vespa.model.VespaModel;
@@ -80,7 +81,7 @@ public class ConfigModelRepo implements ConfigModelRepoAdder, Serializable, Iter
                                  ConfigModelRegistry configModelRegistry) throws IOException {
         Element userServicesElement = getServicesFromApp(deployState.getApplicationPackage());
         readConfigModels(root, userServicesElement, deployState, vespaModel, configModelRegistry);
-        builder.postProc(deployState.getDeployLogger(), root, this);
+        builder.postProc(deployState, root, this);
     }
 
     private Element getServicesFromApp(ApplicationPackage applicationPackage) throws IOException {
@@ -131,8 +132,6 @@ public class ConfigModelRepo implements ConfigModelRepoAdder, Serializable, Iter
                 // Top level config, mainly to be used by the Vespa team.
                 continue;
             }
-            if ((tagName.equals("clients")) && deployState.isHosted())
-                throw new IllegalArgumentException("<" + tagName + "> is not allowed when running Vespa in a hosted environment");
 
             String tagVersion = servicesElement.getAttribute("version");
             ConfigModelId xmlId = ConfigModelId.fromNameAndVersion(tagName, tagVersion);
@@ -172,7 +171,7 @@ public class ConfigModelRepo implements ConfigModelRepoAdder, Serializable, Iter
                              ApplicationType applicationType,
                              DeployState deployState,
                              VespaModel vespaModel,
-                             AbstractConfigProducer parent,
+                             TreeConfigProducer<AnyConfigProducer> parent,
                              List<Element> elements) {
         for (Element servicesElement : elements) {
             ConfigModel model = buildModel(node, applicationType, deployState, vespaModel, parent, servicesElement);
@@ -185,7 +184,7 @@ public class ConfigModelRepo implements ConfigModelRepoAdder, Serializable, Iter
                                    ApplicationType applicationType,
                                    DeployState deployState,
                                    VespaModel vespaModel,
-                                   AbstractConfigProducer parent,
+                                   TreeConfigProducer<AnyConfigProducer> parent,
                                    Element servicesElement) {
         ConfigModelBuilder builder = node.builder;
         ConfigModelContext context = ConfigModelContext.create(applicationType, deployState, vespaModel, this, parent, getIdString(servicesElement));

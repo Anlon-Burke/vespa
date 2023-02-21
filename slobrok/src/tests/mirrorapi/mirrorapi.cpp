@@ -9,6 +9,7 @@
 #include <vespa/fnet/frt/target.h>
 #include <vespa/fnet/transport.h>
 #include <thread>
+#include <vespa/fastos/thread.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("mirrorapi_test");
@@ -57,7 +58,7 @@ void
 Server::reg()
 {
     char spec[64];
-    sprintf(spec, "tcp/localhost:%d", _server.supervisor().GetListenPort());
+    snprintf(spec, sizeof(spec), "tcp/localhost:%d", _server.supervisor().GetListenPort());
 
     FRT_RPCRequest *req = _server.supervisor().AllocRPCRequest();
     req->SetMethodName("slobrok.registerRpcServer");

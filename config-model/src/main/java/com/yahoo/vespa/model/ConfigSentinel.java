@@ -1,7 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model;
 
-import com.yahoo.config.model.api.ModelContext;
 import com.yahoo.cloud.config.SentinelConfig;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.Zone;
@@ -19,20 +18,16 @@ public class ConfigSentinel extends AbstractService implements SentinelConfig.Pr
 
     private final ApplicationId applicationId;
     private final Zone zone;
-    private final boolean ignoreRequestedStackSizes;
 
     /**
      * Constructs a new ConfigSentinel for the given host.
      *
      * @param host Physical host on which to run.
      */
-    public ConfigSentinel(Host host, ApplicationId applicationId, Zone zone,
-                          ModelContext.FeatureFlags featureFlags)
-    {
+    public ConfigSentinel(Host host, ApplicationId applicationId, Zone zone) {
         super(host, "sentinel");
         this.applicationId = applicationId;
         this.zone = zone;
-        this.ignoreRequestedStackSizes = featureFlags.ignoreThreadStackSizes();
         portsMeta.on(0).tag("rpc").tag("admin");
         portsMeta.on(1).tag("telnet").tag("interactive").tag("http").tag("state");
         setProp("clustertype", "hosts");
@@ -75,7 +70,6 @@ public class ConfigSentinel extends AbstractService implements SentinelConfig.Pr
     @Override
     public void getConfig(SentinelConfig.Builder builder) {
         builder.application(getApplicationConfig());
-        builder.ignoreRequestedStackSizes(ignoreRequestedStackSizes);
         for (Service s : getHostResource().getServices()) {
             s.getStartupCommand().ifPresent(command -> builder.service(getServiceConfig(s, command)));
         }

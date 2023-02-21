@@ -9,6 +9,7 @@
 #include <vespa/vespalib/util/varholder.h>
 #include <vespa/vespalib/util/idestructorcallback.h>
 #include <mutex>
+#include <optional>
 
 namespace vespalib {
     class Clock;
@@ -31,6 +32,7 @@ namespace proton {
 
 class DocTypeName;
 class DocumentDBConfig;
+class DocumentDBReconfig;
 class FeedHandler;
 class HwInfo;
 class IDocumentRetriever;
@@ -136,8 +138,10 @@ public:
 
     void pruneRemovedFields(SerialNum serialNum);
 
+    std::unique_ptr<DocumentDBReconfig> prepare_reconfig(const DocumentDBConfig& new_config_snapshot, const ReconfigParams& reconfig_params, std::optional<SerialNum> serial_num);
+    void complete_prepare_reconfig(DocumentDBReconfig& prepared_reconfig, SerialNum serial_num);
     void applyConfig(const DocumentDBConfig &newConfigSnapshot, const DocumentDBConfig &oldConfigSnapshot,
-                     SerialNum serialNum, const ReconfigParams &params, IDocumentDBReferenceResolver &resolver);
+                     SerialNum serialNum, const ReconfigParams &params, IDocumentDBReferenceResolver &resolver, const DocumentDBReconfig& prepared_reconfig);
 
     IFeedViewSP getFeedView();
     IFlushTargetList getFlushTargets();

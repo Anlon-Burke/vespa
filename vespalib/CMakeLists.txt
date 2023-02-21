@@ -21,6 +21,7 @@ vespa_define_module(
     src/apps/vespa-drop-file-from-cache
     src/apps/vespa-probe-io-uring
     src/apps/vespa-resource-limits
+    src/apps/vespa-stress-and-validate-memory
     src/apps/vespa-tsan-digest
     src/apps/vespa-validate-hostname
 
@@ -49,6 +50,7 @@ vespa_define_module(
     src/tests/coro/generator
     src/tests/coro/lazy
     src/tests/coro/received
+    src/tests/coro/waiting_for
     src/tests/cpu_usage
     src/tests/crc
     src/tests/crypto
@@ -193,10 +195,12 @@ vespa_define_module(
     src/tests/util/generationhandler_stress
     src/tests/util/hamming
     src/tests/util/md5
+    src/tests/util/memory_trap
     src/tests/util/mmap_file_allocator
     src/tests/util/mmap_file_allocator_factory
     src/tests/util/rcuvector
     src/tests/util/size_literals
+    src/tests/util/static_string
     src/tests/util/string_escape
     src/tests/valgrind
     src/tests/visit_ranges

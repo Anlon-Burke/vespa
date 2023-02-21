@@ -3,32 +3,34 @@ package com.yahoo.vespa.hosted.provision.testutils;
 
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
-import com.yahoo.config.provision.Cloud;
 import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.HostEvent;
+import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeAllocationException;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.vespa.hosted.provision.Node;
-import com.yahoo.vespa.hosted.provision.node.Address;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.provisioning.FatalProvisioningException;
+import com.yahoo.vespa.hosted.provision.provisioning.HostIpConfig;
 import com.yahoo.vespa.hosted.provision.provisioning.HostProvisioner;
+import com.yahoo.vespa.hosted.provision.provisioning.HostResourcesCalculator;
 import com.yahoo.vespa.hosted.provision.provisioning.ProvisionedHost;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 /**
@@ -45,7 +47,7 @@ public class MockHostProvisioner implements HostProvisioner {
 
     private int deprovisionedHosts = 0;
     private EnumSet<Behaviour> behaviours = EnumSet.noneOf(Behaviour.class);
-    private Optional<Flavor> hostFlavor = Optional.empty();
+    private Map<ClusterSpec.Type, Flavor> hostFlavors = new HashMap<>();
 
     public MockHostProvisioner(List<Flavor> flavors, MockNameResolver nameResolver, int memoryTaxGb) {
         this.flavors = List.copyOf(flavors);
@@ -66,11 +68,14 @@ public class MockHostProvisioner implements HostProvisioner {
                                ApplicationId applicationId, Version osVersion, HostSharing sharing,
                                Optional<ClusterSpec.Type> clusterType, CloudAccount cloudAccount,
                                Consumer<List<ProvisionedHost>> provisionedHostsConsumer) {
-        Flavor hostFlavor = this.hostFlavor.orElseGet(() -> flavors.stream()
-                                                                   .filter(f -> sharing == HostSharing.exclusive ? compatible(f, resources)
-                                                                                                                 : f.resources().satisfies(resources))
-                                                                   .findFirst()
-                                                                   .orElseThrow(() -> new NodeAllocationException("No host flavor matches " + resources, true)));
+        Flavor hostFlavor = hostFlavors.get(clusterType.orElse(ClusterSpec.Type.content));
+        if (hostFlavor == null)
+            hostFlavor = flavors.stream()
+                                .filter(f -> sharing == HostSharing.exclusive ? compatible(f, resources)
+                                                                              : f.resources().satisfies(resources))
+                                .findFirst()
+                                .orElseThrow(() -> new NodeAllocationException("No host flavor matches " + resources, true));
+
         List<ProvisionedHost> hosts = new ArrayList<>();
         for (int index : provisionIndices) {
             String hostHostname = hostType == NodeType.host ? "host" + index : hostType.name() + index;
@@ -80,7 +85,7 @@ public class MockHostProvisioner implements HostProvisioner {
                                           hostType,
                                           sharing == HostSharing.exclusive ? Optional.of(applicationId) : Optional.empty(),
                                           Optional.empty(),
-                                          createAddressesForHost(hostType, hostFlavor, index),
+                                          createHostnames(hostType, hostFlavor, index),
                                           resources,
                                           osVersion,
                                           cloudAccount));
@@ -90,16 +95,16 @@ public class MockHostProvisioner implements HostProvisioner {
     }
 
     @Override
-    public List<Node> provision(Node host, Set<Node> children) throws FatalProvisioningException {
+    public HostIpConfig provision(Node host, Set<Node> children) throws FatalProvisioningException {
         if (behaviours.contains(Behaviour.failProvisioning)) throw new FatalProvisioningException("Failed to provision node(s)");
         if (host.state() != Node.State.provisioned) throw new IllegalStateException("Host to provision must be in " + Node.State.provisioned);
-        List<Node> result = new ArrayList<>();
-        result.add(withIpAssigned(host));
+        Map<String, IP.Config> result = new HashMap<>();
+        result.put(host.hostname(), createIpConfig(host));
         for (var child : children) {
             if (child.state() != Node.State.reserved) throw new IllegalStateException("Child to provisioned must be in " + Node.State.reserved);
-            result.add(withIpAssigned(child));
+            result.put(child.hostname(), createIpConfig(child));
         }
-        return result;
+        return new HostIpConfig(result);
     }
 
     @Override
@@ -151,13 +156,29 @@ public class MockHostProvisioner implements HostProvisioner {
         return this;
     }
 
-    public MockHostProvisioner overrideHostFlavor(String flavorName) {
+    public MockHostProvisioner setHostFlavor(String flavorName, ClusterSpec.Type ... types) {
         Flavor flavor = flavors.stream().filter(f -> f.name().equals(flavorName))
                                .findFirst()
                                .orElseThrow(() -> new IllegalArgumentException("No such flavor '" + flavorName + "'"));
-        hostFlavor = Optional.of(flavor);
+        if (types.length == 0)
+            types = ClusterSpec.Type.values();
+        for (var type : types)
+            hostFlavors.put(type, flavor);
         return this;
     }
+
+    /** Sets the host flavor to use to the flavor matching these resources exactly, if any. */
+    public MockHostProvisioner setHostFlavorIfAvailable(NodeResources flavorAdvertisedResources, HostResourcesCalculator calculator, ClusterSpec.Type ... types) {
+        Optional<Flavor> hostFlavor = flavors.stream().filter(f -> calculator.advertisedResourcesOf(f).compatibleWith(flavorAdvertisedResources))
+                                             .findFirst();
+        if (types.length == 0)
+            types = ClusterSpec.Type.values();
+        for (var type : types)
+            hostFlavor.ifPresent(f -> hostFlavors.put(type, f));
+        return this;
+    }
+
+    public Optional<Flavor> getHostFlavor(ClusterSpec.Type type) { return Optional.ofNullable(hostFlavors.get(type)); }
 
     public MockHostProvisioner addEvent(HostEvent event) {
         hostEvents.add(event);
@@ -175,21 +196,21 @@ public class MockHostProvisioner implements HostProvisioner {
         return flavor.resources().compatibleWith(resourcesToVerify);
     }
 
-    private List<Address> createAddressesForHost(NodeType hostType, Flavor flavor, int hostIndex) {
+    private List<HostName> createHostnames(NodeType hostType, Flavor flavor, int hostIndex) {
         long numAddresses = Math.max(2, Math.round(flavor.resources().bandwidthGbps()));
         return IntStream.range(1, (int) numAddresses)
                         .mapToObj(i -> {
                             String hostname = hostType == NodeType.host
                                     ? "host" + hostIndex + "-" + i
                                     : hostType.childNodeType().name() + i;
-                            return new Address(hostname);
+                            return HostName.of(hostname);
                         })
                         .toList();
     }
 
-    public Node withIpAssigned(Node node) {
+    public IP.Config createIpConfig(Node node) {
         if (!node.type().isHost()) {
-            return node.with(node.ipConfig().withPrimary(nameResolver.resolveAll(node.hostname())));
+            return node.ipConfig().withPrimary(nameResolver.resolveAll(node.hostname()));
         }
         int hostIndex = Integer.parseInt(node.hostname().replaceAll("^[a-z]+|-\\d+$", ""));
         Set<String> addresses = Set.of("::" + hostIndex + ":0");
@@ -203,7 +224,7 @@ public class MockHostProvisioner implements HostProvisioner {
             }
         }
         IP.Pool pool = node.ipConfig().pool().withIpAddresses(ipAddressPool);
-        return node.with(node.ipConfig().withPrimary(addresses).withPool(pool));
+        return node.ipConfig().withPrimary(addresses).withPool(pool);
     }
 
     public enum Behaviour {

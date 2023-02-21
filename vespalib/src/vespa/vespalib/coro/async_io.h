@@ -25,7 +25,11 @@ struct AsyncIo : std::enable_shared_from_this<AsyncIo> {
     AsyncIo &operator=(AsyncIo &&) = delete;
     virtual ~AsyncIo();
     using SP = std::shared_ptr<AsyncIo>;
-    
+
+    // tag used to separate implementations
+    enum class ImplTag { EPOLL, URING };
+    static constexpr ImplTag default_impl() { return ImplTag::EPOLL; }
+
     // thin wrapper used by the owner to handle lifetime
     class Owner {
     private:
@@ -44,13 +48,14 @@ struct AsyncIo : std::enable_shared_from_this<AsyncIo> {
         void fini_shutdown();
         ~Owner();
     };
-    
+
     // create an async_io 'runtime'
-    static Owner create();
+    // note that the preferred implementation may not be available
+    static Owner create(ImplTag prefer_impl = default_impl());
 
     // implementation tag
-    virtual vespalib::string get_impl_spec() = 0;
-    
+    virtual ImplTag get_impl_tag() = 0;
+
     // api for async io used by coroutines
     virtual Lazy<SocketHandle> accept(ServerSocket &server_socket) = 0;
     virtual Lazy<SocketHandle> connect(const SocketAddress &addr) = 0;

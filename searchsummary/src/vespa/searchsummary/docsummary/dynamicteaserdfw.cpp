@@ -4,7 +4,7 @@
 #include "docsumstate.h"
 #include "i_docsum_store_document.h"
 #include "i_juniper_converter.h"
-#include "i_keyword_extractor_factory.h"
+#include "i_query_term_filter_factory.h"
 #include "juniper_query_adapter.h"
 #include <vespa/document/fieldvalue/stringfieldvalue.h>
 #include <vespa/vespalib/objects/hexdump.h>
@@ -23,7 +23,7 @@ JuniperDFW::JuniperDFW(const juniper::Juniper * juniper)
     : _input_field_name(),
       _juniperConfig(),
       _juniper(juniper),
-      _keyword_extractor()
+      _query_term_filter()
 {
 }
 
@@ -34,7 +34,7 @@ bool
 JuniperDFW::Init(
         const char *fieldName,
         const vespalib::string& inputField,
-        const IKeywordExtractorFactory& keyword_extractor_factory)
+        const IQueryTermFilterFactory& query_term_filter_factory)
 {
     bool rc = true;
     _juniperConfig = _juniper->CreateConfig(fieldName);
@@ -44,7 +44,7 @@ JuniperDFW::Init(
     }
 
     _input_field_name = inputField;
-    _keyword_extractor = keyword_extractor_factory.make(_input_field_name);
+    _query_term_filter = query_term_filter_factory.make(_input_field_name);
     return rc;
 }
 
@@ -52,19 +52,20 @@ bool
 JuniperTeaserDFW::Init(
         const char *fieldName,
         const vespalib::string& inputField,
-        const IKeywordExtractorFactory& keyword_extractor_factory)
+        const IQueryTermFilterFactory& query_term_filter_factory)
 {
-    return JuniperDFW::Init(fieldName, inputField, keyword_extractor_factory);
+    return JuniperDFW::Init(fieldName, inputField, query_term_filter_factory);
 }
 
 void
 DynamicTeaserDFW::insert_juniper_field(uint32_t docid, vespalib::stringref input, GetDocsumsState& state, vespalib::slime::Inserter& inserter) const
 {
-    if (!state._dynteaser._query) {
-        JuniperQueryAdapter iq(_keyword_extractor.get(),
+    auto& query = state._dynteaser.get_query(_input_field_name);
+    if (!query) {
+        JuniperQueryAdapter iq(_query_term_filter.get(),
                                state._args.getStackDump(),
                                &state._args.highlightTerms());
-        state._dynteaser._query = _juniper->CreateQueryHandle(iq, nullptr);
+        query = _juniper->CreateQueryHandle(iq, nullptr);
     }
 
     LOG(debug, "makeDynamicTeaser: docid (%d)",
@@ -72,7 +73,7 @@ DynamicTeaserDFW::insert_juniper_field(uint32_t docid, vespalib::stringref input
 
     std::unique_ptr<juniper::Result> result;
 
-    if (state._dynteaser._query != nullptr) {
+    if (query) {
 
         if (LOG_WOULD_LOG(spam)) {
             std::ostringstream hexDump;
@@ -83,7 +84,7 @@ DynamicTeaserDFW::insert_juniper_field(uint32_t docid, vespalib::stringref input
 
         auto langid = static_cast<uint32_t>(-1);
 
-        result = juniper::Analyse(*_juniperConfig, *state._dynteaser._query,
+        result = juniper::Analyse(*_juniperConfig, *query,
                                   input.data(), input.length(), docid, langid);
     }
 

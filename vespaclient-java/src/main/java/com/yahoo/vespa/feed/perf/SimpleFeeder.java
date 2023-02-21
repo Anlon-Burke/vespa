@@ -308,6 +308,7 @@ public class SimpleFeeder implements ReplyHandler {
                 return new DocumentUpdate(deserializer);
             }
         }
+
         @Override
         public FeedOperation read() throws Exception {
             int read = readExact(in, prefix);
@@ -352,8 +353,6 @@ public class SimpleFeeder implements ReplyHandler {
         return new JsonDestination(params.getDumpStream(), failure, numReplies);
     }
 
-
-    @SuppressWarnings("deprecation")
     SimpleFeeder(FeederParams params) {
         inputStreams = params.getInputStreams();
         out = params.getStdOut();
@@ -426,25 +425,24 @@ public class SimpleFeeder implements ReplyHandler {
     }
 
     private static Message newMessage(FeedOperation op) {
-        switch (op.getType()) {
-        case DOCUMENT: {
-            PutDocumentMessage message = new PutDocumentMessage(new DocumentPut(op.getDocument()));
-            message.setCondition(op.getCondition());
-            return message;
-        }
-        case REMOVE: {
-            RemoveDocumentMessage message = new RemoveDocumentMessage(op.getRemove());
-            message.setCondition(op.getCondition());
-            return message;
-        }
-        case UPDATE: {
-            UpdateDocumentMessage message = new UpdateDocumentMessage(op.getDocumentUpdate());
-            message.setCondition(op.getCondition());
-            return message;
-        }
-        default:
-            return null;
-        }
+        return switch (op.getType()) {
+            case DOCUMENT -> {
+                PutDocumentMessage message = new PutDocumentMessage(new DocumentPut(op.getDocument()));
+                message.setCondition(op.getCondition());
+                yield message;
+            }
+            case REMOVE -> {
+                RemoveDocumentMessage message = new RemoveDocumentMessage(op.getRemove());
+                message.setCondition(op.getCondition());
+                yield message;
+            }
+            case UPDATE -> {
+                UpdateDocumentMessage message = new UpdateDocumentMessage(op.getDocumentUpdate());
+                message.setCondition(op.getCondition());
+                yield message;
+            }
+            default -> null;
+        };
     }
 
     private static boolean containsFatalErrors(Stream<Error> errors) {
@@ -480,7 +478,8 @@ public class SimpleFeeder implements ReplyHandler {
     }
 
     private synchronized void printReport(PrintStream out) {
-        out.format("%10d, %12d, %11d, %11d, %11d\n", System.currentTimeMillis() - startTime,
+        // Errors will stop feed so we just fake the num errors = 0
+        out.format("%10d, %12d, 0, %11d, %11d, %11d\n", System.currentTimeMillis() - startTime,
                 numReplies.get(), minLatency, maxLatency, sumLatency / Long.max(1, numReplies.get()));
     }
 

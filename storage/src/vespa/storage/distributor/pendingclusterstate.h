@@ -6,13 +6,14 @@
 #include "clusterinformation.h"
 #include <vespa/storageapi/message/bucket.h>
 #include <vespa/storageapi/message/state.h>
-#include <vespa/storageframework/generic/clock/clock.h>
 #include <vespa/vdslib/state/cluster_state_bundle.h>
 #include <vespa/vespalib/util/xmlserializable.h>
 #include <vespa/vespalib/stllike/hash_map.h>
 #include "outdated_nodes_map.h"
 #include <unordered_map>
 #include <deque>
+
+namespace storage::framework { struct Clock; }
 
 namespace storage::distributor {
 
@@ -30,16 +31,16 @@ public:
     using OutdatedNodes = dbtransition::OutdatedNodes;
     using OutdatedNodesMap = dbtransition::OutdatedNodesMap;
     struct Summary {
-        Summary(const std::string& prevClusterState, const std::string& newClusterState, uint32_t processingTime);
+        Summary(std::string prevClusterState, std::string newClusterState, vespalib::duration processingTime);
         Summary(const Summary &);
         Summary & operator = (const Summary &);
-        Summary(Summary &&) = default;
-        Summary & operator = (Summary &&) = default;
+        Summary(Summary &&) noexcept = default;
+        Summary & operator = (Summary &&) noexcept = default;
         ~Summary();
 
         std::string _prevClusterState;
         std::string _newClusterState;
-        uint32_t _processingTime;
+        vespalib::duration _processingTime;
     };
 
     static std::unique_ptr<PendingClusterState> createForClusterStateChange(
@@ -193,8 +194,7 @@ private:
     struct BucketSpaceAndNode {
         document::BucketSpace bucketSpace;
         uint16_t              node;
-        BucketSpaceAndNode(document::BucketSpace bucketSpace_,
-                           uint16_t node_)
+        BucketSpaceAndNode(document::BucketSpace bucketSpace_, uint16_t node_)
             : bucketSpace(bucketSpace_),
               node(node_)
         {
@@ -218,7 +218,7 @@ private:
     void update_node_supported_features_from_reply(uint16_t node, const api::RequestBucketInfoReply& reply);
 
     using SentMessages       = std::map<uint64_t, BucketSpaceAndNode>;
-    using DelayedRequests    = std::deque<std::pair<framework::MilliSecTime, BucketSpaceAndNode>>;
+    using DelayedRequests    = std::deque<std::pair<vespalib::steady_time , BucketSpaceAndNode>>;
     using PendingTransitions = std::unordered_map<document::BucketSpace, std::unique_ptr<PendingBucketSpaceDbTransition>, document::BucketSpace::hash>;
     using NodeFeatures       = vespalib::hash_map<uint16_t, NodeSupportedFeatures>;
 

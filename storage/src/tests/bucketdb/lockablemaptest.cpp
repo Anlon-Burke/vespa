@@ -1,6 +1,5 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/vespalib/util/document_runnable.h>
 #include <vespa/storage/bucketdb/btree_lockable_map.hpp>
 #include <vespa/storage/bucketdb/striped_btree_lockable_map.hpp>
 #include <vespa/vespalib/datastore/buffer_type.hpp>
@@ -61,12 +60,6 @@ struct LockableMapTest : ::testing::Test {
 
 using MapTypes = ::testing::Types<bucketdb::BTreeLockableMap<A>, bucketdb::StripedBTreeLockableMap<A>>;
 TYPED_TEST_SUITE(LockableMapTest, MapTypes);
-
-// Disable warnings emitted by gtest generated files when using typed tests
-#pragma GCC diagnostic push
-#ifndef __clang__
-#pragma GCC diagnostic ignored "-Wsuggest-override"
-#endif
 
 TYPED_TEST(LockableMapTest, simple_usage) {
     // Tests insert, erase, size, empty, operator[]
@@ -142,8 +135,8 @@ struct EntryProcessor {
 
     std::string toString() {
         std::ostringstream ost;
-        for (uint32_t i=0; i<log.size(); ++i) {
-            ost << log[i] << "\n";
+        for (const auto & i : log) {
+            ost << i << "\n";
         }
         return ost.str();
     }

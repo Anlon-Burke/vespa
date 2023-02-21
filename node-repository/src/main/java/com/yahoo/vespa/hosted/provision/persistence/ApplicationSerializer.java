@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.persistence;
 
+import com.yahoo.config.provision.IntRange;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
@@ -11,6 +12,7 @@ import com.yahoo.slime.Slime;
 import com.yahoo.slime.SlimeUtils;
 import com.yahoo.vespa.hosted.provision.applications.Application;
 import com.yahoo.vespa.hosted.provision.applications.Cluster;
+import com.yahoo.vespa.hosted.provision.applications.BcpGroupInfo;
 import com.yahoo.vespa.hosted.provision.applications.ScalingEvent;
 import com.yahoo.vespa.hosted.provision.applications.Status;
 import com.yahoo.vespa.hosted.provision.autoscale.Autoscaling;
@@ -23,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 /**
  * Application JSON serializer
@@ -48,18 +51,23 @@ public class ApplicationSerializer {
     private static final String exclusiveKey = "exclusive";
     private static final String minResourcesKey = "min";
     private static final String maxResourcesKey = "max";
+    private static final String groupSizeKey = "groupSize";
     private static final String requiredKey = "required";
     private static final String suggestedKey = "suggested";
+    private static final String bcpGroupInfoKey = "bcpGroupInfo";
+    private static final String queryRateKey = "queryRateKey";
+    private static final String growthRateHeadroomKey = "growthRateHeadroomKey";
+    private static final String cpuCostPerQueryKey = "cpuCostPerQueryKey";
     private static final String resourcesKey = "resources";
     private static final String targetKey = "target";
     private static final String nodesKey = "nodes";
     private static final String groupsKey = "groups";
     private static final String nodeResourcesKey = "resources";
     private static final String scalingEventsKey = "scalingEvents";
-    private static final String autoscalingStatusObjectKey = "autoscalingStatusObject";
     private static final String descriptionKey = "description";
     private static final String peakKey = "peak";
     private static final String idealKey = "ideal";
+    private static final String metricsKey = "metrics";
     private static final String cpuKey = "cpu";
     private static final String memoryKey = "memory";
     private static final String diskKey = "disk";
@@ -122,9 +130,12 @@ public class ApplicationSerializer {
         clusterObject.setBool(exclusiveKey, cluster.exclusive());
         toSlime(cluster.minResources(), clusterObject.setObject(minResourcesKey));
         toSlime(cluster.maxResources(), clusterObject.setObject(maxResourcesKey));
+        toSlime(cluster.groupSize(), clusterObject.setObject(groupSizeKey));
         clusterObject.setBool(requiredKey, cluster.required());
         toSlime(cluster.suggested(), clusterObject.setObject(suggestedKey));
         toSlime(cluster.target(), clusterObject.setObject(targetKey));
+        if (! cluster.bcpGroupInfo().isEmpty())
+            toSlime(cluster.bcpGroupInfo(), clusterObject.setObject(bcpGroupInfoKey));
         scalingEventsToSlime(cluster.scalingEvents(), clusterObject.setArray(scalingEventsKey));
     }
 
@@ -133,9 +144,11 @@ public class ApplicationSerializer {
                            clusterObject.field(exclusiveKey).asBool(),
                            clusterResourcesFromSlime(clusterObject.field(minResourcesKey)),
                            clusterResourcesFromSlime(clusterObject.field(maxResourcesKey)),
+                           intRangeFromSlime(clusterObject.field(groupSizeKey)),
                            clusterObject.field(requiredKey).asBool(),
-                           autoscalingFromSlime(clusterObject.field(suggestedKey), clusterObject.field("nonExisting")),
-                           autoscalingFromSlime(clusterObject.field(targetKey), clusterObject.field(autoscalingStatusObjectKey)),
+                           autoscalingFromSlime(clusterObject.field(suggestedKey)),
+                           autoscalingFromSlime(clusterObject.field(targetKey)),
+                           bcpGroupInfoFromSlime(clusterObject.field(bcpGroupInfoKey)),
                            scalingEventsFromSlime(clusterObject.field(scalingEventsKey)));
     }
 
@@ -146,6 +159,7 @@ public class ApplicationSerializer {
         autoscalingObject.setLong(atKey, autoscaling.at().toEpochMilli());
         toSlime(autoscaling.peak(), autoscalingObject.setObject(peakKey));
         toSlime(autoscaling.ideal(), autoscalingObject.setObject(idealKey));
+        toSlime(autoscaling.metrics(), autoscalingObject.setObject(metricsKey));
     }
 
     private static void toSlime(ClusterResources resources, Cursor clusterResourcesObject) {
@@ -165,6 +179,16 @@ public class ApplicationSerializer {
                                     NodeResourcesSerializer.resourcesFromSlime(clusterResourcesObject.field(nodeResourcesKey)));
     }
 
+    private static void toSlime(IntRange range, Cursor rangeObject) {
+        range.from().ifPresent(from -> rangeObject.setLong(fromKey, from));
+        range.to().ifPresent(from -> rangeObject.setLong(toKey, from));
+    }
+
+    private static IntRange intRangeFromSlime(Inspector rangeObject) {
+        if ( ! rangeObject.valid()) return IntRange.empty();
+        return new IntRange(optionalInt(rangeObject.field(fromKey)), optionalInt(rangeObject.field(toKey)));
+    }
+
     private static void toSlime(Load load, Cursor loadObject) {
         loadObject.setDouble(cpuKey, load.cpu());
         loadObject.setDouble(memoryKey, load.memory());
@@ -177,34 +201,42 @@ public class ApplicationSerializer {
                         loadObject.field(diskKey).asDouble());
     }
 
-    private static Autoscaling autoscalingFromSlime(Inspector autoscalingObject,
-                                                    Inspector legacyAutoscalingStatusObject) {
+    private static void toSlime(Autoscaling.Metrics metrics, Cursor metricsObject) {
+        metricsObject.setDouble(queryRateKey, metrics.queryRate());
+        metricsObject.setDouble(growthRateHeadroomKey, metrics.growthRateHeadroom());
+        metricsObject.setDouble(cpuCostPerQueryKey, metrics.cpuCostPerQuery());
+    }
+
+    private static Autoscaling.Metrics metricsFromSlime(Inspector metricsObject) {
+        return new Autoscaling.Metrics(metricsObject.field(queryRateKey).asDouble(),
+                                       metricsObject.field(growthRateHeadroomKey).asDouble(),
+                                       metricsObject.field(cpuCostPerQueryKey).asDouble());
+    }
+
+    private static Autoscaling autoscalingFromSlime(Inspector autoscalingObject) {
         if ( ! autoscalingObject.valid()) return Autoscaling.empty();
-
-        if ( ! autoscalingObject.field(atKey).valid()) { // TODO: Remove after January 2023
-            return new Autoscaling(fromAutoscalingStatusCode(legacyAutoscalingStatusObject.field(statusKey).asString()),
-                                   legacyAutoscalingStatusObject.field(descriptionKey).asString(),
-                                   optionalClusterResourcesFromSlime(autoscalingObject),
-                                   Instant.EPOCH,
-                                   Load.zero(),
-                                   Load.zero());
-        }
-
-        if (legacyAutoscalingStatusObject.valid()) {  // TODO: Remove after January 2023
-            return new Autoscaling(fromAutoscalingStatusCode(legacyAutoscalingStatusObject.field(statusKey).asString()),
-                                   legacyAutoscalingStatusObject.field(descriptionKey).asString(),
-                                   optionalClusterResourcesFromSlime(autoscalingObject.field(resourcesKey)),
-                                   Instant.ofEpochMilli(autoscalingObject.field(atKey).asLong()),
-                                   loadFromSlime(autoscalingObject.field(peakKey)),
-                                   loadFromSlime(autoscalingObject.field(idealKey)));
-        }
 
         return new Autoscaling(fromAutoscalingStatusCode(autoscalingObject.field(statusKey).asString()),
                                autoscalingObject.field(descriptionKey).asString(),
                                optionalClusterResourcesFromSlime(autoscalingObject.field(resourcesKey)),
                                Instant.ofEpochMilli(autoscalingObject.field(atKey).asLong()),
                                loadFromSlime(autoscalingObject.field(peakKey)),
-                               loadFromSlime(autoscalingObject.field(idealKey)));
+                               loadFromSlime(autoscalingObject.field(idealKey)),
+                               metricsFromSlime(autoscalingObject.field(metricsKey)));
+    }
+
+    private static void toSlime(BcpGroupInfo bcpGroupInfo, Cursor bcpGroupInfoObject) {
+        if (bcpGroupInfo.isEmpty()) return;
+        bcpGroupInfoObject.setDouble(queryRateKey, bcpGroupInfo.queryRate());
+        bcpGroupInfoObject.setDouble(growthRateHeadroomKey, bcpGroupInfo.growthRateHeadroom());
+        bcpGroupInfoObject.setDouble(cpuCostPerQueryKey, bcpGroupInfo.cpuCostPerQuery());
+    }
+
+    private static BcpGroupInfo bcpGroupInfoFromSlime(Inspector bcpGroupInfoObject) {
+        if ( ! bcpGroupInfoObject.valid()) return BcpGroupInfo.empty();
+        return new BcpGroupInfo(bcpGroupInfoObject.field(queryRateKey).asDouble(),
+                                bcpGroupInfoObject.field(growthRateHeadroomKey).asDouble(),
+                                bcpGroupInfoObject.field(cpuCostPerQueryKey).asDouble());
     }
 
     private static void scalingEventsToSlime(List<ScalingEvent> scalingEvents, Cursor eventArray) {
@@ -255,6 +287,10 @@ public class ApplicationSerializer {
 
     private static Optional<Instant> optionalInstant(Inspector inspector) {
         return inspector.valid() ? Optional.of(Instant.ofEpochMilli(inspector.asLong())) : Optional.empty();
+    }
+
+    private static OptionalInt optionalInt(Inspector inspector) {
+        return inspector.valid() ? OptionalInt.of((int)inspector.asLong()) : OptionalInt.empty();
     }
 
 }

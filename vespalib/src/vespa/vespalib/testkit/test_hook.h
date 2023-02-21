@@ -4,6 +4,8 @@
 
 #include <vespa/vespalib/util/count_down_latch.h>
 #include <vespa/vespalib/util/barrier.h>
+#include <vespa/vespalib/util/thread.h>
+#include <thread>
 #include <string>
 #include <vector>
 #include <cassert>
@@ -14,12 +16,6 @@ namespace vespalib {
 struct TestThreadEntry {
     virtual void threadEntry() = 0;
     virtual ~TestThreadEntry() {}
-};
-
-struct TestThreadFactory {
-    static __thread TestThreadFactory *factory;
-    virtual void createThread(TestThreadEntry &entry) = 0;
-    virtual ~TestThreadFactory() {}
 };
 
 struct TestFixtureWrapper {
@@ -82,6 +78,7 @@ protected:
         Barrier barrier(num_threads);
         std::vector<FixtureUP> fixtures;
         std::vector<ThreadUP> threads;
+        ThreadPool pool;
         threads.reserve(num_threads);
         fixtures.reserve(num_threads);
         for (size_t i = 0; i < num_threads; ++i) {
@@ -92,11 +89,11 @@ protected:
             fixtures.push_back(std::move(fixture_up));
         }
         for (size_t i = 1; i < num_threads; ++i) {
-            assert(TestThreadFactory::factory != 0);
-            TestThreadFactory::factory->createThread(*threads[i]);
+            pool.start([&target = *threads[i]](){ target.threadEntry(); });
         }
         threads[0]->threadEntry();
         latch.await();
+        pool.join();
         bool result = true;
         for (size_t i = 0; i < num_threads; ++i) {
             result = result && threads[i]->getResult();

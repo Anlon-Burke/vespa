@@ -4,9 +4,11 @@ package com.yahoo.vespa.config.server;
 import ai.vespa.http.DomainName;
 import ai.vespa.http.HttpURL;
 import ai.vespa.http.HttpURL.Query;
-import com.yahoo.component.annotation.Inject;
+import ai.vespa.util.http.hc5.VespaHttpClientBuilder;
+import ai.vespa.util.http.hc5.DefaultHttpClientBuilder;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.component.Version;
+import com.yahoo.component.annotation.Inject;
 import com.yahoo.config.FileReference;
 import com.yahoo.config.application.api.ApplicationFile;
 import com.yahoo.config.application.api.ApplicationMetaData;
@@ -17,13 +19,15 @@ import com.yahoo.config.provision.ActivationContext;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.Capacity;
+import com.yahoo.config.provision.EndpointsChecker;
+import com.yahoo.config.provision.EndpointsChecker.Availability;
+import com.yahoo.config.provision.EndpointsChecker.Endpoint;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.HostFilter;
 import com.yahoo.config.provision.InfraDeployer;
 import com.yahoo.config.provision.Provisioner;
 import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.SystemName;
-import com.yahoo.config.provision.Tags;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.config.provision.exception.ActivationConflictException;
@@ -88,6 +92,12 @@ import com.yahoo.vespa.defaults.Defaults;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.orchestrator.Orchestrator;
+import org.apache.hc.client5.http.classic.methods.HttpGet;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.ssl.NoopHostnameVerifier;
+import org.apache.hc.core5.http.HttpHeaders;
+import org.apache.hc.core5.http.message.BasicHeader;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -113,6 +123,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
+import static ai.vespa.http.HttpURL.Path.parse;
 import static com.yahoo.config.model.api.container.ContainerServiceType.CONTAINER;
 import static com.yahoo.config.model.api.container.ContainerServiceType.LOGSERVER_CONTAINER;
 import static com.yahoo.vespa.config.server.application.ConfigConvergenceChecker.ServiceListResponse;
@@ -142,6 +153,7 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
     private final Optional<InfraDeployer> infraDeployer;
     private final ConfigConvergenceChecker convergeChecker;
     private final HttpProxy httpProxy;
+    private final EndpointsChecker endpointsChecker;
     private final Clock clock;
     private final ConfigserverConfig configserverConfig;
     private final FileDistributionStatus fileDistributionStatus = new FileDistributionStatus();
@@ -170,6 +182,7 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
              infraDeployerProvider.getInfraDeployer(),
              configConvergenceChecker,
              httpProxy,
+             createEndpointsChecker(configserverConfig),
              configserverConfig,
              orchestrator,
              new LogRetriever(),
@@ -186,6 +199,7 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
                                   Optional<InfraDeployer> infraDeployer,
                                   ConfigConvergenceChecker configConvergenceChecker,
                                   HttpProxy httpProxy,
+                                  EndpointsChecker endpointsChecker,
                                   ConfigserverConfig configserverConfig,
                                   Orchestrator orchestrator,
                                   LogRetriever logRetriever,
@@ -200,6 +214,7 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         this.infraDeployer = Objects.requireNonNull(infraDeployer);
         this.convergeChecker = Objects.requireNonNull(configConvergenceChecker);
         this.httpProxy = Objects.requireNonNull(httpProxy);
+        this.endpointsChecker = Objects.requireNonNull(endpointsChecker);
         this.configserverConfig = Objects.requireNonNull(configserverConfig);
         this.orchestrator = Objects.requireNonNull(orchestrator);
         this.logRetriever = Objects.requireNonNull(logRetriever);
@@ -215,7 +230,8 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
     public static class Builder {
         private TenantRepository tenantRepository;
         private Optional<Provisioner> hostProvisioner;
-        private HttpProxy httpProxy = new HttpProxy(new SimpleHttpFetcher());
+        private HttpProxy httpProxy = new HttpProxy(new SimpleHttpFetcher(Duration.ofSeconds(30)));
+        private EndpointsChecker endpointsChecker = __ -> { throw new UnsupportedOperationException(); };
         private Clock clock = Clock.systemUTC();
         private ConfigserverConfig configserverConfig = new ConfigserverConfig.Builder().build();
         private Orchestrator orchestrator;
@@ -293,12 +309,18 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
             return this;
         }
 
+        public Builder withEndpointsChecker(EndpointsChecker endpointsChecker) {
+            this.endpointsChecker = endpointsChecker;
+            return this;
+        }
+
         public ApplicationRepository build() {
             return new ApplicationRepository(tenantRepository,
                                              hostProvisioner,
                                              InfraDeployerProvider.empty().getInfraDeployer(),
                                              configConvergenceChecker,
                                              httpProxy,
+                                             endpointsChecker,
                                              configserverConfig,
                                              orchestrator,
                                              logRetriever,
@@ -364,7 +386,6 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
 
     private PrepareResult deploy(File applicationDir, PrepareParams prepareParams, DeployHandlerLogger logger) {
         long sessionId = createSession(prepareParams.getApplicationId(),
-                                       prepareParams.tags(),
                                        prepareParams.getTimeoutBudget(),
                                        applicationDir,
                                        logger);
@@ -732,6 +753,10 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
 
     public ConfigConvergenceChecker configConvergenceChecker() { return convergeChecker; }
 
+    public Availability verifyEndpoints(List<Endpoint> endpoints) {
+        return endpointsChecker.endpointsAvailable(endpoints);
+    }
+
     // ---------------- Logs ----------------------------------------------------------------
 
     public HttpResponse getLogs(ApplicationId applicationId, Optional<DomainName> hostname, String apiParams) {
@@ -861,21 +886,21 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         return sessionRepository.createSessionFromExisting(fromSession, internalRedeploy, timeoutBudget, deployLogger).getSessionId();
     }
 
-    public long createSession(ApplicationId applicationId, Tags tags, TimeoutBudget timeoutBudget, InputStream in,
+    public long createSession(ApplicationId applicationId, TimeoutBudget timeoutBudget, InputStream in,
                               String contentType, DeployLogger logger) {
         File tempDir = uncheck(() -> Files.createTempDirectory("deploy")).toFile();
         long sessionId;
         try {
-            sessionId = createSession(applicationId, tags, timeoutBudget, decompressApplication(in, contentType, tempDir), logger);
+            sessionId = createSession(applicationId, timeoutBudget, decompressApplication(in, contentType, tempDir), logger);
         } finally {
             cleanupTempDirectory(tempDir, logger);
         }
         return sessionId;
     }
 
-    public long createSession(ApplicationId applicationId, Tags tags, TimeoutBudget timeoutBudget, File applicationDirectory, DeployLogger deployLogger) {
+    public long createSession(ApplicationId applicationId, TimeoutBudget timeoutBudget, File applicationDirectory, DeployLogger deployLogger) {
         SessionRepository sessionRepository = getTenant(applicationId).getSessionRepository();
-        Session session = sessionRepository.createSessionFromApplicationPackage(applicationDirectory, applicationId, tags, timeoutBudget, deployLogger);
+        Session session = sessionRepository.createSessionFromApplicationPackage(applicationDirectory, applicationId, timeoutBudget, deployLogger);
         return session.getSessionId();
     }
 
@@ -1211,6 +1236,31 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         @Override
         public void notifyCompletion() {}
 
+    }
+
+    private static EndpointsChecker createEndpointsChecker(ConfigserverConfig config) {
+        CloseableHttpClient client = (SystemName.from(config.system()).isPublic()
+                                      ? DefaultHttpClientBuilder.create(() -> null, "hosted-vespa-convergence-health-checker")
+                                      : VespaHttpClientBuilder.custom().apacheBuilder().setUserAgent("hosted-vespa-convergence-health-checker"))
+                .setDefaultHeaders(List.of(new BasicHeader(HttpHeaders.CONNECTION, "close")))
+                .build();
+        return EndpointsChecker.of(endpoint -> {
+            int remainingFailures = 3;
+            int remainingSuccesses = 100;
+            while (remainingSuccesses > 0 && remainingFailures > 0) {
+                try {
+                    if (client.execute(new HttpGet(endpoint.url().withPath(parse("/status.html")).asURI()),
+                                       response -> response.getCode() == 200))
+                        remainingSuccesses--;
+                    else remainingFailures--;
+                }
+                catch (Exception e) {
+                    log.log(Level.FINE, e, () -> "Failed to check " + endpoint + "status.html: " + e.getMessage());
+                    remainingFailures--;
+                }
+            }
+            return remainingSuccesses == 0;
+        });
     }
 
 }

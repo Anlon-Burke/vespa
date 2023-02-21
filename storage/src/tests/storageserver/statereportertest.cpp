@@ -25,8 +25,8 @@ namespace storage {
 
 class DummyApplicationGenerationFether : public ApplicationGenerationFetcher {
 public:
-    int64_t getGeneration() const override { return 1; }
-    std::string getComponentName() const override { return "component"; }
+    [[nodiscard]] int64_t getGeneration() const override { return 1; }
+    [[nodiscard]] std::string getComponentName() const override { return "component"; }
 };
 
 struct StateReporterTest : Test {
@@ -42,10 +42,10 @@ struct StateReporterTest : Test {
     std::shared_ptr<FileStorMetrics> _filestorMetrics;
 
     StateReporterTest();
+    ~StateReporterTest() override;
 
     void SetUp() override;
     void TearDown() override;
-    void runLoad(uint32_t count = 1);
 };
 
 namespace {
@@ -54,8 +54,8 @@ struct MetricClock : public metrics::MetricManager::Timer
 {
     framework::Clock& _clock;
     explicit MetricClock(framework::Clock& c) : _clock(c) {}
-    time_t getTime() const override { return _clock.getTimeInSeconds().getTime(); }
-    time_t getTimeInMilliSecs() const override { return _clock.getTimeInMillis().getTime(); }
+    [[nodiscard]] time_t getTime() const override { return vespalib::count_s(_clock.getMonotonicTime().time_since_epoch()); }
+    [[nodiscard]] time_t getTimeInMilliSecs() const override { return vespalib::count_ms(_clock.getMonotonicTime().time_since_epoch()); }
 };
 
 }
@@ -67,6 +67,8 @@ StateReporterTest::StateReporterTest()
       _stateReporter()
 {
 }
+
+StateReporterTest::~StateReporterTest() = default;
 
 void StateReporterTest::SetUp() {
     _config = std::make_unique<vdstestlib::DirConfig>(getStandardConfig(true, "statereportertest"));
@@ -95,7 +97,7 @@ void StateReporterTest::SetUp() {
     _filestorMetrics->initDiskMetrics(1, 1);
     _topSet->registerMetric(*_filestorMetrics);
 
-    _metricManager->init(config::ConfigUri(_config->getConfigId()), _node->getThreadPool());
+    _metricManager->init(config::ConfigUri(_config->getConfigId()));
 }
 
 void StateReporterTest::TearDown() {
@@ -226,9 +228,7 @@ TEST_F(StateReporterTest, report_metrics) {
     for (uint32_t i = 0; i < 6; ++i) {
         _clock->addSecondsToTime(60);
         _metricManager->timeChangedNotification();
-        while (
-            uint64_t(_metricManager->getLastProcessedTime())
-                    < _clock->getTimeInSeconds().getTime())
+        while (int64_t(_metricManager->getLastProcessedTime()) < vespalib::count_s(_clock->getMonotonicTime().time_since_epoch()))
         {
             std::this_thread::sleep_for(1ms);
         }
@@ -243,8 +243,8 @@ TEST_F(StateReporterTest, report_metrics) {
         "/state/v1/metrics?consumer=status"
     };
 
-    for (int i = 0; i < pathCount; i++) {
-        framework::HttpUrlPath path(paths[i]);
+    for (auto & path_str : paths) {
+        framework::HttpUrlPath path(path_str);
         std::ostringstream ost;
         _stateReporter->reportStatus(ost, path);
         std::string jsonData = ost.str();

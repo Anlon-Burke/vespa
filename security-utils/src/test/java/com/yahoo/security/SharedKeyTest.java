@@ -9,17 +9,37 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.Base64;
+import java.util.Optional;
 
 import static com.yahoo.security.ArrayUtils.hex;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class SharedKeyTest {
 
     private static final KeyId KEY_ID_1 = KeyId.ofString("1");
     private static final KeyId KEY_ID_2 = KeyId.ofString("2");
+
+    @Test
+    void sealed_shared_key_uses_enc_and_ciphertext_contents_for_equals_and_hash_code() {
+        var tokenStr1 = "2qW20eDfgCxDVTJfLPzihhqV4i1Ma6QrvjdoU24Csf6W0iKbYmezchhxIGeI39WcHYDvbah5tfLoYZ69ofW40zy59Nm91tavFsA";
+        var tokenStr2 = "mjA83HYuulZW5SWV8FKz4m3b3m9zU8mTrX9n6iY4wZaA6ZNr8WnBZwOU4KQqhPCORPlzSYk4svlonzPZIb3Bjbqr2ePYKLOpdGhCO";
+        var token1a = SealedSharedKey.fromTokenString(tokenStr1);
+        var token1b = SealedSharedKey.fromTokenString(tokenStr1);
+        var token2a = SealedSharedKey.fromTokenString(tokenStr2);
+        var token2b = SealedSharedKey.fromTokenString(tokenStr2);
+        assertEquals(token1a, token1a); // trivial
+        assertEquals(token1a, token1b); // needs deep compare for array contents
+        assertEquals(token1b, token1a);
+        assertEquals(token2a, token2b);
+        assertNotEquals(token1a, token2a);
+
+        assertEquals(token1a.hashCode(), token1b.hashCode());
+        assertEquals(token2a.hashCode(), token2b.hashCode());
+        assertNotEquals(token1a.hashCode(), token2a.hashCode()); // ... with a very high probability
+    }
 
     @Test
     void generated_secret_key_is_128_bit_aes() {
@@ -230,6 +250,29 @@ public class SharedKeyTest {
         byte[] encrypted = streamEncryptString(terrifyingSecret, myShared);
         String decrypted = streamDecryptString(encrypted, myShared);
         assertEquals(terrifyingSecret, decrypted);
+    }
+
+    @Test
+    void shared_key_can_be_resealed_via_interactive_resealing_session() {
+        var originalReceiverKp  = KeyUtils.generateX25519KeyPair();
+        var shared = SharedKeyGenerator.generateForReceiverPublicKey(originalReceiverKp.getPublic(), KEY_ID_1);
+        var secret = hex(shared.secretKey().getEncoded());
+
+        // Resealing requester side; ask for token to be resealed for ephemeral session public key
+        var session = SharedKeyResealingSession.newEphemeralSession();
+        var wrappedResealRequest = session.resealingRequestFor(shared.sealedSharedKey());
+
+        // Resealing request handler side; reseal using private key for original token
+        var unwrappedResealRequest = SharedKeyResealingSession.ResealingRequest.fromSerializedString(wrappedResealRequest.toSerializedString());
+        var wrappedResponse = SharedKeyResealingSession.reseal(unwrappedResealRequest,
+                (keyId) -> Optional.ofNullable(keyId.equals(KEY_ID_1) ? originalReceiverKp.getPrivate() : null));
+
+        // Back to resealing requester side
+        var unwrappedResponse = SharedKeyResealingSession.ResealingResponse.fromSerializedString(wrappedResponse.toSerializedString());
+        var resealed = session.openResealingResponse(unwrappedResponse);
+
+        var resealedSecret = hex(resealed.secretKey().getEncoded());
+        assertEquals(secret, resealedSecret);
     }
 
     // javax.crypto.CipherOutputStream swallows exceptions caused by MAC failures in cipher

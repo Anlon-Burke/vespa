@@ -16,22 +16,24 @@ import com.yahoo.config.application.api.DeploymentInstanceSpec;
 import com.yahoo.config.application.api.DeploymentSpec;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
+import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.InstanceName;
+import com.yahoo.config.provision.IntRange;
 import com.yahoo.config.provision.NodeResources;
-import com.yahoo.config.provision.Tags;
 import com.yahoo.config.provision.TenantName;
+import com.yahoo.config.provision.ZoneEndpoint.AllowedUrn;
 import com.yahoo.config.provision.zone.RoutingMethod;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.container.handler.metrics.JsonResponse;
+import com.yahoo.container.jdisc.EmptyResponse;
 import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.container.jdisc.HttpResponse;
 import com.yahoo.container.jdisc.ThreadedHttpRequestHandler;
 import com.yahoo.io.IOUtils;
-import com.yahoo.jdisc.Response;
 import com.yahoo.jdisc.http.filter.security.misc.User;
 import com.yahoo.restapi.ByteArrayResponse;
 import com.yahoo.restapi.ErrorResponse;
@@ -49,7 +51,6 @@ import com.yahoo.slime.SlimeUtils;
 import com.yahoo.text.Text;
 import com.yahoo.vespa.athenz.api.OAuthCredentials;
 import com.yahoo.vespa.athenz.client.zms.ZmsClientException;
-import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.Instance;
@@ -169,7 +170,6 @@ import static java.util.Comparator.comparingInt;
 import static java.util.Map.Entry.comparingByKey;
 import static java.util.stream.Collectors.collectingAndThen;
 import static java.util.stream.Collectors.joining;
-import static java.util.stream.Collectors.toList;
 
 /**
  * This implements the application/v4 API which is used to deploy and manage applications
@@ -282,7 +282,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/clusters")) return clusters(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/content/{*}")) return content(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.getRest(), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/logs")) return logs(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request.propertyMap());
-        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/private-service")) return getPrivateServiceInfo(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
+        if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/private-services")) return getPrivateServiceInfo(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"));
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/access/support")) return supportAccess(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request.propertyMap());
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/node/{node}/service-dump")) return getServiceDump(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), path.get("node"), request);
         if (path.matches("/application/v4/tenant/{tenant}/application/{application}/instance/{instance}/environment/{environment}/region/{region}/scaling")) return scaling(path.get("tenant"), path.get("application"), path.get("instance"), path.get("environment"), path.get("region"), request);
@@ -399,7 +399,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         for (Tenant tenant : controller.tenants().asList(includeDeleted(request)))
             toSlime(tenantArray.addObject(),
                     tenant,
-                    applications.stream().filter(app -> app.id().tenant().equals(tenant.name())).collect(toList()),
+                    applications.stream().filter(app -> app.id().tenant().equals(tenant.name())).toList(),
                     request);
         return new SlimeJsonResponse(slime);
     }
@@ -584,11 +584,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         var mergedEmail = optional("email", inspector.field("contact"))
                 .filter(address -> !address.equals(info.contact().email().getEmailAddress()))
                 .map(address -> {
-                    if (emailVerificationEnabled()) {
-                        controller.mailVerifier().sendMailVerification(cloudTenant.name(), address, PendingMailVerification.MailType.TENANT_CONTACT);
-                        return new Email(address, false);
-                    }
-                    return new Email(address, true);
+                    controller.mailVerifier().sendMailVerification(cloudTenant.name(), address, PendingMailVerification.MailType.TENANT_CONTACT);
+                    return new Email(address, false);
                 })
                 .orElse(info.contact().email());
 
@@ -773,11 +770,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         var mergedEmail = optional("contactEmail", insp)
                 .filter(address -> !address.equals(oldInfo.contact().email().getEmailAddress()))
                 .map(address -> {
-                    if (emailVerificationEnabled()) {
-                        controller.mailVerifier().sendMailVerification(tenant.name(), address, PendingMailVerification.MailType.TENANT_CONTACT);
-                        return new Email(address, false);
-                    }
-                    return new Email(address, true);
+                    controller.mailVerifier().sendMailVerification(tenant.name(), address, PendingMailVerification.MailType.TENANT_CONTACT);
+                    return new Email(address, false);
                 })
                 .orElse(oldInfo.contact().email());
 
@@ -832,7 +826,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         var mergedEmail = optional("email", insp)
                 .filter(address -> !address.equals(oldContact.email().getEmailAddress()))
                 .map(address -> {
-                    if (isBillingContact || !emailVerificationEnabled())
+                    if (isBillingContact)
                         return new Email(address, true);
                     controller.mailVerifier().sendMailVerification(tenantName, address, PendingMailVerification.MailType.TENANT_CONTACT);
                     return new Email(address, false);
@@ -869,11 +863,8 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                         .findAny()
                         .map(emailContact -> new TenantContacts.EmailContact(audiences, emailContact.email()))
                         .orElseGet(() -> {
-                            if (emailVerificationEnabled()) {
-                                controller.mailVerifier().sendMailVerification(tenantName, email, PendingMailVerification.MailType.NOTIFICATIONS);
-                                return new TenantContacts.EmailContact(audiences, new Email(email, false));
-                            }
-                            return new TenantContacts.EmailContact(audiences, new Email(email, true));
+                            controller.mailVerifier().sendMailVerification(tenantName, email, PendingMailVerification.MailType.NOTIFICATIONS);
+                            return new TenantContacts.EmailContact(audiences, new Email(email, false));
                         });
             }).toList();
 
@@ -1360,13 +1351,12 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
             clusterObject.setString("type", cluster.type().name());
             toSlime(cluster.min(), clusterObject.setObject("min"));
             toSlime(cluster.max(), clusterObject.setObject("max"));
+            if ( ! cluster.groupSize().isEmpty())
+                toSlime(cluster.groupSize(), clusterObject.setObject("groupSize"));
             toSlime(cluster.current(), clusterObject.setObject("current"));
-            toSlime(cluster.target(), cluster, clusterObject.setObject("target"));
-            toSlime(cluster.suggested(), cluster, clusterObject.setObject("suggested"));
-            legacyUtilizationToSlime(cluster.target().peak(), cluster.target().ideal(), clusterObject.setObject("utilization")); // TODO: Remove after January 2023
+            toSlime(cluster.target(), clusterObject.setObject("target"));
+            toSlime(cluster.suggested(), clusterObject.setObject("suggested"));
             scalingEventsToSlime(cluster.scalingEvents(), clusterObject.setArray("scalingEvents"));
-            clusterObject.setString("autoscalingStatusCode", cluster.target().status()); // TODO: Remove after January 2023
-            clusterObject.setString("autoscalingStatus", cluster.target().description()); // TODO: Remove after January 2023
             clusterObject.setLong("scalingDuration", cluster.scalingDuration().toMillis());
         }
         return new SlimeJsonResponse(slime);
@@ -1973,22 +1963,37 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                                                  instance.id().toShortString(), zone, inService ? "in" : "out of"));
     }
 
+    private String serviceTypeIn(DeploymentId id) {
+        CloudName cloud = controller.zoneRegistry().zones().all().get(id.zoneId()).get().getCloudName();
+        if (CloudName.AWS.equals(cloud)) return "aws-private-link";
+        if (CloudName.GCP.equals(cloud)) return "gcp-service-connect";
+        return "unknown";
+    }
+
     private HttpResponse getPrivateServiceInfo(String tenantName, String applicationName, String instanceName, String environment, String region) {
         DeploymentId id = new DeploymentId(ApplicationId.from(tenantName, applicationName, instanceName),
                                            ZoneId.from(environment, region));
         List<LoadBalancer> lbs = controller.serviceRegistry().configServer().getLoadBalancers(id.applicationId(), id.zoneId());
         Slime slime = new Slime();
-        Cursor lbArray = slime.setObject().setArray("loadBalancers");
+        Cursor lbArray = slime.setObject().setArray("privateServices");
         for (LoadBalancer lb : lbs) {
-            Cursor lbObject = lbArray.addObject();
-            lbObject.setString("cluster", lb.cluster().value());
+            Cursor serviceObject = lbArray.addObject();
+            serviceObject.setString("cluster", lb.cluster().value());
             lb.service().ifPresent(service -> {
-                lbObject.setString("serviceId", service.id()); // Really the "serviceName", but this is what the user needs >_<
-                service.allowedUrns().forEach(lbObject.setArray("allowedUrns")::addString);
-                Cursor endpointsArray = lbObject.setArray("endpoints");
+                serviceObject.setString("serviceId", service.id()); // Really the "serviceName", but this is what the user needs >_<
+                serviceObject.setString("type", serviceTypeIn(id));
+                Cursor urnsArray = serviceObject.setArray("allowedUrns");
+                for (AllowedUrn urn : service.allowedUrns()) {
+                    Cursor urnObject = urnsArray.addObject();
+                    urnObject.setString("type", switch (urn.type()) {
+                        case awsPrivateLink -> "aws-private-link";
+                        case gcpServiceConnect -> "gcp-service-connect";
+                    });
+                    urnObject.setString("urn", urn.urn());
+                }
+                Cursor endpointsArray = serviceObject.setArray("endpoints");
                 controller.serviceRegistry().vpcEndpointService()
-                          .getConnections(new ClusterId(id, lb.cluster()),
-                                          controller.applications().decideCloudAccountOf(id, controller.applications().requireApplication(TenantAndApplicationId.from(tenantName, applicationName)).deploymentSpec()))
+                          .getConnections(new ClusterId(id, lb.cluster()), lb.cloudAccount())
                         .forEach(endpoint -> {
                             Cursor endpointObject = endpointsArray.addObject();
                             endpointObject.setString("endpointId", endpoint.endpointId());
@@ -2129,7 +2134,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         if (controller.applications().getApplication(applicationId).isEmpty())
             createApplication(tenantName, applicationName, request);
 
-        controller.applications().createInstance(applicationId.instance(instanceName), Tags.empty());
+        controller.applications().createInstance(applicationId.instance(instanceName));
 
         Slime slime = new Slime();
         toSlime(applicationId.instance(instanceName), slime.setObject(), request);
@@ -2713,12 +2718,12 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         object.setDouble("cost", cost);
     }
 
-    private void toSlime(Cluster.Autoscaling autoscaling, Cluster cluster, Cursor autoscalingObject) {
-        // TODO: Remove after January 2023
-        if (autoscaling.resources().isPresent()
-            && ! autoscaling.resources().get().justNumbers().equals(cluster.current().justNumbers()))
-            toSlime(autoscaling.resources().get(), autoscalingObject);
+    private void toSlime(IntRange range, Cursor object) {
+        range.from().ifPresent(from -> object.setLong("from", from));
+        range.to().ifPresent(to -> object.setLong("to", to));
+    }
 
+    private void toSlime(Cluster.Autoscaling autoscaling, Cursor autoscalingObject) {
         autoscalingObject.setString("status", autoscaling.status());
         autoscalingObject.setString("description", autoscaling.description());
         autoscaling.resources().ifPresent(resources -> toSlime(resources, autoscalingObject.setObject("resources")));
@@ -2731,17 +2736,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         loadObject.setDouble("cpu", load.cpu());
         loadObject.setDouble("memory", load.memory());
         loadObject.setDouble("disk", load.disk());
-    }
-
-    private void legacyUtilizationToSlime(Load peak, Load ideal, Cursor utilizationObject) {
-        utilizationObject.setDouble("idealCpu", ideal.cpu());
-        utilizationObject.setDouble("peakCpu", peak.cpu());
-
-        utilizationObject.setDouble("idealMemory", ideal.memory());
-        utilizationObject.setDouble("peakMemory", peak.memory());
-
-        utilizationObject.setDouble("idealDisk", ideal.disk());
-        utilizationObject.setDouble("peakDisk", peak.disk());
     }
 
     private void scalingEventsToSlime(List<Cluster.ScalingEvent> scalingEvents, Cursor scalingEventsArray) {
@@ -3134,8 +3128,5 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
                           .collect(collectingAndThen(Collectors.toList(), Collections::unmodifiableList));
     }
 
-    public boolean emailVerificationEnabled() {
-        return Flags.ENABLED_MAIL_VERIFICATION.bindTo(controller.flagSource()).value();
-    }
 }
 

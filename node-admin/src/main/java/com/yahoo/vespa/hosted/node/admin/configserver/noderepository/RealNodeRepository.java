@@ -5,18 +5,24 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.DockerImage;
+import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
+import com.yahoo.config.provision.WireguardKey;
 import com.yahoo.config.provision.host.FlavorOverrides;
 import com.yahoo.vespa.hosted.node.admin.configserver.ConfigServerApi;
 import com.yahoo.vespa.hosted.node.admin.configserver.HttpException;
 import com.yahoo.vespa.hosted.node.admin.configserver.StandardConfigServerResponse;
 import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.bindings.GetAclResponse;
 import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.bindings.GetNodesResponse;
+import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.bindings.GetWireguardResponse;
 import com.yahoo.vespa.hosted.node.admin.configserver.noderepository.bindings.NodeRepositoryNode;
+import com.yahoo.vespa.hosted.node.admin.task.util.network.VersionedIpAddress;
+import com.yahoo.vespa.hosted.node.admin.wireguard.WireguardPeer;
 
 import java.net.URI;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -91,6 +97,12 @@ public class RealNodeRepository implements NodeRepository {
                         GetAclResponse.Port::getTrustedBy,
                         Collectors.mapping(port -> port.port, Collectors.toSet())));
 
+        // Group UDP ports by container hostname that trusts them
+        Map<String, Set<Integer>> trustedUdpPorts = response.trustedUdpPorts.stream()
+                .collect(Collectors.groupingBy(
+                        GetAclResponse.Port::getTrustedBy,
+                        Collectors.mapping(port -> port.port, Collectors.toSet())));
+
         // Group node ip-addresses by container hostname that trusts them
         Map<String, Set<Acl.Node>> trustedNodes = response.trustedNodes.stream()
                 .collect(Collectors.groupingBy(
@@ -106,13 +118,36 @@ public class RealNodeRepository implements NodeRepository {
 
 
         // For each hostname create an ACL
-        return Stream.of(trustedNodes.keySet(), trustedPorts.keySet(), trustedNetworks.keySet())
+        return Stream.of(trustedNodes.keySet(), trustedPorts.keySet(), trustedUdpPorts.keySet(), trustedNetworks.keySet())
                      .flatMap(Set::stream)
                      .distinct()
                      .collect(Collectors.toMap(
                              Function.identity(),
-                             hostname -> new Acl(trustedPorts.get(hostname), trustedNodes.get(hostname),
+                             hostname -> new Acl(trustedPorts.get(hostname),
+                                                 trustedUdpPorts.get(hostname),
+                                                 trustedNodes.get(hostname),
                                                  trustedNetworks.get(hostname))));
+    }
+
+    @Override
+    public List<WireguardPeer> getExclavePeers() {
+        String path = "/nodes/v2/node/?recursive=true&enclave=true";
+        final GetNodesResponse response = configServerApi.get(path, GetNodesResponse.class);
+
+        return response.nodes.stream()
+                .filter(node -> node.wireguardPubkey != null && ! node.wireguardPubkey.isEmpty())
+                .map(RealNodeRepository::createTenantPeer)
+                .sorted()
+                .toList();
+    }
+
+    @Override
+    public List<WireguardPeer> getConfigserverPeers() {
+        GetWireguardResponse response = configServerApi.get("/nodes/v2/wireguard", GetWireguardResponse.class);
+        return response.configservers.stream()
+                .map(RealNodeRepository::createConfigserverPeer)
+                .sorted(Comparator.comparing(WireguardPeer::hostname))
+                .toList();
     }
 
     @Override
@@ -192,6 +227,7 @@ public class RealNodeRepository implements NodeRepository {
                 Optional.ofNullable(node.archiveUri).map(URI::create),
                 Optional.ofNullable(node.exclusiveTo).map(ApplicationId::fromSerializedForm),
                 trustStore,
+                Optional.ofNullable(node.wireguardPubkey).map(WireguardKey::from),
                 node.wantToRebuild);
     }
 
@@ -308,10 +344,23 @@ public class RealNodeRepository implements NodeRepository {
         node.trustStore = nodeAttributes.getTrustStore().stream()
                 .map(item -> new NodeRepositoryNode.TrustStoreItem(item.fingerprint(), item.expiry().toEpochMilli()))
                 .toList();
+        node.wireguardPubkey = nodeAttributes.getWireguardPubkey().map(WireguardKey::value).orElse(null);
         Map<String, JsonNode> reports = nodeAttributes.getReports();
         node.reports = reports == null || reports.isEmpty() ? null : new TreeMap<>(reports);
 
         return node;
+    }
+
+    private static WireguardPeer createTenantPeer(NodeRepositoryNode node) {
+        return new WireguardPeer(HostName.of(node.hostname),
+                                 node.ipAddresses.stream().map(VersionedIpAddress::from).toList(),
+                                 WireguardKey.from(node.wireguardPubkey));
+    }
+
+    private static WireguardPeer createConfigserverPeer(GetWireguardResponse.Configserver configServer) {
+        return new WireguardPeer(HostName.of(configServer.hostname),
+                                 configServer.ipAddresses.stream().map(VersionedIpAddress::from).toList(),
+                                 WireguardKey.from(configServer.wireguardPubkey));
     }
 
 }
