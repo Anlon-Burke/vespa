@@ -1,7 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "transport_helper.h"
-#include <vespa/fastos/thread.h>
 #include <vespa/fnet/transport.h>
 #include <vespa/searchcore/proton/server/executorthreadingservice.h>
 #include <vespa/vespalib/util/sequencedtaskexecutor.h>
@@ -12,11 +11,10 @@
 namespace proton {
 
 Transport::Transport()
-    : _threadPool(std::make_unique<FastOS_ThreadPool>()),
-      _transport(std::make_unique<FNET_Transport>()),
+    : _transport(std::make_unique<FNET_Transport>()),
       _clock(std::make_unique<vespalib::TestClock>())
 {
-    _transport->Start(_threadPool.get());
+    _transport->Start();
 }
 
 Transport::~Transport() {

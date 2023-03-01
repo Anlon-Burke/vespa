@@ -1,7 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include "rpc_target.h"
 #include "shared_rpc_resources.h"
-#include <vespa/fastos/thread.h>
 #include <vespa/fnet/frt/supervisor.h>
 #include <vespa/fnet/frt/target.h>
 #include <vespa/fnet/transport.h>
@@ -66,8 +65,7 @@ SharedRpcResources::SharedRpcResources(const config::ConfigUri& config_uri,
                                        int rpc_server_port,
                                        size_t rpc_thread_pool_size,
                                        size_t rpc_events_before_wakeup)
-    : _thread_pool(std::make_unique<FastOS_ThreadPool>()),
-      _transport(std::make_unique<FNET_Transport>(fnet::TransportConfig(rpc_thread_pool_size).
+    : _transport(std::make_unique<FNET_Transport>(fnet::TransportConfig(rpc_thread_pool_size).
               events_before_wakeup(rpc_events_before_wakeup))),
       _orb(std::make_unique<FRT_Supervisor>(_transport.get())),
       _slobrok_register(std::make_unique<slobrok::api::RegisterAPI>(*_orb, slobrok::ConfiguratorFactory(config_uri))),
@@ -92,7 +90,7 @@ void SharedRpcResources::start_server_and_register_slobrok(vespalib::stringref m
     if (!_orb->Listen(_rpc_server_port)) {
         throw IllegalStateException(fmt("Failed to listen to RPC port %d", _rpc_server_port), VESPA_STRLOC);
     }
-    _transport->Start(_thread_pool.get());
+    _transport->Start();
     _slobrok_register->registerName(my_handle);
     wait_until_slobrok_is_ready();
     _handle = my_handle;

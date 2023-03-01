@@ -401,6 +401,7 @@ public class TenantRepository {
     }
 
     private void notifyRemovedTenant(TenantName name) {
+        hostRegistry.removeHosts(name);
         tenantListener.onTenantDelete(name);
     }
 
@@ -617,5 +618,7 @@ public class TenantRepository {
     }
 
     public com.yahoo.vespa.curator.Curator getCurator() { return curator; }
+
+    public HostProvisionerProvider hostProvisionerProvider() { return hostProvisionerProvider; }
 
 }

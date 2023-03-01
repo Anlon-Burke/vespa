@@ -5,7 +5,6 @@
 #include <vespa/vespalib/util/size_literals.h>
 #include <vespa/fnet/frt/supervisor.h>
 #include <vespa/fnet/transport.h>
-#include <vespa/fastos/thread.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".config.frt.frtconnectionpool");
@@ -167,14 +166,12 @@ FRTConnectionPool::getScheduler() {
     return _supervisor->GetScheduler();
 }
 
-FRTConnectionPoolWithTransport::FRTConnectionPoolWithTransport(std::unique_ptr<FastOS_ThreadPool> threadPool,
-                                                               std::unique_ptr<FNET_Transport> transport,
+FRTConnectionPoolWithTransport::FRTConnectionPoolWithTransport(std::unique_ptr<FNET_Transport> transport,
                                                                const ServerSpec & spec, const TimingValues & timingValues)
-    :  _threadPool(std::move(threadPool)),
-       _transport(std::move(transport)),
-       _connectionPool(std::make_unique<FRTConnectionPool>(*_transport, spec, timingValues))
+  : _transport(std::move(transport)),
+    _connectionPool(std::make_unique<FRTConnectionPool>(*_transport, spec, timingValues))
 {
-    _transport->Start(_threadPool.get());
+    _transport->Start();
 }
 
 FRTConnectionPoolWithTransport::~FRTConnectionPoolWithTransport()

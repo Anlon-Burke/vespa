@@ -1,6 +1,5 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include <vespa/fastos/thread.h>
 #include <vespa/fnet/transport.h>
 #include <vespa/searchcore/proton/common/scheduled_forward_executor.h>
 #include <vespa/searchcore/proton/common/scheduledexecutor.h>
@@ -46,17 +45,15 @@ make_scheduled_executor<ScheduledForwardExecutor>(FNET_Transport& transport, ves
 template <typename ScheduledT>
 class ScheduledExecutorTest : public testing::Test {
 public:
-    FastOS_ThreadPool threadPool;
     FNET_Transport transport;
     vespalib::ThreadStackExecutor executor;
     std::unique_ptr<ScheduledT> timer;
 
     ScheduledExecutorTest()
-        : threadPool(),
-          transport(),
+        : transport(),
           executor(1)
     {
-        transport.Start(&threadPool);
+        transport.Start();
         timer = make_scheduled_executor<ScheduledT>(transport, executor);
     }
     ~ScheduledExecutorTest() {

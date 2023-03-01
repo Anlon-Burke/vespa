@@ -77,6 +77,10 @@ public class Autoscaling {
         return peak.equals(Load.zero());
     }
 
+    public boolean isPresent() {
+        return ! isEmpty();
+    }
+
     @Override
     public boolean equals(Object o) {
         if ( ! (o instanceof Autoscaling other)) return false;
@@ -102,8 +106,12 @@ public class Autoscaling {
     }
 
     public static Autoscaling empty() {
+        return empty("");
+    }
+
+    public static Autoscaling empty(String description) {
         return new Autoscaling(Status.unavailable,
-                               "",
+                               description,
                                Optional.empty(),
                                Instant.EPOCH,
                                Load.zero(),

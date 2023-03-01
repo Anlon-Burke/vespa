@@ -23,9 +23,12 @@ import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 
-import java.io.*;
-import java.nio.charset.Charset;
+import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -334,9 +337,15 @@ public class VdsVisit {
                 .hasArg(false)
                 .build());
 
+        options.addOption(Option.builder()
+                .longOpt("jsonl")
+                .desc("Output documents as JSONL (JSON Lines format)")
+                .hasArg(false)
+                .build());
+
         options.addOption(Option.builder("x")
               .longOpt("xmloutput")
-              .desc("Output documents as XML")
+              .desc("Output documents as XML (deprecated)")
               .hasArg(false)
               .build());
 
@@ -370,6 +379,7 @@ public class VdsVisit {
         private int processTime = 0;
         private int fullTimeout = 7 * 24 * 60 * 60 * 1000;
         private boolean jsonOutput = true;
+        private boolean jsonLinesOutput = false;
         private boolean tensorShortForm = false; // TODO Vespa 9: change default to true
         private boolean tensorDirectValues = false; // TODO Vespa 9: change default to true
 
@@ -437,8 +447,30 @@ public class VdsVisit {
             this.processTime = processTime;
         }
 
+        public boolean jsonOutput() {
+            return jsonOutput;
+        }
+
         public void setJsonOutput(boolean jsonOutput) {
             this.jsonOutput = jsonOutput;
+        }
+
+        public boolean jsonLinesOutput() {
+            return jsonLinesOutput;
+        }
+
+        public void setJsonLinesOutput(boolean jsonLinesOutput) {
+            this.jsonLinesOutput = jsonLinesOutput;
+        }
+
+        public StdOutVisitorHandler.OutputFormat stdOutHandlerOutputFormat() {
+            if (jsonLinesOutput) {
+                return StdOutVisitorHandler.OutputFormat.JSONL;
+            } else if (jsonOutput) {
+                return StdOutVisitorHandler.OutputFormat.JSON;
+            } else {
+                return StdOutVisitorHandler.OutputFormat.XML;
+            }
         }
 
         public boolean tensorShortForm() {
@@ -587,11 +619,18 @@ public class VdsVisit {
             }
 
             boolean jsonOutput = line.hasOption("jsonoutput");
-            boolean xmlOutput = line.hasOption("xmloutput");
-            if (jsonOutput && xmlOutput) {
-                throw new IllegalArgumentException("Cannot combine both xml and json output");
+            boolean jsonl      = line.hasOption("jsonl");
+            boolean xmlOutput  = line.hasOption("xmloutput");
+            if ((jsonOutput || jsonl) && xmlOutput) {
+                throw new IllegalArgumentException("Cannot combine both XML and JSON output");
+            } else if (jsonOutput && jsonl) {
+                throw new IllegalArgumentException("Cannot combine both JSON and JSONL output");
             }
-            allParams.setJsonOutput(!xmlOutput);
+            if (jsonl) {
+                allParams.setJsonLinesOutput(true);
+            } else {
+                allParams.setJsonOutput(!xmlOutput);
+            }
 
             allParams.setVisitorParameters(params);
             return allParams;
@@ -716,24 +755,14 @@ public class VdsVisit {
             !"".equals(visitorParameters.getResumeFileName()))
         {
             try {
-                File file = new File(visitorParameters.getResumeFileName());
-                FileInputStream fos = new FileInputStream(file);
-
-                StringBuilder builder = new StringBuilder();
-                byte[] b = new byte[100000];
-                int length;
-
-                while ((length = fos.read(b)) > 0) {
-                    builder.append(new String(b, 0, length));
-                }
-                fos.close();
-                visitorParameters.setResumeToken(new ProgressToken(builder.toString()));
+                var progressFileContents = Files.readString(Path.of(visitorParameters.getResumeFileName()));
+                visitorParameters.setResumeToken(new ProgressToken(progressFileContents));
 
                 if (params.isVerbose()) {
                     System.err.format("Resuming visitor already %.1f %% finished.\n",
                             visitorParameters.getResumeToken().percentFinished());
                 }
-            } catch (FileNotFoundException e) {
+            } catch (NoSuchFileException e) {
                 // Ignore; file has not been created yet but will be shortly.
             } catch (IOException e) {
                 System.err.println("Could not open progress file: " + visitorParameters.getResumeFileName());
@@ -747,17 +776,18 @@ public class VdsVisit {
 
         VdsVisitHandler handler;
 
-        handler = new StdOutVisitorHandler(
-                params.isPrintIdsOnly(),
-                params.isVerbose(),
-                params.isVerbose(),
-                params.isVerbose(),
-                params.getStatisticsParts() != null,
-                params.getAbortOnClusterDown(),
-                params.getProcessTime(),
-                params.jsonOutput,
-                params.tensorShortForm,
-                params.tensorDirectValues);
+        var handlerParams = new StdOutVisitorHandler.Params();
+        handlerParams.printIds             = params.isPrintIdsOnly();
+        handlerParams.indentXml            = params.isVerbose();
+        handlerParams.showProgress         = params.isVerbose();
+        handlerParams.showStatistics       = params.isVerbose();
+        handlerParams.doStatistics         = params.getStatisticsParts() != null;
+        handlerParams.abortOnClusterDown   = params.getAbortOnClusterDown();
+        handlerParams.processTimeMilliSecs = params.getProcessTime();
+        handlerParams.outputFormat         = params.stdOutHandlerOutputFormat();
+        handlerParams.tensorShortForm      = params.tensorShortForm();
+        handlerParams.tensorDirectValues   = params.tensorDirectValues();
+        handler = new StdOutVisitorHandler(handlerParams);
 
         if (visitorParameters.getResumeFileName() != null) {
             handler.setProgressFileName(visitorParameters.getResumeFileName());

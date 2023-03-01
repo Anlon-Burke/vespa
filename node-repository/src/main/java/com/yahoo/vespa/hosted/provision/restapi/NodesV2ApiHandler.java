@@ -7,7 +7,6 @@ import com.yahoo.config.provision.ApplicationLockException;
 import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.HostFilter;
-import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
@@ -34,6 +33,7 @@ import com.yahoo.vespa.hosted.provision.NodeMutex;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.applications.Application;
 import com.yahoo.vespa.hosted.provision.autoscale.Load;
+import com.yahoo.vespa.hosted.provision.node.Address;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.node.filter.ApplicationFilter;
@@ -186,9 +186,9 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
                 return new MessageResponse("Updated " + patcher.application());
             }
         }
-        else if (path.matches("/nodes/v2/archive/{tenant}")) {
+        else if (path.matches("/nodes/v2/archive/account/{key}") || path.matches("/nodes/v2/archive/tenant/{key}") || path.matches("/nodes/v2/archive/{key}") /* TODO (freva): Remove March 2023 */) {
             String uri = requiredField(toSlime(request), "uri", Inspector::asString);
-            return setTenantArchiveUri(path.get("tenant"), Optional.of(uri));
+            return setArchiveUri(path.get("key"), Optional.of(uri), !path.getPath().segments().get(3).equals("account"));
         }
         else if (path.matches("/nodes/v2/upgrade/{nodeType}")) {
             return setTargetVersions(path.get("nodeType"), toSlime(request));
@@ -229,7 +229,8 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
     private HttpResponse handleDELETE(HttpRequest request) {
         Path path = new Path(request.getUri());
         if (path.matches("/nodes/v2/node/{hostname}")) return deleteNode(path.get("hostname"));
-        if (path.matches("/nodes/v2/archive/{tenant}")) return setTenantArchiveUri(path.get("tenant"), Optional.empty());
+        if (path.matches("/nodes/v2/archive/account/{key}") || path.matches("/nodes/v2/archive/tenant/{key}") || path.matches("/nodes/v2/archive/{key}") /* TODO (freva): Remove March 2023) */)
+            return setArchiveUri(path.get("key"), Optional.empty(), !path.getPath().segments().get(3).equals("account"));
         if (path.matches("/nodes/v2/upgrade/firmware")) return cancelFirmwareCheckResponse();
 
         throw new NotFoundException("Nothing at path '" + request.getUri().getPath() + "'");
@@ -280,12 +281,12 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
         Set<String> ipAddressPool = new HashSet<>();
         inspector.field("additionalIpAddresses").traverse((ArrayTraverser) (i, item) -> ipAddressPool.add(item.asString()));
 
-        List<HostName> hostnames = new ArrayList<>();
+        List<Address> addressPool = new ArrayList<>();
         inspector.field("additionalHostnames").traverse((ArrayTraverser) (i, item) ->
-                hostnames.add(HostName.of(item.asString())));
+                addressPool.add(new Address(item.asString())));
 
         Node.Builder builder = Node.create(inspector.field("id").asString(),
-                                           IP.Config.of(ipAddresses, ipAddressPool, hostnames),
+                                           IP.Config.of(ipAddresses, ipAddressPool, addressPool),
                                            inspector.field("hostname").asString(),
                                            flavorFromSlime(inspector),
                                            nodeTypeFromSlime(inspector.field("type")))
@@ -422,9 +423,10 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
         return new MessageResponse("Will request firmware checks on all hosts.");
     }
 
-    private HttpResponse setTenantArchiveUri(String tenant, Optional<String> archiveUri) {
-        nodeRepository.archiveUris().setArchiveUri(TenantName.from(tenant), archiveUri);
-        return new MessageResponse(archiveUri.map(a -> "Updated").orElse("Removed") + " archive URI for " + tenant);
+    private HttpResponse setArchiveUri(String key, Optional<String> archiveUri, boolean isTenant) {
+        if (isTenant) nodeRepository.archiveUriManager().setArchiveUri(TenantName.from(key), archiveUri);
+        else nodeRepository.archiveUriManager().setArchiveUri(CloudAccount.from(key), archiveUri);
+        return new MessageResponse(archiveUri.map(a -> "Updated").orElse("Removed") + " archive URI for " + key);
     }
 
     private static String hostnamesAsString(List<Node> nodes) {

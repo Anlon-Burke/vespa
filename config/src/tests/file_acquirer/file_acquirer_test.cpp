@@ -4,14 +4,12 @@
 #include <vespa/fnet/frt/supervisor.h>
 #include <vespa/fnet/frt/rpcrequest.h>
 #include <vespa/fnet/transport.h>
-#include <vespa/fastos/thread.h>
 #include <vespa/vespalib/util/stringfmt.h>
 
 using namespace config;
 
 struct ServerFixture : FRT_Invokable {
     fnet::frt::StandaloneFRT server;
-    FastOS_ThreadPool threadPool;
     FNET_Transport transport;
     FRT_Supervisor &orb;
     vespalib::string spec;
@@ -26,14 +24,13 @@ struct ServerFixture : FRT_Invokable {
 
     ServerFixture()
         : server(),
-          threadPool(),
           transport(),
           orb(server.supervisor())
     {
         init_rpc();
         orb.Listen(0);
         spec = vespalib::make_string("tcp/localhost:%d", orb.GetListenPort());
-        transport.Start(&threadPool);
+        transport.Start();
     }
 
     void RPC_waitFor(FRT_RPCRequest *req) {

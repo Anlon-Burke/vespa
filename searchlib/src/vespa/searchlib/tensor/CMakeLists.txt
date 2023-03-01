@@ -13,6 +13,7 @@ vespa_add_library(searchlib_tensor OBJECT
     distance_function_factory.cpp
     empty_subspace.cpp
     euclidean_distance.cpp
+    fast_value_view.cpp
     geo_degrees_distance.cpp
     hamming_distance.cpp
     hash_set_visited_tracker.cpp
@@ -30,6 +31,7 @@ vespa_add_library(searchlib_tensor OBJECT
     nearest_neighbor_index.cpp
     nearest_neighbor_index_saver.cpp
     serialized_fast_value_attribute.cpp
+    serialized_tensor_ref.cpp
     small_subspaces_buffer_type.cpp
     subspace_type.cpp
     tensor_attribute.cpp

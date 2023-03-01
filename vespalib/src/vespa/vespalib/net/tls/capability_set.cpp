@@ -32,7 +32,7 @@ std::optional<CapabilitySet> CapabilitySet::find_capability_set(const string& ca
         {"vespa.telemetry",               telemetry()},
         {"vespa.cluster_controller_node", cluster_controller_node()},
         {"vespa.logserver_node",          logserver_node()},
-        {"vespa.config_server",           config_server()}
+        {"vespa.config_server_node",      config_server_node()}
     });
     auto iter = name_to_cap_set.find(cap_set_name);
     return (iter != name_to_cap_set.end()) ? std::optional<CapabilitySet>(iter->second) : std::nullopt;
@@ -72,6 +72,7 @@ CapabilitySet CapabilitySet::container_node() noexcept {
 
 CapabilitySet CapabilitySet::telemetry() noexcept {
     return CapabilitySet::of({Capability::content_status_pages(),
+                              Capability::content_state_api(),
                               Capability::content_metrics_api(),
                               Capability::container_state_api(),
                               Capability::metricsproxy_metrics_api(),
@@ -89,7 +90,7 @@ CapabilitySet CapabilitySet::logserver_node() noexcept {
     return shared_app_node_capabilities();
 }
 
-CapabilitySet CapabilitySet::config_server() noexcept {
+CapabilitySet CapabilitySet::config_server_node() noexcept {
     return CapabilitySet::of({Capability::client_filereceiver_api(),
                               Capability::container_management_api(),
                               Capability::slobrok_api(),

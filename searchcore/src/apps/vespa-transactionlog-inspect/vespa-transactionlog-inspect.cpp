@@ -19,7 +19,6 @@
 #include <vespa/vespalib/util/signalhandler.h>
 #include <iostream>
 #include <thread>
-#include <vespa/fastos/thread.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP("vespa-transactionlog-inspect");
@@ -379,7 +378,6 @@ class BaseUtility : public Utility
 protected:
     const BaseOptions     &_bopts;
     DummyFileHeaderContext _fileHeader;
-    FastOS_ThreadPool      _threadPool;
     FNET_Transport         _transport;
     TransLogServer         _server;
     client::TransLogClient _client;
@@ -388,12 +386,11 @@ public:
     BaseUtility(const BaseOptions &bopts)
         : _bopts(bopts),
           _fileHeader(),
-          _threadPool(),
           _transport(),
           _server(_transport, _bopts.tlsName, _bopts.listenPort, _bopts.tlsDir, _fileHeader),
           _client(_transport, vespalib::make_string("tcp/localhost:%d", _bopts.listenPort))
     {
-        _transport.Start(&_threadPool);
+        _transport.Start();
     }
     ~BaseUtility() override {
         _transport.ShutDown(true);

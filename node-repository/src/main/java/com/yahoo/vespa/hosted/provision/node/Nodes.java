@@ -21,7 +21,6 @@ import com.yahoo.vespa.hosted.provision.applications.Applications;
 import com.yahoo.vespa.hosted.provision.maintenance.NodeFailer;
 import com.yahoo.vespa.hosted.provision.node.filter.NodeFilter;
 import com.yahoo.vespa.hosted.provision.persistence.CuratorDb;
-import com.yahoo.vespa.hosted.provision.provisioning.HostIpConfig;
 import com.yahoo.vespa.orchestrator.HostNameNotFoundException;
 import com.yahoo.vespa.orchestrator.Orchestrator;
 
@@ -110,7 +109,7 @@ public class Nodes {
      */
     public boolean isWorking() {
         NodeList activeNodes = list(Node.State.active);
-        if (activeNodes.size() <= 5) return true; // Not enough data to decide
+        if (activeNodes.size() < 20) return true; // Not enough data to decide
         NodeList downNodes = activeNodes.down();
         return ! ( (double)downNodes.size() / (double)activeNodes.size() > 0.2 );
     }
@@ -353,15 +352,6 @@ public class Nodes {
         } else {
             return move(node.hostname(), Node.State.failed, agent, false, Optional.of(reason));
         }
-    }
-
-    /** Update IP config for nodes in given config */
-    public void setIpConfig(HostIpConfig hostIpConfig) {
-        Predicate<Node> nodeInConfig = (node) -> hostIpConfig.contains(node.hostname());
-        performOn(nodeInConfig, (node, lock) -> {
-            IP.Config ipConfig = hostIpConfig.require(node.hostname());
-            return write(node.with(ipConfig), lock);
-        });
     }
 
     /**

@@ -3,6 +3,7 @@
 #include "tokenizer.h"
 #include "juniperdebug.h"
 #include <vespa/fastlib/text/wordfolder.h>
+#include <cinttypes>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".juniper.tokenizer");
@@ -40,7 +41,6 @@ void JuniperTokenizer::scan()
     {
         if (_registry == NULL) {
             // explicit prefetching seems to have negative effect with many threads
-            //  FastOS_Prefetch::NT(const_cast<void *>((const void *)(src + 32)));
             src = _wordfolder->UCS4Tokenize(src, src_end, dst, dst_end, startpos, result_len);
         } else {
             const char * tmpSrc = _registry->tokenize(src, src_end, dst, dst_end, startpos, result_len);

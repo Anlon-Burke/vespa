@@ -13,9 +13,7 @@ SendProxy::SendProxy(MessageBus &mbus, INetwork &net, Resender *resender) :
     _msg(),
     _logTrace(false),
     _root()
-{
-    // empty
-}
+{ }
 
 void
 SendProxy::handleMessage(Message::UP msg)
@@ -31,14 +29,13 @@ SendProxy::handleMessage(Message::UP msg)
         }
     }
     _msg = std::move(msg);
-    _root.reset(new RoutingNode(_mbus, _net, _resender, *this, *_msg, this));
+    _root = std::make_unique<RoutingNode>(_mbus, _net, _resender, *this, *_msg, this);
     _root->send();
 }
 
 void
-SendProxy::handleDiscard(Context ctx)
+SendProxy::handleDiscard(Context)
 {
-    (void)ctx;
     _msg->discard();
     delete this;
 }

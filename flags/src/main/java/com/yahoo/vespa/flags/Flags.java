@@ -281,13 +281,6 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
-    public static final UnboundBooleanFlag NOTIFICATION_DISPATCH_FLAG = defineFeatureFlag(
-            "dispatch-notifications", false,
-            List.of("enygaard"), "2022-05-02", "2023-03-01",
-            "Whether we should send notification for a given tenant",
-            "Takes effect immediately",
-            TENANT_ID);
-
     public static final UnboundBooleanFlag ENABLE_PROXY_PROTOCOL_MIXED_MODE = defineFeatureFlag(
             "enable-proxy-protocol-mixed-mode", true,
             List.of("tokle"), "2022-05-09", "2023-03-31",
@@ -338,19 +331,19 @@ public class Flags {
             "Takes effect immediately",
             CONSOLE_USER_EMAIL);
 
-    public static final UnboundBooleanFlag USE_WIREGUARD_ON_CONFIGSERVERS = defineFeatureFlag(
-            "use-wireguard-on-configservers", false,
-            List.of("andreer", "gjoranv"), "2022-09-28", "2023-04-01",
-            "Set up a WireGuard endpoint on config servers",
-            "Takes effect on configserver restart",
-            HOSTNAME);
-
     public static final UnboundStringFlag CORE_ENCRYPTION_PUBLIC_KEY_ID = defineStringFlag(
             "core-encryption-public-key-id", "",
             List.of("vekterli"), "2022-11-03", "2023-05-01",
             "Specifies which public key to use for core dump encryption.",
             "Takes effect on the next tick.",
             ZONE_ID, NODE_TYPE, HOSTNAME);
+
+    public static final UnboundBooleanFlag ENABLE_GLOBAL_PHASE = defineFeatureFlag(
+            "enable-global-phase", false,
+            List.of("arnej", "bjorncs"), "2023-02-28", "2024-01-10",
+            "Enable global phase ranking",
+            "Takes effect at redeployment",
+            APPLICATION_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

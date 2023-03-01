@@ -11,7 +11,6 @@
 #include <vespa/vespalib/util/destructor_callbacks.h>
 #include <vespa/fnet/transport.h>
 #include <vespa/fastos/file.h>
-#include <vespa/fastos/thread.h>
 #include <thread>
 
 #include <vespa/log/log.h>
@@ -480,16 +479,14 @@ getMaxSessionRunTime(TransLogServer &tls, const vespalib::string &domain)
 }
 
 struct TLS {
-    FastOS_ThreadPool threadPool;
     FNET_Transport transport;
     TransLogServer tls;
     TLS(const vespalib::string &name, int listenPort, const vespalib::string &baseDir,
         const common::FileHeaderContext &fileHeaderContext, const DomainConfig & cfg, size_t maxThreads = 4)
-        : threadPool(),
-          transport(),
+        : transport(),
           tls(transport, name, listenPort, baseDir, fileHeaderContext, cfg, maxThreads)
     {
-        transport.Start(&threadPool);
+        transport.Start();
     }
     ~TLS() {
         transport.ShutDown(true);

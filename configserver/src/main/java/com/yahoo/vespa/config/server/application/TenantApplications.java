@@ -216,10 +216,10 @@ public class TenantApplications implements RequestHandler, HostValidator {
     }
 
     private void notifyConfigActivationListeners(ApplicationSet applicationSet) {
-        if (applicationSet.getAllApplications().isEmpty()) throw new IllegalArgumentException("application set cannot be empty");
+        List<Application> applications = applicationSet.getAllApplications();
+        if (applications.isEmpty()) throw new IllegalArgumentException("application set cannot be empty");
 
-        configActivationListener.hostsUpdated(applicationSet.getAllApplications().get(0).toApplicationInfo().getApplicationId(),
-                                              applicationSet.getAllHosts());
+        hostRegistry.update(applications.get(0).getId(), applicationSet.getAllHosts());
         configActivationListener.configActivated(applicationSet);
     }
 
@@ -253,7 +253,7 @@ public class TenantApplications implements RequestHandler, HostValidator {
 
         if (hasApplication(applicationId)) {
             applicationMapper.remove(applicationId);
-            hostRegistry.removeHostsForKey(applicationId);
+            hostRegistry.removeHosts(applicationId);
             configActivationListenersOnRemove(applicationId);
             tenantMetricUpdater.setApplications(applicationMapper.numApplications());
             metrics.removeMetricUpdater(Metrics.createDimensions(applicationId));
@@ -277,17 +277,17 @@ public class TenantApplications implements RequestHandler, HostValidator {
     }
 
     private void configActivationListenersOnRemove(ApplicationId applicationId) {
-        configActivationListener.hostsUpdated(applicationId, hostRegistry.getHostsForKey(applicationId));
+        hostRegistry.removeHosts(applicationId);
         configActivationListener.applicationRemoved(applicationId);
     }
 
     private void setActiveApp(ApplicationSet applicationSet) {
-        ApplicationId id = applicationSet.getId();
+        ApplicationId applicationId = applicationSet.getId();
         Collection<String> hostsForApp = applicationSet.getAllHosts();
-        hostRegistry.update(id, hostsForApp);
+        hostRegistry.update(applicationId, hostsForApp);
         applicationSet.updateHostMetrics();
         tenantMetricUpdater.setApplications(applicationMapper.numApplications());
-        applicationMapper.register(id, applicationSet);
+        applicationMapper.register(applicationId, applicationSet);
     }
 
     @Override
@@ -377,7 +377,7 @@ public class TenantApplications implements RequestHandler, HostValidator {
 
     @Override
     public ApplicationId resolveApplicationId(String hostName) {
-        return hostRegistry.getKeyForHost(hostName);
+        return hostRegistry.getApplicationId(hostName);
     }
 
     @Override
@@ -399,11 +399,11 @@ public class TenantApplications implements RequestHandler, HostValidator {
     @Override
     public void verifyHosts(ApplicationId applicationId, Collection<String> newHosts) {
         hostRegistry.verifyHosts(applicationId, newHosts);
-        configActivationListener.verifyHostsAreAvailable(applicationId, newHosts);
     }
 
+    // TODO: Duplicate of resolveApplicationId() above
     public ApplicationId getApplicationIdForHostName(String hostname) {
-        return hostRegistry.getKeyForHost(hostname);
+        return hostRegistry.getApplicationId(hostname);
     }
 
     public TenantFileSystemDirs getTenantFileSystemDirs() { return tenantFileSystemDirs; }

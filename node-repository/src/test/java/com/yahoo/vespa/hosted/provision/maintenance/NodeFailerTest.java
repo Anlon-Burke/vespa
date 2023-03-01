@@ -177,17 +177,17 @@ public class NodeFailerTest {
 
     @Test
     public void zone_is_not_working_if_too_many_nodes_down() {
-        NodeFailTester tester = NodeFailTester.withTwoApplications();
+        NodeFailTester tester = NodeFailTester.withTwoApplications(10, 5, 5);
 
-        tester.serviceMonitor.setHostDown(tester.nodeRepository.nodes().list(Node.State.active).owner(NodeFailTester.app1).asList().get(0).hostname());
-        tester.runMaintainers();
-        assertTrue(tester.nodeRepository.nodes().isWorking());
+        int i = 0;
+        while (i < 4) {
+            tester.serviceMonitor.setHostDown(tester.nodeRepository.nodes().list(Node.State.active).owner(NodeFailTester.app1).asList().get(i).hostname());
+            tester.runMaintainers();
+            assertTrue(tester.nodeRepository.nodes().isWorking());
+            i++;
+        }
 
-        tester.serviceMonitor.setHostDown(tester.nodeRepository.nodes().list(Node.State.active).owner(NodeFailTester.app1).asList().get(1).hostname());
-        tester.runMaintainers();
-        assertTrue(tester.nodeRepository.nodes().isWorking());
-
-        tester.serviceMonitor.setHostDown(tester.nodeRepository.nodes().list(Node.State.active).owner(NodeFailTester.app1).asList().get(2).hostname());
+        tester.serviceMonitor.setHostDown(tester.nodeRepository.nodes().list(Node.State.active).owner(NodeFailTester.app1).asList().get(i).hostname());
         tester.runMaintainers();
         assertFalse(tester.nodeRepository.nodes().isWorking());
 
@@ -199,6 +199,11 @@ public class NodeFailerTest {
     @Test
     public void node_failing() {
         NodeFailTester tester = NodeFailTester.withTwoApplications(6);
+        String downHost1 = tester.nodeRepository.nodes().list(Node.State.active).owner(NodeFailTester.app1).asList().get(1).hostname();
+        String downHost2 = tester.nodeRepository.nodes().list(Node.State.active).owner(NodeFailTester.app2).asList().get(3).hostname();
+        // No liveness evidence yet:
+        assertFalse(tester.nodeRepository.nodes().node(downHost1).get().isDown());
+        assertFalse(tester.nodeRepository.nodes().node(downHost1).get().isUp());
 
         // For a day all nodes work so nothing happens
         for (int minutes = 0; minutes < 24 * 60; minutes +=5 ) {
@@ -208,10 +213,10 @@ public class NodeFailerTest {
             assertEquals(0, tester.deployer.redeployments);
             assertEquals(8, tester.nodeRepository.nodes().list(Node.State.active).nodeType(NodeType.tenant).size());
             assertEquals(0, tester.nodeRepository.nodes().list(Node.State.failed).nodeType(NodeType.tenant).size());
+            assertFalse(tester.nodeRepository.nodes().node(downHost1).get().isDown());
+            assertTrue(tester.nodeRepository.nodes().node(downHost1).get().isUp());
         }
 
-        String downHost1 = tester.nodeRepository.nodes().list(Node.State.active).owner(NodeFailTester.app1).asList().get(1).hostname();
-        String downHost2 = tester.nodeRepository.nodes().list(Node.State.active).owner(NodeFailTester.app2).asList().get(3).hostname();
         tester.serviceMonitor.setHostDown(downHost1);
         tester.serviceMonitor.setHostDown(downHost2);
         // nothing happens the first 45 minutes
@@ -221,12 +226,16 @@ public class NodeFailerTest {
             assertEquals(0, tester.deployer.redeployments);
             assertEquals(8, tester.nodeRepository.nodes().list(Node.State.active).nodeType(NodeType.tenant).size());
             assertEquals(0, tester.nodeRepository.nodes().list(Node.State.failed).nodeType(NodeType.tenant).size());
+            assertTrue(tester.nodeRepository.nodes().node(downHost1).get().isDown());
+            assertFalse(tester.nodeRepository.nodes().node(downHost1).get().isUp());
         }
         tester.serviceMonitor.setHostUp(downHost1);
 
         // downHost2 should now be failed and replaced, but not downHost1
         tester.clock.advance(Duration.ofDays(1));
         tester.runMaintainers();
+        assertFalse(tester.nodeRepository.nodes().node(downHost1).get().isDown());
+        assertTrue(tester.nodeRepository.nodes().node(downHost1).get().isUp());
         assertEquals(1, tester.deployer.redeployments);
         assertEquals(8, tester.nodeRepository.nodes().list(Node.State.active).nodeType(NodeType.tenant).size());
         assertEquals(1, tester.nodeRepository.nodes().list(Node.State.failed).nodeType(NodeType.tenant).size());

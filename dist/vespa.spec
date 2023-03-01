@@ -54,8 +54,7 @@ BuildRequires: gcc-toolset-12-libatomic-devel
 BuildRequires: maven
 BuildRequires: maven-openjdk17
 BuildRequires: vespa-pybind11-devel
-BuildRequires: python3-pytest
-BuildRequires: python36-devel
+BuildRequires: python38-devel
 BuildRequires: glibc-langpack-en
 %endif
 %if 0%{?el9}
@@ -95,6 +94,7 @@ BuildRequires: vespa-gtest = 1.11.0
 BuildRequires: vespa-lz4-devel >= 1.9.4-1
 BuildRequires: vespa-onnxruntime-devel = 1.13.1
 BuildRequires: vespa-protobuf-devel = 3.21.7
+%define _use_vespa_protobuf 1
 BuildRequires: vespa-libzstd-devel >= 1.5.2-1
 %endif
 %if 0%{?el9}
@@ -106,6 +106,7 @@ BuildRequires: vespa-lz4-devel >= 1.9.4-1
 BuildRequires: vespa-onnxruntime-devel = 1.13.1
 BuildRequires: vespa-libzstd-devel >= 1.5.2-1
 BuildRequires: vespa-protobuf-devel = 3.21.7
+%define _use_vespa_protobuf 1
 BuildRequires: llvm-devel
 BuildRequires: boost-devel >= 1.75
 BuildRequires: gtest-devel
@@ -210,7 +211,7 @@ Requires: %{name}-tools = %{version}-%{release}
 # Ugly workaround because vespamalloc/src/vespamalloc/malloc/mmap.cpp uses the private
 # _dl_sym function.
 # Exclude automated requires for libraries in /opt/vespa-deps/lib64.
-%global __requires_exclude ^lib(c\\.so\\.6\\(GLIBC_PRIVATE\\)|pthread\\.so\\.0\\(GLIBC_PRIVATE\\)|(icui18n|icuuc|lz4|protobuf|zstd|onnxruntime%{?_use_vespa_openssl:|crypto|ssl}%{?_use_vespa_openblas:|openblas}%{?_use_vespa_re2:|re2}%{?_use_vespa_xxhash:|xxhash}%{?_use_vespa_gtest:|(gtest|gmock)(_main)?})\\.so\\.[0-9.]*\\([A-Za-z._0-9]*\\))\\(64bit\\)$
+%global __requires_exclude ^lib(c\\.so\\.6\\(GLIBC_PRIVATE\\)|pthread\\.so\\.0\\(GLIBC_PRIVATE\\)|(lz4%{?_use_vespa_protobuf:|protobuf}|zstd|onnxruntime%{?_use_vespa_openssl:|crypto|ssl}%{?_use_vespa_openblas:|openblas}%{?_use_vespa_re2:|re2}%{?_use_vespa_xxhash:|xxhash}%{?_use_vespa_gtest:|(gtest|gmock)(_main)?})\\.so\\.[0-9.]*\\([A-Za-z._0-9]*\\))\\(64bit\\)$
 
 
 %description
@@ -375,7 +376,7 @@ Summary: Vespa - The open big data serving engine - ann-benchmark
 Requires: %{name}-base-libs = %{version}-%{release}
 Requires: %{name}-libs = %{version}-%{release}
 %if 0%{?el8}
-Requires: python36
+Requires: python38
 %endif
 %if 0%{?el9}
 Requires: python3
@@ -688,7 +689,6 @@ fi
 %endif
 %dir %{_prefix}
 %dir %{_prefix}/lib64
-%{_prefix}/lib64/libfastos.so
 %{_prefix}/lib64/libfnet.so
 %{_prefix}/lib64/libvespadefaults.so
 %{_prefix}/lib64/libvespalib.so
@@ -700,7 +700,6 @@ fi
 %endif
 %dir %{_prefix}
 %{_prefix}/lib64
-%exclude %{_prefix}/lib64/libfastos.so
 %exclude %{_prefix}/lib64/libfnet.so
 %exclude %{_prefix}/lib64/libvespadefaults.so
 %exclude %{_prefix}/lib64/libvespalib.so

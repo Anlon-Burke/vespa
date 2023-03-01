@@ -12,7 +12,6 @@ import com.yahoo.jrt.Transport;
 import com.yahoo.test.ManualClock;
 import com.yahoo.vespa.config.server.ApplicationRepository;
 import com.yahoo.vespa.config.server.MemoryGenerationCounter;
-import com.yahoo.vespa.config.server.MockProvisioner;
 import com.yahoo.vespa.config.server.PortRangeAllocator;
 import com.yahoo.vespa.config.server.SuperModelManager;
 import com.yahoo.vespa.config.server.SuperModelRequestHandler;
@@ -55,7 +54,7 @@ public class RpcTester implements AutoCloseable {
     private final ApplicationId applicationId;
     private final TenantName tenantName;
     private final TenantRepository tenantRepository;
-    private final HostRegistry hostRegistry = new HostRegistry();
+    final HostRegistry hostRegistry = new HostRegistry();
 
     private final ApplicationRepository applicationRepository;
     private final List<Integer> allocatedPorts = new ArrayList<>();
@@ -87,7 +86,6 @@ public class RpcTester implements AutoCloseable {
         applicationRepository = new ApplicationRepository.Builder()
                 .withTenantRepository(tenantRepository)
                 .withConfigserverConfig(configserverConfig)
-                .withProvisioner(new MockProvisioner())
                 .withOrchestrator(new OrchestratorMock())
                 .build();
     }

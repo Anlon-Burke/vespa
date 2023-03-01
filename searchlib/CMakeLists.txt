@@ -1,7 +1,6 @@
 # Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 vespa_define_module(
     DEPENDS
-    fastos
     vespalog
     vespalib
     vespaeval
@@ -129,6 +128,7 @@ vespa_define_module(
     src/tests/features
     src/tests/features/beta
     src/tests/features/bm25
+    src/tests/features/closest
     src/tests/features/constant
     src/tests/features/element_completeness
     src/tests/features/element_similarity_feature

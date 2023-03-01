@@ -2,6 +2,7 @@
 package ai.vespa.models.evaluation;
 
 import ai.vespa.modelintegration.evaluator.OnnxEvaluatorOptions;
+import ai.vespa.modelintegration.evaluator.OnnxRuntime;
 import com.yahoo.collections.Pair;
 import com.yahoo.config.FileReference;
 import com.yahoo.filedistribution.fileacquirer.FileAcquirer;
@@ -46,9 +47,11 @@ import java.util.regex.Pattern;
 public class RankProfilesConfigImporter {
 
     private final FileAcquirer fileAcquirer;
+    private final OnnxRuntime onnx;
 
-    public RankProfilesConfigImporter(FileAcquirer fileAcquirer) {
+    public RankProfilesConfigImporter(FileAcquirer fileAcquirer, OnnxRuntime onnx) {
         this.fileAcquirer = fileAcquirer;
+        this.onnx = onnx;
     }
 
     /**
@@ -87,11 +90,14 @@ public class RankProfilesConfigImporter {
         SmallConstantsInfo smallConstantsInfo = new SmallConstantsInfo();
         ExpressionFunction firstPhase = null;
         ExpressionFunction secondPhase = null;
+        ExpressionFunction globalPhase = null;
+        Map<String, TensorType> declaredTypes = new LinkedHashMap<>();
         for (RankProfilesConfig.Rankprofile.Fef.Property property : profile.fef().property()) {
             Optional<FunctionReference> reference = FunctionReference.fromSerial(property.name());
             Optional<FunctionReference> externalReference = FunctionReference.fromExternalSerial(property.name());
             Optional<Pair<FunctionReference, String>> argumentType = FunctionReference.fromTypeArgumentSerial(property.name());
             Optional<FunctionReference> returnType = FunctionReference.fromReturnTypeSerial(property.name());
+            Optional<String> typeDeclaredFeature = fromTypeDeclarationSerial(property.name());
             if (externalReference.isPresent()) {
                 RankingExpression expression = largeExpressions.get(property.value());
                 ExpressionFunction function = new ExpressionFunction(externalReference.get().functionName(),
@@ -137,6 +143,13 @@ public class RankProfilesConfigImporter {
                 secondPhase = new ExpressionFunction("secondphase", new ArrayList<>(),
                                                      new RankingExpression("second-phase", property.value()));
             }
+            else if (property.name().equals("vespa.rank.globalphase")) { // Include in addition to functions
+                globalPhase = new ExpressionFunction("globalphase", new ArrayList<>(),
+                                                     new RankingExpression("global-phase", property.value()));
+            }
+            else if (typeDeclaredFeature.isPresent()) {
+                declaredTypes.put(typeDeclaredFeature.get(), TensorType.fromSpec(property.value()));
+            }
             else {
                 smallConstantsInfo.addIfSmallConstantInfo(property.name(), property.value());
             }
@@ -145,11 +158,13 @@ public class RankProfilesConfigImporter {
             functions.put(FunctionReference.fromName("firstphase"), firstPhase);
         if (functionByName("secondphase", functions.values()) == null && secondPhase != null) // may be already included, depending on body
             functions.put(FunctionReference.fromName("secondphase"), secondPhase);
+        if (functionByName("globalphase", functions.values()) == null && globalPhase != null) // may be already included, depending on body
+            functions.put(FunctionReference.fromName("globalphase"), globalPhase);
 
         constants.addAll(smallConstantsInfo.asConstants());
 
         try {
-            return new Model(profile.name(), functions, referencedFunctions, constants, onnxModels);
+            return new Model(profile.name(), functions, referencedFunctions, declaredTypes, constants, onnxModels);
         }
         catch (RuntimeException e) {
             throw new IllegalArgumentException("Could not load model '" + profile.name() + "'", e);
@@ -183,7 +198,14 @@ public class RankProfilesConfigImporter {
             options.setInterOpThreads(onnxModelConfig.stateless_interop_threads());
             options.setIntraOpThreads(onnxModelConfig.stateless_intraop_threads());
             options.setGpuDevice(onnxModelConfig.gpu_device(), onnxModelConfig.gpu_device_required());
-            return new OnnxModel(name, file, options);
+            var m =  new OnnxModel(name, file, options, onnx);
+            for (var spec : onnxModelConfig.input()) {
+                m.addInputMapping(spec.name(), spec.source());
+            }
+            for (var spec : onnxModelConfig.output()) {
+                m.addOutputMapping(spec.name(), spec.as());
+            }
+            return m;
         } catch (InterruptedException e) {
             throw new IllegalStateException("Gave up waiting for ONNX model " + onnxModelConfig.name());
         }
@@ -287,6 +309,17 @@ public class RankProfilesConfigImporter {
             return constants;
         }
 
+    }
+
+    private static final Pattern typeDeclarationPattern =
+            Pattern.compile("vespa[.]type[.]([a-zA-Z0-9]+)[.](.+)");
+
+    static Optional<String> fromTypeDeclarationSerial(String serialForm) {
+        Matcher expressionMatcher = typeDeclarationPattern.matcher(serialForm);
+        if ( ! expressionMatcher.matches()) return Optional.empty();
+        String name = expressionMatcher.group(1);
+        String argument = expressionMatcher.group(2);
+        return Optional.of(name + "(" + argument + ")");
     }
 
 }
