@@ -11,6 +11,7 @@ import com.yahoo.config.provision.ApplicationName;
 import com.yahoo.config.provision.AthenzService;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.InstanceName;
+import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.zone.RoutingMethod;
@@ -31,7 +32,7 @@ import com.yahoo.vespa.hosted.controller.ControllerTester;
 import com.yahoo.vespa.hosted.controller.Instance;
 import com.yahoo.vespa.hosted.controller.LockedTenant;
 import com.yahoo.vespa.hosted.controller.api.application.v4.EnvironmentResource;
-import com.yahoo.vespa.hosted.controller.api.application.v4.model.ProtonMetrics;
+import com.yahoo.vespa.hosted.controller.api.application.v4.model.SearchNodeMetrics;
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.identifiers.Property;
 import com.yahoo.vespa.hosted.controller.api.identifiers.PropertyId;
@@ -40,6 +41,7 @@ import com.yahoo.vespa.hosted.controller.api.identifiers.UserId;
 import com.yahoo.vespa.hosted.controller.api.integration.athenz.ApplicationAction;
 import com.yahoo.vespa.hosted.controller.api.integration.athenz.AthenzDbMock;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ConfigServerException;
+import com.yahoo.vespa.hosted.controller.api.integration.configserver.Node;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationVersion;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.Contact;
@@ -55,6 +57,7 @@ import com.yahoo.vespa.hosted.controller.deployment.DeploymentContext;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentTester;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentTrigger;
 import com.yahoo.vespa.hosted.controller.integration.ConfigServerMock;
+import com.yahoo.vespa.hosted.controller.integration.NodeRepositoryMock;
 import com.yahoo.vespa.hosted.controller.integration.ZoneApiMock;
 import com.yahoo.vespa.hosted.controller.metric.ApplicationMetrics;
 import com.yahoo.vespa.hosted.controller.notification.Notification;
@@ -90,6 +93,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 import static com.yahoo.application.container.handler.Request.Method.DELETE;
@@ -510,6 +514,42 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant2/application/application1/instance/default/environment/dev/region/us-east-1/content/bar/file.json?query=param", GET).userIdentity(USER_ID),
                 "{\"path\":\"/bar/file.json\"}");
 
+        // Drop documents
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/drop-documents", POST)
+                        .userIdentity(USER_ID),
+                "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Drop documents status is only available for manually deployed environments\"}", 400);
+        tester.assertResponse(request("/application/v4/tenant/tenant2/application/application1/instance/default/environment/dev/region/us-east-1/drop-documents", POST)
+                        .userIdentity(USER_ID),
+                "{\"message\":\"Triggered drop documents for tenant2.application1.default in dev.us-east-1\"}");
+
+        ZoneId zone = ZoneId.from("dev", "us-east-1");
+        ApplicationId application = ApplicationId.from("tenant2", "application1", "default");
+        BiFunction<Integer, String, Node> nodeBuilder = (index, dropDocumentsReport) -> Node.builder().hostname("node" + index + ".dev.us-east-1.test")
+                .state(Node.State.active).type(NodeType.tenant).owner(application).clusterId("c1").clusterType(Node.ClusterType.content)
+                .reports(dropDocumentsReport == null ? Map.of() : Map.of("dropDocuments", dropDocumentsReport)).build();
+        NodeRepositoryMock nodeRepository = deploymentTester.controllerTester().serviceRegistry().configServer().nodeRepository();
+
+        // 2 nodes, neither ever dropped any documents
+        nodeRepository.putNodes(zone, List.of(nodeBuilder.apply(1, null), nodeBuilder.apply(2, null)));
+        tester.assertResponse(request("/application/v4/tenant/tenant2/application/application1/instance/default/environment/dev/region/us-east-1/drop-documents", GET).userIdentity(USER_ID),
+                "{}");
+
+        // 1 node previously dropped documents, 1 node without any report
+        nodeRepository.putNodes(zone, List.of(nodeBuilder.apply(1, "{\"droppedAt\":1,\"readiedAt\":2,\"startedAt\":3}"), nodeBuilder.apply(2, null)));
+        tester.assertResponse(request("/application/v4/tenant/tenant2/application/application1/instance/default/environment/dev/region/us-east-1/drop-documents", GET).userIdentity(USER_ID),
+                "{\"lastDropped\":2}");
+
+        nodeRepository.putNodes(zone, List.of(nodeBuilder.apply(1, "{}"), nodeBuilder.apply(2, null)));
+        tester.assertResponse(request("/application/v4/tenant/tenant2/application/application1/instance/default/environment/dev/region/us-east-1/drop-documents", GET).userIdentity(USER_ID),
+                "{\"error-code\":\"CONFLICT\",\"message\":\"Last dropping of documents may have failed to clear all documents due to concurrent topology changes, consider retrying\"}", 409);
+
+        nodeRepository.putNodes(zone, List.of(nodeBuilder.apply(1, "{}"), nodeBuilder.apply(2, "{\"droppedAt\":1}")));
+        tester.assertResponse(request("/application/v4/tenant/tenant2/application/application1/instance/default/environment/dev/region/us-east-1/drop-documents", GET).userIdentity(USER_ID),
+                "{\"progress\":{\"total\":2,\"dropped\":1,\"started\":0}}");
+
+        nodeRepository.putNodes(zone, List.of(nodeBuilder.apply(1, "{\"startedAt\":3}"), nodeBuilder.apply(2, "{\"readiedAt\":1}")));
+        tester.assertResponse(request("/application/v4/tenant/tenant2/application/application1/instance/default/environment/dev/region/us-east-1/drop-documents", GET).userIdentity(USER_ID),
+                "{\"progress\":{\"total\":2,\"dropped\":2,\"started\":1}}");
 
         updateMetrics();
 
@@ -541,24 +581,22 @@ public class ApplicationApiTest extends ControllerContainerTest {
                 "{\"message\":\"No deployment in progress for tenant1.application1.instance1 at this time\"}");
 
         // POST pinning to a given version to an application
-        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/pin", POST)
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/platform-pin", POST)
                         .userIdentity(USER_ID)
                         .data("6.1.0"),
                 "{\"message\":\"Triggered pin to 6.1 for tenant1.application1.instance1\"}");
         assertTrue(tester.controller().auditLogger().readLog().entries().stream()
-                        .anyMatch(entry -> entry.resource().equals("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/pin?")),
+                        .anyMatch(entry -> entry.resource().equals("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/platform-pin?")),
                 "Action is logged to audit log");
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying", GET)
-                .userIdentity(USER_ID), "{\"platform\":\"6.1\",\"pinned\":true}");
-        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/pin", GET)
-                .userIdentity(USER_ID), "{\"platform\":\"6.1\",\"pinned\":true}");
+                .userIdentity(USER_ID), "{\"platform\":\"6.1\",\"pinned\":true,\"platform-pinned\":true,\"application-pinned\":false}");
 
         // DELETE only the pin to a given version
-        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/pin", DELETE)
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/platform-pin", DELETE)
                         .userIdentity(USER_ID),
                 "{\"message\":\"Changed deployment from 'pin to 6.1' to 'upgrade to 6.1' for tenant1.application1.instance1\"}");
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying", GET)
-                .userIdentity(USER_ID), "{\"platform\":\"6.1\",\"pinned\":false}");
+                .userIdentity(USER_ID), "{\"platform\":\"6.1\",\"pinned\":false,\"platform-pinned\":false,\"application-pinned\":false}");
 
         // POST pinning again
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/pin", POST)
@@ -566,14 +604,14 @@ public class ApplicationApiTest extends ControllerContainerTest {
                         .data("6.1"),
                 "{\"message\":\"Triggered pin to 6.1 for tenant1.application1.instance1\"}");
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying", GET)
-                .userIdentity(USER_ID), "{\"platform\":\"6.1\",\"pinned\":true}");
+                .userIdentity(USER_ID), "{\"platform\":\"6.1\",\"pinned\":true,\"platform-pinned\":true,\"application-pinned\":false}");
 
         // DELETE only the version, but leave the pin
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/platform", DELETE)
                         .userIdentity(USER_ID),
                 "{\"message\":\"Changed deployment from 'pin to 6.1' to 'pin to current platform' for tenant1.application1.instance1\"}");
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying", GET)
-                .userIdentity(USER_ID), "{\"pinned\":true}");
+                .userIdentity(USER_ID), "{\"pinned\":true,\"platform-pinned\":true,\"application-pinned\":false}");
 
         // DELETE also the pin to a given version
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/pin", DELETE)
@@ -581,6 +619,32 @@ public class ApplicationApiTest extends ControllerContainerTest {
                 "{\"message\":\"Changed deployment from 'pin to current platform' to 'no change' for tenant1.application1.instance1\"}");
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying", GET)
                 .userIdentity(USER_ID), "{}");
+
+        // POST pinning to a given revision to an application
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/application-pin", POST)
+                                      .userIdentity(USER_ID)
+                                      .data(""),
+                              "{\"message\":\"Triggered pin to build 1 for tenant1.application1.instance1\"}");
+        assertTrue(tester.controller().auditLogger().readLog().entries().stream()
+                         .anyMatch(entry -> entry.resource().equals("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/application-pin?")),
+                   "Action is logged to audit log");
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying", GET)
+                                      .userIdentity(USER_ID), "{\"application\":\"build 1\",\"pinned\":false,\"platform-pinned\":false,\"application-pinned\":true}");
+
+        // DELETE only the pin to a given revision
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/application-pin", DELETE)
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Changed deployment from 'pin to build 1' to 'revision change to build 1' for tenant1.application1.instance1\"}");
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying", GET)
+                                      .userIdentity(USER_ID), "{\"application\":\"build 1\",\"pinned\":false,\"platform-pinned\":false,\"application-pinned\":false}");
+
+        // DELETE deploying to a given revision
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying/application", DELETE)
+                                      .userIdentity(USER_ID),
+                              "{\"message\":\"Changed deployment from 'revision change to build 1' to 'no change' for tenant1.application1.instance1\"}");
+        tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/deploying", GET)
+                                      .userIdentity(USER_ID), "{}");
+
 
         // POST a pause to a production job
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/job/production-us-west-1/pause", POST)
@@ -701,7 +765,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/private-services", GET)
                                       .userIdentity(USER_ID),
                               """
-                              {"privateServices":[{"cluster":"default","serviceId":"service","type":"unknown","allowedUrns":[{"type":"aws-private-link","urn":"arne"}],"endpoints":[{"endpointId":"endpoint-1","state":"available"}]}]}""");
+                              {"privateServices":[{"cluster":"default","serviceId":"service","type":"unknown","allowedUrns":[{"type":"aws-private-link","urn":"arne"}],"endpoints":[{"endpointId":"endpoint-1","state":"open","detail":"available"}]}]}""");
 
         // GET service/state/v1
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1/environment/prod/region/us-central-1/service/storagenode/host.com/state/v1/?foo=bar", GET)
@@ -1860,20 +1924,20 @@ public class ApplicationApiTest extends ControllerContainerTest {
 
     private void updateMetrics() {
         tester.serviceRegistry().configServerMock().setProtonMetrics(List.of(
-                (new ProtonMetrics("content/doc/"))
-                        .addMetric(ProtonMetrics.DOCUMENTS_ACTIVE_COUNT, 11430)
-                        .addMetric(ProtonMetrics.DOCUMENTS_READY_COUNT, 11430)
-                        .addMetric(ProtonMetrics.DOCUMENTS_TOTAL_COUNT, 11430)
-                        .addMetric(ProtonMetrics.DOCUMENT_DISK_USAGE, 44021)
-                        .addMetric(ProtonMetrics.RESOURCE_DISK_USAGE_AVERAGE, 0.0168421)
-                        .addMetric(ProtonMetrics.RESOURCE_MEMORY_USAGE_AVERAGE, 0.103482),
-                (new ProtonMetrics("content/music/"))
-                        .addMetric(ProtonMetrics.DOCUMENTS_ACTIVE_COUNT, 32210)
-                        .addMetric(ProtonMetrics.DOCUMENTS_READY_COUNT, 32000)
-                        .addMetric(ProtonMetrics.DOCUMENTS_TOTAL_COUNT, 32210)
-                        .addMetric(ProtonMetrics.DOCUMENT_DISK_USAGE, 90113)
-                        .addMetric(ProtonMetrics.RESOURCE_DISK_USAGE_AVERAGE, 0.23912)
-                        .addMetric(ProtonMetrics.RESOURCE_MEMORY_USAGE_AVERAGE, 0.00912)
+                (new SearchNodeMetrics("content/doc/"))
+                        .addMetric(SearchNodeMetrics.DOCUMENTS_ACTIVE_COUNT, 11430)
+                        .addMetric(SearchNodeMetrics.DOCUMENTS_READY_COUNT, 11430)
+                        .addMetric(SearchNodeMetrics.DOCUMENTS_TOTAL_COUNT, 11430)
+                        .addMetric(SearchNodeMetrics.DOCUMENT_DISK_USAGE, 44021)
+                        .addMetric(SearchNodeMetrics.RESOURCE_DISK_USAGE_AVERAGE, 0.0168421)
+                        .addMetric(SearchNodeMetrics.RESOURCE_MEMORY_USAGE_AVERAGE, 0.103482),
+                (new SearchNodeMetrics("content/music/"))
+                        .addMetric(SearchNodeMetrics.DOCUMENTS_ACTIVE_COUNT, 32210)
+                        .addMetric(SearchNodeMetrics.DOCUMENTS_READY_COUNT, 32000)
+                        .addMetric(SearchNodeMetrics.DOCUMENTS_TOTAL_COUNT, 32210)
+                        .addMetric(SearchNodeMetrics.DOCUMENT_DISK_USAGE, 90113)
+                        .addMetric(SearchNodeMetrics.RESOURCE_DISK_USAGE_AVERAGE, 0.23912)
+                        .addMetric(SearchNodeMetrics.RESOURCE_MEMORY_USAGE_AVERAGE, 0.00912)
         ));
     }
 

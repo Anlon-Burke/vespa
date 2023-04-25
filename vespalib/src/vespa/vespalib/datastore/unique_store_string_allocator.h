@@ -62,9 +62,9 @@ class UniqueStoreSmallStringBufferType : public BufferType<char> {
 public:
     UniqueStoreSmallStringBufferType(uint32_t array_size, uint32_t max_arrays, std::shared_ptr<vespalib::alloc::MemoryAllocator> memory_allocator);
     ~UniqueStoreSmallStringBufferType() override;
-    void destroyElements(void *, ElemCount) override;
-    void fallbackCopy(void *newBuffer, const void *oldBuffer, ElemCount numElems) override;
-    void cleanHold(void *buffer, size_t offset, ElemCount numElems, CleanContext) override;
+    void destroy_entries(void *, EntryCount) override;
+    void fallback_copy(void *newBuffer, const void *oldBuffer, EntryCount numElems) override;
+    void clean_hold(void *buffer, size_t offset, EntryCount num_entries, CleanContext) override;
     const vespalib::alloc::MemoryAllocator* get_memory_allocator() const override;
 };
 
@@ -76,7 +76,7 @@ class UniqueStoreExternalStringBufferType : public BufferType<UniqueStoreEntry<s
 public:
     UniqueStoreExternalStringBufferType(uint32_t array_size, uint32_t max_arrays, std::shared_ptr<vespalib::alloc::MemoryAllocator> memory_allocator);
     ~UniqueStoreExternalStringBufferType() override;
-    void cleanHold(void *buffer, size_t offset, ElemCount numElems, CleanContext cleanCtx) override;
+    void clean_hold(void *buffer, size_t offset, EntryCount num_entries, CleanContext cleanCtx) override;
     const vespalib::alloc::MemoryAllocator* get_memory_allocator() const override;
 };
 
@@ -114,7 +114,7 @@ public:
     EntryRef move_on_compact(EntryRef ref) override;
     const UniqueStoreEntryBase& get_wrapped(EntryRef ref) const {
         RefType iRef(ref);
-        auto &state = _store.getBufferState(iRef.bufferId());
+        auto &state = _store.getBufferMeta(iRef.bufferId());
         auto type_id = state.getTypeId();
         if (type_id != 0) {
             return *reinterpret_cast<const UniqueStoreEntryBase *>(_store.template getEntryArray<char>(iRef, state.getArraySize()));
@@ -124,7 +124,7 @@ public:
     }
     const char *get(EntryRef ref) const {
         RefType iRef(ref);
-        auto &state = _store.getBufferState(iRef.bufferId());
+        auto &state = _store.getBufferMeta(iRef.bufferId());
         auto type_id = state.getTypeId();
         if (type_id != 0) {
             return reinterpret_cast<const UniqueStoreSmallStringEntry *>(_store.template getEntryArray<char>(iRef, state.getArraySize()))->value();

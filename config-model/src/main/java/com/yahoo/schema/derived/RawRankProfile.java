@@ -20,6 +20,7 @@ import com.yahoo.searchlib.rankingexpression.parser.ParseException;
 import com.yahoo.searchlib.rankingexpression.rule.ReferenceNode;
 import com.yahoo.searchlib.rankingexpression.rule.SerializationContext;
 import com.yahoo.vespa.config.search.RankProfilesConfig;
+import static com.yahoo.searchlib.rankingexpression.Reference.wrapInRankingExpression;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -247,15 +248,15 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
                                               SerializationContext context) {
             for (Map.Entry<String, RankProfile.RankingExpressionFunction> e : functions.entrySet()) {
                 String propertyName = RankingExpression.propertyName(e.getKey());
-                if (context.serializedFunctions().containsKey(propertyName)) continue;
+                if (! context.serializedFunctions().containsKey(propertyName)) {
 
-                String expressionString = e.getValue().function().getBody().getRoot().toString(context).toString();
+                    String expressionString = e.getValue().function().getBody().getRoot().toString(context).toString();
+                    context.addFunctionSerialization(propertyName, expressionString);
+                    e.getValue().function().argumentTypes().entrySet().stream().sorted(Map.Entry.comparingByKey())
+                            .forEach(argumentType -> context.addArgumentTypeSerialization(e.getKey(), argumentType.getKey(), argumentType.getValue()));
+                }
+                e.getValue().function().returnType().ifPresent(t -> context.addFunctionTypeSerialization(e.getKey(), t));
 
-                context.addFunctionSerialization(propertyName, expressionString);
-                e.getValue().function().argumentTypes().entrySet().stream().sorted(Map.Entry.comparingByKey())
-                        .forEach(argumentType -> context.addArgumentTypeSerialization(e.getKey(), argumentType.getKey(), argumentType.getValue()));
-                if (e.getValue().function().returnType().isPresent())
-                    context.addFunctionTypeSerialization(e.getKey(), e.getValue().function().returnType().get());
                 // else if (e.getValue().function().arguments().isEmpty()) TODO: Enable this check when we resolve all types
                 //     throw new IllegalStateException("Type of function '" + e.getKey() + "' is not resolved");
             }
@@ -273,9 +274,10 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
                     String propertyName = RankingExpression.propertyName(referenceNode.getName());
                     String expressionString = function.getBody().getRoot().toString(context).toString();
                     context.addFunctionSerialization(propertyName, expressionString);
-                    ReferenceNode backendReferenceNode = new ReferenceNode("rankingExpression(" + referenceNode.getName() + ")",
-                                                                           referenceNode.getArguments().expressions(),
-                                                                           referenceNode.getOutput());
+                    function.returnType().ifPresent(t -> context.addFunctionTypeSerialization(referenceNode.getName(), t));
+                    var backendReferenceNode = new ReferenceNode(wrapInRankingExpression(referenceNode.getName()),
+                                                                 referenceNode.getArguments().expressions(),
+                                                                 referenceNode.getOutput());
                     // tell backend to map back to the name the user expects:
                     featureRenames.put(backendReferenceNode.toString(), referenceNode.toString());
                     functionFeatures.put(referenceNode.getName(), backendReferenceNode);
@@ -499,7 +501,7 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             if (expression.getRoot() instanceof ReferenceNode) {
                 properties.add(new Pair<>("vespa.rank." + phase, expression.getRoot().toString()));
             } else {
-                properties.add(new Pair<>("vespa.rank." + phase, "rankingExpression(" + name + ")"));
+                properties.add(new Pair<>("vespa.rank." + phase, wrapInRankingExpression(name)));
                 properties.add(new Pair<>(RankingExpression.propertyName(name), expression.getRoot().toString()));
             }
             return properties;
@@ -520,7 +522,7 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
                 for (Map.Entry<String, String> mapping : onnxModel.getInputMap().entrySet()) {
                     String source = mapping.getValue();
                     if (functionNames.contains(source)) {
-                        onnxModel.addInputNameMapping(mapping.getKey(), "rankingExpression(" + source + ")");
+                        onnxModel.addInputNameMapping(mapping.getKey(), wrapInRankingExpression(source));
                     }
                 }
             }

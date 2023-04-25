@@ -5,6 +5,7 @@ import com.yahoo.collections.ListMap;
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationTransaction;
+import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.Zone;
@@ -21,6 +22,7 @@ import com.yahoo.vespa.hosted.provision.applications.Applications;
 import com.yahoo.vespa.hosted.provision.maintenance.NodeFailer;
 import com.yahoo.vespa.hosted.provision.node.filter.NodeFilter;
 import com.yahoo.vespa.hosted.provision.persistence.CuratorDb;
+import com.yahoo.vespa.hosted.provision.provisioning.HostIpConfig;
 import com.yahoo.vespa.orchestrator.HostNameNotFoundException;
 import com.yahoo.vespa.orchestrator.Orchestrator;
 
@@ -40,6 +42,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static com.yahoo.vespa.hosted.provision.restapi.NodePatcher.DROP_DOCUMENTS_REPORT;
 
 /**
  * The nodes in the node repo and their state transitions
@@ -203,17 +207,12 @@ public class Nodes {
     /**
      * Sets a list of nodes to have their allocation removable (active to inactive) in the node repository.
      *
-     * @param application the application the nodes belong to
      * @param nodes the nodes to make removable. These nodes MUST be in the active state
      * @param reusable move the node directly to {@link Node.State#dirty} after removal
      */
-    public void setRemovable(ApplicationId application, List<Node> nodes, boolean reusable) {
-        try (Mutex lock = applications.lock(application)) {
-            List<Node> removableNodes = nodes.stream()
-                                             .map(node -> node.with(node.allocation().get().removable(true, reusable)))
-                                             .toList();
-            write(removableNodes, lock);
-        }
+    public void setRemovable(NodeList nodes, boolean reusable) {
+        performOn(nodes, (node, mutex) -> write(node.with(node.allocation().get().removable(true, reusable)),
+                                                mutex));
     }
 
     /**
@@ -352,6 +351,15 @@ public class Nodes {
         } else {
             return move(node.hostname(), Node.State.failed, agent, false, Optional.of(reason));
         }
+    }
+
+    /** Update IP config for nodes in given config */
+    public void setIpConfig(HostIpConfig hostIpConfig) {
+        Predicate<Node> nodeInConfig = (node) -> hostIpConfig.contains(node.hostname());
+        performOn(nodeInConfig, (node, lock) -> {
+            IP.Config ipConfig = hostIpConfig.require(node.hostname());
+            return write(node.with(ipConfig), lock);
+        });
     }
 
     /**
@@ -720,6 +728,23 @@ public class Nodes {
             }
         }
         return resultingNodes;
+    }
+
+    public List<Node> dropDocuments(ApplicationId applicationId, Optional<ClusterSpec.Id> clusterId) {
+        try (Mutex lock = applications.lock(applicationId)) {
+            Instant now = clock.instant();
+            List<Node> nodes = list(Node.State.active, Node.State.reserved)
+                    .owner(applicationId)
+                    .matching(node -> {
+                        ClusterSpec cluster = node.allocation().get().membership().cluster();
+                        if (!cluster.type().isContent()) return false;
+                        return clusterId.isEmpty() || clusterId.get().equals(cluster.id());
+                    })
+                    .mapToList(node -> node.with(node.reports().withReport(Report.basicReport(DROP_DOCUMENTS_REPORT, Report.Type.UNSPECIFIED, now, ""))));
+            if (nodes.isEmpty())
+                throw new NoSuchNodeException("No content nodes found for " + applicationId + clusterId.map(id -> " and cluster " + id).orElse(""));
+            return db.writeTo(nodes, Agent.operator, Optional.empty());
+        }
     }
 
     public boolean canAllocateTenantNodeTo(Node host) {

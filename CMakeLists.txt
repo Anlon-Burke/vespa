@@ -54,6 +54,8 @@ find_package(GTest REQUIRED)
 set(PYBIND11_FIND_PYTHON ON)
 find_package(pybind11 CONFIG REQUIRED)
 
+find_package(Protobuf REQUIRED)
+
 include(build_settings.cmake)
 
 # Enable CTest unit testing
@@ -68,7 +70,6 @@ include_directories(BEFORE ${CMAKE_BINARY_DIR}/configdefinitions/src)
 add_subdirectory(airlift-zstd)
 add_subdirectory(ann_benchmark)
 add_subdirectory(application-model)
-add_subdirectory(athenz-identity-provider-service)
 add_subdirectory(client)
 add_subdirectory(cloud-tenant-cd)
 add_subdirectory(clustercontroller-apps)

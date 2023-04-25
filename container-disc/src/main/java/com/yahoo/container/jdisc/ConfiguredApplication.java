@@ -62,6 +62,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static com.yahoo.collections.CollectionUtil.first;
+import static com.yahoo.metrics.ContainerMetrics.APPLICATION_GENERATION;
 
 /**
  * @author Tony Vaagenes
@@ -73,7 +74,6 @@ public final class ConfiguredApplication implements Application {
     private final Set<ClientProvider> startedClients = createIdentityHashSet();
     private final Set<ServerProvider> startedServers = createIdentityHashSet();
     private final SubscriberFactory subscriberFactory;
-    private final Metric metric;
     private final ContainerActivator activator;
     private final String configId;
     private final OsgiFramework osgiFramework;
@@ -106,7 +106,7 @@ public final class ConfiguredApplication implements Application {
     private volatile boolean shutdownReconfiguration = false;
 
     static {
-        log.log(Level.INFO, "Starting jdisc" + (Vtag.currentVersion.isEmpty() ? "" : " at version " + Vtag.currentVersion));
+        log.log(Level.FINE, "Starting jdisc" + (Vtag.currentVersion.isEmpty() ? "" : " at version " + Vtag.currentVersion));
         installBouncyCastleSecurityProvider();
     }
 
@@ -118,7 +118,7 @@ public final class ConfiguredApplication implements Application {
     private static void installBouncyCastleSecurityProvider() {
         BouncyCastleProvider bcProvider = new BouncyCastleProvider();
         if (Security.addProvider(bcProvider) != -1) {
-            log.info("Installed '" + bcProvider.getInfo() + "' as Java Security Provider");
+            log.fine("Installed '" + bcProvider.getInfo() + "' as Java Security Provider");
         } else {
             Provider alreadyInstalledBcProvider = Security.getProvider(BouncyCastleProvider.PROVIDER_NAME);
             log.warning("Unable to install '" + bcProvider.getInfo() + "' as Java Security Provider. " +
@@ -140,13 +140,11 @@ public final class ConfiguredApplication implements Application {
     public ConfiguredApplication(ContainerActivator activator,
                                  OsgiFramework osgiFramework,
                                  com.yahoo.jdisc.Timer timer,
-                                 SubscriberFactory subscriberFactory,
-                                 Metric metric) {
+                                 SubscriberFactory subscriberFactory) {
         this.activator = activator;
         this.osgiFramework = osgiFramework;
         this.timerSingleton = timer;
         this.subscriberFactory = subscriberFactory;
-        this.metric = metric;
         this.configId = System.getProperty("config.id");
         this.slobrokConfigSubscriber = (subscriberFactory instanceof CloudSubscriberFactory)
                 ? new SlobrokConfigSubscriber(configId)
@@ -301,10 +299,7 @@ public final class ConfiguredApplication implements Application {
         startAndStopServers(currentServers);
 
         startAndRemoveClients(Container.get().getClientProviderRegistry().allComponents());
-
-        log.info("Switching to the latest deployed set of configurations and components. " +
-                 "Application config generation: " + configurer.generation());
-        metric.set("application_generation", configurer.generation(), metric.createContext(Map.of()));
+        signalActivation();
     }
 
     private void activateContainer(ContainerBuilder builder, Runnable onPreviousContainerTermination) {
@@ -319,6 +314,13 @@ public final class ConfiguredApplication implements Application {
                 }
             });
         }
+    }
+
+    private void signalActivation() {
+        log.info("Switching to the latest deployed set of configurations and components. " +
+                 "Application config generation: " + configurer.generation());
+        var metric = configurer.getComponent(Metric.class);
+        metric.set(APPLICATION_GENERATION.baseName(), configurer.generation(), metric.createContext(Map.of()));
     }
 
     private ContainerBuilder createBuilderWithGuiceBindings() {
@@ -341,10 +343,10 @@ public final class ConfiguredApplication implements Application {
                 tryReportFailedComponentGraphConstructionMetric(configurer, e);
                 log.log(Level.SEVERE,
                         "Reconfiguration failed, your application package must be fixed, unless this is a " +
-                                "JNI reload issue: " + Exceptions.toMessageString(e), e);
+                        "JNI reload issue: " + Exceptions.toMessageString(e), e);
             } catch (Error e) {
                 com.yahoo.protect.Process.logAndDie("java.lang.Error on reconfiguration: We are probably in " +
-                        "a bad state and will terminate", e);
+                                                    "a bad state and will terminate", e);
             }
         }
         log.fine("Reconfiguration loop exited");

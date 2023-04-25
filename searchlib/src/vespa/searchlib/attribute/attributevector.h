@@ -38,6 +38,8 @@ namespace vespalib::alloc {
     class Alloc;
 }
 
+namespace vespalib::eval { struct Value; }
+
 namespace search {
 
     template <typename T> class ComponentGuard;
@@ -85,6 +87,8 @@ public:
     virtual bool add(int64_t, int32_t = 1) { return false; }
     virtual bool add(double, int32_t = 1) { return false; }
     virtual bool add(const char *, int32_t = 1) { return false; }
+    virtual bool add(vespalib::ConstArrayRef<char>, int32_t = 1) { return false; }
+    virtual bool add(const vespalib::eval::Value&, int32_t = 1) { return false; }
     
     virtual ~IExtendAttribute() = default;
 };
@@ -474,6 +478,10 @@ public:
      * Add reserved initial document with docId 0 and undefined value.
      */
     void addReservedDoc();
+    /**
+     * set undefined values for reserved document 0.
+     */
+    void set_reserved_doc_values();
     bool getEnumeratedSave() const { return _hasEnum; }
 
     virtual attribute::IPostingListAttributeBase * getIPostingListAttributeBase();

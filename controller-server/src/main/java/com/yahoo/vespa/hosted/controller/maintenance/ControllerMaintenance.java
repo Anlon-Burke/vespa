@@ -40,6 +40,7 @@ public class ControllerMaintenance extends AbstractComponent {
     @SuppressWarnings("unused") // instantiated by Dependency Injection
     public ControllerMaintenance(Controller controller, Metric metric, UserManagement userManagement, AthenzClientFactory athenzClientFactory) {
         Intervals intervals = new Intervals(controller.system());
+        SuccessFactorBaseline successFactorBaseline = new SuccessFactorBaseline(controller.system());
         upgrader = new Upgrader(controller, intervals.defaultInterval);
         osUpgradeScheduler = new OsUpgradeScheduler(controller, intervals.osUpgradeScheduler);
         maintainers.add(upgrader);
@@ -53,7 +54,7 @@ public class ControllerMaintenance extends AbstractComponent {
         maintainers.add(new OutstandingChangeDeployer(controller, intervals.outstandingChangeDeployer));
         maintainers.add(new VersionStatusUpdater(controller, intervals.versionStatusUpdater));
         maintainers.add(new ReadyJobsTrigger(controller, intervals.readyJobsTrigger));
-        maintainers.add(new DeploymentMetricsMaintainer(controller, intervals.deploymentMetricsMaintainer));
+        maintainers.add(new DeploymentMetricsMaintainer(controller, intervals.deploymentMetricsMaintainer, successFactorBaseline.deploymentMetricsMaintainerBaseline));
         maintainers.add(new ApplicationOwnershipConfirmer(controller, intervals.applicationOwnershipConfirmer, controller.serviceRegistry().ownershipIssues()));
         maintainers.add(new SystemUpgrader(controller, intervals.systemUpgrader));
         maintainers.add(new JobRunner(controller, intervals.jobRunner));
@@ -68,13 +69,14 @@ public class ControllerMaintenance extends AbstractComponent {
         maintainers.add(new HostInfoUpdater(controller, intervals.hostInfoUpdater));
         maintainers.add(new ReindexingTriggerer(controller, intervals.reindexingTriggerer));
         maintainers.add(new EndpointCertificateMaintainer(controller, intervals.endpointCertificateMaintainer));
-        maintainers.add(new BcpGroupUpdater(controller, intervals.trafficFractionUpdater));
+        maintainers.add(new BcpGroupUpdater(controller, intervals.trafficFractionUpdater, successFactorBaseline.trafficFractionUpdater));
         maintainers.add(new ArchiveUriUpdater(controller, intervals.archiveUriUpdater));
         maintainers.add(new ArchiveAccessMaintainer(controller, metric, intervals.archiveAccessMaintainer));
         maintainers.add(new TenantRoleMaintainer(controller, intervals.tenantRoleMaintainer));
         maintainers.add(new TenantRoleCleanupMaintainer(controller, intervals.tenantRoleMaintainer));
         maintainers.add(new ChangeRequestMaintainer(controller, intervals.changeRequestMaintainer));
         maintainers.add(new VcmrMaintainer(controller, intervals.vcmrMaintainer, metric));
+        maintainers.add(new CloudDatabaseMaintainer(controller, intervals.defaultInterval));
         maintainers.add(new CloudTrialExpirer(controller, intervals.defaultInterval));
         maintainers.add(new RetriggerMaintainer(controller, intervals.retriggerMaintainer));
         maintainers.add(new UserManagementMaintainer(controller, intervals.userManagementMaintainer, controller.serviceRegistry().roleMaintainer()));
@@ -188,4 +190,17 @@ public class ControllerMaintenance extends AbstractComponent {
 
     }
 
+    private static class SuccessFactorBaseline {
+
+        private final Double defaultSuccessFactorBaseline;
+        private final Double deploymentMetricsMaintainerBaseline;
+        private final Double trafficFractionUpdater;
+
+        public SuccessFactorBaseline(SystemName system) {
+            Objects.requireNonNull(system);
+            this.defaultSuccessFactorBaseline = 1.0;
+            this.deploymentMetricsMaintainerBaseline = 0.95;
+            this.trafficFractionUpdater = system.isCd() ? 0.5 : 0.65;
+        }
+    }
 }

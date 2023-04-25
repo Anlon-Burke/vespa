@@ -89,6 +89,7 @@ import static com.yahoo.jdisc.http.HttpRequest.Method.POST;
 import static com.yahoo.jdisc.http.HttpRequest.Method.PUT;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -217,12 +218,14 @@ public class DocumentV1ApiTest {
         access.expect(parameters -> {
             assertEquals("content", parameters.getRoute().toString());
             assertEquals("default", parameters.getBucketSpace());
-            assertEquals(1024, parameters.getMaxTotalHits());
+            assertEquals(1025, parameters.getMaxTotalHits());
             assertEquals(100, ((StaticThrottlePolicy) parameters.getThrottlePolicy()).getMaxPendingCount());
             assertEquals("[id]", parameters.getFieldSet());
             assertEquals("(all the things)", parameters.getDocumentSelection());
-            assertEquals(6000, parameters.getSessionTimeoutMs());
+            assertTrue(6000 <= parameters.getSessionTimeoutMs()); // Static clock in handler < connected time for request, test artefact.
             assertEquals(9, parameters.getTraceLevel());
+            assertEquals(1_000_000, parameters.getFromTimestamp());
+            assertEquals(2_000_000, parameters.getToTimestamp());
             // Put some documents in the response
             parameters.getLocalDataHandler().onMessage(new PutDocumentMessage(new DocumentPut(doc1)), tokens.get(0));
             parameters.getLocalDataHandler().onMessage(new PutDocumentMessage(new DocumentPut(doc2)), tokens.get(1));
@@ -234,7 +237,7 @@ public class DocumentV1ApiTest {
             parameters.getControlHandler().onDone(VisitorControlHandler.CompletionCode.TIMEOUT, "timeout is OK");
         });
         response = driver.sendRequest("http://localhost/document/v1?cluster=content&bucketSpace=default&wantedDocumentCount=1025&concurrency=123" +
-                                      "&selection=all%20the%20things&fieldSet=[id]&timeout=6&tracelevel=9");
+                                      "&selection=all%20the%20things&fieldSet=[id]&timeout=6&tracelevel=9&fromTimestamp=1000000&toTimestamp=2000000");
         assertSameJson("""
                        {
                          "pathId": "/document/v1",
@@ -281,9 +284,11 @@ public class DocumentV1ApiTest {
             assertEquals(1, ((StaticThrottlePolicy) parameters.getThrottlePolicy()).getMaxPendingCount());
             assertEquals("[id]", parameters.getFieldSet());
             assertEquals("(all the things)", parameters.getDocumentSelection());
-            assertEquals(6000, parameters.getTimeoutMs());
+            assertTrue(6000 <= parameters.getTimeoutMs()); // Static clock in handler < connected time for request, test artefact.
             assertEquals(4, parameters.getSlices());
             assertEquals(1, parameters.getSliceId());
+            assertEquals(0, parameters.getFromTimestamp()); // not set; 0 is default
+            assertEquals(0, parameters.getToTimestamp()); // not set; 0 is default
             // Put some documents in the response
             parameters.getLocalDataHandler().onMessage(new PutDocumentMessage(new DocumentPut(doc1)), tokens.get(0));
             parameters.getLocalDataHandler().onMessage(new PutDocumentMessage(new DocumentPut(doc2)), tokens.get(1));
@@ -499,6 +504,15 @@ public class DocumentV1ApiTest {
                        "  \"documents\": []" +
                        "}", response.readAll());
         assertEquals(200, response.getStatus());
+
+        // GET with from timestamp > to timestamp is an error
+        access.expect(parameters -> { fail("unreachable"); });
+        response = driver.sendRequest("http://localhost/document/v1/?cluster=content&fromTimestamp=100&toTimestamp=99");
+        assertSameJson("{" +
+                "  \"pathId\": \"/document/v1/\"," +
+                "  \"message\": \"toTimestamp must be greater than, or equal to, fromTimestamp\"" +
+                "}", response.readAll());
+        assertEquals(400, response.getStatus());
 
         // GET with full document ID is a document get operation which returns 404 when no document is found
         access.session.expect((id, parameters) -> {
@@ -799,7 +813,7 @@ public class DocumentV1ApiTest {
 
         // TIMEOUT is a 504
         access.session.expect((id, parameters) -> {
-            assertEquals(clock.instant().plusSeconds(1000), parameters.deadline().get());
+            assertFalse(clock.instant().plusSeconds(1000).isAfter(parameters.deadline().get())); // Static clock in handler vs real clock in Request.
             parameters.responseHandler().get().handleResponse(new Response(0, "timeout", Response.Outcome.TIMEOUT));
             return new Result();
         });

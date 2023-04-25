@@ -13,7 +13,7 @@ template <typename B>
 SingleValueNumericPostingAttribute<B>::~SingleValueNumericPostingAttribute()
 {
     this->disableFreeLists();
-    this->disableElemHoldList();
+    this->disable_entry_hold_list();
     clearAllPostings();
 }
 
@@ -89,8 +89,6 @@ SingleValueNumericPostingAttribute<B>::applyValueChanges(EnumStoreBatchUpdater& 
     // used to make sure several arithmetic operations on the same document in a single commit works
     std::map<DocId, EnumIndex> currEnumIndices;
 
-    // This avoids searching for the defaultValue in the enum store for each CLEARDOC in the change vector.
-    this->cache_change_data_entry_ref(this->_defaultValue);
     for (const auto& change : this->_changes.getInsertOrder()) {
         auto enumIter = currEnumIndices.find(change._doc);
         EnumIndex oldIdx;
@@ -111,13 +109,9 @@ SingleValueNumericPostingAttribute<B>::applyValueChanges(EnumStoreBatchUpdater& 
                 currEnumIndices[change._doc] = newIdx;
             }
         } else if(change._type == ChangeBase::CLEARDOC) {
-            Change clearDoc(this->_defaultValue);
-            clearDoc._doc = change._doc;
-            applyUpdateValueChange(clearDoc, enumStore, currEnumIndices);
+            currEnumIndices[change._doc] = enumStore.get_default_value_ref().load_relaxed();
         }
     }
-    // We must clear the cached entry ref as the defaultValue might be located in another data buffer on later invocations.
-    this->_defaultValue.clear_entry_ref();
 
     makePostingChange(enumStore.get_comparator(), currEnumIndices, changePost);
 
@@ -149,7 +143,8 @@ SingleValueNumericPostingAttribute<B>::getSearch(QueryTermSimple::UP qTerm,
 {
     using BaseSC = attribute::SingleNumericEnumSearchContext<T>;
     using SC = attribute::NumericPostingSearchContext<BaseSC, SelfType, vespalib::btree::BTreeNoLeafData>;
-    BaseSC base_sc(std::move(qTerm), *this, &this->_enumIndices.acquire_elem_ref(0), this->_enumStore);
+    auto docid_limit = this->getCommittedDocIdLimit();
+    BaseSC base_sc(std::move(qTerm), *this, this->_enumIndices.make_read_view(docid_limit), this->_enumStore);
     return std::make_unique<SC>(std::move(base_sc), params, *this);
 }
 

@@ -19,6 +19,10 @@ import com.yahoo.vespa.athenz.identityprovider.client.CsrGenerator;
 import com.yahoo.vespa.athenz.identityprovider.client.DefaultIdentityDocumentClient;
 import com.yahoo.vespa.athenz.tls.AthenzIdentityVerifier;
 import com.yahoo.vespa.athenz.utils.SiaUtils;
+import com.yahoo.vespa.flags.BooleanFlag;
+import com.yahoo.vespa.flags.FetchVector;
+import com.yahoo.vespa.flags.FlagSource;
+import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.hosted.node.admin.component.ConfigServerInfo;
 import com.yahoo.vespa.hosted.node.admin.container.ContainerName;
 import com.yahoo.vespa.hosted.node.admin.nodeagent.NodeAgentContext;
@@ -41,10 +45,14 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import static com.yahoo.vespa.hosted.node.admin.maintenance.identity.AthenzCredentialsMaintainer.IdentityType.NODE;
+import static com.yahoo.vespa.hosted.node.admin.maintenance.identity.AthenzCredentialsMaintainer.IdentityType.TENANT;
 
 /**
  * A maintainer that is responsible for providing and refreshing Athenz credentials for a container.
@@ -63,12 +71,11 @@ public class AthenzCredentialsMaintainer implements CredentialsMaintainer {
 
     private final URI ztsEndpoint;
     private final Path ztsTrustStorePath;
-    private final AthenzIdentity configserverIdentity;
     private final Clock clock;
+    private final String certificateDnsSuffix;
     private final ServiceIdentityProvider hostIdentityProvider;
     private final IdentityDocumentClient identityDocumentClient;
-    private final CsrGenerator csrGenerator;
-    private final boolean useInternalZts;
+    private final BooleanFlag tenantServiceIdentityFlag;
 
     // Used as an optimization to ensure ZTS is not DDoS'ed on continuously failing refresh attempts
     private final Map<ContainerName, Instant> lastRefreshAttempt = new ConcurrentHashMap<>();
@@ -78,36 +85,44 @@ public class AthenzCredentialsMaintainer implements CredentialsMaintainer {
                                        ConfigServerInfo configServerInfo,
                                        String certificateDnsSuffix,
                                        ServiceIdentityProvider hostIdentityProvider,
-                                       boolean useInternalZts,
+                                       FlagSource flagSource,
                                        Clock clock) {
         this.ztsEndpoint = ztsEndpoint;
         this.ztsTrustStorePath = ztsTrustStorePath;
-        this.configserverIdentity = configServerInfo.getConfigServerIdentity();
-        this.csrGenerator = new CsrGenerator(certificateDnsSuffix, configserverIdentity.getFullName());
+        this.certificateDnsSuffix = certificateDnsSuffix;
         this.hostIdentityProvider = hostIdentityProvider;
         this.identityDocumentClient = new DefaultIdentityDocumentClient(
                 configServerInfo.getLoadBalancerEndpoint(),
                 hostIdentityProvider,
-                new AthenzIdentityVerifier(Set.of(configserverIdentity)));
+                new AthenzIdentityVerifier(Set.of(configServerInfo.getConfigServerIdentity())));
         this.clock = clock;
-        this.useInternalZts = useInternalZts;
+        this.tenantServiceIdentityFlag = Flags.NODE_ADMIN_TENANT_SERVICE_REGISTRY.bindTo(flagSource);
     }
 
     public boolean converge(NodeAgentContext context) {
+        var modified = false;
+        modified |= maintain(context, NODE);
+        if (shouldWriteTenantServiceIdentity(context))
+            modified |= maintain(context, TENANT);
+        return modified;
+    }
+
+    private boolean maintain(NodeAgentContext context, IdentityType identityType) {
         if (context.isDisabled(NodeAgentTask.CredentialsMaintainer)) return false;
 
         try {
             context.log(logger, Level.FINE, "Checking certificate");
-            ContainerPath containerSiaDirectory = context.paths().of(CONTAINER_SIA_DIRECTORY, context.users().vespa());
-            ContainerPath privateKeyFile = (ContainerPath) SiaUtils.getPrivateKeyFile(containerSiaDirectory, context.identity());
-            ContainerPath certificateFile = (ContainerPath) SiaUtils.getCertificateFile(containerSiaDirectory, context.identity());
-            ContainerPath identityDocumentFile = containerSiaDirectory.resolve("vespa-node-identity-document.json");
+            ContainerPath siaDirectory = context.paths().of(CONTAINER_SIA_DIRECTORY, context.users().vespa());
+            ContainerPath identityDocumentFile = siaDirectory.resolve(identityType.getIdentityDocument());
+            AthenzIdentity athenzIdentity = getAthenzIdentity(context, identityType, identityDocumentFile);
+            ContainerPath privateKeyFile = (ContainerPath) SiaUtils.getPrivateKeyFile(siaDirectory, athenzIdentity);
+            ContainerPath certificateFile = (ContainerPath) SiaUtils.getCertificateFile(siaDirectory, athenzIdentity);
             if (!Files.exists(privateKeyFile) || !Files.exists(certificateFile) || !Files.exists(identityDocumentFile)) {
                 context.log(logger, "Certificate/private key/identity document file does not exist");
                 Files.createDirectories(privateKeyFile.getParent());
                 Files.createDirectories(certificateFile.getParent());
                 Files.createDirectories(identityDocumentFile.getParent());
-                registerIdentity(context, privateKeyFile, certificateFile, identityDocumentFile);
+                registerIdentity(context, privateKeyFile, certificateFile, identityDocumentFile, identityType, athenzIdentity);
                 return true;
             }
 
@@ -117,11 +132,11 @@ public class AthenzCredentialsMaintainer implements CredentialsMaintainer {
             var doc = EntityBindingsMapper.readSignedIdentityDocumentFromFile(identityDocumentFile);
             if (doc.outdated()) {
                 context.log(logger, "Identity document is outdated (version=%d)", doc.documentVersion());
-                registerIdentity(context, privateKeyFile, certificateFile, identityDocumentFile);
+                registerIdentity(context, privateKeyFile, certificateFile, identityDocumentFile, identityType, athenzIdentity);
                 return true;
             } else if (isCertificateExpired(expiry, now)) {
                 context.log(logger, "Certificate has expired (expiry=%s)", expiry.toString());
-                registerIdentity(context, privateKeyFile, certificateFile, identityDocumentFile);
+                registerIdentity(context, privateKeyFile, certificateFile, identityDocumentFile, identityType, athenzIdentity);
                 return true;
             }
 
@@ -135,7 +150,7 @@ public class AthenzCredentialsMaintainer implements CredentialsMaintainer {
                     return false;
                 } else {
                     lastRefreshAttempt.put(context.containerName(), now);
-                    refreshIdentity(context, privateKeyFile, certificateFile, identityDocumentFile, doc);
+                    refreshIdentity(context, privateKeyFile, certificateFile, identityDocumentFile, doc, identityType, athenzIdentity);
                     return true;
                 }
             }
@@ -183,21 +198,20 @@ public class AthenzCredentialsMaintainer implements CredentialsMaintainer {
                         now)) > 0;
     }
 
-    private void registerIdentity(NodeAgentContext context, ContainerPath privateKeyFile, ContainerPath certificateFile, ContainerPath identityDocumentFile) {
+    private void registerIdentity(NodeAgentContext context, ContainerPath privateKeyFile, ContainerPath certificateFile, ContainerPath identityDocumentFile, IdentityType identityType, AthenzIdentity identity) {
         KeyPair keyPair = KeyUtils.generateKeypair(KeyAlgorithm.RSA);
-        var doc = identityDocumentClient.getNodeIdentityDocument(context.hostname().value());
+        SignedIdentityDocument doc = signedIdentityDocument(context, identityType);
+        CsrGenerator csrGenerator = new CsrGenerator(certificateDnsSuffix, doc.providerService().getFullName());
         Pkcs10Csr csr = csrGenerator.generateInstanceCsr(
-                context.identity(), doc.providerUniqueId(), doc.ipAddresses(), doc.clusterType(), keyPair);
+                identity, doc.providerUniqueId(), doc.ipAddresses(), doc.clusterType(), keyPair);
 
-        // Set up a hostname verified for zts if this is configured to use the config server (internal zts) apis
-        HostnameVerifier ztsHostNameVerifier = useInternalZts
-                ? new AthenzIdentityVerifier(Set.of(configserverIdentity))
-                : null;
-        try (ZtsClient ztsClient = new DefaultZtsClient.Builder(ztsEndpoint).withIdentityProvider(hostIdentityProvider).withHostnameVerifier(ztsHostNameVerifier).build()) {
+        // Allow all zts hosts while removing SIS
+        HostnameVerifier ztsHostNameVerifier = (hostname, sslSession) -> true;
+        try (ZtsClient ztsClient = new DefaultZtsClient.Builder(ztsEndpoint(doc)).withIdentityProvider(hostIdentityProvider).withHostnameVerifier(ztsHostNameVerifier).build()) {
             InstanceIdentity instanceIdentity =
                     ztsClient.registerInstance(
-                            configserverIdentity,
-                            context.identity(),
+                            doc.providerService(),
+                            identity,
                             EntityBindingsMapper.toAttestationData(doc),
                             csr);
             EntityBindingsMapper.writeSignedIdentityDocumentToFile(identityDocumentFile, doc);
@@ -206,26 +220,34 @@ public class AthenzCredentialsMaintainer implements CredentialsMaintainer {
         }
     }
 
+    /**
+     * Return zts url from identity document, fallback to ztsEndpoint
+     */
+    private URI ztsEndpoint(SignedIdentityDocument doc) {
+        return Optional.ofNullable(doc.ztsUrl())
+                .filter(s -> !s.isBlank())
+                .map(URI::create)
+                .orElse(ztsEndpoint);
+    }
     private void refreshIdentity(NodeAgentContext context, ContainerPath privateKeyFile, ContainerPath certificateFile,
-                                 ContainerPath identityDocumentFile, SignedIdentityDocument doc) {
+                                 ContainerPath identityDocumentFile, SignedIdentityDocument doc, IdentityType identityType, AthenzIdentity identity) {
         KeyPair keyPair = KeyUtils.generateKeypair(KeyAlgorithm.RSA);
+        CsrGenerator csrGenerator = new CsrGenerator(certificateDnsSuffix, doc.providerService().getFullName());
         Pkcs10Csr csr = csrGenerator.generateInstanceCsr(
-                context.identity(), doc.providerUniqueId(), doc.ipAddresses(), doc.clusterType(), keyPair);
+                identity, doc.providerUniqueId(), doc.ipAddresses(), doc.clusterType(), keyPair);
 
         SSLContext containerIdentitySslContext = new SslContextBuilder().withKeyStore(privateKeyFile, certificateFile)
                                                                         .withTrustStore(ztsTrustStorePath)
                                                                         .build();
 
         try {
-            // Set up a hostname verified for zts if this is configured to use the config server (internal zts) apis
-            HostnameVerifier ztsHostNameVerifier = useInternalZts
-                    ? new AthenzIdentityVerifier(Set.of(configserverIdentity))
-                    : null;
-            try (ZtsClient ztsClient = new DefaultZtsClient.Builder(ztsEndpoint).withSslContext(containerIdentitySslContext).withHostnameVerifier(ztsHostNameVerifier).build()) {
+            // Allow all zts hosts while removing SIS
+            HostnameVerifier ztsHostNameVerifier = (hostname, sslSession) -> true;
+            try (ZtsClient ztsClient = new DefaultZtsClient.Builder(ztsEndpoint(doc)).withSslContext(containerIdentitySslContext).withHostnameVerifier(ztsHostNameVerifier).build()) {
                 InstanceIdentity instanceIdentity =
                         ztsClient.refreshInstance(
-                                configserverIdentity,
-                                context.identity(),
+                                doc.providerService(),
+                                identity,
                                 doc.providerUniqueId().asDottedString(),
                                 csr);
                 writePrivateKeyAndCertificate(privateKeyFile, keyPair.getPrivate(), certificateFile, instanceIdentity.certificate());
@@ -233,7 +255,7 @@ public class AthenzCredentialsMaintainer implements CredentialsMaintainer {
             } catch (ZtsClientException e) {
                 if (e.getErrorCode() == 403 && e.getDescription().startsWith("Certificate revoked")) {
                     context.log(logger, Level.SEVERE, "Certificate cannot be refreshed as it is revoked by ZTS - re-registering the instance now", e);
-                    registerIdentity(context, privateKeyFile, certificateFile, identityDocumentFile);
+                    registerIdentity(context, privateKeyFile, certificateFile, identityDocumentFile, identityType, identity);
                 } else {
                     throw e;
                 }
@@ -265,5 +287,47 @@ public class AthenzCredentialsMaintainer implements CredentialsMaintainer {
 
     private static boolean isCertificateExpired(Instant expiry, Instant now) {
         return now.isAfter(expiry.minus(EXPIRY_MARGIN));
+    }
+
+    private SignedIdentityDocument signedIdentityDocument(NodeAgentContext context, IdentityType identityType) {
+        return switch (identityType) {
+            case NODE -> identityDocumentClient.getNodeIdentityDocument(context.hostname().value());
+            case TENANT -> identityDocumentClient.getTenantIdentityDocument(context.hostname().value());
+        };
+    }
+
+    private AthenzIdentity getAthenzIdentity(NodeAgentContext context, IdentityType identityType, ContainerPath identityDocumentFile) {
+        return switch (identityType) {
+            case NODE -> context.identity();
+            case TENANT -> getTenantIdentity(context, identityDocumentFile);
+        };
+    }
+
+    private AthenzIdentity getTenantIdentity(NodeAgentContext context, ContainerPath identityDocumentFile) {
+        if (Files.exists(identityDocumentFile)) {
+            return EntityBindingsMapper.readSignedIdentityDocumentFromFile(identityDocumentFile).serviceIdentity();
+        } else {
+            return identityDocumentClient.getTenantIdentityDocument(context.hostname().value()).serviceIdentity();
+        }
+    }
+
+    private boolean shouldWriteTenantServiceIdentity(NodeAgentContext context) {
+        return tenantServiceIdentityFlag
+                .with(FetchVector.Dimension.HOSTNAME, context.hostname().value())
+                .value();
+    }
+
+    enum IdentityType {
+        NODE("vespa-node-identity-document.json"),
+        TENANT("vespa-tenant-identity-document.json");
+
+        private String identityDocument;
+        IdentityType(String identityDocument) {
+            this.identityDocument = identityDocument;
+        }
+
+        public String getIdentityDocument() {
+            return identityDocument;
+        }
     }
 }

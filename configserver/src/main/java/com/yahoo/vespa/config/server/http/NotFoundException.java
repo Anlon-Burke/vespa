@@ -5,7 +5,6 @@ package com.yahoo.vespa.config.server.http;
  * Exception that will create a http response with NOT_FOUND response code (404)
  *
  * @author hmusum
- * @since 5.1.17
  */
 public class NotFoundException extends RuntimeException {
 

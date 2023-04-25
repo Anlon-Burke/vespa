@@ -2,7 +2,6 @@ package vespa
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -12,18 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vespa-engine/vespa/client/go/internal/cli/auth/auth0"
-	"github.com/vespa-engine/vespa/client/go/internal/cli/auth/zts"
 	"github.com/vespa-engine/vespa/client/go/internal/util"
 	"github.com/vespa-engine/vespa/client/go/internal/version"
 )
 
 // CloudOptions configures URL and authentication for a cloud target.
 type APIOptions struct {
-	System         System
-	TLSOptions     TLSOptions
-	APIKey         []byte
-	AuthConfigPath string
+	System     System
+	TLSOptions TLSOptions
+	APIKey     []byte
 }
 
 // CloudDeploymentOptions configures the deployment to manage through a cloud target.
@@ -38,7 +34,8 @@ type cloudTarget struct {
 	deploymentOptions CloudDeploymentOptions
 	logOptions        LogOptions
 	httpClient        util.HTTPClient
-	ztsClient         ztsClient
+	apiAuth           Authenticator
+	deploymentAuth    Authenticator
 }
 
 type deploymentEndpoint struct {
@@ -64,22 +61,15 @@ type logMessage struct {
 	Message string `json:"message"`
 }
 
-type ztsClient interface {
-	AccessToken(domain string, certficiate tls.Certificate) (string, error)
-}
-
 // CloudTarget creates a Target for the Vespa Cloud or hosted Vespa platform.
-func CloudTarget(httpClient util.HTTPClient, apiOptions APIOptions, deploymentOptions CloudDeploymentOptions, logOptions LogOptions) (Target, error) {
-	ztsClient, err := zts.NewClient(zts.DefaultURL, httpClient)
-	if err != nil {
-		return nil, err
-	}
+func CloudTarget(httpClient util.HTTPClient, apiAuth Authenticator, deploymentAuth Authenticator, apiOptions APIOptions, deploymentOptions CloudDeploymentOptions, logOptions LogOptions) (Target, error) {
 	return &cloudTarget{
 		httpClient:        httpClient,
 		apiOptions:        apiOptions,
 		deploymentOptions: deploymentOptions,
 		logOptions:        logOptions,
-		ztsClient:         ztsClient,
+		apiAuth:           apiAuth,
+		deploymentAuth:    deploymentAuth,
 	}, nil
 }
 
@@ -125,15 +115,15 @@ func (t *cloudTarget) Service(name string, timeout time.Duration, runID int64, c
 			Name:       name,
 			BaseURL:    t.apiOptions.System.URL,
 			TLSOptions: t.apiOptions.TLSOptions,
-			ztsClient:  t.ztsClient,
 			httpClient: t.httpClient,
+			auth:       t.apiAuth,
 		}
 		if timeout > 0 {
 			status, err := service.Wait(timeout)
 			if err != nil {
 				return nil, err
 			}
-			if !isOK(status) {
+			if ok, _ := isOK(status); !ok {
 				return nil, fmt.Errorf("got status %d from deploy service at %s", status, service.BaseURL)
 			}
 		}
@@ -148,31 +138,15 @@ func (t *cloudTarget) Service(name string, timeout time.Duration, runID int64, c
 		if err != nil {
 			return nil, err
 		}
-		t.deploymentOptions.TLSOptions.AthenzDomain = t.apiOptions.System.AthenzDomain
 		return &Service{
 			Name:       name,
 			BaseURL:    url,
 			TLSOptions: t.deploymentOptions.TLSOptions,
-			ztsClient:  t.ztsClient,
 			httpClient: t.httpClient,
+			auth:       t.deploymentAuth,
 		}, nil
-	}
-	return nil, fmt.Errorf("unknown service: %s", name)
-}
-
-func (t *cloudTarget) SignRequest(req *http.Request, keyID string) error {
-	if t.apiOptions.System.IsPublic() {
-		if t.apiOptions.APIKey != nil {
-			signer := NewRequestSigner(keyID, t.apiOptions.APIKey)
-			return signer.SignRequest(req)
-		} else {
-			return t.addAuth0AccessToken(req)
-		}
-	} else {
-		if t.apiOptions.TLSOptions.KeyPair.Certificate == nil {
-			return fmt.Errorf("system %s requires a certificate for authentication", t.apiOptions.System.Name)
-		}
-		return nil
+	default:
+		return nil, fmt.Errorf("unknown service: %s", name)
 	}
 }
 
@@ -184,7 +158,11 @@ func (t *cloudTarget) CheckVersion(clientVersion version.Version) error {
 	if err != nil {
 		return err
 	}
-	response, err := t.httpClient.Do(req, 10*time.Second)
+	deployService, err := t.Service(DeployService, 0, 0, "")
+	if err != nil {
+		return err
+	}
+	response, err := deployService.Do(req, 10*time.Second)
 	if err != nil {
 		return err
 	}
@@ -203,22 +181,6 @@ func (t *cloudTarget) CheckVersion(clientVersion version.Version) error {
 	if clientVersion.Less(minVersion) {
 		return fmt.Errorf("client version %s is less than the minimum supported version: %s", clientVersion, minVersion)
 	}
-	return nil
-}
-
-func (t *cloudTarget) addAuth0AccessToken(request *http.Request) error {
-	client, err := auth0.New(t.apiOptions.AuthConfigPath, t.apiOptions.System.Name, t.apiOptions.System.URL)
-	if err != nil {
-		return err
-	}
-	accessToken, err := client.GetAccessToken()
-	if err != nil {
-		return err
-	}
-	if request.Header == nil {
-		request.Header = make(http.Header)
-	}
-	request.Header.Set("Authorization", "Bearer "+accessToken)
 	return nil
 }
 
@@ -244,11 +206,10 @@ func (t *cloudTarget) PrintLog(options LogOptions) error {
 			q.Set("to", strconv.FormatInt(toMillis, 10))
 		}
 		req.URL.RawQuery = q.Encode()
-		t.SignRequest(req, t.deploymentOptions.Deployment.Application.SerializedForm())
 		return req
 	}
 	logFunc := func(status int, response []byte) (bool, error) {
-		if ok, err := isCloudOK(status); !ok {
+		if ok, err := isOK(status); !ok {
 			return ok, err
 		}
 		logEntries, err := ReadLogEntries(bytes.NewReader(response))
@@ -273,8 +234,16 @@ func (t *cloudTarget) PrintLog(options LogOptions) error {
 	if options.Follow {
 		timeout = math.MaxInt64 // No timeout
 	}
-	_, err = wait(t.httpClient, logFunc, requestFunc, &t.apiOptions.TLSOptions.KeyPair, timeout)
+	_, err = t.deployServiceWait(logFunc, requestFunc, timeout)
 	return err
+}
+
+func (t *cloudTarget) deployServiceWait(fn responseFunc, reqFn requestFunc, timeout time.Duration) (int, error) {
+	deployService, err := t.Service(DeployService, 0, 0, "")
+	if err != nil {
+		return 0, err
+	}
+	return wait(deployService, fn, reqFn, timeout)
 }
 
 func (t *cloudTarget) waitForEndpoints(timeout time.Duration, runID int64) error {
@@ -300,13 +269,10 @@ func (t *cloudTarget) waitForRun(runID int64, timeout time.Duration) error {
 		q := req.URL.Query()
 		q.Set("after", strconv.FormatInt(lastID, 10))
 		req.URL.RawQuery = q.Encode()
-		if err := t.SignRequest(req, t.deploymentOptions.Deployment.Application.SerializedForm()); err != nil {
-			util.JustExitWith(err)
-		}
 		return req
 	}
 	jobSuccessFunc := func(status int, response []byte) (bool, error) {
-		if ok, err := isCloudOK(status); !ok {
+		if ok, err := isOK(status); !ok {
 			return ok, err
 		}
 		var resp jobResponse
@@ -324,7 +290,7 @@ func (t *cloudTarget) waitForRun(runID int64, timeout time.Duration) error {
 		}
 		return true, nil
 	}
-	_, err = wait(t.httpClient, jobSuccessFunc, requestFunc, &t.apiOptions.TLSOptions.KeyPair, timeout)
+	_, err = t.deployServiceWait(jobSuccessFunc, requestFunc, timeout)
 	return err
 }
 
@@ -359,12 +325,9 @@ func (t *cloudTarget) discoverEndpoints(timeout time.Duration) error {
 	if err != nil {
 		return err
 	}
-	if err := t.SignRequest(req, t.deploymentOptions.Deployment.Application.SerializedForm()); err != nil {
-		return err
-	}
 	urlsByCluster := make(map[string]string)
 	endpointFunc := func(status int, response []byte) (bool, error) {
-		if ok, err := isCloudOK(status); !ok {
+		if ok, err := isOK(status); !ok {
 			return ok, err
 		}
 		var resp deploymentResponse
@@ -382,7 +345,7 @@ func (t *cloudTarget) discoverEndpoints(timeout time.Duration) error {
 		}
 		return true, nil
 	}
-	if _, err = wait(t.httpClient, endpointFunc, func() *http.Request { return req }, &t.apiOptions.TLSOptions.KeyPair, timeout); err != nil {
+	if _, err := t.deployServiceWait(endpointFunc, func() *http.Request { return req }, timeout); err != nil {
 		return err
 	}
 	if len(urlsByCluster) == 0 {
@@ -390,12 +353,4 @@ func (t *cloudTarget) discoverEndpoints(timeout time.Duration) error {
 	}
 	t.deploymentOptions.ClusterURLs = urlsByCluster
 	return nil
-}
-
-func isCloudOK(status int) (bool, error) {
-	if status == 401 {
-		// when retrying we should give up immediately if we're not authorized
-		return false, fmt.Errorf("status %d: invalid credentials", status)
-	}
-	return isOK(status), nil
 }

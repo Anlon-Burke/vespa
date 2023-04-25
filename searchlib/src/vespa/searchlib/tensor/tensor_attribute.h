@@ -28,6 +28,7 @@ protected:
 
     RefVector _refVector; // docId -> ref in data store for serialized tensor
     TensorStore &_tensorStore; // data store for serialized tensors
+    std::unique_ptr<DistanceFunctionFactory> _distance_function_factory;
     std::unique_ptr<NearestNeighborIndex> _index;
     bool _is_dense;
     std::unique_ptr<vespalib::eval::Value> _emptyTensor;
@@ -48,7 +49,6 @@ protected:
     bool tensor_cells_are_unchanged(DocId docid, VectorBundle vectors) const;
 
 public:
-    using RefCopyVector = vespalib::Array<EntryRef>;
     TensorAttribute(vespalib::stringref name, const Config &cfg, TensorStore &tensorStore, const NearestNeighborIndexFactory& index_factory);
     ~TensorAttribute() override;
     const ITensorAttribute *asTensorAttribute() const override;
@@ -68,12 +68,12 @@ public:
     bool supports_get_tensor_ref() const override { return false; }
     bool supports_get_serialized_tensor_ref() const override;
     const vespalib::eval::ValueType & getTensorType() const override;
+    DistanceFunctionFactory& distance_function_factory() const override;
     const NearestNeighborIndex* nearest_neighbor_index() const override;
     void get_state(const vespalib::slime::Inserter& inserter) const override;
     void clearDocs(DocId lidLow, DocId lidLimit, bool in_shrink_lid_space) override;
     void onShrinkLidSpace() override;
     uint32_t getVersion() const override;
-    RefCopyVector getRefCopy() const;
     virtual void setTensor(DocId docId, const vespalib::eval::Value &tensor);
     virtual void update_tensor(DocId docId,
                                const document::TensorUpdate &update,

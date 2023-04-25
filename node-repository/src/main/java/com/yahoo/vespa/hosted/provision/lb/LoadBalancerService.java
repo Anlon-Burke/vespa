@@ -22,18 +22,19 @@ public interface LoadBalancerService {
     /**
      * Configures load balancers for the given specification. Implementations are expected to be idempotent
      *
+     * @param instance    Load balancer instance to reconfigure
      * @param spec        Load balancer specification
      * @param force       Whether reconfiguration should be forced (e.g. allow configuring an empty set of reals on a
      *                    pre-existing load balancer, or removing an unused private endpoint service load balancer).
      * @return The (re)configured load balancer instance
      */
-    LoadBalancerInstance configure(LoadBalancerSpec spec, boolean force);
+    LoadBalancerInstance configure(LoadBalancerInstance instance, LoadBalancerSpec spec, boolean force);
 
     /** Permanently remove given load balancer */
     void remove(LoadBalancer loadBalancer);
 
     /** Returns the protocol supported by this load balancer service */
-    Protocol protocol();
+    Protocol protocol(boolean enclave);
 
     /** Returns whether load balancers created by this service can forward traffic to given node and cluster type */
     boolean supports(NodeType nodeType, ClusterSpec.Type clusterType);

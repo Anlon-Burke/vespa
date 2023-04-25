@@ -1,11 +1,19 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.admin.monitoring;
 
+import com.yahoo.metrics.ClusterControllerMetrics;
+import com.yahoo.metrics.ConfigServerMetrics;
 import com.yahoo.metrics.ContainerMetrics;
 import com.yahoo.metrics.DistributorMetrics;
+import com.yahoo.metrics.LogdMetrics;
+import com.yahoo.metrics.RoutingLayerMetrics;
 import com.yahoo.metrics.SearchNodeMetrics;
+import com.yahoo.metrics.SentinelMetrics;
+import com.yahoo.metrics.SlobrokMetrics;
 import com.yahoo.metrics.StorageMetrics;
+import com.yahoo.metrics.NodeAdminMetrics;
 import com.yahoo.metrics.Suffix;
+import com.yahoo.metrics.VespaMetrics;
 
 import java.util.Collections;
 import java.util.EnumSet;
@@ -55,12 +63,10 @@ public class VespaMetricSet {
     private static Set<Metric> getSentinelMetrics() {
         Set<Metric> metrics = new LinkedHashSet<>();
 
-        addMetric(metrics, "sentinel.restarts.count");
-        addMetric(metrics, "sentinel.totalRestarts.last");
-        addMetric(metrics, "sentinel.uptime.last");
-
-        addMetric(metrics, "sentinel.running.count");
-        addMetric(metrics, "sentinel.running.last");
+        addMetric(metrics, SentinelMetrics.SENTINEL_RESTARTS.count());
+        addMetric(metrics, SentinelMetrics.SENTINEL_TOTAL_RESTARTS.last());
+        addMetric(metrics, SentinelMetrics.SENTINEL_UPTIME.last());
+        addMetric(metrics, SentinelMetrics.SENTINEL_RUNNING, EnumSet.of(count, last));
 
         return metrics;
     }
@@ -68,62 +74,62 @@ public class VespaMetricSet {
     private static Set<Metric> getOtherMetrics() {
         Set<Metric> metrics = new LinkedHashSet<>();
 
-        addMetric(metrics, "slobrok.heartbeats.failed.count");
-        addMetric(metrics, "slobrok.missing.consensus.count");
+        addMetric(metrics, SlobrokMetrics.SLOBROK_HEARTBEATS_FAILED.count());
+        addMetric(metrics, SlobrokMetrics.SLOBROK_MISSING_CONSENSUS.count());
 
-        addMetric(metrics, "logd.processed.lines.count");
-        addMetric(metrics, "worker.connections.max");
-        addMetric(metrics, "endpoint.certificate.expiry.seconds");
+        addMetric(metrics, LogdMetrics.LOGD_PROCESSED_LINES.count());
 
         // Java (JRT) TLS metrics
-        addMetric(metrics, "jrt.transport.tls-certificate-verification-failures");
-        addMetric(metrics, "jrt.transport.peer-authorization-failures");
-        addMetric(metrics, "jrt.transport.server.tls-connections-established");
-        addMetric(metrics, "jrt.transport.client.tls-connections-established");
-        addMetric(metrics, "jrt.transport.server.unencrypted-connections-established");
-        addMetric(metrics, "jrt.transport.client.unencrypted-connections-established");
+        addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_TLS_CERTIFICATE_VERIFICATION_FAILURES.baseName());
+        addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_PEER_AUTHORIZATION_FAILURES.baseName());
+        addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_SERVER_TLS_CONNECIONTS_ESTABLISHED.baseName());
+        addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_CLIENT_TLS_CONNECTIONS_ESTABLISHED.baseName());
+        addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_SERVER_UNENCRYPTED_CONNECTIONS_ESTABLISHED.baseName());
+        addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_CLIENT_UNENCRYPTED_CONNECTIONS_ESTABLISHED.baseName());
 
         // C++ TLS metrics
-        addMetric(metrics, "vds.server.network.tls-handshakes-failed");
-        addMetric(metrics, "vds.server.network.peer-authorization-failures");
-        addMetric(metrics, "vds.server.network.client.tls-connections-established");
-        addMetric(metrics, "vds.server.network.server.tls-connections-established");
-        addMetric(metrics, "vds.server.network.client.insecure-connections-established");
-        addMetric(metrics, "vds.server.network.server.insecure-connections-established");
-        addMetric(metrics, "vds.server.network.tls-connections-broken");
-        addMetric(metrics, "vds.server.network.failed-tls-config-reloads");
+        addMetric(metrics, StorageMetrics.VDS_SERVER_NETWORK_TLS_HANDSHAKES_FAILED.count());
+        addMetric(metrics, StorageMetrics.VDS_SERVER_NETWORK_PEER_AUTHORIZATION_FAILURES.count());
+        addMetric(metrics, StorageMetrics.VDS_SERVER_NETWORK_CLIENT_TLS_CONNECTIONS_ESTABLISHED.count());
+        addMetric(metrics, StorageMetrics.VDS_SERVER_NETWORK_SERVER_TLS_CONNECTIONS_ESTABLISHED.count());
+        addMetric(metrics, StorageMetrics.VDS_SERVER_NETWORK_CLIENT_INSECURE_CONNECTIONS_ESTABLISHED.count());
+        addMetric(metrics, StorageMetrics.VDS_SERVER_NETWORK_SERVER_INSECURE_CONNECTIONS_ESTABLISHED.count());
+        addMetric(metrics, StorageMetrics.VDS_SERVER_NETWORK_TLS_CONNECTIONS_BROKEN.count());
+        addMetric(metrics, StorageMetrics.VDS_SERVER_NETWORK_FAILED_TLS_CONFIG_RELOADS.count());
         // C++ capability metrics
-        addMetric(metrics, "vds.server.network.rpc-capability-checks-failed");
-        addMetric(metrics, "vds.server.network.status-capability-checks-failed");
+        addMetric(metrics, StorageMetrics.VDS_SERVER_NETWORK_RPC_CAPABILITY_CHECKS_FAILED.count());
+        addMetric(metrics, StorageMetrics.VDS_SERVER_NETWORK_STATUS_CAPABILITY_CHECKS_FAILED.count());
 
         // C++ Fnet metrics
-        addMetric(metrics, "vds.server.fnet.num-connections");
+        addMetric(metrics, StorageMetrics.VDS_SERVER_FNET_NUM_CONNECTIONS.count());
 
-        // Node certificate
-        addMetric(metrics, "node-certificate.expiry.seconds");
+        // NodeAdmin certificate
+        addMetric(metrics, NodeAdminMetrics.ENDPOINT_CERTIFICATE_EXPIRY_SECONDS.baseName());
+        addMetric(metrics, NodeAdminMetrics.NODE_CERTIFICATE_EXPIRY_SECONDS.baseName());
+
+        // Routing layer metrics
+        addMetric(metrics, RoutingLayerMetrics.WORKER_CONNECTIONS.max()); // Hosted Vespa only (routing layer)
 
         return metrics;
     }
 
     private static Set<Metric> getConfigServerMetrics() {
-        Set<Metric> metrics =new LinkedHashSet<>();
+        Set<Metric> metrics = new LinkedHashSet<>();
 
-        addMetric(metrics, "configserver.requests.count");
-        addMetric(metrics, "configserver.failedRequests.count");
-        addMetric(metrics, "configserver.latency.max");
-        addMetric(metrics, "configserver.latency.sum");
-        addMetric(metrics, "configserver.latency.count");
-        addMetric(metrics, "configserver.cacheConfigElems.last");
-        addMetric(metrics, "configserver.cacheChecksumElems.last");
-        addMetric(metrics, "configserver.hosts.last");
-        addMetric(metrics, "configserver.delayedResponses.count");
-        addMetric(metrics, "configserver.sessionChangeErrors.count");
+        addMetric(metrics, ConfigServerMetrics.REQUESTS.count());
+        addMetric(metrics, ConfigServerMetrics.FAILED_REQUESTS.count());
+        addMetric(metrics, ConfigServerMetrics.LATENCY, EnumSet.of(max, sum, count));
+        addMetric(metrics, ConfigServerMetrics.CACHE_CONFIG_ELEMS.last());
+        addMetric(metrics, ConfigServerMetrics.CACHE_CHECKSUM_ELEMS.last());
+        addMetric(metrics, ConfigServerMetrics.HOSTS.last());
+        addMetric(metrics, ConfigServerMetrics.DELAYED_RESPONSES.count());
+        addMetric(metrics, ConfigServerMetrics.SESSION_CHANGE_ERRORS.count());
 
-        addMetric(metrics, "configserver.zkZNodes.last");
-        addMetric(metrics, "configserver.zkAvgLatency.last");
-        addMetric(metrics, "configserver.zkMaxLatency.last");
-        addMetric(metrics, "configserver.zkConnections.last");
-        addMetric(metrics, "configserver.zkOutstandingRequests.last");
+        addMetric(metrics, ConfigServerMetrics.ZK_Z_NODES.last());
+        addMetric(metrics, ConfigServerMetrics.ZK_AVG_LATENCY.last());
+        addMetric(metrics, ConfigServerMetrics.ZK_MAX_LATENCY.last());
+        addMetric(metrics, ConfigServerMetrics.ZK_CONNECTIONS.last());
+        addMetric(metrics, ConfigServerMetrics.ZK_OUTSTANDING_REQUESTS.last());
 
         return metrics;
     }
@@ -131,29 +137,31 @@ public class VespaMetricSet {
     private static Set<Metric> getContainerMetrics() {
         Set<Metric> metrics = new LinkedHashSet<>();
 
+        addMetric(metrics, ContainerMetrics.APPLICATION_GENERATION.baseName());
+
         addMetric(metrics, ContainerMetrics.HANDLED_REQUESTS.count());
         addMetric(metrics, ContainerMetrics.HANDLED_LATENCY, EnumSet.of(sum, count, max));
-        
-        addMetric(metrics, ContainerMetrics.SERVER_NUM_OPEN_CONNECTIONS, EnumSet.of(max,last, average));
-        addMetric(metrics, ContainerMetrics.SERVER_NUM_CONNECTIONS, EnumSet.of(max,last, average));
+
+        addMetric(metrics, ContainerMetrics.SERVER_NUM_OPEN_CONNECTIONS, EnumSet.of(max, last, average)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ContainerMetrics.SERVER_NUM_CONNECTIONS, EnumSet.of(max, last, average)); // TODO: Vespa 9: Remove last
 
         addMetric(metrics, ContainerMetrics.SERVER_BYTES_RECEIVED, EnumSet.of(sum, count));
         addMetric(metrics, ContainerMetrics.SERVER_BYTES_SENT, EnumSet.of(sum, count));
 
-        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_UNHANDLED_EXCEPTIONS, EnumSet.of(sum, count, last, min, max));
-        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_WORK_QUEUE_CAPACITY, EnumSet.of(sum, count, last, min, max));
-        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_WORK_QUEUE_SIZE, EnumSet.of(sum, count, last, min, max));
-        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_REJECTED_TASKS, EnumSet.of(sum, count, last, min, max));
-        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_SIZE, EnumSet.of(sum, count, last, min, max));
-        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_MAX_ALLOWED_SIZE, EnumSet.of(sum, count, last, min, max));
-        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_ACTIVE_THREADS, EnumSet.of(sum, count, last, min, max));
+        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_UNHANDLED_EXCEPTIONS, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove last, min, max
+        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_WORK_QUEUE_CAPACITY, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove sum, count, last, min
+        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_WORK_QUEUE_SIZE, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_REJECTED_TASKS, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove last, min, max
+        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_SIZE, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove sum, count, last, min
+        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_MAX_ALLOWED_SIZE, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove sum, count, last, min
+        addMetric(metrics, ContainerMetrics.JDISC_THREAD_POOL_ACTIVE_THREADS, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove last
 
-        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_MAX_THREADS, EnumSet.of(sum, count, last, min, max));
-        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_MIN_THREADS, EnumSet.of(sum, count, last, min, max));
-        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_RESERVED_THREADS, EnumSet.of(sum, count, last, min, max));
-        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_BUSY_THREADS, EnumSet.of(sum, count, last, min, max));
-        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_TOTAL_THREADS, EnumSet.of(sum, count, last, min, max));
-        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_QUEUE_SIZE, EnumSet.of(sum, count, last, min, max));
+        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_MAX_THREADS, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove.
+        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_MIN_THREADS, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove.
+        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_RESERVED_THREADS, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove.
+        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_BUSY_THREADS, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove last, min
+        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_TOTAL_THREADS, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove sum, count, last, min
+        addMetric(metrics, ContainerMetrics.JETTY_THREADPOOL_QUEUE_SIZE, EnumSet.of(sum, count, last, min, max)); // TODO: Vespa 9: Remove sum, count, last, min
 
         addMetric(metrics, ContainerMetrics.HTTPAPI_LATENCY, EnumSet.of(max, sum, count));
         addMetric(metrics, ContainerMetrics.HTTPAPI_PENDING, EnumSet.of(max, sum, count));
@@ -180,12 +188,12 @@ public class VespaMetricSet {
         addMetric(metrics, ContainerMetrics.MEM_NATIVE_TOTAL.average());
         addMetric(metrics, ContainerMetrics.MEM_NATIVE_FREE.average());
         addMetric(metrics, ContainerMetrics.MEM_NATIVE_USED.average());
-                
+
         addMetric(metrics, ContainerMetrics.JDISC_MEMORY_MAPPINGS.max());
         addMetric(metrics, ContainerMetrics.JDISC_OPEN_FILE_DESCRIPTORS.max());
 
-        addMetric(metrics, ContainerMetrics.JDISC_GC_COUNT, EnumSet.of(average, max, last));
-        addMetric(metrics, ContainerMetrics.JDISC_GC_MS, EnumSet.of(average, max, last));
+        addMetric(metrics, ContainerMetrics.JDISC_GC_COUNT, EnumSet.of(average, max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ContainerMetrics.JDISC_GC_MS, EnumSet.of(average, max, last)); // TODO: Vespa 9: Remove last
 
         addMetric(metrics, ContainerMetrics.JDISC_DEACTIVATED_CONTAINERS.last());
         addMetric(metrics, ContainerMetrics.JDISC_DEACTIVATED_CONTAINERS_WITH_RETAINED_REFS.last());
@@ -233,7 +241,7 @@ public class VespaMetricSet {
         addMetric(metrics, ContainerMetrics.JDISC_APPLICATION_FAILED_COMPONENT_GRAPHS.rate());
 
         addMetric(metrics, ContainerMetrics.JDISC_JVM.last());
-        
+
         // Deprecated metrics. TODO: Remove on Vespa 9.
         addMetric(metrics, ContainerMetrics.SERVER_REJECTED_REQUESTS, EnumSet.of(rate, count));             // TODO: Remove on Vespa 9. Use jdisc.thread_pool.rejected_tasks.
         addMetric(metrics, ContainerMetrics.SERVER_THREAD_POOL_SIZE, EnumSet.of(max, last));                // TODO: Remove on Vespa 9. Use jdisc.thread_pool.rejected_tasks.
@@ -248,32 +256,30 @@ public class VespaMetricSet {
     private static Set<Metric> getClusterControllerMetrics() {
         Set<Metric> metrics = new LinkedHashSet<>();
 
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_DOWN_COUNT.last());
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_INITIALIZING_COUNT.last());
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_MAINTENANCE_COUNT.last());
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_RETIRED_COUNT.last());
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_STOPPING_COUNT.last());
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_UP_COUNT.last());
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_CLUSTER_STATE_CHANGE_COUNT.baseName());
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_BUSY_TICK_TIME_MS, EnumSet.of(last, max, sum, count));
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_IDLE_TICK_TIME_MS, EnumSet.of(last, max, sum, count));
-        
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_WORK_MS, EnumSet.of(last, sum, count));
-        
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_IS_MASTER.last());
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_REMOTE_TASK_QUEUE_SIZE.last());
+        addMetric(metrics, ClusterControllerMetrics.DOWN_COUNT.last());
+        addMetric(metrics, ClusterControllerMetrics.INITIALIZING_COUNT.last());
+        addMetric(metrics, ClusterControllerMetrics.MAINTENANCE_COUNT.last());
+        addMetric(metrics, ClusterControllerMetrics.RETIRED_COUNT.last());
+        addMetric(metrics, ClusterControllerMetrics.STOPPING_COUNT.last());
+        addMetric(metrics, ClusterControllerMetrics.UP_COUNT.last());
+        addMetric(metrics, ClusterControllerMetrics.CLUSTER_STATE_CHANGE_COUNT.baseName());
+        addMetric(metrics, ClusterControllerMetrics.BUSY_TICK_TIME_MS, EnumSet.of(last, max, sum, count)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ClusterControllerMetrics.IDLE_TICK_TIME_MS, EnumSet.of(last, max, sum, count)); // TODO: Vespa 9: Remove last
+
+        addMetric(metrics, ClusterControllerMetrics.WORK_MS, EnumSet.of(last, sum, count)); // TODO: Vespa 9: Remove last
+
+        addMetric(metrics, ClusterControllerMetrics.IS_MASTER.last());
+        addMetric(metrics, ClusterControllerMetrics.REMOTE_TASK_QUEUE_SIZE.last());
         // TODO(hakonhall): Update this name once persistent "count" metrics has been implemented.
         // DO NOT RELY ON THIS METRIC YET.
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_NODE_EVENT_COUNT.baseName());
-        
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_RESOURCE_USAGE_NODES_ABOVE_LIMIT, EnumSet.of(last, max));
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_RESOURCE_USAGE_MAX_MEMORY_UTILIZATION, EnumSet.of(last, max));
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_RESOURCE_USAGE_MAX_DISK_UTILIZATION, EnumSet.of(last, max));
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_RESOURCE_USAGE_MEMORY_LIMIT.last());
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_RESOURCE_USAGE_DISK_LIMIT.last());
+        addMetric(metrics, ClusterControllerMetrics.NODE_EVENT_COUNT.baseName());
+        addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_NODES_ABOVE_LIMIT, EnumSet.of(last, max)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_MAX_MEMORY_UTILIZATION, EnumSet.of(last, max)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_MAX_DISK_UTILIZATION, EnumSet.of(last, max)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_MEMORY_LIMIT.last());
+        addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_DISK_LIMIT.last());
+        addMetric(metrics, ClusterControllerMetrics.REINDEXING_PROGRESS.last());
 
-        addMetric(metrics, ContainerMetrics.CLUSTER_CONTROLLER_REINDEXING_PROGRESS.last());
-        
         return metrics;
     }
 
@@ -305,7 +311,7 @@ public class VespaMetricSet {
         addMetric(metrics, ContainerMetrics.DOCUMENTS_COVERED.count());
         addMetric(metrics, ContainerMetrics.DOCUMENTS_TOTAL.count());
         addMetric(metrics, ContainerMetrics.DOCUMENTS_TARGET_TOTAL.count());
-        addMetric(metrics, ContainerMetrics.JDISC_RENDER_LATENCY, EnumSet.of(min, max, count, sum, last, average));
+        addMetric(metrics, ContainerMetrics.JDISC_RENDER_LATENCY, EnumSet.of(min, max, count, sum, last, average)); // TODO: Vespa 9: Remove last, average
         addMetric(metrics, ContainerMetrics.QUERY_ITEM_COUNT, EnumSet.of(max, sum, count));
         addMetric(metrics, ContainerMetrics.TOTAL_HITS_PER_QUERY, EnumSet.of(sum, count, max, ninety_five_percentile, ninety_nine_percentile));
         addMetric(metrics, ContainerMetrics.EMPTY_RESULTS.rate());
@@ -316,7 +322,7 @@ public class VespaMetricSet {
         addMetric(metrics, ContainerMetrics.RELEVANCE_AT_1, EnumSet.of(sum, count));
         addMetric(metrics, ContainerMetrics.RELEVANCE_AT_3, EnumSet.of(sum, count));
         addMetric(metrics, ContainerMetrics.RELEVANCE_AT_10, EnumSet.of(sum, count));
-                
+
         // Errors from search container
         addMetric(metrics, ContainerMetrics.ERROR_TIMEOUT.rate());
         addMetric(metrics, ContainerMetrics.ERROR_BACKENDS_OOS.rate());
@@ -414,7 +420,7 @@ public class VespaMetricSet {
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_THREADING_SERVICE_SUMMARY_ACCEPTED.rate());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_THREADING_SERVICE_SUMMARY_WAKEUPS.rate());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_THREADING_SERVICE_SUMMARY_UTILIZATION, EnumSet.of(max, sum, count));
-        
+
         // lid space
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_READY_LID_SPACE_LID_BLOAT_FACTOR.average());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_READY_LID_SPACE_LID_FRAGMENTATION_FACTOR.average());
@@ -611,6 +617,7 @@ public class VespaMetricSet {
 
         return metrics;
     }
+
     private static Set<Metric> getDistributorMetrics() {
         Set<Metric> metrics = new LinkedHashSet<>();
         addMetric(metrics, DistributorMetrics.VDS_IDEALSTATE_BUCKETS_RECHECKING.average());
@@ -704,21 +711,10 @@ public class VespaMetricSet {
         metrics.add(new Metric(nameWithSuffix));
     }
 
-    private static void addMetric(Set<Metric> metrics, ContainerMetrics metric, EnumSet<Suffix> suffixes) {
+    private static void addMetric(Set<Metric> metrics, VespaMetrics metric, EnumSet<Suffix> suffixes) {
         suffixes.forEach(suffix -> metrics.add(new Metric(metric.baseName() + "." + suffix.suffix())));
     }
 
-    private static void addMetric(Set<Metric> metrics, SearchNodeMetrics metric, EnumSet<Suffix> suffixes) {
-        suffixes.forEach(suffix -> metrics.add(new Metric(metric.baseName() + "." + suffix.suffix())));
-    }
-
-    private static void addMetric(Set<Metric> metrics, StorageMetrics metric, EnumSet<Suffix> suffixes) {
-        suffixes.forEach(suffix -> metrics.add(new Metric(metric.baseName() + "." + suffix.suffix())));
-    }
-
-    private static void addMetric(Set<Metric> metrics, DistributorMetrics metric, EnumSet<Suffix> suffixes) {
-        suffixes.forEach(suffix -> metrics.add(new Metric(metric.baseName() + "." + suffix.suffix())));
-    }
     private static void addMetric(Set<Metric> metrics, String metricName, Iterable<String> aggregateSuffices) {
         for (String suffix : aggregateSuffices) {
             metrics.add(new Metric(metricName + "." + suffix));

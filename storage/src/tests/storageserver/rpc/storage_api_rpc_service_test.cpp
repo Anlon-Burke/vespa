@@ -161,7 +161,7 @@ public:
 
     std::shared_ptr<api::PutCommand> create_dummy_put_command() const {
         auto doc_type = _doc_type_repo->getDocumentType("testdoctype1");
-        auto doc = std::make_shared<document::Document>(*doc_type, document::DocumentId("id:foo:testdoctype1::bar"));
+        auto doc = std::make_shared<document::Document>(*_doc_type_repo, *doc_type, document::DocumentId("id:foo:testdoctype1::bar"));
         doc->setFieldValue(doc->getField("hstringval"), std::make_unique<document::StringFieldValue>("hello world"));
         return std::make_shared<api::PutCommand>(makeDocumentBucket(document::BucketId(0)), std::move(doc), 100);
     }
@@ -204,8 +204,8 @@ public:
         EXPECT_TRUE(req->IsError());
         EXPECT_EQ(req->GetErrorCode(), FRTE_RPC_METHOD_FAILED);
         EXPECT_EQ(req->GetErrorMessage(), expected_msg);
-        target->SubRef();
-        req->SubRef();
+        target->internal_subref();
+        req->internal_subref();
     }
 };
 

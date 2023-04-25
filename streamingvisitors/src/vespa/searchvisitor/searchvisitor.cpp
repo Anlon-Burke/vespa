@@ -7,12 +7,15 @@
 #include <vespa/persistence/spi/docentry.h>
 #include <vespa/document/datatype/positiondatatype.h>
 #include <vespa/document/datatype/documenttype.h>
+#include <vespa/document/datatype/tensor_data_type.h>
 #include <vespa/document/datatype/weightedsetdatatype.h>
 #include <vespa/document/datatype/mapdatatype.h>
 #include <vespa/searchlib/aggregation/modifiers.h>
+#include <vespa/searchlib/attribute/single_raw_ext_attribute.h>
 #include <vespa/searchlib/common/packets.h>
 #include <vespa/searchlib/uca/ucaconverter.h>
 #include <vespa/searchlib/features/setup.h>
+#include <vespa/searchlib/tensor/tensor_ext_attribute.h>
 #include <vespa/searchcommon/attribute/config.h>
 #include <vespa/vespalib/geo/zcurve.h>
 #include <vespa/vespalib/objects/nbostream.h>
@@ -98,6 +101,16 @@ createMultiValueAttribute(const vespalib::string & name, const document::FieldVa
     return {};
 }
 
+const document::TensorDataType*
+get_tensor_type(const document::FieldValue& fv)
+{
+    auto tfv = dynamic_cast<const document::TensorFieldValue*>(&fv);
+    if (tfv == nullptr) {
+        return nullptr;
+    }
+    return dynamic_cast<const document::TensorDataType*>(tfv->getDataType());
+}
+
 AttributeVector::SP
 createAttribute(const vespalib::string & name, const document::FieldValue & fv)
 {
@@ -108,6 +121,14 @@ createAttribute(const vespalib::string & name, const document::FieldValue & fv)
         return std::make_shared<search::SingleFloatExtAttribute>(name);
     } else if (fv.isA(document::FieldValue::Type::STRING)) {
         return std::make_shared<search::SingleStringExtAttribute>(name);
+    } else if (fv.isA(document::FieldValue::Type::RAW)) {
+        return std::make_shared<search::attribute::SingleRawExtAttribute>(name);
+    } else if (fv.isA(document::FieldValue::Type::TENSOR) && get_tensor_type(fv) != nullptr) {
+        search::attribute::Config cfg(search::attribute::BasicType::TENSOR, search::attribute::CollectionType::SINGLE);
+        auto tdt = get_tensor_type(fv);
+        assert(tdt != nullptr);
+        cfg.setTensorType(tdt->getTensorType());
+        return std::make_shared<search::tensor::TensorExtAttribute>(name, cfg);
     } else {
         LOG(debug, "Can not make an attribute out of %s of type '%s'.", name.c_str(), fv.className());
     }
@@ -366,7 +387,6 @@ void SearchVisitor::init(const Parameters & params)
             StringFieldIdTMap fieldsInQuery;
             setupFieldSearchers(additionalFields, fieldsInQuery);
 
-            setupSnippetModifiers();
 
             setupScratchDocument(fieldsInQuery);
 
@@ -379,8 +399,17 @@ void SearchVisitor::init(const Parameters & params)
             const RankManager * rm = _env.getRankManager(searchCluster);
             _rankController.setRankManagerSnapshot(rm->getSnapshot());
             _rankController.setupRankProcessors(_query, location, wantedSummaryCount, _attrMan, _attributeFields);
-            // Depends on hitCollector setup.
+
+            // This depends on _fieldPathMap (from setupScratchDocument),
+            // and IQueryEnvironment (from setupRankProcessors).
+            setupSnippetModifiers();
+
+            // Depends on hitCollector setup and _snippetModifierManager
             setupDocsumObjects();
+
+            // This depends on _fieldPathMap (from setupScratchDocument),
+            // and IQueryEnvironment (from setupRankProcessors).
+            prepare_field_searchers();
 
         } else {
             LOG(warning, "No query received");
@@ -438,6 +467,17 @@ SearchVisitor::AttributeInserter::onPrimitive(uint32_t, const Content & c)
         attr.add(value.getAsDouble(), c.getWeight());
     } else if (_attribute.isStringType()) {
         attr.add(value.getAsString().c_str(), c.getWeight());
+    } else if (_attribute.is_raw_type()) {
+        auto raw_value = value.getAsRaw();
+        attr.add(vespalib::ConstArrayRef<char>(raw_value.first, raw_value.second), c.getWeight());
+    } else if (_attribute.isTensorType()) {
+        auto tfvalue = dynamic_cast<const document::TensorFieldValue*>(&value);
+        if (tfvalue != nullptr) {
+            auto tensor = tfvalue->getAsTensorPtr();
+            if (tensor != nullptr) {
+                attr.add(*tensor, c.getWeight());
+            }
+        }
     } else {
         assert(false && "We got an attribute vector that is of an unknown type");
     }
@@ -624,14 +664,14 @@ SearchVisitor::RankController::onCompletedVisiting(vsm::GetDocsumsStateCallback 
         // calculate summary features and set them on the callback object
         if (!_rankSetup->getSummaryFeatures().empty()) {
             LOG(debug, "Calculate summary features");
-            search::FeatureSet::SP sf = _rankProcessor->calculateFeatureSet();
+            vespalib::FeatureSet::SP sf = _rankProcessor->calculateFeatureSet();
             docsumsStateCallback.setSummaryFeatures(sf);
         }
 
         // calculate rank features and set them on the callback object
         if (_dumpFeatures) {
             LOG(debug, "Calculate rank features");
-            search::FeatureSet::SP rf = _dumpProcessor->calculateFeatureSet();
+            vespalib::FeatureSet::SP rf = _dumpProcessor->calculateFeatureSet();
             docsumsStateCallback.setRankFeatures(rf);
         }
     }
@@ -700,9 +740,14 @@ SearchVisitor::setupFieldSearchers(const std::vector<vespalib::string> & additio
     _fieldSearchSpecMap.buildFieldsInQuery(_query, fieldsInQuery);
     // Connect field names in the query to field searchers
     _fieldSearchSpecMap.buildSearcherMap(fieldsInQuery.map(), _fieldSearcherMap);
+}
 
+void
+SearchVisitor::prepare_field_searchers()
+{
     // prepare the field searchers
-    _fieldSearcherMap.prepare(_fieldSearchSpecMap.documentTypeMap(), _searchBuffer, _query);
+    _fieldSearcherMap.prepare(_fieldSearchSpecMap.documentTypeMap(), _searchBuffer, _query,
+                              *_fieldPathMap, _rankController.getRankProcessor()->get_query_env());
 }
 
 void
@@ -710,7 +755,8 @@ SearchVisitor::setupSnippetModifiers()
 {
     QueryTermList qtl;
     _query.getLeafs(qtl);
-    _snippetModifierManager.setup(qtl, _fieldSearchSpecMap.specMap(), _fieldSearchSpecMap.documentTypeMap().begin()->second);
+    _snippetModifierManager.setup(qtl, _fieldSearchSpecMap.specMap(), _fieldSearchSpecMap.documentTypeMap().begin()->second,
+                                  *_fieldPathMap, _rankController.getRankProcessor()->get_query_env());
 }
 
 void

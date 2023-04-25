@@ -17,12 +17,14 @@ ImportedAttributeVectorReadGuard::ImportedAttributeVectorReadGuard(std::shared_p
       _target_document_meta_store_read_guard(std::move(targetMetaStoreReadGuard)),
       _imported_attribute(imported_attribute),
       _targetLids(),
+      _target_docid_limit(0u),
       _reference_attribute_guard(imported_attribute.getReferenceAttribute()),
       _target_attribute_guard(imported_attribute.getTargetAttribute()->makeReadGuard(stableEnumGuard)),
       _reference_attribute(*imported_attribute.getReferenceAttribute()),
       _target_attribute(*_target_attribute_guard->attribute())
 {
     _targetLids = _reference_attribute.getTargetLids();
+    _target_docid_limit = _target_attribute.getCommittedDocIdLimit();
 }
 
 ImportedAttributeVectorReadGuard::~ImportedAttributeVectorReadGuard() = default;
@@ -51,8 +53,10 @@ double ImportedAttributeVectorReadGuard::getFloat(DocId doc) const {
     return _target_attribute.getFloat(getTargetLid(doc));
 }
 
-const char *ImportedAttributeVectorReadGuard::getString(DocId doc, char *buffer, size_t sz) const {
-    return _target_attribute.getString(getTargetLid(doc), buffer, sz);
+vespalib::ConstArrayRef<char>
+ImportedAttributeVectorReadGuard::get_raw(DocId doc) const
+{
+    return _target_attribute.get_raw(getTargetLid(doc));
 }
 
 IAttributeVector::EnumHandle ImportedAttributeVectorReadGuard::getEnum(DocId doc) const {

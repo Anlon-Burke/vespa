@@ -32,6 +32,7 @@ getDataTypeMap()
     map[AttributesConfig::Attribute::Datatype::PREDICATE] = BasicType::PREDICATE;
     map[AttributesConfig::Attribute::Datatype::TENSOR] = BasicType::TENSOR;
     map[AttributesConfig::Attribute::Datatype::REFERENCE] = BasicType::REFERENCE;
+    map[AttributesConfig::Attribute::Datatype::RAW] = BasicType::RAW;
     map[AttributesConfig::Attribute::Datatype::NONE] = BasicType::NONE;
     return map;
 }
@@ -132,6 +133,9 @@ ConfigConverter::convert(const AttributesConfig::Attribute & cfg)
             break;
         case CfgDm::HAMMING:
             dm = DistanceMetric::Hamming;
+            break;
+        case CfgDm::PRENORMALIZED_ANGULAR:
+            dm = DistanceMetric::PrenormalizedAngular;
             break;
     }
     retval.set_distance_metric(dm);

@@ -35,6 +35,7 @@ using vespalib::IllegalStateException;
 using vespalib::getErrorString;
 using vespalib::getLastErrorString;
 using vespalib::make_string;
+using vespalib::to_string;
 
 using CpuCategory = CpuUsage::Category;
 
@@ -43,7 +44,6 @@ LogDataStore::Config::Config()
       _maxBucketSpread(2.5),
       _minFileSizeFactor(0.2),
       _maxNumLids(DEFAULT_MAX_LIDS_PER_FILE),
-      _skipCrcOnRead(false),
       _compactCompression(CompressionConfig::LZ4),
       _fileConfig()
 { }
@@ -53,7 +53,6 @@ LogDataStore::Config::operator == (const Config & rhs) const {
     return (_maxBucketSpread == rhs._maxBucketSpread) &&
             (_maxFileSize == rhs._maxFileSize) &&
             (_minFileSizeFactor == rhs._minFileSizeFactor) &&
-            (_skipCrcOnRead == rhs._skipCrcOnRead) &&
             (_compactCompression == rhs._compactCompression) &&
             (_fileConfig == rhs._fileConfig);
 }
@@ -81,8 +80,11 @@ LogDataStore::LogDataStore(vespalib::Executor &executor, const vespalib::string 
       _compactLidSpaceGeneration()
 {
     // Reserve space for 1TB summary in order to avoid locking.
-    _fileChunks.reserve(LidInfo::getFileIdLimit());
-    _holdFileChunks.resize(LidInfo::getFileIdLimit());
+    // Even if we have reserved 16 bits for file id there is no chance that we will even get close to that.
+    // Size of files grows with disk size, so 8k files should be more than sufficient.
+    // File ids are reused so there should be no chance of running empty.
+    static_assert(LidInfo::getFileIdLimit() == 65536u);
+    _fileChunks.reserve(8_Ki);
 
     preload();
     updateLidMap(getLastFileChunkDocIdLimit());
@@ -215,7 +217,7 @@ LogDataStore::requireSpace(MonitorGuard guard, WriteableFileChunk & active, CpuU
         FileId fileId = allocateFileId(guard);
         setNewFileChunk(guard, createWritableFile(fileId, active.getSerialNum()));
         setActive(guard, fileId);
-        std::unique_ptr<FileChunkHolder> activeHolder = holdFileChunk(active.getFileId());
+        std::unique_ptr<FileChunkHolder> activeHolder = holdFileChunk(guard, active.getFileId());
         guard.unlock();
         // Write chunks to old .dat file 
         // Note: Feed latency spike
@@ -318,7 +320,7 @@ LogDataStore::flush(uint64_t syncToken)
         // but is a fundamental part of the WRITE pipeline of the data store.
         getActive(guard).flush(true, syncToken, CpuCategory::WRITE);
         active = &getActive(guard);
-        activeHolder = holdFileChunk(active->getFileId());
+        activeHolder = holdFileChunk(guard, active->getFileId());
     }
     active->flushPendingChunks(syncToken);
     activeHolder.reset();
@@ -487,7 +489,7 @@ void LogDataStore::compactFile(FileId fileId)
         MonitorGuard guard(_updateLock);
         _genHandler.update_oldest_used_generation();
         if (currentGeneration < _genHandler.get_oldest_used_generation()) {
-            if (_holdFileChunks[fc->getFileId().getId()] == 0u) {
+            if (canFileChunkBeDropped(guard, fc->getFileId())) {
                 toDie = std::move(fc);
                 break;
             }
@@ -535,13 +537,13 @@ LogDataStore::memoryMeta() const
 FileChunk::FileId
 LogDataStore::allocateFileId(const MonitorGuard & guard)
 {
-    (void) guard;
+    assert(guard.owns_lock());
     for (size_t i(0); i < _fileChunks.size(); i++) {
         if ( ! _fileChunks[i] ) {
             return FileId(i);
         }
     }
-    // This assert is verify that we have not gotten ourselves into a mess
+    // This assert is to verify that we have not gotten ourselves into a mess
     // that would require the use of locks to prevent. Just assure that the 
     // below resize is 'safe'.
     assert(_fileChunks.capacity() > _fileChunks.size());
@@ -628,7 +630,7 @@ LogDataStore::createIdxFileName(NameId id) const {
 FileChunk::UP
 LogDataStore::createReadOnlyFile(FileId fileId, NameId nameId) {
     auto file = std::make_unique<FileChunk>(fileId, nameId, getBaseDir(), _tune,
-                                            _bucketizer.get(), _config.crcOnReadDisabled());
+                                            _bucketizer.get());
     file->enableRead();
     return file;
 }
@@ -646,7 +648,7 @@ LogDataStore::createWritableFile(FileId fileId, SerialNum serialNum, NameId name
     uint32_t docIdLimit = (getDocIdLimit() != 0) ? getDocIdLimit() : std::numeric_limits<uint32_t>::max();
     auto file = std::make_unique< WriteableFileChunk>(_executor, fileId, nameId, getBaseDir(), serialNum,docIdLimit,
                                                       _config.getFileConfig(), _tune, _fileHeaderContext,
-                                                      _bucketizer.get(), _config.crcOnReadDisabled());
+                                                      _bucketizer.get());
     file->enableRead();
     return file;
 }
@@ -665,7 +667,7 @@ lsSingleFile(const vespalib::string & fileName)
     vespalib::string s;
     FastOS_StatInfo stat;
     if ( FastOS_File::Stat(fileName.c_str(), &stat)) {
-        s += make_string("%s  %20" PRIu64 "  %12" PRId64, fileName.c_str(), stat._modifiedTimeNS, stat._size);
+        s += make_string("%s  %20" PRIu64 "  %12" PRId64, fileName.c_str(), vespalib::count_ns(stat._modifiedTime.time_since_epoch()), stat._size);
     } else {
         s = make_string("%s 'stat' FAILED !!", fileName.c_str());
     }
@@ -744,16 +746,16 @@ LogDataStore::verifyModificationTime(const NameIdSet & partList)
             throw runtime_error(make_string("Failed to Stat '%s'\nDirectory =\n%s", idxName.c_str(), ls(partList).c_str()));
         }
         ns_log::Logger::LogLevel logLevel = ns_log::Logger::debug;
-        if ((datStat._modifiedTimeNS < prevDatStat._modifiedTimeNS) && hasNonHeaderData(datName)) {
-            VLOG(logLevel, "Older file '%s' is newer (%" PRIu64 ") than file '%s' (%" PRIu64 ")\nDirectory =\n%s",
-                         prevDatNam.c_str(), prevDatStat._modifiedTimeNS,
-                         datName.c_str(), datStat._modifiedTimeNS,
+        if ((datStat._modifiedTime < prevDatStat._modifiedTime) && hasNonHeaderData(datName)) {
+            VLOG(logLevel, "Older file '%s' is newer (%s) than file '%s' (%s)\nDirectory =\n%s",
+                         prevDatNam.c_str(), to_string(prevDatStat._modifiedTime).c_str(),
+                         datName.c_str(), to_string(datStat._modifiedTime).c_str(),
                          ls(partList).c_str());
         }
-        if ((idxStat._modifiedTimeNS < prevIdxStat._modifiedTimeNS) && hasNonHeaderData(idxName)) {
-            VLOG(logLevel, "Older file '%s' is newer (%" PRIu64 ") than file '%s' (%" PRIu64 ")\nDirectory =\n%s",
-                         prevIdxNam.c_str(), prevIdxStat._modifiedTimeNS,
-                         idxName.c_str(), idxStat._modifiedTimeNS,
+        if ((idxStat._modifiedTime < prevIdxStat._modifiedTime) && hasNonHeaderData(idxName)) {
+            VLOG(logLevel, "Older file '%s' is newer (%s) than file '%s' (%s)\nDirectory =\n%s",
+                         prevIdxNam.c_str(), to_string(prevIdxStat._modifiedTime).c_str(),
+                         idxName.c_str(), to_string(idxStat._modifiedTime).c_str(),
                          ls(partList).c_str());
         }
         prevDatStat = datStat;
@@ -1125,11 +1127,16 @@ public:
 };
 
 std::unique_ptr<LogDataStore::FileChunkHolder>
-LogDataStore::holdFileChunk(FileId fileId)
+LogDataStore::holdFileChunk(const MonitorGuard & guard, FileId fileId)
 {
-    assert(fileId.getId() < _holdFileChunks.size());
-    assert(_holdFileChunks[fileId.getId()] < 2000u);
-    ++_holdFileChunks[fileId.getId()];
+    assert(guard.owns_lock());
+    auto found = _holdFileChunks.find(fileId.getId());
+    if (found == _holdFileChunks.end()) {
+        _holdFileChunks[fileId.getId()] = 1;
+    } else {
+        assert(found->second < 2000u);
+        found->second++;
+    }
     return std::make_unique<FileChunkHolder>(*this, fileId);
 }
 
@@ -1137,10 +1144,18 @@ void
 LogDataStore::unholdFileChunk(FileId fileId)
 {
     MonitorGuard guard(_updateLock);
-    assert(fileId.getId() < _holdFileChunks.size());
-    assert(_holdFileChunks[fileId.getId()] > 0u);
-    --_holdFileChunks[fileId.getId()];
+    auto found = _holdFileChunks.find(fileId.getId());
+    assert(found != _holdFileChunks.end());
+    assert(found->second > 0u);
+    if (--found->second == 0u) {
+        _holdFileChunks.erase(found);
+    }
     // No signalling, compactWorst() sleeps and retries
+}
+
+bool LogDataStore::canFileChunkBeDropped(const MonitorGuard & guard, FileId fileId) const {
+    assert(guard.owns_lock());
+    return ! _holdFileChunks.contains(fileId.getId());
 }
 
 DataStoreStorageStats
@@ -1168,6 +1183,14 @@ LogDataStore::getMemoryUsage() const
             result.merge(fileChunk->getMemoryUsage());
         }
     }
+    size_t extra_allocated = 0;
+    extra_allocated += _fileChunks.capacity() * sizeof(FileChunkVector::value_type);
+    extra_allocated += _holdFileChunks.capacity() * sizeof(uint32_t);
+    size_t extra_used = 0;
+    extra_used += _fileChunks.size() * sizeof(FileChunkVector::value_type);
+    extra_used += _holdFileChunks.size() * sizeof(uint32_t);
+    result.incAllocatedBytes(extra_allocated);
+    result.incUsedBytes(extra_used);
     return result;
 }
 

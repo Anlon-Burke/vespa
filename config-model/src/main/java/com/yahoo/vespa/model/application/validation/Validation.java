@@ -76,13 +76,13 @@ public class Validation {
         new StreamingValidator().validate(model, deployState);
         new RankSetupValidator(validationParameters.ignoreValidationErrors()).validate(model, deployState);
         new NoPrefixForIndexes().validate(model, deployState);
+        new ContainerInCloudValidator().validate(model, deployState);
         new DeploymentSpecValidator().validate(model, deployState);
         new ValidationOverridesValidator().validate(model, deployState);
         new ConstantValidator().validate(model, deployState);
         new SecretStoreValidator().validate(model, deployState);
         new EndpointCertificateSecretsValidator().validate(model, deployState);
         new AccessControlFilterValidator().validate(model, deployState);
-        new CloudWatchValidator().validate(model, deployState);
         new QuotaValidator().validate(model, deployState);
         new UriBindingsValidator().validate(model, deployState);
         new CloudDataPlaneFilterValidator().validate(model, deployState);

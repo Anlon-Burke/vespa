@@ -26,8 +26,6 @@ protected:
     using EnumIndexRemapper = IEnumStore::EnumIndexRemapper;
     using GenerationHolder = vespalib::GenerationHolder;
     using EnumRefs = attribute::IAttributeVector::EnumRefs;
-public:
-    using EnumIndexCopyVector = vespalib::Array<EnumIndex>;
 protected:
 
     EntryRef acquire_enum_entry_ref(DocId docId) const noexcept { return _enumIndices.acquire_elem_ref(docId).load_acquire(); }
@@ -39,7 +37,6 @@ protected:
 
     AtomicEntryRefVector _enumIndices;
 
-    EnumIndexCopyVector getIndicesCopy(uint32_t size) const;
     void remap_enum_store_refs(const EnumIndexRemapper& remapper, AttributeVector& v);
 };
 
@@ -70,14 +67,14 @@ protected:
     void considerAttributeChange(const Change & c, EnumStoreBatchUpdater & inserter) override;
 
     // implemented by single value numeric enum attribute.
-    virtual void considerUpdateAttributeChange(const Change & c) { (void) c; }
+    virtual void considerUpdateAttributeChange(DocId, const Change&) { }
     virtual void considerArithmeticAttributeChange(const Change & c, EnumStoreBatchUpdater & inserter) { (void) c; (void) inserter; }
 
     virtual void applyValueChanges(EnumStoreBatchUpdater& updater) ;
     virtual void applyArithmeticValueChange(const Change& c, EnumStoreBatchUpdater& updater) {
         (void) c; (void) updater;
     }
-    void updateEnumRefCounts(const Change& c, EnumIndex newIdx, EnumIndex oldIdx, EnumStoreBatchUpdater& updater);
+    void updateEnumRefCounts(DocId doc, EnumIndex newIdx, EnumIndex oldIdx, EnumStoreBatchUpdater& updater);
 
     virtual void freezeEnumDictionary() {
         this->getEnumStore().freeze_dictionary();

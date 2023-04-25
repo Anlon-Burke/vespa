@@ -353,6 +353,8 @@ AttributeVector::load(vespalib::Executor * executor) {
     bool loaded = onLoad(executor);
     if (loaded) {
         commit();
+        incGeneration();
+        updateStat(true);
     }
     _loaded = loaded;
     return _loaded;
@@ -440,21 +442,18 @@ AttributeVector::addReservedDoc()
     addDoc(docId);      // Reserved
     assert(docId == 0u);
     assert(docId < getNumDocs());
+    set_reserved_doc_values();
+}
+
+void
+AttributeVector::set_reserved_doc_values()
+{
+    uint32_t docId = 0;
+    if (docId >= getNumDocs()) {
+        return;
+    }
     clearDoc(docId);
     commit();
-    FloatingPointAttribute * vec = dynamic_cast<FloatingPointAttribute *>(this);
-    if (vec) {
-        if (hasMultiValue()) {
-            bool appendedUndefined = vec->append(0, attribute::getUndefined<double>(), 1);
-            assert(appendedUndefined);
-            (void) appendedUndefined;
-        } else {
-            bool updatedUndefined = vec->update(0, attribute::getUndefined<double>());
-            assert(updatedUndefined);
-            (void) updatedUndefined;
-        }
-        commit();
-    }
 }
 
 attribute::IPostingListAttributeBase *AttributeVector::getIPostingListAttributeBase() { return nullptr; }
@@ -590,7 +589,6 @@ AttributeVector::getEstimatedSaveByteSize() const
     uint64_t idxFileSize = 0;
     uint64_t udatFileSize = 0;
     size_t fixedWidth = getFixedWidth();
-    vespalib::MemoryUsage values_mem_usage = getEnumStoreValuesMemoryUsage();
 
     if (hasMultiValue()) {
         idxFileSize = headerSize + sizeof(uint32_t) * (docIdLimit + 1);
@@ -603,6 +601,7 @@ AttributeVector::getEstimatedSaveByteSize() const
         if (fixedWidth != 0) {
             udatFileSize = headerSize + fixedWidth * uniqueValueCount;
         } else {
+            vespalib::MemoryUsage values_mem_usage = getEnumStoreValuesMemoryUsage();
             size_t unique_values_bytes = values_mem_usage.usedBytes() -
                     (values_mem_usage.deadBytes() + values_mem_usage.allocatedBytesOnHold());
             size_t ref_count_mem_usage = sizeof(uint32_t) * uniqueValueCount;

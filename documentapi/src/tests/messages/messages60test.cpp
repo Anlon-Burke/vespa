@@ -15,6 +15,17 @@
 using document::DataType;
 using document::DocumentTypeRepo;
 
+template <typename T>
+struct Unwrap {
+    mbus::Routable::UP value;
+    const T *ptr = nullptr;
+    explicit Unwrap(mbus::Routable::UP value_in) : value(std::move(value_in)) {
+        ptr = dynamic_cast<T*>(value.get());
+        ASSERT_TRUE(ptr != nullptr);
+    }
+    const T *operator->() const noexcept { return ptr; }
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 //
 // Setup
@@ -28,7 +39,6 @@ Messages60Test::Messages60Test()
     putTest(DocumentProtocol::MESSAGE_CREATEVISITOR, TEST_METHOD(Messages60Test::testCreateVisitorMessage));
     putTest(DocumentProtocol::MESSAGE_DESTROYVISITOR, TEST_METHOD(Messages60Test::testDestroyVisitorMessage));
     putTest(DocumentProtocol::MESSAGE_DOCUMENTLIST, TEST_METHOD(Messages60Test::testDocumentListMessage));
-    putTest(DocumentProtocol::MESSAGE_DOCUMENTSUMMARY, TEST_METHOD(Messages60Test::testDocumentSummaryMessage));
     putTest(DocumentProtocol::MESSAGE_EMPTYBUCKETS, TEST_METHOD(Messages60Test::testEmptyBucketsMessage));
     putTest(DocumentProtocol::MESSAGE_GETBUCKETLIST, TEST_METHOD(Messages60Test::testGetBucketListMessage));
     putTest(DocumentProtocol::MESSAGE_GETBUCKETSTATE, TEST_METHOD(Messages60Test::testGetBucketStateMessage));
@@ -38,7 +48,6 @@ Messages60Test::Messages60Test()
     putTest(DocumentProtocol::MESSAGE_QUERYRESULT, TEST_METHOD(Messages60Test::testQueryResultMessage));
     putTest(DocumentProtocol::MESSAGE_REMOVEDOCUMENT, TEST_METHOD(Messages60Test::testRemoveDocumentMessage));
     putTest(DocumentProtocol::MESSAGE_REMOVELOCATION, TEST_METHOD(Messages60Test::testRemoveLocationMessage));
-    putTest(DocumentProtocol::MESSAGE_SEARCHRESULT, TEST_METHOD(Messages60Test::testSearchResultMessage));
     putTest(DocumentProtocol::MESSAGE_STATBUCKET, TEST_METHOD(Messages60Test::testStatBucketMessage));
     putTest(DocumentProtocol::MESSAGE_UPDATEDOCUMENT, TEST_METHOD(Messages60Test::testUpdateDocumentMessage));
     putTest(DocumentProtocol::MESSAGE_VISITORINFO, TEST_METHOD(Messages60Test::testVisitorInfoMessage));
@@ -47,7 +56,6 @@ Messages60Test::Messages60Test()
     putTest(DocumentProtocol::REPLY_DESTROYVISITOR, TEST_METHOD(Messages60Test::testDestroyVisitorReply));
     putTest(DocumentProtocol::REPLY_DOCUMENTIGNORED, TEST_METHOD(Messages60Test::testDocumentIgnoredReply));
     putTest(DocumentProtocol::REPLY_DOCUMENTLIST, TEST_METHOD(Messages60Test::testDocumentListReply));
-    putTest(DocumentProtocol::REPLY_DOCUMENTSUMMARY, TEST_METHOD(Messages60Test::testDocumentSummaryReply));
     putTest(DocumentProtocol::REPLY_EMPTYBUCKETS, TEST_METHOD(Messages60Test::testEmptyBucketsReply));
     putTest(DocumentProtocol::REPLY_GETBUCKETLIST, TEST_METHOD(Messages60Test::testGetBucketListReply));
     putTest(DocumentProtocol::REPLY_GETBUCKETSTATE, TEST_METHOD(Messages60Test::testGetBucketStateReply));
@@ -57,7 +65,6 @@ Messages60Test::Messages60Test()
     putTest(DocumentProtocol::REPLY_QUERYRESULT, TEST_METHOD(Messages60Test::testQueryResultReply));
     putTest(DocumentProtocol::REPLY_REMOVEDOCUMENT, TEST_METHOD(Messages60Test::testRemoveDocumentReply));
     putTest(DocumentProtocol::REPLY_REMOVELOCATION, TEST_METHOD(Messages60Test::testRemoveLocationReply));
-    putTest(DocumentProtocol::REPLY_SEARCHRESULT, TEST_METHOD(Messages60Test::testSearchResultReply));
     putTest(DocumentProtocol::REPLY_STATBUCKET, TEST_METHOD(Messages60Test::testStatBucketReply));
     putTest(DocumentProtocol::REPLY_UPDATEDOCUMENT, TEST_METHOD(Messages60Test::testUpdateDocumentReply));
     putTest(DocumentProtocol::REPLY_VISITORINFO, TEST_METHOD(Messages60Test::testVisitorInfoReply));
@@ -79,9 +86,9 @@ namespace {
 document::Document::SP
 createDoc(const DocumentTypeRepo &repo, const string &type_name, const string &id)
 {
-    return document::Document::SP(new document::Document(
+    return std::make_shared<document::Document>(repo,
                     *repo.getDocumentType(type_name),
-                    document::DocumentId(id)));
+                    document::DocumentId(id));
 }
 
 }  // namespace
@@ -258,65 +265,6 @@ Messages60Test::testRemoveLocationMessage()
 
 
 bool
-Messages60Test::testDocumentSummaryMessage()
-{
-    DocumentSummaryMessage srm;
-    EXPECT_EQUAL(srm.hasSequenceId(), false);
-    EXPECT_EQUAL(srm.getSummaryCount(), size_t(0));
-
-    EXPECT_EQUAL(MESSAGE_BASE_LENGTH + size_t(12), serialize("DocumentSummaryMessage-1", srm));
-
-    mbus::Routable::UP routable = deserialize("DocumentSummaryMessage-1", DocumentProtocol::MESSAGE_DOCUMENTSUMMARY, LANG_CPP);
-    if (!EXPECT_TRUE(routable)) {
-        return false;
-    }
-    DocumentSummaryMessage * dm = static_cast<DocumentSummaryMessage *>(routable.get());
-    EXPECT_EQUAL(dm->getSummaryCount(), size_t(0));
-
-    srm.addSummary("doc1", "summary1", 8);
-    srm.addSummary("aoc17", "summary45", 9);
-
-    const void *summary(NULL);
-    const char *docId(NULL);
-    size_t sz(0);
-
-    EXPECT_EQUAL(MESSAGE_BASE_LENGTH + 52u, serialize("DocumentSummaryMessage-2", srm));
-    routable = deserialize("DocumentSummaryMessage-2", DocumentProtocol::MESSAGE_DOCUMENTSUMMARY, LANG_CPP);
-    if (!EXPECT_TRUE(routable)) {
-        return false;
-    }
-    dm = static_cast<DocumentSummaryMessage *>(routable.get());
-    EXPECT_EQUAL(dm->getSummaryCount(), size_t(2));
-    dm->getSummary(0, docId, summary, sz);
-    EXPECT_EQUAL(sz, 8u);
-    EXPECT_EQUAL(strcmp("doc1", docId), 0);
-    EXPECT_EQUAL(memcmp("summary1", summary, sz), 0);
-    dm->getSummary(1, docId, summary, sz);
-    EXPECT_EQUAL(sz, 9u);
-    EXPECT_EQUAL(strcmp("aoc17", docId), 0);
-    EXPECT_EQUAL(memcmp("summary45", summary, sz), 0);
-
-    srm.sort();
-
-    EXPECT_EQUAL(MESSAGE_BASE_LENGTH + 52u, serialize("DocumentSummaryMessage-3", srm));
-    routable = deserialize("DocumentSummaryMessage-3", DocumentProtocol::MESSAGE_DOCUMENTSUMMARY, LANG_CPP);
-    if (!EXPECT_TRUE(routable)) {
-        return false;
-    }
-    dm = static_cast<DocumentSummaryMessage *>(routable.get());
-    EXPECT_EQUAL(dm->getSummaryCount(), size_t(2));
-    dm->getSummary(0, docId, summary, sz);
-    EXPECT_EQUAL(sz, 9u);
-    EXPECT_EQUAL(strcmp("aoc17", docId), 0);
-    EXPECT_EQUAL(memcmp("summary45", summary, sz), 0);
-    dm->getSummary(1, docId, summary, sz);
-    EXPECT_EQUAL(sz, 8u);
-    EXPECT_EQUAL(strcmp("doc1", docId), 0);
-    EXPECT_EQUAL(memcmp("summary1", summary, sz), 0);
-    return true;
-}
-
-bool
 Messages60Test::testGetDocumentMessage()
 {
     GetDocumentMessage tmp(document::DocumentId("id:ns:testdoc::"), "foo bar");
@@ -399,10 +347,12 @@ Messages60Test::testPutDocumentMessage()
     EXPECT_EQUAL(sizeof(vespalib::string), sizeof(TestAndSetCondition));
     EXPECT_EQUAL(112u, sizeof(DocumentMessage));
     EXPECT_EQUAL(sizeof(TestAndSetCondition) + sizeof(DocumentMessage), sizeof(TestAndSetMessage));
-    EXPECT_EQUAL(sizeof(TestAndSetMessage) + 24, sizeof(PutDocumentMessage));
+    EXPECT_EQUAL(sizeof(TestAndSetMessage) + 32, sizeof(PutDocumentMessage));
+    int size_of_create_if_non_existent_flag = 1;
     EXPECT_EQUAL(MESSAGE_BASE_LENGTH +
                  45u +
-                 serializedLength(msg.getCondition().getSelection()),
+                 serializedLength(msg.getCondition().getSelection()) +
+                 size_of_create_if_non_existent_flag,
                  serialize("PutDocumentMessage", msg));
 
     for (uint32_t lang = 0; lang < NUM_LANGUAGES; ++lang) {
@@ -413,9 +363,32 @@ Messages60Test::testPutDocumentMessage()
             EXPECT_EQUAL(msg.getDocument().getType().getName(), deserializedMsg.getDocument().getType().getName());
             EXPECT_EQUAL(msg.getDocument().getId().toString(), deserializedMsg.getDocument().getId().toString());
             EXPECT_EQUAL(msg.getTimestamp(), deserializedMsg.getTimestamp());
-            EXPECT_EQUAL(71u, deserializedMsg.getApproxSize());
+            EXPECT_EQUAL(72u, deserializedMsg.getApproxSize());
             EXPECT_EQUAL(msg.getCondition().getSelection(), deserializedMsg.getCondition().getSelection());
+            EXPECT_EQUAL(false, deserializedMsg.get_create_if_non_existent());
         }
+    }
+
+    //-------------------------------------------------------------------------
+
+    PutDocumentMessage msg2(createDoc(getTypeRepo(), "testdoc", "id:ns:testdoc::"));
+    msg2.set_create_if_non_existent(true);
+    uint32_t expected_message_size = MESSAGE_BASE_LENGTH + 45u +
+        serializedLength(msg2.getCondition().getSelection()) +
+        size_of_create_if_non_existent_flag;
+    auto trunc1 = [](mbus::Blob x) noexcept { return truncate(std::move(x), 1); };
+    auto pad1 = [](mbus::Blob x) noexcept { return pad(std::move(x), 1); };
+    EXPECT_EQUAL(expected_message_size, serialize("PutDocumentMessage-create", msg2));
+    EXPECT_EQUAL(expected_message_size - 1, serialize("PutDocumentMessage-create-truncate", msg2, trunc1));
+    EXPECT_EQUAL(expected_message_size + 1, serialize("PutDocumentMessage-create-pad", msg2, pad1));
+
+    for (uint32_t lang = 0; lang < NUM_LANGUAGES; ++lang) {
+        auto decoded = Unwrap<PutDocumentMessage>(deserialize("PutDocumentMessage-create", DocumentProtocol::MESSAGE_PUTDOCUMENT, lang));
+        auto decoded_trunc = Unwrap<PutDocumentMessage>(deserialize("PutDocumentMessage-create-truncate", DocumentProtocol::MESSAGE_PUTDOCUMENT, lang));
+        auto decoded_pad = Unwrap<PutDocumentMessage>(deserialize("PutDocumentMessage-create-pad", DocumentProtocol::MESSAGE_PUTDOCUMENT, lang));
+        EXPECT_EQUAL(true, decoded->get_create_if_non_existent());
+        EXPECT_EQUAL(false, decoded_trunc->get_create_if_non_existent());
+        EXPECT_EQUAL(true, decoded_pad->get_create_if_non_existent());
     }
 
     return true;
@@ -521,133 +494,6 @@ Messages60Test::testRemoveDocumentReply()
             EXPECT_EQUAL(false, ref.wasFound());
         }
     }
-    return true;
-}
-
-bool
-Messages60Test::testSearchResultMessage()
-{
-    SearchResultMessage srm;
-    EXPECT_EQUAL(srm.getSequenceId(), 0u);
-    EXPECT_EQUAL(srm.getHitCount(), 0u);
-    EXPECT_EQUAL(srm.getAggregatorList().getSerializedSize(), 4u);
-    EXPECT_EQUAL(srm.vdslib::SearchResult::getSerializedSize(), 20u);
-    EXPECT_EQUAL(srm.getSerializedSize(), 20u);
-
-    EXPECT_EQUAL(MESSAGE_BASE_LENGTH + size_t(24), serialize("SearchResultMessage-1", srm));
-
-    mbus::Routable::UP routable = deserialize("SearchResultMessage-1", DocumentProtocol::MESSAGE_SEARCHRESULT, LANG_CPP);
-    if (!EXPECT_TRUE(routable)) {
-        return false;
-    }
-    SearchResultMessage * dm = static_cast<SearchResultMessage *>(routable.get());
-    EXPECT_EQUAL(dm->getSequenceId(), size_t(0));
-    EXPECT_EQUAL(dm->getHitCount(), size_t(0));
-
-    srm.addHit(0, "doc1", 89);
-    srm.addHit(1, "doc17", 109);
-
-    EXPECT_EQUAL(MESSAGE_BASE_LENGTH + 55u, serialize("SearchResultMessage-2", srm));
-    routable = deserialize("SearchResultMessage-2", DocumentProtocol::MESSAGE_SEARCHRESULT, LANG_CPP);
-    if (!EXPECT_TRUE(routable)) {
-        return false;
-    }
-    dm = static_cast<SearchResultMessage *>(routable.get());
-    EXPECT_EQUAL(dm->getHitCount(), size_t(2));
-    const char *docId;
-    SearchResultMessage::RankType rank;
-    dm->getHit(0, docId, rank);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(89));
-    EXPECT_EQUAL(strcmp("doc1", docId), 0);
-    dm->getHit(1, docId, rank);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(109));
-    EXPECT_EQUAL(strcmp("doc17", docId), 0);
-
-    srm.sort();
-
-    EXPECT_EQUAL(MESSAGE_BASE_LENGTH + 55u, serialize("SearchResultMessage-3", srm));
-    routable = deserialize("SearchResultMessage-3", DocumentProtocol::MESSAGE_SEARCHRESULT, LANG_CPP);
-    if (!EXPECT_TRUE(routable)) {
-        return false;
-    }
-    dm = static_cast<SearchResultMessage *>(routable.get());
-    EXPECT_EQUAL(dm->getHitCount(), size_t(2));
-    dm->getHit(0, docId, rank);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(109));
-    EXPECT_EQUAL(strcmp("doc17", docId), 0);
-    dm->getHit(1, docId, rank);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(89));
-    EXPECT_EQUAL(strcmp("doc1", docId), 0);
-
-    SearchResultMessage srm2;
-    srm2.addHit(0, "doc1", 89, "sortdata2", 9);
-    srm2.addHit(1, "doc17", 109, "sortdata1", 9);
-    srm2.addHit(2, "doc18", 90, "sortdata3", 9);
-
-    EXPECT_EQUAL(MESSAGE_BASE_LENGTH + 108u, serialize("SearchResultMessage-4", srm2));
-    routable = deserialize("SearchResultMessage-4", DocumentProtocol::MESSAGE_SEARCHRESULT, LANG_CPP);
-    if (!EXPECT_TRUE(routable)) {
-        return false;
-    }
-    dm = static_cast<SearchResultMessage *>(routable.get());
-    EXPECT_EQUAL(dm->getHitCount(), size_t(3));
-    dm->getHit(0, docId, rank);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(89));
-    EXPECT_EQUAL(strcmp("doc1", docId), 0);
-    dm->getHit(1, docId, rank);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(109));
-    EXPECT_EQUAL(strcmp("doc17", docId), 0);
-    dm->getHit(2, docId, rank);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(90));
-    EXPECT_EQUAL(strcmp("doc18", docId), 0);
-
-    srm2.sort();
-    const void *buf;
-    size_t sz;
-    srm2.getHit(0, docId, rank);
-    srm2.getSortBlob(0, buf, sz);
-    EXPECT_EQUAL(sz, 9u);
-    EXPECT_EQUAL(memcmp("sortdata1", buf, sz), 0);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(109));
-    EXPECT_EQUAL(strcmp("doc17", docId), 0);
-    srm2.getHit(1, docId, rank);
-    srm2.getSortBlob(1, buf, sz);
-    EXPECT_EQUAL(sz, 9u);
-    EXPECT_EQUAL(memcmp("sortdata2", buf, sz), 0);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(89));
-    EXPECT_EQUAL(strcmp("doc1", docId), 0);
-    srm2.getHit(2, docId, rank);
-    srm2.getSortBlob(2, buf, sz);
-    EXPECT_EQUAL(sz, 9u);
-    EXPECT_EQUAL(memcmp("sortdata3", buf, sz), 0);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(90));
-    EXPECT_EQUAL(strcmp("doc18", docId), 0);
-
-    EXPECT_EQUAL(MESSAGE_BASE_LENGTH + 108u, serialize("SearchResultMessage-5", srm2));
-    routable = deserialize("SearchResultMessage-5", DocumentProtocol::MESSAGE_SEARCHRESULT, LANG_CPP);
-    if (!EXPECT_TRUE(routable)) {
-        return false;
-    }
-    dm = static_cast<SearchResultMessage *>(routable.get());
-    EXPECT_EQUAL(dm->getHitCount(), size_t(3));
-    dm->getHit(0, docId, rank);
-    dm->getSortBlob(0, buf, sz);
-    EXPECT_EQUAL(sz, 9u);
-    EXPECT_EQUAL(memcmp("sortdata1", buf, sz), 0);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(109));
-    EXPECT_EQUAL(strcmp("doc17", docId), 0);
-    dm->getHit(1, docId, rank);
-    dm->getSortBlob(1, buf, sz);
-    EXPECT_EQUAL(sz, 9u);
-    EXPECT_EQUAL(memcmp("sortdata2", buf, sz), 0);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(89));
-    EXPECT_EQUAL(strcmp("doc1", docId), 0);
-    dm->getHit(2, docId, rank);
-    dm->getSortBlob(2, buf, sz);
-    EXPECT_EQUAL(sz, 9u);
-    EXPECT_EQUAL(memcmp("sortdata3", buf, sz), 0);
-    EXPECT_EQUAL(rank, SearchResultMessage::RankType(90));
-    EXPECT_EQUAL(strcmp("doc18", docId), 0);
     return true;
 }
 
@@ -877,12 +723,6 @@ Messages60Test::testDocumentListReply()
 }
 
 bool
-Messages60Test::testDocumentSummaryReply()
-{
-    return tryVisitorReply("DocumentSummaryReply", DocumentProtocol::REPLY_DOCUMENTSUMMARY);
-}
-
-bool
 Messages60Test::testGetDocumentReply()
 {
     document::Document::SP doc =
@@ -908,12 +748,6 @@ bool
 Messages60Test::testMapVisitorReply()
 {
     return tryVisitorReply("MapVisitorReply", DocumentProtocol::REPLY_MAPVISITOR);
-}
-
-bool
-Messages60Test::testSearchResultReply()
-{
-    return tryVisitorReply("SearchResultReply", DocumentProtocol::REPLY_SEARCHRESULT);
 }
 
 bool

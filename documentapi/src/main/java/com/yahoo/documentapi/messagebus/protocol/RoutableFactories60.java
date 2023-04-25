@@ -344,34 +344,6 @@ public abstract class RoutableFactories60 {
         }
     }
 
-    public static class DocumentSummaryMessageFactory extends DocumentMessageFactory {
-
-        @Override
-        protected DocumentMessage doDecode(DocumentDeserializer buf) {
-            DocumentSummaryMessage msg = new DocumentSummaryMessage();
-            msg.setDocumentSummary(new DocumentSummary(buf));
-            return msg;
-        }
-
-        @Override
-        protected boolean doEncode(DocumentMessage obj, DocumentSerializer buf) {
-            return false; // not supported
-        }
-    }
-
-    public static class DocumentSummaryReplyFactory extends DocumentReplyFactory {
-
-        @Override
-        protected DocumentReply doDecode(DocumentDeserializer buf) {
-            return new VisitorReply(DocumentProtocol.REPLY_DOCUMENTSUMMARY);
-        }
-
-        @Override
-        protected boolean doEncode(DocumentReply obj, DocumentSerializer buf) {
-            return true;
-        }
-    }
-
     public static class EmptyBucketsMessageFactory extends DocumentMessageFactory {
 
         @Override
@@ -607,6 +579,10 @@ public abstract class RoutableFactories60 {
             msg.setDocumentPut(new DocumentPut(Document.createDocument(buf)));
             msg.setTimestamp(buf.getLong(null));
             decodeTasCondition(msg, buf);
+            if (buf.getBuf().hasRemaining()) {
+                byte value = buf.getBuf().get();
+                msg.setCreateIfNonExistent(value != 0);
+            }
         }
 
         @Override
@@ -627,6 +603,11 @@ public abstract class RoutableFactories60 {
                 msg.getDocumentPut().getDocument().serialize(buf);
                 buf.putLong(null, msg.getTimestamp());
                 encodeTasCondition(buf, (TestAndSetMessage) obj);
+                if (msg.getCreateIfNonExistent()) {
+                    buf.getBuf().put((byte)1);
+                } else {
+                    buf.getBuf().put((byte)0);
+                }
             }
             return true;
         }
@@ -719,21 +700,6 @@ public abstract class RoutableFactories60 {
         }
     }
 
-    public static class SearchResultMessageFactory extends DocumentMessageFactory {
-
-        @Override
-        protected DocumentMessage doDecode(DocumentDeserializer buf) {
-            SearchResultMessage msg = new SearchResultMessage();
-            msg.setSearchResult(new SearchResult(buf));
-            return msg;
-        }
-
-        @Override
-        protected boolean doEncode(DocumentMessage obj, DocumentSerializer buf) {
-            return false; // not supported
-        }
-    }
-
     public static class QueryResultMessageFactory extends DocumentMessageFactory {
 
         @Override
@@ -747,19 +713,6 @@ public abstract class RoutableFactories60 {
         @Override
         protected boolean doEncode(DocumentMessage obj, DocumentSerializer buf) {
             return false; // not supported
-        }
-    }
-
-    public static class SearchResultReplyFactory extends DocumentReplyFactory {
-
-        @Override
-        protected DocumentReply doDecode(DocumentDeserializer buf) {
-            return new VisitorReply(DocumentProtocol.REPLY_SEARCHRESULT);
-        }
-
-        @Override
-        protected boolean doEncode(DocumentReply obj, DocumentSerializer buf) {
-            return true;
         }
     }
 

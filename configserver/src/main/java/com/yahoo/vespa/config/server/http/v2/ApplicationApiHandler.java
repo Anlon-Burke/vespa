@@ -100,6 +100,10 @@ public class ApplicationApiHandler extends SessionHandler {
             compressedStream = createFromCompressedStream(request.getData(), request.getHeader(contentTypeHeader), maxApplicationPackageSize);
         }
 
+        // Aid debugging by adding full application id to access log (since only tenant name is part of the request URI path)
+        request.getAccessLogEntry()
+                .ifPresent(e -> e.addKeyValue("app.id", prepareParams.getApplicationId().toFullString()));
+
         try (compressedStream) {
             PrepareResult result = applicationRepository.deploy(compressedStream, prepareParams);
             return new SessionPrepareAndActivateResponse(result, request, prepareParams.getApplicationId(), zone);
@@ -111,7 +115,7 @@ public class ApplicationApiHandler extends SessionHandler {
 
     @Override
     public Duration getTimeout() {
-        return zookeeperBarrierTimeout.plus(Duration.ofSeconds(30));
+        return zookeeperBarrierTimeout.plus(Duration.ofSeconds(180));
     }
 
     private TenantName validateTenant(HttpRequest request) {

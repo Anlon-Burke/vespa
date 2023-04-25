@@ -95,6 +95,7 @@ class NodeAllocation {
         this.requiredHostFlavor = Optional.of(PermanentFlags.HOST_FLAVOR.bindTo(nodeRepository.flagSource())
                         .with(FetchVector.Dimension.APPLICATION_ID, application.serializedForm())
                         .with(FetchVector.Dimension.CLUSTER_TYPE, cluster.type().name())
+                        .with(FetchVector.Dimension.CLUSTER_ID, cluster.id().value())
                         .value())
                 .filter(s -> !s.isBlank());
     }
@@ -306,8 +307,13 @@ class NodeAllocation {
     }
 
     /** Returns true if this allocation was already fulfilled and resulted in no new changes */
-    public boolean fulfilledAndNoChanges() {
+    boolean fulfilledAndNoChanges() {
         return fulfilled() && reservableNodes().isEmpty() && newNodes().isEmpty();
+    }
+
+    /** Returns true if this allocation has retired nodes */
+    boolean hasRetiredJustNow() {
+        return wasRetiredJustNow > 0;
     }
 
     /**
@@ -450,7 +456,7 @@ class NodeAllocation {
                          .toList();
     }
 
-    public String allocationFailureDetails() {
+    String allocationFailureDetails() {
         List<String> reasons = new ArrayList<>();
         if (rejectedDueToExclusivity > 0)
             reasons.add("host exclusivity constraints");

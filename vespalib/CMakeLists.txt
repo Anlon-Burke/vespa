@@ -46,6 +46,7 @@ vespa_define_module(
     src/tests/component
     src/tests/compress
     src/tests/compression
+    src/tests/coro/active_work
     src/tests/coro/async_io
     src/tests/coro/detached
     src/tests/coro/generator
@@ -140,7 +141,7 @@ vespa_define_module(
     src/tests/process
     src/tests/programoptions
     src/tests/random
-    src/tests/referencecounter
+    src/tests/ref_counted
     src/tests/regex
     src/tests/rendezvous
     src/tests/require

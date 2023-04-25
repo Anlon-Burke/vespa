@@ -48,19 +48,21 @@ public:
     uint32_t get(DocId doc, WeightedFloat * v, uint32_t sz) const override;
     uint32_t clearDoc(DocId doc) override;
     static size_t countZero(const char * bt, size_t sz);
-    static void generateOffsets(const char * bt, size_t sz, OffsetVector & offsets);
     virtual const char * getFromEnum(EnumHandle e) const = 0;
     virtual const char *get(DocId doc) const = 0;
+    largeint_t getInt(DocId doc)  const override { return strtoll(get(doc), nullptr, 0); }
+    double getFloat(DocId doc)    const override;
+    vespalib::ConstArrayRef<char> get_raw(DocId) const override;
+    static const char * defaultValue() { return ""; }
 protected:
     StringAttribute(const vespalib::string & name);
     StringAttribute(const vespalib::string & name, const Config & c);
     ~StringAttribute() override;
-    static const char * defaultValue() { return ""; }
     using Change = ChangeTemplate<StringChangeData>;
     using ChangeVector = ChangeVectorT<Change>;
     using EnumEntryType = const char*;
     ChangeVector _changes;
-    Change _defaultValue;
+    const Change _defaultValue;
     bool onLoad(vespalib::Executor *executor) override;
 
     bool onLoadEnumerated(ReaderBase &attrReader);
@@ -78,10 +80,6 @@ private:
     virtual void load_enumerated_data(ReaderBase &attrReader, enumstore::EnumeratedPostingsLoader& loader, size_t num_values);
     virtual void load_enumerated_data(ReaderBase &attrReader, enumstore::EnumeratedLoader& loader);
     virtual void load_posting_lists_and_update_enum_store(enumstore::EnumeratedPostingsLoader& loader);
-
-    largeint_t getInt(DocId doc)  const override { return strtoll(get(doc), nullptr, 0); }
-    double getFloat(DocId doc)    const override;
-    const char * getString(DocId doc, char * v, size_t sz) const override { (void) v; (void) sz; return get(doc); }
 
     long onSerializeForAscendingSort(DocId doc, void * serTo, long available, const common::BlobConverter * bc) const override;
     long onSerializeForDescendingSort(DocId doc, void * serTo, long available, const common::BlobConverter * bc) const override;

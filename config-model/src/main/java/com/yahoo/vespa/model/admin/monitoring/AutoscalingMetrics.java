@@ -3,6 +3,7 @@ package com.yahoo.vespa.model.admin.monitoring;
 import com.yahoo.metrics.ContainerMetrics;
 import com.yahoo.metrics.SearchNodeMetrics;
 import com.yahoo.metrics.StorageMetrics;
+import com.yahoo.metrics.HostedNodeAdminMetrics;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -10,7 +11,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Metrics used for autoscaling
+ * Metrics used for autoscaling.
+ * See com.yahoo.vespa.hosted.provision.autoscale.MetricsResponse
  *
  * @author bratseth
  */
@@ -21,29 +23,33 @@ public class AutoscalingMetrics {
     private static MetricSet create() {
         List<String> metrics = new ArrayList<>();
 
-        metrics.add("cpu.util");
+        metrics.add(HostedNodeAdminMetrics.CPU_UTIL.baseName());
+        metrics.add(HostedNodeAdminMetrics.GPU_UTIL.baseName());
 
         // Memory util
-        metrics.add("mem.util"); // node level - default
-        metrics.add(SearchNodeMetrics.CONTENT_PROTON_RESOURCE_USAGE_MEMORY.average()); // better for content as it is the basis for blocking
+        metrics.add(HostedNodeAdminMetrics.MEM_UTIL.baseName()); // node level - default
+        metrics.add(HostedNodeAdminMetrics.GPU_MEM_USED.baseName());
+        metrics.add(HostedNodeAdminMetrics.GPU_MEM_TOTAL.baseName());
+        metrics.add(SearchNodeMetrics.CONTENT_PROTON_RESOURCE_USAGE_MEMORY.average()); // the basis for blocking
 
         // Disk util
-        metrics.add("disk.util"); // node level -default
-        metrics.add(SearchNodeMetrics.CONTENT_PROTON_RESOURCE_USAGE_DISK.average()); // better for content as it is the basis for blocking
+        metrics.add(HostedNodeAdminMetrics.DISK_UTIL.baseName()); // node level -default
+        metrics.add(SearchNodeMetrics.CONTENT_PROTON_RESOURCE_USAGE_DISK.average()); // the basis for blocking
 
-        metrics.add("application_generation");
+        metrics.add(ContainerMetrics.APPLICATION_GENERATION.last());
+        metrics.add(SearchNodeMetrics.CONTENT_PROTON_CONFIG_GENERATION.last());
 
-        metrics.add("in_service");
+        metrics.add(ContainerMetrics.IN_SERVICE.last());
 
         // Query rate
-        metrics.add(ContainerMetrics.QUERIES.rate()); // container
-        metrics.add(SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_MATCHING_QUERIES.rate()); // content
+        metrics.add(ContainerMetrics.QUERIES.rate());
+        metrics.add(SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_MATCHING_QUERIES.rate());
 
         // Write rate
-        metrics.add(ContainerMetrics.FEED_HTTP_REQUESTS.rate()); // container
-        metrics.add(StorageMetrics.VDS_FILESTOR_ALLTHREADS_PUT_COUNT.rate()); // content
-        metrics.add(StorageMetrics.VDS_FILESTOR_ALLTHREADS_REMOVE_COUNT.rate()); // content
-        metrics.add(StorageMetrics.VDS_FILESTOR_ALLTHREADS_UPDATE_COUNT.rate()); // content
+        metrics.add(ContainerMetrics.FEED_HTTP_REQUESTS.rate());
+        metrics.add(StorageMetrics.VDS_FILESTOR_ALLTHREADS_PUT_COUNT.rate());
+        metrics.add(StorageMetrics.VDS_FILESTOR_ALLTHREADS_REMOVE_COUNT.rate());
+        metrics.add(StorageMetrics.VDS_FILESTOR_ALLTHREADS_UPDATE_COUNT.rate());
 
         return new MetricSet("autoscaling", toMetrics(metrics));
     }

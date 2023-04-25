@@ -13,15 +13,12 @@ import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.ListFlag;
 import com.yahoo.vespa.flags.PermanentFlags;
-
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * A maintainer is some job which runs at a fixed interval to perform some maintenance task in the config server.
@@ -49,9 +46,9 @@ public abstract class ConfigServerMaintainer extends Maintainer {
         }
 
         @Override
-        public void completed(String job, double successFactor, long durationMs) {
+        public void completed(String job, double successFactorDeviation, long durationMs) {
             var context = metric.createContext(Map.of("job", job));
-            metric.set("maintenance.successFactor", successFactor, context);
+            metric.set("maintenance.successFactorDeviation", successFactorDeviation, context);
             metric.set("maintenance.duration", durationMs, context);
         }
 

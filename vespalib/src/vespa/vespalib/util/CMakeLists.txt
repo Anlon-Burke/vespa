@@ -31,6 +31,7 @@ vespa_add_library(vespalib_vespalib_util OBJECT
     exceptions.cpp
     execution_profiler.cpp
     executor_idle_tracking.cpp
+    featureset.cpp
     file_area_freelist.cpp
     foregroundtaskexecutor.cpp
     gate.cpp
@@ -63,6 +64,7 @@ vespa_add_library(vespalib_vespalib_util OBJECT
     programoptions.cpp
     random.cpp
     rcuvector.cpp
+    ref_counted.cpp
     regexp.cpp
     require.cpp
     resource_limits.cpp
@@ -99,3 +101,7 @@ vespa_add_library(vespalib_vespalib_util OBJECT
     zstdcompressor.cpp
     DEPENDS
 )
+
+# Don't convert call to jump when returning a value from a function with
+# a compatible stack.
+set_source_files_properties(signalhandler.cpp PROPERTIES COMPILE_OPTIONS "-fno-optimize-sibling-calls")

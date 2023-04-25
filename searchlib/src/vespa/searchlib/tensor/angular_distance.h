@@ -3,6 +3,8 @@
 #pragma once
 
 #include "distance_function.h"
+#include "bound_distance_function.h"
+#include "distance_function_factory.h"
 #include <vespa/eval/eval/typed_cells.h>
 #include <vespa/vespalib/hwaccelrated/iaccelrated.h>
 #include <cmath>
@@ -22,7 +24,7 @@ public:
     }
     double to_rawscore(double distance) const override {
         double cosine_similarity = 1.0 - distance;
-        // should be in in range [-1,1] but roundoff may cause problems:
+        // should be in the range [-1,1] but roundoff may cause problems:
         cosine_similarity = std::min(1.0, cosine_similarity);
         cosine_similarity = std::max(-1.0, cosine_similarity);
         double angle_distance = acos(cosine_similarity); // in range [0,pi]
@@ -58,8 +60,8 @@ public:
         auto rhs_vector = rhs.typify<FloatType>();
         size_t sz = lhs_vector.size();
         assert(sz == rhs_vector.size());
-        auto a = &lhs_vector[0];
-        auto b = &rhs_vector[0];
+        auto a = lhs_vector.data();
+        auto b = rhs_vector.data();
         double a_norm_sq = _computer.dotProduct(a, a, sz);
         double b_norm_sq = _computer.dotProduct(b, b, sz);
         double squared_norms = a_norm_sq * b_norm_sq;
@@ -71,6 +73,17 @@ public:
     }
 private:
     const vespalib::hwaccelrated::IAccelrated & _computer;
+};
+
+template <typename FloatType>
+class AngularDistanceFunctionFactory : public DistanceFunctionFactory {
+public:
+    AngularDistanceFunctionFactory()
+        : DistanceFunctionFactory(vespalib::eval::get_cell_type<FloatType>())
+        {}
+
+    BoundDistanceFunction::UP for_query_vector(const vespalib::eval::TypedCells& lhs) override;
+    BoundDistanceFunction::UP for_insertion_vector(const vespalib::eval::TypedCells& lhs) override;
 };
 
 }

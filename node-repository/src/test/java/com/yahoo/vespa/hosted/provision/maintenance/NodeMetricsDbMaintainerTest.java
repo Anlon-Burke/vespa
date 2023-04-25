@@ -24,6 +24,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
+ * @author bratseth
  */
 public class NodeMetricsDbMaintainerTest {
 
@@ -43,7 +44,7 @@ public class NodeMetricsDbMaintainerTest {
                                                                          fetcher,
                                                                          Duration.ofHours(1),
                                                                          new TestMetric());
-        assertEquals(maintainer.maintain(), 1.0, 0.0000001);
+        assertEquals(maintainer.maintain(), 0.0, 0.0000001);
         List<NodeTimeseries> timeseriesList = tester.nodeRepository().metricsDb().getNodeTimeseries(Duration.ofDays(1),
                                                                                                     Set.of("host-1.yahoo.com", "host-2.yahoo.com"));
         assertEquals(2, timeseriesList.size());
@@ -56,53 +57,56 @@ public class NodeMetricsDbMaintainerTest {
 
     private static class MockHttpClient implements MetricsV2MetricsFetcher.AsyncHttpClient {
 
+        // this value asserted on above
         final String cannedResponse =
-                "{\n" +
-                "  \"nodes\": [\n" +
-                "    {\n" +
-                "      \"hostname\": \"host-1.yahoo.com\",\n" +
-                "      \"role\": \"role0\",\n" +
-                "      \"node\": {\n" +
-                "        \"timestamp\": 1300,\n" +
-                "        \"metrics\": [\n" +
-                "          {\n" +
-                "            \"values\": {\n" +
-                "              \"cpu.util\": 14,\n" + // this value asserted on above
-                "              \"mem_total.util\": 15,\n" +
-                "              \"disk.util\": 20,\n" +
-                "              \"application_generation\": 3,\n" +
-                "              \"in_service\": 1\n" +
-                "            },\n" +
-                "            \"dimensions\": {\n" +
-                "              \"state\": \"active\"\n" +
-                "            }\n" +
-                "          }\n" +
-                "        ]\n" +
-                "      }\n" +
-                "    },\n" +
-                "    {\n" +
-                "      \"hostname\": \"host-2.yahoo.com\",\n" +
-                "      \"role\": \"role0\",\n" +
-                "      \"node\": {\n" +
-                "        \"timestamp\": 1300,\n" +
-                "        \"metrics\": [\n" +
-                "          {\n" +
-                "            \"values\": {\n" +
-                "              \"cpu.util\": 1,\n" +
-                "              \"mem_total.util\": 2,\n" +
-                "              \"disk.util\": 3,\n" +
-                "              \"application_generation\": 3,\n" +
-                "              \"in_service\": 0\n" +
-                "            },\n" +
-                "            \"dimensions\": {\n" +
-                "              \"state\": \"active\"\n" +
-                "            }\n" +
-                "          }\n" +
-                "        ]\n" +
-                "      }\n" +
-                "    }\n" +
-                "  ]\n" +
-                "}\n";
+                """
+                        {
+                          "nodes": [
+                            {
+                              "hostname": "host-1.yahoo.com",
+                              "role": "role0",
+                              "node": {
+                                "timestamp": 1300,
+                                "metrics": [
+                                  {
+                                    "values": {
+                                      "cpu.util": 14,
+                                      "mem_total.util": 15,
+                                      "disk.util": 20,
+                                      "application_generation.last": 3,
+                                      "in_service.last": 1
+                                    },
+                                    "dimensions": {
+                                      "state": "active"
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "hostname": "host-2.yahoo.com",
+                              "role": "role0",
+                              "node": {
+                                "timestamp": 1300,
+                                "metrics": [
+                                  {
+                                    "values": {
+                                      "cpu.util": 1,
+                                      "mem_total.util": 2,
+                                      "disk.util": 3,
+                                      "application_generation.last": 3,
+                                      "in_service.last": 0
+                                    },
+                                    "dimensions": {
+                                      "state": "active"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                        """;
 
         @Override
         public CompletableFuture<String> get(String url) {

@@ -271,7 +271,7 @@ public class DynamicProvisioningTest {
         assertEquals(Set.of("x86"), nodes.parentsOf(tester.getNodes(app, Node.State.active).retired()).stream().map(n -> n.flavor().name()).collect(Collectors.toSet()));
         assertEquals(Set.of("arm"), nodes.parentsOf(tester.getNodes(app, Node.State.active).not().retired()).stream().map(n -> n.flavor().name()).collect(Collectors.toSet()));
 
-        flagSource.removeFlag(PermanentFlags.HOST_FLAVOR.id()); // Resetting flag does not moves the nodes back
+        flagSource.removeFlag(PermanentFlags.HOST_FLAVOR.id()); // Resetting flag does not move the nodes back
         tester.activate(app, cluster, capacity);
         nodes = tester.nodeRepository().nodes().list();
         assertEquals(4, nodes.owner(app).state(Node.State.active).retired().size());
@@ -453,7 +453,7 @@ public class DynamicProvisioningTest {
         if (!provisionedHosts.isEmpty()) {
             List<Node> hosts = provisionedHosts.asList()
                                                .stream()
-                                               .map(h -> ((MockHostProvisioner)tester.hostProvisioner()).withIpAssigned(h))
+                                               .map(h -> h.with(((MockHostProvisioner) tester.hostProvisioner()).createIpConfig(h)))
                                                .toList();
             tester.move(Node.State.ready, hosts);
             tester.activateTenantHosts();

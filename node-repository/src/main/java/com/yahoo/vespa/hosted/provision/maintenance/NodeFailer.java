@@ -7,6 +7,7 @@ import com.yahoo.config.provision.Deployment;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.TransientException;
 import com.yahoo.jdisc.Metric;
+import com.yahoo.slime.SlimeUtils;
 import com.yahoo.transaction.Mutex;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
@@ -97,7 +98,7 @@ public class NodeFailer extends NodeRepositoryMaintainer {
         metric.set(throttlingActiveMetric, throttlingActive, null);
         metric.set(throttledHostFailuresMetric, throttledHostFailures, null);
         metric.set(throttledNodeFailuresMetric, throttledNodeFailures, null);
-        return asSuccessFactor(attempts, failures);
+        return asSuccessFactorDeviation(attempts, failures);
     }
 
     private Collection<FailingNode> findActiveFailingNodes() {
@@ -109,7 +110,7 @@ public class NodeFailer extends NodeRepositoryMaintainer {
 
         for (Node node : activeNodes) {
             Instant graceTimeStart = clock().instant().minus(nodeRepository().nodes().suspended(node) ? suspendedDownTimeLimit : downTimeLimit);
-            if (node.isDown() && node.history().hasEventBefore(History.Event.Type.down, graceTimeStart) && !applicationSuspended(node)) {
+            if (node.isDown() && node.history().hasEventBefore(History.Event.Type.down, graceTimeStart) && !applicationSuspended(node) && !undergoingCmr(node)) {
                 // Allow a grace period after node re-activation
                 if (!node.history().hasEventAfter(History.Event.Type.activated, graceTimeStart))
                     failingNodes.add(new FailingNode(node, "Node has been down longer than " + downTimeLimit));
@@ -157,6 +158,19 @@ public class NodeFailer extends NodeRepositoryMaintainer {
         }
     }
 
+    private boolean undergoingCmr(Node node) {
+        return node.reports().getReport("vcmr")
+                .map(report ->
+                        SlimeUtils.entriesStream(report.getInspector().field("upcoming"))
+                                .anyMatch(cmr -> {
+                                    var startTime = cmr.field("plannedStartTime").asLong();
+                                    var endTime = cmr.field("plannedEndTime").asLong();
+                                    var now = clock().instant().getEpochSecond();
+                                    return now > startTime && now < endTime;
+                                })
+                ).orElse(false);
+    }
+
     /** Is the node and all active children suspended? */
     private boolean allSuspended(Node node, NodeList activeNodes) {
         if (!nodeRepository().nodes().suspended(node)) return false;
@@ -182,27 +196,26 @@ public class NodeFailer extends NodeRepositoryMaintainer {
      * Called when a node should be moved to the failed state: Do that if it seems safe,
      * which is when the node repo has available capacity to replace the node (and all its tenant nodes if host).
      * Otherwise not replacing the node ensures (by Orchestrator check) that no further action will be taken.
-     *
-     * @return whether node was successfully failed
      */
-    private boolean failActive(FailingNode failing) {
+    private void failActive(FailingNode failing) {
         Optional<Deployment> deployment =
             deployer.deployFromLocalActive(failing.node().allocation().get().owner(), Duration.ofMinutes(5));
-        if (deployment.isEmpty()) return false;
+        if (deployment.isEmpty()) return;
 
         // If the active node that we are trying to fail is of type host, we need to successfully fail all
         // the children nodes running on it before we fail the host.  Failing a child node in a dynamically
         // provisioned zone may require provisioning new hosts that require the host application lock to be held,
         // so we must release ours before failing the children.
         List<FailingNode> activeChildrenToFail = new ArrayList<>();
+        boolean redeploy = false;
         try (NodeMutex lock = nodeRepository().nodes().lockAndGetRequired(failing.node())) {
             // Now that we have gotten the node object under the proper lock, sanity-check it still makes sense to fail
             if (!Objects.equals(failing.node().allocation().map(Allocation::owner), lock.node().allocation().map(Allocation::owner)))
-                return false;
+                return;
             if (lock.node().state() == Node.State.failed)
-                return true;
+                return;
             if (!Objects.equals(failing.node().state(), lock.node().state()))
-                return false;
+                return;
             failing = new FailingNode(lock.node(), failing.reason);
 
             String reasonForChildFailure = "Failing due to parent host " + failing.node().hostname() + " failure: " + failing.reason();
@@ -216,36 +229,46 @@ public class NodeFailer extends NodeRepositoryMaintainer {
 
             if (activeChildrenToFail.isEmpty()) {
                 log.log(Level.INFO, "Failing out " + failing.node + ": " + failing.reason);
-                wantToFail(failing.node(), true, lock);
-                try {
-                    deployment.get().activate();
-                    return true;
-                } catch (TransientException | UncheckedTimeoutException e) {
-                    log.log(Level.INFO, "Failed to redeploy " + failing.node().allocation().get().owner() +
-                                        " with a transient error, will be retried by application maintainer: " +
-                                        Exceptions.toMessageString(e));
-                    return true;
-                } catch (RuntimeException e) {
-                    // Reset want to fail: We'll retry failing unless it heals in the meantime
-                    nodeRepository().nodes().node(failing.node().hostname())
-                                    .ifPresent(n -> wantToFail(n, false, lock));
-                    log.log(Level.WARNING, "Could not fail " + failing.node() + " for " + failing.node().allocation().get().owner() +
-                                           " for " + failing.reason() + ": " + Exceptions.toMessageString(e));
-                    return false;
-                }
+                markWantToFail(failing.node(), true, lock);
+                redeploy = true;
             }
+        }
+
+        // Redeploy to replace failing node
+        if (redeploy) {
+            redeploy(deployment.get(), failing);
+            return;
         }
 
         // In a dynamically provisioned zone the failing of the first child may require a new host to be provisioned,
         // so failActive() may take a long time to complete, but the remaining children should be fast.
         activeChildrenToFail.forEach(this::failActive);
 
-        return false;
     }
 
-    private void wantToFail(Node node, boolean wantToFail, Mutex lock) {
-        if (!node.status().wantToFail())
+    private void redeploy(Deployment deployment, FailingNode failing) {
+        try {
+            deployment.activate();
+        } catch (TransientException | UncheckedTimeoutException e) {
+            log.log(Level.INFO, "Failed to redeploy " + failing.node().allocation().get().owner() +
+                                " with a transient error, will be retried by application maintainer: " +
+                                Exceptions.toMessageString(e));
+        } catch (RuntimeException e) {
+            // Reset want to fail: We'll retry failing unless it heals in the meantime
+            Optional<NodeMutex> optionalNodeMutex = nodeRepository().nodes().lockAndGet(failing.node());
+            if (optionalNodeMutex.isEmpty()) return;
+            try (var nodeMutex = optionalNodeMutex.get()) {
+                markWantToFail(nodeMutex.node(), false, nodeMutex);
+                log.log(Level.WARNING, "Could not fail " + failing.node() + " for " + failing.node().allocation().get().owner() +
+                                       " for " + failing.reason() + ": " + Exceptions.toMessageString(e));
+            }
+        }
+    }
+
+    private void markWantToFail(Node node, boolean wantToFail, Mutex lock) {
+        if (node.status().wantToFail() != wantToFail) {
             nodeRepository().nodes().write(node.withWantToFail(wantToFail, Agent.NodeFailer, clock().instant()), lock);
+        }
     }
 
     /** Returns true if node failing should be throttled */

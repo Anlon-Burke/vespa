@@ -1,24 +1,19 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.ranking;
 
-import ai.vespa.models.evaluation.FunctionEvaluator;
-import ai.vespa.models.evaluation.Model;
 import com.yahoo.component.annotation.Inject;
 import com.yahoo.search.Query;
 import com.yahoo.search.Result;
+import com.yahoo.search.query.Sorting;
 import com.yahoo.search.ranking.RankProfilesEvaluator.GlobalPhaseData;
-import com.yahoo.search.result.Hit;
-import com.yahoo.search.result.HitGroup;
+import com.yahoo.search.result.ErrorMessage;
 import com.yahoo.tensor.Tensor;
 
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.logging.Logger;
+import java.util.Optional;
 import java.util.function.Supplier;
+import java.util.logging.Logger;
 
 public class GlobalPhaseRanker {
 
@@ -28,16 +23,26 @@ public class GlobalPhaseRanker {
     @Inject
     public GlobalPhaseRanker(RankProfilesEvaluatorFactory factory) {
         this.factory = factory;
-        logger.info("using factory: " + factory);
+        logger.fine(() -> "Using factory: " + factory);
     }
 
-    public void process(Query query, Result result, String schema) {
-        var proxy = factory.proxyForSchema(schema);
-        String rankProfile = query.getRanking().getProfile();
-        var optData = proxy.getGlobalPhaseData(rankProfile);
-        if (optData.isEmpty())
-            return;
-        GlobalPhaseData data = optData.get();
+    public Optional<ErrorMessage> validateNoSorting(Query query, String schema) {
+        var data = globalPhaseDataFor(query, schema).orElse(null);
+        if (data == null) return Optional.empty();
+        var sorting = query.getRanking().getSorting();
+        if (sorting == null || sorting.fieldOrders() == null) return Optional.empty();
+        for (var fieldOrder : sorting.fieldOrders()) {
+            if (!fieldOrder.getSorter().getName().equals("[rank]")
+                    || fieldOrder.getSortOrder() != Sorting.Order.DESCENDING) {
+                return Optional.of(ErrorMessage.createIllegalQuery("Sorting is not supported with global phase"));
+            }
+        }
+        return Optional.empty();
+    }
+
+    public void rerankHits(Query query, Result result, String schema) {
+        var data = globalPhaseDataFor(query, schema).orElse(null);
+        if (data == null) return;
         var functionEvaluatorSource = data.functionEvaluatorSource();
         var prepared = findFromQuery(query, data.needInputs());
         Supplier<Evaluator> supplier = () -> {
@@ -52,6 +57,11 @@ public class GlobalPhaseRanker {
         if (rerankCount < 0)
             rerankCount = 100;
         ResultReranker.rerankHits(result, new HitRescorer(supplier), rerankCount);
+    }
+
+    private Optional<GlobalPhaseData> globalPhaseDataFor(Query query, String schema) {
+        return factory.evaluatorForSchema(schema)
+                .flatMap(evaluator -> evaluator.getGlobalPhaseData(query.getRanking().getProfile()));
     }
 
     record NameAndValue(String name, Tensor value) { }

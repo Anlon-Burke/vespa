@@ -33,7 +33,10 @@ enum Policy {
 
     /** Full access to everything. */
     supporter(Privilege.grant(Action.read)
-                       .on(PathGroup.all())
+                       .on(PathGroup.allExcept(PathGroup.classifiedOperator))
+                       .in(SystemName.all()),
+              Privilege.grant(Action.all())
+                       .on(PathGroup.classifiedOperator)
                        .in(SystemName.all())),
 
     /** Full access to user management for a tenant in select systems. */
@@ -84,7 +87,7 @@ enum Policy {
 
     /** Read access to application information and settings. */
     applicationRead(Privilege.grant(Action.read)
-                             .on(PathGroup.application, PathGroup.applicationInfo, PathGroup.reindexing, PathGroup.serviceDump)
+                             .on(PathGroup.application, PathGroup.applicationInfo, PathGroup.reindexing, PathGroup.serviceDump, PathGroup.dropDocuments)
                              .in(SystemName.all())),
 
     /** Update access to application information and settings. */
@@ -99,7 +102,7 @@ enum Policy {
 
     /** Full access to application information and settings. */
     applicationOperations(Privilege.grant(Action.write())
-                                   .on(PathGroup.applicationInfo, PathGroup.productionRestart, PathGroup.reindexing, PathGroup.serviceDump)
+                                   .on(PathGroup.applicationInfo, PathGroup.productionRestart, PathGroup.reindexing, PathGroup.serviceDump, PathGroup.dropDocuments)
                                    .in(SystemName.all())),
 
     /** Access to create and delete developer and deploy keys under a tenant. */

@@ -14,6 +14,8 @@ import java.util.TreeMap;
 import java.util.function.Predicate;
 
 import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
+import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_ID;
+import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_TYPE;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.CONSOLE_USER_EMAIL;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.HOSTNAME;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.NODE_TYPE;
@@ -46,6 +48,23 @@ public class Flags {
 
     private static volatile TreeMap<FlagId, FlagDefinition> flags = new TreeMap<>();
 
+    public static final UnboundBooleanFlag RECONFIGURE_ALB_TARGETS = defineFeatureFlag(
+            "reconfigure-alb-targets", false,
+            List.of("bjormel"), "2023-03-24", "2023-04-30",
+            "Reconfigure ALB targets",
+            "Takes effect on next config server container start",
+            ZONE_ID);
+
+    public static final UnboundBooleanFlag DROP_CACHES = defineFeatureFlag(
+            "drop-caches", false,
+            List.of("hakonhall", "baldersheim"), "2023-03-06", "2023-06-05",
+            "Drop caches on tenant hosts",
+            "Takes effect on next tick",
+            ZONE_ID,
+            // The application ID is the exclusive application ID associated with the host,
+            // if any, or otherwise hosted-vespa:tenant-host:default.
+            APPLICATION_ID, TENANT_ID, CLUSTER_ID, CLUSTER_TYPE);
+
     public static final UnboundDoubleFlag DEFAULT_TERM_WISE_LIMIT = defineDoubleFlag(
             "default-term-wise-limit", 1.0,
             List.of("baldersheim"), "2020-12-02", "2023-12-31",
@@ -58,6 +77,12 @@ public class Flags {
             List.of("baldersheim"), "2022-08-20", "2023-12-31",
             "Select query dispatch policy, valid values are adaptive, round-robin, best-of-random-2," +
                     " latency-amortized-over-requests, latency-amortized-over-time",
+            "Takes effect at redeployment (requires restart)",
+            ZONE_ID, APPLICATION_ID);
+    public static final UnboundStringFlag SUMMARY_DECODE_POLICY = defineStringFlag(
+            "summary-decode-policy", "eager",
+            List.of("baldersheim"), "2023-03-30", "2023-12-31",
+            "Select summary decoding policy, valid values are eager and on-demand/ondemand.",
             "Takes effect at redeployment (requires restart)",
             ZONE_ID, APPLICATION_ID);
 
@@ -203,9 +228,10 @@ public class Flags {
             "Takes effect at redeployment",
             ZONE_ID, APPLICATION_ID);
 
+    // TODO: Move to a permanent flag
     public static final UnboundListFlag<String> ALLOWED_ATHENZ_PROXY_IDENTITIES = defineListFlag(
             "allowed-athenz-proxy-identities", List.of(), String.class,
-            List.of("bjorncs", "tokle"), "2021-02-10", "2023-03-01",
+            List.of("bjorncs", "tokle"), "2021-02-10", "2023-05-01",
             "Allowed Athenz proxy identities",
             "takes effect at redeployment");
 
@@ -283,7 +309,7 @@ public class Flags {
 
     public static final UnboundBooleanFlag ENABLE_PROXY_PROTOCOL_MIXED_MODE = defineFeatureFlag(
             "enable-proxy-protocol-mixed-mode", true,
-            List.of("tokle"), "2022-05-09", "2023-03-31",
+            List.of("tokle"), "2022-05-09", "2023-04-30",
             "Enable or disable proxy protocol mixed mode",
             "Takes effect on redeployment",
             APPLICATION_ID);
@@ -339,11 +365,50 @@ public class Flags {
             ZONE_ID, NODE_TYPE, HOSTNAME);
 
     public static final UnboundBooleanFlag ENABLE_GLOBAL_PHASE = defineFeatureFlag(
-            "enable-global-phase", false,
+            "enable-global-phase", true,
             List.of("arnej", "bjorncs"), "2023-02-28", "2024-01-10",
             "Enable global phase ranking",
             "Takes effect at redeployment",
             APPLICATION_ID);
+
+    public static final UnboundBooleanFlag VESPA_ATHENZ_PROVIDER = defineFeatureFlag(
+            "vespa-athenz-provider", false,
+            List.of("mortent"), "2023-02-22", "2023-05-01",
+            "Enable athenz provider in public systems",
+            "Takes effect on next config server container start",
+            ZONE_ID);
+
+    public static final UnboundLongFlag ZOOKEEPER_BARRIER_WAIT_FOR_ALL_TIMEOUT = defineLongFlag(
+            "zookeeper-barrier-wait-for-all-timeout", 1,
+            List.of("hmusum"), "2023-03-28", "2023-05-28",
+            "Time to wait for all barrier members after getting response from quorum number of member",
+            "Takes effect on next config server container start",
+            ZONE_ID);
+
+    public static final UnboundBooleanFlag NODE_ADMIN_TENANT_SERVICE_REGISTRY = defineFeatureFlag(
+            "node-admin-tenant-service-registry", false,
+            List.of("olaa"), "2023-04-12", "2023-06-12",
+            "Whether AthenzCredentialsMaintainer in node-admin should create tenant service identity certificate",
+            "Takes effect on next tick",
+            ZONE_ID, HOSTNAME
+    );
+
+    public static final UnboundBooleanFlag ENABLE_CROWDSTRIKE = defineFeatureFlag(
+            "enable-crowdstrike", true, List.of("andreer"), "2023-04-13", "2023-06-13",
+            "Whether to enable CrowdStrike.", "Takes effect on next host admin tick",
+            HOSTNAME);
+
+    public static final UnboundBooleanFlag ALLOW_MORE_THAN_ONE_CONTENT_GROUP_DOWN = defineFeatureFlag(
+            "allow-more-than-one-content-group-down", false, List.of("hmusum"), "2023-04-14", "2023-06-14",
+            "Whether to enable possible configuration of letting more than one content group down",
+            "Takes effect at redeployment",
+            ZONE_ID, APPLICATION_ID);
+
+    public static final UnboundBooleanFlag FAIL_DEPLOYMENT_ON_MISSING_CERTIFICATE_FILE = defineFeatureFlag(
+            "fail-on-missing-certificate-file", false, List.of("hmusum"), "2023-04-21", "2023-05-21",
+            "Whether to fail in controller when a submitted application package has no certificate files",
+            "Takes effect at redeployment",
+            ZONE_ID);
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */
     public static UnboundBooleanFlag defineFeatureFlag(String flagId, boolean defaultValue, List<String> owners,

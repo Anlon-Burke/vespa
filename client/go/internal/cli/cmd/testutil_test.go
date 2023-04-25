@@ -3,10 +3,14 @@ package cmd
 
 import (
 	"bytes"
+	"net/http"
 	"path/filepath"
 	"testing"
 
+	"github.com/vespa-engine/vespa/client/go/internal/cli/auth/auth0"
 	"github.com/vespa-engine/vespa/client/go/internal/mock"
+	"github.com/vespa-engine/vespa/client/go/internal/util"
+	"github.com/vespa-engine/vespa/client/go/internal/vespa"
 )
 
 func newTestCLI(t *testing.T, envVars ...string) (*CLI, *bytes.Buffer, *bytes.Buffer) {
@@ -23,7 +27,18 @@ func newTestCLI(t *testing.T, envVars ...string) (*CLI, *bytes.Buffer, *bytes.Bu
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.httpClient = &mock.HTTPClient{}
+	httpClient := &mock.HTTPClient{}
+	cli.httpClient = httpClient
 	cli.exec = &mock.Exec{}
+	cli.auth0Factory = func(httpClient util.HTTPClient, options auth0.Options) (vespa.Authenticator, error) {
+		return &mockAuthenticator{}, nil
+	}
+	cli.ztsFactory = func(httpClient util.HTTPClient, domain, url string) (vespa.Authenticator, error) {
+		return &mockAuthenticator{}, nil
+	}
 	return cli, &stdout, &stderr
 }
+
+type mockAuthenticator struct{}
+
+func (a *mockAuthenticator) Authenticate(request *http.Request) error { return nil }

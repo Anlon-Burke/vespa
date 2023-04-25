@@ -76,10 +76,11 @@ public class MetricsV2MetricsFetcherTest {
             assertEquals(0.15, values.get(0).getSecond().load().memory(), delta);
             assertEquals(0.20, values.get(0).getSecond().load().disk(), delta);
             assertEquals(3, values.get(0).getSecond().generation(), delta);
+            assertFalse(values.get(0).getSecond().inService());
             assertTrue(values.get(0).getSecond().stable());
         }
 
-        {
+        { // read response 2 when unstable
             httpClient.cannedResponse = cannedResponseForApplication2;
             try (Mutex lock = tester.nodeRepository().applications().lock(application1)) {
                 tester.nodeRepository().nodes().write(tester.nodeRepository().nodes().list(Node.State.active).owner(application2)
@@ -88,6 +89,18 @@ public class MetricsV2MetricsFetcherTest {
             List<Pair<String, NodeMetricSnapshot>> values = new ArrayList<>(fetcher.fetchMetrics(application2).get().nodeMetrics());
             assertFalse(values.get(0).getSecond().stable());
         }
+
+        {
+            httpClient.cannedResponse = cannedResponseForApplication3;
+            List<Pair<String, NodeMetricSnapshot>> values = new ArrayList<>(fetcher.fetchMetrics(application2).get().nodeMetrics());
+            assertEquals("http://host-3.yahoo.com:4080/metrics/v2/values?consumer=autoscaling",
+                         httpClient.requestsReceived.get(1));
+            assertEquals(1, values.size());
+            assertEquals("host-3.yahoo.com", values.get(0).getFirst());
+            assertEquals(0.13, values.get(0).getSecond().load().cpu(), delta);
+            assertEquals(0.9375, values.get(0).getSecond().load().memory(), delta);
+        }
+
     }
 
     private static class MockHttpClient implements MetricsV2MetricsFetcher.AsyncHttpClient {
@@ -108,114 +121,154 @@ public class MetricsV2MetricsFetcherTest {
     }
 
     final String cannedResponseForApplication1 =
-            "{\n" +
-            "  \"nodes\": [\n" +
-            "    {\n" +
-            "      \"hostname\": \"host-1.yahoo.com\",\n" +
-            "      \"role\": \"role0\",\n" +
-            "      \"node\": {\n" +
-            "        \"timestamp\": 1234,\n" +
-            "        \"metrics\": [\n" +
-            "          {\n" +
-            "            \"values\": {\n" +
-            "              \"cpu.util\": 16.2,\n" +
-            "              \"mem.util\": 23.1,\n" +
-            "              \"disk.util\": 82\n" +
-            "            },\n" +
-            "            \"dimensions\": {\n" +
-            "              \"state\": \"active\"\n" +
-            "            }\n" +
-            "          }\n" +
-            "        ]\n" +
-            "      }\n" +
-            "    },\n" +
-            "    {\n" +
-            "      \"hostname\": \"host-2.yahoo.com\",\n" +
-            "      \"role\": \"role1\",\n" +
-            "      \"node\": {\n" +
-            "        \"timestamp\": 1200,\n" +
-            "        \"metrics\": [\n" +
-            "          {\n" +
-            "            \"values\": {\n" +
-            "              \"mem.util\": 30,\n" +
-            "              \"disk.util\": 40\n" +
-            "            },\n" +
-            "            \"dimensions\": {\n" +
-            "              \"state\": \"active\"\n" +
-            "            }\n" +
-            "          }\n" +
-            "        ]\n" +
-            "      },\n" +
-            "      \"services\": [\n" +
-            "        {\n" +
-            "          \"name\": \"searchnode\",\n" +
-            "          \"timestamp\": 1234,\n" +
-            "          \"status\": {\n" +
-            "            \"code\": \"up\"\n" +
-            "          },\n" +
-            "          \"metrics\": [\n" +
-            "            {\n" +
-            "              \"values\": {\n" +
-            "                \"content.proton.documentdb.matching.queries.rate\": 20.5\n" +
-            "              },\n" +
-            "              \"dimensions\": {\n" +
-            "                \"documentType\": \"music\"\n" +
-            "              }\n" +
-            "            },\n" +
-            "            {\n" +
-            "              \"values\": {\n" +
-            "                \"content.proton.resource_usage.memory.average\": 0.35,\n" +
-            "                \"content.proton.resource_usage.disk.average\": 0.45\n" +
-            "              },\n" +
-            "              \"dimensions\": {\n" +
-            "              }\n" +
-            "            },\n" +
-            "            {\n" +
-            "              \"values\": {\n" +
-            "                \"content.proton.documentdb.matching.queries.rate\": 13.5\n" +
-            "              },\n" +
-            "              \"dimensions\": {\n" +
-            "                \"documentType\": \"books\"\n" +
-            "              }\n" +
-            "            },\n" +
-            "            {\n" +
-            "              \"values\": {\n" +
-            "                \"queries.rate\": 11.0\n" +
-            "              },\n" +
-            "              \"dimensions\": {\n" +
-            "              }\n" +
-            "            }\n" +
-            "          ]\n" +
-            "        }\n" +
-            "      ]\n" +
-            "    }\n" +
-            "  ]\n" +
-            "}\n";
+            """
+                    {
+                      "nodes": [
+                        {
+                          "hostname": "host-1.yahoo.com",
+                          "role": "role0",
+                          "node": {
+                            "timestamp": 1234,
+                            "metrics": [
+                              {
+                                "values": {
+                                  "cpu.util": 16.2,
+                                  "mem.util": 23.1,
+                                  "disk.util": 82
+                                },
+                                "dimensions": {
+                                  "state": "active"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "hostname": "host-2.yahoo.com",
+                          "role": "role1",
+                          "node": {
+                            "timestamp": 1200,
+                            "metrics": [
+                              {
+                                "values": {
+                                  "mem.util": 30,
+                                  "disk.util": 40
+                                },
+                                "dimensions": {
+                                  "state": "active"
+                                }
+                              }
+                            ]
+                          },
+                          "services": [
+                            {
+                              "name": "searchnode",
+                              "timestamp": 1234,
+                              "status": {
+                                "code": "up"
+                              },
+                              "metrics": [
+                                {
+                                  "values": {
+                                    "content.proton.documentdb.matching.queries.rate": 20.5
+                                  },
+                                  "dimensions": {
+                                    "documentType": "music"
+                                  }
+                                },
+                                {
+                                  "values": {
+                                    "content.proton.resource_usage.memory.average": 0.35,
+                                    "content.proton.resource_usage.disk.average": 0.45
+                                  },
+                                  "dimensions": {
+                                  }
+                                },
+                                {
+                                  "values": {
+                                    "content.proton.documentdb.matching.queries.rate": 13.5
+                                  },
+                                  "dimensions": {
+                                    "documentType": "books"
+                                  }
+                                },
+                                {
+                                  "values": {
+                                    "queries.rate": 11.0
+                                  },
+                                  "dimensions": {
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                    """;
 
     final String cannedResponseForApplication2 =
-            "{\n" +
-            "  \"nodes\": [\n" +
-            "    {\n" +
-            "      \"hostname\": \"host-3.yahoo.com\",\n" +
-            "      \"role\": \"role0\",\n" +
-            "      \"node\": {\n" +
-            "        \"timestamp\": 1300,\n" +
-            "        \"metrics\": [\n" +
-            "          {\n" +
-            "            \"values\": {\n" +
-            "              \"cpu.util\": 10,\n" +
-            "              \"mem.util\": 15,\n" +
-            "              \"disk.util\": 20,\n" +
-            "              \"application_generation\": 3\n" +
-            "            },\n" +
-            "            \"dimensions\": {\n" +
-            "              \"state\": \"active\"\n" +
-            "            }\n" +
-            "          }\n" +
-            "        ]\n" +
-            "      }\n" +
-            "    }\n" +
-            "  ]\n" +
-            "}\n";
+            """
+                    {
+                      "nodes": [
+                        {
+                          "hostname": "host-3.yahoo.com",
+                          "role": "role0",
+                          "node": {
+                            "timestamp": 1300,
+                            "metrics": [
+                              {
+                                "values": {
+                                  "cpu.util": 10,
+                                  "gpu.util": 8,
+                                  "mem.util": 15,
+                                  "gpu.memory.used": 0,
+                                  "gpu.memory.total": 8,
+                                  "disk.util": 20,
+                                  "application_generation.last": 3,
+                                  "in_service.last": 0
+                                },
+                                "dimensions": {
+                                  "state": "active"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                    """;
+
+    final String cannedResponseForApplication3 =
+            """
+                    {
+                      "nodes": [
+                        {
+                          "hostname": "host-3.yahoo.com",
+                          "role": "role0",
+                          "node": {
+                            "timestamp": 1300,
+                            "metrics": [
+                              {
+                                "values": {
+                                  "cpu.util": 10,
+                                  "gpu.util": 13,
+                                  "mem.util": 15,
+                                  "gpu.memory.used": 7.5,
+                                  "gpu.memory.total": 8,
+                                  "disk.util": 20,
+                                  "application_generation.last": 3,
+                                  "in_service.last": 0
+                                },
+                                "dimensions": {
+                                  "state": "active"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                    """;
 
 }

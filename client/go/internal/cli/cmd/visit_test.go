@@ -47,7 +47,7 @@ func TestQuoteFunc(t *testing.T) {
 		res := quoteArgForUrl(s)
 		if i < 32 || i > 127 {
 			assert.Equal(t, "a+z", res)
-		} else {
+		} else if testing.Verbose() { // go test -v
 			fmt.Printf("res %3d => '%s'\n", i, res)
 		}
 	}
@@ -105,6 +105,7 @@ func TestVisitCommand(t *testing.T) {
 	assertVisitResults(
 		[]string{
 			"visit",
+			"--bucket-space", "default",
 			"--json-lines",
 		},
 		t,
@@ -118,7 +119,7 @@ func TestVisitCommand(t *testing.T) {
 				document3 +
 				`],"documentCount":2}`,
 		},
-		"cluster=fooCC&continuation=CAFE&wantedDocumentCount=1000",
+		"cluster=fooCC&continuation=CAFE&wantedDocumentCount=1000&bucketSpace=default",
 		document1+"\n"+
 			document2+"\n"+
 			document3+"\n")

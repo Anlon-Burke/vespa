@@ -15,9 +15,9 @@ namespace search {
 
 template <typename B>
 void
-SingleValueNumericEnumAttribute<B>::considerUpdateAttributeChange(const Change & c)
+SingleValueNumericEnumAttribute<B>::considerUpdateAttributeChange(DocId doc, const Change & c)
 {
-    _currDocValues[c._doc] = c._data.get();
+    _currDocValues[doc] = c._data.get();
 }
 
 template <typename B>
@@ -53,7 +53,7 @@ SingleValueNumericEnumAttribute<B>::applyArithmeticValueChange(const Change& c, 
     T newValue = this->template applyArithmetic<T, typename Change::DataType>(get(c._doc), c._data.getArithOperand(), c._type);
     this->_enumStore.find_index(newValue, newIdx);
 
-    this->updateEnumRefCounts(c, newIdx, oldIdx, updater);
+    this->updateEnumRefCounts(c._doc, newIdx, oldIdx, updater);
 }
 
 template <typename B>
@@ -117,6 +117,10 @@ SingleValueNumericEnumAttribute<B>::onLoad(vespalib::Executor *)
         return false;
     }
 
+    this->_enumStore.clear_default_value_ref();
+    this->commit();
+    this->incGeneration();
+
     this->setCreateSerialNum(attrReader.getCreateSerialNum());
 
     if (attrReader.getEnumerated()) {
@@ -156,7 +160,8 @@ SingleValueNumericEnumAttribute<B>::getSearch(QueryTermSimple::UP qTerm,
                                               const attribute::SearchContextParams & params) const
 {
     (void) params;
-    return std::make_unique<attribute::SingleNumericEnumSearchContext<T>>(std::move(qTerm), *this, &this->_enumIndices.acquire_elem_ref(0), this->_enumStore);
+    auto docid_limit = this->getCommittedDocIdLimit();
+    return std::make_unique<attribute::SingleNumericEnumSearchContext<T>>(std::move(qTerm), *this, this->_enumIndices.make_read_view(docid_limit), this->_enumStore);
 }
 
 }

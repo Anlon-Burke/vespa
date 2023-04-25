@@ -32,7 +32,6 @@ private:
     using EnumHandle = typename B::EnumHandle;
     NumericDirectAttribute(const NumericDirectAttribute &);
     NumericDirectAttribute & operator=(const NumericDirectAttribute &);
-    bool onLoad(vespalib::Executor *executor) override;
     typename B::BaseType getFromEnum(EnumHandle e) const override { return _data[e]; }
 protected:
     using BaseType = typename B::BaseType;
@@ -136,8 +135,6 @@ class StringDirectAttribute : public StringAttribute
 private:
     StringDirectAttribute(const StringDirectAttribute &);
     StringDirectAttribute & operator=(const StringDirectAttribute &);
-    void onSave(IAttributeSaveTarget & saveTarget) override;
-    bool onLoad(vespalib::Executor *executor) override;
     const char * getFromEnum(EnumHandle e) const override { return &_buffer[e]; }
     const char * getStringFromEnum(EnumHandle e) const override { return &_buffer[e]; }
     std::unique_ptr<attribute::SearchContext> getSearch(QueryTermSimpleUP term, const attribute::SearchContextParams & params) const override;
@@ -165,16 +162,13 @@ class StringDirectAttrVector : public search::StringDirectAttribute
 public:
     StringDirectAttrVector(const vespalib::string & baseFileName);
     StringDirectAttrVector(const vespalib::string & baseFileName, const Config & c);
-    const char * getString(DocId doc, char * v, size_t sz) const override {
-        (void) v; (void) sz; return getHelper(doc, 0);
-    }
     uint32_t get(DocId doc, const char ** v, uint32_t sz)  const override {
         return getAllHelper(doc, v, sz);
     }
+    const char * get(DocId doc)  const override { return getHelper(doc, 0); }
 private:
     uint32_t get(DocId doc, vespalib::string * v, uint32_t sz)  const override { return getAllHelper(doc, v, sz); }
     uint32_t get(DocId doc, EnumHandle * e, uint32_t sz) const override { return getAllEnumHelper(doc, e, sz); }
-    const char * get(DocId doc)  const override { return getHelper(doc, 0); }
     EnumHandle getEnum(DocId doc)  const override { return getEnumHelper(doc, 0); }
     uint32_t getValueCount(DocId doc) const override { return getValueCountHelper(doc); }
     uint32_t get(DocId doc, WeightedEnum * e, uint32_t sz)  const override { return getAllEnumHelper(doc, e, sz); }

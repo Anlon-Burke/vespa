@@ -201,13 +201,20 @@
   },
   "com.yahoo.prelude.hitfield.RawBase64" : {
     "superClass" : "java.lang.Object",
-    "interfaces" : [ ],
+    "interfaces" : [
+      "java.lang.Comparable"
+    ],
     "attributes" : [
       "public"
     ],
     "methods" : [
       "public void <init>(byte[])",
-      "public java.lang.String toString()"
+      "public byte[] value()",
+      "public int compareTo(com.yahoo.prelude.hitfield.RawBase64)",
+      "public java.lang.String toString()",
+      "public boolean equals(java.lang.Object)",
+      "public int hashCode()",
+      "public bridge synthetic int compareTo(java.lang.Object)"
     ],
     "fields" : [ ]
   },

@@ -43,6 +43,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private double defaultTermwiseLimit = 1.0;
     private String jvmGCOptions = null;
     private String queryDispatchPolicy = "adaptive";
+    private String summaryDecodePolicy = "eager";
     private String sequencerType = "THROUGHPUT";
     private boolean firstTimeDeployment = false;
     private String responseSequencerType = "ADAPTIVE";
@@ -82,6 +83,7 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     private boolean useRestrictedDataPlaneBindings = false;
     private Optional<CloudAccount> cloudAccount = Optional.empty();
     private boolean allowUserFilters = true;
+    private boolean allowMoreThanOneContentGroupDown = false;
 
     @Override public ModelContext.FeatureFlags featureFlags() { return this; }
     @Override public boolean multitenant() { return multitenant; }
@@ -134,10 +136,12 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     @Override public int heapSizePercentage() { return heapSizePercentage; }
     @Override public int rpcEventsBeforeWakeup() { return rpc_events_before_wakeup; }
     @Override public String queryDispatchPolicy() { return queryDispatchPolicy; }
+    @Override public String summaryDecodePolicy() { return summaryDecodePolicy; }
     @Override public boolean useRestrictedDataPlaneBindings() { return useRestrictedDataPlaneBindings; }
     @Override public Optional<CloudAccount> cloudAccount() { return cloudAccount; }
     @Override public boolean allowUserFilters() { return allowUserFilters; }
     @Override public boolean enableGlobalPhase() { return true; } // Enable global-phase by default for unit tests only
+    @Override public boolean allowMoreThanOneContentGroupDown(ClusterSpec.Id id) { return allowMoreThanOneContentGroupDown; }
 
     public TestProperties sharedStringRepoNoReclaim(boolean sharedStringRepoNoReclaim) {
         this.sharedStringRepoNoReclaim = sharedStringRepoNoReclaim;
@@ -189,6 +193,10 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
     }
     public TestProperties setQueryDispatchPolicy(String policy) {
         queryDispatchPolicy = policy;
+        return this;
+    }
+    public TestProperties setSummaryDecodePolicy(String type) {
+        summaryDecodePolicy = type;
         return this;
     }
     public TestProperties setFeedSequencerType(String type) {
@@ -359,6 +367,11 @@ public class TestProperties implements ModelContext.Properties, ModelContext.Fea
 
     public TestProperties setCloudAccount(CloudAccount cloudAccount) {
         this.cloudAccount = Optional.ofNullable(cloudAccount);
+        return this;
+    }
+
+    public TestProperties setAllowMoreThanOneContentGroupDown(boolean allowMoreThanOneContentGroupDown) {
+        this.allowMoreThanOneContentGroupDown = allowMoreThanOneContentGroupDown;
         return this;
     }
 

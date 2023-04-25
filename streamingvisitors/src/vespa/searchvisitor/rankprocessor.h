@@ -50,8 +50,6 @@ private:
      **/
     void init(bool forRanking, size_t wantedHitCount);
 
-    void unpackMatchData(search::fef::MatchData &matchData);
-
 public:
     using UP = std::unique_ptr<RankProcessor>;
 
@@ -65,14 +63,16 @@ public:
     void initForRanking(size_t wantedHitCount);
     void initForDumping(size_t wantedHitCount);
     void unpackMatchData(uint32_t docId);
+    static void unpack_match_data(uint32_t docid, search::fef::MatchData& matchData, QueryWrapper& query);
     void runRankProgram(uint32_t docId);
-    search::FeatureSet::SP calculateFeatureSet();
+    vespalib::FeatureSet::SP calculateFeatureSet();
     void fillSearchResult(vdslib::SearchResult & searchResult);
     const search::fef::MatchData &getMatchData() const { return *_match_data; }
     void setRankScore(double score) { _score = score; } 
     double getRankScore() const { return _score; }
     HitCollector & getHitCollector() { return *_hitCollector; }
     uint32_t getDocId() const { return _docId; }
+    search::fef::IQueryEnvironment& get_query_env() { return _queryEnv; }
 };
 
 } // namespace streaming

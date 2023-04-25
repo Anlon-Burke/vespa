@@ -240,6 +240,24 @@ TEST_F("original lid range is used by read guard", Fixture)
     EXPECT_EQUAL(getUndefined<int>(), first_guard->getInt(DocId(10)));
 }
 
+TEST_F("Original target lid range is used by read guard", Fixture)
+{
+    reset_with_single_value_reference_mappings<IntegerAttribute, int32_t>(
+            f, BasicType::INT32,
+            {});
+    EXPECT_EQUAL(11u, f.target_attr->getNumDocs());
+    auto first_guard = f.get_imported_attr();
+    add_n_docs_with_undefined_values(*f.target_attr, 1);
+    EXPECT_EQUAL(12u, f.target_attr->getNumDocs());
+    auto typed_target_attr = f.template target_attr_as<IntegerAttribute>();
+    ASSERT_TRUE(typed_target_attr->update(11, 2345));
+    f.target_attr->commit();
+    f.map_reference(DocId(8), dummy_gid(11), DocId(11));
+    auto second_guard = f.get_imported_attr();
+    EXPECT_EQUAL(2345, second_guard->getInt(DocId(8)));
+    EXPECT_NOT_EQUAL(2345, first_guard->getInt(DocId(8)));
+}
+
 struct SingleStringAttrFixture : Fixture {
     SingleStringAttrFixture() : Fixture() {
         setup();
@@ -258,9 +276,10 @@ SingleStringAttrFixture::~SingleStringAttrFixture() = default;
 
 TEST_F("Single-valued string attribute values can be retrieved via reference", SingleStringAttrFixture)
 {
-    char buf[64];
-    EXPECT_EQUAL(vespalib::string("foo"), f.get_imported_attr()->getString(DocId(2), buf, sizeof(buf)));
-    EXPECT_EQUAL(vespalib::string("bar"), f.get_imported_attr()->getString(DocId(4), buf, sizeof(buf)));
+    auto buf = f.get_imported_attr()->get_raw(DocId(2));
+    EXPECT_EQUAL(vespalib::stringref("foo"), vespalib::stringref(buf.data(), buf.size()));
+    buf = f.get_imported_attr()->get_raw(DocId(4));
+    EXPECT_EQUAL(vespalib::stringref("bar"), vespalib::stringref(buf.data(), buf.size()));
 }
 
 TEST_F("getEnum() returns target vector enum via reference", SingleStringAttrFixture)

@@ -38,7 +38,7 @@ namespace streaming {
  * @class storage::SearchVisitor
  *
  * @brief Visitor that applies a search query to visitor data and
- * converts them to a SearchResultCommand and a DocumentSummaryCommand.
+ * converts them to a QueryResultCommand.
  **/
 class SearchVisitor : public storage::Visitor {
 public:
@@ -258,6 +258,13 @@ private:
      **/
     void setupFieldSearchers(const std::vector<vespalib::string> & additionalFields,
                              vsm::StringFieldIdTMap & fieldsInQuery);
+
+    /**
+     * Prepare the field searchers for the given query.
+     * This includes connecting the query terms searching a given field to that field searcher,
+     * and setting up objects in the field searcher needed when matching later on.
+     **/
+    void prepare_field_searchers();
 
     /**
      * Setup snippet modifiers for the fields where we have substring search.

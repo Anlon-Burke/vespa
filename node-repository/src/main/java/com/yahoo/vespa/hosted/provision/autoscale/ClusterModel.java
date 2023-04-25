@@ -113,10 +113,6 @@ public class ClusterModel {
     public ClusterSpec clusterSpec() { return clusterSpec; }
     public Cluster cluster() { return cluster; }
 
-    public String description() {
-        return nodeTimeseries.description();
-    }
-
     public boolean isEmpty() {
         return nodeTimeseries().isEmpty();
     }
@@ -247,8 +243,10 @@ public class ClusterModel {
     }
 
     private boolean hasScaledIn(Duration period) {
-        return cluster.lastScalingEvent().map(event -> event.at()).orElse(Instant.MIN)
-                      .isAfter(clock.instant().minus(period));
+        if (cluster.lastScalingEvent().isEmpty()) return false;
+        var lastCompletion = cluster.lastScalingEvent().get().completion();
+        if (lastCompletion.isEmpty()) return true; // Ongoing
+        return lastCompletion.get().isAfter(clock.instant().minus(period));
     }
 
     private ClusterNodesTimeseries nodeTimeseries() { return nodeTimeseries; }

@@ -25,6 +25,7 @@ import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import static com.yahoo.vespa.model.container.PlatformBundles.SEARCH_AND_DOCPROC_BUNDLE;
 
@@ -46,6 +47,7 @@ public class ContainerSearch extends ContainerSubsystem<SearchChains>
 
     private final ApplicationContainerCluster owningCluster;
     private final List<SearchCluster> searchClusters = new LinkedList<>();
+    private final Collection<String> schemasWithGlobalPhase;
     private final boolean globalPhase;
 
     private QueryProfiles queryProfiles;
@@ -55,6 +57,7 @@ public class ContainerSearch extends ContainerSubsystem<SearchChains>
     public ContainerSearch(DeployState deployState, ApplicationContainerCluster cluster, SearchChains chains) {
         super(chains);
         this.globalPhase = deployState.featureFlags().enableGlobalPhase();
+        this.schemasWithGlobalPhase = getSchemasWithGlobalPhase(deployState);
         this.owningCluster = cluster;
 
         owningCluster.addComponent(Component.fromClassAndBundle(CompiledQueryProfileRegistry.class, SEARCH_AND_DOCPROC_BUNDLE));
@@ -63,6 +66,11 @@ public class ContainerSearch extends ContainerSubsystem<SearchChains>
         owningCluster.addComponent(Component.fromClassAndBundle(RankProfilesEvaluatorFactory.class, SEARCH_AND_DOCPROC_BUNDLE));
         owningCluster.addComponent(Component.fromClassAndBundle(com.yahoo.search.ranking.GlobalPhaseRanker.class, SEARCH_AND_DOCPROC_BUNDLE));
         cluster.addSearchAndDocprocBundles();
+    }
+
+    private static Collection<String> getSchemasWithGlobalPhase(DeployState state) {
+        return state.rankProfileRegistry().all().stream()
+                .filter(rp -> rp.getGlobalPhase() != null).map(rp -> rp.schema().getName()).collect(Collectors.toSet());
     }
 
     public void connectSearchClusters(Map<String, SearchCluster> searchClusters) {
@@ -77,12 +85,13 @@ public class ContainerSearch extends ContainerSubsystem<SearchChains>
             if (searchCluster instanceof IndexedSearchCluster indexed) {
                 var dispatcher = new DispatcherComponent(indexed);
                 owningCluster.addComponent(dispatcher);
-                if (globalPhase) {
-                    for (var documentDb : indexed.getDocumentDbs()) {
-                        var factory = new RankProfilesEvaluatorComponent(documentDb);
-                        if (! owningCluster.getComponentsMap().containsKey(factory.getComponentId())) {
-                            owningCluster.addComponent(factory);
-                        }
+            }
+            if (globalPhase) {
+                for (var documentDb : searchCluster.getDocumentDbs()) {
+                    if (!schemasWithGlobalPhase.contains(documentDb.getSchemaName())) continue;
+                    var factory = new RankProfilesEvaluatorComponent(documentDb);
+                    if (! owningCluster.getComponentsMap().containsKey(factory.getComponentId())) {
+                        owningCluster.addComponent(factory);
                     }
                 }
             }
@@ -148,17 +157,17 @@ public class ContainerSearch extends ContainerSubsystem<SearchChains>
     public void getConfig(QrSearchersConfig.Builder builder) {
         for (int i = 0; i < searchClusters.size(); i++) {
             SearchCluster sys = findClusterWithId(searchClusters, i);
-                QrSearchersConfig.Searchcluster.Builder scB = new QrSearchersConfig.Searchcluster.Builder().
-                                name(sys.getClusterName());
-                for (SchemaInfo spec : sys.schemas().values()) {
-                        scB.searchdef(spec.fullSchema().getName());
-                }
-                scB.rankprofiles(new QrSearchersConfig.Searchcluster.Rankprofiles.Builder().configid(sys.getConfigId()));
-                scB.indexingmode(QrSearchersConfig.Searchcluster.Indexingmode.Enum.valueOf(sys.getIndexingModeName()));
-                if ( ! (sys instanceof IndexedSearchCluster)) {
+            QrSearchersConfig.Searchcluster.Builder scB = new QrSearchersConfig.Searchcluster.Builder().
+                    name(sys.getClusterName());
+            for (SchemaInfo spec : sys.schemas().values()) {
+                scB.searchdef(spec.fullSchema().getName());
+            }
+            scB.rankprofiles(new QrSearchersConfig.Searchcluster.Rankprofiles.Builder().configid(sys.getConfigId()));
+            scB.indexingmode(QrSearchersConfig.Searchcluster.Indexingmode.Enum.valueOf(sys.getIndexingModeName()));
+            scB.globalphase(globalPhase);
+            if ( ! (sys instanceof IndexedSearchCluster)) {
                 scB.storagecluster(new QrSearchersConfig.Searchcluster.Storagecluster.Builder().
-                                routespec(((StreamingSearchCluster)sys).getStorageRouteSpec()));
-                scB.globalphase(globalPhase);
+                                           routespec(((StreamingSearchCluster)sys).getStorageRouteSpec()));
             }
             builder.searchcluster(scB);
         }

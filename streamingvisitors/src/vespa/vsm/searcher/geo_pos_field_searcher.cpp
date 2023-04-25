@@ -28,10 +28,14 @@ GeoPosFieldSearcher::GeoPosFieldSearcher(FieldIdT fId) :
 
 GeoPosFieldSearcher::~GeoPosFieldSearcher() {}
 
-void GeoPosFieldSearcher::prepare(QueryTermList & qtl, const SharedSearcherBuf & buf) {
+void GeoPosFieldSearcher::prepare(search::streaming::QueryTermList& qtl,
+                                  const SharedSearcherBuf& buf,
+                                  const vsm::FieldPathMapT& field_paths,
+                                  search::fef::IQueryEnvironment& query_env)
+{
     _geoPosTerm.clear();
-    FieldSearcher::prepare(qtl, buf);
-    for (const QueryTerm * qt : qtl) {
+    FieldSearcher::prepare(qtl, buf, field_paths, query_env);
+    for (auto qt : qtl) {
         const vespalib::string & str = qt->getTermString();
         GeoLocationParser parser;
         bool valid = parser.parseNoField(str);

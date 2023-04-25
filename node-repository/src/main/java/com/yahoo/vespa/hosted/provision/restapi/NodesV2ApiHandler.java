@@ -5,8 +5,10 @@ import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationLockException;
 import com.yahoo.config.provision.CloudAccount;
+import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.HostFilter;
+import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
@@ -33,7 +35,6 @@ import com.yahoo.vespa.hosted.provision.NodeMutex;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.applications.Application;
 import com.yahoo.vespa.hosted.provision.autoscale.Load;
-import com.yahoo.vespa.hosted.provision.node.Address;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.node.filter.ApplicationFilter;
@@ -186,7 +187,7 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
                 return new MessageResponse("Updated " + patcher.application());
             }
         }
-        else if (path.matches("/nodes/v2/archive/account/{key}") || path.matches("/nodes/v2/archive/tenant/{key}") || path.matches("/nodes/v2/archive/{key}") /* TODO (freva): Remove March 2023 */) {
+        else if (path.matches("/nodes/v2/archive/account/{key}") || path.matches("/nodes/v2/archive/tenant/{key}")) {
             String uri = requiredField(toSlime(request), "uri", Inspector::asString);
             return setArchiveUri(path.get("key"), Optional.of(uri), !path.getPath().segments().get(3).equals("account"));
         }
@@ -222,6 +223,11 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
         }
         if (path.matches("/nodes/v2/maintenance/run/{job}")) return runJob(path.get("job"));
         if (path.matches("/nodes/v2/upgrade/firmware")) return requestFirmwareCheckResponse();
+        if (path.matches("/nodes/v2/application/{applicationId}/drop-documents")) {
+            int count = nodeRepository.nodes().dropDocuments(ApplicationId.fromFullString(path.get("applicationId")),
+                    Optional.ofNullable(request.getProperty("clusterId")).map(ClusterSpec.Id::from)).size();
+            return new MessageResponse("Triggered dropping of documents on " + count + " nodes");
+        }
 
         throw new NotFoundException("Nothing at path '" + request.getUri().getPath() + "'");
     }
@@ -229,7 +235,7 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
     private HttpResponse handleDELETE(HttpRequest request) {
         Path path = new Path(request.getUri());
         if (path.matches("/nodes/v2/node/{hostname}")) return deleteNode(path.get("hostname"));
-        if (path.matches("/nodes/v2/archive/account/{key}") || path.matches("/nodes/v2/archive/tenant/{key}") || path.matches("/nodes/v2/archive/{key}") /* TODO (freva): Remove March 2023) */)
+        if (path.matches("/nodes/v2/archive/account/{key}") || path.matches("/nodes/v2/archive/tenant/{key}"))
             return setArchiveUri(path.get("key"), Optional.empty(), !path.getPath().segments().get(3).equals("account"));
         if (path.matches("/nodes/v2/upgrade/firmware")) return cancelFirmwareCheckResponse();
 
@@ -281,12 +287,12 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
         Set<String> ipAddressPool = new HashSet<>();
         inspector.field("additionalIpAddresses").traverse((ArrayTraverser) (i, item) -> ipAddressPool.add(item.asString()));
 
-        List<Address> addressPool = new ArrayList<>();
+        List<HostName> hostnames = new ArrayList<>();
         inspector.field("additionalHostnames").traverse((ArrayTraverser) (i, item) ->
-                addressPool.add(new Address(item.asString())));
+                hostnames.add(HostName.of(item.asString())));
 
         Node.Builder builder = Node.create(inspector.field("id").asString(),
-                                           IP.Config.of(ipAddresses, ipAddressPool, addressPool),
+                                           IP.Config.of(ipAddresses, ipAddressPool, hostnames),
                                            inspector.field("hostname").asString(),
                                            flavorFromSlime(inspector),
                                            nodeTypeFromSlime(inspector.field("type")))
@@ -482,14 +488,14 @@ public class NodesV2ApiHandler extends ThreadedHttpRequestHandler {
         return new SlimeJsonResponse(slime);
     }
 
-    private void toSlime(Load load, Cursor object) {
+    private static void toSlime(Load load, Cursor object) {
         object.setDouble("cpu", load.cpu());
         object.setDouble("memory", load.memory());
         object.setDouble("disk", load.disk());
     }
 
     /** Returns a copy of the given URI with the host and port from the given URI and the path set to the given path */
-    private URI withPath(String newPath, URI uri) {
+    private static URI withPath(String newPath, URI uri) {
         try {
             return new URI(uri.getScheme(), uri.getUserInfo(), uri.getHost(), uri.getPort(), newPath, null, null);
         }

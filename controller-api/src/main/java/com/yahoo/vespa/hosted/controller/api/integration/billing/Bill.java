@@ -116,6 +116,10 @@ public class Bill {
         return sumResourceValues(LineItem::getDiskCost);
     }
 
+    public BigDecimal sumGpuCost() {
+        return sumResourceValues(LineItem::getGpuCost);
+    }
+
     public BigDecimal sumAdditionalCost() {
         // anything that is not covered by the cost for resources is "additional" costs
         var resourceCosts = sumCpuCost().add(sumMemoryCost()).add(sumDiskCost());
@@ -185,10 +189,13 @@ public class Bill {
         private BigDecimal cpuHours;
         private BigDecimal memoryHours;
         private BigDecimal diskHours;
+        private BigDecimal gpuHours;
         private BigDecimal cpuCost;
         private BigDecimal memoryCost;
         private BigDecimal diskCost;
+        private BigDecimal gpuCost;
         private NodeResources.Architecture architecture;
+        private int majorVersion;
 
         public LineItem(String id, String description, BigDecimal amount, String plan, String agent, ZonedDateTime addedAt) {
             this.id = id;
@@ -200,7 +207,7 @@ public class Bill {
         }
 
         public LineItem(String id, String description, BigDecimal amount, String plan, String agent, ZonedDateTime addedAt, ZonedDateTime startedAt, ZonedDateTime endedAt, ApplicationId applicationId, ZoneId zoneId,
-                        BigDecimal cpuHours, BigDecimal memoryHours, BigDecimal diskHours, BigDecimal cpuCost, BigDecimal memoryCost, BigDecimal diskCost, NodeResources.Architecture architecture) {
+                        BigDecimal cpuHours, BigDecimal memoryHours, BigDecimal diskHours, BigDecimal gpuHours, BigDecimal cpuCost, BigDecimal memoryCost, BigDecimal diskCost, BigDecimal gpuCost, NodeResources.Architecture architecture, int majorVersion) {
             this(id, description, amount, plan, agent, addedAt);
             this.startedAt = startedAt;
             this.endedAt = endedAt;
@@ -213,10 +220,13 @@ public class Bill {
             this.cpuHours = cpuHours;
             this.memoryHours = memoryHours;
             this.diskHours = diskHours;
+            this.gpuHours = gpuHours;
             this.cpuCost = cpuCost;
             this.memoryCost = memoryCost;
             this.diskCost = diskCost;
             this.architecture = architecture;
+            this.majorVersion = majorVersion;
+            this.gpuCost = gpuCost;
         }
 
         /** The opaque ID of this */
@@ -281,6 +291,10 @@ public class Bill {
             return Optional.ofNullable(diskHours);
         }
 
+        public Optional<BigDecimal> getGpuHours() {
+            return Optional.ofNullable(gpuHours);
+        }
+
         public Optional<BigDecimal> getCpuCost() {
             return Optional.ofNullable(cpuCost);
         }
@@ -293,8 +307,16 @@ public class Bill {
             return Optional.ofNullable(diskCost);
         }
 
+        public Optional<BigDecimal> getGpuCost() {
+            return Optional.ofNullable(gpuCost);
+        }
+
         public Optional<NodeResources.Architecture> getArchitecture() {
             return Optional.ofNullable(architecture);
+        }
+
+        public int getMajorVersion() {
+            return majorVersion;
         }
 
         @Override
@@ -311,12 +333,13 @@ public class Bill {
                     startedAt.equals(lineItem.startedAt) &&
                     endedAt.equals(lineItem.endedAt) &&
                     applicationId.equals(lineItem.applicationId) &&
-                    zoneId.equals(lineItem.zoneId);
+                    zoneId.equals(lineItem.zoneId) &&
+                    majorVersion == lineItem.majorVersion;
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(id, description, amount, plan, agent, addedAt, startedAt, endedAt, applicationId, zoneId);
+            return Objects.hash(id, description, amount, plan, agent, addedAt, startedAt, endedAt, applicationId, zoneId, majorVersion);
         }
 
         @Override

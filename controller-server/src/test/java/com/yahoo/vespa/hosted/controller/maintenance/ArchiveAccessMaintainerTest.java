@@ -7,7 +7,6 @@ import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.jdisc.test.MockMetric;
 import com.yahoo.vespa.hosted.controller.ControllerTester;
 import com.yahoo.vespa.hosted.controller.LockedTenant;
-import com.yahoo.vespa.hosted.controller.api.integration.archive.ArchiveBucket;
 import com.yahoo.vespa.hosted.controller.api.integration.archive.MockArchiveService;
 import com.yahoo.vespa.hosted.controller.tenant.ArchiveAccess;
 import com.yahoo.vespa.hosted.controller.tenant.Tenant;
@@ -15,8 +14,6 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -37,7 +34,6 @@ public class ArchiveAccessMaintainerTest {
 
         ZoneId testZone = ZoneId.from("prod.aws-us-east-1c");
         tester.controller().archiveBucketDb().archiveUriFor(testZone, tenant1, true);
-        var testBucket = new ArchiveBucket("bucketName", "keyArn").withTenant(tenant1);
 
         MockArchiveService archiveService = (MockArchiveService) tester.controller().serviceRegistry().archiveService();
 
@@ -47,10 +43,12 @@ public class ArchiveAccessMaintainerTest {
         assertEquals(new ArchiveAccess().withAWSRole(tenant1role), archiveService.authorizeAccessByTenantName.get(tenant1));
         assertEquals(new ArchiveAccess().withAWSRole(tenant2role), archiveService.authorizeAccessByTenantName.get(tenant2));
 
+        var zoneRegistry = tester.controller().zoneRegistry();
         var expected = Map.of("archive.bucketCount",
-                tester.controller().zoneRegistry().zonesIncludingSystem().all().ids().stream()
+                zoneRegistry.zonesIncludingSystem().all().ids().stream()
                         .collect(Collectors.toMap(
-                                zone -> Map.of("zone", zone.value(), "cloud", "default"),
+                                zone -> Map.of("zone", zone.value(), "cloud",
+                                        zoneRegistry.hasZone(zone) ? zoneRegistry.get(zone).getCloudName().value() : "default"),
                                 zone -> zone.equals(testZone) ? 1d : 0d)));
 
         assertEquals(expected, metric.metrics());

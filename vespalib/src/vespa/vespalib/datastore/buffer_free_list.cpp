@@ -20,9 +20,8 @@ BufferFreeList::detach()
     _free_list->detach(*this);
 }
 
-BufferFreeList::BufferFreeList(std::atomic<ElemCount>& dead_elems)
-    : _dead_elems(dead_elems),
-      _array_size(0),
+BufferFreeList::BufferFreeList(std::atomic<EntryCount>& dead_entries)
+    : _dead_entries(dead_entries),
       _free_list(),
       _free_refs()
 {
@@ -50,6 +49,24 @@ BufferFreeList::disable()
         EntryRefArray().swap(_free_refs);
     }
     _free_list = nullptr;
+}
+
+void
+BufferFreeList::push_entry(EntryRef ref) {
+    if (empty()) {
+        attach();
+    }
+    _free_refs.push_back(ref);
+}
+EntryRef
+BufferFreeList::pop_entry() {
+    EntryRef ret = _free_refs.back();
+    _free_refs.pop_back();
+    if (empty()) {
+        detach();
+    }
+    _dead_entries.store(_dead_entries.load(std::memory_order_relaxed) - 1, std::memory_order_relaxed);
+    return ret;
 }
 
 }

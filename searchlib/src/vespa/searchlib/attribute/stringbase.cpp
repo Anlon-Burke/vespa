@@ -27,19 +27,6 @@ StringAttribute::countZero(const char * bt, size_t sz)
     return size;
 }
 
-void
-StringAttribute::generateOffsets(const char * bt, size_t sz, OffsetVector & offsets)
-{
-    offsets.clear();
-    uint32_t start(0);
-    for (size_t i(0); i < sz; i++) {
-        if (bt[i] == '\0') {
-            offsets.push_back(start);
-            start = i + 1;
-        }
-    }
-}
-
 StringAttribute::StringAttribute(const vespalib::string & name) :
     AttributeVector(name, Config(BasicType::STRING)),
     _changes(),
@@ -85,6 +72,13 @@ StringAttribute::getFloat(DocId doc) const {
     return vespalib::locale::c::strtod(get(doc), nullptr);
 }
 
+vespalib::ConstArrayRef<char>
+StringAttribute::get_raw(DocId doc) const
+{
+    const char * s = get(doc);
+    return {s, s ? ::strlen(s) : 0u};
+}
+
 uint32_t
 StringAttribute::get(DocId doc, double * v, uint32_t sz) const
 {
@@ -112,7 +106,6 @@ StringAttribute::get(DocId doc, largeint_t * v, uint32_t sz) const
 long
 StringAttribute::onSerializeForAscendingSort(DocId doc, void * serTo, long available, const common::BlobConverter * bc) const
 {
-    auto *dst = static_cast<unsigned char *>(serTo);
     const char *value(get(doc));
     int size = strlen(value) + 1;
     vespalib::ConstBufferRef buf(value, size);
@@ -120,7 +113,7 @@ StringAttribute::onSerializeForAscendingSort(DocId doc, void * serTo, long avail
         buf = bc->convert(buf);
     }
     if (available >= (long)buf.size()) {
-        memcpy(dst, buf.data(), buf.size());
+        memcpy(serTo, buf.data(), buf.size());
     } else {
         return -1;
     }
@@ -130,8 +123,6 @@ StringAttribute::onSerializeForAscendingSort(DocId doc, void * serTo, long avail
 long
 StringAttribute::onSerializeForDescendingSort(DocId doc, void * serTo, long available, const common::BlobConverter * bc) const
 {
-    (void) bc;
-    auto *dst = static_cast<unsigned char *>(serTo);
     const char *value(get(doc));
     int size = strlen(value) + 1;
     vespalib::ConstBufferRef buf(value, size);
@@ -139,6 +130,7 @@ StringAttribute::onSerializeForDescendingSort(DocId doc, void * serTo, long avai
         buf = bc->convert(buf);
     }
     if (available >= (long)buf.size()) {
+        auto *dst = static_cast<unsigned char *>(serTo);
         const auto * src(static_cast<const uint8_t *>(buf.data()));
         for (size_t i(0); i < buf.size(); ++i) {
             dst[i] = 0xff - src[i];
@@ -230,6 +222,10 @@ StringAttribute::onLoad(vespalib::Executor *)
     if (!ok) {
         return false;
     }
+
+    getEnumStoreBase()->clear_default_value_ref();
+    commit();
+    incGeneration();
 
     setCreateSerialNum(attrReader.getCreateSerialNum());
 

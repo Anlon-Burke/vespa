@@ -15,29 +15,39 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
-import java.util.stream.Collectors;
 
 import static com.yahoo.vdslib.state.NodeState.ORCHESTRATOR_RESERVED_DESCRIPTION;
 
 public class ContentCluster {
 
+    private static final int pollingFrequency = 5000;
+
     private final String clusterName;
-
     private final ClusterInfo clusterInfo = new ClusterInfo();
-
     private final Map<Node, Long> nodeStartTimestamps = new TreeMap<>();
 
     private int slobrokGenerationCount = 0;
-
-    private int pollingFrequency = 5000;
-
     private Distribution distribution;
 
+    private final int maxNumberOfGroupsAllowedToBeDown;
+
     public ContentCluster(String clusterName, Collection<ConfiguredNode> configuredNodes, Distribution distribution) {
+        this(clusterName, configuredNodes, distribution, -1);
+    }
+
+    public ContentCluster(FleetControllerOptions options) {
+        this(options.clusterName(), options.nodes(), options.storageDistribution(), options.maxNumberOfGroupsAllowedToBeDown());
+    }
+
+    ContentCluster(String clusterName,
+                   Collection<ConfiguredNode> configuredNodes,
+                   Distribution distribution,
+                   int maxNumberOfGroupsAllowedToBeDown) {
         if (configuredNodes == null) throw new IllegalArgumentException("Nodes must be set");
         this.clusterName = clusterName;
         this.distribution = distribution;
         setNodes(configuredNodes, new NodeListener() {});
+        this.maxNumberOfGroupsAllowedToBeDown = maxNumberOfGroupsAllowedToBeDown;
     }
 
     public Distribution getDistribution() { return distribution; }
@@ -78,7 +88,6 @@ public class ContentCluster {
     }
 
     public int getPollingFrequency() { return pollingFrequency; }
-    public void setPollingFrequency(int millisecs) { pollingFrequency = millisecs; }
 
     /** Returns the configured nodes of this as a read-only map indexed on node index (distribution key) */
     public Map<Integer, ConfiguredNode> getConfiguredNodes() {
@@ -94,6 +103,8 @@ public class ContentCluster {
     public String getName() { return clusterName; }
 
     public NodeInfo getNodeInfo(Node node) { return clusterInfo.getNodeInfo(node); }
+
+    public int maxNumberOfGroupsAllowedToBeDown() { return maxNumberOfGroupsAllowedToBeDown; }
 
     public String toString() {
         StringBuilder sb = new StringBuilder();
@@ -116,40 +127,35 @@ public class ContentCluster {
      * @param clusterState the current cluster state version
      * @param condition the upgrade condition
      * @param oldState the old/current wanted state
-     * @param newState state wanted to be set  @return NodeUpgradePrechecker.Response
+     * @param newState state wanted to be set
      * @param inMoratorium whether the CC is in moratorium
      */
     public NodeStateChangeChecker.Result calculateEffectOfNewState(
             Node node, ClusterState clusterState, SetUnitStateRequest.Condition condition,
             NodeState oldState, NodeState newState, boolean inMoratorium) {
 
-        NodeStateChangeChecker nodeStateChangeChecker = new NodeStateChangeChecker(
-                distribution.getRedundancy(),
-                new HierarchicalGroupVisitingAdapter(distribution),
-                clusterInfo,
-                inMoratorium
-        );
+        NodeStateChangeChecker nodeStateChangeChecker = new NodeStateChangeChecker(this, inMoratorium);
         return nodeStateChangeChecker.evaluateTransition(node, clusterState, condition, oldState, newState);
     }
 
     /** Returns the indices of the nodes that have been safely set to the given state by the Orchestrator (best guess). */
     public List<Integer> nodesSafelySetTo(State state) {
-        switch (state) {
-            case MAINTENANCE:  // Orchestrator's ALLOWED_TO_BE_DOWN
-            case DOWN:  // Orchestrator's PERMANENTLY_DOWN
-                return clusterInfo.getStorageNodeInfos().stream()
-                                  .filter(storageNodeInfo -> {
-                            NodeState userWantedState = storageNodeInfo.getUserWantedState();
-                            return userWantedState.getState() == state &&
-                                    Objects.equals(userWantedState.getDescription(), ORCHESTRATOR_RESERVED_DESCRIPTION);
-                        })
-                                  .map(NodeInfo::getNodeIndex)
-                                  .toList();
-            default:
-                // Note: There is no trace left if the Orchestrator set the state to UP, so that's handled
-                // like any other state:
-                return List.of();
-        }
+        return switch (state) {
+            // Orchestrator's ALLOWED_TO_BE_DOWN or PERMANENTLY_DOWN, respectively
+            case MAINTENANCE, DOWN ->
+                    clusterInfo.getStorageNodeInfos().stream()
+                               .filter(storageNodeInfo -> {
+                                   NodeState userWantedState = storageNodeInfo.getUserWantedState();
+                                   return userWantedState.getState() == state &&
+                                           Objects.equals(userWantedState.getDescription(), ORCHESTRATOR_RESERVED_DESCRIPTION);
+                               })
+                               .map(NodeInfo::getNodeIndex)
+                               .toList();
+            default ->
+                    // Note: There is no trace left if the Orchestrator sets the state to UP, so that's handled
+                    // like any other state:
+                    List.of();
+        };
     }
 
     public boolean hasConfiguredNode(int index) {

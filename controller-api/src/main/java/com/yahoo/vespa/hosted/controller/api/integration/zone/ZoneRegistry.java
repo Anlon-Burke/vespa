@@ -23,6 +23,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 /**
@@ -38,6 +39,9 @@ public interface ZoneRegistry {
     /** Returns whether cloudAccount in this system supports given zone */
     boolean hasZone(ZoneId zoneId, CloudAccount cloudAccount);
 
+    /** Returns whether the given cloud account is an enclave */
+    boolean isEnclave(CloudAccount cloudAccount);
+
     /** Returns a list containing the id of all zones in this registry */
     ZoneFilter zones();
 
@@ -46,6 +50,9 @@ public interface ZoneRegistry {
 
     /** Returns the default region for the given environment, if one is configured */
     Optional<RegionName> getDefaultRegion(Environment environment);
+
+    /** Throws {@link NoSuchElementException} if there is no such zone (in the system). */
+    ZoneApi get(ZoneId zoneId);
 
     /** Returns the URI for the config server VIP in the given zone */
     URI getConfigServerVipUri(ZoneId zoneId);

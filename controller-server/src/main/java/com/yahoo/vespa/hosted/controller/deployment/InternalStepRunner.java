@@ -1,7 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.deployment;
 
-import ai.vespa.http.DomainName;
 import ai.vespa.http.HttpURL;
 import com.yahoo.component.Version;
 import com.yahoo.config.application.api.DeploymentSpec;
@@ -249,7 +248,7 @@ public class InternalStepRunner implements StepRunner {
                 }
                 case LOAD_BALANCER_NOT_READY, PARENT_HOST_NOT_READY -> {
                     logger.log(e.message()); // Consider splitting these messages in summary and details, on config server.
-                    Instant someTimeAfterStart = startTime.plusSeconds(450);
+                    Instant someTimeAfterStart = startTime.plusSeconds(200);
                     Instant inALittleWhile = controller.clock().instant().plusSeconds(90);
                     controller.jobController().locked(id, run -> run.sleepingUntil(someTimeAfterStart.isAfter(inALittleWhile) ? someTimeAfterStart : inALittleWhile));
                     return result;
@@ -280,7 +279,7 @@ public class InternalStepRunner implements StepRunner {
             switch (e.type()) {
                 case CERT_NOT_AVAILABLE:
                     // Same as CERTIFICATE_NOT_READY above, only from the controller
-                    logger.log("Creating a CA signed certificate for the application. " +
+                    logger.log("Retrieving CA signed certificate for the application. " +
                                "This may take up to " + timeouts.endpointCertificate() + " on first deployment.");
                     if (startTime.plus(timeouts.endpointCertificate()).isBefore(controller.clock().instant())) {
                         logger.log(WARNING, "CA signed certificate for app not available within " +
@@ -438,7 +437,7 @@ public class InternalStepRunner implements StepRunner {
         Version targetPlatform = controller.jobController().run(id).versions().targetPlatform();
         Version systemVersion = controller.readSystemVersion();
         boolean incompatible = controller.applications().versionCompatibility(id.application()).refuse(targetPlatform, systemVersion);
-        return incompatible || application(id.application()).change().isPinned() ? targetPlatform : systemVersion;
+        return incompatible || application(id.application()).change().isPlatformPinned() ? targetPlatform : systemVersion;
     }
 
     private Optional<RunStatus> installTester(RunId id, DualLogger logger) {

@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "array_store_type_mapper.h"
+#include "array_store_simple_type_mapper.h"
 #include "array_store_config.h"
 #include "buffer_type.h"
 #include "bufferstate.h"
@@ -19,7 +19,7 @@
 namespace vespalib::datastore {
 
 /**
- * Datastore for storing arrays of type EntryT that is accessed via a 32-bit EntryRef.
+ * Datastore for storing arrays of type ElemT that is accessed via a 32-bit EntryRef.
  *
  * The default EntryRef type uses 19 bits for offset (524288 values) and 13 bits for buffer id (8192 buffers).
  *
@@ -29,27 +29,29 @@ namespace vespalib::datastore {
  *
  * The max value of maxSmallArrayTypeId is (2^bufferBits - 1).
  */
-template <typename EntryT, typename RefT = EntryRefT<19>, typename TypeMapperT = ArrayStoreTypeMapper<EntryT> >
+template <typename ElemT, typename RefT = EntryRefT<19>, typename TypeMapperT = ArrayStoreSimpleTypeMapper<ElemT> >
 class ArrayStore : public ICompactable
 {
 public:
     using AllocSpec = ArrayStoreConfig::AllocSpec;
-    using ArrayRef = vespalib::ArrayRef<EntryT>;
-    using ConstArrayRef = vespalib::ConstArrayRef<EntryT>;
+    using ArrayRef = vespalib::ArrayRef<ElemT>;
+    using ConstArrayRef = vespalib::ConstArrayRef<ElemT>;
     using DataStoreType  = DataStoreT<RefT>;
-    using LargeArray = vespalib::Array<EntryT>;
+    using ElemType = ElemT;
+    using LargeArray = vespalib::Array<ElemT>;
     using LargeBufferType = typename TypeMapperT::LargeBufferType;
+    using RefType = RefT;
     using SmallBufferType = typename TypeMapperT::SmallBufferType;
     using TypeMapper = TypeMapperT;
 private:
-    uint32_t _largeArrayTypeId;
-    uint32_t _maxSmallArrayTypeId;
-    size_t _maxSmallArraySize;
-    DataStoreType _store;
-    TypeMapper _mapper;
+    uint32_t                     _largeArrayTypeId;
+    uint32_t                     _maxSmallArrayTypeId;
+    size_t                       _maxSmallArraySize;
+    DataStoreType                _store;
+    TypeMapper                   _mapper;
     std::vector<SmallBufferType> _smallArrayTypes;
-    LargeBufferType _largeArrayType;
-    CompactionSpec _compaction_spec;
+    LargeBufferType              _largeArrayType;
+    CompactionSpec               _compaction_spec;
     using generation_t = vespalib::GenerationHandler::generation_t;
 
     void initArrayTypes(const ArrayStoreConfig &cfg, std::shared_ptr<alloc::MemoryAllocator> memory_allocator);
@@ -58,7 +60,7 @@ private:
     EntryRef addLargeArray(const ConstArrayRef &array);
     EntryRef allocate_large_array(size_t array_size);
     ConstArrayRef getSmallArray(RefT ref, size_t arraySize) const {
-        const EntryT *buf = _store.template getEntryArray<EntryT>(ref, arraySize);
+        const ElemT *buf = _store.template getEntryArray<ElemT>(ref, arraySize);
         return ConstArrayRef(buf, arraySize);
     }
     ConstArrayRef getLargeArray(RefT ref) const {
@@ -76,17 +78,16 @@ public:
             return ConstArrayRef();
         }
         RefT internalRef(ref);
-        uint32_t typeId = _store.getTypeId(internalRef.bufferId());
-        if (typeId != _largeArrayTypeId) [[likely]] {
-            size_t arraySize = _mapper.get_array_size(typeId);
-            return getSmallArray(internalRef, arraySize);
+        const BufferAndMeta & bufferAndMeta = _store.getBufferMeta(internalRef.bufferId());
+        if (bufferAndMeta.getTypeId() != _largeArrayTypeId) [[likely]] {
+            return getSmallArray(internalRef, bufferAndMeta.getArraySize());
         } else {
             return getLargeArray(internalRef);
         }
     }
 
     /**
-     * Allocate an array of the given size without any instantiation of EntryT elements.
+     * Allocate an array of the given size without any instantiation of ElemT elements.
      *
      * Use get_writable() to get a reference to the array for writing.
      *
@@ -112,7 +113,7 @@ public:
     // Use this if references to array store is not an array of AtomicEntryRef
     std::unique_ptr<CompactingBuffers> start_compact_worst_buffers(const CompactionStrategy &compaction_strategy);
 
-    vespalib::MemoryUsage getMemoryUsage() const { return _store.getMemoryUsage(); }
+    vespalib::MemoryUsage getMemoryUsage() const;
     vespalib::MemoryUsage update_stat(const CompactionStrategy& compaction_strategy);
     bool consider_compact() const noexcept { return _compaction_spec.compact() && !_store.has_held_buffers(); }
 
@@ -139,7 +140,7 @@ public:
     static DataStoreBase& get_data_store_base(ArrayStore &self) { return self._store; }
 
     // Should only be used for unit testing
-    const BufferState &bufferState(EntryRef ref) const;
+    const BufferState &bufferState(EntryRef ref);
 
     bool has_free_lists_enabled() const { return _store.has_free_lists_enabled(); }
     bool has_held_buffers() const noexcept { return _store.has_held_buffers(); }
@@ -149,14 +150,14 @@ public:
     static ArrayStoreConfig optimizedConfigForHugePage(uint32_t maxSmallArrayTypeId,
                                                        size_t hugePageSize,
                                                        size_t smallPageSize,
-                                                       size_t minNumArraysForNewBuffer,
+                                                       size_t min_num_entries_for_new_buffer,
                                                        float allocGrowFactor);
 
     static ArrayStoreConfig optimizedConfigForHugePage(uint32_t maxSmallArrayTypeId,
                                                        const TypeMapper& mapper,
                                                        size_t hugePageSize,
                                                        size_t smallPageSize,
-                                                       size_t minNumArraysForNewBuffer,
+                                                       size_t min_num_entries_for_new_buffer,
                                                        float allocGrowFactor);
 };
 

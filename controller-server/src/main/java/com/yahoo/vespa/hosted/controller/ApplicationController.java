@@ -30,6 +30,7 @@ import com.yahoo.vespa.hosted.controller.api.application.v4.model.DeploymentData
 import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.identifiers.InstanceId;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingController;
+import com.yahoo.vespa.hosted.controller.api.integration.billing.Plan;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.Quota;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateMetadata;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.ApplicationReindexing;
@@ -47,6 +48,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.TesterId;
 import com.yahoo.vespa.hosted.controller.api.integration.noderepository.RestartFilter;
 import com.yahoo.vespa.hosted.controller.api.integration.secrets.TenantSecretStore;
+import com.yahoo.vespa.hosted.controller.application.Change;
 import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.DeploymentMetrics;
 import com.yahoo.vespa.hosted.controller.application.DeploymentMetrics.Warning;
@@ -60,6 +62,7 @@ import com.yahoo.vespa.hosted.controller.application.pkg.ApplicationPackageValid
 import com.yahoo.vespa.hosted.controller.athenz.impl.AthenzFacade;
 import com.yahoo.vespa.hosted.controller.certificate.EndpointCertificates;
 import com.yahoo.vespa.hosted.controller.concurrent.Once;
+import com.yahoo.vespa.hosted.controller.deployment.DeploymentStatus;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentTrigger;
 import com.yahoo.vespa.hosted.controller.deployment.JobStatus;
 import com.yahoo.vespa.hosted.controller.deployment.Run;
@@ -76,7 +79,6 @@ import com.yahoo.vespa.hosted.controller.versions.VersionStatus;
 import com.yahoo.vespa.hosted.controller.versions.VespaVersion;
 import com.yahoo.vespa.hosted.controller.versions.VespaVersion.Confidence;
 import com.yahoo.yolean.Exceptions;
-
 import java.io.ByteArrayInputStream;
 import java.security.Principal;
 import java.security.cert.X509Certificate;
@@ -526,8 +528,8 @@ public class ApplicationController {
             };
 
             // Carry out deployment without holding the application lock.
-            DeploymentResult result = deploy(job.application(), applicationPackage, zone, platform, containerEndpoints,
-                                             endpointCertificateMetadata, run.isDryRun(), run.testerCertificate());
+            DeploymentDataAndResult dataAndResult = deploy(job.application(), applicationPackage, zone, platform, containerEndpoints,
+                                                           endpointCertificateMetadata, run.isDryRun(), run.testerCertificate());
 
 
             // Record the quota usage for this application
@@ -540,7 +542,7 @@ public class ApplicationController {
                                         ? NotificationSource.from(deployment)
                                         : revision.equals(lastRevision.get()) ? NotificationSource.from(applicationId) : null;
             if (source != null) {
-                List<String> warnings = Optional.ofNullable(result.log())
+                List<String> warnings = Optional.ofNullable(dataAndResult.result().log())
                                                 .map(logs -> logs.stream()
                                                                  .filter(LogEntry::concernsPackage)
                                                                  .filter(log -> log.level().intValue() >= Level.WARNING.intValue())
@@ -558,9 +560,9 @@ public class ApplicationController {
             lockApplicationOrThrow(applicationId, application ->
                     store(application.with(job.application().instance(),
                                            i -> i.withNewDeployment(zone, revision, platform,
-                                                                    clock.instant(), warningsFrom(result.log()),
-                                                                    quotaUsage))));
-            return result;
+                                                                    clock.instant(), warningsFrom(dataAndResult.result().log()),
+                                                                    quotaUsage, dataAndResult.data().cloudAccount().orElse(CloudAccount.empty)))));
+            return dataAndResult.result();
         }
     }
 
@@ -586,7 +588,16 @@ public class ApplicationController {
         }
 
         // Validate new deployment spec thoroughly before storing it.
-        controller.jobController().deploymentStatus(application.get());
+        DeploymentStatus status = controller.jobController().deploymentStatus(application.get());
+        Change dummyChange = Change.of(RevisionId.forProduction(Long.MAX_VALUE)); // Should always run everywhere.
+        for (var jobs : status.jobsToRun(applicationPackage.deploymentSpec().instanceNames().stream()
+                                                           .collect(toMap(name -> name, __ -> dummyChange)))
+                              .entrySet()) {
+            for (var job : jobs.getValue()) {
+                decideCloudAccountOf(new DeploymentId(jobs.getKey().application(), job.type().zone()),
+                                     applicationPackage.deploymentSpec());
+            }
+        }
 
         for (Notification notification : controller.notificationsDb().listNotifications(NotificationSource.from(application.get().id()), true)) {
             if (   notification.source().instance().isPresent()
@@ -618,7 +629,7 @@ public class ApplicationController {
             ApplicationPackageStream applicationPackage = new ApplicationPackageStream(
                     () -> new ByteArrayInputStream(artifactRepository.getSystemApplicationPackage(application.id(), zone, version))
             );
-            return deploy(application.id(), applicationPackage, zone, version, Set.of(), Optional::empty, false, Optional.empty());
+            return deploy(application.id(), applicationPackage, zone, version, Set.of(), Optional::empty, false, Optional.empty()).result();
         } else {
            throw new RuntimeException("This system application does not have an application package: " + application.id().toShortString());
         }
@@ -626,13 +637,14 @@ public class ApplicationController {
 
     /** Deploys the given tester application to the given zone. */
     public DeploymentResult deployTester(TesterId tester, ApplicationPackageStream applicationPackage, ZoneId zone, Version platform) {
-        return deploy(tester.id(), applicationPackage, zone, platform, Set.of(), Optional::empty, false, Optional.empty());
+        return deploy(tester.id(), applicationPackage, zone, platform, Set.of(), Optional::empty, false, Optional.empty()).result();
     }
 
-    private DeploymentResult deploy(ApplicationId application, ApplicationPackageStream applicationPackage,
-                                    ZoneId zone, Version platform, Set<ContainerEndpoint> endpoints,
-                                    Supplier<Optional<EndpointCertificateMetadata>> endpointCertificateMetadata,
-                                    boolean dryRun, Optional<X509Certificate> testerCertificate) {
+    private record DeploymentDataAndResult(DeploymentData data, DeploymentResult result) {}
+    private DeploymentDataAndResult deploy(ApplicationId application, ApplicationPackageStream applicationPackage,
+                                           ZoneId zone, Version platform, Set<ContainerEndpoint> endpoints,
+                                           Supplier<Optional<EndpointCertificateMetadata>> endpointCertificateMetadata,
+                                           boolean dryRun, Optional<X509Certificate> testerCertificate) {
         DeploymentId deployment = new DeploymentId(application, zone);
         // Routing and metadata may have changed, so we need to refresh state after deployment, even if deployment fails.
         interface CleanCloseable extends AutoCloseable { void close(); }
@@ -664,13 +676,12 @@ public class ApplicationController {
                 operatorCertificates = Stream.concat(operatorCertificates.stream(), testerCertificate.stream()).toList();
             }
             Supplier<Optional<CloudAccount>> cloudAccount = () -> decideCloudAccountOf(deployment, applicationPackage.truncatedPackage().deploymentSpec());
-            ConfigServer.PreparedApplication preparedApplication =
-                    configServer.deploy(new DeploymentData(application, zone, applicationPackage::zipStream, platform,
-                                                           endpoints, endpointCertificateMetadata, dockerImageRepo, domain,
-                                                           deploymentQuota, tenantSecretStores, operatorCertificates,
-                                                           cloudAccount, dryRun));
+            DeploymentData deploymentData = new DeploymentData(application, zone, applicationPackage::zipStream, platform,
+                    endpoints, endpointCertificateMetadata, dockerImageRepo, domain,
+                    deploymentQuota, tenantSecretStores, operatorCertificates, cloudAccount, dryRun);
+            ConfigServer.PreparedApplication preparedApplication = configServer.deploy(deploymentData);
 
-            return preparedApplication.deploymentResult();
+            return new DeploymentDataAndResult(deploymentData, preparedApplication.deploymentResult());
         }
     }
 
@@ -696,7 +707,7 @@ public class ApplicationController {
             throw new IllegalArgumentException("Requested cloud account '" + requestedAccount.get().value() +
                                                "' is not valid for tenant '" + tenant + "'");
         }
-        if (!controller.zoneRegistry().hasZone(zoneId, requestedAccount.get())) {
+        if ( ! controller.zoneRegistry().hasZone(zoneId, requestedAccount.get())) {
             throw new IllegalArgumentException("Zone " + zoneId + " is not configured in requested cloud account '" +
                                                requestedAccount.get().value() + "'");
         }
@@ -891,16 +902,17 @@ public class ApplicationController {
      */
     private Optional<LockedApplication> deactivate(ApplicationId instanceId, ZoneId zone, Optional<LockedApplication> application) {
         DeploymentId id = new DeploymentId(instanceId, zone);
-        try {
-            configServer.deactivate(id);
-        } finally {
+        interface CleanCloseable extends AutoCloseable { void close(); }
+        try (CleanCloseable postDeactivation = () -> {
             application.ifPresent(app -> controller.routing().of(id).configure(app.get().deploymentSpec()));
             if (id.zoneId().environment().isManuallyDeployed())
                 applicationStore.putMetaTombstone(id, clock.instant());
-            if (!id.zoneId().environment().isTest())
+            if ( ! id.zoneId().environment().isTest())
                 controller.notificationsDb().removeNotifications(NotificationSource.from(id));
+        }) {
+            configServer.deactivate(id);
+            return application.map(app -> app.with(instanceId.instance(), instance -> instance.withoutDeploymentIn(id.zoneId())));
         }
-        return application.map(app -> app.with(instanceId.instance(), instance -> instance.withoutDeploymentIn(id.zoneId())));
     }
 
     public DeploymentTrigger deploymentTrigger() { return deploymentTrigger; }
@@ -1046,6 +1058,16 @@ public class ApplicationController {
                   //  category and typed log level
                   .collect(groupingBy(__ -> Warning.all,
                                       collectingAndThen(counting(), Long::intValue)));
+    }
+
+    public void verifyPlan(TenantName tenantName) {
+        var planId = controller.serviceRegistry().billingController().getPlan(tenantName);
+        Optional<Plan> plan = controller.serviceRegistry().planRegistry().plan(planId);
+        if (plan.isEmpty())
+            throw new IllegalArgumentException("Tenant '" + tenantName.value() + "' has no plan, not allowed to deploy. See https://cloud.vespa.ai/support");
+        if (plan.get().quota().calculate().equals(Quota.zero()))
+            throw new IllegalArgumentException("Tenant '" + tenantName.value() + "' has a plan '" +
+                                                       plan.get().displayName() + "' with zero quota, not allowed to deploy. See https://cloud.vespa.ai/support");
     }
 
 }

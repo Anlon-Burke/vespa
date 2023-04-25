@@ -11,9 +11,9 @@ import java.util.List;
 import java.util.logging.Level;
 
 /**
- * Implementation of a Barrier that handles the case where more than number of members can call synchronize. If
- * the number of members that synchronize exceed the expected number, the other members are immediately allowed
- * to pass through the barrier.
+ * Implementation of a Barrier that handles the case where more than number of members can call synchronize.
+ * Will wait for some time for all servers to do the operation, but will accept the majority of servers to have
+ * done the operation if it takes longer than a specified amount of time.
  *
  * @author Vegard Havdal
  * @author Ulf Lilleengen
@@ -21,16 +21,19 @@ import java.util.logging.Level;
 class CuratorCompletionWaiter implements Curator.CompletionWaiter {
 
     private static final java.util.logging.Logger log = java.util.logging.Logger.getLogger(CuratorCompletionWaiter.class.getName());
+
     private final Curator curator;
     private final String barrierPath;
     private final String myId;
     private final Clock clock;
+    private final Duration waitForAll;
 
-    CuratorCompletionWaiter(Curator curator, String barrierPath, String myId, Clock clock) {
+    CuratorCompletionWaiter(Curator curator, String barrierPath, String myId, Clock clock, Duration waitForAll) {
         this.myId = barrierPath + "/" + myId;
         this.curator = curator;
         this.barrierPath = barrierPath;
         this.clock = clock;
+        this.waitForAll = waitForAll;
     }
 
     @Override
@@ -55,6 +58,7 @@ class CuratorCompletionWaiter implements Curator.CompletionWaiter {
     private List<String> awaitInternal(Duration timeout) throws Exception {
         Instant startTime = clock.instant();
         Instant endTime = startTime.plus(timeout);
+        Instant gotQuorumTime = Instant.EPOCH;
 
         List<String> respondents = new ArrayList<>();
         do {
@@ -65,15 +69,20 @@ class CuratorCompletionWaiter implements Curator.CompletionWaiter {
                                      respondents + ", all participants: " + curator.zooKeeperEnsembleConnectionSpec());
             }
 
-            // First, check if all config servers responded
+            // If all config servers responded, return
             if (respondents.size() == curator.zooKeeperEnsembleCount()) {
-                log.log(Level.FINE, () -> barrierCompletedMessage(respondents, startTime));
+                logBarrierCompleted(respondents, startTime);
                 break;
             }
-            // If some are missing, quorum is enough
+            // If some are missing, quorum is enough, but wait for all up to ´waitForAll´ seconds before returning
             if (respondents.size() >= barrierMemberCount()) {
-                log.log(Level.FINE, () -> barrierCompletedMessage(respondents, startTime));
-                break;
+                if (gotQuorumTime.isBefore(startTime))
+                    gotQuorumTime = clock.instant();
+
+                if (Duration.between(clock.instant(), gotQuorumTime.plus(waitForAll)).isNegative()) {
+                    logBarrierCompleted(respondents, startTime);
+                    break;
+                }
             }
 
             Thread.sleep(100);
@@ -82,9 +91,15 @@ class CuratorCompletionWaiter implements Curator.CompletionWaiter {
         return respondents;
     }
 
-    private String barrierCompletedMessage(List<String> respondents, Instant startTime) {
-        return barrierPath + " completed in " + Duration.between(startTime, Instant.now()).toString() +
-               ", " + respondents.size() + "/" + curator.zooKeeperEnsembleCount() + " responded: " + respondents;
+    private void logBarrierCompleted(List<String> respondents, Instant startTime) {
+        Duration duration = Duration.between(startTime, Instant.now());
+        Level level = duration.minus(Duration.ofSeconds(5)).isNegative() ? Level.FINE : Level.INFO;
+        log.log(level, () -> barrierCompletedMessage(respondents, duration));
+    }
+
+    private String barrierCompletedMessage(List<String> respondents, Duration duration) {
+        return barrierPath + " completed in " + duration.toString() +
+                ", " + respondents.size() + "/" + curator.zooKeeperEnsembleCount() + " responded: " + respondents;
     }
 
     @Override
@@ -105,11 +120,11 @@ class CuratorCompletionWaiter implements Curator.CompletionWaiter {
         return "'" + barrierPath + "', " + barrierMemberCount() + " members";
     }
 
-    public static Curator.CompletionWaiter create(Curator curator, Path barrierPath, String id) {
-        return new CuratorCompletionWaiter(curator, barrierPath.getAbsolute(), id, Clock.systemUTC());
+    public static Curator.CompletionWaiter create(Curator curator, Path barrierPath, String id, Duration waitForAll) {
+        return new CuratorCompletionWaiter(curator, barrierPath.getAbsolute(), id, Clock.systemUTC(), waitForAll);
     }
 
-    public static Curator.CompletionWaiter createAndInitialize(Curator curator, Path parentPath, String waiterNode, String id) {
+    public static Curator.CompletionWaiter createAndInitialize(Curator curator, Path parentPath, String waiterNode, String id, Duration waitForAll) {
         Path waiterPath = parentPath.append(waiterNode);
 
         String debugMessage = log.isLoggable(Level.FINE) ? "Recreating ZK path " + waiterPath : null;
@@ -120,7 +135,7 @@ class CuratorCompletionWaiter implements Curator.CompletionWaiter {
 
         if (debugMessage != null) log.fine(debugMessage + ": Done");
 
-        return new CuratorCompletionWaiter(curator, waiterPath.getAbsolute(), id, Clock.systemUTC());
+        return new CuratorCompletionWaiter(curator, waiterPath.getAbsolute(), id, Clock.systemUTC(), waitForAll);
     }
 
     private int barrierMemberCount() {

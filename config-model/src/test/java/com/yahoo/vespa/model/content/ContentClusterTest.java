@@ -70,7 +70,7 @@ public class ContentClusterTest extends ContentBaseTest {
                 "    </proton>" +
                 "  </engine>" +
                 "  <redundancy>15</redundancy>\n" +
-                "  <group name='root' distribution-key='0'>" +
+                "  <group name='root'>" +
                 "    <distribution partitions='1|1|*'/>" +
                 "    <group name='g-1' distribution-key='0'>" +
                 "      <node hostalias='mockhost' distribution-key='0'/>" +
@@ -167,7 +167,7 @@ public class ContentClusterTest extends ContentBaseTest {
                                               <content version='1.0' id='storage'>
                                                 <documents/>
                                                 <min-redundancy>2</min-redundancy>
-                                                <group name='root' distribution-key='0'>"
+                                                <group name='root'>"
                                                   <distribution partitions='1|*'/>
                                                   <group name='g0' distribution-key='0'>
                                                     <node hostalias='mockhost' distribution-key='0'/>
@@ -214,7 +214,7 @@ public class ContentClusterTest extends ContentBaseTest {
                                               <content version='1.0' id='storage'>
                                                 <documents/>
                                                 <min-redundancy>4</min-redundancy>
-                                                <group name='root' distribution-key='0'>"
+                                                <group name='root'>"
                                                   <distribution partitions='1|*'/>
                                                   <group name='g0' distribution-key='0'>
                                                     <node hostalias='mockhost' distribution-key='0'/>
@@ -1099,6 +1099,30 @@ public class ContentClusterTest extends ContentBaseTest {
         }
     }
 
+    private void verifySummaryDecodeType(String policy, DispatchConfig.SummaryDecodePolicy.Enum expected) {
+        TestProperties properties = new TestProperties();
+        if (policy != null) {
+            properties.setSummaryDecodePolicy(policy);
+        }
+        VespaModel model = createEnd2EndOneNode(properties);
+
+        ContentCluster cc = model.getContentClusters().get("storage");
+        DispatchConfig.Builder builder = new DispatchConfig.Builder();
+        cc.getSearch().getConfig(builder);
+
+        DispatchConfig cfg = new DispatchConfig(builder);
+        assertEquals(expected, cfg.summaryDecodePolicy());
+    }
+
+    @Test
+    public void verify_summary_decoding_controlled_by_properties() {
+        verifySummaryDecodeType(null, DispatchConfig.SummaryDecodePolicy.EAGER);
+        verifySummaryDecodeType("illegal-config", DispatchConfig.SummaryDecodePolicy.EAGER);
+        verifySummaryDecodeType("eager", DispatchConfig.SummaryDecodePolicy.EAGER);
+        verifySummaryDecodeType("ondemand", DispatchConfig.SummaryDecodePolicy.ONDEMAND);
+        verifySummaryDecodeType("on-demand", DispatchConfig.SummaryDecodePolicy.ONDEMAND);
+    }
+
     private int resolveMaxCompactBuffers(OptionalInt maxCompactBuffers) {
         TestProperties testProperties = new TestProperties();
         if (maxCompactBuffers.isPresent()) {
@@ -1268,6 +1292,50 @@ public class ContentClusterTest extends ContentBaseTest {
                 clusterControllers);
         assertZookeeperServerImplementation("com.yahoo.vespa.zookeeper.VespaZooKeeperAdminImpl",
                 clusterControllers);
+    }
+
+    @Test
+    void testAllow2GroupsDown() {
+        String services = "<?xml version='1.0' encoding='UTF-8' ?>" +
+                "<services version='1.0'>" +
+                "  <container id='default' version='1.0' />" +
+                "  <content id='storage' version='1.0'>" +
+                "    <redundancy>4</redundancy>" +
+                "    <documents>" +
+                "      <document mode='index' type='type1' />" +
+                "    </documents>" +
+                "  <group name='root'>" +
+                "    <distribution partitions='1|1|1|*'/>" +
+                "    <group name='g-1' distribution-key='0'>" +
+                "      <node hostalias='mockhost' distribution-key='0'/>" +
+                "    </group>" +
+                "    <group name='g-2' distribution-key='1'>" +
+                "      <node hostalias='mockhost' distribution-key='1'/>" +
+                "    </group>" +
+                "    <group name='g-3' distribution-key='2'>" +
+                "      <node hostalias='mockhost' distribution-key='2'/>" +
+                "    </group>" +
+                "    <group name='g-4' distribution-key='3'>" +
+                "      <node hostalias='mockhost' distribution-key='3'/>" +
+                "    </group>" +
+                "  </group>" +
+                "    <tuning>" +
+                "      <cluster-controller>" +
+                "        <max-groups-allowed-down>2</max-groups-allowed-down>" +
+                "      </cluster-controller>" +
+                "    </tuning>" +
+                "    <engine>" +
+                "      <proton>" +
+                "        <searchable-copies>4</searchable-copies>" +
+                "      </proton>" +
+                "    </engine>" +
+                "  </content>" +
+                " </services>";
+        VespaModel model = createEnd2EndOneNode(new TestProperties().setAllowMoreThanOneContentGroupDown(true), services);
+
+        var fleetControllerConfigBuilder = new FleetcontrollerConfig.Builder();
+        model.getConfig(fleetControllerConfigBuilder, "admin/cluster-controllers/0/components/clustercontroller-storage-configurer");
+        assertEquals(2, fleetControllerConfigBuilder.build().max_number_of_groups_allowed_to_be_down());
     }
 
 }

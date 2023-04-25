@@ -94,7 +94,7 @@ public class LoadBalancerExpirer extends NodeRepositoryMaintainer {
                                                                                   .collect(Collectors.joining(", ")),
                                                                             interval()));
         }
-        return asSuccessFactor(attempts.get(), failed.size());
+        return asSuccessFactorDeviation(attempts.get(), failed.size());
     }
 
     /** Remove reals from inactive load balancers */
@@ -112,7 +112,8 @@ public class LoadBalancerExpirer extends NodeRepositoryMaintainer {
             try {
                 attempts.add(1);
                 LOG.log(Level.INFO, () -> "Removing reals from inactive load balancer " + lb.id() + ": " + Sets.difference(lb.instance().get().reals(), reals));
-                LoadBalancerInstance instance = service.configure(new LoadBalancerSpec(lb.id().application(), lb.id().cluster(), reals,
+                LoadBalancerInstance instance = service.configure(lb.instance().get(),
+                                                                  new LoadBalancerSpec(lb.id().application(), lb.id().cluster(), reals,
                                                                                        lb.instance().get().settings(), lb.instance().get().cloudAccount()),
                                                                   true);
                 db.writeLoadBalancer(lb.with(Optional.of(instance)), lb.state());
@@ -130,7 +131,7 @@ public class LoadBalancerExpirer extends NodeRepositoryMaintainer {
                                                  interval()),
                     lastException.get());
         }
-        return asSuccessFactor(attempts.get(), failed.size());
+        return asSuccessFactorDeviation(attempts.get(), failed.size());
     }
 
     /** Patch load balancers matching given filter, while holding lock */

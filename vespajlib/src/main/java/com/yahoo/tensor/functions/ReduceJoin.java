@@ -106,6 +106,8 @@ public class ReduceJoin<NAMETYPE extends Name> extends CompositeTensorFunction<N
                 return false;
             if (b.type().dimensions().size() != commonDimensions.dimensions().size())
                 return false;
+        } else if (dimensions.size() != commonDimensions.dimensions().size()) {
+            return false;
         } else {
             for (TensorType.Dimension dimension : commonDimensions.dimensions()) {
                 if (!dimensions.contains(dimension.name()))
@@ -331,7 +333,7 @@ public class ReduceJoin<NAMETYPE extends Name> extends CompositeTensorFunction<N
 
         private final long[] bounds;
         private final long[] iterator;
-        private int remaining;
+        private long remaining;
 
         MultiDimensionIterator(TensorType type) {
             bounds = new long[type.dimensions().size()];

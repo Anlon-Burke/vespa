@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.controller.api.integration.resource;
 
+import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.zone.ZoneId;
@@ -19,20 +20,29 @@ import java.util.stream.Collectors;
  */
 public class ResourceSnapshot {
 
+    private static final NodeResources zero = new NodeResources(
+            0, 0, 0, 0,
+            NodeResources.DiskSpeed.any,
+            NodeResources.StorageType.any,
+            NodeResources.Architecture.any,
+            NodeResources.GpuResources.zero());
+
     private final ApplicationId applicationId;
-    private final ResourceAllocation resourceAllocation;
+    private final NodeResources resources;
     private final Instant timestamp;
     private final ZoneId zoneId;
+    private final int majorVersion;
 
-    public ResourceSnapshot(ApplicationId applicationId, double cpuCores, double memoryGb, double diskGb, NodeResources.Architecture architecture, Instant timestamp, ZoneId zoneId) {
+    public ResourceSnapshot(ApplicationId applicationId, NodeResources resources, Instant timestamp, ZoneId zoneId, int majorVersion) {
         this.applicationId = applicationId;
-        this.resourceAllocation = new ResourceAllocation(cpuCores, memoryGb, diskGb, architecture);
+        this.resources = resources;
         this.timestamp = timestamp;
         this.zoneId = zoneId;
+        this.majorVersion = majorVersion;
     }
 
-    public static ResourceSnapshot from(ApplicationId applicationId, int nodes, double cpuCores, double memoryGb, double diskGb, NodeResources.Architecture architecture, Instant timestamp, ZoneId zoneId) {
-        return new ResourceSnapshot(applicationId, cpuCores * nodes, memoryGb * nodes, diskGb * nodes, architecture, timestamp, zoneId);
+    public static ResourceSnapshot from(ApplicationId applicationId, int nodes, NodeResources resources, Instant timestamp, ZoneId zoneId) {
+        return new ResourceSnapshot(applicationId, resources.multipliedBy(nodes), timestamp, zoneId, 0);
     }
 
     public static ResourceSnapshot from(List<Node> nodes, Instant timestamp, ZoneId zoneId) {
@@ -41,37 +51,26 @@ public class ResourceSnapshot {
                                                  .map(node -> node.owner().get())
                                                  .collect(Collectors.toSet());
 
-        if (applicationIds.size() != 1) throw new IllegalArgumentException("List of nodes can only represent one application");
+        Set<Integer> versions = nodes.stream()
+                .map(n -> n.wantedVersion().getMajor())
+                .collect(Collectors.toSet());
 
-        return new ResourceSnapshot(
-                applicationIds.iterator().next(),
-                nodes.stream().map(Node::resources).mapToDouble(NodeResources::vcpu).sum(),
-                nodes.stream().map(Node::resources).mapToDouble(NodeResources::memoryGb).sum(),
-                nodes.stream().map(Node::resources).mapToDouble(NodeResources::diskGb).sum(),
-                nodes.stream().map(node -> node.resources().architecture()).findFirst().orElse(NodeResources.Architecture.getDefault()),
-                timestamp,
-                zoneId
-        );
+        if (applicationIds.size() != 1) throw new IllegalArgumentException("List of nodes can only represent one application");
+        if (versions.size() != 1) throw new IllegalArgumentException("List of nodes can only represent one version");
+
+        var resources = nodes.stream()
+                .map(Node::resources)
+                .reduce(zero, ResourceSnapshot::addResources);
+
+        return new ResourceSnapshot(applicationIds.iterator().next(), resources, timestamp, zoneId, versions.iterator().next());
     }
 
     public ApplicationId getApplicationId() {
         return applicationId;
     }
 
-    public ResourceAllocation allocation() {
-        return resourceAllocation;
-    }
-
-    public double getCpuCores() {
-        return resourceAllocation.getCpuCores();
-    }
-
-    public double getMemoryGb() {
-        return resourceAllocation.getMemoryGb();
-    }
-
-    public double getDiskGb() {
-        return resourceAllocation.getDiskGb();
+    public NodeResources resources() {
+        return resources;
     }
 
     public Instant getTimestamp() {
@@ -82,8 +81,8 @@ public class ResourceSnapshot {
         return zoneId;
     }
 
-    public NodeResources.Architecture getArchitecture() {
-        return resourceAllocation.getArchitecture();
+    public int getMajorVersion() {
+        return majorVersion;
     }
 
     @Override
@@ -93,13 +92,34 @@ public class ResourceSnapshot {
 
         ResourceSnapshot other = (ResourceSnapshot) o;
         return this.applicationId.equals(other.applicationId) &&
-                this.resourceAllocation.equals(other.resourceAllocation) &&
+                this.resources.equals(other.resources) &&
                 this.timestamp.equals(other.timestamp) &&
-                this.zoneId.equals(other.zoneId);
+                this.zoneId.equals(other.zoneId) &&
+                this.majorVersion == other.majorVersion;
     }
 
     @Override
     public int hashCode(){
-        return Objects.hash(applicationId, resourceAllocation, timestamp, zoneId);
+        return Objects.hash(applicationId, resources, timestamp, zoneId, majorVersion);
+    }
+
+    /* This function does pretty much the same thing as NodeResources::add, but it allows adding resources
+     * where some dimensions that are not relevant for billing (yet) are not the same.
+     *
+     * TODO: Make this code respect all dimensions.
+     */
+    private static NodeResources addResources(NodeResources a, NodeResources b) {
+        if (a.architecture() != b.architecture() && a.architecture() != NodeResources.Architecture.any && b.architecture() != NodeResources.Architecture.any) {
+            throw new IllegalArgumentException(a + " and " + b + " are not interchangeable for resource snapshots");
+        }
+        return new NodeResources(
+                a.vcpu() + b.vcpu(),
+                a.memoryGb() + b.memoryGb(),
+                a.diskGb() + b.diskGb(),
+                0,
+                NodeResources.DiskSpeed.any,
+                NodeResources.StorageType.any,
+                a.architecture() == NodeResources.Architecture.any ? b.architecture() : a.architecture(),
+                a.gpuResources().plus(b.gpuResources()));
     }
 }

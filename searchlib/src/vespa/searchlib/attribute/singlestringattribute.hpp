@@ -40,14 +40,14 @@ SingleValueStringAttributeT<B>::freezeEnumDictionary()
     this->getEnumStore().freeze_dictionary();
 }
 
-
 template <typename B>
 std::unique_ptr<attribute::SearchContext>
 SingleValueStringAttributeT<B>::getSearch(QueryTermSimpleUP qTerm,
                                           const attribute::SearchContextParams &) const
 {
     bool cased = this->get_match_is_cased();
-    return std::make_unique<attribute::SingleStringEnumHintSearchContext>(std::move(qTerm), cased, *this, &this->_enumIndices.acquire_elem_ref(0), this->_enumStore, this->getCommittedDocIdLimit(), this->getStatus().getNumValues());
+    auto docid_limit = this->getCommittedDocIdLimit();
+    return std::make_unique<attribute::SingleStringEnumHintSearchContext>(std::move(qTerm), cased, *this, this->_enumIndices.make_read_view(docid_limit), this->_enumStore, this->getStatus().getNumValues());
 }
 
 }

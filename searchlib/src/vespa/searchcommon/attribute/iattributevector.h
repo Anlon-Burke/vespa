@@ -128,16 +128,11 @@ public:
     virtual double getFloat(DocId doc)   const = 0;
 
     /**
-     * Returns the first value stored for the given document as a string.
-     * Uses the given buffer to store the actual string if no underlying
-     * string storage is used for this attribute vector.
+     * Return raw value.
      *
-     * @param docId document identifier
-     * @param buffer content buffer to optionally store the string
-     * @param sz the size of the buffer
-     * @return the string value
-     **/
-    virtual const char * getString(DocId doc, char * buffer, size_t sz) const = 0;
+     * TODO: Consider accessing via new IRawAttribute interface class.
+     */
+    virtual vespalib::ConstArrayRef<char> get_raw(DocId doc) const = 0;
 
     /**
      * Returns the first value stored for the given document as an enum value.
@@ -370,6 +365,11 @@ public:
     virtual bool isPredicateType() const { return getBasicType() == BasicType::PREDICATE; }
     virtual bool isTensorType() const { return getBasicType() == BasicType::TENSOR; }
     virtual bool isReferenceType() const { return getBasicType() == BasicType::REFERENCE; }
+    virtual bool is_raw_type() const noexcept {
+        BasicType::Type t = getBasicType();
+        return t == BasicType::RAW ||
+               t == BasicType::STRING;
+    }
 
     /**
      * Returns whether this is a multi value attribute.

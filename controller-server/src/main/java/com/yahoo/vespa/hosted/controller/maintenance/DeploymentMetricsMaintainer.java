@@ -39,9 +39,13 @@ public class DeploymentMetricsMaintainer extends ControllerMaintainer {
 
     private final ApplicationController applications;
 
-    public DeploymentMetricsMaintainer(Controller controller, Duration duration) {
-        super(controller, duration);
+    public DeploymentMetricsMaintainer(Controller controller, Duration duration, Double successFactorBaseline) {
+        super(controller, duration, successFactorBaseline);
         this.applications = controller.applications();
+    }
+
+    public DeploymentMetricsMaintainer(Controller controller, Duration duration) {
+        this(controller, duration, 1.0);
     }
 
     @Override
@@ -96,7 +100,7 @@ public class DeploymentMetricsMaintainer extends ControllerMaintainer {
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
-        return asSuccessFactor(attempts.get(), failures.get());
+        return asSuccessFactorDeviation(attempts.get(), failures.get());
     }
 
     static DeploymentMetrics updateDeploymentMetrics(DeploymentMetrics current, List<ClusterMetrics> metrics) {

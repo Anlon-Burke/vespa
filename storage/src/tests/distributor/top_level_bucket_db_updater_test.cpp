@@ -1697,7 +1697,7 @@ TopLevelBucketDBUpdaterTest::merge_bucket_lists(
     BucketDumper dumper_tmp(true);
     for (auto* s : distributor_stripes()) {
         auto& db = s->getBucketSpaceRepo().get(document::FixedBucketSpaces::default_space()).getBucketDatabase();
-        db.forEach(dumper_tmp);
+        db.for_each_upper_bound(dumper_tmp);
     }
 
     {
@@ -1717,7 +1717,7 @@ TopLevelBucketDBUpdaterTest::merge_bucket_lists(
     BucketDumper dumper(include_bucket_info);
     for (auto* s : distributor_stripes()) {
         auto& db = s->getBucketSpaceRepo().get(document::FixedBucketSpaces::default_space()).getBucketDatabase();
-        db.forEach(dumper);
+        db.for_each_upper_bound(dumper);
         db.clear();
     }
     return dumper.ost.str();
@@ -2513,6 +2513,7 @@ TEST_F(TopLevelBucketDBUpdaterTest, node_feature_sets_are_aggregated_from_nodes_
             EXPECT_FALSE(s->node_supported_features_repo().node_supported_features(i).unordered_merge_chaining);
             EXPECT_FALSE(s->node_supported_features_repo().node_supported_features(i).two_phase_remove_location);
             EXPECT_FALSE(s->node_supported_features_repo().node_supported_features(i).no_implicit_indexing_of_active_buckets);
+            EXPECT_FALSE(s->node_supported_features_repo().node_supported_features(i).document_condition_probe);
         }
     }
 
@@ -2526,6 +2527,7 @@ TEST_F(TopLevelBucketDBUpdaterTest, node_feature_sets_are_aggregated_from_nodes_
                 reply.supported_node_features().unordered_merge_chaining = true;
                 reply.supported_node_features().two_phase_remove_location = true;
                 reply.supported_node_features().no_implicit_indexing_of_active_buckets = true;
+                reply.supported_node_features().document_condition_probe = true;
             }
         }));
     }
@@ -2535,14 +2537,17 @@ TEST_F(TopLevelBucketDBUpdaterTest, node_feature_sets_are_aggregated_from_nodes_
         EXPECT_FALSE(s->node_supported_features_repo().node_supported_features(0).unordered_merge_chaining);
         EXPECT_FALSE(s->node_supported_features_repo().node_supported_features(0).two_phase_remove_location);
         EXPECT_FALSE(s->node_supported_features_repo().node_supported_features(0).no_implicit_indexing_of_active_buckets);
+        EXPECT_FALSE(s->node_supported_features_repo().node_supported_features(0).document_condition_probe);
 
         EXPECT_TRUE(s->node_supported_features_repo().node_supported_features(1).unordered_merge_chaining);
         EXPECT_TRUE(s->node_supported_features_repo().node_supported_features(1).two_phase_remove_location);
         EXPECT_TRUE(s->node_supported_features_repo().node_supported_features(1).no_implicit_indexing_of_active_buckets);
+        EXPECT_TRUE(s->node_supported_features_repo().node_supported_features(1).document_condition_probe);
 
         EXPECT_TRUE(s->node_supported_features_repo().node_supported_features(2).unordered_merge_chaining);
         EXPECT_TRUE(s->node_supported_features_repo().node_supported_features(2).two_phase_remove_location);
         EXPECT_TRUE(s->node_supported_features_repo().node_supported_features(2).no_implicit_indexing_of_active_buckets);
+        EXPECT_TRUE(s->node_supported_features_repo().node_supported_features(2).document_condition_probe);
     }
 }
 

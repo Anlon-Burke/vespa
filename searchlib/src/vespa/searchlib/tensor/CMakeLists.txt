@@ -3,7 +3,7 @@ vespa_add_library(searchlib_tensor OBJECT
     SOURCES
     angular_distance.cpp
     bitvector_visited_tracker.cpp
-    blob_sequence_reader.cpp
+    bound_distance_function.cpp
     default_nearest_neighbor_index_factory.cpp
     dense_tensor_attribute.cpp
     dense_tensor_store.cpp
@@ -30,10 +30,12 @@ vespa_add_library(searchlib_tensor OBJECT
     large_subspaces_buffer_type.cpp
     nearest_neighbor_index.cpp
     nearest_neighbor_index_saver.cpp
+    prenormalized_angular_distance.cpp
     serialized_fast_value_attribute.cpp
     serialized_tensor_ref.cpp
     small_subspaces_buffer_type.cpp
     subspace_type.cpp
+    temporary_vector_store.cpp
     tensor_attribute.cpp
     tensor_attribute_loader.cpp
     tensor_attribute_saver.cpp
@@ -41,6 +43,7 @@ vespa_add_library(searchlib_tensor OBJECT
     tensor_buffer_store.cpp
     tensor_buffer_type_mapper.cpp
     tensor_deserialize.cpp
+    tensor_ext_attribute.cpp
     tensor_store.cpp
     DEPENDS
 )

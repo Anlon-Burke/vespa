@@ -30,7 +30,7 @@ FRTConnection::~FRTConnection()
 {
     if (_target != nullptr) {
         LOG(debug, "Shutting down %s", _address.c_str());
-        _target->SubRef();
+        _target->internal_subref();
         _target = nullptr;
     }
 }
@@ -42,10 +42,10 @@ FRTConnection::getTarget()
     if (_target == nullptr) {
         _target = _supervisor.GetTarget(_address.c_str());
     } else if ( ! _target->IsValid()) {
-        _target->SubRef();
+        _target->internal_subref();
         _target = _supervisor.GetTarget(_address.c_str());
     }
-    _target->AddRef();
+    _target->internal_addref();
     return _target;
 }
 
@@ -54,7 +54,7 @@ FRTConnection::invoke(FRT_RPCRequest * req, duration timeout, FRT_IRequestWait *
 {
     FRT_Target * target = getTarget();
     target->InvokeAsync(req, vespalib::to_s(timeout), waiter);
-    target->SubRef();
+    target->internal_subref();
 }
 
 void
@@ -104,7 +104,7 @@ void FRTConnection::calculateSuspension(ErrorType type)
     switch(type) {
     case TRANSIENT:
         delay = std::min(MAX_DELAY_MULTIPLIER, ++_transientFailures) * _transientDelay;
-        LOG(warning, "Connection to %s failed or timed out", _address.c_str());
+        LOG(debug, "Connection to %s failed or timed out", _address.c_str());
         break;
     case FATAL:
         delay = std::min(MAX_DELAY_MULTIPLIER, ++_fatalFailures) * _fatalDelay;
@@ -112,7 +112,7 @@ void FRTConnection::calculateSuspension(ErrorType type)
     }
     _suspendedUntil = now + delay;
     if (_suspendWarned < (now - WARN_INTERVAL)) {
-        LOG(warning, "FRT Connection %s suspended until %s", _address.c_str(), vespalib::to_string(to_utc(_suspendedUntil)).c_str());
+        LOG(debug, "FRT Connection %s suspended until %s", _address.c_str(), vespalib::to_string(to_utc(_suspendedUntil)).c_str());
         _suspendWarned = now;
     }
 }

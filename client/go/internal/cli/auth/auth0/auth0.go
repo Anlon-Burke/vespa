@@ -33,10 +33,14 @@ type Credentials struct {
 type Client struct {
 	httpClient    util.HTTPClient
 	Authenticator *auth.Authenticator // TODO: Make this private
-	configPath    string
-	systemName    string
-	systemURL     string
+	options       Options
 	provider      auth0Provider
+}
+
+type Options struct {
+	ConfigPath string
+	SystemName string
+	SystemURL  string
 }
 
 // config is the root type of the persisted config
@@ -74,12 +78,12 @@ func cancelOnInterrupt() context.Context {
 	return ctx
 }
 
-func newClient(httpClient util.HTTPClient, configPath, systemName, systemURL string) (*Client, error) {
+// NewClient constructs a new Auth0 client, storing configuration in the given configPath. The client will be configured for
+// use in the given Vespa system.
+func NewClient(httpClient util.HTTPClient, options Options) (*Client, error) {
 	a := Client{}
 	a.httpClient = httpClient
-	a.configPath = configPath
-	a.systemName = systemName
-	a.systemURL = systemURL
+	a.options = options
 	c, err := a.getDeviceFlowConfig()
 	if err != nil {
 		return nil, err
@@ -90,7 +94,7 @@ func newClient(httpClient util.HTTPClient, configPath, systemName, systemURL str
 		DeviceCodeEndpoint: c.DeviceCodeEndpoint,
 		OauthTokenEndpoint: c.OauthTokenEndpoint,
 	}
-	provider, err := readConfig(configPath)
+	provider, err := readConfig(options.ConfigPath)
 	if err != nil {
 		return nil, err
 	}
@@ -98,42 +102,48 @@ func newClient(httpClient util.HTTPClient, configPath, systemName, systemURL str
 	return &a, nil
 }
 
-// New constructs a new Auth0 client, storing configuration in the given configPath. The client will be configured for
-// use in the given Vespa system.
-func New(configPath string, systemName, systemURL string) (*Client, error) {
-	return newClient(util.CreateClient(time.Second*30), configPath, systemName, systemURL)
-}
-
 func (a *Client) getDeviceFlowConfig() (flowConfig, error) {
-	url := a.systemURL + "/auth0/v1/device-flow-config"
+	url := a.options.SystemURL + "/auth0/v1/device-flow-config"
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return flowConfig{}, err
 	}
 	r, err := a.httpClient.Do(req, time.Second*30)
 	if err != nil {
-		return flowConfig{}, fmt.Errorf("failed to get device flow config: %w", err)
+		return flowConfig{}, fmt.Errorf("auth0: failed to get device flow config: %w", err)
 	}
 	defer r.Body.Close()
 	if r.StatusCode/100 != 2 {
-		return flowConfig{}, fmt.Errorf("failed to get device flow config: got response code %d from %s", r.StatusCode, url)
+		return flowConfig{}, fmt.Errorf("auth0: failed to get device flow config: got response code %d from %s", r.StatusCode, url)
 	}
 	var cfg flowConfig
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		return flowConfig{}, fmt.Errorf("failed to decode response: %w", err)
+		return flowConfig{}, fmt.Errorf("auth0: failed to decode response: %w", err)
 	}
 	return cfg, nil
 }
 
-// GetAccessToken returns an access token for the configured system, refreshing it if necessary.
-func (a *Client) GetAccessToken() (string, error) {
-	creds, ok := a.provider.Systems[a.systemName]
+func (a *Client) Authenticate(request *http.Request) error {
+	accessToken, err := a.AccessToken()
+	if err != nil {
+		return err
+	}
+	if request.Header == nil {
+		request.Header = make(http.Header)
+	}
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	return nil
+}
+
+// AccessToken returns an access token for the configured system, refreshing it if necessary.
+func (a *Client) AccessToken() (string, error) {
+	creds, ok := a.provider.Systems[a.options.SystemName]
 	if !ok {
-		return "", fmt.Errorf("system %s is not configured", a.systemName)
+		return "", fmt.Errorf("auth0: system %s is not configured: %s", a.options.SystemName, reauthMessage)
 	} else if creds.AccessToken == "" {
-		return "", fmt.Errorf("access token missing: %s", reauthMessage)
+		return "", fmt.Errorf("auth0: access token missing: %s", reauthMessage)
 	} else if scopesChanged(creds) {
-		return "", fmt.Errorf("authentication scopes changed: %s", reauthMessage)
+		return "", fmt.Errorf("auth0: authentication scopes changed: %s", reauthMessage)
 	} else if isExpired(creds.ExpiresAt, accessTokenExpiry) {
 		// check if the stored access token is expired:
 		// use the refresh token to get a new access token:
@@ -142,9 +152,9 @@ func (a *Client) GetAccessToken() (string, error) {
 			Secrets:       &auth.Keyring{},
 			Client:        http.DefaultClient,
 		}
-		resp, err := tr.Refresh(cancelOnInterrupt(), a.systemName)
+		resp, err := tr.Refresh(cancelOnInterrupt(), a.options.SystemName)
 		if err != nil {
-			return "", fmt.Errorf("failed to renew access token: %w: %s", err, reauthMessage)
+			return "", fmt.Errorf("auth0: failed to renew access token: %w: %s", err, reauthMessage)
 		} else {
 			// persist the updated system with renewed access token
 			creds.AccessToken = resp.AccessToken
@@ -175,20 +185,14 @@ func scopesChanged(s Credentials) bool {
 	return false
 }
 
-// HasCredentials returns true if this client has retrived credentials for the configured system.
-func (a *Client) HasCredentials() bool {
-	_, ok := a.provider.Systems[a.systemName]
-	return ok
-}
-
 // WriteCredentials writes given credentials to the configuration file.
 func (a *Client) WriteCredentials(credentials Credentials) error {
 	if a.provider.Systems == nil {
 		a.provider.Systems = make(map[string]Credentials)
 	}
-	a.provider.Systems[a.systemName] = credentials
-	if err := writeConfig(a.provider, a.configPath); err != nil {
-		return fmt.Errorf("failed to write config: %w", err)
+	a.provider.Systems[a.options.SystemName] = credentials
+	if err := writeConfig(a.provider, a.options.ConfigPath); err != nil {
+		return fmt.Errorf("auth0: failed to write config: %w", err)
 	}
 	return nil
 }
@@ -196,12 +200,12 @@ func (a *Client) WriteCredentials(credentials Credentials) error {
 // RemoveCredentials removes credentials for the system configured in this client.
 func (a *Client) RemoveCredentials() error {
 	tr := &auth.TokenRetriever{Secrets: &auth.Keyring{}}
-	if err := tr.Delete(a.systemName); err != nil {
-		return fmt.Errorf("failed to remove system %s from secret storage: %w", a.systemName, err)
+	if err := tr.Delete(a.options.SystemName); err != nil {
+		return fmt.Errorf("auth0: failed to remove system %s from secret storage: %w", a.options.SystemName, err)
 	}
-	delete(a.provider.Systems, a.systemName)
-	if err := writeConfig(a.provider, a.configPath); err != nil {
-		return fmt.Errorf("failed to write config: %w", err)
+	delete(a.provider.Systems, a.options.SystemName)
+	if err := writeConfig(a.provider, a.options.ConfigPath); err != nil {
+		return fmt.Errorf("auth0: failed to write config: %w", err)
 	}
 	return nil
 }

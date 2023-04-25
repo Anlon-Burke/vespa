@@ -6,6 +6,7 @@
 #include <vespa/metrics/metricmanager.h>
 #include <vespa/storage/common/nodestateupdater.h>
 #include <vespa/vdslib/state/nodestate.h>
+#include <vespa/vespalib/net/connection_auth_context.h>
 #include <vespa/vespalib/stllike/asciistream.h>
 
 #include <vespa/log/log.h>
@@ -57,11 +58,18 @@ bool
 StateReporter::reportStatus(std::ostream& out,
                             const framework::HttpUrlPath& path) const
 {
-    vespalib::string status = _stateApi.get(path.getServerSpec(), path.getPath(), getParams(path));
-    if (status.empty()) {
+    // When we get here, capabilities have already been checked at a higher level, so
+    // this will never fail unless a state API handler requires other capabilities than
+    // we require for this reporter (in which case this will silently fail, but not
+    // expose any other information).
+    vespalib::net::ConnectionAuthContext dummy_ctx(vespalib::net::tls::PeerCredentials(), required_capabilities());
+    auto status = _stateApi.get(path.getServerSpec(), path.getPath(), getParams(path), dummy_ctx);
+    if (status.failed()) {
+        LOG(debug, "State API reporting for path '%s' failed with status HTTP %d: %s",
+            path.getPath().c_str(), status.status_code(), vespalib::string(status.status_message()).c_str());
         return false;
     }
-    out << status;
+    out << status.payload();
     return true;
 }
 
@@ -69,11 +77,11 @@ vespalib::string
 StateReporter::getMetrics(const vespalib::string &consumer)
 {
     metrics::MetricLockGuard guard(_manager.getMetricLock());
-    std::vector<uint32_t> periods = _manager.getSnapshotPeriods(guard);
+    auto periods = _manager.getSnapshotPeriods(guard);
     if (periods.empty()) {
         return ""; // no configuration yet
     }
-    uint32_t interval = periods[0];
+    auto interval = periods[0];
 
     // To get unset metrics, we have to copy active metrics, clear them
     // and then assign the snapshot
@@ -81,9 +89,8 @@ StateReporter::getMetrics(const vespalib::string &consumer)
             _manager.getMetricSnapshot(guard, interval).getName(), interval,
             _manager.getActiveMetrics(guard).getMetrics(), true);
 
-    snapshot.reset(0);
-    _manager.getMetricSnapshot(guard, interval).addToSnapshot(
-            snapshot, vespalib::count_s(_component.getClock().getSystemTime().time_since_epoch()));
+    snapshot.reset();
+    _manager.getMetricSnapshot(guard, interval).addToSnapshot(snapshot, _component.getClock().getSystemTime());
 
     vespalib::asciistream json;
     vespalib::JsonStream stream(json);

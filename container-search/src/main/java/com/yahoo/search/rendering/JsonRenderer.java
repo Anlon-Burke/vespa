@@ -32,8 +32,6 @@ import com.yahoo.search.grouping.result.AbstractList;
 import com.yahoo.search.grouping.result.BucketGroupId;
 import com.yahoo.search.grouping.result.Group;
 import com.yahoo.search.grouping.result.GroupId;
-import com.yahoo.search.grouping.result.RawBucketId;
-import com.yahoo.search.grouping.result.RawId;
 import com.yahoo.search.grouping.result.RootGroup;
 import com.yahoo.search.grouping.result.ValueGroupId;
 import com.yahoo.search.result.Coverage;
@@ -57,7 +55,6 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
-import java.util.Arrays;
 import java.util.Deque;
 import java.util.Map;
 import java.util.Optional;
@@ -76,10 +73,10 @@ import static com.fasterxml.jackson.databind.SerializationFeature.FLUSH_AFTER_WR
 // NOTE: The JSON format is a public API. If new elements are added be sure to update the reference doc.
 public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
 
-    private static final CompoundName WRAP_DEEP_MAPS = new CompoundName("renderer.json.jsonMaps");
-    private static final CompoundName WRAP_WSETS = new CompoundName("renderer.json.jsonWsets");
-    private static final CompoundName DEBUG_RENDERING_KEY = new CompoundName("renderer.json.debug");
-    private static final CompoundName JSON_CALLBACK = new CompoundName("jsoncallback");
+    private static final CompoundName WRAP_DEEP_MAPS = CompoundName.from("renderer.json.jsonMaps");
+    private static final CompoundName WRAP_WSETS = CompoundName.from("renderer.json.jsonWsets");
+    private static final CompoundName DEBUG_RENDERING_KEY = CompoundName.from("renderer.json.debug");
+    private static final CompoundName JSON_CALLBACK = CompoundName.from("jsoncallback");
 
     // if this must be optimized, simply use com.fasterxml.jackson.core.SerializableString
     private static final String BUCKET_LIMITS = "limits";
@@ -420,29 +417,17 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
     }
 
     protected void renderGroupMetadata(GroupId id) throws IOException {
-        if (!(id instanceof ValueGroupId || id instanceof BucketGroupId)) return;
+        if (!(id instanceof ValueGroupId<?> || id instanceof BucketGroupId)) return;
 
-        if (id instanceof ValueGroupId valueId) {
-            generator.writeStringField(GROUPING_VALUE, getIdValue(valueId));
+        if (id instanceof ValueGroupId<?> valueId) {
+            generator.writeStringField(GROUPING_VALUE, valueId.getValue().toString());
         } else {
             BucketGroupId<?> bucketId = (BucketGroupId<?>) id;
             generator.writeObjectFieldStart(BUCKET_LIMITS);
-            generator.writeStringField(BUCKET_FROM, getBucketFrom(bucketId));
-            generator.writeStringField(BUCKET_TO, getBucketTo(bucketId));
+            generator.writeStringField(BUCKET_FROM, bucketId.getFrom().toString());
+            generator.writeStringField(BUCKET_TO, bucketId.getTo().toString());
             generator.writeEndObject();
         }
-    }
-
-    private static String getIdValue(ValueGroupId<?> id) {
-        return (id instanceof RawId ? Arrays.toString(((RawId) id).getValue()) : id.getValue()).toString();
-    }
-
-    private static String getBucketFrom(BucketGroupId<?> id) {
-        return (id instanceof RawBucketId ? Arrays.toString(((RawBucketId) id).getFrom()) : id.getFrom()).toString();
-    }
-
-    private static String getBucketTo(BucketGroupId<?> id) {
-        return (id instanceof RawBucketId ? Arrays.toString(((RawBucketId) id).getTo()) : id.getTo()).toString();
     }
 
     protected void renderTotalHitCount(Hit hit) throws IOException {
@@ -730,7 +715,7 @@ public class JsonRenderer extends AsynchronousSectionedRenderer<Result> {
                     if (wset != null) return wset;
                 }
                 if (settings.convertDeep()) {
-                    var array = new Value.ArrayValue();
+                    var array = new Value.ArrayValue(data.entryCount());
                     for (int i = 0; i < data.entryCount(); i++) {
                         Inspector obj = data.entry(i);
                         array.add(deepMaybeConvert(obj));

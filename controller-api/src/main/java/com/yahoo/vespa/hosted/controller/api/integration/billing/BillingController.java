@@ -92,7 +92,7 @@ public interface BillingController {
     void updateBillStatus(Bill.Id billId, String agent, String status);
 
     /** Add a line item to the given bill */
-    void addLineItem(TenantName tenant, String description, BigDecimal amount, String agent);
+    void addLineItem(TenantName tenant, String description, BigDecimal amount, Optional<Bill.Id> billId, String agent);
 
     /** Delete a line item - only available for unused line items */
     void deleteLineItem(String lineItemId);
@@ -118,4 +118,11 @@ public interface BillingController {
     default CollectionResult setCollectionMethod(TenantName tenant, CollectionMethod method) {
         return CollectionResult.error("Method not implemented");
     }
+
+    /** Test if the number of tenants with the given plan is under the given limit */
+    default boolean tenantsWithPlanUnderLimit(Plan plan, int limit) {
+        return true;
+    }
+
+    default void updateCache(List<TenantName> tenants) {}
 }

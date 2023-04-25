@@ -7,7 +7,7 @@
 #include <vespa/searchlib/attribute/multistringpostattribute.h>
 
 #include <vespa/searchlib/attribute/enumstore.hpp>
-#include <vespa/searchlib/attribute/singlestringpostattribute.hpp>
+#include <vespa/searchlib/attribute/single_string_enum_search_context.h>
 #include <vespa/searchlib/attribute/multistringpostattribute.hpp>
 
 #include <vespa/log/log.h>
@@ -303,7 +303,7 @@ testDefaultValueOnAddDoc(AttributeVector & v)
     EXPECT_EQUAL(1u, doc);
     EXPECT_EQUAL(2u, v.getNumDocs());
     EXPECT_TRUE( IEnumStore::Index(EntryRef(v.getEnum(doc))).valid() );
-    EXPECT_EQUAL(0u, strlen(v.getString(doc, NULL, 0)));
+    EXPECT_EQUAL(0u, v.get_raw(doc).size());
 }
 
 template <typename Attribute>
@@ -339,6 +339,9 @@ testSingleValue(Attribute & svsa, Config &cfg)
             for (uint32_t j = i - 9; j <= i; ++j) {
                 snprintf(tmp, sizeof(tmp), "enum%u", j % 10);
                 EXPECT_TRUE( strcmp(t = v.get(j), tmp) == 0 );
+                auto raw = v.get_raw(j);
+                EXPECT_EQUAL(strlen(tmp), raw.size());
+                EXPECT_EQUAL(0, memcmp(raw.data(), tmp, raw.size()));
                 e1 = v.getEnum(j);
                 EXPECT_TRUE( v.findEnum(t, e2) );
                 EXPECT_TRUE( e1 == e2 );
@@ -387,7 +390,7 @@ TEST("testSingleValue")
 {
     EXPECT_EQUAL(24u, sizeof(SearchContext));
     EXPECT_EQUAL(32u, sizeof(StringSearchHelper));
-    EXPECT_EQUAL(80u, sizeof(attribute::SingleStringEnumSearchContext));
+    EXPECT_EQUAL(88u, sizeof(attribute::SingleStringEnumSearchContext));
     {
         Config cfg(BasicType::STRING, CollectionType::SINGLE);
         SingleValueStringAttribute svsa("svsa", cfg);

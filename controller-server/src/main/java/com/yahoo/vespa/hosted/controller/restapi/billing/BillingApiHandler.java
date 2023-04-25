@@ -35,8 +35,6 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.security.Principal;
 import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Comparator;
@@ -44,7 +42,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Executor;
-import java.util.stream.Collectors;
 
 /**
  * @author andreer
@@ -225,11 +222,16 @@ public class BillingApiHandler extends ThreadedHttpRequestHandler {
 
     private HttpResponse addLineItem(HttpRequest request, String tenant, String userId) {
         Inspector inspector = inspectorOrThrow(request);
+
+        Optional<Bill.Id> billId = SlimeUtils.optionalString(inspector.field("billId")).map(Bill.Id::of);
+
         billingController.addLineItem(
                 TenantName.from(tenant),
                 getInspectorFieldOrThrow(inspector, "description"),
                 new BigDecimal(getInspectorFieldOrThrow(inspector, "amount")),
+                billId,
                 userId);
+
         return new MessageResponse("Added line item for tenant " + tenant);
     }
 
@@ -416,6 +418,12 @@ public class BillingApiHandler extends ThreadedHttpRequestHandler {
             cursor.setString("zone", zoneId.value())
         );
 
+        lineItem.getArchitecture().ifPresent(architecture -> {
+            cursor.setString("architecture", architecture.name());
+        });
+
+        cursor.setLong("majorVersion", lineItem.getMajorVersion());
+
         lineItem.getCpuHours().ifPresent(cpuHours ->
                 cursor.setString("cpuHours", cpuHours.toString())
         );
@@ -424,6 +432,9 @@ public class BillingApiHandler extends ThreadedHttpRequestHandler {
         );
         lineItem.getDiskHours().ifPresent(diskHours ->
                 cursor.setString("diskHours", diskHours.toString())
+        );
+        lineItem.getGpuHours().ifPresent(gpuHours ->
+                cursor.setString("gpuHours", gpuHours.toString())
         );
         lineItem.getCpuCost().ifPresent(cpuCost ->
                 cursor.setString("cpuCost", cpuCost.toString())
@@ -434,7 +445,9 @@ public class BillingApiHandler extends ThreadedHttpRequestHandler {
         lineItem.getDiskCost().ifPresent(diskCost ->
                 cursor.setString("diskCost", diskCost.toString())
         );
-
+        lineItem.getGpuCost().ifPresent(gpuCost ->
+                cursor.setString("gpuCost", gpuCost.toString())
+        );
     }
 
     private HttpResponse deleteInstrument(String tenant, String userId, String instrument) {

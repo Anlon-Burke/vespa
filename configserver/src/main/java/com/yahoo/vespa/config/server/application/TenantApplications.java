@@ -74,7 +74,7 @@ public class TenantApplications implements RequestHandler, HostValidator {
     private final MetricUpdater tenantMetricUpdater;
     private final Clock clock;
     private final TenantFileSystemDirs tenantFileSystemDirs;
-    private final ConfigserverConfig configserverConfig;
+    private final String serverId;
     private final ListFlag<String> incompatibleVersions;
 
     public TenantApplications(TenantName tenant, Curator curator, StripedExecutor<TenantName> zkWatcherExecutor,
@@ -95,7 +95,7 @@ public class TenantApplications implements RequestHandler, HostValidator {
         this.hostRegistry = hostRegistry;
         this.tenantFileSystemDirs = tenantFileSystemDirs;
         this.clock = clock;
-        this.configserverConfig = configserverConfig;
+        this.serverId = configserverConfig.serverId();
         this.incompatibleVersions = PermanentFlags.INCOMPATIBLE_VERSIONS.bindTo(flagSource);
     }
 
@@ -230,7 +230,7 @@ public class TenantApplications implements RequestHandler, HostValidator {
      */
     public void activateApplication(ApplicationSet applicationSet, long activeSessionId) {
         ApplicationId id = applicationSet.getId();
-        try (Lock lock = lock(id)) {
+        try (@SuppressWarnings("unused") Lock lock = lock(id)) {
             if ( ! exists(id))
                 return; // Application was deleted before activation.
             if (applicationSet.getApplicationGeneration() != activeSessionId)
@@ -269,7 +269,7 @@ public class TenantApplications implements RequestHandler, HostValidator {
     public void removeApplicationsExcept(Set<ApplicationId> applications) {
         for (ApplicationId activeApplication : applicationMapper.listApplicationIds()) {
             if ( ! applications.contains(activeApplication)) {
-                try (var applicationLock = lock(activeApplication)){
+                try (@SuppressWarnings("unused") var applicationLock = lock(activeApplication)){
                     removeApplication(activeApplication);
                 }
             }
@@ -401,25 +401,21 @@ public class TenantApplications implements RequestHandler, HostValidator {
         hostRegistry.verifyHosts(applicationId, newHosts);
     }
 
-    // TODO: Duplicate of resolveApplicationId() above
-    public ApplicationId getApplicationIdForHostName(String hostname) {
-        return hostRegistry.getApplicationId(hostname);
-    }
-
     public TenantFileSystemDirs getTenantFileSystemDirs() { return tenantFileSystemDirs; }
 
     public CompletionWaiter createRemoveApplicationWaiter(ApplicationId applicationId) {
-        return RemoveApplicationWaiter.createAndInitialize(curator, applicationId, configserverConfig.serverId());
+        return RemoveApplicationWaiter.createAndInitialize(curator, applicationId, serverId);
     }
 
     public CompletionWaiter getRemoveApplicationWaiter(ApplicationId applicationId) {
-        return RemoveApplicationWaiter.create(curator, applicationId, configserverConfig.serverId());
+        return RemoveApplicationWaiter.create(curator, applicationId, serverId);
     }
 
     /**
      * Waiter for removing application. Will wait for some time for all servers to remove application,
-     * but will accept majority of servers to have removed app if it takes a long time.
+     * but will accept the majority of servers to have removed app if it takes a long time.
      */
+    // TODO: Merge with CuratorCompletionWaiter
     static class RemoveApplicationWaiter implements CompletionWaiter {
 
         private static final java.util.logging.Logger log = Logger.getLogger(RemoveApplicationWaiter.class.getName());
@@ -485,7 +481,7 @@ public class TenantApplications implements RequestHandler, HostValidator {
                         gotQuorumTime = clock.instant();
 
                     // Give up if more than some time has passed since we got quorum, otherwise continue
-                    if (Duration.between(Instant.now(), gotQuorumTime.plus(waitForAll)).isNegative()) {
+                    if (Duration.between(clock.instant(), gotQuorumTime.plus(waitForAll)).isNegative()) {
                         logBarrierCompleted(respondents, startTime);
                         break;
                     }

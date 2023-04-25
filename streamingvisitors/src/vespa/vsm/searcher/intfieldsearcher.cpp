@@ -19,12 +19,14 @@ IntFieldSearcher::IntFieldSearcher(FieldIdT fId) :
 
 IntFieldSearcher::~IntFieldSearcher() = default;
 
-void IntFieldSearcher::prepare(QueryTermList & qtl, const SharedSearcherBuf & buf)
+void IntFieldSearcher::prepare(search::streaming::QueryTermList& qtl,
+                               const SharedSearcherBuf& buf,
+                               const vsm::FieldPathMapT& field_paths,
+                               search::fef::IQueryEnvironment& query_env)
 {
     _intTerm.clear();
-    FieldSearcher::prepare(qtl, buf);
-    for (QueryTermList::const_iterator it=qtl.begin(); it < qtl.end(); it++) {
-        const QueryTerm * qt = *it;
+    FieldSearcher::prepare(qtl, buf, field_paths, query_env);
+    for (auto qt : qtl) {
         size_t sz(qt->termLen());
         if (sz) {
             int64_t low;

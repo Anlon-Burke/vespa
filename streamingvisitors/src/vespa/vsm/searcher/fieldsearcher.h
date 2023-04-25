@@ -5,6 +5,9 @@
 #include <vespa/searchlib/query/streaming/query.h>
 #include <vespa/vsm/common/document.h>
 #include <vespa/vsm/common/storagedocument.h>
+#include <vespa/vespalib/util/array.h>
+
+namespace search::fef { class IQueryEnvironment; }
 
 namespace vsm {
 
@@ -49,13 +52,17 @@ public:
         EXACT
     };
 
-    FieldSearcher(const FieldIdT & fId, bool defaultPrefix=false);
+    FieldSearcher(FieldIdT fId, bool defaultPrefix=false);
     ~FieldSearcher() override;
     virtual std::unique_ptr<FieldSearcher> duplicate() const = 0;
     bool search(const StorageDocument & doc);
-    virtual void prepare(search::streaming::QueryTermList & qtl, const SharedSearcherBuf & buf);
-    const FieldIdT & field()         const { return _field; }
-    void field(const FieldIdT & v)         { _field = v; prepareFieldId(); }
+    virtual void prepare(search::streaming::QueryTermList& qtl,
+                         const SharedSearcherBuf& buf,
+                         const vsm::FieldPathMapT& field_paths,
+                         search::fef::IQueryEnvironment& query_env);
+
+    FieldIdT field()                 const { return _field; }
+    void field(FieldIdT v)                 { _field = v; prepareFieldId(); }
     bool prefix()                    const { return _matchType == PREFIX; }
     bool substring()                 const { return _matchType == SUBSTRING; }
     bool suffix()                    const { return _matchType == SUFFIX; }
@@ -141,7 +148,11 @@ using FieldIdTSearcherMapT = std::vector<FieldSearcherContainer>;
 class FieldIdTSearcherMap : public FieldIdTSearcherMapT
 {
 public:
-    void prepare(const DocumentTypeIndexFieldMapT & difm, const SharedSearcherBuf & searcherBuf, search::streaming::Query & query);
+    void prepare(const DocumentTypeIndexFieldMapT& difm,
+                 const SharedSearcherBuf& searcherBuf,
+                 search::streaming::Query& query,
+                 const vsm::FieldPathMapT& field_paths,
+                 search::fef::IQueryEnvironment& query_env);
 };
 
 }

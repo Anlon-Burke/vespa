@@ -10,7 +10,6 @@ import com.yahoo.config.provision.NodeAllocationException;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.vespa.hosted.provision.Node;
-import com.yahoo.vespa.hosted.provision.NodeRepository;
 
 import java.util.List;
 import java.util.Optional;
@@ -50,6 +49,8 @@ public interface HostProvisioner {
      * @param sharing puts requirements on sharing or exclusivity of the host to be provisioned.
      * @param clusterType the cluster we are provisioning for, or empty if we are provisioning hosts
      *                    to be shared by multiple cluster nodes
+     * @param clusterId the id of the cluster we are provisioning for, or empty if we are provisioning hosts
+     *                    to be shared by multiple cluster nodes
      * @param cloudAccount the cloud account to use
      * @param provisionedHostConsumer consumer of {@link ProvisionedHost}s describing the provisioned nodes,
      *                                the {@link Node} returned from {@link ProvisionedHost#generateHost()} must be
@@ -64,6 +65,7 @@ public interface HostProvisioner {
                         Version osVersion,
                         HostSharing sharing,
                         Optional<ClusterSpec.Type> clusterType,
+                        Optional<ClusterSpec.Id> clusterId,
                         CloudAccount cloudAccount,
                         Consumer<List<ProvisionedHost>> provisionedHostConsumer) throws NodeAllocationException;
 
@@ -72,12 +74,11 @@ public interface HostProvisioner {
      *
      * @param host the host to provision
      * @param children list of all the nodes that run on the given host
-     * @return a subset of {@code host} and {@code children} where the values have been modified and should
-     * be written back to node-repository.
+     * @return IP config for the provisioned host and its children
      * @throws FatalProvisioningException if the provisioning has irrecoverably failed and the input nodes
      * should be deleted from node-repo.
      */
-    List<Node> provision(Node host, Set<Node> children) throws FatalProvisioningException;
+    HostIpConfig provision(Node host, Set<Node> children) throws FatalProvisioningException;
 
     /**
      * Deprovisions a given host and resources associated with it and its children (such as DNS entries).

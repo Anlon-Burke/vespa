@@ -5,7 +5,6 @@
 #include "multistringattribute.h"
 #include "enumattribute.hpp"
 #include "enumerated_multi_value_read_view.h"
-#include "multienumattribute.hpp"
 #include "multi_string_enum_hint_search_context.h"
 #include <vespa/vespalib/text/utf8.h>
 #include <vespa/vespalib/text/lowercase.h>
@@ -42,7 +41,6 @@ MultiValueStringAttributeT<B, M>::freezeEnumDictionary()
 {
     this->getEnumStore().freeze_dictionary();
 }
-
 
 template <typename B, typename M>
 std::unique_ptr<attribute::SearchContext>

@@ -9,9 +9,7 @@ import com.yahoo.documentapi.VisitorDataHandler;
 import com.yahoo.documentapi.VisitorParameters;
 import com.yahoo.documentapi.VisitorSession;
 import com.yahoo.documentapi.messagebus.protocol.DocumentProtocol;
-import com.yahoo.documentapi.messagebus.protocol.DocumentSummaryMessage;
 import com.yahoo.documentapi.messagebus.protocol.QueryResultMessage;
-import com.yahoo.documentapi.messagebus.protocol.SearchResultMessage;
 import com.yahoo.io.GrowableByteBuffer;
 
 import com.yahoo.messagebus.Message;
@@ -51,13 +49,13 @@ import java.util.logging.Level;
  */
 class VdsVisitor extends VisitorDataHandler implements Visitor {
 
-    private static final CompoundName streamingUserid=new CompoundName("streaming.userid");
-    private static final CompoundName streamingGroupname=new CompoundName("streaming.groupname");
-    private static final CompoundName streamingSelection=new CompoundName("streaming.selection");
-    private static final CompoundName streamingFromtimestamp=new CompoundName("streaming.fromtimestamp");
-    private static final CompoundName streamingTotimestamp=new CompoundName("streaming.totimestamp");
-    private static final CompoundName streamingPriority=new CompoundName("streaming.priority");
-    private static final CompoundName streamingMaxbucketspervisitor=new CompoundName("streaming.maxbucketspervisitor");
+    private static final CompoundName streamingUserid = CompoundName.from("streaming.userid");
+    private static final CompoundName streamingGroupname = CompoundName.from("streaming.groupname");
+    private static final CompoundName streamingSelection = CompoundName.from("streaming.selection");
+    private static final CompoundName streamingFromtimestamp = CompoundName.from("streaming.fromtimestamp");
+    private static final CompoundName streamingTotimestamp = CompoundName.from("streaming.totimestamp");
+    private static final CompoundName streamingPriority = CompoundName.from("streaming.priority");
+    private static final CompoundName streamingMaxbucketspervisitor = CompoundName.from("streaming.maxbucketspervisitor");
 
     protected static final int MAX_BUCKETS_PER_VISITOR = 1024;
 
@@ -300,12 +298,8 @@ class VdsVisitor extends VisitorDataHandler implements Visitor {
     public void onMessage(Message m, AckToken token) {
         if (m instanceof QueryResultMessage qm) {
             onQueryResult(qm.getResult(), qm.getSummary());
-        } else if (m instanceof SearchResultMessage) {
-            onSearchResult(((SearchResultMessage) m).getResult());
-        } else if (m instanceof DocumentSummaryMessage dsm) {
-            onDocumentSummary(dsm.getResult());
         } else {
-            throw new UnsupportedOperationException("Received unsupported message " + m + ". VdsVisitor can only accept query result, search result, and documentsummary messages.");
+            throw new UnsupportedOperationException("Received unsupported message " + m + ". VdsVisitor can only accept query result messages.");
         }
         ack(token);
     }
@@ -318,13 +312,6 @@ class VdsVisitor extends VisitorDataHandler implements Visitor {
     public void onQueryResult(SearchResult sr, DocumentSummary summary) {
         handleSearchResult(sr);
         handleSummary(summary);
-    }
-
-    public void onSearchResult(SearchResult sr) {
-        if (log.isLoggable(Level.FINEST)) {
-            log.log(Level.FINEST, "Got SearchResult for query with selection " + params.getDocumentSelection());
-        }
-        handleSearchResult(sr);
     }
 
     private void handleSearchResult(SearchResult sr) {
@@ -375,13 +362,6 @@ class VdsVisitor extends VisitorDataHandler implements Visitor {
                 }
             }
         }
-    }
-
-    public void onDocumentSummary(DocumentSummary ds) {
-        if (log.isLoggable(Level.FINEST)) {
-            log.log(Level.FINEST, "Got DocumentSummary for query with selection " + params.getDocumentSelection());
-        }
-        handleSummary(ds);
     }
 
     private void handleSummary(DocumentSummary ds) {

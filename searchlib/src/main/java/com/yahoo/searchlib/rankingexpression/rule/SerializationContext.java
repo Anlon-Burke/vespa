@@ -6,6 +6,7 @@ import com.yahoo.searchlib.rankingexpression.RankingExpression;
 import com.yahoo.searchlib.rankingexpression.Reference;
 import com.yahoo.tensor.TensorType;
 import com.yahoo.tensor.evaluation.TypeContext;
+import static com.yahoo.searchlib.rankingexpression.Reference.wrapInRankingExpression;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -97,13 +98,17 @@ public class SerializationContext extends FunctionReferenceContext {
 
     /** Adds the serialization of the argument type to a function */
     public void addArgumentTypeSerialization(String functionName, String argumentName, TensorType type) {
-        serializedFunctions.put("rankingExpression(" + functionName + ")." + argumentName + ".type", type.toString());
+        serializedFunctions.put(wrapInRankingExpression(functionName) + "." + argumentName + ".type", type.toString());
     }
 
     /** Adds the serialization of the return type of a function */
     public void addFunctionTypeSerialization(String functionName, TensorType type) {
         if (type.rank() == 0) return; // no explicit type implies scalar (aka rank 0 tensor)
-        serializedFunctions.put("rankingExpression(" + functionName + ").type", type.toString());
+        String key = wrapInRankingExpression(functionName) + ".type";
+        var old = serializedFunctions.put(key, type.toString());
+        if (old != null && !old.equals(type.toString())) {
+            throw new IllegalArgumentException("conflicting values for " + key + ": " + old + " != " + type.toString());
+        }
     }
 
     @Override

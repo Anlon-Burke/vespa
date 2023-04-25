@@ -22,7 +22,7 @@ import java.util.Iterator;
 @Before(GroupingExecutor.COMPONENT_NAME)
 public class FlatteningSearcher extends Searcher {
 
-    private final CompoundName flatten = CompoundName.fromComponents("grouping", "flatten");
+    private final CompoundName flatten = CompoundName.from("grouping.flatten");
 
     @Override
     public Result search(Query query, Execution execution) {
@@ -45,8 +45,9 @@ public class FlatteningSearcher extends Searcher {
 
             // If we count the number of unique groups, use that as total hit count.
             if (level == 0 && (hit instanceof RootGroup)) {
-                if (hit.fields().get("count()") != null)
-                    result.setTotalHitCount((long)hit.fields().get("count()"));
+                Object countField = hit.getField("count()");
+                if (countField != null)
+                    result.setTotalHitCount((long)countField);
             }
 
             if (hit instanceof HitGroup) {

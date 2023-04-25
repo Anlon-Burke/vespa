@@ -4,12 +4,13 @@
 #include "rankprocessor.h"
 #include <vespa/searchlib/fef/handle.h>
 #include <vespa/searchlib/fef/simpletermfielddata.h>
+#include <vespa/searchlib/query/streaming/nearest_neighbor_query_node.h>
 #include <vespa/vsm/vsm/fieldsearchspec.h>
 #include <cmath>
 #include <vespa/log/log.h>
 LOG_SETUP(".searchvisitor.rankprocessor");
 
-using search::FeatureSet;
+using vespalib::FeatureSet;
 using search::fef::FeatureHandle;
 using search::fef::ITermData;
 using search::fef::ITermFieldData;
@@ -55,24 +56,28 @@ RankProcessor::initQueryEnvironment()
 {
     QueryWrapper::TermList & terms = _query.getTermList();
 
-    for (uint32_t i = 0; i < terms.size(); ++i) {
-        if (terms[i].isGeoPosTerm()) {
-            const vespalib::string & fieldName = terms[i].getTerm()->index();
-            const vespalib::string & locStr = terms[i].getTerm()->getTermString();
+    for (auto& term : terms) {
+        if (term.isGeoPosTerm()) {
+            const vespalib::string & fieldName = term.getTerm()->index();
+            const vespalib::string & locStr = term.getTerm()->getTermString();
             _queryEnv.addGeoLocation(fieldName, locStr);
         }
-        if (!terms[i].isPhraseTerm() || terms[i].isFirstPhraseTerm()) { // register 1 term data per phrase
-            QueryTermData & qtd = dynamic_cast<QueryTermData &>(terms[i].getTerm()->getQueryItem());
+        if (!term.isPhraseTerm() || term.isFirstPhraseTerm()) { // register 1 term data per phrase
+            QueryTermData & qtd = dynamic_cast<QueryTermData &>(term.getTerm()->getQueryItem());
 
-            qtd.getTermData().setWeight(terms[i].getTerm()->weight());
-            qtd.getTermData().setUniqueId(terms[i].getTerm()->uniqueId());
-            if (terms[i].isFirstPhraseTerm()) {
-                qtd.getTermData().setPhraseLength(terms[i].getParent()->width());
+            qtd.getTermData().setWeight(term.getTerm()->weight());
+            qtd.getTermData().setUniqueId(term.getTerm()->uniqueId());
+            if (term.isFirstPhraseTerm()) {
+                qtd.getTermData().setPhraseLength(term.getParent()->width());
             } else {
                 qtd.getTermData().setPhraseLength(1);
             }
+            auto* nn_term = term.getTerm()->as_nearest_neighbor_query_node();
+            if (nn_term != nullptr) {
+                qtd.getTermData().set_query_tensor_name(nn_term->get_query_tensor_name());
+            }
 
-            vespalib::string expandedIndexName = vsm::FieldSearchSpecMap::stripNonFields(terms[i].getTerm()->index());
+            vespalib::string expandedIndexName = vsm::FieldSearchSpecMap::stripNonFields(term.getTerm()->index());
             const RankManager::View *view = _rankManagerSnapshot->getView(expandedIndexName);
             if (view != nullptr) {
                 RankManager::View::const_iterator iter = view->begin();
@@ -82,17 +87,17 @@ RankProcessor::initQueryEnvironment()
                 }
             } else {
                 LOG(warning, "Could not find a view for index '%s'. Ranking no fields.",
-                    getIndexName(terms[i].getTerm()->index(), expandedIndexName).c_str());
+                    getIndexName(term.getTerm()->index(), expandedIndexName).c_str());
             }
 
             LOG(debug, "Setup query term '%s:%s' (%s)",
-                getIndexName(terms[i].getTerm()->index(), expandedIndexName).c_str(),
-                terms[i].getTerm()->getTerm(),
-                terms[i].isFirstPhraseTerm() ? "phrase" : "term");
+                getIndexName(term.getTerm()->index(), expandedIndexName).c_str(),
+                term.getTerm()->getTerm(),
+                term.isFirstPhraseTerm() ? "phrase" : "term");
             _queryEnv.addTerm(&qtd.getTermData());
         } else {
             LOG(debug, "Ignore query term '%s:%s' (part of phrase)",
-                terms[i].getTerm()->index().c_str(), terms[i].getTerm()->getTerm());
+                term.getTerm()->index().c_str(), term.getTerm()->getTerm());
         }
     }
     _rankSetup.prepareSharedState(_queryEnv, _queryEnv.getObjectStore());
@@ -227,14 +232,27 @@ void
 RankProcessor::unpackMatchData(uint32_t docId)
 {
     _docId = docId;
-    unpackMatchData(*_match_data);
+    unpack_match_data(docId, *_match_data, _query);
 }
 
 void
-RankProcessor::unpackMatchData(MatchData &matchData)
+RankProcessor::unpack_match_data(uint32_t docid, MatchData &matchData, QueryWrapper& query)
 {
-    for (QueryWrapper::Term & term: _query.getTermList()) {
-        if (!term.isPhraseTerm() || term.isFirstPhraseTerm()) { // consider 1 term data per phrase
+    for (QueryWrapper::Term & term: query.getTermList()) {
+        auto nn_node = term.getTerm()->as_nearest_neighbor_query_node();
+        if (nn_node != nullptr) {
+            auto& raw_score = nn_node->get_raw_score();
+            if (raw_score.has_value()) {
+                auto& qtd = static_cast<QueryTermData &>(term.getTerm()->getQueryItem());
+                auto& td = qtd.getTermData();
+                if (td.numFields() == 1u) {
+                    auto tfd = td.field(0u);
+                    auto tmd = matchData.resolveTermField(tfd.getHandle());
+                    assert(tmd != nullptr);
+                    tmd->setRawScore(docid, raw_score.value());
+                }
+            }
+        } else if (!term.isPhraseTerm() || term.isFirstPhraseTerm()) { // consider 1 term data per phrase
             bool isPhrase = term.isFirstPhraseTerm();
             QueryTermData & qtd = static_cast<QueryTermData &>(term.getTerm()->getQueryItem());
             const ITermData &td = qtd.getTermData();
@@ -266,8 +284,8 @@ RankProcessor::unpackMatchData(MatchData &matchData)
                             tmd = matchData.resolveTermField(tfd->getHandle());
                             tmd->setFieldId(fieldId);
                             // reset field match data, but only once per docId
-                            if (tmd->getDocId() != _docId) {
-                                tmd->reset(_docId);
+                            if (tmd->getDocId() != docid) {
+                                tmd->reset(docid);
                             }
                         }
                         // find fieldLen for new field

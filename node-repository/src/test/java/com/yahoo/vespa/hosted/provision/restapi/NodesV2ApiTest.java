@@ -650,6 +650,43 @@ public class NodesV2ApiTest {
     }
 
     @Test
+    public void drop_documents() throws IOException {
+        // Initially no reports
+        tester.assertPartialResponse(new Request("http://localhost:8080/nodes/v2/node/test-node-pool-102-2"), "reports", false);
+        tester.assertPartialResponse(new Request("http://localhost:8080/nodes/v2/node/host4.yahoo.com"), "reports", false);
+
+        // Initiating drop documents will set the report on all nodes
+        assertResponse(new Request("http://localhost:8080/nodes/v2/application/tenant3.application3.instance3/drop-documents?clusterId=id3", new byte[0], Request.Method.POST),
+                "{\"message\":\"Triggered dropping of documents on 2 nodes\"}");
+        tester.assertResponseContains(new Request("http://localhost:8080/nodes/v2/node/test-node-pool-102-2"),
+                "{\"dropDocuments\":{\"createdMillis\":123}}");
+        tester.assertResponseContains(new Request("http://localhost:8080/nodes/v2/node/host4.yahoo.com"),
+                "{\"dropDocuments\":{\"createdMillis\":123}}");
+
+        // Host admin of the first node finishes dropping
+        assertResponse(new Request("http://localhost:8080/nodes/v2/node/host4.yahoo.com",
+                        Utf8.toBytes("{\"reports\": {\"dropDocuments\":{\"createdMillis\":25,\"droppedAt\":36}}}"),
+                        Request.Method.PATCH),
+                "{\"message\":\"Updated host4.yahoo.com\"}");
+        tester.assertResponseContains(new Request("http://localhost:8080/nodes/v2/node/host4.yahoo.com"),
+                "{\"dropDocuments\":{\"createdMillis\":25,\"droppedAt\":36}}");
+
+        // Host admin of the second node finishes dropping, node-repo will update report on both nodes to start phase 2
+        assertResponse(new Request("http://localhost:8080/nodes/v2/node/test-node-pool-102-2",
+                        Utf8.toBytes("{\"reports\": {\"dropDocuments\":{\"createdMillis\":49,\"droppedAt\":456}}}"),
+                        Request.Method.PATCH),
+                "{\"message\":\"Updated test-node-pool-102-2\"}");
+        tester.assertResponseContains(new Request("http://localhost:8080/nodes/v2/node/test-node-pool-102-2"),
+                "{\"dropDocuments\":{\"createdMillis\":49,\"droppedAt\":456,\"readiedAt\":123}}");
+        tester.assertResponseContains(new Request("http://localhost:8080/nodes/v2/node/host4.yahoo.com"),
+                "{\"dropDocuments\":{\"createdMillis\":25,\"droppedAt\":36,\"readiedAt\":123}}");
+
+        tester.assertResponse(new Request("http://localhost:8080/nodes/v2/application/does.not.exist/drop-documents", new byte[0], Request.Method.POST),
+                404,
+                "{\"error-code\":\"NOT_FOUND\",\"message\":\"No content nodes found for does.not.exist\"}");
+    }
+
+    @Test
     public void test_upgrade() throws IOException {
         // Initially, no versions are set
         assertResponse(new Request("http://localhost:8080/nodes/v2/upgrade/"), "{\"versions\":{},\"osVersions\":{},\"dockerImages\":{}}");
@@ -906,13 +943,13 @@ public class NodesV2ApiTest {
 
         // Test patching with overrides
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node/" + host,
-                                          "{\"minDiskAvailableGb\":5432,\"minMainMemoryAvailableGb\":2345}".getBytes(StandardCharsets.UTF_8),
+                                          "{\"diskGb\":5432,\"memoryGb\":2345}".getBytes(StandardCharsets.UTF_8),
                                           Request.Method.PATCH),
                               400,
-                              "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Could not set field 'minMainMemoryAvailableGb': Can only override disk GB for configured flavor\"}");
+                              "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Could not set field 'memoryGb': Can only override disk GB for configured flavor\"}");
 
         assertResponse(new Request("http://localhost:8080/nodes/v2/node/" + host,
-                        "{\"minDiskAvailableGb\":5432}".getBytes(StandardCharsets.UTF_8),
+                        "{\"diskGb\":5432}".getBytes(StandardCharsets.UTF_8),
                         Request.Method.PATCH),
                 "{\"message\":\"Updated " + host + "\"}");
         tester.assertResponseContains(new Request("http://localhost:8080/nodes/v2/node/" + host),

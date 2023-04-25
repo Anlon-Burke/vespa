@@ -54,7 +54,8 @@ BuildRequires: gcc-toolset-12-libatomic-devel
 BuildRequires: maven
 BuildRequires: maven-openjdk17
 BuildRequires: vespa-pybind11-devel
-BuildRequires: python38-devel
+BuildRequires: python39-devel
+BuildRequires: python39-pip
 BuildRequires: glibc-langpack-en
 %endif
 %if 0%{?el9}
@@ -93,9 +94,9 @@ BuildRequires: vespa-gtest = 1.11.0
 %define _use_vespa_gtest 1
 BuildRequires: vespa-lz4-devel >= 1.9.4-1
 BuildRequires: vespa-onnxruntime-devel = 1.13.1
-BuildRequires: vespa-protobuf-devel = 3.21.7
+BuildRequires: vespa-protobuf-devel = 3.21.12
 %define _use_vespa_protobuf 1
-BuildRequires: vespa-libzstd-devel >= 1.5.2-1
+BuildRequires: vespa-libzstd-devel >= 1.5.4-1
 %endif
 %if 0%{?el9}
 BuildRequires: cmake >= 3.20.2
@@ -104,8 +105,8 @@ BuildRequires: maven-openjdk17
 BuildRequires: openssl-devel
 BuildRequires: vespa-lz4-devel >= 1.9.4-1
 BuildRequires: vespa-onnxruntime-devel = 1.13.1
-BuildRequires: vespa-libzstd-devel >= 1.5.2-1
-BuildRequires: vespa-protobuf-devel = 3.21.7
+BuildRequires: vespa-libzstd-devel >= 1.5.4-1
+BuildRequires: vespa-protobuf-devel = 3.21.12
 %define _use_vespa_protobuf 1
 BuildRequires: llvm-devel
 BuildRequires: boost-devel >= 1.75
@@ -115,7 +116,7 @@ BuildRequires: gmock-devel
 %if 0%{?fedora}
 BuildRequires: cmake >= 3.9.1
 BuildRequires: maven
-%if 0%{?amzn2022}
+%if 0%{?amzn2023}
 BuildRequires: maven-amazon-corretto17
 %define _java_home /usr/lib/jvm/java-17-amazon-corretto
 %else
@@ -126,14 +127,14 @@ BuildRequires: maven-openjdk17
 BuildRequires: openssl-devel
 BuildRequires: vespa-lz4-devel >= 1.9.4-1
 BuildRequires: vespa-onnxruntime-devel = 1.13.1
-BuildRequires: vespa-libzstd-devel >= 1.5.2-1
+BuildRequires: vespa-libzstd-devel >= 1.5.4-1
 BuildRequires: protobuf-devel
 BuildRequires: llvm-devel
 BuildRequires: boost-devel
 BuildRequires: gtest-devel
 BuildRequires: gmock-devel
 %endif
-%if 0%{?amzn2022}
+%if 0%{?amzn2023}
 BuildRequires: vespa-xxhash-devel >= 0.8.1
 %define _use_vespa_xxhash 1
 %else
@@ -145,7 +146,7 @@ BuildRequires: vespa-openblas-devel = 0.3.21
 %else
 BuildRequires: openblas-devel
 %endif
-%if 0%{?amzn2022}
+%if 0%{?amzn2023}
 BuildRequires: vespa-re2-devel = 20210801
 %define _use_vespa_re2 1
 %else
@@ -153,7 +154,7 @@ BuildRequires: re2-devel
 %endif
 BuildRequires: zlib-devel
 BuildRequires: libicu-devel
-%if 0%{?amzn2022}
+%if 0%{?amzn2023}
 BuildRequires: java-17-amazon-corretto-devel
 BuildRequires: java-17-amazon-corretto
 %else
@@ -177,7 +178,7 @@ Requires: numactl
 BuildRequires: perl
 BuildRequires: valgrind
 BuildRequires: perf
-%if 0%{?amzn2022}
+%if 0%{?amzn2023}
 Requires: vespa-xxhash >= 0.8.1
 %else
 Requires: xxhash-libs >= 0.8.1
@@ -222,7 +223,7 @@ Vespa - The open big data serving engine
 
 Summary: Vespa - The open big data serving engine - base
 
-%if 0%{?amzn2022}
+%if 0%{?amzn2023}
 Requires: java-17-amazon-corretto-devel
 Requires: java-17-amazon-corretto
 %else
@@ -243,7 +244,7 @@ Summary: Vespa - The open big data serving engine - base C++ libraries
 %if 0%{?centos} || 0%{?rocky} || 0%{?oraclelinux}
 Requires: epel-release
 %endif
-%if 0%{?amzn2022}
+%if 0%{?amzn2023}
 Requires: vespa-xxhash >= 0.8.1
 %else
 Requires: xxhash-libs >= 0.8.1
@@ -254,13 +255,13 @@ Requires: vespa-openssl >= 1.1.1o-1
 Requires: openssl-libs
 %endif
 Requires: vespa-lz4 >= 1.9.4-1
-Requires: vespa-libzstd >= 1.5.2-1
+Requires: vespa-libzstd >= 1.5.4-1
 %if 0%{?el8}
 Requires: vespa-openblas = 0.3.21
 %else
 Requires: openblas-serial
 %endif
-%if 0%{?amzn2022}
+%if 0%{?amzn2023}
 Requires: vespa-re2 = 20210801
 %else
 Requires: re2
@@ -286,11 +287,11 @@ Requires: openssl-libs
 %endif
 %if 0%{?el8}
 Requires: llvm-libs
-Requires: vespa-protobuf = 3.21.7
+Requires: vespa-protobuf = 3.21.12
 %endif
 %if 0%{?el9}
 Requires: llvm-libs
-Requires: vespa-protobuf = 3.21.7
+Requires: vespa-protobuf = 3.21.12
 %endif
 %if 0%{?fedora}
 Requires: protobuf
@@ -376,7 +377,7 @@ Summary: Vespa - The open big data serving engine - ann-benchmark
 Requires: %{name}-base-libs = %{version}-%{release}
 Requires: %{name}-libs = %{version}-%{release}
 %if 0%{?el8}
-Requires: python38
+Requires: python39
 %endif
 %if 0%{?el9}
 Requires: python3
@@ -452,15 +453,32 @@ export FACTORY_VESPA_VERSION=%{version}
 mvn --batch-mode -e -N io.takari:maven:wrapper -Dmaven=3.6.3
 %endif
 %{?_use_mvn_wrapper:env VESPA_MAVEN_COMMAND=$(pwd)/mvnw }sh bootstrap.sh java
-%{?_use_mvn_wrapper:./mvnw}%{!?_use_mvn_wrapper:mvn} --batch-mode -nsu -T 1C  install -Dmaven.test.skip=true -Dmaven.javadoc.skip=true
+%{?_use_mvn_wrapper:./mvnw}%{!?_use_mvn_wrapper:mvn} --batch-mode -nsu -T 1C install -DskipTests -Dmaven.javadoc.skip=true
 %{_command_cmake} -DCMAKE_INSTALL_PREFIX=%{_prefix} \
        -DJAVA_HOME=$JAVA_HOME \
        -DVESPA_USER=%{_vespa_user} \
        -DVESPA_UNPRIVILEGED=no \
+       %{_cmake_extra_opts} \
        .
 
 make %{_smp_mflags}
 VERSION=%{version} CI=true make -C client/go install-all
+%endif
+
+%check
+%if ! 0%{?installdir:1}
+%if 0%{?_java_home:1}
+export JAVA_HOME=%{?_java_home}
+%else
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+%endif
+export PATH="$JAVA_HOME/bin:$PATH"
+%if 0%{?el8}
+python3.9 -m pip install --user pytest
+%endif
+export PYTHONPATH="$PYTHONPATH:/usr/local/lib/$(basename $(readlink -f $(which python3)))/site-packages"
+#%{?_use_mvn_wrapper:./mvnw}%{!?_use_mvn_wrapper:mvn} --batch-mode -nsu -T 1C -Dmaven.javadoc.skip=true test
+make test ARGS="--output-on-failure %{_smp_mflags}"
 %endif
 
 %install
@@ -576,7 +594,6 @@ fi
 %exclude %{_prefix}/conf/configserver-app/components/config-model-fat.jar
 %exclude %{_prefix}/conf/configserver-app/config-models.xml
 %dir %{_prefix}/conf/logd
-%dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/conf/telegraf
 %dir %{_prefix}/conf/vespa
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/var/zookeeper/conf
 %dir %{_prefix}/etc
@@ -586,7 +603,6 @@ fi
 %{_prefix}/include
 %dir %{_prefix}/lib
 %dir %{_prefix}/lib/jars
-%{_prefix}/lib/jars/athenz-identity-provider-service-jar-with-dependencies.jar
 %{_prefix}/lib/jars/cloud-tenant-cd-jar-with-dependencies.jar
 %{_prefix}/lib/jars/clustercontroller-apps-jar-with-dependencies.jar
 %{_prefix}/lib/jars/clustercontroller-core-jar-with-dependencies.jar
@@ -620,7 +636,6 @@ fi
 %exclude %{_prefix}/libexec/vespa/standalone-container.sh
 %exclude %{_prefix}/libexec/vespa/vespa-curl-wrapper
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/logs
-%dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/logs/telegraf
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/logs/vespa
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/logs/vespa/access
 %dir %attr(-,%{_vespa_user},%{_vespa_group}) %{_prefix}/logs/vespa/configserver

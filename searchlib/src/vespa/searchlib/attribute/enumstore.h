@@ -16,7 +16,6 @@
 #include <vespa/vespalib/datastore/unique_store.h>
 #include <vespa/vespalib/datastore/unique_store_string_allocator.h>
 #include <vespa/vespalib/util/buffer.h>
-#include <vespa/vespalib/util/array.h>
 #include <vespa/vespalib/stllike/allocator.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <cmath>
@@ -28,6 +27,9 @@ namespace search {
  *
  * It uses an instance of vespalib::datastore::UniqueStore to store the actual values.
  * It also exposes the dictionary used for fast lookups into the set of unique values.
+ *
+ * The default value is always present except for a short time window
+ * during attribute vector load.
  *
  * @tparam EntryType The type of the entries/values stored.
  *                   It has special handling of type 'const char *' for strings.
@@ -56,6 +58,8 @@ private:
     ComparatorType         _comparator;
     ComparatorType         _foldedComparator;
     enumstore::EnumStoreCompactionSpec _compaction_spec;
+    EntryType              _default_value;
+    AtomicIndex            _default_value_ref;
 
     EnumStoreT(const EnumStoreT & rhs) = delete;
     EnumStoreT & operator=(const EnumStoreT & rhs) = delete;
@@ -76,7 +80,7 @@ private:
     std::unique_ptr<EntryComparator> allocate_optionally_folded_comparator(bool folded) const;
     ComparatorType make_optionally_folded_comparator(bool folded) const;
 public:
-    EnumStoreT(bool has_postings, const search::DictionaryConfig& dict_cfg, std::shared_ptr<vespalib::alloc::MemoryAllocator> memory_allocator);
+    EnumStoreT(bool has_postings, const search::DictionaryConfig& dict_cfg, std::shared_ptr<vespalib::alloc::MemoryAllocator> memory_allocator, EntryType default_value);
     EnumStoreT(bool has_postings, const search::DictionaryConfig & dict_cfg);
     ~EnumStoreT() override;
 
@@ -91,7 +95,12 @@ public:
     uint32_t get_num_uniques() const override { return _dict->get_num_uniques(); }
     bool is_folded() const { return _is_folded;}
 
-    vespalib::MemoryUsage get_values_memory_usage() const override { return _store.get_allocator().get_data_store().getMemoryUsage(); }
+    vespalib::MemoryUsage get_values_memory_usage() const override {
+        return _store.get_allocator().get_data_store().getMemoryUsage();
+    }
+    vespalib::MemoryUsage get_dynamic_values_memory_usage() const {
+        return _store.get_allocator().get_data_store().getDynamicMemoryUsage();
+    }
     vespalib::MemoryUsage get_dictionary_memory_usage() const override { return _dict->get_memory_usage(); }
 
     vespalib::AddressSpace get_values_address_space_usage() const override;
@@ -197,6 +206,9 @@ public:
     bool find_index(EntryType value, Index& idx) const;
     void free_unused_values() override;
     void free_unused_values(IndexList to_remove);
+    void clear_default_value_ref() override;
+    void setup_default_value_ref() override;
+    const AtomicIndex& get_default_value_ref() const noexcept { return _default_value_ref; }
     vespalib::MemoryUsage update_stat(const CompactionStrategy& compaction_strategy) override;
     std::unique_ptr<EnumIndexRemapper> consider_compact_values(const CompactionStrategy& compaction_strategy) override;
     std::unique_ptr<EnumIndexRemapper> compact_worst_values(CompactionSpec compaction_spec, const CompactionStrategy& compaction_strategy) override;
@@ -207,7 +219,7 @@ public:
     void inc_compaction_count() override {
         _store.get_allocator().get_data_store().inc_compaction_count();
     }
-    std::unique_ptr<Enumerator> make_enumerator() const override;
+    std::unique_ptr<Enumerator> make_enumerator() override;
     std::unique_ptr<EntryComparator> allocate_comparator() const override;
 
     // Methods below are only relevant for strings, and are templated to only be instantiated on demand.

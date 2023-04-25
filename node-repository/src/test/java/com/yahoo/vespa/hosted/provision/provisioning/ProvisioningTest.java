@@ -757,6 +757,23 @@ public class ProvisioningTest {
     }
 
     @Test
+    public void ignore_retirement_if_no_capacity() {
+        ProvisioningTester tester = new ProvisioningTester.Builder().zone(new Zone(Environment.prod, RegionName.from("us-east"))).build();
+        tester.makeReadyHosts(3, defaultResources).activateTenantHosts();
+
+        ApplicationId application = ProvisioningTester.applicationId();
+        ClusterSpec cluster = ClusterSpec.request(ClusterSpec.Type.content, ClusterSpec.Id.from("music")).vespaVersion("4.5.6").build();
+        tester.activate(application, tester.prepare(application, cluster, 3, 1, defaultResources));
+
+        // Mark the nodes as want to retire
+        NodeList nodes = tester.getNodes(application);
+        tester.patchNodes(nodes.asList(), node -> node.withWantToRetire(true, Agent.system, tester.clock().instant()));
+
+        tester.activate(application, tester.prepare(application, cluster, 3, 1, defaultResources));
+        assertEquals(3, tester.getNodes(application).state(Node.State.active).not().retired().size());
+    }
+
+    @Test
     public void highest_node_indexes_are_retired_first() {
         ProvisioningTester tester = new ProvisioningTester.Builder().zone(new Zone(Environment.prod, RegionName.from("us-east"))).build();
 
@@ -919,10 +936,10 @@ public class ProvisioningTest {
         // Add 2 config server hosts and 2 config servers
         Flavor flavor = tester.nodeRepository().flavors().getFlavorOrThrow("default");
         List<Node> nodes = List.of(
-                Node.create("cfghost1", new IP.Config(Set.of("::1:0"), Set.of("::1:1")), "cfghost1", flavor, NodeType.confighost).build(),
-                Node.create("cfghost2", new IP.Config(Set.of("::2:0"), Set.of("::2:1")), "cfghost2", flavor, NodeType.confighost).ipConfig(IP.Config.of(Set.of("::2:0"), Set.of("::2:1"), List.of())).build(),
-                Node.create("cfg1", new IP.Config(Set.of("::1:1"), Set.of()), "cfg1", flavor, NodeType.config).parentHostname("cfghost1").build(),
-                Node.create("cfg2", new IP.Config(Set.of("::2:1"), Set.of()), "cfg2", flavor, NodeType.config).parentHostname("cfghost2").build());
+                Node.create("cfghost1", IP.Config.of(Set.of("::1:0"), Set.of("::1:1")), "cfghost1", flavor, NodeType.confighost).build(),
+                Node.create("cfghost2", IP.Config.of(Set.of("::2:0"), Set.of("::2:1")), "cfghost2", flavor, NodeType.confighost).ipConfig(IP.Config.of(Set.of("::2:0"), Set.of("::2:1"), List.of())).build(),
+                Node.create("cfg1", IP.Config.of(Set.of("::1:1"), Set.of()), "cfg1", flavor, NodeType.config).parentHostname("cfghost1").build(),
+                Node.create("cfg2", IP.Config.of(Set.of("::2:1"), Set.of()), "cfg2", flavor, NodeType.config).parentHostname("cfghost2").build());
         tester.move(Node.State.ready, tester.nodeRepository().nodes().addNodes(nodes, Agent.system));
 
         InfraApplication cfgHostApp = new ConfigServerHostApplication();
