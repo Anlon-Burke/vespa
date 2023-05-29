@@ -9,6 +9,7 @@
 #include "simple_phrase_blueprint.h"
 #include "weighted_set_term_blueprint.h"
 #include "split_float.h"
+#include "irequestcontext.h"
 
 namespace search::queryeval {
 
@@ -20,6 +21,15 @@ CreateBlueprintVisitorHelper::CreateBlueprintVisitorHelper(Searchable &searchabl
 {}
 
 CreateBlueprintVisitorHelper::~CreateBlueprintVisitorHelper() = default;
+
+attribute::SearchContextParams
+CreateBlueprintVisitorHelper::createContextParams() const {
+    return attribute::SearchContextParams().metaStoreReadGuard(_requestContext.getMetaStoreReadGuard());
+}
+attribute::SearchContextParams
+CreateBlueprintVisitorHelper::createContextParams(bool useBitVector) const {
+    return createContextParams().useBitVector(useBitVector);
+}
 
 Blueprint::UP
 CreateBlueprintVisitorHelper::getResult()
@@ -65,13 +75,12 @@ CreateBlueprintVisitorHelper::handleNumberTermAsText(query::NumberTerm &n)
 template <typename WS, typename NODE>
 void
 CreateBlueprintVisitorHelper::createWeightedSet(std::unique_ptr<WS> bp, NODE &n) {
-    FieldSpecList fields;
+    bp->reserve(n.getNumTerms());
     for (size_t i = 0; i < n.getNumTerms(); ++i) {
-        fields.clear();
-        fields.add(bp->getNextChildField(_field));
         auto term = n.getAsString(i);
         query::SimpleStringTerm node(term.first, n.getView(), 0, term.second); // TODO Temporary
-        bp->addTerm(_searchable.createBlueprint(_requestContext, fields, node), term.second.percent());
+        FieldSpec field = bp->getNextChildField(_field);
+        bp->addTerm(_searchable.createBlueprint(_requestContext, field, node), term.second.percent());
     }
     setResult(std::move(bp));
 }

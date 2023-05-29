@@ -1,14 +1,14 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
+#include "wordnummapper.h"
+#include "docidmapper.h"
+#include "fieldwriter.h"
 #include <vespa/searchlib/index/postinglistcounts.h>
 #include <vespa/searchlib/index/dictionaryfile.h>
 #include <vespa/searchlib/index/docidandfeatures.h>
 #include <vespa/searchlib/index/postinglistfile.h>
 #include <vespa/searchlib/index/schemautil.h>
-#include "wordnummapper.h"
-#include "docidmapper.h"
-#include "fieldwriter.h"
 
 namespace search::diskindex {
 
@@ -17,7 +17,7 @@ class FieldLengthScanner;
 /*
  * FieldReader is used to read a dictionary and posting list file
  * together, and get a sequential view of the stored data.
- * 
+ *
  * It can use mappings for word numbers and document ids to skip
  * documents that are logically removed and use shared word numbers
  * with other field readers.
@@ -40,7 +40,7 @@ public:
     using PostingListCounts = index::PostingListCounts;
     using PostingListParams = index::PostingListParams;
 
-    uint64_t        _wordNum;
+    uint64_t         _wordNum;
     DocIdAndFeatures _docIdAndFeatures;
 protected:
     std::unique_ptr<DictionaryFileSeqRead> _dictFile;

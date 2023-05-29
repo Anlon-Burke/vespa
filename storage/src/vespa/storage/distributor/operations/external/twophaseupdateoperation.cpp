@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "getoperation.h"
+#include "intermediate_message_sender.h"
 #include "putoperation.h"
 #include "twophaseupdateoperation.h"
 #include "updateoperation.h"
@@ -15,7 +16,7 @@
 #include <cinttypes>
 
 #include <vespa/log/log.h>
-LOG_SETUP(".distributor.callback.twophaseupdate");
+LOG_SETUP(".distributor.operations.external.two_phase_update");
 
 using namespace std::literals::string_literals;
 using document::BucketSpace;
@@ -33,6 +34,7 @@ TwoPhaseUpdateOperation::TwoPhaseUpdateOperation(
     : SequencedOperation(std::move(sequencingHandle)),
       _updateMetric(metrics.updates),
       _putMetric(metrics.update_puts),
+      _put_condition_probe_metrics(metrics.put_condition_probes), // Updates never trigger put write repair, so we sneakily use a ref to someone else
       _getMetric(metrics.update_gets),
       _metadata_get_metrics(metrics.update_metadata_gets),
       _updateCmd(std::move(msg)),
@@ -55,63 +57,6 @@ TwoPhaseUpdateOperation::TwoPhaseUpdateOperation(
 }
 
 TwoPhaseUpdateOperation::~TwoPhaseUpdateOperation() = default;
-
-namespace {
-
-struct IntermediateMessageSender : DistributorStripeMessageSender {
-    SentMessageMap& msgMap;
-    std::shared_ptr<Operation> callback;
-    DistributorStripeMessageSender& forward;
-    std::shared_ptr<api::StorageReply> _reply;
-
-    IntermediateMessageSender(SentMessageMap& mm, std::shared_ptr<Operation> cb, DistributorStripeMessageSender & fwd);
-    ~IntermediateMessageSender() override;
-
-    void sendCommand(const std::shared_ptr<api::StorageCommand>& cmd) override {
-        msgMap.insert(cmd->getMsgId(), callback);
-        forward.sendCommand(cmd);
-    };
-
-    void sendReply(const std::shared_ptr<api::StorageReply>& reply) override {
-        _reply = reply;
-    }
-
-    int getDistributorIndex() const override {
-        return forward.getDistributorIndex();
-    }
-
-    const ClusterContext & cluster_context() const override {
-        return forward.cluster_context();
-    }
-
-    PendingMessageTracker& getPendingMessageTracker() override {
-        return forward.getPendingMessageTracker();
-    }
-
-    const PendingMessageTracker& getPendingMessageTracker() const override {
-        return forward.getPendingMessageTracker();
-    }
-
-    const OperationSequencer& operation_sequencer() const noexcept override {
-        return forward.operation_sequencer();
-    }
-
-    OperationSequencer& operation_sequencer() noexcept override {
-        return forward.operation_sequencer();
-    }
-};
-
-IntermediateMessageSender::IntermediateMessageSender(SentMessageMap& mm,
-                                                     std::shared_ptr<Operation> cb,
-                                                     DistributorStripeMessageSender & fwd)
-    : msgMap(mm),
-      callback(std::move(cb)),
-      forward(fwd)
-{ }
-
-IntermediateMessageSender::~IntermediateMessageSender() = default;
-
-}
 
 const char*
 TwoPhaseUpdateOperation::stateToString(SendState state) noexcept
@@ -319,7 +264,7 @@ TwoPhaseUpdateOperation::schedulePutsWithUpdatedDocument(std::shared_ptr<documen
     document::Bucket bucket(_updateCmd->getBucket().getBucketSpace(), document::BucketId(0));
     auto put = std::make_shared<api::PutCommand>(bucket, doc, putTimestamp);
     copyMessageSettings(*_updateCmd, *put);
-    auto putOperation = std::make_shared<PutOperation>(_node_ctx, _op_ctx, _bucketSpace, std::move(put), _putMetric);
+    auto putOperation = std::make_shared<PutOperation>(_node_ctx, _op_ctx, _bucketSpace, std::move(put), _putMetric, _put_condition_probe_metrics);
     PutOperation & op = *putOperation;
     IntermediateMessageSender intermediate(_sentMessageMap, std::move(putOperation), sender);
     op.start(intermediate, _node_ctx.clock().getSystemTime());

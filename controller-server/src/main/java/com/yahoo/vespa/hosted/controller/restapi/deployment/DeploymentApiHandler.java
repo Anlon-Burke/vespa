@@ -259,7 +259,7 @@ public class DeploymentApiHandler extends ThreadedHttpRequestHandler {
     public static String nameOf(RunStatus status) {
         return switch (status) {
             case reset, running                       -> "running";
-            case aborted                              -> "aborted";
+            case cancelled, aborted                   -> "aborted";
             case error                                -> "error";
             case testFailure                          -> "testFailure";
             case noTests                              -> "noTests";
@@ -268,6 +268,7 @@ public class DeploymentApiHandler extends ThreadedHttpRequestHandler {
             case installationFailed                   -> "installationFailed";
             case invalidApplication, deploymentFailed -> "deploymentFailed";
             case success                              -> "success";
+            case quotaExceeded                        -> "quotaExceeded";
         };
     }
 

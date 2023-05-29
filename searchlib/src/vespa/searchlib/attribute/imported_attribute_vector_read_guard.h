@@ -6,7 +6,7 @@
 #include "attributeguard.h"
 #include <vespa/searchcommon/attribute/iattributevector.h>
 #include <vespa/searchcommon/attribute/i_multi_value_attribute.h>
-#include <vespa/searchlib/common/i_document_meta_store_context.h>
+#include <vespa/searchcommon/attribute/i_document_meta_store_context.h>
 #include <vespa/vespalib/datastore/atomic_value_wrapper.h>
 #include <vespa/vespalib/util/arrayref.h>
 
@@ -96,7 +96,7 @@ private:
     const ImportedAttributeVector       &_imported_attribute;
     TargetLids                           _targetLids;
     uint32_t                             _target_docid_limit;
-    AttributeGuard                       _reference_attribute_guard;
+    vespalib::GenerationHandler::Guard   _reference_attribute_guard;
     std::unique_ptr<attribute::AttributeReadGuard> _target_attribute_guard;
     const ReferenceAttribute            &_reference_attribute;
 protected:

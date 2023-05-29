@@ -6,6 +6,7 @@
 #include "hash_set_visited_tracker.h"
 #include "hnsw_index_loader.hpp"
 #include "hnsw_index_saver.h"
+#include "mips_distance_transform.h"
 #include "random_level_generator.h"
 #include "vector_bundle.h"
 #include <vespa/searchlib/attribute/address_space_components.h>
@@ -31,6 +32,7 @@ using search::StateExplorerUtils;
 using search::queryeval::GlobalFilter;
 using vespalib::datastore::CompactionStrategy;
 using vespalib::datastore::EntryRef;
+using vespalib::GenericHeader;
 
 namespace {
 
@@ -40,6 +42,29 @@ constexpr float alloc_grow_factor = 0.3;
 constexpr size_t max_level_array_size = 16;
 constexpr size_t max_link_array_size = 193;
 constexpr vespalib::duration MAX_COUNT_DURATION(100ms);
+
+const vespalib::string hnsw_max_squared_norm = "hnsw.max_squared_norm";
+
+void save_mips_max_distance(GenericHeader& header, DistanceFunctionFactory& dff) {
+    auto* mips_dff = dynamic_cast<MipsDistanceFunctionFactoryBase*>(&dff);
+    if (mips_dff != nullptr) {
+        auto& norm_store = mips_dff->get_max_squared_norm_store();
+        header.putTag(GenericHeader::Tag(hnsw_max_squared_norm, norm_store.get_max()));
+    }
+}
+
+void load_mips_max_distance(const GenericHeader& header, DistanceFunctionFactory& dff) {
+    auto* mips_dff = dynamic_cast<MipsDistanceFunctionFactoryBase*>(&dff);
+    if (mips_dff != nullptr) {
+        auto& norm_store = mips_dff->get_max_squared_norm_store();
+        if (header.hasTag(hnsw_max_squared_norm)) {
+            auto& tag = header.getTag(hnsw_max_squared_norm);
+            if (tag.getType() == GenericHeader::Tag::Type::TYPE_FLOAT) {
+                (void) norm_store.get_max(tag.asFloat());
+            }
+        }
+    }
+}
 
 bool has_link_to(vespalib::ConstArrayRef<uint32_t> links, uint32_t id) {
     for (uint32_t link : links) {
@@ -151,8 +176,9 @@ template <HnswIndexType type>
 bool
 HnswIndex<type>::have_closer_distance(HnswTraversalCandidate candidate, const HnswTraversalCandidateVector& result) const
 {
+    auto df = _distance_ff->for_insertion_vector(get_vector(candidate.nodeid));
     for (const auto & neighbor : result) {
-        double dist = calc_distance(candidate.nodeid, neighbor.nodeid);
+        double dist = calc_distance(*df, neighbor.nodeid);
         if (dist < candidate.distance) {
             return true;
         }
@@ -228,8 +254,9 @@ HnswIndex<type>::shrink_if_needed(uint32_t nodeid, uint32_t level)
     if (old_links.size() > max_links) {
         HnswTraversalCandidateVector neighbors;
         neighbors.reserve(old_links.size());
+        auto df = _distance_ff->for_insertion_vector(get_vector(nodeid));
         for (uint32_t neighbor_nodeid : old_links) {
-            double dist = calc_distance(nodeid, neighbor_nodeid);
+            double dist = calc_distance(*df, neighbor_nodeid);
             neighbors.emplace_back(neighbor_nodeid, dist);
         }
         auto split = select_neighbors(neighbors, max_links);
@@ -270,17 +297,6 @@ HnswIndex<type>::remove_link_to(uint32_t remove_from, uint32_t remove_id, uint32
         if (id != remove_id) new_links.push_back(id);
     }
     _graph.set_link_array(remove_from, level, new_links);
-}
-
-
-template <HnswIndexType type>
-double
-HnswIndex<type>::calc_distance(uint32_t lhs_nodeid, uint32_t rhs_nodeid) const
-{
-    auto lhs = get_vector(lhs_nodeid);
-    auto df = _distance_ff->for_insertion_vector(lhs);
-    auto rhs = get_vector(rhs_nodeid);
-    return df->calc(rhs);
 }
 
 template <HnswIndexType type>
@@ -614,10 +630,14 @@ HnswIndex<type>::mutual_reconnect(const LinkArrayRef &cluster, uint32_t level)
     for (uint32_t i = 0; i + 1 < cluster.size(); ++i) {
         uint32_t n_id_1 = cluster[i];
         LinkArrayRef n_list_1 = _graph.get_link_array(n_id_1, level);
+        std::unique_ptr<BoundDistanceFunction> df;
         for (uint32_t j = i + 1; j < cluster.size(); ++j) {
             uint32_t n_id_2 = cluster[j];
             if (has_link_to(n_list_1, n_id_2)) continue;
-            pairs.emplace_back(n_id_1, n_id_2, calc_distance(n_id_1, n_id_2));
+            if (!df) {
+                df = _distance_ff->for_insertion_vector(get_vector(n_id_1));
+            }
+            pairs.emplace_back(n_id_1, n_id_2, calc_distance(*df, n_id_2));
         }
     }
     std::sort(pairs.begin(), pairs.end());
@@ -824,26 +844,30 @@ void
 HnswIndex<type>::shrink_lid_space(uint32_t doc_id_limit)
 {
     assert(doc_id_limit >= 1u);
-    assert(doc_id_limit >= _graph.nodes_size.load(std::memory_order_relaxed));
-    uint32_t old_doc_id_limit = _graph.nodes.size();
-    if (doc_id_limit >= old_doc_id_limit) {
-        return;
+    if constexpr (std::is_same_v<IdMapping, HnswIdentityMapping>) {
+        assert(doc_id_limit >= _graph.nodes_size.load(std::memory_order_relaxed));
+        uint32_t old_doc_id_limit = _graph.nodes.size();
+        if (doc_id_limit >= old_doc_id_limit) {
+            return;
+        }
+        _graph.nodes.shrink(doc_id_limit);
     }
-    _graph.nodes.shrink(doc_id_limit);
 }
 
 template <HnswIndexType type>
 std::unique_ptr<NearestNeighborIndexSaver>
-HnswIndex<type>::make_saver() const
+HnswIndex<type>::make_saver(GenericHeader& header) const
 {
+    save_mips_max_distance(header, distance_function_factory());
     return std::make_unique<HnswIndexSaver<type>>(_graph);
 }
 
 template <HnswIndexType type>
 std::unique_ptr<NearestNeighborIndexLoader>
-HnswIndex<type>::make_loader(FastOS_FileInterface& file)
+HnswIndex<type>::make_loader(FastOS_FileInterface& file, const vespalib::GenericHeader& header)
 {
     assert(get_entry_nodeid() == 0); // cannot load after index has data
+    load_mips_max_distance(header, distance_function_factory());
     using ReaderType = FileReader<uint32_t>;
     using LoaderType = HnswIndexLoader<ReaderType, type>;
     return std::make_unique<LoaderType>(_graph, _id_mapping, std::make_unique<ReaderType>(&file));

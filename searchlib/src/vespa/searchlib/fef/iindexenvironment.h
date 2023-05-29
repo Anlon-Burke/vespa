@@ -81,7 +81,7 @@ public:
      * motivation is typically that we want to set up features for
      * ranking or dumping. In some cases we are also setting things up
      * just to verify that it is possible.
-     * 
+     *
      * @return current feature motivation
      **/
     virtual FeatureMotivation getFeatureMotivation() const = 0;
@@ -96,26 +96,6 @@ public:
      *                   the framework is about to configure.
      **/
     virtual void hintFeatureMotivation(FeatureMotivation motivation) const = 0;
-
-    /**
-     * Hint about the future access of a field. This method may be
-     * used by blueprints during setup to hint the enclosing system
-     * that a feature executor created by it might try to access the
-     * field iterator for a specific field during execution.
-     *
-     * @param fieldId field id
-     **/
-    virtual void hintFieldAccess(uint32_t fieldId) const = 0;
-
-    /**
-     * Hint about the future access of an attribute. This method may
-     * be used by blueprints during setup to hint the enclosing system
-     * that a feature executor created by it might try to access a
-     * specific attribute during execution.
-     *
-     * @param name attribute name
-     **/
-    virtual void hintAttributeAccess(const string &name) const = 0;
 
     /**
      * Returns a constant rank value with the given name or null ptr if no such value exists.

@@ -10,20 +10,18 @@
 #include <vespa/storageapi/message/bucket.h>
 #include <vespa/storageapi/message/persistence.h>
 #include <vespa/storageapi/message/state.h>
-#include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/text/stringtokenizer.h>
 #include <vespa/config/helper/configgetter.h>
+#include <gtest/gtest.h>
+#include <gmock/gmock.h>
 
-using std::shared_ptr;
 using config::ConfigGetter;
 using config::FileSpec;
 using vespalib::string;
 using namespace document;
-using namespace storage;
-using namespace storage::api;
-using namespace storage::lib;
 using namespace std::literals::string_literals;
 using document::test::makeDocumentBucket;
+using storage::api::TestAndSetCondition;
 
 using namespace ::testing;
 
@@ -63,7 +61,7 @@ public:
         }
 
         std::shared_ptr<api::StorageCommand> msg =  _sender.command(idx);
-        api::StorageReply::SP reply(msg->makeReply().release());
+        api::StorageReply::SP reply(msg->makeReply());
         dynamic_cast<api::BucketInfoReply&>(*reply).setBucketInfo(info);
         reply->setResult(result);
 
@@ -75,7 +73,8 @@ public:
                                             operation_context(),
                                             getDistributorBucketSpace(),
                                             msg,
-                                            metrics().puts);
+                                            metrics().puts,
+                                            metrics().put_condition_probes);
         op->start(_sender);
     }
 
@@ -96,6 +95,30 @@ public:
     }
 
     void set_up_3_nodes_and_send_put_with_create_bucket_acks();
+
+    std::shared_ptr<api::GetCommand> sent_get_command(size_t idx) {
+        return sent_command<api::GetCommand>(idx);
+    }
+
+    std::shared_ptr<api::PutCommand> sent_put_command(size_t idx) {
+        return sent_command<api::PutCommand>(idx);
+    }
+
+    static std::shared_ptr<api::GetReply> make_get_reply(const api::GetCommand& cmd, api::Timestamp ts,
+                                                         bool is_tombstone, bool condition_matched)
+    {
+        return std::make_shared<api::GetReply>(cmd, std::shared_ptr<document::Document>(), ts,
+                                               false, is_tombstone, condition_matched);
+    }
+
+    std::shared_ptr<api::GetReply> make_failed_get_reply(size_t cmd_idx) {
+        auto reply = make_get_reply(*sent_get_command(cmd_idx), 0, false, false);
+        reply->setResult(api::ReturnCode(api::ReturnCode::INTERNAL_FAILURE, "did a bork"));
+        return reply;
+    }
+
+    void set_up_tas_put_with_2_inconsistent_replica_nodes(bool create = false);
+
 };
 
 PutOperationTest::~PutOperationTest() = default;
@@ -133,6 +156,9 @@ TEST_F(PutOperationTest, simple) {
     ASSERT_EQ("Put(BucketId(0x4000000000001dd4), "
               "id:test:testdoctype1::, timestamp 100, size 45) => 0",
               _sender.getCommands(true, true));
+
+    auto put_n1 = sent_put_command(0);
+    EXPECT_FALSE(put_n1->get_create_if_non_existent()); // False by default
 
     sendReply();
 
@@ -466,7 +492,8 @@ TEST_F(PutOperationTest, update_correct_bucket_on_remapped_put) {
     {
         std::shared_ptr<api::StorageCommand> msg2  = _sender.command(0);
         std::shared_ptr<api::StorageReply> reply(msg2->makeReply().release());
-        PutReply* sreply = (PutReply*)reply.get();
+        auto* sreply = dynamic_cast<api::PutReply*>(reply.get());
+        ASSERT_TRUE(sreply);
         sreply->remapBucketId(document::BucketId(17, 13));
         sreply->setBucketInfo(api::BucketInfo(1,2,3,4,5));
         op->receive(_sender, reply);
@@ -648,6 +675,188 @@ TEST_F(PutOperationTest, minority_failure_override_not_in_effect_for_non_tas_err
               "BucketId(0x0000000000000000), "
               "timestamp 100) ReturnCode(ABORTED)",
               _sender.getLastReply());
+}
+
+void PutOperationTest::set_up_tas_put_with_2_inconsistent_replica_nodes(bool create) {
+    setup_stripe(Redundancy(2), NodeCount(2), "version:1 storage:2 distributor:1");
+    config_enable_condition_probing(true);
+    tag_content_node_supports_condition_probing(0, true);
+    tag_content_node_supports_condition_probing(1, true);
+
+    auto doc = createDummyDocument("test", "test");
+    auto bucket = operation_context().make_split_bit_constrained_bucket_id(doc->getId());
+    addNodesToBucketDB(bucket, "1=10/20/30,0=20/30/40");
+
+    auto put = createPut(doc);
+    put->setCondition(TestAndSetCondition("test.foo"));
+    put->set_create_if_non_existent(create);
+    put->getTrace().setLevel(9);
+    sendPut(std::move(put));
+    ASSERT_EQ("Get => 1,Get => 0", _sender.getCommands(true));
+}
+
+TEST_F(PutOperationTest, matching_condition_probe_sends_unconditional_puts_to_all_nodes) {
+    ASSERT_NO_FATAL_FAILURE(set_up_tas_put_with_2_inconsistent_replica_nodes());
+
+    op->receive(_sender, make_get_reply(*sent_get_command(0), 50, false, true));
+    op->receive(_sender, make_get_reply(*sent_get_command(1), 50, false, true));
+
+    ASSERT_EQ("Get => 1,Get => 0,Put => 1,Put => 0", _sender.getCommands(true)); // Note: cumulative message list
+
+    auto put_n1 = sent_put_command(2);
+    EXPECT_FALSE(put_n1->hasTestAndSetCondition());
+    auto put_n0 = sent_put_command(3);
+    EXPECT_FALSE(put_n0->hasTestAndSetCondition());
+
+    // Ensure replies are no longer routed to condition checker
+    ASSERT_TRUE(_sender.replies().empty());
+    sendReply(2); // put to node 1
+    ASSERT_TRUE(_sender.replies().empty());
+    sendReply(3); // put to node 0
+    ASSERT_EQ(_sender.replies().size(), 1);
+    EXPECT_EQ("PutReply(id:test:testdoctype1::test, "
+              "BucketId(0x0000000000000000), "
+              "timestamp 100) ReturnCode(NONE)",
+              _sender.getLastReply());
+}
+
+TEST_F(PutOperationTest, mismatching_condition_probe_fails_op_with_tas_error) {
+    ASSERT_NO_FATAL_FAILURE(set_up_tas_put_with_2_inconsistent_replica_nodes());
+
+    op->receive(_sender, make_get_reply(*sent_get_command(0), 50, false, false));
+    op->receive(_sender, make_get_reply(*sent_get_command(1), 50, false, false));
+
+    ASSERT_EQ("Get => 1,Get => 0", _sender.getCommands(true));
+    ASSERT_EQ("PutReply(id:test:testdoctype1::test, "
+              "BucketId(0x0000000000000000), timestamp 100) "
+              "ReturnCode(TEST_AND_SET_CONDITION_FAILED, Condition did not match document)",
+              _sender.getLastReply());
+}
+
+// TODO change semantics for Not Found...
+TEST_F(PutOperationTest, not_found_condition_probe_fails_op_with_tas_error) {
+    ASSERT_NO_FATAL_FAILURE(set_up_tas_put_with_2_inconsistent_replica_nodes());
+
+    op->receive(_sender, make_get_reply(*sent_get_command(0), 0, false, false));
+    op->receive(_sender, make_get_reply(*sent_get_command(1), 0, false, false));
+
+    ASSERT_EQ("Get => 1,Get => 0", _sender.getCommands(true));
+    ASSERT_EQ("PutReply(id:test:testdoctype1::test, "
+              "BucketId(0x0000000000000000), timestamp 100) "
+              "ReturnCode(TEST_AND_SET_CONDITION_FAILED, Document does not exist)",
+              _sender.getLastReply());
+}
+
+TEST_F(PutOperationTest, failed_condition_probe_fails_op_with_returned_error) {
+    ASSERT_NO_FATAL_FAILURE(set_up_tas_put_with_2_inconsistent_replica_nodes());
+
+    op->receive(_sender, make_get_reply(*sent_get_command(0), 0, false, false));
+    op->receive(_sender, make_failed_get_reply(1));
+
+    ASSERT_EQ("Get => 1,Get => 0", _sender.getCommands(true));
+    ASSERT_EQ("PutReply(id:test:testdoctype1::test, "
+              "BucketId(0x0000000000000000), timestamp 100) "
+              "ReturnCode(ABORTED, Failed during write repair condition probe step. Reason: "
+              "One or more replicas failed during test-and-set condition evaluation)",
+              _sender.getLastReply());
+}
+
+TEST_F(PutOperationTest, create_flag_in_parent_put_is_propagated_to_sent_puts) {
+    setup_stripe(Redundancy(2), NodeCount(2), "version:1 storage:2 distributor:1");
+    auto doc = createDummyDocument("test", "test");
+    auto bucket = operation_context().make_split_bit_constrained_bucket_id(doc->getId());
+    addNodesToBucketDB(bucket, "1=10/20/30,0=20/30/40");
+
+    auto put = createPut(doc);
+    // Toggling the create-flag only makes sense in the presence of a TaS-condition
+    put->setCondition(TestAndSetCondition("test.foo"));
+    put->set_create_if_non_existent(true);
+
+    sendPut(std::move(put));
+    ASSERT_EQ("Put => 1,Put => 0", _sender.getCommands(true));
+
+    auto put_n1 = sent_put_command(0);
+    EXPECT_TRUE(put_n1->get_create_if_non_existent());
+    auto put_n0 = sent_put_command(1);
+    EXPECT_TRUE(put_n0->get_create_if_non_existent());
+}
+
+TEST_F(PutOperationTest, not_found_condition_probe_with_create_set_acts_as_if_matched) {
+    ASSERT_NO_FATAL_FAILURE(set_up_tas_put_with_2_inconsistent_replica_nodes(true));
+
+    op->receive(_sender, make_get_reply(*sent_get_command(0), 0, false, false));
+    op->receive(_sender, make_get_reply(*sent_get_command(1), 0, false, false));
+
+    EXPECT_EQ(_sender.replies().size(), 0);
+    ASSERT_EQ("Get => 1,Get => 0,Put => 1,Put => 0", _sender.getCommands(true));
+
+    auto put_n1 = sent_put_command(2);
+    EXPECT_FALSE(put_n1->hasTestAndSetCondition());
+    auto put_n0 = sent_put_command(3);
+    EXPECT_FALSE(put_n0->hasTestAndSetCondition());
+}
+
+TEST_F(PutOperationTest, conditional_put_no_replicas_case_with_create_set_acts_as_if_matched) {
+    setup_stripe(Redundancy(2), NodeCount(2), "version:1 storage:2 distributor:1");
+    config_enable_condition_probing(true);
+    tag_content_node_supports_condition_probing(0, true);
+    tag_content_node_supports_condition_probing(1, true);
+
+    // Don't init the DB with any replicas for the put's target bucket
+    auto put = createPut(createDummyDocument("test", "test"));
+    put->setCondition(TestAndSetCondition("test.foo"));
+    put->set_create_if_non_existent(true);
+    sendPut(std::move(put));
+
+    EXPECT_EQ(_sender.replies().size(), 0);
+    // Pipelined create + put
+    ASSERT_EQ("Create bucket => 1,Create bucket => 0,Put => 1,Put => 0", _sender.getCommands(true));
+
+    // In this case we can preserve both the condition + create-flag.
+    // The content node will deal with them appropriately.
+    auto put_n1 = sent_put_command(2);
+    EXPECT_TRUE(put_n1->hasTestAndSetCondition());
+    EXPECT_TRUE(put_n1->get_create_if_non_existent());
+    auto put_n0 = sent_put_command(3);
+    EXPECT_TRUE(put_n0->hasTestAndSetCondition());
+    EXPECT_TRUE(put_n1->get_create_if_non_existent());
+}
+
+TEST_F(PutOperationTest, trace_is_propagated_from_condition_probe_gets_ok_probe_case) {
+    ASSERT_NO_FATAL_FAILURE(set_up_tas_put_with_2_inconsistent_replica_nodes());
+
+    ASSERT_EQ(sent_get_command(0)->getTrace().getLevel(), 9);
+    auto get_reply = make_get_reply(*sent_get_command(0), 50, false, true);
+    MBUS_TRACE(get_reply->getTrace(), 1, "a foo walks into a bar");
+
+    op->receive(_sender, get_reply);
+    op->receive(_sender, make_get_reply(*sent_get_command(1), 50, false, true));
+
+    ASSERT_EQ("Get => 1,Get => 0,Put => 1,Put => 0", _sender.getCommands(true));
+    sendReply(2);
+    sendReply(3);
+    ASSERT_EQ(_sender.replies().size(), 1);
+    auto put_reply = sent_reply<api::PutReply>(0);
+
+    auto trace_str = put_reply->getTrace().toString();
+    EXPECT_THAT(trace_str, HasSubstr("a foo walks into a bar"));
+}
+
+TEST_F(PutOperationTest, trace_is_propagated_from_condition_probe_gets_failed_probe_case) {
+    ASSERT_NO_FATAL_FAILURE(set_up_tas_put_with_2_inconsistent_replica_nodes());
+
+    auto get_reply = make_get_reply(*sent_get_command(0), 50, false, false);
+    MBUS_TRACE(get_reply->getTrace(), 1, "a foo walks into a zoo");
+
+    op->receive(_sender, get_reply);
+    op->receive(_sender, make_get_reply(*sent_get_command(1), 50, false, false));
+
+    ASSERT_EQ("Get => 1,Get => 0", _sender.getCommands(true));
+    ASSERT_EQ(_sender.replies().size(), 1);
+    auto put_reply = sent_reply<api::PutReply>(0);
+
+    auto trace_str = put_reply->getTrace().toString();
+    EXPECT_THAT(trace_str, HasSubstr("a foo walks into a zoo"));
 }
 
 }

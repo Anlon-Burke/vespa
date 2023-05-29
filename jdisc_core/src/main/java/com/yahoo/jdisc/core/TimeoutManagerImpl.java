@@ -2,6 +2,7 @@
 package com.yahoo.jdisc.core;
 
 import com.google.inject.Inject;
+import com.yahoo.concurrent.SystemTimer;
 import com.yahoo.jdisc.Request;
 import com.yahoo.jdisc.ResourceReference;
 import com.yahoo.jdisc.Response;
@@ -14,12 +15,12 @@ import com.yahoo.jdisc.handler.RequestHandler;
 import com.yahoo.jdisc.handler.ResponseHandler;
 
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -30,10 +31,9 @@ public class TimeoutManagerImpl {
 
     private static final ContentChannel IGNORED_CONTENT = new IgnoredContent();
     private static final Logger log = Logger.getLogger(TimeoutManagerImpl.class.getName());
-    private final ScheduledQueue [] schedules = new ScheduledQueue[Runtime.getRuntime().availableProcessors()];
+    private final ScheduledQueue scheduler;
     private final Thread thread;
     private final Timer timer;
-    private final AtomicInteger nextScheduler = new AtomicInteger(0);
     private final AtomicBoolean done = new AtomicBoolean(false);
 
     @Inject
@@ -41,11 +41,7 @@ public class TimeoutManagerImpl {
         this.thread = factory.newThread(new ManagerTask());
         this.thread.setName(getClass().getName());
         this.timer = timer;
-
-        long now = timer.currentTimeMillis();
-        for (int i = 0; i < schedules.length; ++i) {
-            schedules[i] = new ScheduledQueue(now);
-        }
+        this.scheduler = new ScheduledQueue(timer.currentTimeMillis());
     }
 
     public void start() {
@@ -66,13 +62,7 @@ public class TimeoutManagerImpl {
         return new ManagedRequestHandler(handler);
     }
 
-    synchronized int queueSize() {
-        int sum = 0;
-        for (ScheduledQueue schedule : schedules) {
-            sum += schedule.queueSize();
-        }
-        return sum;
-    }
+    int queueSize() { return scheduler.queueSize(); }
 
     Timer timer() {
         return timer;
@@ -80,9 +70,7 @@ public class TimeoutManagerImpl {
 
     void checkTasks(long currentTimeMillis) {
         Queue<Object> queue = new LinkedList<>();
-        for (ScheduledQueue schedule : schedules) {
-            schedule.drainTo(currentTimeMillis, queue);
-        }
+        scheduler.drainTo(currentTimeMillis, queue);
         while (!queue.isEmpty()) {
             TimeoutHandler timeoutHandler = (TimeoutHandler)queue.poll();
             invokeTimeout(timeoutHandler.requestHandler, timeoutHandler.request, timeoutHandler);
@@ -92,7 +80,7 @@ public class TimeoutManagerImpl {
     private void invokeTimeout(RequestHandler requestHandler, Request request, ResponseHandler responseHandler) {
         try {
             requestHandler.handleTimeout(request, responseHandler);
-        } catch (RuntimeException e) {
+        } catch (Exception e) {
             log.log(Level.WARNING, "Ignoring exception thrown by " + requestHandler.getClass().getName() +
                                    " in timeout manager.", e);
         }
@@ -105,7 +93,7 @@ public class TimeoutManagerImpl {
 
     private class ManagerTask implements Runnable {
 
-        boolean oneMoreCheck(int timeoutMS) {
+        boolean oneMoreCheck(long timeoutMS) {
             synchronized (done) {
                 if (!done.get()) {
                     try {
@@ -120,7 +108,9 @@ public class TimeoutManagerImpl {
 
         @Override
         public void run() {
-            while (oneMoreCheck(ScheduledQueue.MILLIS_PER_SLOT)) {
+            Duration desiredTimeout = Duration.ofMillis(ScheduledQueue.MILLIS_PER_SLOT);
+            Duration actualTimeout = SystemTimer.adjustTimeoutByDetectedHz(desiredTimeout);
+            while (oneMoreCheck(actualTimeout.toMillis())) {
                 checkTasks(timer.currentTimeMillis());
             }
         }
@@ -204,7 +194,7 @@ public class TimeoutManagerImpl {
                 return;
             }
             if (timeoutQueueEntry == null) {
-                timeoutQueueEntry = schedules[(nextScheduler.incrementAndGet() & 0xffff) % schedules.length].newEntry(this);
+                timeoutQueueEntry = scheduler.newEntry(this);
             }
             timeoutQueueEntry.scheduleAt(request.creationTime(TimeUnit.MILLISECONDS) + request.getTimeout(TimeUnit.MILLISECONDS));
         }

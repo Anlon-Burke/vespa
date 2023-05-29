@@ -23,7 +23,10 @@ namespace streaming {
 class RankProcessor
 {
 private:
-    RankManager::Snapshot::SP      _rankManagerSnapshot;
+    using RankProgram = search::fef::RankProgram;
+    using FeatureSet = vespalib::FeatureSet;
+    using FeatureValues = vespalib::FeatureValues;
+    std::shared_ptr<const RankManager::Snapshot> _rankManagerSnapshot;
     const search::fef::RankSetup & _rankSetup;
     QueryWrapper                   _query;
 
@@ -37,10 +40,12 @@ private:
     search::fef::NumberOrObject          _zeroScore;
     search::fef::LazyValue               _rankScore;
     HitCollector::UP                     _hitCollector;
+    std::unique_ptr<RankProgram>         _match_features_program;
 
     void initQueryEnvironment();
     void initHitCollector(size_t wantedHitCount);
     void setupRankProgram(search::fef::RankProgram &program);
+    FeatureValues calculate_match_features();
 
     /**
      * Initializes this rank processor.
@@ -53,7 +58,7 @@ private:
 public:
     using UP = std::unique_ptr<RankProcessor>;
 
-    RankProcessor(RankManager::Snapshot::SP snapshot,
+    RankProcessor(std::shared_ptr<const RankManager::Snapshot> snapshot,
                   const vespalib::string &rankProfile,
                   search::streaming::Query & query,
                   const vespalib::string & location,
@@ -73,6 +78,7 @@ public:
     HitCollector & getHitCollector() { return *_hitCollector; }
     uint32_t getDocId() const { return _docId; }
     search::fef::IQueryEnvironment& get_query_env() { return _queryEnv; }
+    QueryEnvironment& get_real_query_env() { return _queryEnv; }
 };
 
 } // namespace streaming

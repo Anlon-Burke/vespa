@@ -6,7 +6,6 @@
 #include "posting_list_merger.h"
 #include <vespa/searchcommon/attribute/search_context_params.h>
 #include <vespa/searchcommon/attribute/i_search_context.h>
-#include <vespa/searchlib/common/i_document_meta_store_context.h>
 #include <vespa/vespalib/datastore/atomic_value_wrapper.h>
 #include <vespa/vespalib/util/arrayref.h>
 
@@ -33,8 +32,8 @@ class ImportedSearchContext : public ISearchContext {
     const ImportedAttributeVector&                  _imported_attribute;
     vespalib::string                                _queryTerm;
     bool                                            _useSearchCache;
-    BitVectorSearchCache::Entry::SP                 _searchCacheLookup;
-    IDocumentMetaStoreContext::IReadGuard::UP       _dmsReadGuard;
+    std::shared_ptr<BitVectorSearchCache::Entry>    _searchCacheLookup;
+    IDocumentMetaStoreContext::IReadGuard::SP       _dmsReadGuardFallback;
     const ReferenceAttribute&                       _reference_attribute;
     const IAttributeVector                         &_target_attribute;
     std::unique_ptr<ISearchContext>                 _target_search_context;

@@ -85,6 +85,11 @@
     </dependency>
     <dependency>
       <groupId>com.yahoo.vespa</groupId>
+      <artifactId>metrics</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.yahoo.vespa</groupId>
       <artifactId>opennlp-linguistics</artifactId>
       <version>${project.version}</version>
       <exclusions>
@@ -440,6 +445,9 @@
         <groupId>com.yahoo.vespa</groupId>
         <artifactId>bundle-plugin</artifactId>
         <extensions>true</extensions>
+        <configuration>
+          <bundleType>CORE</bundleType>
+        </configuration>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

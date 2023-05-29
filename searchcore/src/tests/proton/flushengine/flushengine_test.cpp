@@ -235,6 +235,7 @@ protected:
     SimpleTarget(const std::string &name, const Type &type, search::SerialNum flushedSerial = 0, bool proceedImmediately = true) :
         test::DummyFlushTarget(name, type, Component::OTHER),
         _flushedSerial(flushedSerial),
+        _currentSerial(0),
         _proceed(),
         _initDone(),
         _taskStart(),
@@ -266,7 +267,7 @@ public:
     { }
 
     SimpleTarget(const std::string &name, search::SerialNum flushedSerial = 0, bool proceedImmediately = true)
-            : SimpleTarget(name, Type::OTHER, flushedSerial, proceedImmediately)
+        : SimpleTarget(name, Type::OTHER, flushedSerial, proceedImmediately)
     { }
 
     Time getLastFlushTime() const override { return vespalib::system_clock::now(); }
@@ -288,8 +289,19 @@ public:
 class GCTarget : public SimpleTarget {
 public:
     GCTarget(const vespalib::string &name, search::SerialNum flushedSerial)
-            : SimpleTarget(name, Type::GC, flushedSerial)
+        : SimpleTarget(name, Type::GC, flushedSerial)
     {}
+};
+
+class HighPriorityTarget : public SimpleTarget {
+public:
+    HighPriorityTarget(const vespalib::string &name, search::SerialNum flushedSerial, bool proceed)
+        : SimpleTarget(name, Type::OTHER, flushedSerial, proceed)
+    {}
+
+    Priority getPriority() const override {
+        return Priority::HIGH;
+    }
 };
 
 class AssertedTarget : public SimpleTarget {
@@ -321,10 +333,13 @@ public:
 
 class SimpleStrategy : public IFlushStrategy {
 public:
+    using SP = std::shared_ptr<SimpleStrategy>;
+    enum class OrderBy {INDEX_OF, SERIAL};
     std::vector<IFlushTarget::SP> _targets;
+    OrderBy                       _orderBy;
 
-    struct CompareTarget {
-        CompareTarget(const SimpleStrategy &flush) : _flush(flush) { }
+    struct CompareIndexOf {
+        CompareIndexOf(const SimpleStrategy &flush) : _flush(flush) { }
         bool operator () (const FlushContext::SP &lhs, const FlushContext::SP &rhs) const {
             return _flush.compare(lhs->getTarget(), rhs->getTarget());
         }
@@ -335,7 +350,13 @@ public:
                                        const flushengine::TlsStatsMap&,
                                        const flushengine::ActiveFlushStats&) const override {
         FlushContext::List fv(targetList);
-        std::sort(fv.begin(), fv.end(), CompareTarget(*this));
+        if (_orderBy == OrderBy::INDEX_OF) {
+            std::sort(fv.begin(), fv.end(), CompareIndexOf(*this));
+        } else {
+            std::sort(fv.begin(), fv.end(), [](const auto & a, const auto & b) {
+                return a->getTarget()->getFlushedSerialNum() < b->getTarget()->getFlushedSerialNum(); }
+            );
+        }
         return fv;
     }
 
@@ -346,11 +367,7 @@ public:
         return indexOf(lhs) < indexOf(rhs);
     }
 
-
-public:
-    using SP = std::shared_ptr<SimpleStrategy>;
-
-    SimpleStrategy() noexcept : _targets() {}
+    SimpleStrategy(OrderBy orderBy) noexcept : _targets(), _orderBy(orderBy) {}
 
     uint32_t
     indexOf(const IFlushTarget::SP &target) const
@@ -377,6 +394,8 @@ public:
 
 class NoFlushStrategy : public SimpleStrategy
 {
+public:
+    NoFlushStrategy() noexcept : SimpleStrategy(OrderBy::INDEX_OF) {}
     FlushContext::List getFlushTargets(const FlushContext::List &, const flushengine::TlsStatsMap &, const flushengine::ActiveFlushStats&) const override {
         return {};
     }
@@ -420,7 +439,7 @@ struct Fixture
     { }
 
     Fixture(uint32_t numThreads, vespalib::duration idleInterval)
-        : Fixture(numThreads, idleInterval, std::make_shared<SimpleStrategy>())
+        : Fixture(numThreads, idleInterval, std::make_shared<SimpleStrategy>(SimpleStrategy::OrderBy::INDEX_OF))
     { }
 
     void putFlushHandler(const vespalib::string &docTypeName, IFlushHandler::SP handler) {
@@ -449,6 +468,17 @@ struct Fixture
         EXPECT_EQUAL(expOldestSerial, handler.oldest_serial());
     }
 };
+
+TEST("require that leaf defaults are sane") {
+    test::DummyFlushTarget leaf("dummy");
+    EXPECT_FALSE(leaf.needUrgentFlush());
+    EXPECT_EQUAL(0.0, leaf.get_replay_operation_cost());
+    EXPECT_TRUE(IFlushTarget::Priority::NORMAL == leaf.getPriority());
+    EXPECT_TRUE(50 == static_cast<int>(IFlushTarget::Priority::NORMAL));
+    EXPECT_TRUE(100 == static_cast<int>(IFlushTarget::Priority::HIGH));
+    EXPECT_TRUE(IFlushTarget::Priority::NORMAL < IFlushTarget::Priority::HIGH);
+    EXPECT_TRUE(IFlushTarget::Priority::HIGH > IFlushTarget::Priority::NORMAL);
+}
 
 TEST_F("require that strategy controls flush target", Fixture(1, IINTERVAL))
 {
@@ -518,7 +548,11 @@ TEST_F("require that GC targets are not considered when oldest serial is found",
 
     // Before anything is flushed the oldest serial is 5.
     // After 'foo' has been flushed the oldest serial is 20 as GC target 'bar' is not considered.
-    EXPECT_EQUAL(FlushDoneHistory({ 5, 20, 20, 25 }), handler->getFlushDoneHistory());
+    FlushDoneHistory history = handler->getFlushDoneHistory();
+    EXPECT_TRUE(history.end() == std::find(history.begin(), history.end(), 10));
+    auto last_unique = std::unique(history.begin(), history.end());
+    history.erase(last_unique, history.end());
+    EXPECT_EQUAL(FlushDoneHistory({ 5, 20, 25 }), history);
 }
 
 TEST_F("require that oldest serial is found in group", Fixture(2, IINTERVAL))
@@ -694,6 +728,75 @@ TEST_F("require that concurrency works", Fixture(2, 1ms))
     target2->_proceed.countDown();
 }
 
+TEST_F("require that there is room for one and only one high pri target",
+       Fixture(2, 1ms, std::make_unique<SimpleStrategy>(SimpleStrategy::OrderBy::SERIAL)))
+{
+    auto target1 = std::make_shared<SimpleTarget>("target1", 1, false);
+    auto target2 = std::make_shared<SimpleTarget>("target2", 2, false);
+    auto target3 = std::make_shared<HighPriorityTarget>("target3", 3, false);
+    auto target4 = std::make_shared<HighPriorityTarget>("target4", 4, false);
+    auto handler = std::make_shared<SimpleHandler>(Targets({target1, target2, target3, target4}), "handler", 9);
+    f.putFlushHandler("handler", handler);
+    f.engine.start();
+    EXPECT_EQUAL(2u, f.engine.maxConcurrentNormal());
+    EXPECT_EQUAL(3u, f.engine.maxConcurrentTotal());
+    EXPECT_EQUAL(f.engine.maxConcurrentTotal(), f.engine.get_executor().getNumThreads());
+
+    EXPECT_TRUE(target1->_initDone.await(LONG_TIMEOUT));
+    EXPECT_TRUE(target2->_initDone.await(LONG_TIMEOUT));
+    EXPECT_TRUE(target3->_initDone.await(LONG_TIMEOUT));
+    EXPECT_FALSE(target4->_initDone.await(SHORT_TIMEOUT));
+    assertThatHandlersInCurrentSet(f.engine, {"handler.target1", "handler.target2", "handler.target3"});
+    target1->_proceed.countDown();
+    EXPECT_TRUE(target1->_taskDone.await(LONG_TIMEOUT));
+    EXPECT_TRUE(target4->_initDone.await(LONG_TIMEOUT));
+    assertThatHandlersInCurrentSet(f.engine, {"handler.target2", "handler.target3", "handler.target4"});
+    target2->_proceed.countDown();
+    EXPECT_TRUE(target2->_taskDone.await(LONG_TIMEOUT));
+    assertThatHandlersInCurrentSet(f.engine, {"handler.target3", "handler.target4"});
+    target3->_proceed.countDown();
+    EXPECT_TRUE(target3->_taskDone.await(LONG_TIMEOUT));
+    assertThatHandlersInCurrentSet(f.engine, {"handler.target4"});
+    target4->_proceed.countDown();
+    EXPECT_TRUE(target4->_taskDone.await(LONG_TIMEOUT));
+    assertThatHandlersInCurrentSet(f.engine, {});
+}
+
+TEST_F("require that high priority does not jump the queue",
+       Fixture(2, 1ms, std::make_unique<SimpleStrategy>(SimpleStrategy::OrderBy::SERIAL)))
+{
+    auto target1 = std::make_shared<SimpleTarget>("target1", 1, false);
+    auto target2 = std::make_shared<SimpleTarget>("target2", 2, false);
+    auto target3 = std::make_shared<SimpleTarget>("target3", 3, false);
+    auto target4 = std::make_shared<HighPriorityTarget>("target4", 4, false);
+    auto handler = std::make_shared<SimpleHandler>(Targets({target1, target2, target3, target4}), "handler", 9);
+    f.putFlushHandler("handler", handler);
+    f.engine.start();
+    EXPECT_EQUAL(2u, f.engine.maxConcurrentNormal());
+    EXPECT_EQUAL(3u, f.engine.maxConcurrentTotal());
+    EXPECT_EQUAL(f.engine.maxConcurrentTotal(), f.engine.get_executor().getNumThreads());
+
+    EXPECT_TRUE(target1->_initDone.await(LONG_TIMEOUT));
+    EXPECT_TRUE(target2->_initDone.await(LONG_TIMEOUT));
+    EXPECT_FALSE(target3->_initDone.await(SHORT_TIMEOUT));
+    EXPECT_FALSE(target4->_initDone.await(SHORT_TIMEOUT));
+    assertThatHandlersInCurrentSet(f.engine, {"handler.target1", "handler.target2"});
+    target1->_proceed.countDown();
+    EXPECT_TRUE(target1->_taskDone.await(LONG_TIMEOUT));
+    EXPECT_TRUE(target3->_initDone.await(LONG_TIMEOUT));
+    EXPECT_TRUE(target4->_initDone.await(LONG_TIMEOUT));
+    assertThatHandlersInCurrentSet(f.engine, {"handler.target2", "handler.target3", "handler.target4"});
+    target2->_proceed.countDown();
+    EXPECT_TRUE(target2->_taskDone.await(LONG_TIMEOUT));
+    assertThatHandlersInCurrentSet(f.engine, {"handler.target3", "handler.target4"});
+    target3->_proceed.countDown();
+    EXPECT_TRUE(target3->_taskDone.await(LONG_TIMEOUT));
+    assertThatHandlersInCurrentSet(f.engine, {"handler.target4"});
+    target4->_proceed.countDown();
+    EXPECT_TRUE(target4->_taskDone.await(LONG_TIMEOUT));
+    assertThatHandlersInCurrentSet(f.engine, {});
+}
+
 TEST_F("require that concurrency works with triggerFlush", Fixture(2, 1ms))
 {
     auto target1 = std::make_shared<SimpleTarget>("target1", 1, false);
@@ -764,7 +867,7 @@ TEST_F("require that oldest serial is updated when finishing priority flush stra
     auto target1 = std::make_shared<SimpleTarget>("target1", 10, true);
     auto handler = f.addSimpleHandler({ target1 });
     TEST_DO(f.assertOldestSerial(*handler, 10));
-    f.engine.setStrategy(std::make_shared<SimpleStrategy>());
+    f.engine.setStrategy(std::make_shared<SimpleStrategy>(SimpleStrategy::OrderBy::INDEX_OF));
     EXPECT_EQUAL(20u, handler->_oldestSerial);
 }
 

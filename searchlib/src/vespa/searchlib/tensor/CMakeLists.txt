@@ -2,6 +2,7 @@
 vespa_add_library(searchlib_tensor OBJECT
     SOURCES
     angular_distance.cpp
+    mips_distance_transform.cpp
     bitvector_visited_tracker.cpp
     bound_distance_function.cpp
     default_nearest_neighbor_index_factory.cpp
@@ -25,7 +26,6 @@ vespa_add_library(searchlib_tensor OBJECT
     hnsw_single_best_neighbors.cpp
     imported_tensor_attribute_vector.cpp
     imported_tensor_attribute_vector_read_guard.cpp
-    inner_product_distance.cpp
     inv_log_level_generator.cpp
     large_subspaces_buffer_type.cpp
     nearest_neighbor_index.cpp

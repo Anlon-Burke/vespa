@@ -318,7 +318,7 @@ public class DeploymentContext {
                               .projectId()
                               .orElse(1000); // These are really set through submission, so just pick one if it hasn't been set.
         var testerpackage = new byte[]{ (byte) (salt >> 56), (byte) (salt >> 48), (byte) (salt >> 40), (byte) (salt >> 32), (byte) (salt >> 24), (byte) (salt >> 16), (byte) (salt >> 8), (byte) salt };
-        lastSubmission = jobs.submit(applicationId, new Submission(applicationPackage, testerpackage, Optional.empty(), sourceRevision, Optional.of("a@b"), Optional.empty(), risk), projectId).id();
+        lastSubmission = jobs.submit(applicationId, new Submission(applicationPackage, testerpackage, Optional.empty(), sourceRevision, Optional.of("a@b"), Optional.empty(), tester.clock().instant(), risk), projectId).id();
         return this;
     }
 
@@ -477,7 +477,7 @@ public class DeploymentContext {
     public DeploymentContext abortJob(JobType type) {
         var job = jobId(type);
         assertNotSame(RunStatus.aborted, currentRun(job).status());
-        jobs.abort(currentRun(job).id(), "DeploymentContext.abortJob");
+        jobs.abort(currentRun(job).id(), "DeploymentContext.abortJob", false);
         jobAborted(type);
         return this;
     }

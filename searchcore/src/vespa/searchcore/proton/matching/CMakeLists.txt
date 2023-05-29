@@ -3,7 +3,6 @@ vespa_add_library(searchcore_matching STATIC
     SOURCES
     attribute_limiter.cpp
     blueprintbuilder.cpp
-        ranking_assets_repo.cpp
     docid_range_scheduler.cpp
     docsum_matcher.cpp
     document_scorer.cpp
@@ -13,6 +12,7 @@ vespa_add_library(searchcore_matching STATIC
     i_match_loop_communicator.cpp
     indexenvironment.cpp
     match_loop_communicator.cpp
+    match_context.cpp
     match_master.cpp
     match_params.cpp
     match_phase_limit_calculator.cpp
@@ -21,15 +21,12 @@ vespa_add_library(searchcore_matching STATIC
     match_tools.cpp
     matcher.cpp
     matching_stats.cpp
-    onnx_models.cpp
     partial_result.cpp
     query.cpp
     queryenvironment.cpp
     querylimiter.cpp
     querynodes.cpp
     rangequerylocator.cpp
-    ranking_constants.cpp
-    ranking_expressions.cpp
     requestcontext.cpp
     resolveviewvisitor.cpp
     result_processor.cpp

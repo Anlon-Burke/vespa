@@ -107,6 +107,7 @@ public class DeploymentInstanceSpec extends DeploymentSpec.Steps {
         validateZones(new HashSet<>(), new HashSet<>(), this);
         validateEndpoints(globalServiceId, this.endpoints);
         validateChangeBlockers(changeBlockers, now);
+        validateBcp(bcp);
     }
 
     public InstanceName name() { return name; }
@@ -180,7 +181,6 @@ public class DeploymentInstanceSpec extends DeploymentSpec.Steps {
                       .flatMap(z -> z.region().stream())
                       .collect(Collectors.toSet());
      }
-
 
     private void validateChangeBlockers(List<DeploymentSpec.ChangeBlocker> changeBlockers, Instant now) {
         // Find all possible dates an upgrade block window can start
@@ -275,7 +275,7 @@ public class DeploymentInstanceSpec extends DeploymentSpec.Steps {
     /** Returns the rotations configuration of these instances */
     public List<Endpoint> endpoints() { return endpoints; }
 
-    /** Returns the BCP spec declared in this specified instance, or BcpSpec.empty() if none. */
+    /** Returns the BCP spec of this instance, or BcpSpec.empty() if none. */
     public Bcp bcp() { return bcp; }
 
     /** Returns whether this instance deploys to the given zone, either implicitly or explicitly */
@@ -315,22 +315,27 @@ public class DeploymentInstanceSpec extends DeploymentSpec.Steps {
                steps().equals(other.steps()) &&
                athenzService.equals(other.athenzService) &&
                notifications.equals(other.notifications) &&
-               endpoints.equals(other.endpoints);
+               endpoints.equals(other.endpoints) &&
+               zoneEndpoints.equals(other.zoneEndpoints) &&
+               bcp.equals(other.bcp) &&
+               tags.equals(other.tags);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(globalServiceId, upgradePolicy, revisionTarget, upgradeRollout, changeBlockers, steps(), athenzService, notifications, endpoints);
+        return Objects.hash(globalServiceId, upgradePolicy, revisionTarget, upgradeRollout, changeBlockers, steps(), athenzService, notifications, endpoints, zoneEndpoints, bcp, tags);
     }
 
     int deployableHashCode() {
         List<DeploymentSpec.DeclaredZone> zones = zones().stream().filter(zone -> zone.concerns(prod)).toList();
-        Object[] toHash = new Object[zones.size() + 4];
+        Object[] toHash = new Object[zones.size() + 6];
         int i = 0;
         toHash[i++] = name;
         toHash[i++] = endpoints;
+        toHash[i++] = zoneEndpoints;
         toHash[i++] = globalServiceId;
         toHash[i++] = tags;
+        toHash[i++] = bcp;
         for (DeploymentSpec.DeclaredZone zone : zones)
             toHash[i++] = Objects.hash(zone, zone.athenzService());
 

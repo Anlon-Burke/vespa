@@ -69,10 +69,17 @@ public class LoadBalancerProvisioner {
         this.service = service;
         this.deactivateRouting = PermanentFlags.DEACTIVATE_ROUTING.bindTo(nodeRepository.flagSource());
         // Read and write all load balancers to make sure they are stored in the latest version of the serialization format
+
+        CloudAccount zoneAccount = nodeRepository.zone().cloud().account();
         for (var id : db.readLoadBalancerIds()) {
             try (var lock = db.lock(id.application())) {
                 var loadBalancer = db.readLoadBalancer(id);
-                loadBalancer.ifPresent(lb -> db.writeLoadBalancer(lb, lb.state()));
+                loadBalancer.ifPresent(lb -> {
+                    // TODO (freva): Remove after 8.166
+                    if (!zoneAccount.isUnspecified() && lb.instance().isPresent() && lb.instance().get().cloudAccount().isUnspecified())
+                        lb = lb.with(Optional.of(lb.instance().get().with(zoneAccount)));
+                    db.writeLoadBalancer(lb, lb.state());
+                });
             }
         }
     }
@@ -315,8 +322,8 @@ public class LoadBalancerProvisioner {
     }
 
     /** Returns whether load balancer is provisioned in given account */
-    private static boolean inAccount(CloudAccount cloudAccount, LoadBalancer loadBalancer) {
-        return loadBalancer.instance().isEmpty() || loadBalancer.instance().get().cloudAccount().equals(cloudAccount);
+    private boolean inAccount(CloudAccount cloudAccount, LoadBalancer loadBalancer) {
+        return !nodeRepository.zone().cloud().allowEnclave() || loadBalancer.instance().isEmpty() || loadBalancer.instance().get().cloudAccount().equals(cloudAccount);
     }
 
     /** Find IP addresses reachable by the load balancer service */
@@ -330,7 +337,7 @@ public class LoadBalancerProvisioner {
         return reachable;
     }
 
-    private static void requireInstance(LoadBalancerId id, LoadBalancer loadBalancer, CloudAccount cloudAccount, ZoneEndpoint zoneEndpoint) {
+    private void requireInstance(LoadBalancerId id, LoadBalancer loadBalancer, CloudAccount cloudAccount, ZoneEndpoint zoneEndpoint) {
         if (loadBalancer.instance().isEmpty()) {
             // Signal that load balancer is not ready yet
             throw new LoadBalancerServiceException("Could not provision " + id + ". The operation will be retried on next deployment");

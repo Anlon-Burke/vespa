@@ -40,9 +40,9 @@ using document::DocumentTypeRepo;
 using search::TuneFileDocumentDB;
 using std::map;
 using search::index::Schema;
-using proton::matching::RankingConstants;
-using proton::matching::RankingExpressions;
-using proton::matching::OnnxModels;
+using search::fef::OnnxModels;
+using search::fef::RankingConstants;
+using search::fef::RankingExpressions;
 
 struct DBConfigFixture {
     using UP = std::unique_ptr<DBConfigFixture>;
@@ -58,17 +58,17 @@ struct DBConfigFixture {
         return DocumentDBConfig::build_schema(_attributesBuilder, _indexschemaBuilder);
     }
 
-    static RankingConstants::SP buildRankingConstants()
+    static std::shared_ptr<const RankingConstants> buildRankingConstants()
     {
         return std::make_shared<RankingConstants>();
     }
 
-    static RankingExpressions::SP buildRankingExpressions()
+    static std::shared_ptr<const RankingExpressions> buildRankingExpressions()
     {
         return std::make_shared<RankingExpressions>();
     }
 
-    static OnnxModels::SP buildOnnxModels()
+    static std::shared_ptr<const OnnxModels> buildOnnxModels()
     {
         return std::make_shared<OnnxModels>();
     }

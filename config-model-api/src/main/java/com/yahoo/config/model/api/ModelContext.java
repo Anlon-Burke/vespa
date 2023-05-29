@@ -20,6 +20,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.net.URI;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -114,6 +115,8 @@ public interface ModelContext {
         @ModelFeatureFlag(owners = {"arnej, bjorncs"}) default boolean enableGlobalPhase() { return true; }
         @ModelFeatureFlag(owners = {"baldersheim"}, comment = "Select summary decode type") default String summaryDecodePolicy() { return "eager"; }
         @ModelFeatureFlag(owners = {"hmusum"}) default boolean allowMoreThanOneContentGroupDown(ClusterSpec.Id id) { return false; }
+        @ModelFeatureFlag(owners = {"vekterli", "havardpe"}) default boolean enableConditionalPutRemoveWriteRepair() { return false; }
+        @ModelFeatureFlag(owners = {"mortent", "olaa"}) default boolean enableDataplaneProxy() { return false; }
 
         //Below are all flags that must be kept until 7 is out of the door
         @ModelFeatureFlag(owners = {"arnej"}, removeAfter="7.last") default boolean ignoreThreadStackSizes() { return false; }
@@ -141,6 +144,7 @@ public interface ModelContext {
 
     /** Warning: As elsewhere in this package, do not make backwards incompatible changes that will break old config models! */
     interface Properties {
+
         FeatureFlags featureFlags();
         boolean multitenant();
         ApplicationId applicationId();
@@ -184,6 +188,8 @@ public interface ModelContext {
         default Optional<CloudAccount> cloudAccount() { return Optional.empty(); }
 
         default boolean allowUserFilters() { return true; }
+
+        default Duration endpointConnectionTtl() { return Duration.ZERO; }
 
     }
 

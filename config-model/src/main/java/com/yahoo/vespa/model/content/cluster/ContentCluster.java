@@ -203,19 +203,24 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
             if (docprocCluster != null) {
                 docprocCluster = docprocCluster.trim();
             }
-            if (c.getSearch().hasIndexedCluster()) {
-                if (docprocCluster != null && !docprocCluster.isEmpty()) {
-                    c.getSearch().getIndexed().setIndexingClusterName(docprocCluster);
-                }
-            }
-
             String docprocChain = e.stringAttribute("chain");
             if (docprocChain != null) {
                 docprocChain = docprocChain.trim();
             }
-            if (c.getSearch().hasIndexedCluster()) {
-                if (docprocChain != null && !docprocChain.isEmpty()) {
-                    c.getSearch().getIndexed().setIndexingChainName(docprocChain);
+            if (docprocCluster != null && !docprocCluster.isEmpty()) {
+                if (!c.getSearch().hasIndexedCluster() && !c.getSearch().getIndexingDocproc().isPresent() &&
+                        docprocChain != null && !docprocChain.isEmpty()) {
+                    c.getSearch().setupStreamingSearchIndexingDocProc();
+                }
+                var indexingDocproc = c.getSearch().getIndexingDocproc();
+                if (indexingDocproc.isPresent()) {
+                    indexingDocproc.get().setClusterName(docprocCluster);
+                }
+            }
+            if (docprocChain != null && !docprocChain.isEmpty()) {
+                var indexingDocproc = c.getSearch().getIndexingDocproc();
+                if (indexingDocproc.isPresent()) {
+                    indexingDocproc.get().setChainName(docprocChain);
                 }
             }
         }
@@ -245,7 +250,7 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
             }
         }
 
-        /** Returns of memory reserved on a host. Memory is reserved for the jvm if th ecluster is combined */
+        /** Returns of memory reserved on a host. Memory is reserved for the jvm if the cluster is combined */
         private double fractionOfMemoryReserved(String clusterId, Collection<ContainerModel> containers) {
             for (ContainerModel containerModel : containers) {
                 Optional<String> hostClusterId = containerModel.getCluster().getHostClusterId();
@@ -451,7 +456,7 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
 
     @Override
     public void getConfig(MessagetyperouteselectorpolicyConfig.Builder builder) {
-        if ( ! getSearch().hasIndexedCluster()) return;
+        if ( ! getSearch().getIndexingDocproc().isPresent()) return;
         DocumentProtocol.getConfig(builder, getConfigId());
     }
 

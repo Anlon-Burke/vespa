@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "indexenvironment.h"
+#include <vespa/searchlib/fef/i_ranking_assets_repo.h>
 
 using namespace search::fef;
 
@@ -12,8 +13,7 @@ IndexEnvironment::IndexEnvironment(const ITableManager & tableManager) :
     _fields(),
     _fieldNames(),
     _motivation(RANK),
-    _rankAttributes(),
-    _dumpAttributes()
+    _ranking_assets_repo()
 {
 }
 
@@ -39,16 +39,27 @@ IndexEnvironment::addField(const vespalib::string& name,
 }
 
 void
-IndexEnvironment::hintAttributeAccess(const string & name) const {
-    if (name.empty()) {
-        return;
-    }
-    if (_motivation == RANK) {
-        _rankAttributes.insert(name);
-    } else {
-        _dumpAttributes.insert(name);
-    }
+IndexEnvironment::set_ranking_assets_repo(std::shared_ptr<const IRankingAssetsRepo> ranking_assets_repo)
+{
+    _ranking_assets_repo = std::move(ranking_assets_repo);
 }
 
-} // namespace streaming
+vespalib::eval::ConstantValue::UP
+IndexEnvironment::getConstantValue(const vespalib::string& name) const
+{
+    return _ranking_assets_repo->getConstant(name);
+}
 
+vespalib::string
+IndexEnvironment::getRankingExpression(const vespalib::string& name) const
+{
+    return _ranking_assets_repo->getExpression(name);
+}
+
+const search::fef::OnnxModel*
+IndexEnvironment::getOnnxModel(const vespalib::string& name) const
+{
+    return _ranking_assets_repo->getOnnxModel(name);
+}
+
+}

@@ -6,6 +6,8 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -39,23 +41,30 @@ import java.util.stream.Collectors;
  */
 public class Bcp {
 
-    private static final Bcp empty = new Bcp(List.of());
+    private static final Bcp empty = new Bcp(List.of(), Optional.empty());
 
+    private final Optional<Duration> defaultDeadline;
     private final List<Group> groups;
 
-    public Bcp(List<Group> groups) {
+    public Bcp(List<Group> groups, Optional<Duration> defaultDeadline) {
         totalMembershipSumsToOne(groups);
+        this.defaultDeadline = defaultDeadline;
         this.groups = List.copyOf(groups);
     }
 
+    public Optional<Duration> defaultDeadline() { return defaultDeadline; }
     public List<Group> groups() { return groups; }
+
+    public Bcp withGroups(List<Group> groups) {
+        return new Bcp(groups, defaultDeadline);
+    }
 
     /** Returns the set of regions declared in the groups of this. */
     public Set<RegionName> regions() {
         return groups.stream().flatMap(group -> group.members().stream()).map(member -> member.region()).collect(Collectors.toSet());
     }
 
-    public boolean isEmpty() { return groups.isEmpty(); }
+    public boolean isEmpty() { return groups.isEmpty() && defaultDeadline.isEmpty(); }
 
     /** Returns this bcp spec, or if it is empty, the given bcp spec. */
     public Bcp orElse(Bcp other) {
@@ -79,9 +88,24 @@ public class Bcp {
     public static Bcp empty() { return empty; }
 
     @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Bcp bcp = (Bcp) o;
+        return defaultDeadline.equals(bcp.defaultDeadline) && groups.equals(bcp.groups);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(defaultDeadline, groups);
+    }
+
+    @Override
     public String toString() {
         if (isEmpty()) return "empty BCP";
-        return "BCP of " + groups;
+        return "BCP of " +
+               ( groups.isEmpty() ? "no groups" : groups ) +
+               (defaultDeadline.isEmpty() ? "" : ", deadline: " + defaultDeadline.get());
     }
 
     public static class Group {
@@ -105,6 +129,19 @@ public class Bcp {
          * when a region becomes unreachable, which by default is Duration.ZERO.
          */
         public Duration deadline() { return deadline; }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            Group group = (Group) o;
+            return members.equals(group.members) && memberRegions.equals(group.memberRegions) && deadline.equals(group.deadline);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(members, memberRegions, deadline);
+        }
 
         @Override
         public String toString() {

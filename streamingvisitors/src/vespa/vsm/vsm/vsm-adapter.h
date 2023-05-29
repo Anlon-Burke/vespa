@@ -87,7 +87,7 @@ public:
     const juniper::Juniper * getJuniper() const override { return _juniper.get(); }
 };
 
-using DocsumToolsPtr = std::shared_ptr<DocsumTools>;
+using DocsumToolsPtr = std::shared_ptr<const DocsumTools>;
 
 class VSMConfigSnapshot {
 private:
@@ -103,16 +103,15 @@ public:
 class VSMAdapter
 {
 public:
-    VSMAdapter(const vespalib::string & highlightindexes, const vespalib::string & configId, Fast_WordFolder & wordFolder);
+    VSMAdapter(const vespalib::string& configId, const Fast_WordFolder& wordFolder);
     virtual ~VSMAdapter();
 
     VsmfieldsHandle getFieldsConfig() const { return _fieldsCfg.get(); }
     DocsumToolsPtr getDocsumTools()   const { return _docsumTools.get(); }
     void configure(const VSMConfigSnapshot & snapshot);
 private:
-    vespalib::string                          _highlightindexes;
     const vespalib::string                    _configId;
-    Fast_WordFolder                         & _wordFolder;
+    const Fast_WordFolder&                    _wordFolder;
     vespalib::PtrHolder<VsmfieldsConfig>      _fieldsCfg;
     vespalib::PtrHolder<DocsumTools>          _docsumTools;
     std::unique_ptr<JuniperProperties>        _juniperProps;

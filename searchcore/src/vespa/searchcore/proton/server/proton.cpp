@@ -352,7 +352,7 @@ Proton::init(const BootstrapConfig::SP & configSnapshot)
     vespalib::string fileConfigId;
     _compile_cache_executor_binding = vespalib::eval::CompileCache::bind(_shared_service->shared_raw());
 
-    InitializeThreadsCalculator calc(protonConfig.basedir, protonConfig.initialize.threads);
+    InitializeThreadsCalculator calc(hwInfo.cpu(), protonConfig.basedir, protonConfig.initialize.threads);
     LOG(info, "Start initializing components: threads=%u, configured=%u",
         calc.num_threads(), protonConfig.initialize.threads);
     _initDocumentDbsInSequence = (calc.num_threads() == 1);
@@ -380,7 +380,9 @@ Proton::init(const BootstrapConfig::SP & configSnapshot)
 
     _flushEngine->start();
     vespalib::duration pruneSessionsInterval = vespalib::from_s(protonConfig.grouping.sessionmanager.pruning.interval);
-    _sessionPruneHandle = _scheduler->scheduleAtFixedRate(makeLambdaTask([&]() { _sessionManager->pruneTimedOutSessions(vespalib::steady_clock::now()); }), pruneSessionsInterval, pruneSessionsInterval);
+    _sessionPruneHandle = _scheduler->scheduleAtFixedRate(makeLambdaTask([&]() {
+        _sessionManager->pruneTimedOutSessions(vespalib::steady_clock::now(), _shared_service->shared());
+    }), pruneSessionsInterval, pruneSessionsInterval);
     _isInitializing = false;
     _protonConfigurer.setAllowReconfig(true);
     _initComplete = true;

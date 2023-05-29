@@ -1,34 +1,34 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.admin.monitoring;
 
-import com.yahoo.metrics.ClusterControllerMetrics;
-import com.yahoo.metrics.ConfigServerMetrics;
-import com.yahoo.metrics.ContainerMetrics;
-import com.yahoo.metrics.DistributorMetrics;
-import com.yahoo.metrics.LogdMetrics;
-import com.yahoo.metrics.RoutingLayerMetrics;
-import com.yahoo.metrics.SearchNodeMetrics;
-import com.yahoo.metrics.SentinelMetrics;
-import com.yahoo.metrics.SlobrokMetrics;
-import com.yahoo.metrics.StorageMetrics;
-import com.yahoo.metrics.NodeAdminMetrics;
-import com.yahoo.metrics.Suffix;
-import com.yahoo.metrics.VespaMetrics;
+import ai.vespa.metrics.ClusterControllerMetrics;
+import ai.vespa.metrics.ConfigServerMetrics;
+import ai.vespa.metrics.ContainerMetrics;
+import ai.vespa.metrics.DistributorMetrics;
+import ai.vespa.metrics.LogdMetrics;
+import ai.vespa.metrics.NodeAdminMetrics;
+import ai.vespa.metrics.RoutingLayerMetrics;
+import ai.vespa.metrics.SearchNodeMetrics;
+import ai.vespa.metrics.SentinelMetrics;
+import ai.vespa.metrics.SlobrokMetrics;
+import ai.vespa.metrics.StorageMetrics;
+import ai.vespa.metrics.Suffix;
+import ai.vespa.metrics.VespaMetrics;
 
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-import static com.yahoo.metrics.Suffix.average;
-import static com.yahoo.metrics.Suffix.count;
-import static com.yahoo.metrics.Suffix.last;
-import static com.yahoo.metrics.Suffix.max;
-import static com.yahoo.metrics.Suffix.min;
-import static com.yahoo.metrics.Suffix.ninety_five_percentile;
-import static com.yahoo.metrics.Suffix.ninety_nine_percentile;
-import static com.yahoo.metrics.Suffix.rate;
-import static com.yahoo.metrics.Suffix.sum;
+import static ai.vespa.metrics.Suffix.average;
+import static ai.vespa.metrics.Suffix.count;
+import static ai.vespa.metrics.Suffix.last;
+import static ai.vespa.metrics.Suffix.max;
+import static ai.vespa.metrics.Suffix.min;
+import static ai.vespa.metrics.Suffix.ninety_five_percentile;
+import static ai.vespa.metrics.Suffix.ninety_nine_percentile;
+import static ai.vespa.metrics.Suffix.rate;
+import static ai.vespa.metrics.Suffix.sum;
 import static com.yahoo.vespa.model.admin.monitoring.DefaultVespaMetrics.defaultVespaMetricSet;
 import static java.util.Collections.singleton;
 
@@ -130,6 +130,35 @@ public class VespaMetricSet {
         addMetric(metrics, ConfigServerMetrics.ZK_MAX_LATENCY.last());
         addMetric(metrics, ConfigServerMetrics.ZK_CONNECTIONS.last());
         addMetric(metrics, ConfigServerMetrics.ZK_OUTSTANDING_REQUESTS.last());
+
+        // Node repository metrics
+        addMetric(metrics, ConfigServerMetrics.NODES_NON_ACTIVE_FRACTION.last());
+        addMetric(metrics, ConfigServerMetrics.CLUSTER_COST.last());
+        addMetric(metrics, ConfigServerMetrics.CLUSTER_LOAD_IDEAL_CPU.last());
+        addMetric(metrics, ConfigServerMetrics.CLUSTER_LOAD_IDEAL_MEMORY.last());
+        addMetric(metrics, ConfigServerMetrics.CLUSTER_LOAD_IDEAL_DISK.last());
+        addMetric(metrics, ConfigServerMetrics.WANT_TO_REBOOT.max());
+        addMetric(metrics, ConfigServerMetrics.WANT_TO_RESTART.max());
+        addMetric(metrics, ConfigServerMetrics.RETIRED.max());
+        addMetric(metrics, ConfigServerMetrics.WANT_TO_CHANGE_VESPA_VERSION.max());
+        addMetric(metrics, ConfigServerMetrics.HAS_WIRE_GUARD_KEY.last());
+        addMetric(metrics, ConfigServerMetrics.WANT_TO_DEPROVISION.max());
+        addMetric(metrics, ConfigServerMetrics.SUSPENDED.max());
+        addMetric(metrics, ConfigServerMetrics.SOME_SERVICES_DOWN.max());
+        addMetric(metrics, ConfigServerMetrics.NODE_FAILER_BAD_NODE.last());
+        addMetric(metrics, ConfigServerMetrics.LOCK_ATTEMPT_LOCKED_LOAD, EnumSet.of(max,average));
+
+        addMetric(metrics, ConfigServerMetrics.HOSTED_VESPA_DOCKER_ALLOCATED_CAPACITY_CPU.average());
+        addMetric(metrics, ConfigServerMetrics.HOSTED_VESPA_DOCKER_ALLOCATED_CAPACITY_MEM.average());
+        addMetric(metrics, ConfigServerMetrics.HOSTED_VESPA_DOCKER_ALLOCATED_CAPACITY_DISK.average());
+        addMetric(metrics, ConfigServerMetrics.HOSTED_VESPA_DOCKER_FREE_CAPACITY_CPU.max());
+        addMetric(metrics, ConfigServerMetrics.HOSTED_VESPA_DOCKER_FREE_CAPACITY_MEM.max());
+        addMetric(metrics, ConfigServerMetrics.HOSTED_VESPA_DOCKER_FREE_CAPACITY_DISK.max());
+        addMetric(metrics, ConfigServerMetrics.HOSTED_VESPA_DOCKER_TOTAL_CAPACITY_CPU, EnumSet.of(max,average));
+        addMetric(metrics, ConfigServerMetrics.HOSTED_VESPA_DOCKER_TOTAL_CAPACITY_DISK, EnumSet.of(max,average));
+        addMetric(metrics, ConfigServerMetrics.HOSTED_VESPA_DOCKER_TOTAL_CAPACITY_MEM, EnumSet.of(max,average));
+        addMetric(metrics, ConfigServerMetrics.HOSTED_VESPA_DOCKER_SKEW.last());
+        addMetric(metrics, ConfigServerMetrics.HOSTED_VESPA_PENDING_REDEPLOYMENTS.last());
 
         return metrics;
     }
@@ -239,6 +268,8 @@ public class VespaMetricSet {
         addMetric(metrics, ContainerMetrics.JDISC_HTTP_HANDLER_UNHANDLED_EXCEPTIONS.rate());
 
         addMetric(metrics, ContainerMetrics.JDISC_APPLICATION_FAILED_COMPONENT_GRAPHS.rate());
+        addMetric(metrics, ContainerMetrics.JDISC_APPLICATION_COMPONENT_GRAPH_CREATION_TIME_MILLIS.last());
+        addMetric(metrics, ContainerMetrics.JDISC_APPLICATION_COMPONENT_GRAPH_RECONFIGURATIONS.rate());
 
         addMetric(metrics, ContainerMetrics.JDISC_JVM.last());
 

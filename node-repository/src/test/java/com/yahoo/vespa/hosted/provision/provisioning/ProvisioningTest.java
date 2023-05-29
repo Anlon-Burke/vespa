@@ -525,14 +525,14 @@ public class ProvisioningTest {
         tester.activate(app1, cluster1, Capacity.from(resources(4, 2, 2, 10, 20),
                                                       resources(6, 3, 3, 15, 25)));
         tester.assertNodes("Allocation preserving resources within new limits",
-                           6, 2, 3, 8.0/4*21 / (6.0/2), 25,
+                           6, 2, 3, 14.57, 25,
                            app1, cluster1);
 
         // Widening window does not change allocation
         tester.activate(app1, cluster1, Capacity.from(resources(4, 2, 1, 5, 15),
                                                       resources(8, 4, 4, 21, 30)));
         tester.assertNodes("Same allocation",
-                           6, 2, 3, 8.0/4*21 / (6.0/2), 25,
+                           6, 2, 3, 14.57, 25,
                            app1, cluster1);
 
         // Changing limits in opposite directions cause a mixture of min and max
@@ -770,7 +770,35 @@ public class ProvisioningTest {
         tester.patchNodes(nodes.asList(), node -> node.withWantToRetire(true, Agent.system, tester.clock().instant()));
 
         tester.activate(application, tester.prepare(application, cluster, 3, 1, defaultResources));
-        assertEquals(3, tester.getNodes(application).state(Node.State.active).not().retired().size());
+        assertEquals(3, tester.getNodes(application).state(Node.State.active).size());
+    }
+
+    @Test
+    public void fails_if_retired_and_no_capacity() {
+        ProvisioningTester tester = new ProvisioningTester.Builder().zone(new Zone(Environment.prod, RegionName.from("us-east"))).build();
+        tester.makeReadyHosts(4, defaultResources).activateTenantHosts();
+
+        ApplicationId application = ProvisioningTester.applicationId();
+        ClusterSpec cluster = ClusterSpec.request(ClusterSpec.Type.content, ClusterSpec.Id.from("music")).vespaVersion("4.5.6").build();
+        tester.activate(application, tester.prepare(application, cluster, 3, 1, defaultResources));
+
+        // Retire one node
+        tester.patchNodes(tester.getNodes(application).first(1).asList(),
+                          node -> node.withWantToRetire(true, Agent.system, tester.clock().instant()));
+
+        tester.activate(application, tester.prepare(application, cluster, 3, 1, defaultResources));
+        assertEquals(4, tester.getNodes(application).state(Node.State.active).size());
+
+        // Retire another node
+        tester.patchNodes(tester.getNodes(application).not().retired().first(1).asList(),
+                          node -> node.withWantToRetire(true, Agent.system, tester.clock().instant()));
+
+        try {
+            // Deploy with increased cluster size, at this point there is no capacity even if we deploy
+            // without considering retirements
+            tester.activate(application, tester.prepare(application, cluster, 5, 1, defaultResources));
+            fail("Expected to failed due to lack of capacity");
+        } catch (NodeAllocationException ignored) {}
     }
 
     @Test

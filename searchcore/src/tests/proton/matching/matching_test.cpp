@@ -3,7 +3,6 @@
 #include <vespa/searchcore/proton/bucketdb/bucket_db_owner.h>
 #include <vespa/searchcore/proton/documentmetastore/documentmetastore.h>
 #include <vespa/searchcore/proton/matching/fakesearchcontext.h>
-#include <vespa/searchcore/proton/matching/i_ranking_assets_repo.h>
 #include <vespa/searchcore/proton/matching/match_context.h>
 #include <vespa/searchcore/proton/matching/match_params.h>
 #include <vespa/searchcore/proton/matching/match_tools.h>
@@ -20,6 +19,7 @@
 #include <vespa/searchlib/engine/docsumrequest.h>
 #include <vespa/searchlib/engine/searchreply.h>
 #include <vespa/searchlib/engine/searchrequest.h>
+#include <vespa/searchlib/fef/i_ranking_assets_repo.h>
 #include <vespa/searchlib/fef/indexproperties.h>
 #include <vespa/searchlib/fef/properties.h>
 #include <vespa/searchlib/fef/ranksetup.h>
@@ -110,7 +110,7 @@ vespalib::string make_same_element_stack_dump(const vespalib::string &a1_term, c
 
 const uint32_t NUM_DOCS = 1000;
 
-struct EmptyRankingAssetsRepo : public proton::matching::IRankingAssetsRepo {
+struct EmptyRankingAssetsRepo : public search::fef::IRankingAssetsRepo {
     vespalib::eval::ConstantValue::UP getConstant(const vespalib::string &) const override {
         return {};
     }
@@ -377,7 +377,7 @@ struct MyWorld {
     void verify_diversity_filter(const SearchRequest & req, bool expectDiverse) {
         Matcher::SP matcher = createMatcher();
         search::fef::Properties overrides;
-        auto mtf = matcher->create_match_tools_factory(req, searchContext, attributeContext, metaStore, overrides, ttb(), true);
+        auto mtf = matcher->create_match_tools_factory(req, searchContext, attributeContext, metaStore, overrides, ttb(), nullptr, true);
         auto diversity = mtf->createDiversifier(HeapSize::lookup(config));
         EXPECT_EQUAL(expectDiverse, static_cast<bool>(diversity));
     }
@@ -386,19 +386,17 @@ struct MyWorld {
         Matcher::SP matcher = createMatcher();
         SearchRequest::SP request = createSimpleRequest("f1", "spread");
         search::fef::Properties overrides;
-        MatchToolsFactory::UP match_tools_factory = matcher->create_match_tools_factory(
-            *request, searchContext, attributeContext, metaStore, overrides, ttb(), true);
-        MatchTools::UP match_tools = match_tools_factory->createMatchTools();
+        auto mtf = matcher->create_match_tools_factory(*request, searchContext, attributeContext, metaStore, overrides, ttb(), nullptr, true);
+        MatchTools::UP match_tools = mtf->createMatchTools();
         match_tools->setup_first_phase(nullptr);
         return match_tools->match_data().get_termwise_limit();
     }
 
     SearchReply::UP performSearch(const SearchRequest & req, size_t threads) {
         Matcher::SP matcher = createMatcher();
-        SearchSession::OwnershipBundle owned_objects;
-        owned_objects.search_handler = std::make_shared<MySearchHandler>(matcher);
-        owned_objects.context = std::make_unique<MatchContext>(std::make_unique<MockAttributeContext>(),
-                                                               std::make_unique<FakeSearchContext>());
+        SearchSession::OwnershipBundle owned_objects({std::make_unique<MockAttributeContext>(),
+                                                      std::make_unique<FakeSearchContext>()},
+                                                     std::make_shared<MySearchHandler>(matcher));
         vespalib::SimpleThreadBundle threadBundle(threads);
         SearchReply::UP reply = matcher->match(req, threadBundle, searchContext, attributeContext,
                                                *sessionManager, metaStore, metaStore.getBucketDB(),

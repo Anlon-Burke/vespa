@@ -58,6 +58,7 @@ import static com.yahoo.config.application.api.DeploymentSpec.RevisionTarget.nex
 import static com.yahoo.config.provision.Environment.prod;
 import static com.yahoo.config.provision.Environment.staging;
 import static com.yahoo.config.provision.Environment.test;
+import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.cancelled;
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.invalidApplication;
 import static java.util.Comparator.comparing;
 import static java.util.Comparator.naturalOrder;
@@ -644,10 +645,16 @@ public class DeploymentStatus {
         Optional<Instant> platformReadyAt = step.dependenciesCompletedAt(change.withoutApplication(), Optional.of(job));
         Optional<Instant> revisionReadyAt = step.dependenciesCompletedAt(change.withoutPlatform(), Optional.of(job));
 
+        boolean failingUpgradeOnlyTests = ! jobs().type(systemTest(job.type()), stagingTest(job.type()))
+                                                  .failingHardOn(Versions.from(change.withoutApplication(), application, deploymentFor(job), () -> systemVersion))
+                                                  .isEmpty();
+
         // If neither change is ready, we guess based on the specified rollout.
         if (platformReadyAt.isEmpty() && revisionReadyAt.isEmpty()) {
             return switch (rollout) {
-                case separate -> List.of(change.withoutApplication(), change);  // Platform should stay ahead.
+                case separate -> ! failingUpgradeOnlyTests
+                                 ? List.of(change.withoutApplication(), change) // Platform should stay ahead ...
+                                 : List.of(change);                             // ... unless upgrade-only is failing tests.
                 case leading -> List.of(change);                                // They should eventually join.
                 case simultaneous -> List.of(change.withoutPlatform(), change); // Revision should get ahead.
             };
@@ -662,9 +669,6 @@ public class DeploymentStatus {
         // Both changes are ready for this step, and we look to the specified rollout to decide.
         boolean platformReadyFirst = platformReadyAt.get().isBefore(revisionReadyAt.get());
         boolean revisionReadyFirst = revisionReadyAt.get().isBefore(platformReadyAt.get());
-        boolean failingUpgradeOnlyTests = ! jobs().type(systemTest(job.type()), stagingTest(job.type()))
-                                                  .failingHardOn(Versions.from(change.withoutApplication(), application, deploymentFor(job), () -> systemVersion))
-                                                  .isEmpty();
         return switch (rollout) {
             case separate ->      // Let whichever change rolled out first, keep rolling first, unless upgrade alone is failing.
                     (platformReadyFirst || platformReadyAt.get().equals(Instant.EPOCH)) // Assume platform was first if no jobs have run yet.
@@ -1062,6 +1066,7 @@ public class DeploymentStatus {
                 &&   job.isNodeAllocationFailure()) return Readiness.empty;
 
             if (job.lastStatus().get() == invalidApplication) return new Readiness(status.now.plus(Duration.ofSeconds(1 << 30)), DelayCause.invalidPackage);
+            if (job.lastStatus().get() == cancelled) return new Readiness(status.now.plus(Duration.ofSeconds(1 << 30)), DelayCause.coolingDown);
             Instant firstFailing = job.firstFailing().get().end().get();
             Instant lastCompleted = job.lastCompleted().get().end().get();
 

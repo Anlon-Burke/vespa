@@ -2,7 +2,9 @@
 package com.yahoo.document.restapi.resource;
 
 import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonFactoryBuilder;
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.yahoo.cloud.config.ClusterListConfig;
 import com.yahoo.component.annotation.Inject;
 import com.yahoo.concurrent.DaemonThreadFactory;
@@ -152,7 +154,9 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         @Override public void close(CompletionHandler handler) { handler.completed(); }
     };
 
-    private static final JsonFactory jsonFactory = new JsonFactory();
+    private static final JsonFactory jsonFactory = new JsonFactoryBuilder()
+            .streamReadConstraints(StreamReadConstraints.builder().maxStringLength(Integer.MAX_VALUE).build())
+            .build();
 
     private static final String CREATE = "create";
     private static final String CONDITION = "condition";
@@ -460,15 +464,17 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
         return new ForwardingContentChannel(in -> {
             enqueueAndDispatch(request, handler, () -> {
-                ParsedDocumentOperation put = parser.parsePut(in, path.id().toString());
-                getProperty(request, CONDITION).map(TestAndSetCondition::new).ifPresent(c -> put.operation().setCondition(c));
+                ParsedDocumentOperation parsed = parser.parsePut(in, path.id().toString());
+                DocumentPut put = (DocumentPut)parsed.operation();
+                getProperty(request, CONDITION).map(TestAndSetCondition::new).ifPresent(c -> put.setCondition(c));
+                getProperty(request, CREATE, booleanParser).ifPresent(put::setCreateIfNonExistent);
                 DocumentOperationParameters parameters = parametersFromRequest(request, ROUTE)
                         .withResponseHandler(response -> {
                             outstanding.decrementAndGet();
-                            updatePutMetrics(response.outcome(), latencyOf(request));
-                            handleFeedOperation(path, put.fullyApplied(), handler, response);
+                            updatePutMetrics(response.outcome(), latencyOf(request), put.getCreateIfNonExistent());
+                            handleFeedOperation(path, parsed.fullyApplied(), handler, response);
                         });
-                return () -> dispatchOperation(() -> asyncSession.put((DocumentPut)put.operation(), parameters));
+                return () -> dispatchOperation(() -> asyncSession.put(put, parameters));
             });
         });
     }
@@ -1091,7 +1097,8 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
 
     private static double latencyOf(HttpRequest r) { return (System.nanoTime() - r.relativeCreatedAtNanoTime()) / 1e+9d; }
 
-    private void updatePutMetrics(Outcome outcome, double latency) {
+    private void updatePutMetrics(Outcome outcome, double latency, boolean create) {
+        if (create && outcome == Outcome.NOT_FOUND) outcome = Outcome.SUCCESS; // >_<
         incrementMetricNumOperations(); incrementMetricNumPuts(); sampleLatency(latency);
         switch (outcome) {
             case SUCCESS -> incrementMetricSucceeded();
@@ -1212,10 +1219,12 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
         parameters.setPriority(DocumentProtocol.Priority.NORMAL_4);
 
         getProperty(request, FROM_TIMESTAMP, unsignedLongParser).ifPresent(parameters::setFromTimestamp);
-        getProperty(request, TO_TIMESTAMP, unsignedLongParser).ifPresent(parameters::setToTimestamp);
-        if (Long.compareUnsigned(parameters.getFromTimestamp(), parameters.getToTimestamp()) > 0) {
-            throw new IllegalArgumentException("toTimestamp must be greater than, or equal to, fromTimestamp");
-        }
+        getProperty(request, TO_TIMESTAMP, unsignedLongParser).ifPresent(ts -> {
+            parameters.setToTimestamp(ts);
+            if (Long.compareUnsigned(parameters.getFromTimestamp(), parameters.getToTimestamp()) > 0) {
+                throw new IllegalArgumentException("toTimestamp must be greater than, or equal to, fromTimestamp");
+            }
+        });
 
         StorageCluster storageCluster = resolveCluster(cluster, clusters);
         parameters.setRoute(storageCluster.name());
@@ -1360,23 +1369,22 @@ public class DocumentV1ApiHandler extends AbstractRequestHandler {
                         try (response) {
                             callback.onEnd(response);
 
-                            if (getVisitorStatistics() != null)
-                                response.writeDocumentCount(getVisitorStatistics().getDocumentsVisited());
+                            response.writeDocumentCount(getVisitorStatistics() == null ? 0 : getVisitorStatistics().getDocumentsVisited());
 
                             if (session.get() != null)
                                 response.writeTrace(session.get().getTrace());
 
                             int status = Response.Status.BAD_GATEWAY;
                             switch (code) {
-                                case TIMEOUT:
-                                    if ( ! hasVisitedAnyBuckets() && parameters.getVisitInconsistentBuckets()) {
+                                case TIMEOUT: // Intentional fallthrough.
+                                case ABORTED:
+                                    if (error.get() == null && ! hasVisitedAnyBuckets() && parameters.getVisitInconsistentBuckets()) {
                                         response.writeMessage("No buckets visited within timeout of " +
                                                               parameters.getSessionTimeoutMs() + "ms (request timeout -5s)");
                                         status = Response.Status.GATEWAY_TIMEOUT;
                                         break;
                                     }
-                                case SUCCESS: // Intentional fallthrough.
-                                case ABORTED: // Intentional fallthrough.
+                                case SUCCESS:
                                     if (error.get() == null) {
                                         ProgressToken progress = getProgress() != null ? getProgress() : parameters.getResumeToken();
                                         if (progress != null && ! progress.isFinished())

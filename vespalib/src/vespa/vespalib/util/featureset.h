@@ -22,6 +22,16 @@ public:
         std::vector<char> _data;
         double _value;
     public:
+        Value() noexcept
+            : _data(),
+              _value(0.0)
+        {
+        }
+        Value(double value_in) noexcept
+            : _data(),
+              _value(value_in)
+        {
+        }
         bool operator==(const Value &rhs) const {
             return ((_data == rhs._data) && (_value == rhs._value));
         }
@@ -150,6 +160,12 @@ struct FeatureValues {
     using Value = FeatureSet::Value;
     std::vector<vespalib::string> names;
     std::vector<Value> values; // values.size() == names.size() * N
+    FeatureValues() noexcept;
+    FeatureValues(const FeatureValues& rhs);
+    FeatureValues(FeatureValues&& rhs) noexcept;
+    ~FeatureValues() noexcept;
+    FeatureValues& operator=(const FeatureValues& rhs);
+    FeatureValues& operator=(FeatureValues&& rhs) noexcept;
 };
 
 }

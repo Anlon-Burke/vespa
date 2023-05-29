@@ -1,10 +1,11 @@
 package document
 
 import (
+	"fmt"
 	"io"
-	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -111,18 +112,31 @@ func feedInput(jsonl bool) string {
 		`
 {
   "put": "id:ns:type::doc1",
-  "fields": {"foo": "123"}
+  "fields":    {  "foo"  : "123", "bar": {"a": [1, 2, 3]}}
 }`,
 		`
-{
+
+     {
   "put": "id:ns:type::doc2",
+  "create": false,
+  "condition": "foo",
   "fields": {"bar": "456"}
 }`,
 		`
 {
-  "remove": "id:ns:type::doc1"
+  "remove": "id:ns:type::doc3"
 }
-`}
+`,
+		`
+{
+  "fields": {"qux": "789"},
+  "put": "id:ns:type::doc4",
+  "create": true
+}`,
+		`
+{
+  "remove": "id:ns:type::doc5"
+}`}
 	if jsonl {
 		return strings.Join(operations, "\n")
 	}
@@ -131,32 +145,49 @@ func feedInput(jsonl bool) string {
 
 func testDocumentDecoder(t *testing.T, jsonLike string) {
 	t.Helper()
-	r := NewDecoder(strings.NewReader(jsonLike))
-	want := []Document{
-		{Id: mustParseId("id:ns:type::doc1"), Operation: OperationPut, Body: []byte(`{"fields":{"foo": "123"}}`)},
-		{Id: mustParseId("id:ns:type::doc2"), Operation: OperationPut, Body: []byte(`{"fields":{"bar": "456"}}`)},
-		{Id: mustParseId("id:ns:type::doc1"), Operation: OperationRemove},
+	dec := NewDecoder(strings.NewReader(jsonLike))
+	docs := []Document{
+		{Id: mustParseId("id:ns:type::doc1"), Operation: OperationPut, Body: []byte(`{"fields":{  "foo"  : "123", "bar": {"a": [1, 2, 3]}}}`)},
+		{Id: mustParseId("id:ns:type::doc2"), Operation: OperationPut, Condition: "foo", Body: []byte(`{"fields":{"bar": "456"}}`)},
+		{Id: mustParseId("id:ns:type::doc3"), Operation: OperationRemove},
+		{Id: mustParseId("id:ns:type::doc4"), Operation: OperationPut, Create: true, Body: []byte(`{"fields":{"qux": "789"}}`)},
+		{Id: mustParseId("id:ns:type::doc5"), Operation: OperationRemove},
 	}
-	got := []Document{}
+	result := []Document{}
 	for {
-		doc, err := r.Decode()
+		doc, err := dec.Decode()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			t.Fatal(err)
 		}
-		got = append(got, doc)
+		result = append(result, doc)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("got %+v, want %+v", got, want)
+	wantBufLen := 0
+	if dec.array {
+		wantBufLen = 1
+	}
+	if l := dec.buf.Len(); l != wantBufLen {
+		t.Errorf("got dec.buf.Len() = %d, want %d", l, wantBufLen)
+	}
+	if len(docs) != len(result) {
+		t.Errorf("len(result) = %d, want %d", len(result), len(docs))
+	}
+	for i := 0; i < len(docs); i++ {
+		got := result[i]
+		want := docs[i]
+		if !got.Equal(want) {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
 	}
 }
 
-func TestDocumentDecoder(t *testing.T) {
-	testDocumentDecoder(t, feedInput(false))
-	testDocumentDecoder(t, feedInput(true))
+func TestDocumentDecoderArray(t *testing.T) { testDocumentDecoder(t, feedInput(false)) }
 
+func TestDocumentDecoderJSONL(t *testing.T) { testDocumentDecoder(t, feedInput(true)) }
+
+func TestDocumentDecoderInvalid(t *testing.T) {
 	jsonLike := `
 {
   "put": "id:ns:type::doc1",
@@ -167,14 +198,60 @@ func TestDocumentDecoder(t *testing.T) {
   "fields": {"foo": "invalid
 }
 `
-	r := NewDecoder(strings.NewReader(jsonLike))
-	_, err := r.Decode() // first object is valid
+	dec := NewDecoder(strings.NewReader(jsonLike))
+	_, err := dec.Decode() // first object is valid
 	if err != nil {
 		t.Errorf("unexpected error: %s", err)
 	}
-	_, err = r.Decode()
-	wantErr := "invalid json at byte offset 60: invalid character '\\n' in string literal"
+	_, err = dec.Decode()
+	wantErr := "invalid json at byte offset 110: json: invalid character '\\n' within string (expecting non-control character)"
 	if err.Error() != wantErr {
 		t.Errorf("want error %q, got %q", wantErr, err.Error())
+	}
+}
+
+func benchmarkDocumentDecoder(b *testing.B, size int) {
+	b.Helper()
+	input := fmt.Sprintf(`{"put": "id:ns:type::doc1", "fields": {"foo": "%s"}}`, strings.Repeat("s", size))
+	r := strings.NewReader(input)
+	dec := NewDecoder(r)
+	b.ResetTimer() // ignore setup time
+
+	for n := 0; n < b.N; n++ {
+		_, err := dec.Decode()
+		if err != nil {
+			b.Fatal(err)
+		}
+		r.Seek(0, 0)
+	}
+}
+
+func BenchmarkDocumentDecoderSmall(b *testing.B) { benchmarkDocumentDecoder(b, 10) }
+
+func BenchmarkDocumentDecoderLarge(b *testing.B) { benchmarkDocumentDecoder(b, 10000) }
+
+func TestGenerator(t *testing.T) {
+	now := time.Now()
+	steps := 10
+	step := time.Second
+	gen := Generator{
+		Size:     10,
+		Deadline: now.Add(time.Duration(steps) * step),
+		nowFunc:  func() time.Time { return now },
+	}
+	dec := NewDecoder(&gen)
+	var docs []Document
+	for {
+		doc, err := dec.Decode()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		docs = append(docs, doc)
+		now = now.Add(step)
+	}
+	if got := len(docs); got != steps {
+		t.Errorf("got %d docs, want %d", got, steps)
 	}
 }

@@ -219,7 +219,8 @@ use_btree_database bool default=true restart
 ## content nodes, the two-phase update path reverts back to the regular fast path.
 ## Since all replicas of the document were in sync, applying the update in-place
 ## shall be considered safe.
-restart_with_fast_update_path_if_all_get_timestamps_are_consistent bool default=false
+## DEPRECATED -- always enabled with 3-phase updates.
+restart_with_fast_update_path_if_all_get_timestamps_are_consistent bool default=true
 
 ## If set, no merge operations may be generated for any reason by a distributor.
 ## This is ONLY intended for system testing of certain transient edge cases and
@@ -307,3 +308,8 @@ inhibit_default_merges_when_global_merges_pending bool default=true
 ## Two-phase GC is only used iff all replica content nodes support the feature AND it's enabled
 ## by this config.
 enable_two_phase_garbage_collection bool default=true
+
+## If true, a conditional Put or Remove operation received for a bucket with inconsistent
+## replicas will trigger an implicit distributed condition probe to resolve the outcome of
+## the condition across all divergent replicas.
+enable_condition_probing bool default=false

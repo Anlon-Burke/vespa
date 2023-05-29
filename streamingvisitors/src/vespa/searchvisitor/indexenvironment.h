@@ -12,6 +12,8 @@
 #include <vespa/vespalib/stllike/hash_map.h>
 #include <set>
 
+namespace search::fef { struct IRankingAssetsRepo; }
+
 namespace streaming {
 
 /**
@@ -27,8 +29,7 @@ private:
     std::vector<search::fef::FieldInfo>  _fields;
     StringInt32Map                       _fieldNames;
     mutable FeatureMotivation            _motivation;
-    mutable std::set<vespalib::string>   _rankAttributes;
-    mutable std::set<vespalib::string>   _dumpAttributes;
+    std::shared_ptr<const search::fef::IRankingAssetsRepo> _ranking_assets_repo;
 
 public:
     IndexEnvironment(const search::fef::ITableManager & tableManager);
@@ -67,21 +68,11 @@ public:
         _motivation = motivation;
     }
 
-    void hintFieldAccess(uint32_t) const override {}
+    vespalib::eval::ConstantValue::UP getConstantValue(const vespalib::string& name) const override;
 
-    void hintAttributeAccess(const string & name) const override;
+    vespalib::string getRankingExpression(const vespalib::string& name) const override;
 
-    vespalib::eval::ConstantValue::UP getConstantValue(const vespalib::string &) const override {
-        return vespalib::eval::ConstantValue::UP();
-    }
-
-    vespalib::string getRankingExpression(const vespalib::string &) const override {
-        return {};
-    }
-
-    const search::fef::OnnxModel *getOnnxModel(const vespalib::string &) const override {
-        return nullptr;
-    }
+    const search::fef::OnnxModel *getOnnxModel(const vespalib::string& name) const override;
 
     bool addField(const vespalib::string& name,
                   bool isAttribute,
@@ -89,9 +80,7 @@ public:
 
     search::fef::Properties & getProperties() { return _properties; }
 
-    const std::set<vespalib::string> & getHintedRankAttributes() const { return _rankAttributes; }
-
-    const std::set<vespalib::string> & getHintedDumpAttributes() const { return _dumpAttributes; }
+    void set_ranking_assets_repo(std::shared_ptr<const search::fef::IRankingAssetsRepo> ranking_assets_repo);
 
     //TODO Wire in proper distribution key
     uint32_t getDistributionKey() const override { return 0; }

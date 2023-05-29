@@ -17,7 +17,7 @@ import static ai.onnxruntime.OrtSession.SessionOptions.ExecutionMode.SEQUENTIAL;
  */
 public class OnnxEvaluatorOptions {
 
-    private final OrtSession.SessionOptions.OptLevel optimizationLevel;
+    private OrtSession.SessionOptions.OptLevel optimizationLevel;
     private OrtSession.SessionOptions.ExecutionMode executionMode;
     private int interOpThreads;
     private int intraOpThreads;
@@ -67,10 +67,26 @@ public class OnnxEvaluatorOptions {
         }
     }
 
+    /**
+     * Sets the number of threads for inter and intra op execution.
+     * A negative number is interpreted as an inverse scaling factor <code>threads=CPU/-n</code>
+     */
+    public void setThreads(int interOp, int intraOp) {
+        interOpThreads = calculateThreads(interOp);
+        intraOpThreads = calculateThreads(intraOp);
+    }
+
+    private static int calculateThreads(int t) {
+        if (t >= 0) return t;
+        return Math.max(1, (int) Math.ceil(-1d * Runtime.getRuntime().availableProcessors() / t));
+    }
+
     public void setGpuDevice(int deviceNumber, boolean required) {
         this.gpuDeviceNumber = deviceNumber;
         this.gpuDeviceRequired = required;
     }
+
+    public void setGpuDevice(int deviceNumber) { gpuDeviceNumber = deviceNumber; }
 
     public boolean requestingGpu() {
         return gpuDeviceNumber > -1;
@@ -78,6 +94,19 @@ public class OnnxEvaluatorOptions {
 
     public boolean gpuDeviceRequired() {
         return gpuDeviceRequired;
+    }
+
+    public int gpuDeviceNumber() { return gpuDeviceNumber; }
+
+    public OnnxEvaluatorOptions copy() {
+        var copy = new OnnxEvaluatorOptions();
+        copy.gpuDeviceNumber = gpuDeviceNumber;
+        copy.gpuDeviceRequired = gpuDeviceRequired;
+        copy.executionMode = executionMode;
+        copy.interOpThreads = interOpThreads;
+        copy.intraOpThreads = intraOpThreads;
+        copy.optimizationLevel = optimizationLevel;
+        return copy;
     }
 
     @Override

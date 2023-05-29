@@ -11,7 +11,7 @@ namespace search::fef {
 /**
  * Class containing configuration for a single onnx model setup. This
  * class is used both by the IIndexEnvironment api as well as the
- * OnnxModels config adapter in the search core (matching component).
+ * OnnxModels config adapter.
  **/
 class OnnxModel {
 private:
@@ -30,7 +30,7 @@ public:
     OnnxModel & operator =(const OnnxModel &) = delete;
     ~OnnxModel();
 
-    const vespalib::string &name() const { return _name; }    
+    const vespalib::string &name() const { return _name; }
     const vespalib::string &file_path() const { return _file_path; }
     OnnxModel &input_feature(const vespalib::string &model_input_name, const vespalib::string &input_feature);
     OnnxModel &output_name(const vespalib::string &model_output_name, const vespalib::string &output_name);

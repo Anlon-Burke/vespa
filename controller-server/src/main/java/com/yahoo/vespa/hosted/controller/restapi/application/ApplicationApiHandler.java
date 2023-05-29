@@ -52,8 +52,6 @@ import com.yahoo.slime.SlimeUtils;
 import com.yahoo.text.Text;
 import com.yahoo.vespa.athenz.api.OAuthCredentials;
 import com.yahoo.vespa.athenz.client.zms.ZmsClientException;
-import com.yahoo.vespa.flags.BooleanFlag;
-import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.Instance;
@@ -167,7 +165,8 @@ import java.util.stream.Stream;
 
 import static com.yahoo.jdisc.Response.Status.BAD_REQUEST;
 import static com.yahoo.jdisc.Response.Status.CONFLICT;
-import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
+import static com.yahoo.vespa.hosted.controller.api.application.v4.EnvironmentResource.APPLICATION_TEST_ZIP;
+import static com.yahoo.vespa.hosted.controller.api.application.v4.EnvironmentResource.APPLICATION_ZIP;
 import static com.yahoo.yolean.Exceptions.uncheck;
 import static java.util.Comparator.comparingInt;
 import static java.util.Map.Entry.comparingByKey;
@@ -189,7 +188,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     private final Controller controller;
     private final AccessControlRequests accessControlRequests;
     private final TestConfigSerializer testConfigSerializer;
-    private final BooleanFlag failDeploymentOnMissingCertificateFile;
 
     @Inject
     public ApplicationApiHandler(ThreadedHttpRequestHandler.Context parentCtx,
@@ -199,7 +197,6 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         this.controller = controller;
         this.accessControlRequests = accessControlRequests;
         this.testConfigSerializer = new TestConfigSerializer(controller.system());
-        this.failDeploymentOnMissingCertificateFile = Flags.FAIL_DEPLOYMENT_ON_MISSING_CERTIFICATE_FILE.bindTo(controller.flagSource());
     }
 
     @Override
@@ -2428,14 +2425,16 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private HttpResponse jobDeploy(ApplicationId id, JobType type, HttpRequest request) {
-        if ( ! type.environment().isManuallyDeployed() && ! isOperator(request))
+        if ( ! type.environment().isManuallyDeployed() && ! (isOperator(request) || controller.system().isCd()))
             throw new IllegalArgumentException("Direct deployments are only allowed to manually deployed environments.");
+
+        controller.applications().verifyPlan(id.tenant());
 
         Map<String, byte[]> dataParts = parseDataParts(request);
         if ( ! dataParts.containsKey("applicationZip"))
             throw new IllegalArgumentException("Missing required form part 'applicationZip'");
 
-        ApplicationPackage applicationPackage = new ApplicationPackage(dataParts.get(EnvironmentResource.APPLICATION_ZIP));
+        ApplicationPackage applicationPackage = new ApplicationPackage(dataParts.get(APPLICATION_ZIP));
         controller.applications().verifyApplicationIdentityConfiguration(id.tenant(),
                                                                          Optional.of(id.instance()),
                                                                          Optional.of(type.zone()),
@@ -2552,7 +2551,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         controller.applications().deactivate(id.applicationId(), id.zoneId());
         controller.jobController().last(id.applicationId(), JobType.deploymentTo(id.zoneId()))
                   .filter(run -> ! run.hasEnded())
-                  .ifPresent(last -> controller.jobController().abort(last.id(), "deployment deactivated by " + request.getJDiscRequest().getUserPrincipal().getName()));
+                  .ifPresent(last -> controller.jobController().abort(last.id(), "deployment deactivated by " + request.getJDiscRequest().getUserPrincipal().getName(), true));
         return new MessageResponse("Deactivated " + id);
     }
 
@@ -3050,6 +3049,9 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
     }
 
     private HttpResponse submit(String tenant, String application, HttpRequest request) {
+        TenantName tenantName = TenantName.from(tenant);
+        controller.applications().verifyPlan(tenantName);
+
         Map<String, byte[]> dataParts = parseDataParts(request);
         Inspector submitOptions = SlimeUtils.jsonToSlime(dataParts.get(EnvironmentResource.SUBMIT_OPTIONS)).get();
         long projectId = submitOptions.field("projectId").asLong(); // Absence of this means it's not a prod app :/
@@ -3071,17 +3073,10 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         });
 
         ApplicationPackage applicationPackage =
-                new ApplicationPackage(dataParts.get(EnvironmentResource.APPLICATION_ZIP),
-                                       true,
-                                       failDeploymentOnMissingCertificateFile
-                                               .with(APPLICATION_ID, ApplicationId.from(tenant, application, "default").serializedForm())
-                                               .value());
+                new ApplicationPackage(dataParts.get(APPLICATION_ZIP), true, controller.system().isPublic());
+        byte[] testPackage = dataParts.getOrDefault(APPLICATION_TEST_ZIP, new byte[0]);
+        Submission submission = new Submission(applicationPackage, testPackage, sourceUrl, sourceRevision, authorEmail, description, controller.clock().instant(), risk);
 
-        byte[] testPackage = dataParts.getOrDefault(EnvironmentResource.APPLICATION_TEST_ZIP, new byte[0]);
-        Submission submission = new Submission(applicationPackage, testPackage, sourceUrl, sourceRevision, authorEmail, description, risk);
-
-        TenantName tenantName = TenantName.from(tenant);
-        controller.applications().verifyPlan(tenantName);
         controller.applications().verifyApplicationIdentityConfiguration(tenantName,
                                                                          Optional.empty(),
                                                                          Optional.empty(),
@@ -3097,7 +3092,7 @@ public class ApplicationApiHandler extends AuditLoggingRequestHandler {
         JobControllerApiHandlerHelper.submitResponse(controller.jobController(),
                                                      TenantAndApplicationId.from(tenant, application),
                                                      new Submission(ApplicationPackage.deploymentRemoval(), new byte[0], Optional.empty(),
-                                                                    Optional.empty(), Optional.empty(), Optional.empty(), 0),
+                                                                    Optional.empty(), Optional.empty(), Optional.empty(), controller.clock().instant(), 0),
                                                      0);
         return new MessageResponse("All deployments removed");
     }

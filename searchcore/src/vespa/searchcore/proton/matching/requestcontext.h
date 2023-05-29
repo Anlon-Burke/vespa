@@ -26,7 +26,8 @@ public:
                    IAttributeContext& attributeContext,
                    const search::fef::IQueryEnvironment& query_env,
                    search::fef::IObjectStore& shared_store,
-                   const search::attribute::AttributeBlueprintParams& attribute_blueprint_params);
+                   const search::attribute::AttributeBlueprintParams& attribute_blueprint_params,
+                   const MetaStoreReadGuardSP * metaStoreReadGuard);
 
     const Doom & getDoom() const override { return _doom; }
     const search::attribute::IAttributeVector *getAttribute(const vespalib::string &name) const override;
@@ -37,14 +38,20 @@ public:
 
     const vespalib::eval::Value* get_query_tensor(const vespalib::string& tensor_name) const override;
 
-    const search::attribute::AttributeBlueprintParams& get_attribute_blueprint_params() const override;
+    const search::attribute::AttributeBlueprintParams& get_attribute_blueprint_params() const override {
+        return _attribute_blueprint_params;
+    }
+    const MetaStoreReadGuardSP * getMetaStoreReadGuard() const override {
+        return _metaStoreReadGuard;
+    }
 
 private:
-    const Doom                      _doom;
-    IAttributeContext             & _attributeContext;
-    const search::fef::IQueryEnvironment& _query_env;
-    search::fef::IObjectStore& _shared_store;
-    search::attribute::AttributeBlueprintParams _attribute_blueprint_params;
+    const Doom                                    _doom;
+    IAttributeContext                           & _attributeContext;
+    const search::fef::IQueryEnvironment        & _query_env;
+    search::fef::IObjectStore                   & _shared_store;
+    search::attribute::AttributeBlueprintParams   _attribute_blueprint_params;
+    const MetaStoreReadGuardSP                  * _metaStoreReadGuard;
 };
 
 }

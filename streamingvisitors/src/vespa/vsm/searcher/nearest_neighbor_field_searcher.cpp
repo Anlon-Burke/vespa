@@ -5,6 +5,7 @@
 #include <vespa/document/datatype/tensor_data_type.h>
 #include <vespa/document/fieldvalue/tensorfieldvalue.h>
 #include <vespa/searchcommon/attribute/config.h>
+#include <vespa/searchlib/attribute/distance_metric_utils.h>
 #include <vespa/searchlib/fef/iqueryenvironment.h>
 #include <vespa/searchlib/fef/query_value.h>
 #include <vespa/searchlib/query/streaming/nearest_neighbor_query_node.h>
@@ -14,14 +15,17 @@
 #include <vespa/searchlib/tensor/tensor_ext_attribute.h>
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/util/issue.h>
+#include <algorithm>
+#include <cctype>
 
 using search::attribute::BasicType;
 using search::attribute::CollectionType;
 using search::attribute::Config;
+using search::attribute::DistanceMetric;
+using search::attribute::DistanceMetricUtils;
 using search::fef::QueryValue;
 using search::tensor::DistanceCalculator;
 using search::tensor::TensorExtAttribute;
-using search::tensor::make_distance_function;
 using vespalib::eval::ValueType;
 
 namespace {
@@ -48,12 +52,21 @@ NearestNeighborFieldSearcher::NodeAndCalc::NodeAndCalc(search::streaming::Neares
                                                        std::unique_ptr<search::tensor::DistanceCalculator> calc_in)
     : node(node_in),
       calc(std::move(calc_in)),
-      distance_threshold(calc->function().convert_threshold(node->get_distance_threshold()))
+      heap(node->get_target_hits())
 {
+    node->set_raw_score_calc(this);
+    heap.set_distance_threshold(calc->function().convert_threshold(node->get_distance_threshold()));
+}
+
+double
+NearestNeighborFieldSearcher::NodeAndCalc::to_raw_score(double distance)
+{
+    heap.used(distance);
+    return calc->function().to_rawscore(distance);
 }
 
 NearestNeighborFieldSearcher::NearestNeighborFieldSearcher(FieldIdT fid,
-                                                           search::attribute::DistanceMetric metric)
+                                                           DistanceMetric metric)
     : FieldSearcher(fid),
       _metric(metric),
       _attr(),
@@ -100,7 +113,7 @@ NearestNeighborFieldSearcher::prepare(search::streaming::QueryTermList& qtl,
         }
         try {
             auto calc = DistanceCalculator::make_with_validation(*_attr, *tensor_value);
-            _calcs.emplace_back(nn_term, std::move(calc));
+            _calcs.push_back(std::make_unique<NodeAndCalc>(nn_term, std::move(calc)));
         } catch (const vespalib::IllegalArgumentException& ex) {
             vespalib::Issue::report("Could not create DistanceCalculator for NearestNeighborQueryNode(%s, %s): %s",
                                     nn_term->index().c_str(), nn_term->get_query_tensor_name().c_str(), ex.what());
@@ -116,35 +129,30 @@ NearestNeighborFieldSearcher::onValue(const document::FieldValue& fv)
         if (tfv && tfv->getAsTensorPtr()) {
             _attr->add(*tfv->getAsTensorPtr(), 1);
             for (auto& elem : _calcs) {
-                double distance = elem.calc->calc_with_limit(scratch_docid, elem.distance_threshold);
-                if (distance <= elem.distance_threshold) {
-                    double score = elem.calc->function().to_rawscore(distance);
-                    elem.node->set_raw_score(score);
+                double distance_limit = elem->heap.distanceLimit();
+                double distance = elem->calc->calc_with_limit(scratch_docid, distance_limit);
+                if (distance <= distance_limit) {
+                    elem->node->set_distance(distance);
                 }
             }
         }
     }
 }
 
-search::attribute::DistanceMetric
+DistanceMetric
 NearestNeighborFieldSearcher::distance_metric_from_string(const vespalib::string& value)
 {
-    using search::attribute::DistanceMetric;
     // Valid string values must match the definition of DistanceMetric in
     // config-model/src/main/java/com/yahoo/schema/document/Attribute.java
-    if (value == "EUCLIDEAN") {
+    auto v = value;
+    std::transform(v.begin(), v.end(), v.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    try {
+        return DistanceMetricUtils::to_distance_metric(v);
+    } catch (vespalib::IllegalStateException&) {
+        vespalib::Issue::report("Distance metric '%s' is not supported. Using 'euclidean' instead", value.c_str());
         return DistanceMetric::Euclidean;
-    } else if (value == "ANGULAR") {
-        return DistanceMetric::Angular;
-    } else if (value == "GEODEGREES") {
-        return DistanceMetric::GeoDegrees;
-    } else if (value == "INNERPRODUCT") {
-        return DistanceMetric::InnerProduct;
-    } else if (value == "HAMMING") {
-        return DistanceMetric::Hamming;
     }
-    vespalib::Issue::report("Distance metric '%s' is not supported. Using 'euclidean' instead", value.c_str());
-    return DistanceMetric::Euclidean;
 }
 
 }

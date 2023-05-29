@@ -2,14 +2,24 @@ package document
 
 import (
 	"bufio"
-	"encoding/json"
+	"bytes"
 	"fmt"
 	"io"
+	"math/rand"
 	"strconv"
 	"strings"
-)
+	"sync"
 
-var asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
+	"time"
+
+	// Why do we use an experimental parser? This appears to be the only JSON library that satisfies the following
+	// requirements:
+	// - Faster than the std parser
+	// - Supports parsing from a io.Reader
+	// - Supports parsing token-by-token
+	// - Few allocations during parsing (especially for large objects)
+	"github.com/go-json-experiment/json"
+)
 
 type Operation int
 
@@ -17,6 +27,17 @@ const (
 	OperationPut Operation = iota
 	OperationUpdate
 	OperationRemove
+
+	jsonArrayStart  json.Kind = '['
+	jsonArrayEnd    json.Kind = ']'
+	jsonObjectStart json.Kind = '{'
+	jsonObjectEnd   json.Kind = '}'
+	jsonString      json.Kind = '"'
+)
+
+var (
+	fieldsPrefix = []byte(`{"fields":`)
+	fieldsSuffix = []byte("}")
 )
 
 // Id represents a Vespa document ID.
@@ -92,28 +113,41 @@ func ParseId(serialized string) (Id, error) {
 // Document represents a Vespa document operation.
 type Document struct {
 	Id        Id
-	Operation Operation
 	Condition string
-	Create    bool
 	Body      []byte
+	Operation Operation
+	Create    bool
+
+	resetFunc func()
 }
 
-type jsonDocument struct {
-	IdString  string          `json:"id"`
-	PutId     string          `json:"put"`
-	UpdateId  string          `json:"update"`
-	RemoveId  string          `json:"remove"`
-	Condition string          `json:"condition"`
-	Create    bool            `json:"create"`
-	Fields    json.RawMessage `json:"fields"`
+func (d Document) Equal(o Document) bool {
+	return d.Id.Equal(o.Id) &&
+		d.Condition == o.Condition &&
+		bytes.Equal(d.Body, o.Body) &&
+		d.Operation == o.Operation &&
+		d.Create == o.Create
+}
+
+// Reset discards the body of this document.
+func (d *Document) Reset() {
+	d.Body = nil
+	if d.resetFunc != nil {
+		d.resetFunc()
+	}
 }
 
 // Decoder decodes documents from a JSON structure which is either an array of objects, or objects separated by newline.
 type Decoder struct {
-	buf   *bufio.Reader
-	dec   *json.Decoder
+	dec *json.Decoder
+	buf bytes.Buffer
+
 	array bool
 	jsonl bool
+
+	fieldsEnd int64
+
+	documentBuffers sync.Pool
 }
 
 func (d Document) String() string {
@@ -134,46 +168,61 @@ func (d Document) String() string {
 	if d.Create {
 		sb.WriteString(", create=true")
 	}
+	if d.Body != nil {
+		sb.WriteString(", body=")
+		sb.WriteString(string(d.Body))
+	}
 	return sb.String()
 }
 
 func (d *Decoder) guessMode() error {
-	for !d.array && !d.jsonl {
-		b, err := d.buf.ReadByte()
-		if err != nil {
+	if d.array || d.jsonl {
+		return nil
+	}
+	kind := d.dec.PeekKind()
+	switch kind {
+	case jsonArrayStart:
+		if _, err := d.readNext(jsonArrayStart); err != nil {
 			return err
 		}
-		// Skip leading whitespace
-		if b < 0x80 && asciiSpace[b] != 0 {
-			continue
-		}
-		switch rune(b) {
-		case '{':
-			d.jsonl = true
-		case '[':
-			d.array = true
-		default:
-			return fmt.Errorf("unexpected token: %q", string(b))
-		}
-		if err := d.buf.UnreadByte(); err != nil {
-			return err
-		}
-		if d.array {
-			// prepare for decoding objects inside array
-			if _, err := d.dec.Token(); err != nil {
-				return err
-			}
-		}
+		d.array = true
+	case jsonObjectStart:
+		d.jsonl = true
+	default:
+		return fmt.Errorf("expected %s or %s, got %s", jsonArrayStart, jsonObjectStart, kind)
 	}
 	return nil
 }
 
-func (d *Decoder) readCloseToken() error {
-	if !d.array {
-		return nil
+func (d *Decoder) readNext(kind json.Kind) (json.Token, error) {
+	t, err := d.dec.ReadToken()
+	if err != nil {
+		return json.Token{}, err
 	}
-	_, err := d.dec.Token()
-	return err
+	if t.Kind() != kind {
+		return json.Token{}, fmt.Errorf("unexpected json kind: %q: want %q", t, kind)
+	}
+	return t, nil
+}
+
+func (d *Decoder) readString() (string, error) {
+	t, err := d.readNext(jsonString)
+	if err != nil {
+		return "", err
+	}
+	return t.String(), nil
+}
+
+func (d *Decoder) readBool() (bool, error) {
+	t, err := d.dec.ReadToken()
+	if err != nil {
+		return false, err
+	}
+	kind := t.Kind()
+	if kind != 't' && kind != 'f' {
+		return false, fmt.Errorf("unexpected json kind: %q: want %q or %q", t, 't', 'f')
+	}
+	return t.Bool(), nil
 }
 
 func (d *Decoder) Decode() (Document, error) {
@@ -184,71 +233,178 @@ func (d *Decoder) Decode() (Document, error) {
 	return doc, err
 }
 
+func (d *Decoder) buffer() *bytes.Buffer {
+	buf := d.documentBuffers.Get().(*bytes.Buffer)
+	buf.Reset()
+	return buf
+}
+
+func (d *Decoder) readField(name string, offset int64, doc *Document) error {
+	readId := false
+	switch name {
+	case "id", "put":
+		readId = true
+		doc.Operation = OperationPut
+	case "update":
+		readId = true
+		doc.Operation = OperationUpdate
+	case "remove":
+		readId = true
+		doc.Operation = OperationRemove
+	case "condition":
+		condition, err := d.readString()
+		if err != nil {
+			return err
+		}
+		doc.Condition = condition
+	case "create":
+		create, err := d.readBool()
+		if err != nil {
+			return err
+		}
+		doc.Create = create
+	case "fields":
+		if _, err := d.readNext(jsonObjectStart); err != nil {
+			return err
+		}
+		// Skip data between start of operation and start of fields
+		fieldsStart := d.dec.InputOffset() - 1
+		d.buf.Next(int(fieldsStart - offset))
+		depth := 1
+		for depth > 0 {
+			t, err := d.dec.ReadToken()
+			if err != nil {
+				return err
+			}
+			switch t.Kind() {
+			case jsonObjectStart:
+				depth++
+			case jsonObjectEnd:
+				depth--
+			}
+		}
+		d.fieldsEnd = d.dec.InputOffset()
+		fields := d.buf.Next(int(d.fieldsEnd - fieldsStart))
+		// Try to re-use buffers holding the document body. The buffer is released by document.Reset()
+		bodyBuf := d.buffer()
+		bodyBuf.Grow(len(fieldsPrefix) + len(fields) + len(fieldsSuffix))
+		bodyBuf.Write(fieldsPrefix)
+		bodyBuf.Write(fields)
+		bodyBuf.Write(fieldsSuffix)
+		doc.Body = bodyBuf.Bytes()
+		doc.resetFunc = func() { d.documentBuffers.Put(bodyBuf) }
+	}
+	if readId {
+		s, err := d.readString()
+		if err != nil {
+			return err
+		}
+		id, err := ParseId(s)
+		if err != nil {
+			return err
+		}
+		doc.Id = id
+	}
+	return nil
+}
+
 func (d *Decoder) decode() (Document, error) {
+	start := d.dec.InputOffset()
 	if err := d.guessMode(); err != nil {
 		return Document{}, err
 	}
-	if !d.dec.More() {
-		err := io.EOF
-		if tokenErr := d.readCloseToken(); tokenErr != nil {
-			err = tokenErr
+	if d.array && d.dec.PeekKind() == jsonArrayEnd {
+		// Reached end of the array holding document operations
+		if _, err := d.readNext(jsonArrayEnd); err != nil {
+			return Document{}, err
 		}
+		return Document{}, io.EOF
+	}
+	// Start of document operation
+	if _, err := d.readNext(jsonObjectStart); err != nil {
 		return Document{}, err
 	}
-	doc := jsonDocument{}
-	if err := d.dec.Decode(&doc); err != nil {
-		return Document{}, err
+	var doc Document
+loop:
+	for {
+		switch d.dec.PeekKind() {
+		case jsonString:
+			t, err := d.dec.ReadToken()
+			if err != nil {
+				return Document{}, err
+			}
+			if err := d.readField(t.String(), start, &doc); err != nil {
+				return Document{}, err
+			}
+		default:
+			if _, err := d.readNext(jsonObjectEnd); err != nil {
+				return Document{}, err
+			}
+			// Drop operation from the buffer
+			start = max(start, d.fieldsEnd)
+			end := d.dec.InputOffset()
+			d.buf.Next(int(end - start))
+			break loop
+		}
 	}
-	return parseDocument(&doc)
+	return doc, nil
 }
 
 func NewDecoder(r io.Reader) *Decoder {
-	buf := bufio.NewReader(r)
-	return &Decoder{
-		buf: buf,
-		dec: json.NewDecoder(buf),
-	}
-}
-
-func parseDocument(d *jsonDocument) (Document, error) {
-	id := ""
-	var op Operation
-	if d.IdString != "" {
-		op = OperationPut
-		id = d.IdString
-	} else if d.PutId != "" {
-		op = OperationPut
-		id = d.PutId
-	} else if d.UpdateId != "" {
-		op = OperationUpdate
-		id = d.UpdateId
-	} else if d.RemoveId != "" {
-		op = OperationRemove
-		id = d.RemoveId
-	} else {
-		return Document{}, fmt.Errorf("invalid document: missing operation: %v", d)
-	}
-	docId, err := ParseId(id)
-	if err != nil {
-		return Document{}, err
-	}
-	var body []byte
-	if d.Fields != nil {
-		jsonObject := `{"fields":`
-		body = make([]byte, 0, len(jsonObject)+len(d.Fields)+1)
-		body = append(body, []byte(jsonObject)...)
-		body = append(body, d.Fields...)
-		body = append(body, byte('}'))
-	}
-	return Document{
-		Id:        docId,
-		Operation: op,
-		Condition: d.Condition,
-		Create:    d.Create,
-		Body:      body,
-	}, nil
+	br := bufio.NewReaderSize(r, 1<<26)
+	d := &Decoder{}
+	d.documentBuffers.New = func() any { return &bytes.Buffer{} }
+	d.dec = json.NewDecoder(io.TeeReader(br, &d.buf))
+	return d
 }
 
 func parseError(value string) error {
 	return fmt.Errorf("invalid document: expected id:<namespace>:<document-type>:[n=<number>|g=<group>]:<user-specific>, got %q", value)
+}
+
+// Generator is a reader that returns synthetic documents until a given deadline.
+type Generator struct {
+	Size     int
+	Deadline time.Time
+
+	buf     bytes.Buffer
+	nowFunc func() time.Time
+}
+
+func NewGenerator(size int, deadline time.Time) *Generator {
+	return &Generator{Size: size, Deadline: deadline, nowFunc: time.Now}
+}
+
+func randString(size int) string {
+	b := make([]byte, size)
+	for i := range b {
+		b[i] = byte('a' + rand.Intn('z'-'a'+1))
+	}
+	return string(b)
+}
+
+func (g *Generator) Read(p []byte) (int, error) {
+	if g.buf.Len() == 0 {
+		if !g.nowFunc().Before(g.Deadline) {
+			return 0, io.EOF
+		}
+		fmt.Fprintf(&g.buf, "{\"put\": \"id:test:test::%s\", \"fields\": {\"test\": \"%s\"}}\n", randString(8), randString(g.Size))
+	}
+	return g.buf.Read(p)
+}
+
+type number interface{ float64 | int64 | int }
+
+func min[T number](x, y T) T {
+	if x < y {
+		return x
+	}
+	return y
+}
+
+func max[T number](x, y T) T {
+	if x > y {
+		return x
+	}
+	return y
 }

@@ -120,7 +120,7 @@ class NodeAllocation {
                 if ( candidate.state() == Node.State.active && allocation.removable()) continue; // don't accept; causes removal
                 if ( candidate.state() == Node.State.active && candidate.wantToFail()) continue; // don't accept; causes failing
                 if ( indexes.contains(membership.index())) continue; // duplicate index (just to be sure)
-                if ( candidate.parent.isPresent() && ! candidate.parent.get().cloudAccount().equals(requestedNodes.cloudAccount())) continue; // wrong account
+                if (nodeRepository.zone().cloud().allowEnclave() && candidate.parent.isPresent() && ! candidate.parent.get().cloudAccount().equals(requestedNodes.cloudAccount())) continue; // wrong account
 
                 boolean resizeable = requestedNodes.considerRetiring() && candidate.isResizable;
                 boolean acceptToRetire = acceptToRetire(candidate);
@@ -267,7 +267,7 @@ class NodeAllocation {
 
             if (node.state() != Node.State.active) // reactivated node - wipe state that deactivated it
                 node = node.unretire().removable(false);
-        } else {
+        } else if (retirement != Retirement.alreadyRetired) {
             LOG.info("Retiring " + node + " because " + retirement.description());
             ++wasRetiredJustNow;
             node = node.retire(nodeRepository.clock().instant());

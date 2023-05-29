@@ -77,6 +77,7 @@ import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.installatio
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.invalidApplication;
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.noTests;
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.nodeAllocationFailure;
+import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.quotaExceeded;
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.reset;
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.running;
 import static com.yahoo.vespa.hosted.controller.deployment.RunStatus.success;
@@ -249,7 +250,7 @@ public class InternalStepRunner implements StepRunner {
                 case LOAD_BALANCER_NOT_READY, PARENT_HOST_NOT_READY -> {
                     logger.log(e.message()); // Consider splitting these messages in summary and details, on config server.
                     Instant someTimeAfterStart = startTime.plusSeconds(200);
-                    Instant inALittleWhile = controller.clock().instant().plusSeconds(90);
+                    Instant inALittleWhile = controller.clock().instant().plusSeconds(60);
                     controller.jobController().locked(id, run -> run.sleepingUntil(someTimeAfterStart.isAfter(inALittleWhile) ? someTimeAfterStart : inALittleWhile));
                     return result;
                 }
@@ -266,6 +267,10 @@ public class InternalStepRunner implements StepRunner {
                 case BAD_REQUEST -> {
                     logger.log(WARNING, e.getMessage());
                     return Optional.of(deploymentFailed);
+                }
+                case QUOTA_EXCEEDED -> {
+                    logger.log(WARNING, e.getMessage());
+                    return Optional.of(quotaExceeded);
                 }
             }
 
@@ -355,7 +360,7 @@ public class InternalStepRunner implements StepRunner {
         }
         if (summary.converged()) {
             controller.jobController().locked(id, lockedRun -> lockedRun.withSummary(null));
-            Availability availability = endpointsAvailable(id.application(), id.type().zone(), logger);
+            Availability availability = endpointsAvailable(id.application(), id.type().zone(), deployment.get(), logger);
             if (availability.status() == Status.available) {
                 if (controller.routing().policies().processDnsChallenges(new DeploymentId(id.application(), id.type().zone()))) {
                     logger.log("Installation succeeded!");
@@ -495,24 +500,26 @@ public class InternalStepRunner implements StepRunner {
         }
     }
 
-    private Availability endpointsAvailable(ApplicationId id, ZoneId zone, DualLogger logger) {
-        DeploymentId deployment = new DeploymentId(id, zone);
-        Map<ZoneId, List<Endpoint>> endpoints = controller.routing().readTestRunnerEndpointsOf(Set.of(deployment));
+    private Availability endpointsAvailable(ApplicationId id, ZoneId zone, Deployment deployment, DualLogger logger) {
+        DeploymentId deploymentId = new DeploymentId(id, zone);
+        Map<ZoneId, List<Endpoint>> endpoints = controller.routing().readTestRunnerEndpointsOf(Set.of(deploymentId));
         logEndpoints(endpoints, logger);
-        DeploymentRoutingContext context = controller.routing().of(deployment);
+        DeploymentRoutingContext context = controller.routing().of(deploymentId);
         boolean resolveEndpoints = context.routingMethod() == RoutingMethod.exclusive;
         return controller.serviceRegistry().testerCloud().verifyEndpoints(
-                deployment,
+                deploymentId,
                 endpoints.getOrDefault(zone, List.of())
                          .stream()
                          .map(endpoint -> {
                              ClusterSpec.Id cluster = ClusterSpec.Id.from(endpoint.name());
                              RoutingPolicy policy = context.routingPolicy(cluster).get();
-                             return new EndpointsChecker.Endpoint(cluster,
+                             return new EndpointsChecker.Endpoint(id,
+                                                                  cluster,
                                                                   HttpURL.from(endpoint.url()),
                                                                   policy.ipAddress().filter(__ -> resolveEndpoints).map(uncheck(InetAddress::getByName)),
                                                                   policy.canonicalName().filter(__ -> resolveEndpoints),
-                                                                  policy.isPublic());
+                                                                  policy.isPublic(),
+                                                                  deployment.cloudAccount());
                          }).toList());
     }
 
@@ -801,7 +808,7 @@ public class InternalStepRunner implements StepRunner {
         NotificationSource source = NotificationSource.from(run.id());
         Consumer<String> updater = msg -> controller.notificationsDb().setNotification(source, Notification.Type.deployment, Notification.Level.error, msg);
         switch (isRemoved ? success : run.status()) {
-            case aborted: return; // wait and see how the next run goes.
+            case aborted, cancelled: return; // wait and see how the next run goes.
             case noTests:
             case running:
             case success:
@@ -825,6 +832,9 @@ public class InternalStepRunner implements StepRunner {
             case error:
             case endpointCertificateTimeout:
                 break;
+            case quotaExceeded:
+                updater.accept("quota exceeded. Contact support to upgrade your plan.");
+                return;
             default:
                 logger.log(WARNING, "Don't know what to set console notification to for run status '" + run.status() + "'");
         }
@@ -836,6 +846,7 @@ public class InternalStepRunner implements StepRunner {
         switch (run.status()) {
             case running:
             case aborted:
+            case cancelled:
             case noTests:
             case success:
                 return Optional.empty();

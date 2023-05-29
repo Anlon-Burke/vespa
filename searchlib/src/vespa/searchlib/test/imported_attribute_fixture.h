@@ -13,7 +13,6 @@
 #include <vespa/searchlib/attribute/integerbase.h>
 #include <vespa/searchlib/attribute/reference_attribute.h>
 #include <vespa/searchlib/attribute/stringbase.h>
-#include <vespa/searchlib/common/i_document_meta_store_context.h>
 #include <vespa/searchlib/query/query_term_simple.h>
 #include <vespa/searchcommon/attribute/attributecontent.h>
 #include <vespa/searchcommon/attribute/config.h>
@@ -25,7 +24,7 @@ struct MockDocumentMetaStoreContext : public IDocumentMetaStoreContext {
     mutable size_t get_read_guard_cnt;
 
     MockDocumentMetaStoreContext() noexcept : get_read_guard_cnt(0) {}
-    IReadGuard::UP getReadGuard() const override;
+    IReadGuard::SP getReadGuard() const override;
 };
 
 }

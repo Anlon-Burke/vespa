@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include <vespa/searchlib/queryeval/blueprint.h>
+#include <vespa/searchlib/queryeval/field_spec.h>
 #include <vespa/searchlib/fef/iindexenvironment.h>
 #include <vespa/searchlib/fef/itermdata.h>
 #include <vespa/searchlib/fef/simpletermdata.h>
@@ -44,7 +44,7 @@ public:
     };
 
 private:
-    std::vector<FieldEntry> _fields;
+    vespalib::SmallVector<FieldEntry, 1u> _fields;
 
     void propagate_document_frequency(uint32_t matching_count_doc, uint32_t total_doc_count);
 

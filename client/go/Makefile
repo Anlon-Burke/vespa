@@ -3,7 +3,7 @@
 # The version to release. Defaults to the current tag or revision.
 # Use env VERSION=X.Y.Z make ... to override
 VERSION ?= $(shell git describe --tags --exact-match 2> /dev/null | sed "s/^v//")
-DEVEL_VERSION := $(shell echo "0.0.0-`git rev-parse --short HEAD`")
+DEVEL_VERSION := $(shell echo "0.0.0-`git rev-parse --short HEAD 2> /dev/null || echo unknown`")
 ifeq ($(VERSION),)
 	VERSION = $(DEVEL_VERSION)
 endif
@@ -14,7 +14,8 @@ SHARE ?= $(PREFIX)/share
 DIST ?= $(CURDIR)/dist
 
 GO_FLAGS := -ldflags "-X github.com/vespa-engine/vespa/client/go/internal/build.Version=$(VERSION)"
-GIT_ROOT := $(shell git rev-parse --show-toplevel)
+PROJECT_ROOT := $(shell realpath $(CURDIR)/../..)
+GO_TMPDIR := $(PROJECT_ROOT)/build/go
 DIST_TARGETS := dist-mac dist-mac-arm64 dist-linux dist-linux-arm64 dist-win32 dist-win64
 
 all: test checkfmt install
@@ -85,8 +86,9 @@ $(DIST_TARGETS): DIST_NAME=vespa-cli_$(VERSION)_$(GOOS)_$(GOARCH)
 $(DIST_TARGETS): dist-version ci manpages
 $(DIST_TARGETS):
 	mkdir -p $(DIST)/$(DIST_NAME)/bin
-	env CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o $(DIST)/$(DIST_NAME)/bin $(GO_FLAGS) ./...
-	cp -a $(GIT_ROOT)/LICENSE $(DIST)/$(DIST_NAME)
+	env CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o $(DIST)/$(DIST_NAME)/bin $(GO_FLAGS) \
+		github.com/vespa-engine/vespa/client/go/internal/cli/cmd/vespa
+	cp -a $(PROJECT_ROOT)/LICENSE $(DIST)/$(DIST_NAME)
 	if [ "$(GOOS)" = "windows" ]; then \
 		cd $(DIST) && zip -r $(DIST)/$(DIST_NAME).zip $(DIST_NAME); \
 	else \
@@ -131,7 +133,10 @@ clean:
 	rmdir -p $(BIN) $(SHARE)/man/man1 > /dev/null 2>&1 || true
 
 test: ci
-	mkdir -p $(CURDIR)/tmp && TMPDIR=$(CURDIR)/tmp go test ./...
+# Why custom GOTMPDIR? go builds executables for unit tests and by default these
+# end up in TMPDIR/GOTMPDIR. In some environments /tmp is mounted noexec so
+# running test executables will fail
+	mkdir -p $(GO_TMPDIR) && GOTMPDIR=$(GO_TMPDIR) go test ./...
 
 checkfmt:
 	@sh -c "test -z $$(gofmt -l .)" || { echo "one or more files need to be formatted: try make fmt to fix this automatically"; exit 1; }

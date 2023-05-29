@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "check_condition.h"
 #include <vespa/storage/distributor/operations/sequenced_operation.h>
 #include <vespa/storage/distributor/persistencemessagetracker.h>
 
@@ -27,6 +28,7 @@ public:
                  DistributorBucketSpace& bucketSpace,
                  std::shared_ptr<api::PutCommand> msg,
                  PersistenceOperationMetricSet& metric,
+                 PersistenceOperationMetricSet& condition_probe_metrics,
                  SequencingHandle sequencingHandle = SequencingHandle());
     ~PutOperation() override;
 
@@ -37,24 +39,32 @@ public:
     void onClose(DistributorStripeMessageSender& sender) override;
 
 private:
-    PersistenceMessageTrackerImpl _trackerInstance;
-    PersistenceMessageTracker& _tracker;
+    PersistenceMessageTrackerImpl      _tracker_instance;
+    PersistenceMessageTracker&         _tracker;
+    std::shared_ptr<api::PutCommand>   _msg;
+    document::BucketId                 _doc_id_bucket_id;
+    const DistributorNodeContext&      _node_ctx;
+    DistributorStripeOperationContext& _op_ctx;
+    PersistenceOperationMetricSet&     _condition_probe_metrics;
+    DistributorBucketSpace&            _bucket_space;
+    std::shared_ptr<CheckCondition>    _check_condition;
 
+    void start_direct_put_dispatch(DistributorStripeMessageSender& sender);
+    void start_conditional_put(DistributorStripeMessageSender& sender);
+    void on_completed_check_condition(CheckCondition::Outcome& outcome,
+                                      DistributorStripeMessageSender& sender);
     void insertDatabaseEntryAndScheduleCreateBucket(const OperationTargetList& copies, bool setOneActive,
                                                     const api::StorageCommand& originalCommand,
                                                     std::vector<MessageTracker::ToSend>& messagesToSend);
 
     void sendPutToBucketOnNode(document::BucketSpace bucketSpace, const document::BucketId& bucketId,
-                               const uint16_t node, std::vector<PersistenceMessageTracker::ToSend>& putBatch);
+                               uint16_t node, std::vector<PersistenceMessageTracker::ToSend>& putBatch);
 
     [[nodiscard]] bool shouldImplicitlyActivateReplica(const OperationTargetList& targets) const;
 
     [[nodiscard]] bool has_unavailable_targets_in_pending_state(const OperationTargetList& targets) const;
     [[nodiscard]] bool at_least_one_storage_node_is_available() const;
-
-    std::shared_ptr<api::PutCommand> _msg;
-    DistributorStripeOperationContext& _op_ctx;
-    DistributorBucketSpace &_bucketSpace;
+    [[nodiscard]] bool has_condition() const noexcept;
 };
 
 }

@@ -117,7 +117,7 @@ public class NodeResources {
         }
 
         public boolean isDefault() { return this == getDefault(); }
-        public static Architecture getDefault() { return x86_64; }
+        public static Architecture getDefault() { return any; }
 
     }
 
@@ -210,6 +210,10 @@ public class NodeResources {
     public Architecture architecture() { return architecture; }
     public GpuResources gpuResources() { return gpuResources; }
 
+    public boolean vcpuIsUnspecified() { return vcpu == 0; }
+    public boolean memoryGbIsUnspecified() { return memoryGb == 0; }
+    public boolean diskGbIsUnspecified() { return diskGb == 0; }
+
     /** Returns the standard cost of these resources, in dollars per hour */
     public double cost() {
         return (vcpu * cpuUnitCost) +
@@ -219,19 +223,16 @@ public class NodeResources {
     }
 
     public NodeResources withVcpu(double vcpu) {
-        ensureSpecified();
         if (vcpu == this.vcpu) return this;
         return new NodeResources(vcpu, memoryGb, diskGb, bandwidthGbps, diskSpeed, storageType, architecture, gpuResources);
     }
 
     public NodeResources withMemoryGb(double memoryGb) {
-        ensureSpecified();
         if (memoryGb == this.memoryGb) return this;
         return new NodeResources(vcpu, memoryGb, diskGb, bandwidthGbps, diskSpeed, storageType, architecture, gpuResources);
     }
 
     public NodeResources withDiskGb(double diskGb) {
-        ensureSpecified();
         if (diskGb == this.diskGb) return this;
         return new NodeResources(vcpu, memoryGb, diskGb, bandwidthGbps, diskSpeed, storageType, architecture, gpuResources);
     }
@@ -361,7 +362,7 @@ public class NodeResources {
         appendDouble(sb, vcpu);
         sb.append(", memory: ");
         appendDouble(sb, memoryGb);
-        sb.append(" Gb, disk ");
+        sb.append(" Gb, disk: ");
         appendDouble(sb, diskGb);
         sb.append(" Gb");
         if (bandwidthGbps > 0) {
@@ -498,7 +499,7 @@ public class NodeResources {
         if (cpu == 0) cpu = 0.5;
         if (cpu == 2 && mem == 8 ) cpu = 1.5;
         if (cpu == 2 && mem == 12 ) cpu = 2.3;
-        return new NodeResources(cpu, mem, dsk, 0.3, DiskSpeed.getDefault(), StorageType.getDefault(), Architecture.x86_64);
+        return new NodeResources(cpu, mem, dsk, 0.3, DiskSpeed.getDefault(), StorageType.getDefault(), Architecture.any);
     }
 
     private static double validate(double value, String valueName) {

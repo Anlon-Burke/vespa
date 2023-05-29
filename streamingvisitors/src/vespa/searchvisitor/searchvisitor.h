@@ -34,6 +34,8 @@ using namespace search::aggregation;
 
 namespace streaming {
 
+class SearchEnvironmentSnapshot;
+
 /**
  * @class storage::SearchVisitor
  *
@@ -46,6 +48,10 @@ public:
                   const vdslib::Parameters & params);
 
     ~SearchVisitor() override;
+
+    // This should only be used by unit tests.
+    std::unique_ptr<documentapi::QueryResultMessage> generate_query_result(HitCounter& counter);
+
 private:
     /**
      * This struct wraps an attribute vector.
@@ -118,7 +124,7 @@ private:
     class RankController {
     private:
         vespalib::string               _rankProfile;
-        RankManager::Snapshot::SP      _rankManagerSnapshot;
+        std::shared_ptr<const RankManager::Snapshot>  _rankManagerSnapshot;
         const search::fef::RankSetup * _rankSetup;
         search::fef::Properties        _queryProperties;
         bool                           _hasRanking;
@@ -127,11 +133,13 @@ private:
         RankProcessor::UP              _dumpProcessor;
 
         /**
-         * Process attribute hints and add needed attributes to the given list.
+         * Process attribute accessed and add needed attributes to the
+         * given list.
          **/
-        static void processHintedAttributes(const IndexEnvironment & indexEnv, bool rank,
-                                            const search::IAttributeManager & attrMan,
-                                            std::vector<AttrInfo> & attributeFields);
+        static void processAccessedAttributes(const QueryEnvironment& queryEnv,
+                                              bool rank,
+                                              const search::IAttributeManager& attrMan,
+                                              std::vector<AttrInfo>& attributeFields);
 
     public:
         RankController();
@@ -139,7 +147,7 @@ private:
         bool valid() const { return _rankProcessor.get() != nullptr; }
         void setRankProfile(const vespalib::string &rankProfile) { _rankProfile = rankProfile; }
         const vespalib::string &getRankProfile() const { return _rankProfile; }
-        void setRankManagerSnapshot(const RankManager::Snapshot::SP & snapshot) { _rankManagerSnapshot = snapshot; }
+        void setRankManagerSnapshot(const std::shared_ptr<const RankManager::Snapshot>& snapshot) { _rankManagerSnapshot = snapshot; }
         search::fef::Properties & getQueryProperties() { return _queryProperties; }
         RankProcessor * getRankProcessor() { return _rankProcessor.get(); }
         void setDumpFeatures(bool dumpFeatures) { _dumpFeatures = dumpFeatures; }
@@ -446,9 +454,9 @@ private:
     };
 
     void init(const vdslib::Parameters & params);
-    SearchEnvironment                     & _env;
+    std::shared_ptr<const SearchEnvironmentSnapshot> _env;
     vdslib::Parameters                      _params;
-    const vsm::VSMAdapter                 * _vsmAdapter;
+    bool                                    _init_called;
     size_t                                  _docSearchedCount;
     size_t                                  _hitCount;
     size_t                                  _hitsRejectedCount;
@@ -484,12 +492,14 @@ private:
 
 class SearchVisitorFactory : public storage::VisitorFactory {
     config::ConfigUri _configUri;
-    storage::VisitorEnvironment::UP makeVisitorEnvironment(storage::StorageComponent&) override;
+    std::shared_ptr<storage::VisitorEnvironment> _env;
+    std::shared_ptr<storage::VisitorEnvironment> makeVisitorEnvironment(storage::StorageComponent&) override;
 
     storage::Visitor* makeVisitor(storage::StorageComponent&, storage::VisitorEnvironment&env,
                          const vdslib::Parameters& params) override;
 public:
-    explicit SearchVisitorFactory(const config::ConfigUri & configUri);
+    explicit SearchVisitorFactory(const config::ConfigUri & configUri, FNET_Transport* transport, const vespalib::string& file_distributor_connection_spec);
+    ~SearchVisitorFactory() override;
 };
 
 }

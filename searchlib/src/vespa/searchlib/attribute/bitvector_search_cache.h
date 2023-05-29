@@ -2,11 +2,12 @@
 
 #pragma once
 
-#include <vespa/searchlib/common/i_document_meta_store_context.h>
+#include <vespa/searchcommon/attribute/i_document_meta_store_context.h>
 #include <vespa/vespalib/stllike/hash_map.h>
 #include <vespa/vespalib/stllike/string.h>
 #include <memory>
-#include <mutex>
+#include <shared_mutex>
+#include <atomic>
 
 namespace search { class BitVector; }
 namespace search::attribute {
@@ -19,32 +20,31 @@ namespace search::attribute {
 class BitVectorSearchCache {
 public:
     using BitVectorSP = std::shared_ptr<BitVector>;
-    using ReadGuardUP = IDocumentMetaStoreContext::IReadGuard::UP;
+    using ReadGuardSP = IDocumentMetaStoreContext::IReadGuard::SP;
 
     struct Entry {
-        using SP = std::shared_ptr<Entry>;
         // We need to keep a document meta store read guard to ensure that no lids that are cached
         // in the bit vector are re-used until the guard is released.
-        ReadGuardUP dmsReadGuard;
+        ReadGuardSP dmsReadGuard;
         BitVectorSP bitVector;
         uint32_t docIdLimit;
-        Entry(ReadGuardUP dmsReadGuard_, BitVectorSP bitVector_, uint32_t docIdLimit_) noexcept
+        Entry(ReadGuardSP dmsReadGuard_, BitVectorSP bitVector_, uint32_t docIdLimit_) noexcept
             : dmsReadGuard(std::move(dmsReadGuard_)), bitVector(std::move(bitVector_)), docIdLimit(docIdLimit_) {}
     };
 
 private:
-    using LockGuard = std::lock_guard<std::mutex>;
-    using Cache = vespalib::hash_map<vespalib::string, Entry::SP>;
+    using Cache = vespalib::hash_map<vespalib::string, std::shared_ptr<Entry>>;
 
-    mutable std::mutex _mutex;
+    mutable std::shared_mutex _mutex;
+    std::atomic<uint64_t>     _size;
     Cache _cache;
 
 public:
     BitVectorSearchCache();
     ~BitVectorSearchCache();
-    void insert(const vespalib::string &term, Entry::SP entry);
-    Entry::SP find(const vespalib::string &term) const;
-    size_t size() const;
+    void insert(const vespalib::string &term, std::shared_ptr<Entry> entry);
+    std::shared_ptr<Entry> find(const vespalib::string &term) const;
+    size_t size() const { return _size.load(std::memory_order_relaxed); }
     void clear();
 };
 

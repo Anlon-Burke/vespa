@@ -40,12 +40,11 @@ public:
 
 };
 
-EquivBlueprint::EquivBlueprint(const FieldSpecBaseList &fields,
+EquivBlueprint::EquivBlueprint(FieldSpecBaseList fields,
                                fef::MatchDataLayout subtree_mdl)
-    : ComplexLeafBlueprint(fields),
-      _fields(fields),
+    : ComplexLeafBlueprint(std::move(fields)),
       _estimate(),
-      _layout(subtree_mdl),
+      _layout(std::move(subtree_mdl)),
       _terms(),
       _exactness()
 {

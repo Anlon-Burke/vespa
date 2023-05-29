@@ -219,7 +219,7 @@ class JobControllerApiHandlerHelper {
         Cursor responseObject = slime.setObject();
         Optional<Run> run = jobs.last(id, type).flatMap(last -> jobs.active(last.id()));
         if (run.isPresent()) {
-            jobs.abort(run.get().id(), "aborted by " + request.getJDiscRequest().getUserPrincipal().getName());
+            jobs.abort(run.get().id(), "aborted by " + request.getJDiscRequest().getUserPrincipal().getName(), true);
             responseObject.setString("message", "Aborting " + run.get().id());
         }
         else
@@ -230,7 +230,7 @@ class JobControllerApiHandlerHelper {
     private static String nameOf(RunStatus status) {
         return switch (status) {
             case reset, running                       -> "running";
-            case aborted                              -> "aborted";
+            case cancelled, aborted                   -> "aborted";
             case error                                -> "error";
             case testFailure                          -> "testFailure";
             case noTests                              -> "noTests";
@@ -239,6 +239,7 @@ class JobControllerApiHandlerHelper {
             case installationFailed                   -> "installationFailed";
             case invalidApplication, deploymentFailed -> "deploymentFailed";
             case success                              -> "success";
+            case quotaExceeded                        -> "quotaExceeded";
         };
     }
 
@@ -270,39 +271,28 @@ class JobControllerApiHandlerHelper {
             stepObject.setString("instance", stepStatus.instance().value());
 
             // TODO: recursively search dependents for what is the relevant partial change when this is a delay step ...
-            Readiness readiness = stepStatus.job().map(jobsToRun::get).map(job -> job.get(0).readiness())
-                                            .orElse(stepStatus.readiness(change));
+            Instant now = controller.clock().instant();
+            Readiness readiness = stepStatus.pausedUntil().okAt(now)
+                                  ? stepStatus.job().map(jobsToRun::get).map(job -> job.get(0).readiness())
+                                              .orElse(stepStatus.readiness(change))
+                                  : stepStatus.pausedUntil();
             if (readiness.ok()) {
+                // TODO jonmv: remove after UI changes.
                 stepObject.setLong("readyAt", readiness.at().toEpochMilli());
-                if ( ! readiness.okAt(controller.clock().instant())) {
-                    Instant until = readiness.at();
-                    stepObject.setLong("delayedUntil", readiness.at().toEpochMilli());
-                    switch (readiness.cause()) {
-                        case paused -> stepObject.setLong("pausedUntil", until.toEpochMilli());
-                        case coolingDown -> stepObject.setLong("coolingDownUntil", until.toEpochMilli());
-                        case changeBlocked -> {
-                            Readiness platformReadiness = stepStatus.readiness(Change.of(controller.systemVersion(versionStatus))); // Dummy version — just anything with a platform.
-                            if (platformReadiness.cause() == DelayCause.changeBlocked)
-                                stepObject.setLong("platformBlockedUntil", platformReadiness.at().toEpochMilli());
-                            Readiness applicationReadiness = stepStatus.readiness(Change.of(RevisionId.forProduction(1))); // Dummy version — just anything with an application.
-                            if (applicationReadiness.cause() == DelayCause.changeBlocked)
-                                stepObject.setLong("applicationBlockedUntil", applicationReadiness.at().toEpochMilli());
-                        }
-                    }
-                }
+
+                if ( ! readiness.okAt(now)) stepObject.setLong("delayedUntil", readiness.at().toEpochMilli());
             }
-            stepObject.setString("delayCause",
-                                 switch (readiness.cause()) {
-                                     case none -> null;
-                                     case invalidPackage -> "invalidPackage";
-                                     case paused -> "paused";
-                                     case coolingDown -> "coolingDown";
-                                     case changeBlocked -> "changeBlocked";
-                                     case blocked -> "blocked";
-                                     case running -> "running";
-                                     case notReady -> "notReady";
-                                     case unverified -> "unverified";
-                                 });
+
+            // TODO jonmv: remove after UI changes.
+            if (readiness.cause() == DelayCause.coolingDown) stepObject.setLong("coolingDownUntil", readiness.at().toEpochMilli());
+            if (readiness.cause() == DelayCause.paused) stepObject.setLong("pausedUntil", readiness.at().toEpochMilli());
+
+            Readiness platformReadiness = stepStatus.blockedUntil(Change.of(controller.systemVersion(versionStatus))); // Dummy version — just anything with a platform.
+            if ( ! platformReadiness.okAt(now))
+                stepObject.setLong("platformBlockedUntil", platformReadiness.at().toEpochMilli());
+            Readiness applicationReadiness = stepStatus.blockedUntil(Change.of(RevisionId.forProduction(1))); // Dummy version — just anything with an application.
+            if ( ! applicationReadiness.okAt(now))
+                stepObject.setLong("applicationBlockedUntil", applicationReadiness.at().toEpochMilli());
 
             if (stepStatus.type() == DeploymentStatus.StepType.delay)
                 stepStatus.completedAt(change).ifPresent(completed -> stepObject.setLong("completedAt", completed.toEpochMilli()));
@@ -362,7 +352,9 @@ class JobControllerApiHandlerHelper {
                 }
             }
 
-            stepStatus.job().ifPresent(job -> {
+            boolean showDelayCause = true;
+            if (stepStatus.job().isPresent()) {
+                JobId job = stepStatus.job().get();
                 stepObject.setString("jobName", job.type().jobName());
                 URI baseUriForJob = baseUriForDeployments.resolve(baseUriForDeployments.getPath() +
                                                                      "/../instance/" + job.application().instance().value() +
@@ -380,6 +372,7 @@ class JobControllerApiHandlerHelper {
 
                 JobStatus jobStatus = status.jobs().get(job).get();
                 Cursor toRunArray = stepObject.setArray("toRun");
+                showDelayCause = readiness.cause() == DelayCause.paused;
                 for (DeploymentStatus.Job versions : jobsToRun.getOrDefault(job, List.of())) {
                     boolean running = jobStatus.lastTriggered()
                                                .map(run ->    jobStatus.isRunning()
@@ -389,12 +382,27 @@ class JobControllerApiHandlerHelper {
                     if (running)
                         continue; // Run will be contained in the "runs" array.
 
+                    showDelayCause = true;
                     Cursor runObject = toRunArray.addObject();
                     toSlime(runObject.setObject("versions"), versions.versions(), application);
                 }
 
                 toSlime(stepObject.setArray("runs"), jobStatus.runs().descendingMap().values(), application, 10, baseUriForJob);
-            });
+            }
+            stepObject.setString("delayCause",
+                                 ! showDelayCause
+                                 ? (String) null
+                                 : switch (readiness.cause()) {
+                                       case none -> null;
+                                       case invalidPackage -> "invalidPackage";
+                                       case paused -> "paused";
+                                       case coolingDown -> "coolingDown";
+                                       case changeBlocked -> "changeBlocked";
+                                       case blocked -> "blocked";
+                                       case running -> "running";
+                                       case notReady -> "notReady";
+                                       case unverified -> "unverified";
+                                   });
         }
 
         Cursor buildsArray = responseObject.setArray("builds");
@@ -408,6 +416,7 @@ class JobControllerApiHandlerHelper {
         version.description().ifPresent(description -> versionObject.setString("description", description));
         if (version.risk() != 0) versionObject.setLong("risk", version.risk());
         versionObject.setBool("deployable", version.isDeployable());
+        version.submittedAt().ifPresent(submittedAt -> versionObject.setLong("submittedAt", submittedAt.toEpochMilli()));
     }
 
     static void toSlime(Cursor versionObject, ApplicationVersion version) {

@@ -3,6 +3,7 @@ package com.yahoo.document.json;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonFactoryBuilder;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.yahoo.document.DocumentOperation;
 import com.yahoo.document.DocumentPut;
 import com.yahoo.document.DocumentRemove;
@@ -28,7 +29,10 @@ public class JsonFeedReader implements FeedReader {
 
     private final JsonReader reader;
     private final InputStream stream;
-    private static final JsonFactory jsonFactory = new JsonFactoryBuilder().disable(JsonFactory.Feature.CANONICALIZE_FIELD_NAMES).build();
+    private static final JsonFactory jsonFactory = new JsonFactoryBuilder()
+            .disable(JsonFactory.Feature.CANONICALIZE_FIELD_NAMES)
+            .streamReadConstraints(StreamReadConstraints.builder().maxStringLength(Integer.MAX_VALUE).build())
+            .build();
 
     public JsonFeedReader(InputStream stream, DocumentTypeManager docMan) {
         reader = new JsonReader(docMan, stream, jsonFactory);
@@ -45,11 +49,11 @@ public class JsonFeedReader implements FeedReader {
         }
 
         if (documentOperation instanceof DocumentUpdate) {
-            return new DocumentUpdateFeedOperation((DocumentUpdate) documentOperation, documentOperation.getCondition());
+            return new DocumentUpdateFeedOperation((DocumentUpdate) documentOperation);
         } else if (documentOperation instanceof DocumentRemove) {
-            return new RemoveFeedOperation(documentOperation.getId(), documentOperation.getCondition());
+            return new RemoveFeedOperation((DocumentRemove)documentOperation);
         } else if (documentOperation instanceof DocumentPut) {
-            return new DocumentFeedOperation(((DocumentPut) documentOperation).getDocument(), documentOperation.getCondition());
+            return new DocumentFeedOperation((DocumentPut) documentOperation);
         } else {
             throw new IllegalArgumentException("Got unknown class from JSON reader: " + documentOperation.getClass().getName());
         }

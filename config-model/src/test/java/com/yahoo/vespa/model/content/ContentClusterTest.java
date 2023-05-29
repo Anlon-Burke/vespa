@@ -161,6 +161,54 @@ public class ContentClusterTest extends ContentBaseTest {
     }
 
     @Test
+    void testImplicitSearchableCopies() {
+        ContentCluster cc = parse("" +
+                                  "<content version=\"1.0\" id=\"storage\">\n" +
+                                  "  <documents/>" +
+                                  "  <redundancy>3</redundancy>\n" +
+                                  "  <group name='root'>" +
+                                  "    <distribution partitions='1|1|*'/>" +
+                                  "    <group name='g-1' distribution-key='0'>" +
+                                  "      <node hostalias='mockhost' distribution-key='0'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='1'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='2'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='3'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='4'/>" +
+                                  "    </group>" +
+                                  "    <group name='g-2' distribution-key='1'>" +
+                                  "      <node hostalias='mockhost' distribution-key='5'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='6'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='7'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='8'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='9'/>" +
+                                  "    </group>" +
+                                  "    <group name='g-3' distribution-key='1'>" +
+                                  "      <node hostalias='mockhost' distribution-key='10'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='11'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='12'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='13'/>" +
+                                  "      <node hostalias='mockhost' distribution-key='14'/>" +
+                                  "    </group>" +
+                                  "  </group>" +
+                                  "</content>"
+                                 );
+        DistributionConfig.Builder distributionBuilder = new DistributionConfig.Builder();
+        cc.getConfig(distributionBuilder);
+        DistributionConfig distributionConfig = distributionBuilder.build();
+        assertEquals(3, distributionConfig.cluster("storage").ready_copies());
+
+        StorDistributionConfig.Builder storBuilder = new StorDistributionConfig.Builder();
+        cc.getConfig(storBuilder);
+        StorDistributionConfig storConfig = new StorDistributionConfig(storBuilder);
+        assertEquals(3, storConfig.ready_copies());
+
+        ProtonConfig.Builder protonBuilder = new ProtonConfig.Builder();
+        cc.getSearch().getConfig(protonBuilder);
+        ProtonConfig protonConfig = new ProtonConfig(protonBuilder);
+        assertEquals(1, protonConfig.distribution().searchablecopies());
+    }
+
+    @Test
     void testMinRedundancy() {
         {   // Groups ensures redundancy
             ContentCluster cc = parse("""
@@ -1192,6 +1240,17 @@ public class ContentClusterTest extends ContentBaseTest {
         assertEquals(2, resolveMaxInhibitedGroupsConfigWithFeatureFlag(2));
     }
 
+    private boolean resolveConditionProbingFromWriteRepairFeatureFlag(boolean enable) throws Exception {
+        var cfg = resolveStorDistributormanagerConfig(new TestProperties().setEnableConditionalPutRemoveWriteRepair(enable));
+        return cfg.enable_condition_probing();
+    }
+
+    @Test
+    void distributor_condition_probing_is_controlled_by_write_repair_feature_flag() throws Exception {
+        assertFalse(resolveConditionProbingFromWriteRepairFeatureFlag(false));
+        assertTrue(resolveConditionProbingFromWriteRepairFeatureFlag(true));
+    }
+
     private int resolveNumDistributorStripesConfig(Optional<Flavor> flavor) throws Exception {
         var cc = createOneNodeCluster(new TestProperties(), flavor);
         var builder = new StorDistributormanagerConfig.Builder();
@@ -1336,6 +1395,44 @@ public class ContentClusterTest extends ContentBaseTest {
         var fleetControllerConfigBuilder = new FleetcontrollerConfig.Builder();
         model.getConfig(fleetControllerConfigBuilder, "admin/cluster-controllers/0/components/clustercontroller-storage-configurer");
         assertEquals(2, fleetControllerConfigBuilder.build().max_number_of_groups_allowed_to_be_down());
+    }
+
+    private void assertIndexingDocprocEnabled(boolean indexed, boolean force, boolean expEnabled)
+    {
+        String services = "<?xml version='1.0' encoding='UTF-8' ?>" +
+                "<services version='1.0'>" +
+                "  <container id='default' version='1.0'>" +
+                "    <document-processing/>" +
+                "  </container>" +
+                "  <content id='search' version='1.0'>" +
+                "    <redundancy>1</redundancy>" +
+                "    <documents>" +
+                "      <document-processing cluster='default'" + (force ? " chain='indexing'" : "") + "/>" +
+                "      <document type='type1' mode='" + (indexed ? "index" : "streaming") + "'/>" +
+                "    </documents>" +
+                "  </content>" +
+                "</services>";
+        VespaModel model = createEnd2EndOneNode(new TestProperties(), services);
+        var searchCluster = model.getContentClusters().get("search").getSearch();
+        assertEquals(expEnabled, searchCluster.getIndexingDocproc().isPresent());
+    }
+
+    @Test
+    void testIndexingDocprocEnabledWhenIndexMode()
+    {
+        assertIndexingDocprocEnabled(true, false, true);
+    }
+
+    @Test
+    void testIndexingDocprocNotEnabledWhenStreamingMode()
+    {
+        assertIndexingDocprocEnabled(false, false, false);
+    }
+
+    @Test
+    void testIndexingDocprocEnabledWhenStreamingModeAndForced()
+    {
+        assertIndexingDocprocEnabled(false, true, true);
     }
 
 }

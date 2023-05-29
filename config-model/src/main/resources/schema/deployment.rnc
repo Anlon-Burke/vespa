@@ -173,7 +173,8 @@ Endpoints = element endpoints {
 }
 
 Bcp = element bcp {
-    Group+
+    attribute deadline { xsd:string }? &
+    Group*
 }
 
 Group = element group {

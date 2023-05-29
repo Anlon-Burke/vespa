@@ -160,7 +160,7 @@ public class InMemoryProvisioner implements HostProvisioner {
     public List<HostSpec> prepare(ClusterSpec cluster, Capacity requested, ProvisionLogger logger) {
         provisioned.add(cluster.id(), requested);
         clusters.add(cluster);
-        if (environment == Environment.dev) {
+        if (environment == Environment.dev && ! requested.isRequired()) {
             requested = requested.withLimits(requested.minResources().withNodes(1),
                                              requested.maxResources().withNodes(1));
         }
@@ -232,9 +232,14 @@ public class InMemoryProvisioner implements HostProvisioner {
     }
 
     // Minimal capacity policies
-    private NodeResources decideResources(NodeResources requestedResources) {
-        if (requestedResources.isUnspecified()) return defaultNodeResources;
-        return requestedResources;
+    private NodeResources decideResources(NodeResources resources) {
+        if (resources.vcpuIsUnspecified())
+            resources = resources.withVcpu(defaultNodeResources.vcpu());
+        if (resources.memoryGbIsUnspecified())
+            resources = resources.withMemoryGb(defaultNodeResources.memoryGb());
+        if (resources.diskGbIsUnspecified())
+            resources = resources.withDiskGb(defaultNodeResources.diskGb());
+        return resources;
     }
 
     private List<HostSpec> allocateHostGroup(ClusterSpec clusterGroup, NodeResources requestedResourcesOrUnspecified,

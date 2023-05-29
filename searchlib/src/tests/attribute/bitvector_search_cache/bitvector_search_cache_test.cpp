@@ -3,24 +3,24 @@
 #include <vespa/vespalib/testkit/test_kit.h>
 #include <vespa/searchlib/attribute/bitvector_search_cache.h>
 #include <vespa/searchlib/common/bitvector.h>
-#include <vespa/searchlib/common/i_document_meta_store_context.h>
 
 using namespace search;
 using namespace search::attribute;
 
 using BitVectorSP = BitVectorSearchCache::BitVectorSP;
 using Entry = BitVectorSearchCache::Entry;
+using EntrySP = std::shared_ptr<Entry>;
 
-Entry::SP
+EntrySP
 makeEntry()
 {
-    return std::make_shared<Entry>(IDocumentMetaStoreContext::IReadGuard::UP(), BitVector::create(5), 10);
+    return std::make_shared<Entry>(IDocumentMetaStoreContext::IReadGuard::SP(), BitVector::create(5), 10);
 }
 
 struct Fixture {
     BitVectorSearchCache cache;
-    Entry::SP entry1;
-    Entry::SP entry2;
+    EntrySP entry1;
+    EntrySP entry2;
     Fixture()
         : cache(),
           entry1(makeEntry()),

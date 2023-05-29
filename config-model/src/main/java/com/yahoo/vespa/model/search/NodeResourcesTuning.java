@@ -3,6 +3,7 @@ package com.yahoo.vespa.model.search;
 
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.vespa.config.search.core.ProtonConfig;
+import com.yahoo.vespa.model.Host;
 
 import static java.lang.Long.min;
 import static java.lang.Long.max;
@@ -17,7 +18,7 @@ public class NodeResourcesTuning implements ProtonConfig.Producer {
     private final static double SUMMARY_FILE_SIZE_AS_FRACTION_OF_MEMORY = 0.02;
     private final static double SUMMARY_CACHE_SIZE_AS_FRACTION_OF_MEMORY = 0.04;
     private final static double MEMORY_GAIN_AS_FRACTION_OF_MEMORY = 0.08;
-    private final static double MIN_MEMORY_PER_FLUSH_THREAD_GB = 16.0;
+    private final static double MIN_MEMORY_PER_FLUSH_THREAD_GB = 11.0;
     private final static double TLS_SIZE_FRACTION = 0.02;
     final static long MB = 1024 * 1024;
     public final static long GB = MB * 1024;
@@ -26,9 +27,6 @@ public class NodeResourcesTuning implements ProtonConfig.Producer {
     private final NodeResources resources;
     private final int threadsPerSearch;
     private final double fractionOfMemoryReserved;
-
-    // "Reserve" 0.5GB of memory for other processes running on the content node (config-proxy, metrics-proxy).
-    public static final double reservedMemoryGb = 0.5;
 
     public NodeResourcesTuning(NodeResources resources,
                                int threadsPerSearch,
@@ -128,7 +126,7 @@ public class NodeResourcesTuning implements ProtonConfig.Producer {
 
     /** Returns the memory we can expect will be available for the content node processes */
     private double usableMemoryGb() {
-        double usableMemoryGb = resources.memoryGb() - reservedMemoryGb;
+        double usableMemoryGb = resources.memoryGb() - Host.memoryOverheadGb;
         return usableMemoryGb * (1 - fractionOfMemoryReserved);
     }
 

@@ -13,7 +13,6 @@
 #include <vespa/searchlib/attribute/integerbase.h>
 #include <vespa/searchlib/attribute/reference_attribute.h>
 #include <vespa/searchlib/attribute/stringbase.h>
-#include <vespa/searchlib/common/i_document_meta_store_context.h>
 #include <vespa/searchlib/test/mock_gid_to_lid_mapping.h>
 #include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/util/stash.h>
@@ -53,13 +52,13 @@ struct MockReadGuard : public IDocumentMetaStoreContext::IReadGuard {
 
 struct MockDocumentMetaStoreContext : public IDocumentMetaStoreContext
 {
-    std::unique_ptr<IReadGuard> getReadGuard() const override;
+    std::shared_ptr<IReadGuard> getReadGuard() const override;
 };
 
-std::unique_ptr<IDocumentMetaStoreContext::IReadGuard>
+std::shared_ptr<IDocumentMetaStoreContext::IReadGuard>
 MockDocumentMetaStoreContext::getReadGuard() const
 {
-    return std::make_unique<MockReadGuard>();
+    return std::make_shared<MockReadGuard>();
 }
 
 

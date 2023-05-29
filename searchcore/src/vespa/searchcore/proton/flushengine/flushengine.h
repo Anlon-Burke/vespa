@@ -50,8 +50,8 @@ private:
     };
     using FlushMap = std::map<uint32_t, FlushInfo>;
     using FlushHandlerMap = HandlerMap<IFlushHandler>;
-    bool                           _closed;
-    const uint32_t                 _maxConcurrent;
+    std::atomic<bool>              _closed;
+    const uint32_t                 _maxConcurrentNormal;
     const vespalib::duration       _idleInterval;
     uint32_t                       _taskId;    
     std::thread                    _thread;
@@ -75,15 +75,19 @@ private:
     std::pair<FlushContext::List,bool> getSortedTargetList();
     std::shared_ptr<search::IFlushToken> get_flush_token(const FlushContext& ctx);
     FlushContext::SP initNextFlush(const FlushContext::List &lst);
-    vespalib::string flushNextTarget(const vespalib::string & name);
+    vespalib::string flushNextTarget(const vespalib::string & name, const FlushContext::List & contexts);
     void flushAll(const FlushContext::List &lst);
     bool prune();
     uint32_t initFlush(const FlushContext &ctx);
     uint32_t initFlush(const IFlushHandler::SP &handler, const IFlushTarget::SP &target);
     void flushDone(const FlushContext &ctx, uint32_t taskId);
-    bool canFlushMore(const std::unique_lock<std::mutex> &guard) const;
-    bool wait(vespalib::duration minimumWaitTimeIfReady, bool ignorePendingPrune);
+    bool canFlushMore(const std::unique_lock<std::mutex> &guard, IFlushTarget::Priority priority) const;
+    void wait_for_slot_or_pending_prune(IFlushTarget::Priority priority);
+    void idle_wait(vespalib::duration minimumWaitTimeIfReady);
+    bool wait_for_slot(IFlushTarget::Priority priority);
+    bool has_slot(IFlushTarget::Priority priority);
     bool isFlushing(const std::lock_guard<std::mutex> &guard, const vespalib::string & name) const;
+    vespalib::string checkAndFlush(vespalib::string prev);
 
     friend class FlushTask;
     friend class FlushEngineExplorer;
@@ -175,6 +179,8 @@ public:
     FlushMetaSet getCurrentlyFlushingSet() const;
 
     void setStrategy(IFlushStrategy::SP strategy);
+    uint32_t maxConcurrentTotal() const { return _maxConcurrentNormal + 1; }
+    uint32_t maxConcurrentNormal() const { return _maxConcurrentNormal; }
 };
 
 } // namespace proton

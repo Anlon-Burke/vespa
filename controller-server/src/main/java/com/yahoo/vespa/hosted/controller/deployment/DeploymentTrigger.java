@@ -246,7 +246,7 @@ public class DeploymentTrigger {
                                                                 .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
 
         jobs.forEach((jobId, versionsList) -> {
-            trigger(deploymentJob(application.require(job.application().instance()),
+            trigger(deploymentJob(application.require(jobId.application().instance()),
                                   versionsList.get(0).versions(),
                                   jobId.type(),
                                   status.jobs().get(jobId).get().isNodeAllocationFailure(),
@@ -287,7 +287,7 @@ public class DeploymentTrigger {
                         .toList();
                 controller.curator().writeRetriggerEntries(newList);
             }
-            controller.jobController().abort(run.id(), "force re-triggered");
+            controller.jobController().abort(run.id(), "force re-triggered", false);
             return Optional.empty();
         } else {
             return Optional.of(reTrigger(deployment.applicationId(), jobType, reason));
@@ -413,7 +413,7 @@ public class DeploymentTrigger {
                                         .map(scheduled -> scheduled.versions().toString())
                                         .collect(Collectors.joining(", "));
                    log.log(Level.INFO, "Aborting outdated run " + last + ", which is blocking runs: " + blocked);
-                   controller.jobController().abort(last.id(), "run no longer scheduled, and is blocking scheduled runs: " + blocked);
+                   controller.jobController().abort(last.id(), "run no longer scheduled, and is blocking scheduled runs: " + blocked, false);
                }
            });
     }

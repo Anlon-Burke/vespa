@@ -113,7 +113,7 @@ public class FleetController implements NodeListener, SlobrokListener, SystemSta
                            MasterElectionHandler masterElectionHandler,
                            MetricUpdater metricUpdater,
                            FleetControllerOptions options) {
-        context.log(logger, Level.INFO, "Created");
+        context.log(logger, Level.FINE, "Created");
         this.context = context;
         this.timer = timer;
         this.monitor = timer;
@@ -131,19 +131,11 @@ public class FleetController implements NodeListener, SlobrokListener, SystemSta
         this.statusPageServer = new StatusHandler.ContainerStatusPageServer();
         this.rpcServer = server;
         this.masterElectionHandler = masterElectionHandler;
-        this.statusRequestRouter.addHandler(
-                "^/node=([a-z]+)\\.(\\d+)$",
-                new LegacyNodePageRequestHandler(timer, eventLog, cluster));
-        this.statusRequestRouter.addHandler(
-                "^/state.*",
-                new NodeHealthRequestHandler());
-        this.statusRequestRouter.addHandler(
-                "^/clusterstate",
-                new ClusterStateRequestHandler(stateVersionTracker));
+        this.statusRequestRouter.addHandler(new LegacyNodePageRequestHandler(timer, eventLog, cluster));
+        this.statusRequestRouter.addHandler(new NodeHealthRequestHandler());
+        this.statusRequestRouter.addHandler(new ClusterStateRequestHandler(stateVersionTracker));
         this.indexPageRequestHandler = new LegacyIndexPageRequestHandler(timer, cluster, masterElectionHandler, stateVersionTracker, eventLog, options);
-        this.statusRequestRouter.addHandler(
-                "^/$",
-                indexPageRequestHandler);
+        this.statusRequestRouter.addHandler(indexPageRequestHandler);
 
         propagateOptions();
     }
@@ -257,7 +249,7 @@ public class FleetController implements NodeListener, SlobrokListener, SystemSta
 
     public int getRpcPort() { return rpcServer.getPort(); }
 
-    public void shutdown() throws InterruptedException, java.io.IOException {
+    public void shutdown() throws InterruptedException {
         if (runner != null && isRunning()) {
             context.log(logger, Level.INFO, "Joining event thread.");
             running.set(false);
@@ -378,6 +370,8 @@ public class FleetController implements NodeListener, SlobrokListener, SystemSta
         }
     }
 
+    public EventLog getEventLog() { return eventLog; }
+
     private boolean maybePublishOldMetrics() {
         verifyInControllerThread();
         if (isMaster() && cycleCount > 300 + lastMetricUpdateCycleCount) {
@@ -393,14 +387,8 @@ public class FleetController implements NodeListener, SlobrokListener, SystemSta
     }
 
     private void storeClusterStateMetaDataToZooKeeper(ClusterStateBundle stateBundle) {
-        try {
-            database.saveLatestSystemStateVersion(databaseContext, stateBundle.getVersion());
-            database.saveLatestClusterStateBundle(databaseContext, stateBundle);
-        } catch (InterruptedException e) {
-            // Rethrow as RuntimeException to propagate exception up to main thread method.
-            // Don't want to hide failures to write cluster state version.
-            throw new RuntimeException("ZooKeeper write interrupted", e);
-        }
+        database.saveLatestSystemStateVersion(databaseContext, stateBundle.getVersion());
+        database.saveLatestClusterStateBundle(databaseContext, stateBundle);
     }
 
     /**
@@ -408,7 +396,7 @@ public class FleetController implements NodeListener, SlobrokListener, SystemSta
      * The keys in the given map are indices of fleet controllers.
      * The values are what fleetcontroller that fleetcontroller wants to
      * become master.
-     *
+     * <p>
      * If more than half the fleetcontrollers want a node to be master and
      * that node also wants itself as master, that node is the single master.
      * If this condition is not met, there is currently no master.
@@ -450,7 +438,7 @@ public class FleetController implements NodeListener, SlobrokListener, SystemSta
     }
 
     /** Called when all distributors have acked newest cluster state version. */
-    public void handleAllDistributorsInSync(DatabaseHandler database, DatabaseHandler.DatabaseContext dbContext) throws InterruptedException {
+    public void handleAllDistributorsInSync(DatabaseHandler database, DatabaseHandler.DatabaseContext dbContext) {
         Set<ConfiguredNode> nodes = new HashSet<>(cluster.clusterInfo().getConfiguredNodes().values());
         // TODO wouldn't it be better to always get bundle information from the state broadcaster?
         var currentBundle = stateVersionTracker.getVersionedClusterStateBundle();
@@ -510,12 +498,6 @@ public class FleetController implements NodeListener, SlobrokListener, SystemSta
         if (rpcServer != null) {
             rpcServer.setMasterElectionHandler(masterElectionHandler);
             rpcServer.setSlobrokConnectionSpecs(options.slobrokConnectionSpecs(), options.rpcPort());
-        }
-
-        try {
-            statusPageServer.setPort(options.httpPort());
-        } catch (Exception e) {
-            context.log(logger, Level.WARNING, "Failed to initialize status server socket. This may be natural if cluster has altered the services running on this node: " + e.getMessage());
         }
 
         long currentTime = timer.getCurrentTimeInMillis();
@@ -632,8 +614,6 @@ public class FleetController implements NodeListener, SlobrokListener, SystemSta
     private boolean updateMasterElectionState() {
         try {
             return masterElectionHandler.watchMasterElection(database, databaseContext);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
         } catch (Exception e) {
             context.log(logger, Level.WARNING, "Failed to watch master election: " + e);
         }
@@ -1116,7 +1096,7 @@ public class FleetController implements NodeListener, SlobrokListener, SystemSta
         synchronized (monitor) { monitor.notifyAll(); }
     }
 
-    public DatabaseHandler.DatabaseContext databaseContext = new DatabaseHandler.DatabaseContext() {
+    public final DatabaseHandler.DatabaseContext databaseContext = new DatabaseHandler.DatabaseContext() {
         @Override
         public ContentCluster getCluster() { return cluster; }
         @Override
@@ -1206,10 +1186,6 @@ public class FleetController implements NodeListener, SlobrokListener, SystemSta
     public int getSlobrokMirrorUpdates() { return ((SlobrokClient)nodeLookup).getMirror().updates(); }
 
     public ContentCluster getCluster() { return cluster; }
-
-    public EventLog getEventLog() {
-        return eventLog;
-    }
 
     public StatusHandler.ContainerStatusPageServer statusPageServer() { return statusPageServer; }
 

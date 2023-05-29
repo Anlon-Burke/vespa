@@ -3,9 +3,9 @@
 #[non-test]
 # Contains dependencies that are not used exclusively in 'test' scope
 aopalliance:aopalliance:1.0
-com.fasterxml.jackson.core:jackson-annotations:2.14.2
-com.fasterxml.jackson.core:jackson-core:2.14.2
-com.fasterxml.jackson.core:jackson-databind:2.14.2
+com.fasterxml.jackson.core:jackson-annotations:2.15.0
+com.fasterxml.jackson.core:jackson-core:2.15.0
+com.fasterxml.jackson.core:jackson-databind:2.15.0
 com.google.errorprone:error_prone_annotations:2.18.0
 com.google.guava:failureaccess:1.0.1
 com.google.guava:guava:27.1-jre
@@ -15,7 +15,7 @@ commons-io:commons-io:2.11.0
 javax.annotation:javax.annotation-api:1.2
 javax.inject:javax.inject:1
 org.apache.commons:commons-collections4:4.2
-org.apache.commons:commons-compress:1.22
+org.apache.commons:commons-compress:1.23.0
 org.apache.commons:commons-lang3:3.12.0
 org.apache.maven:maven-archiver:3.6.0
 org.apache.maven:maven-artifact:3.8.7

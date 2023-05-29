@@ -158,7 +158,6 @@ protected:
         return _vectors.get_vectors(docid);
     }
 
-    double calc_distance(uint32_t lhs_nodeid, uint32_t rhs_nodeid) const;
     double calc_distance(const BoundDistanceFunction &df, uint32_t rhs_nodeid) const;
     double calc_distance(const BoundDistanceFunction &df, uint32_t rhs_docid, uint32_t rhs_subspace) const;
     uint32_t estimate_visited_nodes(uint32_t level, uint32_t nodeid_limit, uint32_t neighbors_to_find, const GlobalFilter* filter) const;
@@ -211,8 +210,8 @@ public:
     void get_state(const vespalib::slime::Inserter& inserter) const override;
     void shrink_lid_space(uint32_t doc_id_limit) override;
 
-    std::unique_ptr<NearestNeighborIndexSaver> make_saver() const override;
-    std::unique_ptr<NearestNeighborIndexLoader> make_loader(FastOS_FileInterface& file) override;
+    std::unique_ptr<NearestNeighborIndexSaver> make_saver(vespalib::GenericHeader& header) const override;
+    std::unique_ptr<NearestNeighborIndexLoader> make_loader(FastOS_FileInterface& file, const vespalib::GenericHeader& header) override;
 
     std::vector<Neighbor> find_top_k(
             uint32_t k,

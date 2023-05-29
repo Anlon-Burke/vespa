@@ -63,7 +63,8 @@ struct StupidMetaStore : search::IDocumentMetaStore {
     void foreach(const search::IGidToLidMapperVisitor &) const override { }
 };
 
-size_t numThreads(size_t hits, size_t minHits) {
+size_t
+numThreads(size_t hits, size_t minHits) {
     return static_cast<size_t>(std::ceil(double(hits) / double(minHits)));
 }
 
@@ -74,16 +75,17 @@ public:
         _threadBundle(threadBundle),
         _maxThreads(std::min(maxThreads, static_cast<uint32_t>(threadBundle.size())))
     { }
-private:
     size_t size() const override { return _maxThreads; }
     void run(vespalib::Runnable* const* targets, size_t cnt) override {
         _threadBundle.run(targets, cnt);
     }
+private:
     vespalib::ThreadBundle &_threadBundle;
     const uint32_t          _maxThreads;
 };
 
-bool willNotNeedRanking(const SearchRequest & request, const GroupingContext & groupingContext) {
+bool
+willNotNeedRanking(const SearchRequest & request, const GroupingContext & groupingContext) {
     return (!groupingContext.needRanking() && (request.maxhits == 0))
            || (!request.sortSpec.empty() && (request.sortSpec.find("[rank]") == vespalib::string::npos));
 }
@@ -103,7 +105,7 @@ handleGroupingSession(SessionManager &sessionMgr, GroupingContext & groupingCont
 }  // namespace proton::matching::<unnamed>
 
 Matcher::Matcher(const search::index::Schema &schema, Properties props, const vespalib::Clock &clock,
-                 QueryLimiter &queryLimiter, const IRankingAssetsRepo &rankingAssetsRepo, uint32_t distributionKey)
+                 QueryLimiter &queryLimiter, const search::fef::IRankingAssetsRepo &rankingAssetsRepo, uint32_t distributionKey)
   : _indexEnv(distributionKey, schema, std::move(props), rankingAssetsRepo),
     _blueprintFactory(),
     _rankSetup(),
@@ -143,6 +145,7 @@ std::unique_ptr<MatchToolsFactory>
 Matcher::create_match_tools_factory(const search::engine::Request &request, ISearchContext &searchContext,
                                     IAttributeContext &attrContext, const search::IDocumentMetaStore &metaStore,
                                     const Properties &feature_overrides, vespalib::ThreadBundle &thread_bundle,
+                                    const IDocumentMetaStoreContext::IReadGuard::SP * metaStoreReadGuard,
                                     bool is_search) const
 {
     const Properties & rankProperties = request.propertiesMap.rankProperties();
@@ -163,7 +166,8 @@ Matcher::create_match_tools_factory(const search::engine::Request &request, ISea
     return std::make_unique<MatchToolsFactory>(_queryLimiter, doom, searchContext, attrContext,
                                                request.trace(), request.getStackRef(), request.location,
                                                _viewResolver, metaStore, _indexEnv, *_rankSetup,
-                                               rankProperties, feature_overrides, thread_bundle, is_search);
+                                               rankProperties, feature_overrides, thread_bundle,
+                                               metaStoreReadGuard, is_search);
 }
 
 size_t
@@ -219,12 +223,13 @@ Matcher::match(const SearchRequest &request, vespalib::ThreadBundle &threadBundl
         }
         const Properties *feature_overrides = &request.propertiesMap.featureOverrides();
         if (shouldCacheSearchSession) {
+            // These should have been moved instead.
             owned_objects.feature_overrides = std::make_unique<Properties>(*feature_overrides);
             feature_overrides = owned_objects.feature_overrides.get();
         }
 
         MatchToolsFactory::UP mtf = create_match_tools_factory(request, searchContext, attrContext, metaStore,
-                                                               *feature_overrides, threadBundle, true);
+                                                               *feature_overrides, threadBundle, &owned_objects.readGuard, true);
         isDoomExplicit = mtf->getRequestContext().getDoom().isExplicitSoftDoom();
         traceQuery(6, request.trace(), mtf->query());
         if (!mtf->valid()) {
@@ -246,6 +251,9 @@ Matcher::match(const SearchRequest &request, vespalib::ThreadBundle &threadBundl
         LimitedThreadBundleWrapper limitedThreadBundle(threadBundle, numThreadsPerSearch);
         MatchMaster master;
         uint32_t numParts = NumSearchPartitions::lookup(rankProperties, _rankSetup->getNumSearchPartitions());
+        if (limitedThreadBundle.size() > 1) {
+            attrContext.enableMultiThreadSafe();
+        }
         ResultProcessor::Result::UP result = master.match(request.trace(), params, limitedThreadBundle, *mtf, rp,
                                                           _distributionKey, numParts);
         my_stats = MatchMaster::getStats(std::move(master));
@@ -376,7 +384,7 @@ Matcher::create_docsum_matcher(const DocsumRequest &req, ISearchContext &search_
     StupidMetaStore meta;
     MatchToolsFactory::UP mtf = create_match_tools_factory(req, search_ctx, attr_ctx, meta,
                                                            req.propertiesMap.featureOverrides(),
-                                                           vespalib::ThreadBundle::trivial(), false);
+                                                           vespalib::ThreadBundle::trivial(), nullptr, false);
     if (!mtf->valid()) {
         LOG(warning, "could not initialize docsum matching: %s",
             (expectedSessionCached) ? "session has expired" : "invalid query");

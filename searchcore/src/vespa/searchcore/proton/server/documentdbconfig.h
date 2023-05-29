@@ -5,11 +5,11 @@
 #include "document_db_maintenance_config.h"
 #include "threading_service_config.h"
 #include <vespa/searchcore/proton/common/alloc_config.h>
-#include <vespa/searchcore/proton/matching/ranking_constants.h>
-#include <vespa/searchcore/proton/matching/ranking_expressions.h>
-#include <vespa/searchcore/proton/matching/onnx_models.h>
 #include <vespa/searchlib/common/tunefileinfo.h>
 #include <vespa/searchlib/docstore/logdocumentstore.h>
+#include <vespa/searchlib/fef/onnx_models.h>
+#include <vespa/searchlib/fef/ranking_constants.h>
+#include <vespa/searchlib/fef/ranking_expressions.h>
 #include <vespa/searchcommon/common/schema.h>
 #include <vespa/document/config/documenttypes_config_fwd.h>
 
@@ -98,9 +98,9 @@ public:
     using AttributesConfigSP = std::shared_ptr<AttributesConfig>;
     using RankProfilesConfig = const vespa::config::search::internal::InternalRankProfilesType;
     using RankProfilesConfigSP = std::shared_ptr<RankProfilesConfig>;
-    using RankingConstants = matching::RankingConstants;
-    using RankingExpressions = matching::RankingExpressions;
-    using OnnxModels = matching::OnnxModels;
+    using RankingConstants = search::fef::RankingConstants;
+    using RankingExpressions = search::fef::RankingExpressions;
+    using OnnxModels = search::fef::OnnxModels;
     using SummaryConfig = const vespa::config::search::internal::InternalSummaryType;
     using SummaryConfigSP = std::shared_ptr<SummaryConfig>;
     using JuniperrcConfig = const vespa::config::search::summary::internal::InternalJuniperrcType;
@@ -111,28 +111,28 @@ public:
     using ImportedFieldsConfigSP = std::shared_ptr<ImportedFieldsConfig>;
 
 private:
-    vespalib::string                 _configId;
-    vespalib::string                 _docTypeName;
-    int64_t                          _generation;
-    RankProfilesConfigSP             _rankProfiles;
-    RankingConstants::SP             _rankingConstants;
-    RankingExpressions::SP           _rankingExpressions;
-    OnnxModels::SP                   _onnxModels;
-    IndexschemaConfigSP              _indexschema;
-    AttributesConfigSP               _attributes;
-    SummaryConfigSP                  _summary;
-    JuniperrcConfigSP                _juniperrc;
-    DocumenttypesConfigSP            _documenttypes;
+    vespalib::string                          _configId;
+    vespalib::string                          _docTypeName;
+    int64_t                                   _generation;
+    RankProfilesConfigSP                      _rankProfiles;
+    std::shared_ptr<const RankingConstants>   _rankingConstants;
+    std::shared_ptr<const RankingExpressions> _rankingExpressions;
+    std::shared_ptr<const OnnxModels>         _onnxModels;
+    IndexschemaConfigSP                       _indexschema;
+    AttributesConfigSP                        _attributes;
+    SummaryConfigSP                           _summary;
+    JuniperrcConfigSP                         _juniperrc;
+    DocumenttypesConfigSP                     _documenttypes;
     std::shared_ptr<const document::DocumentTypeRepo>   _repo;
-    ImportedFieldsConfigSP           _importedFields;
-    search::TuneFileDocumentDB::SP   _tuneFileDocumentDB;
-    search::index::Schema::SP        _schema;
-    MaintenanceConfigSP              _maintenance;
-    search::LogDocumentStore::Config _storeConfig;
-    const ThreadingServiceConfig     _threading_service_config;
-    const AllocConfig                _alloc_config;
-    SP                               _orig;
-    bool                             _delayedAttributeAspects;
+    ImportedFieldsConfigSP                    _importedFields;
+    search::TuneFileDocumentDB::SP            _tuneFileDocumentDB;
+    search::index::Schema::SP                 _schema;
+    MaintenanceConfigSP                       _maintenance;
+    search::LogDocumentStore::Config          _storeConfig;
+    const ThreadingServiceConfig              _threading_service_config;
+    const AllocConfig                         _alloc_config;
+    SP                                        _orig;
+    bool                                      _delayedAttributeAspects;
 
 
     template <typename T>
@@ -154,9 +154,9 @@ private:
 public:
     DocumentDBConfig(int64_t generation,
                      const RankProfilesConfigSP &rankProfiles,
-                     const RankingConstants::SP &rankingConstants,
-                     const RankingExpressions::SP &rankingExpressions,
-                     const OnnxModels::SP &onnxModels,
+                     const std::shared_ptr<const RankingConstants> &rankingConstants,
+                     const std::shared_ptr<const RankingExpressions> &rankingExpressions,
+                     const std::shared_ptr<const OnnxModels> &onnxModels,
                      const IndexschemaConfigSP &indexschema,
                      const AttributesConfigSP &attributes,
                      const SummaryConfigSP &summary,
@@ -193,9 +193,9 @@ public:
     const JuniperrcConfig &getJuniperrcConfig() const { return *_juniperrc; }
     const DocumenttypesConfig &getDocumenttypesConfig() const { return *_documenttypes; }
     const RankProfilesConfigSP &getRankProfilesConfigSP() const { return _rankProfiles; }
-    const RankingConstants::SP &getRankingConstantsSP() const { return _rankingConstants; }
-    const RankingExpressions::SP &getRankingExpressionsSP() const { return _rankingExpressions; }
-    const OnnxModels::SP &getOnnxModelsSP() const { return _onnxModels; }
+    const std::shared_ptr<const RankingConstants> &getRankingConstantsSP() const { return _rankingConstants; }
+    const std::shared_ptr<const RankingExpressions> &getRankingExpressionsSP() const { return _rankingExpressions; }
+    const std::shared_ptr<const OnnxModels> &getOnnxModelsSP() const { return _onnxModels; }
     const IndexschemaConfigSP &getIndexschemaConfigSP() const { return _indexschema; }
     const AttributesConfigSP &getAttributesConfigSP() const { return _attributes; }
     const SummaryConfigSP &getSummaryConfigSP() const { return _summary; }

@@ -1,6 +1,7 @@
 # Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 vespa_add_library(streamingvisitors
     SOURCES
+    attribute_access_recorder.cpp
     hitcollector.cpp
     indexenvironment.cpp
     matching_elements_filler.cpp
@@ -9,6 +10,7 @@ vespa_add_library(streamingvisitors
     querywrapper.cpp
     rankmanager.cpp
     rankprocessor.cpp
+    search_environment_snapshot.cpp
     searchenvironment.cpp
     searchvisitor.cpp
     $<TARGET_OBJECTS:vsm_vconfig>

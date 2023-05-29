@@ -7,6 +7,7 @@ import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.zone.ZoneApi;
+import com.yahoo.jdisc.Timer;
 import com.yahoo.vespa.flags.DoubleFlag;
 import com.yahoo.vespa.flags.FetchVector;
 import com.yahoo.vespa.flags.FlagSource;
@@ -32,7 +33,6 @@ import com.yahoo.vespa.hosted.node.admin.maintenance.servicedump.VespaServiceDum
 import com.yahoo.vespa.hosted.node.admin.nodeadmin.ConvergenceException;
 import com.yahoo.vespa.hosted.node.admin.task.util.file.FileFinder;
 
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -70,7 +70,7 @@ public class NodeAgentImpl implements NodeAgent {
     private final List<CredentialsMaintainer> credentialsMaintainers;
     private final Optional<AclMaintainer> aclMaintainer;
     private final Optional<HealthChecker> healthChecker;
-    private final Clock clock;
+    private final Timer timer;
     private final Duration warmUpDuration;
     private final DoubleFlag containerCpuCap;
     private final VespaServiceDumper serviceDumper;
@@ -109,10 +109,10 @@ public class NodeAgentImpl implements NodeAgent {
                          Orchestrator orchestrator, ContainerOperations containerOperations,
                          RegistryCredentialsProvider registryCredentialsProvider, StorageMaintainer storageMaintainer,
                          FlagSource flagSource, List<CredentialsMaintainer> credentialsMaintainers,
-                         Optional<AclMaintainer> aclMaintainer, Optional<HealthChecker> healthChecker, Clock clock,
+                         Optional<AclMaintainer> aclMaintainer, Optional<HealthChecker> healthChecker, Timer timer,
                          VespaServiceDumper serviceDumper, List<ContainerWireguardTask> wireguardTasks) {
         this(contextSupplier, nodeRepository, orchestrator, containerOperations, registryCredentialsProvider,
-             storageMaintainer, flagSource, credentialsMaintainers, aclMaintainer, healthChecker, clock,
+             storageMaintainer, flagSource, credentialsMaintainers, aclMaintainer, healthChecker, timer,
              DEFAULT_WARM_UP_DURATION, serviceDumper, wireguardTasks);
     }
 
@@ -120,7 +120,7 @@ public class NodeAgentImpl implements NodeAgent {
                          Orchestrator orchestrator, ContainerOperations containerOperations,
                          RegistryCredentialsProvider registryCredentialsProvider, StorageMaintainer storageMaintainer,
                          FlagSource flagSource, List<CredentialsMaintainer> credentialsMaintainers,
-                         Optional<AclMaintainer> aclMaintainer, Optional<HealthChecker> healthChecker, Clock clock,
+                         Optional<AclMaintainer> aclMaintainer, Optional<HealthChecker> healthChecker, Timer timer,
                          Duration warmUpDuration, VespaServiceDumper serviceDumper,
                          List<ContainerWireguardTask> wireguardTasks) {
         this.contextSupplier = contextSupplier;
@@ -132,7 +132,7 @@ public class NodeAgentImpl implements NodeAgent {
         this.credentialsMaintainers = credentialsMaintainers;
         this.aclMaintainer = aclMaintainer;
         this.healthChecker = healthChecker;
-        this.clock = clock;
+        this.timer = timer;
         this.warmUpDuration = warmUpDuration;
         this.containerCpuCap = PermanentFlags.CONTAINER_CPU_CAP.bindTo(flagSource);
         this.serviceDumper = serviceDumper;
@@ -232,7 +232,7 @@ public class NodeAgentImpl implements NodeAgent {
 
         Optional<DropDocumentsReport> report = context.node().reports().getReport(DropDocumentsReport.reportId(), DropDocumentsReport.class);
         if (report.isPresent() && report.get().startedAt() == null && report.get().readiedAt() != null) {
-            newNodeAttributes.withReport(DropDocumentsReport.reportId(), report.get().withStartedAt(clock.millis()).toJsonNode());
+            newNodeAttributes.withReport(DropDocumentsReport.reportId(), report.get().withStartedAt(timer.currentTimeMillis()).toJsonNode());
             changed = true;
         }
 
@@ -400,7 +400,7 @@ public class NodeAgentImpl implements NodeAgent {
         ContainerResources wantedContainerResources = getContainerResources(context);
 
         if (healthChecker.isPresent() && firstSuccessfulHealthCheckInstant
-                .map(clock.instant().minus(warmUpDuration(context))::isBefore)
+                .map(timer.currentTime().minus(warmUpDuration(context))::isBefore)
                 .orElse(true))
             return existingContainer;
 
@@ -450,7 +450,7 @@ public class NodeAgentImpl implements NodeAgent {
             container.ifPresent(c -> removeContainer(context, c, List.of("Dropping documents"), true));
             FileFinder.from(context.paths().underVespaHome("var/db/vespa/search")).deleteRecursively(context);
             nodeRepository.updateNodeAttributes(context.node().hostname(),
-                    new NodeAttributes().withReport(DropDocumentsReport.reportId(), report.get().withDroppedAt(clock.millis()).toJsonNode()));
+                    new NodeAttributes().withReport(DropDocumentsReport.reportId(), report.get().withDroppedAt(timer.currentTimeMillis()).toJsonNode()));
         }
 
         throw ConvergenceException.ofTransient("Documents already dropped, waiting for signal to start the container");
@@ -506,14 +506,6 @@ public class NodeAgentImpl implements NodeAgent {
                 storageMaintainer.cleanDiskIfFull(context);
                 storageMaintainer.handleCoreDumpsForContainer(context, container, false);
 
-                // TODO: this is a workaround for restarting wireguard as early as possible after host-admin has been down.
-                var runOrdinaryWireguardTasks = true;
-                if (container.isPresent() && container.get().state().isRunning()) {
-                    Optional<Container> finalContainer = container;
-                    wireguardTasks.forEach(task -> task.converge(context, finalContainer.get().id()));
-                    runOrdinaryWireguardTasks = false;
-                }
-
                 if (downloadImageIfNeeded(context, container)) {
                     context.log(logger, "Waiting for image to download " + context.node().wantedDockerImage().get().asString());
                     return;
@@ -525,24 +517,21 @@ public class NodeAgentImpl implements NodeAgent {
                     containerState = STARTING;
                     container = Optional.of(startContainer(context));
                     containerState = UNKNOWN;
-                    runOrdinaryWireguardTasks = true;
                 } else {
                     container = Optional.of(updateContainerIfNeeded(context, container.get()));
                 }
 
                 aclMaintainer.ifPresent(maintainer -> maintainer.converge(context));
-                if (runOrdinaryWireguardTasks) {
-                    Optional<Container> finalContainer = container;
-                    wireguardTasks.forEach(task -> task.converge(context, finalContainer.get().id()));
-                }
+                final Optional<Container> finalContainer = container;
+                wireguardTasks.forEach(task -> task.converge(context, finalContainer.get().id()));
                 startServicesIfNeeded(context);
                 resumeNodeIfNeeded(context);
                 if (healthChecker.isPresent()) {
                     healthChecker.get().verifyHealth(context);
                     if (firstSuccessfulHealthCheckInstant.isEmpty())
-                        firstSuccessfulHealthCheckInstant = Optional.of(clock.instant());
+                        firstSuccessfulHealthCheckInstant = Optional.of(timer.currentTime());
 
-                    Duration timeLeft = Duration.between(clock.instant(), firstSuccessfulHealthCheckInstant.get().plus(warmUpDuration(context)));
+                    Duration timeLeft = Duration.between(timer.currentTime(), firstSuccessfulHealthCheckInstant.get().plus(warmUpDuration(context)));
                     if (!container.get().resources().equalsCpu(getContainerResources(context)))
                         throw ConvergenceException.ofTransient("Refusing to resume until warm up period ends (" +
                                 (timeLeft.isNegative() ? "next tick" : "in " + timeLeft) + ")");
@@ -630,8 +619,10 @@ public class NodeAgentImpl implements NodeAgent {
         } catch (OrchestratorException e) {
             // Ensure the ACLs are up to date: The reason we're unable to suspend may be because some other
             // node is unable to resume because the ACL rules of SOME Docker container is wrong...
+            // Same can happen with stale WireGuard config, so update that too
             try {
                 aclMaintainer.ifPresent(maintainer -> maintainer.converge(context));
+                wireguardTasks.forEach(task -> getContainer(context).ifPresent(c -> task.converge(context, c.id())));
             } catch (RuntimeException suppressed) {
                 logger.log(Level.WARNING, "Suppressing ACL update failure: " + suppressed);
                 e.addSuppressed(suppressed);

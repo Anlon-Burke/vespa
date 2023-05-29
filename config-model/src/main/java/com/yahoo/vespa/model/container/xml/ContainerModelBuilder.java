@@ -1,8 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container.xml;
 
-import com.yahoo.config.provision.ClusterInfo;
-import com.yahoo.config.provision.IntRange;
+import com.yahoo.component.ComponentId;
 import com.yahoo.component.ComponentSpecification;
 import com.yahoo.component.Version;
 import com.yahoo.component.chain.dependencies.Dependencies;
@@ -13,8 +12,6 @@ import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.application.api.DeploymentInstanceSpec;
 import com.yahoo.config.application.api.DeploymentSpec;
-import com.yahoo.config.provision.ZoneEndpoint;
-import com.yahoo.config.application.api.xml.DeploymentSpecXmlReader;
 import com.yahoo.config.model.ConfigModelContext;
 import com.yahoo.config.model.api.ApplicationClusterEndpoint;
 import com.yahoo.config.model.api.ConfigServerSpec;
@@ -31,17 +28,18 @@ import com.yahoo.config.provision.AthenzDomain;
 import com.yahoo.config.provision.AthenzService;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterMembership;
-import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.InstanceName;
-import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.Zone;
+import com.yahoo.config.provision.ZoneEndpoint;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.container.bundle.BundleInstantiationSpecification;
+import com.yahoo.container.logging.AccessLog;
 import com.yahoo.container.logging.FileConnectionLog;
 import com.yahoo.io.IOUtils;
+import com.yahoo.jdisc.http.server.jetty.VoidRequestLog;
 import com.yahoo.osgi.provider.model.ComponentModel;
 import com.yahoo.path.Path;
 import com.yahoo.schema.OnnxModel;
@@ -90,10 +88,10 @@ import com.yahoo.vespa.model.container.http.Filter;
 import com.yahoo.vespa.model.container.http.FilterBinding;
 import com.yahoo.vespa.model.container.http.FilterChains;
 import com.yahoo.vespa.model.container.http.Http;
+import com.yahoo.vespa.model.container.http.HttpFilterChain;
 import com.yahoo.vespa.model.container.http.JettyHttpServer;
 import com.yahoo.vespa.model.container.http.ssl.HostedSslConnectorFactory;
 import com.yahoo.vespa.model.container.http.xml.HttpBuilder;
-import com.yahoo.vespa.model.container.http.HttpFilterChain;
 import com.yahoo.vespa.model.container.processing.ProcessingChains;
 import com.yahoo.vespa.model.container.search.ContainerSearch;
 import com.yahoo.vespa.model.container.search.PageTemplates;
@@ -107,6 +105,7 @@ import java.io.IOException;
 import java.io.Reader;
 import java.net.URI;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -137,7 +136,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     static final String HOSTED_VESPA_STATUS_FILE = Defaults.getDefaults().underVespaHome("var/vespa/load-balancer/status.html");
 
     // Data plane port for hosted Vespa
-    static final int HOSTED_VESPA_DATAPLANE_PORT = 4443;
+    public static final int HOSTED_VESPA_DATAPLANE_PORT = 4443;
 
     //Path to vip status file for container in Hosted Vespa. Only used if set, else use HOSTED_VESPA_STATUS_FILE
     private static final String HOSTED_VESPA_STATUS_FILE_SETTING = "VESPA_LB_STATUS_FILE";
@@ -224,8 +223,8 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         addAccessLogs(deployState, cluster, spec);
         addNodes(cluster, spec, context);
 
+        addModelEvaluationRuntime(cluster);
         addModelEvaluation(spec, cluster, context); // NOTE: Must be done after addNodes
-        addModelEvaluationBundles(cluster);
 
         addServerProviders(deployState, spec, cluster);
 
@@ -420,34 +419,34 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     protected void addAccessLogs(DeployState deployState, ApplicationContainerCluster cluster, Element spec) {
         List<Element> accessLogElements = getAccessLogElements(spec);
 
-        if (cluster.isHostedVespa() && !accessLogElements.isEmpty()) {
-            accessLogElements.clear();
-            log.logApplicationPackage(
-                    Level.WARNING, "Applications are not allowed to override the 'accesslog' element");
+        if (accessLogElements.isEmpty() && deployState.getAccessLoggingEnabledByDefault()) {
+            cluster.addAccessLog();
         } else {
-            for (Element accessLog : accessLogElements) {
-                AccessLogBuilder.buildIfNotDisabled(deployState, cluster, accessLog).ifPresent(cluster::addComponent);
+            if (cluster.isHostedVespa()) {
+                log.logApplicationPackage(WARNING, "Applications are not allowed to override the 'accesslog' element");
+            } else {
+                List<AccessLogComponent> components = new ArrayList<>();
+                for (Element accessLog : accessLogElements) {
+                    AccessLogBuilder.buildIfNotDisabled(deployState, cluster, accessLog).ifPresent(accessLogComponent -> {
+                        components.add(accessLogComponent);
+                        cluster.addComponent(accessLogComponent);
+                    });
+                }
+                if (components.size() > 0) {
+                    cluster.removeSimpleComponent(VoidRequestLog.class);
+                    cluster.addSimpleComponent(AccessLog.class);
+                }
             }
         }
-
-        if (accessLogElements.isEmpty() && deployState.getAccessLoggingEnabledByDefault())
-            cluster.addDefaultSearchAccessLog();
 
         // Add connection log if access log is configured
-        if (cluster.getAllComponents().stream().anyMatch(component -> component instanceof AccessLogComponent)) {
-            // TODO: Vespa > 8: Clean up
-            if (cluster.isHostedVespa() || deployState.getVespaVersion().getMajor() == 8) {
-                cluster.addComponent(new ConnectionLogComponent(cluster, FileConnectionLog.class, "access"));
-            } else {
-                cluster.addComponent(new ConnectionLogComponent(cluster, FileConnectionLog.class, "qrs"));
-            }
-        }
+        if (cluster.getAllComponents().stream().anyMatch(component -> component instanceof AccessLogComponent))
+            cluster.addComponent(new ConnectionLogComponent(cluster, FileConnectionLog.class, "access"));
     }
 
     private List<Element> getAccessLogElements(Element spec) {
         return XML.getChildren(spec, "accesslog");
     }
-
 
     protected void addHttp(DeployState deployState, Element spec, ApplicationContainerCluster cluster, ConfigModelContext context) {
         Element httpElement = XML.getChild(spec, "http");
@@ -566,6 +565,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         HostedSslConnectorFactory connectorFactory;
         Collection<String> tlsCiphersOverride = deployState.getProperties().tlsCiphersOverride();
         boolean proxyProtocolMixedMode = deployState.getProperties().featureFlags().enableProxyProtocolMixedMode();
+        Duration endpointConnectionTtl = deployState.getProperties().endpointConnectionTtl();
         if (deployState.endpointCertificateSecrets().isPresent()) {
             boolean authorizeClient = deployState.zone().system().isPublic();
             List<X509Certificate> clientCertificates = getClientCertificates(cluster);
@@ -582,11 +582,15 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
             connectorFactory = authorizeClient
                     ? HostedSslConnectorFactory.withProvidedCertificateAndTruststore(
-                    serverName, endpointCertificateSecrets, X509CertificateUtils.toPem(clientCertificates), tlsCiphersOverride, proxyProtocolMixedMode, HOSTED_VESPA_DATAPLANE_PORT)
+                    serverName, endpointCertificateSecrets, X509CertificateUtils.toPem(clientCertificates),
+                    tlsCiphersOverride, proxyProtocolMixedMode, HOSTED_VESPA_DATAPLANE_PORT, endpointConnectionTtl)
                     : HostedSslConnectorFactory.withProvidedCertificate(
-                    serverName, endpointCertificateSecrets, enforceHandshakeClientAuth, tlsCiphersOverride, proxyProtocolMixedMode, HOSTED_VESPA_DATAPLANE_PORT);
+                    serverName, endpointCertificateSecrets, enforceHandshakeClientAuth, tlsCiphersOverride,
+                    proxyProtocolMixedMode, HOSTED_VESPA_DATAPLANE_PORT, endpointConnectionTtl);
         } else {
-            connectorFactory = HostedSslConnectorFactory.withDefaultCertificateAndTruststore(serverName, tlsCiphersOverride, proxyProtocolMixedMode, HOSTED_VESPA_DATAPLANE_PORT);
+            connectorFactory = HostedSslConnectorFactory.withDefaultCertificateAndTruststore(
+                    serverName, tlsCiphersOverride, proxyProtocolMixedMode, HOSTED_VESPA_DATAPLANE_PORT,
+                    endpointConnectionTtl);
         }
         cluster.getHttp().getAccessControl().ifPresent(accessControl -> accessControl.configureHostedConnector(connectorFactory));
         server.addConnector(connectorFactory);
@@ -709,13 +713,16 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         return (child != null) ? Integer.parseInt(child.getTextContent()) : defaultValue;
     }
 
-    protected void addModelEvaluationBundles(ApplicationContainerCluster cluster) {
+    protected void addModelEvaluationRuntime(ApplicationContainerCluster cluster) {
         /* These bundles are added to all application container clusters, even if they haven't
          * declared 'model-evaluation' in services.xml, because there are many public API packages
          * in the model-evaluation bundle that could be used by customer code. */
         cluster.addPlatformBundle(ContainerModelEvaluation.MODEL_EVALUATION_BUNDLE_FILE);
         cluster.addPlatformBundle(ContainerModelEvaluation.MODEL_INTEGRATION_BUNDLE_FILE);
         cluster.addPlatformBundle(ContainerModelEvaluation.ONNXRUNTIME_BUNDLE_FILE);
+        /* The ONNX runtime is always available for injection to any component */
+        cluster.addSimpleComponent(
+                ContainerModelEvaluation.ONNX_RUNTIME_CLASS, null, ContainerModelEvaluation.INTEGRATION_BUNDLE_NAME);
     }
 
     private void addProcessing(DeployState deployState, Element spec, ApplicationContainerCluster cluster, ConfigModelContext context) {
@@ -898,22 +905,19 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
     }
     
     private static boolean applyMemoryPercentage(ApplicationContainerCluster cluster, String memoryPercentage) {
-        if (memoryPercentage == null || memoryPercentage.isEmpty()) return false;
-        memoryPercentage = memoryPercentage.trim();
-
-        if ( ! memoryPercentage.endsWith("%"))
-            throw new IllegalArgumentException("The memory percentage given for nodes in " + cluster +
-                                               " must be an integer percentage ending by the '%' sign");
-        memoryPercentage = memoryPercentage.substring(0, memoryPercentage.length()-1).trim();
-
         try {
+            if (memoryPercentage == null || memoryPercentage.isEmpty()) return false;
+            memoryPercentage = memoryPercentage.trim();
+            if ( ! memoryPercentage.endsWith("%"))
+                throw new IllegalArgumentException("Missing % sign");
+            memoryPercentage = memoryPercentage.substring(0, memoryPercentage.length()-1).trim();
             cluster.setMemoryPercentage(Integer.parseInt(memoryPercentage));
+            return true;
         }
         catch (NumberFormatException e) {
             throw new IllegalArgumentException("The memory percentage given for nodes in " + cluster +
-                                               " must be an integer percentage ending by the '%' sign");
+                                               " must be an integer percentage ending by the '%' sign", e);
         }
-        return true;
     }
 
     /** Allocate a container cluster without a nodes tag */
@@ -925,9 +929,11 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             int nodeCount = deployState.zone().environment().isProduction() ? 2 : 1;
             deployState.getDeployLogger().logApplicationPackage(Level.INFO, "Using " + nodeCount + " nodes in " + cluster);
             var nodesSpec = NodesSpecification.dedicated(nodeCount, context);
+            ClusterSpec.Id clusterId = ClusterSpec.Id.from(cluster.getName());
             var hosts = nodesSpec.provision(hostSystem,
                                             ClusterSpec.Type.container,
-                                            ClusterSpec.Id.from(cluster.getName()),
+                                            clusterId,
+                                            zoneEndpoint(context, clusterId),
                                             deployState.getDeployLogger(),
                                             false,
                                             context.clusterInfo().build());
@@ -1169,7 +1175,13 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
                                                                      ztsUrl,
                                                                      zoneDnsSuffix,
                                                                      zone);
+
+            // Replace AthenzIdentityProviderProvider
+            cluster.removeComponent(ComponentId.fromString("com.yahoo.container.jdisc.AthenzIdentityProviderProvider"));
             cluster.addComponent(identityProvider);
+
+            var serviceIdentityProviderProvider = "com.yahoo.vespa.athenz.identityprovider.client.ServiceIdentityProviderProvider";
+            cluster.addComponent(new SimpleComponent(new ComponentModel(serviceIdentityProviderProvider, serviceIdentityProviderProvider, "vespa-athenz")));
 
             cluster.getContainers().forEach(container -> {
                 container.setProp("identity.domain", domain.value());
@@ -1215,7 +1227,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
         private static final Pattern validPattern = Pattern.compile("-[a-zA-z0-9=:./,+*-]+");
         // debug port will not be available in hosted, don't allow
-        private static final Pattern invalidInHostedatttern = Pattern.compile("-Xrunjdwp:transport=.*");
+        private static final Pattern invalidInHostedPattern = Pattern.compile("-Xrunjdwp:transport=.*");
 
         private final Element nodesElement;
         private final DeployLogger logger;
@@ -1268,7 +1280,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             if (isHosted)
                 invalidOptions.addAll(Arrays.stream(optionList)
                         .filter(option -> !option.isEmpty())
-                        .filter(option -> Pattern.matches(invalidInHostedatttern.pattern(), option))
+                        .filter(option -> Pattern.matches(invalidInHostedPattern.pattern(), option))
                         .sorted().toList());
 
             if (invalidOptions.isEmpty()) return;
