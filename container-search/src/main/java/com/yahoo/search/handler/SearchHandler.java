@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.handler;
 
+import ai.vespa.metrics.ContainerMetrics;
 import ai.vespa.cloud.ZoneInfo;
 import ai.vespa.metrics.ContainerMetrics;
 import com.yahoo.collections.Tuple2;
@@ -59,6 +60,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
+import static java.io.InputStream.nullInputStream;
+
 /**
  * Handles search request.
  *
@@ -79,7 +82,7 @@ public class SearchHandler extends LoggingRequestHandler {
     private static final CompoundName FORCE_TIMESTAMPS = CompoundName.from("trace.timestamps");
 
     /** Event name for number of connections to the search subsystem */
-    private static final String SEARCH_CONNECTIONS = "search_connections";
+    private static final String SEARCH_CONNECTIONS = ContainerMetrics.SEARCH_CONNECTIONS.baseName();
     static final String RENDER_LATENCY_METRIC = ContainerMetrics.JDISC_RENDER_LATENCY.baseName();
     static final String MIME_DIMENSION = "mime";
     static final String RENDERER_DIMENSION = "renderer";
@@ -139,6 +142,8 @@ public class SearchHandler extends LoggingRequestHandler {
         this.numRequestsLeftToTrace = new AtomicLong(numQueriesToTraceOnDebugAfterStartup);
         metric.set(SEARCH_CONNECTIONS, 0.0d, null);
         this.zoneInfo = zoneInfo;
+
+        warmup();
     }
 
     Metric metric() { return metric; }
@@ -148,6 +153,21 @@ public class SearchHandler extends LoggingRequestHandler {
             return ((ThreadPoolExecutor) executor).getMaximumPoolSize();
         }
         return Integer.MAX_VALUE; // assume unbound
+    }
+
+    private void warmup() {
+        try {
+            handle(HttpRequest.createTestRequest("/search/" +
+                                                 "?timeout=2s" +
+                                                 "&ranking.profile=unranked" +
+                                                 "&metrics.ignore=true" +
+                                                 "&yql=select+*+from+sources+*+where+true+limit+0;",
+                                                 com.yahoo.jdisc.http.HttpRequest.Method.GET,
+                                                 nullInputStream()));
+        }
+        catch (RuntimeException e) {
+            log.log(Level.INFO, "Exception warming up search handler", e);
+        }
     }
 
     @Override

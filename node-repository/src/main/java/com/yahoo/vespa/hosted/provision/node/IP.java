@@ -3,7 +3,11 @@ package com.yahoo.vespa.hosted.provision.node;
 
 import com.google.common.net.InetAddresses;
 import com.google.common.primitives.UnsignedBytes;
+import com.yahoo.config.provision.CloudAccount;
+import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.HostName;
+import com.yahoo.config.provision.NodeType;
+import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.hosted.provision.LockedNodeList;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
@@ -13,18 +17,21 @@ import com.yahoo.vespa.hosted.provision.persistence.NameResolver.RecordType;
 import java.net.InetAddress;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.yahoo.config.provision.NodeType.confighost;
 import static com.yahoo.config.provision.NodeType.controllerhost;
 import static com.yahoo.config.provision.NodeType.proxyhost;
+import static java.util.function.Predicate.not;
 
 /**
  * This handles IP address configuration and allocation.
@@ -112,6 +119,7 @@ public record IP() {
                 for (var other : sortedNodes) {
                     if (node.equals(other)) continue;
                     if (canAssignIpOf(other, node)) continue;
+                    Predicate<String> sharedIpSpace = other.cloudAccount().equals(node.cloudAccount()) ? __ -> true : IP::isPublic;
 
                     var addresses = new HashSet<>(node.ipConfig().primary());
                     var otherAddresses = new HashSet<>(other.ipConfig().primary());
@@ -119,6 +127,7 @@ public record IP() {
                         addresses.addAll(node.ipConfig().pool().asSet());
                         otherAddresses.addAll(other.ipConfig().pool().asSet());
                     }
+                    otherAddresses.removeIf(not(sharedIpSpace));
                     otherAddresses.retainAll(addresses);
                     if (!otherAddresses.isEmpty())
                         throw new IllegalArgumentException("Cannot assign " + addresses + " to " + node.hostname() +
@@ -394,15 +403,45 @@ public record IP() {
         }
     }
 
-    /** Verify DNS configuration of given hostname and IP address */
-    public static void verifyDns(String hostname, String ipAddress, NameResolver resolver, boolean hasPtr) {
-        RecordType recordType = isV6(ipAddress) ? RecordType.AAAA : RecordType.A;
-        Set<String> addresses = resolver.resolve(hostname, recordType);
-        if (!addresses.equals(Set.of(ipAddress)))
-            throw new IllegalArgumentException("Expected " + hostname + " to resolve to " + ipAddress +
-                                               ", but got " + addresses);
+    public enum DnsRecordType { FORWARD, PUBLIC_FORWARD, REVERSE }
 
-        if (hasPtr) {
+    /** Returns the set of DNS record types for a host and its children and the given version (ipv6), host type, etc. */
+    public static Set<DnsRecordType> dnsRecordTypesFor(boolean ipv6, NodeType hostType, CloudName cloudName, boolean exclave) {
+        if (cloudName == CloudName.AWS)
+            return exclave ?
+                   EnumSet.of(DnsRecordType.FORWARD, DnsRecordType.PUBLIC_FORWARD) :
+                   EnumSet.of(DnsRecordType.FORWARD, DnsRecordType.PUBLIC_FORWARD, DnsRecordType.REVERSE);
+
+        if (cloudName == CloudName.GCP) {
+            if (exclave) {
+                return ipv6 ?
+                       EnumSet.of(DnsRecordType.FORWARD, DnsRecordType.PUBLIC_FORWARD) :
+                       EnumSet.noneOf(DnsRecordType.class);
+            } else {
+                return hostType == confighost && ipv6 ?
+                       EnumSet.of(DnsRecordType.FORWARD, DnsRecordType.REVERSE, DnsRecordType.PUBLIC_FORWARD) :
+                       EnumSet.of(DnsRecordType.FORWARD, DnsRecordType.REVERSE);
+            }
+        }
+
+        throw new IllegalArgumentException("Does not manage DNS for cloud " + cloudName);
+    }
+
+    /** Verify DNS configuration of given hostname and IP address */
+    public static void verifyDns(String hostname, String ipAddress, NodeType nodeType, NameResolver resolver,
+                                 CloudAccount cloudAccount, Zone zone) {
+        boolean ipv6 = isV6(ipAddress);
+        Set<DnsRecordType> recordTypes = dnsRecordTypesFor(ipv6, nodeType, zone.cloud().name(), cloudAccount.isExclave(zone));
+
+        if (recordTypes.contains(DnsRecordType.FORWARD)) {
+            RecordType recordType = ipv6 ? RecordType.AAAA : RecordType.A;
+            Set<String> addresses = resolver.resolve(hostname, recordType);
+            if (!addresses.equals(Set.of(ipAddress)))
+                throw new IllegalArgumentException("Expected " + hostname + " to resolve to " + ipAddress +
+                                                   ", but got " + addresses);
+        }
+
+        if (recordTypes.contains(DnsRecordType.REVERSE)) {
             Optional<String> reverseHostname = resolver.resolveHostname(ipAddress);
             if (reverseHostname.isEmpty())
                 throw new IllegalArgumentException(ipAddress + " did not resolve to a hostname");
@@ -426,6 +465,12 @@ public record IP() {
     /** Returns whether given string is an IPv6 address */
     public static boolean isV6(String ipAddress) {
         return ipAddress.contains(":");
+    }
+
+    /** Returns whether given string is a public IP address */
+    public static boolean isPublic(String ip) {
+        InetAddress address = parse(ip);
+        return ! address.isLoopbackAddress() && ! address.isLinkLocalAddress() && ! address.isSiteLocalAddress();
     }
 
 }

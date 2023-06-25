@@ -15,6 +15,7 @@ import com.yahoo.text.Text;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.NotExistsException;
+import com.yahoo.vespa.hosted.controller.api.identifiers.DeploymentId;
 import com.yahoo.vespa.hosted.controller.api.integration.LogEntry;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationVersion;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobId;
@@ -22,6 +23,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.application.Change;
+import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.deployment.ConvergenceSummary;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentStatus;
@@ -49,7 +51,9 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Optional;
+import java.util.SortedMap;
 import java.util.stream.Stream;
 
 import static com.yahoo.config.application.api.DeploymentSpec.UpgradePolicy.canary;
@@ -97,12 +101,18 @@ class JobControllerApiHandlerHelper {
     }
 
     /** Returns a response with the runs for the given job type. */
-    static HttpResponse runResponse(Application application, Map<RunId, Run> runs, Optional<String> limitStr, URI baseUriForJobType) {
+    static HttpResponse runResponse(Controller controller, JobId id, Optional<String> limitStr, URI baseUriForJobType) {
         Slime slime = new Slime();
         Cursor cursor = slime.setObject();
+        Application application = controller.applications().requireApplication(TenantAndApplicationId.from(id.application()));
+        NavigableMap<RunId, Run> runs = controller.jobController().runs(id).descendingMap();
 
         int limit = limitStr.map(Integer::parseInt).orElse(Integer.MAX_VALUE);
         toSlime(cursor.setArray("runs"), runs.values(), application, limit, baseUriForJobType);
+        controller.applications().decideCloudAccountOf(new DeploymentId(id.application(),
+                                                                        runs.lastEntry().getValue().id().job().type().zone()), // Urgh, must use a job with actual zone.
+                                                       application.deploymentSpec())
+                  .ifPresent(cloudAccount -> cursor.setObject("enclave").setString("cloudAccount", cloudAccount.value()));
 
         return new SlimeJsonResponse(slime);
     }
@@ -361,7 +371,9 @@ class JobControllerApiHandlerHelper {
                                                                      "/job/" + job.type().jobName()).normalize();
                 stepObject.setString("url", baseUriForJob.toString());
                 stepObject.setString("environment", job.type().environment().value());
-                if ( ! job.type().environment().isTest()) stepObject.setString("region", job.type().zone().value());
+                if ( ! job.type().environment().isTest()) {
+                    stepObject.setString("region", job.type().zone().value());
+                }
 
                 if (job.type().isProduction() && job.type().isDeployment()) {
                     status.deploymentFor(job).ifPresent(deployment -> {
@@ -386,6 +398,12 @@ class JobControllerApiHandlerHelper {
                     Cursor runObject = toRunArray.addObject();
                     toSlime(runObject.setObject("versions"), versions.versions(), application);
                 }
+
+                if ( ! jobStatus.runs().isEmpty())
+                    controller.applications().decideCloudAccountOf(new DeploymentId(job.application(),
+                                                                                    jobStatus.runs().lastEntry().getValue().id().job().type().zone()), // Urgh, must use a job with actual zone.
+                                                                   status.application().deploymentSpec())
+                              .ifPresent(cloudAccount -> stepObject.setObject("enclave").setString("cloudAccount", cloudAccount.value()));
 
                 toSlime(stepObject.setArray("runs"), jobStatus.runs().descendingMap().values(), application, 10, baseUriForJob);
             }

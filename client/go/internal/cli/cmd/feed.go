@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,8 +56,8 @@ func newFeedCmd(cli *CLI) *cobra.Command {
 	var options feedOptions
 	cmd := &cobra.Command{
 		Use:   "feed FILE [FILE]...",
-		Short: "Feed documents to a Vespa cluster",
-		Long: `Feed documents to a Vespa cluster.
+		Short: "Feed multiple document operations to a Vespa cluster",
+		Long: `Feed multiple document operations to a Vespa cluster.
 
 This command can be used to feed large amounts of documents to a Vespa cluster
 efficiently.
@@ -164,7 +165,7 @@ func feedFiles(files []string, dispatcher *document.Dispatcher, cli *CLI) {
 }
 
 func dispatchFrom(r io.ReadCloser, dispatcher *document.Dispatcher, cli *CLI) {
-	dec := document.NewDecoder(r)
+	dec := document.NewDecoder(bufio.NewReaderSize(r, 1<<26)) // Buffer up to 64M of data at a time
 	defer r.Close()
 	for {
 		doc, err := dec.Decode()

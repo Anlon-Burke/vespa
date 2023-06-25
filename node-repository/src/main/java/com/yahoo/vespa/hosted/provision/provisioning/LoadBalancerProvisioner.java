@@ -70,16 +70,10 @@ public class LoadBalancerProvisioner {
         this.deactivateRouting = PermanentFlags.DEACTIVATE_ROUTING.bindTo(nodeRepository.flagSource());
         // Read and write all load balancers to make sure they are stored in the latest version of the serialization format
 
-        CloudAccount zoneAccount = nodeRepository.zone().cloud().account();
         for (var id : db.readLoadBalancerIds()) {
             try (var lock = db.lock(id.application())) {
                 var loadBalancer = db.readLoadBalancer(id);
-                loadBalancer.ifPresent(lb -> {
-                    // TODO (freva): Remove after 8.166
-                    if (!zoneAccount.isUnspecified() && lb.instance().isPresent() && lb.instance().get().cloudAccount().isUnspecified())
-                        lb = lb.with(Optional.of(lb.instance().get().with(zoneAccount)));
-                    db.writeLoadBalancer(lb, lb.state());
-                });
+                loadBalancer.ifPresent(lb -> db.writeLoadBalancer(lb, lb.state()));
             }
         }
     }
@@ -330,7 +324,7 @@ public class LoadBalancerProvisioner {
     private Set<String> reachableIpAddresses(Node node) {
         Set<String> reachable = new LinkedHashSet<>(node.ipConfig().primary());
         // Remove addresses unreachable by the load balancer service
-        switch (service.protocol(node.cloudAccount().isEnclave(nodeRepository.zone()))) {
+        switch (service.protocol(node.cloudAccount().isExclave(nodeRepository.zone()))) {
             case ipv4 -> reachable.removeIf(IP::isV6);
             case ipv6 -> reachable.removeIf(IP::isV4);
         }

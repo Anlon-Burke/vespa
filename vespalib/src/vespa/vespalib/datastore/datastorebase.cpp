@@ -59,7 +59,8 @@ DataStoreBase::FallbackHold::FallbackHold(size_t bytesSize, BufferState::Alloc &
 
 DataStoreBase::FallbackHold::~FallbackHold()
 {
-    _typeHandler->destroy_entries(_buffer.get(), _used_entries);
+    auto buffer_underflow_size = _typeHandler->buffer_underflow_size();
+    _typeHandler->destroy_entries(static_cast<char *>(_buffer.get()) + buffer_underflow_size, _used_entries);
 }
 
 class DataStoreBase::BufferHold : public GenerationHeldBase {
@@ -415,7 +416,11 @@ DataStoreBase::on_active(uint32_t bufferId, uint32_t typeId, size_t entries_need
     assert(state->isFree());
     state->on_active(bufferId, typeId, _typeHandlers[typeId], entries_needed, bufferMeta.get_atomic_buffer());
     bufferMeta.setTypeId(typeId);
-    bufferMeta.setArraySize(state->getArraySize());
+    if (_typeHandlers[typeId]->is_dynamic_array_buffer_type()) {
+        bufferMeta.set_entry_size(_typeHandlers[typeId]->entry_size());
+    } else {
+        bufferMeta.set_array_size(state->getArraySize());
+    }
     if (_freeListsEnabled && state->isActive() && !state->getCompacting()) {
         state->enable_free_list(_free_lists[state->getTypeId()]);
     }

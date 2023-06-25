@@ -16,11 +16,12 @@ ArrayStoreTypeMapper::~ArrayStoreTypeMapper() = default;
 uint32_t
 ArrayStoreTypeMapper::get_type_id(size_t array_size) const
 {
-    assert(!_array_sizes.empty());
-    auto result = std::lower_bound(_array_sizes.begin() + 1, _array_sizes.end(), array_size);
-    if (result == _array_sizes.end()) {
+    assert(_array_sizes.size() >= 2u);
+    if (array_size > _array_sizes.back()) {
         return 0; // type id 0 uses buffer type for large arrays
     }
+    auto result = std::lower_bound(_array_sizes.begin() + 1, _array_sizes.end(), array_size);
+    assert(result < _array_sizes.end());
     return result - _array_sizes.begin();
 }
 
@@ -32,10 +33,10 @@ ArrayStoreTypeMapper::get_array_size(uint32_t type_id) const
 }
 
 uint32_t
-ArrayStoreTypeMapper::get_max_small_array_type_id(uint32_t max_small_array_type_id) const noexcept
+ArrayStoreTypeMapper::get_max_type_id(uint32_t max_type_id) const noexcept
 {
     auto clamp_type_id = _array_sizes.size() - 1;
-    return (clamp_type_id < max_small_array_type_id) ? clamp_type_id : max_small_array_type_id;
+    return (clamp_type_id < max_type_id) ? clamp_type_id : max_type_id;
 }
 
 }

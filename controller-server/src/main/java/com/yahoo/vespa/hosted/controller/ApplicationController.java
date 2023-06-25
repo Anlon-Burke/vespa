@@ -10,6 +10,7 @@ import com.yahoo.config.application.api.ValidationId;
 import com.yahoo.config.application.api.ValidationOverrides;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.CloudAccount;
+import com.yahoo.config.provision.CloudName;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.InstanceName;
 import com.yahoo.config.provision.TenantName;
@@ -40,6 +41,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.configserver.Deployment
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.DeploymentResult.LogEntry;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.Node;
 import com.yahoo.vespa.hosted.controller.api.integration.configserver.NodeFilter;
+import com.yahoo.vespa.hosted.controller.api.integration.dataplanetoken.DataplaneTokenVersions;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationStore;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationVersion;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.ArtifactRepository;
@@ -676,9 +678,10 @@ public class ApplicationController {
                 operatorCertificates = Stream.concat(operatorCertificates.stream(), testerCertificate.stream()).toList();
             }
             Supplier<Optional<CloudAccount>> cloudAccount = () -> decideCloudAccountOf(deployment, applicationPackage.truncatedPackage().deploymentSpec());
+            List<DataplaneTokenVersions> dataplaneTokenVersions = controller.dataplaneTokenService().listTokens(application.tenant());
             DeploymentData deploymentData = new DeploymentData(application, zone, applicationPackage::zipStream, platform,
                     endpoints, endpointCertificateMetadata, dockerImageRepo, domain,
-                    deploymentQuota, tenantSecretStores, operatorCertificates, cloudAccount, dryRun);
+                    deploymentQuota, tenantSecretStores, operatorCertificates, cloudAccount, dataplaneTokenVersions, dryRun);
             ConfigServer.PreparedApplication preparedApplication = configServer.deploy(deploymentData);
 
             return new DeploymentDataAndResult(deploymentData, preparedApplication.deploymentResult());
@@ -694,24 +697,22 @@ public class ApplicationController {
 
     public Optional<CloudAccount> decideCloudAccountOf(DeploymentId deployment, DeploymentSpec spec) {
         ZoneId zoneId = deployment.zoneId();
-        Optional<CloudAccount> requestedAccount = spec.instance(deployment.applicationId().instance())
-                                                      .flatMap(instanceSpec -> instanceSpec.cloudAccount(zoneId.environment(),
-                                                                                                         Optional.of(zoneId.region())))
-                                                      .or(spec::cloudAccount);
-        if (requestedAccount.isEmpty() || requestedAccount.get().isUnspecified()) {
+        CloudName cloud = controller.zoneRegistry().get(zoneId).getCloudName();
+        CloudAccount requestedAccount = spec.cloudAccount(cloud, deployment.applicationId().instance(), deployment.zoneId());
+        if (requestedAccount.isUnspecified())
             return Optional.empty();
-        }
+
         TenantName tenant = deployment.applicationId().tenant();
         Set<CloudAccount> tenantAccounts = accountsOf(tenant);
-        if (!tenantAccounts.contains(requestedAccount.get())) {
-            throw new IllegalArgumentException("Requested cloud account '" + requestedAccount.get().value() +
+        if ( ! tenantAccounts.contains(requestedAccount)) {
+            throw new IllegalArgumentException("Requested cloud account '" + requestedAccount.value() +
                                                "' is not valid for tenant '" + tenant + "'");
         }
-        if ( ! controller.zoneRegistry().hasZone(zoneId, requestedAccount.get())) {
+        if ( ! controller.zoneRegistry().hasZone(zoneId, requestedAccount)) {
             throw new IllegalArgumentException("Zone " + zoneId + " is not configured in requested cloud account '" +
-                                               requestedAccount.get().value() + "'");
+                                               requestedAccount.value() + "'");
         }
-        return requestedAccount;
+        return Optional.of(requestedAccount);
     }
 
     private LockedApplication withoutDeletedDeployments(LockedApplication application, InstanceName instance) {
@@ -948,7 +949,7 @@ public class ApplicationController {
      * @param applicationPackage application package
      * @param deployer principal initiating the deployment, possibly empty
      */
-    public void verifyApplicationIdentityConfiguration(TenantName tenantName, Optional<InstanceName> instanceName, Optional<ZoneId> zoneId, ApplicationPackage applicationPackage, Optional<Principal> deployer) {
+    public void verifyApplicationIdentityConfiguration(TenantName tenantName, Optional<DeploymentId> deployment, ApplicationPackage applicationPackage, Optional<Principal> deployer) {
         Optional<AthenzDomain> identityDomain = applicationPackage.deploymentSpec().athenzDomain()
                                                                   .map(domain -> new AthenzDomain(domain.value()));
         if (identityDomain.isEmpty()) {
@@ -969,14 +970,12 @@ public class ApplicationController {
         // Either the user is member of the domain admin role, or is given the "launch" privilege on the service.
         Optional<AthenzUser> athenzUser = getUser(deployer);
         if (athenzUser.isPresent()) {
-            // We only need to validate the root and instance in deployment.xml. Dev/perf entries are found at the instance level as well.
-            var zone = zoneId.orElseThrow(() -> new IllegalArgumentException("Unable to evaluate access, no zone provided in deployment"));
-            var serviceToLaunch = instanceName
-                    .flatMap(instance -> applicationPackage.deploymentSpec().instance(instance))
-                    .flatMap(instanceSpec -> instanceSpec.athenzService(zone.environment(), zone.region()))
-                    .or(() -> applicationPackage.deploymentSpec().athenzService())
-                    .map(service -> new AthenzService(identityDomain.get(), service.value()));
-
+            // This is a direct deployment, and we need only validate what the configserver will actually launch.
+            DeploymentId id = deployment.orElseThrow(() -> new IllegalArgumentException("Unable to evaluate access, no zone provided in deployment"));
+            var serviceToLaunch = applicationPackage.deploymentSpec().athenzService(id.applicationId().instance(),
+                                                                                    id.zoneId().environment(),
+                                                                                    id.zoneId().region())
+                                                    .map(service -> new AthenzService(identityDomain.get(), service.value()));
             if (serviceToLaunch.isPresent()) {
                 if (
                         ! ((AthenzFacade) accessControl).canLaunch(athenzUser.get(), serviceToLaunch.get()) && // launch privilege
@@ -989,7 +988,7 @@ public class ApplicationController {
             } else {
                 // This is a rare edge case where deployment.xml specifies athenz-service on each step, but not on the root.
                 // It is undefined which service should be launched, so handle this as an error.
-                throw new IllegalArgumentException("Athenz domain configured, but no service defined for deployment to " + zone.value());
+                throw new IllegalArgumentException("Athenz domain configured, but no service defined for deployment to " + id.zoneId().value());
             }
         } else {
             // If this is a deployment pipeline, verify that the domain in deployment.xml is the same as the tenant domain. Access control is already validated before this step.

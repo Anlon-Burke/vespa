@@ -17,7 +17,7 @@ class BoundMipsDistanceFunction : public BoundDistanceFunction {
     const vespalib::ConstArrayRef<FloatType> _lhs_vector;
     const vespalib::hwaccelrated::IAccelrated & _computer;
     double _max_sq_norm;
-    using ExtraDimT = std::conditional<extra_dim,double,std::monostate>::type;
+    using ExtraDimT = std::conditional_t<extra_dim,double,std::monostate>;
     [[no_unique_address]] ExtraDimT _lhs_extra_dim;
 
     static const double *cast(const double * p) { return p; }
@@ -66,6 +66,9 @@ public:
     }
     double to_distance(double rawscore) const override {
         return -rawscore;
+    }
+    double min_rawscore() const override {
+        return std::numeric_limits<double>::lowest();
     }
     double calc_with_limit(const vespalib::eval::TypedCells& rhs, double) const override {
         return calc(rhs);

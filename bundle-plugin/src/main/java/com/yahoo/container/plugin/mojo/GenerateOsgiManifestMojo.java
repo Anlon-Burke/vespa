@@ -26,6 +26,8 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.yahoo.container.plugin.bundle.AnalyzeBundle.exportedPackagesAggregated;
+import static com.yahoo.container.plugin.bundle.AnalyzeBundle.nonPublicApiPackagesAggregated;
+import static com.yahoo.container.plugin.classanalysis.Packages.disallowedImports;
 import static com.yahoo.container.plugin.osgi.ExportPackages.exportsByPackageName;
 import static com.yahoo.container.plugin.osgi.ImportPackages.calculateImports;
 import static com.yahoo.container.plugin.util.Files.allDescendantFiles;
@@ -43,6 +45,8 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
         INTERNAL,  // other vespa bundles (need not be set for groupId 'com.yahoo.vespa')
         USER
     }
+
+    private static final String VESPA_GROUP_ID = "com.yahoo.vespa";
 
     @Parameter
     private String discApplicationClass = null;
@@ -66,6 +70,16 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
     private BundleType bundleType = BundleType.USER;
 
     @Parameter(defaultValue = "false")
+    private boolean suppressWarningMissingImportPackages;
+    @Parameter(defaultValue = "false")
+    private boolean suppressWarningPublicApi;
+    @Parameter(defaultValue = "false")
+    private boolean suppressWarningOverlappingPackages;
+
+    @Parameter(defaultValue = "false")
+    private boolean failOnWarnings;
+
+    @Parameter(defaultValue = "false")
     private boolean buildLegacyVespaPlatformBundle;
 
     public void execute() throws MojoExecutionException {
@@ -78,10 +92,12 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
             if (! isContainerDiscArtifact(project.getArtifact()))
                 throwIfInternalContainerArtifactsAreIncluded(artifactSet.getJarArtifactsToInclude());
 
-            List<Export> exportedPackagesFromProvidedJars = exportedPackagesAggregated(
-                    artifactSet.getJarArtifactsProvided().stream().map(Artifact::getFile).toList());
+            List<Artifact> providedJarArtifacts = artifactSet.getJarArtifactsProvided();
+            List<File> providedJarFiles = providedJarArtifacts.stream().map(Artifact::getFile).toList();
+            List<Export> exportedPackagesFromProvidedJars = exportedPackagesAggregated(providedJarFiles);
+            List<String> nonPublicApiPackagesFromProvidedJars = nonPublicApiPackagesAggregated(providedJarFiles);
 
-            // Packages from Export-Package headers in provided scoped jars
+            // Packages from Export-Package/PublicApi headers in provided scoped jars
             Set<String> exportedPackagesFromProvidedDeps = ExportPackages.packageNames(exportedPackagesFromProvidedJars);
 
             // Packaged defined in this project's code
@@ -95,11 +111,15 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
 
             logDebugPackageSets(exportedPackagesFromProvidedJars, includedPackages);
 
-            if (hasJdiscCoreProvided(artifactSet.getJarArtifactsProvided())) {
+            Optional<Artifact> jdiscCore = providedJarArtifacts.stream()
+                    .filter(artifact -> artifact.getArtifactId().equals("jdisc_core"))
+                    .findAny();
+
+            if (jdiscCore.isPresent()) {
                 // jdisc_core being provided guarantees that log output does not contain its exported packages
                 logMissingPackages(exportedPackagesFromProvidedDeps, projectPackages, compileJarsPackages, includedPackages);
-            } else {
-                getLog().warn(("This project does not have '%s' as provided dependency, so the generated 'Import-Package' " +
+            } else if (! suppressWarningMissingImportPackages) {
+                warnOrThrow(("This project does not have '%s' as provided dependency, so the generated 'Import-Package' " +
                         "OSGi header may be missing important packages.").formatted(wantedProvidedDependency()));
             }
             logOverlappingPackages(projectPackages, exportedPackagesFromProvidedDeps);
@@ -109,11 +129,15 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
                                                                      includedPackages.definedPackages(),
                                                                      exportsByPackageName(exportedPackagesFromProvidedJars));
 
+            List<String> nonPublicApiUsed = disallowedImports(calculatedImports, nonPublicApiPackagesFromProvidedJars);
+            logNonPublicApiUsage(nonPublicApiUsed);
 
             Map<String, String> manifestContent = generateManifestContent(artifactSet.getJarArtifactsToInclude(), calculatedImports, includedPackages);
-            addAdditionalManifestProperties(manifestContent, includedPackages);
-            createManifestFile(Paths.get(project.getBuild().getOutputDirectory()), manifestContent);
+            addAdditionalManifestProperties(manifestContent);
+            addManifestPropertiesForInternalBundles(manifestContent, includedPackages);
+            addManifestPropertiesForUserBundles(manifestContent, jdiscCore, nonPublicApiUsed);
 
+            createManifestFile(Paths.get(project.getBuild().getOutputDirectory()), manifestContent);
         } catch (Exception e) {
             throw new MojoExecutionException("Failed generating osgi manifest", e);
         }
@@ -129,11 +153,10 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
 
     private BundleType effectiveBundleType() {
         if (bundleType != BundleType.USER) return bundleType;
-        return project.getGroupId().equals("com.yahoo.vespa") ? BundleType.INTERNAL : BundleType.USER;
+        return isVespaInternalGroupId(project.getGroupId()) ? BundleType.INTERNAL : BundleType.USER;
     }
 
-    private void addAdditionalManifestProperties(Map<String, String> manifestContent, PackageTally includedPackages) {
-        addIfNotEmpty(manifestContent, "X-JDisc-PublicApi-Package", publicApi(includedPackages));
+    private void addAdditionalManifestProperties(Map<String, String> manifestContent) {
         addIfNotEmpty(manifestContent, "Bundle-Activator", bundleActivator);
         addIfNotEmpty(manifestContent, "X-JDisc-Privileged-Activator", jdiscPrivilegedActivator);
         addIfNotEmpty(manifestContent, "Main-Class", mainClass);
@@ -142,8 +165,36 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
         addIfNotEmpty(manifestContent, "WebInfUrl", webInfUrl);
     }
 
+    private void addManifestPropertiesForInternalBundles(Map<String, String> manifestContent, PackageTally includedPackages) {
+        if (effectiveBundleType() == BundleType.USER) return;
+
+        // TODO: this attribute is not necessary, remove?
+        addIfNotEmpty(manifestContent, "X-JDisc-PublicApi-Package", publicApi(includedPackages));
+
+        addIfNotEmpty(manifestContent, "X-JDisc-Non-PublicApi-Export-Package", nonPublicApi(includedPackages));
+    }
+
+    private void addManifestPropertiesForUserBundles(Map<String, String> manifestContent,
+                                                     Optional<Artifact> jdiscCore,
+                                                     List<String> nonPublicApiUsed) {
+        if (effectiveBundleType() != BundleType.USER) return;
+
+        jdiscCore.ifPresent(
+                artifact -> addIfNotEmpty(manifestContent, "X-JDisc-Vespa-Build-Version", artifact.getVersion()));
+        addIfNotEmpty(manifestContent, "X-JDisc-Non-PublicApi-Import-Package", String.join(",", nonPublicApiUsed));
+    }
+
+    private void logNonPublicApiUsage(List<String> nonPublicApiUsed) {
+        if (suppressWarningPublicApi || effectiveBundleType() != BundleType.USER || nonPublicApiUsed.isEmpty()) return;
+        warnOrThrow("This project uses packages that are not part of Vespa's public api: %s".formatted(nonPublicApiUsed));
+    }
+
     private static String publicApi(PackageTally tally) {
         return tally.publicApiPackages().stream().sorted().collect(Collectors.joining(","));
+    }
+
+    private static String nonPublicApi(PackageTally tally) {
+        return tally.nonPublicApiExportedPackages().stream().sorted().collect(Collectors.joining(","));
     }
 
     private void logDebugPackageSets(List<Export> exportedPackagesFromProvidedJars, PackageTally includedPackages) {
@@ -153,10 +204,6 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
             getLog().debug("Exported packages of dependencies = " + exportedPackagesFromProvidedJars.stream()
                     .map(e -> "(" + e.getPackageNames().toString() + ", " + e.version().orElse("")).collect(Collectors.joining(", ")));
         }
-    }
-
-    private boolean hasJdiscCoreProvided(List<Artifact> providedArtifacts) {
-        return providedArtifacts.stream().anyMatch(artifact -> artifact.getArtifactId().equals("jdisc_core"));
     }
 
     private void logMissingPackages(Set<String> exportedPackagesFromProvidedJars,
@@ -181,10 +228,12 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
 
     private void logOverlappingPackages(PackageTally projectPackages,
                                         Set<String> exportedPackagesFromProvidedDeps) {
+        if (suppressWarningOverlappingPackages) return;
+
         Set<String> overlappingProjectPackages = Sets.intersection(projectPackages.definedPackages(), exportedPackagesFromProvidedDeps);
         if (! overlappingProjectPackages.isEmpty()) {
-            getLog().warn("This project defines packages that are also defined in provided scoped dependencies " +
-                          "(overlapping packages are strongly discouraged): " + overlappingProjectPackages);
+            warnOrThrow("This project defines packages that are also defined in provided scoped dependencies " +
+                         "(overlapping packages are strongly discouraged): " + overlappingProjectPackages);
         }
     }
 
@@ -211,9 +260,8 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
         List<Artifact> unsupportedArtifacts = nonJarArtifacts.stream().filter(a -> ! a.getType().equals("pom"))
                 .toList();
 
-        unsupportedArtifacts.forEach(artifact -> getLog()
-                .warn(String.format("Unsupported artifact '%s': Type '%s' is not supported. Please file a feature request.",
-                        artifact.getId(), artifact.getType())));
+        unsupportedArtifacts.forEach(artifact -> warnOrThrow(String.format("Unsupported artifact '%s': Type '%s' is not supported. Please file a feature request.",
+                                                                           artifact.getId(), artifact.getType())));
     }
 
     private void throwIfInternalContainerArtifactsAreIncluded(Collection<Artifact> includedArtifacts) throws MojoExecutionException {
@@ -228,12 +276,18 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
         }
     }
 
+    private boolean isVespaInternalGroupId(String groupId) {
+        return groupId.equals(VESPA_GROUP_ID)
+                || groupId.equals(VESPA_GROUP_ID + ".hosted")
+                || groupId.equals(VESPA_GROUP_ID + ".hosted.controller");
+    }
+
     private boolean isJdiscComponentArtifact(Artifact a) {
-        return a.getArtifactId().equals("component") && a.getGroupId().equals("com.yahoo.vespa");
+        return a.getArtifactId().equals("component") && a.getGroupId().equals(VESPA_GROUP_ID);
     }
 
     private boolean isContainerDiscArtifact(Artifact a) {
-        return a.getArtifactId().equals("container-disc") && a.getGroupId().equals("com.yahoo.vespa");
+        return a.getArtifactId().equals("container-disc") && a.getGroupId().equals(VESPA_GROUP_ID);
     }
 
     private PackageTally getProjectClassesTally() {
@@ -246,4 +300,13 @@ public class GenerateOsgiManifestMojo extends AbstractGenerateOsgiManifestMojo {
 
         return PackageTally.fromAnalyzedClassFiles(analyzedClasses);
     }
+
+    private void warnOrThrow(String... messages){
+        String message = String.join("\n", messages);
+        if (failOnWarnings) {
+            throw new RuntimeException(message);
+        }
+        getLog().warn(message);
+    }
+
 }

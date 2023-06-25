@@ -1,7 +1,11 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.container.plugin.classanalysis;
 
+import com.yahoo.container.plugin.osgi.ImportPackages;
+
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -29,6 +33,20 @@ public class Packages {
         } else {
             return fullClassName.substring(0, index);
         }
+    }
+
+    /**
+     * Returns the imported packages that exist in the given set of disallowed packages.
+     */
+    public static List<String> disallowedImports(Map<String, ImportPackages.Import> imports, List<String> disallowed) {
+        if (imports == null || imports.isEmpty()) return List.of();
+
+        var importedSet = new HashSet<>(imports.keySet());
+        var disallowedSet = disallowed == null ? Set.of() : new HashSet<>(disallowed);
+
+        return importedSet.stream()
+                .filter(disallowedSet::contains)
+                .toList();
     }
 
     public static PackageMetaData analyzePackages(Set<ClassFileMetaData> allClasses) {

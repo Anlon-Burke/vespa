@@ -8,6 +8,7 @@ start = element deployment {
    attribute athenz-domain { xsd:string }? &
    attribute athenz-service { xsd:string }? &
    attribute cloud-account { xsd:string }? &
+   attribute empty-host-ttl { xsd:string }? &
    Step
 }
 
@@ -39,6 +40,7 @@ Instance = element instance {
    attribute tags { xsd:string }? &
    attribute athenz-service { xsd:string }? &
    attribute cloud-account { xsd:string }? &
+   attribute empty-host-ttl { xsd:string }? &
    StepExceptInstance
 }
 
@@ -96,21 +98,27 @@ Email = element email {
 Test = element test {
    attribute athenz-service { xsd:string }? &
    attribute tester-flavor { xsd:string }? &
+   attribute cloud-account { xsd:string }? &
+   attribute empty-host-ttl { xsd:string }? &
    text
 }
 
 Staging = element staging {
    attribute athenz-service { xsd:string }? &
    attribute tester-flavor { xsd:string }? &
+   attribute cloud-account { xsd:string }? &
+   attribute empty-host-ttl { xsd:string }? &
    text
 }
 
 Dev = element dev {
-   attribute cloud-account { xsd:string }?
+   attribute cloud-account { xsd:string }? &
+   attribute empty-host-ttl { xsd:string }?
 }
 
 Perf = element perf {
-   attribute cloud-account { xsd:string }?
+   attribute cloud-account { xsd:string }? &
+   attribute empty-host-ttl { xsd:string }?
 }
 
 Prod = element prod {
@@ -118,6 +126,7 @@ Prod = element prod {
    attribute athenz-service { xsd:string }? &
    attribute tester-flavor { xsd:string }? &
    attribute cloud-account { xsd:string }? &
+   attribute empty-host-ttl { xsd:string }? &
    Region* &
    Delay* &
    ProdTest* &
@@ -132,6 +141,7 @@ Region = element region {
    attribute active { xsd:boolean }? &
    attribute athenz-service { xsd:string }? &
    attribute cloud-account { xsd:string }? &
+   attribute empty-host-ttl { xsd:string }? &
    text
 }
 

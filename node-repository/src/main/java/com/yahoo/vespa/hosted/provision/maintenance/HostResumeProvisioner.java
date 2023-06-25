@@ -1,9 +1,10 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
-import com.yahoo.config.provision.CloudName;
+import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.jdisc.Metric;
+import com.yahoo.transaction.Mutex;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
@@ -38,21 +39,26 @@ public class HostResumeProvisioner extends NodeRepositoryMaintainer {
 
     @Override
     protected double maintain() {
-        NodeList allNodes = nodeRepository().nodes().list();
+        NodeList allNodes;
+        // Host and child nodes are written in separate transactions, but both are written while holding the
+        // unallocated lock. Hold the unallocated lock while reading nodes to ensure we get all the children
+        // of newly provisioned hosts.
+        try (Mutex ignored = nodeRepository().nodes().lockUnallocated()) {
+            allNodes = nodeRepository().nodes().list();
+        }
+
         NodeList hosts = allNodes.state(Node.State.provisioned).nodeType(NodeType.host, NodeType.confighost, NodeType.controllerhost);
         int failures = 0;
         for (Node host : hosts) {
-            NodeList children = allNodes.childrenOf(host);
             try {
-                HostIpConfig hostIpConfig = hostProvisioner.provision(host, children.asSet());
-                setIpConfig(host, children, hostIpConfig);
+                HostIpConfig hostIpConfig = hostProvisioner.provision(host);
+                setIpConfig(host, hostIpConfig);
             } catch (IllegalArgumentException | IllegalStateException e) {
-                log.log(Level.INFO, "Could not provision " + host.hostname() + " with " + children.size() + " children, will retry in " +
+                log.log(Level.INFO, "Could not provision " + host.hostname() + ", will retry in " +
                                     interval() + ": " + Exceptions.toMessageString(e));
             } catch (FatalProvisioningException e) {
                 failures++;
-                log.log(Level.SEVERE, "Failed to provision " + host.hostname() + " with " + children.size()  +
-                                      " children, failing out the host recursively", e);
+                log.log(Level.SEVERE, "Failed to provision " + host.hostname() + ", failing out the host recursively", e);
                 nodeRepository().nodes().failOrMarkRecursively(
                         host.hostname(), Agent.HostResumeProvisioner, "Failed by HostResumeProvisioner due to provisioning failure");
             } catch (RuntimeException e) {
@@ -67,26 +73,18 @@ public class HostResumeProvisioner extends NodeRepositoryMaintainer {
         return asSuccessFactorDeviation(hosts.size(), failures);
     }
 
-    private void setIpConfig(Node host, NodeList children, HostIpConfig hostIpConfig) {
+    private void setIpConfig(Node host, HostIpConfig hostIpConfig) {
         if (hostIpConfig.isEmpty()) return;
-        NodeList nodes = NodeList.of(host).and(children);
-        for (var node : nodes) {
-            verifyDns(node, hostIpConfig.require(node.hostname()));
-        }
+        hostIpConfig.asMap().forEach((hostname, ipConfig) ->
+                verifyDns(hostname, host.type(), host.cloudAccount(), ipConfig));
         nodeRepository().nodes().setIpConfig(hostIpConfig);
     }
 
     /** Verify DNS configuration of given node */
-    private void verifyDns(Node node, IP.Config ipConfig) {
-        for (var ipAddress : ipConfig.primary()) {
-            IP.verifyDns(node.hostname(), ipAddress, nodeRepository().nameResolver(), verifyPtr(node, ipAddress));
+    private void verifyDns(String hostname, NodeType hostType, CloudAccount cloudAccount, IP.Config ipConfig) {
+        for (String ipAddress : ipConfig.primary()) {
+            IP.verifyDns(hostname, ipAddress, hostType, nodeRepository().nameResolver(), cloudAccount, nodeRepository().zone());
         }
-    }
-
-    private boolean verifyPtr(Node node, String address) {
-        if (node.cloudAccount().isEnclave(nodeRepository().zone())) return false;
-        if (nodeRepository().zone().cloud().name().equals(CloudName.GCP) && IP.isV6(address)) return false;
-        return true;
     }
 
 }

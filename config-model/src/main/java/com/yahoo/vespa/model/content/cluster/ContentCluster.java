@@ -114,7 +114,6 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
                     new SearchDefinitionBuilder().build(deployState.getDocumentModel().getDocumentManager(), documentsElement);
 
             String routingSelection = new DocumentSelectionBuilder().build(documentsElement);
-            RedundancyBuilder redundancyBuilder = new RedundancyBuilder(contentElement);
             Set<NewDocumentType> globallyDistributedDocuments = new GlobalDistributionBuilder(documentDefinitions).build(documentsElement);
 
             String clusterId = getClusterId(contentElement);
@@ -133,7 +132,7 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
             c.persistenceFactory = new EngineFactoryBuilder().build(contentElement, c);
             c.storageNodes = new StorageCluster.Builder().build(deployState, c, w3cContentElement);
             c.distributorNodes = new DistributorCluster.Builder(c).build(deployState, c, w3cContentElement);
-            c.rootGroup = new StorageGroup.Builder(contentElement, context).buildRootGroup(deployState, redundancyBuilder, c);
+            c.rootGroup = new StorageGroup.Builder(contentElement, context).buildRootGroup(deployState, c, c.search.isStreaming());
             c.clusterControllerConfig = createClusterControllerConfig(contentElement, deployState, c, resourceLimits);
             validateThatGroupSiblingsAreUnique(c.clusterId, c.rootGroup);
             c.search.handleRedundancy(c.redundancy);
@@ -447,7 +446,7 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
 
     public final ContentSearchCluster getSearch() { return search; }
 
-    public Redundancy redundancy() { return redundancy; }
+    public Redundancy getRedundancy() { return redundancy; }
 
     public ContentCluster setRedundancy(Redundancy redundancy) {
         this.redundancy = redundancy;
@@ -519,7 +518,7 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
      * in config and not remove it again if they reduce the node count.
      */
     public int distributionBits() {
-        if (zone.environment() == Environment.prod && ! zone.equals(Zone.defaultZone())) {
+        if (zoneEnvImplies16DistributionBits() && ! zone.equals(Zone.defaultZone())) {
             return 16;
         }
         else { // hosted test zone, or self-hosted system
@@ -527,6 +526,11 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
             // self-hosted systems: should probably default to 16 bits, but the transition may cause problems
             return DistributionBitCalculator.getDistributionBits(getNodeCountPerGroup(), getDistributionMode());
         }
+    }
+
+    private boolean zoneEnvImplies16DistributionBits() {
+        // We want perf to behave like prod as much as possible.
+        return (zone.environment() == Environment.prod) || (zone.environment() == Environment.perf);
     }
 
     public boolean isHosted() {

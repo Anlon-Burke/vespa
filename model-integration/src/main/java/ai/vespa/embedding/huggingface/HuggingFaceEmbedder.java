@@ -1,5 +1,6 @@
 package ai.vespa.embedding.huggingface;
 
+import ai.vespa.embedding.PoolingStrategy;
 import ai.vespa.modelintegration.evaluator.OnnxEvaluator;
 import ai.vespa.modelintegration.evaluator.OnnxEvaluatorOptions;
 import ai.vespa.modelintegration.evaluator.OnnxRuntime;
@@ -17,9 +18,14 @@ import com.yahoo.tensor.TensorType;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Logger;
+
+import static com.yahoo.language.huggingface.ModelInfo.TruncationStrategy.LONGEST_FIRST;
 
 @Beta
 public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
+
+    private static final Logger log = Logger.getLogger(HuggingFaceEmbedder.class.getName());
 
     private final String inputIdsName;
     private final String attentionMaskName;
@@ -28,6 +34,7 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
     private final boolean normalize;
     private final HuggingFaceTokenizer tokenizer;
     private final OnnxEvaluator evaluator;
+    private final PoolingStrategy poolingStrategy;
 
     @Inject
     public HuggingFaceEmbedder(OnnxRuntime onnx, HuggingFaceEmbedderConfig config) {
@@ -36,12 +43,22 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
         tokenTypeIdsName = config.transformerTokenTypeIds();
         outputName = config.transformerOutput();
         normalize = config.normalize();
-        tokenizer = new HuggingFaceTokenizer.Builder()
+        var tokenizerPath = Paths.get(config.tokenizerPath().toString());
+        var builder = new HuggingFaceTokenizer.Builder()
                 .addSpecialTokens(true)
-                .addDefaultModel(Paths.get(config.tokenizerPath().toString()))
-                .setTruncation(true)
-                .setMaxLength(config.transformerMaxTokens())
-                .build();
+                .addDefaultModel(tokenizerPath)
+                .setPadding(false);
+        var info = HuggingFaceTokenizer.getModelInfo(tokenizerPath);
+        log.fine(() -> "'%s' has info '%s'".formatted(tokenizerPath, info));
+        if (info.maxLength() == -1 || info.truncation() != LONGEST_FIRST) {
+            // Force truncation to max token vector length accepted by model if tokenizer.json contains no valid truncation configuration
+            int maxLength = info.maxLength() > 0 && info.maxLength() <= config.transformerMaxTokens()
+                    ? info.maxLength()
+                    : config.transformerMaxTokens();
+            builder.setTruncation(true).setMaxLength(maxLength);
+        }
+        this.tokenizer = builder.build();
+        poolingStrategy = PoolingStrategy.fromString(config.poolingStrategy().toString());
         var onnxOpts = new OnnxEvaluatorOptions();
         if (config.transformerGpuDevice() >= 0)
             onnxOpts.setGpuDevice(config.transformerGpuDevice());
@@ -84,11 +101,11 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
         var encoding = tokenizer.encode(s, context.getLanguage());
         Tensor inputSequence = createTensorRepresentation(encoding.ids(), "d1");
         Tensor attentionMask = createTensorRepresentation(encoding.attentionMask(), "d1");
-        Tensor tokenTypeIds = createTensorRepresentation(encoding.typeIds(), "d1");
+        Tensor tokenTypeIds = tokenTypeIdsName.isEmpty() ? null : createTensorRepresentation(encoding.typeIds(), "d1");
 
 
         Map<String, Tensor> inputs;
-        if (tokenTypeIds.isEmpty()) {
+        if (tokenTypeIdsName.isEmpty() || tokenTypeIds.isEmpty()) {
             inputs = Map.of(inputIdsName, inputSequence.expand("d0"),
                             attentionMaskName, attentionMask.expand("d0"));
         } else {
@@ -99,17 +116,7 @@ public class HuggingFaceEmbedder extends AbstractComponent implements Embedder {
 
         Map<String, Tensor> outputs = evaluator.evaluate(inputs);
         Tensor tokenEmbeddings = outputs.get(outputName);
-        Tensor.Builder builder = Tensor.Builder.of(tensorType);
-
-        // Mean pooling implementation
-        Tensor summedEmbeddings = tokenEmbeddings.sum("d1");
-        Tensor summedAttentionMask = attentionMask.expand("d0").sum("d1");
-        Tensor averaged = summedEmbeddings.join(summedAttentionMask, (x, y) -> x / y);
-        for (int i = 0; i < tensorType.dimensions().get(0).size().get(); i++) {
-            builder.cell(averaged.get(TensorAddress.of(0,i)), i);
-        }
-
-        Tensor result = builder.build();
+        var result = poolingStrategy.toSentenceEmbedding(tensorType, tokenEmbeddings, attentionMask);
         return normalize ? normalize(result, tensorType) : result;
     }
 

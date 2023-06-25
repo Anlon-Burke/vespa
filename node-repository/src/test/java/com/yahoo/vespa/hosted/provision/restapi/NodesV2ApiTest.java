@@ -237,18 +237,24 @@ public class NodesV2ApiTest {
 
         assertFile(new Request("http://localhost:8080/nodes/v2/node/host4.yahoo.com"), "node4-after-changes.json");
 
-        // park and remove host
+        // Park and remove host
         assertResponse(new Request("http://localhost:8080/nodes/v2/state/parked/dockerhost1.yahoo.com",
                                    new byte[0], Request.Method.PUT),
                        "{\"message\":\"Moved dockerhost1.yahoo.com to parked\"}");
         assertResponse(new Request("http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com",
                                    new byte[0], Request.Method.DELETE),
                        "{\"message\":\"Removed dockerhost1.yahoo.com\"}");
-        // ... and then forget it completely
+
+        // Host marked for rebuild cannot be forgotten
+        assertResponse(new Request("http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com",
+                                   Utf8.toBytes("{\"wantToRebuild\": true, \"wantToRetire\": true}"), Request.Method.PATCH),
+                       "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
         tester.assertResponse(new Request("http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com",
                                           new byte[0], Request.Method.DELETE),
                               400,
                               "{\"error-code\":\"BAD_REQUEST\",\"message\":\"deprovisioned host dockerhost1.yahoo.com is rebuilding and cannot be forgotten\"}");
+
+        // Forget host completely
         assertResponse(new Request("http://localhost:8080/nodes/v2/node/dockerhost1.yahoo.com",
                                    Utf8.toBytes("{\"wantToRebuild\": false}"), Request.Method.PATCH),
                        "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
@@ -1016,15 +1022,25 @@ public class NodesV2ApiTest {
 
         assertResponse(new Request(url, Utf8.toBytes("{\"exclusiveToApplicationId\": \"t1:a1:i1\"}"), Request.Method.PATCH),
                 "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
-        tester.assertPartialResponse(new Request(url), "exclusiveTo\":\"t1:a1:i1\",", true);
+        tester.assertPartialResponse(new Request(url), "\"exclusiveTo\":\"t1:a1:i1\",", true);
+
+        assertResponse(new Request(url, Utf8.toBytes("{\"hostTTL\": 86400000}"), Request.Method.PATCH),
+                       "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
+        tester.assertPartialResponse(new Request(url), "\"hostTTL\":86400000", true);
+
+        assertResponse(new Request(url, Utf8.toBytes("{\"hostEmptyAt\": 789}"), Request.Method.PATCH),
+                       "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
+        tester.assertPartialResponse(new Request(url), "\"hostEmptyAt\":789", true);
 
         assertResponse(new Request(url, Utf8.toBytes("{\"exclusiveToClusterType\": \"admin\"}"), Request.Method.PATCH),
                 "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
-        tester.assertPartialResponse(new Request(url), "exclusiveTo\":\"t1:a1:i1\",\"exclusiveToClusterType\":\"admin\",", true);
+        tester.assertPartialResponse(new Request(url), "\"exclusiveToClusterType\":\"admin\",", true);
 
-        assertResponse(new Request(url, Utf8.toBytes("{\"exclusiveTo\": null, \"exclusiveToClusterType\": null}"), Request.Method.PATCH),
+        assertResponse(new Request(url, Utf8.toBytes("{\"exclusiveTo\": null, \"hostTTL\":null, \"hostEmptyAt\":null, \"exclusiveToClusterType\": null}"), Request.Method.PATCH),
                 "{\"message\":\"Updated dockerhost1.yahoo.com\"}");
-        tester.assertPartialResponse(new Request(url), "exclusiveTo", false);
+        tester.assertPartialResponse(new Request(url), "\"exclusiveTo", false);
+        tester.assertPartialResponse(new Request(url), "\"hostTTL\"", false);
+        tester.assertPartialResponse(new Request(url), "\"hostEmptyAt\"", false);
     }
 
     @Test

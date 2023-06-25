@@ -1,6 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision;
 
+import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.History;
@@ -17,6 +18,8 @@ import java.util.function.Predicate;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -46,6 +49,53 @@ public class NodeRepositoryTest {
 
         assertEquals(4, tester.nodeRepository().nodes().list().size());
         assertEquals(2, tester.nodeRepository().nodes().list(Node.State.deprovisioned).size());
+    }
+
+    @Test
+    public void test_ip_conflicts() {
+        NodeRepositoryTester tester = new NodeRepositoryTester();
+        IP.Config ipConfig = IP.Config.of(Set.of("1.2.3.4", "10.2.3.4"), Set.of("1.2.3.4", "10.2.3.4"));
+        IP.Config publicIpConfig = IP.Config.of(Set.of("1.2.3.4"), Set.of("1.2.3.4"));
+        IP.Config privateIpConfig = IP.Config.of(Set.of("10.2.3.4"), Set.of("10.2.3.4"));
+
+        Node host1 = Node.create("id1", ipConfig, "host1", tester.nodeFlavors().getFlavorOrThrow("default"), NodeType.host)
+                               .build();
+        tester.nodeRepository().nodes().addNodes(List.of(host1), Agent.system);
+
+        Node publicHost2 = Node.create("id2", publicIpConfig, "host2", tester.nodeFlavors().getFlavorOrThrow("default"), NodeType.host)
+                               .build();
+
+        Node publicEnclaveHost2 = Node.create("id2", publicIpConfig, "host2", tester.nodeFlavors().getFlavorOrThrow("default"), NodeType.host)
+                                      .cloudAccount(CloudAccount.from("gcp:foo-bar-baz"))
+                                      .build();
+
+        // Public IP conflicts inside an account are not allowed
+        assertEquals("Cannot assign [1.2.3.4] to host2: [1.2.3.4] already assigned to host1",
+                     assertThrows(IllegalArgumentException.class,
+                                  () -> tester.nodeRepository().nodes().addNodes(List.of(publicHost2), Agent.system))
+                             .getMessage());
+
+        // Public IP conflicts across accounts are not allowed
+        assertEquals("Cannot assign [1.2.3.4] to host2: [1.2.3.4] already assigned to host1",
+                     assertThrows(IllegalArgumentException.class,
+                                  () -> tester.nodeRepository().nodes().addNodes(List.of(publicEnclaveHost2), Agent.system))
+                             .getMessage());
+
+        Node privateHost2 = Node.create("id2", privateIpConfig, "host2", tester.nodeFlavors().getFlavorOrThrow("default"), NodeType.host)
+                                .build();
+
+        Node privateEnclaveHost2 = Node.create("id2", privateIpConfig, "host2", tester.nodeFlavors().getFlavorOrThrow("default"), NodeType.host)
+                                       .cloudAccount(CloudAccount.from("gcp:foo-bar-baz"))
+                                       .build();
+
+        // Private IP conflicts inside accounts are not allowed
+        assertEquals("Cannot assign [10.2.3.4] to host2: [10.2.3.4] already assigned to host1",
+                     assertThrows(IllegalArgumentException.class,
+                                  () -> tester.nodeRepository().nodes().addNodes(List.of(privateHost2), Agent.system))
+                             .getMessage());
+
+        // Private IP conflicts across accounts are allowed
+        tester.nodeRepository().nodes().addNodes(List.of(privateEnclaveHost2), Agent.system);
     }
 
     @Test
@@ -199,7 +249,7 @@ public class NodeRepositoryTest {
 
         // Set host 2 properties and deprovision it
         try (var lock = tester.nodeRepository().nodes().lockAndGetRequired("host2")) {
-            Node host2 = lock.node().withWantToRetire(true, false, true, Agent.system, tester.nodeRepository().clock().instant());
+            Node host2 = lock.node().withWantToRetire(true, false, true, false, Agent.system, tester.nodeRepository().clock().instant());
             tester.nodeRepository().nodes().write(host2, lock);
         }
         tester.nodeRepository().nodes().removeRecursively("host2");
@@ -285,6 +335,24 @@ public class NodeRepositoryTest {
         Node node = tester.nodeRepository().nodes().list().first().get();
         assertEquals("host1", node.hostname());
         assertEquals(Node.State.breakfixed, node.state());
+    }
+
+    @Test
+    public void parking_by_operator_cancels_retirement() {
+        NodeRepositoryTester tester = new NodeRepositoryTester();
+        String hostname = "host1";
+        tester.addHost(hostname, hostname, "default", NodeType.host);
+        tester.nodeRepository().nodes().deprovision(hostname, Agent.system, tester.clock().instant());
+
+        Node host1 = tester.nodeRepository().nodes().node(hostname).get();
+        assertTrue(host1.status().wantToRetire());
+        assertTrue(host1.status().wantToDeprovision());
+
+        tester.nodeRepository().nodes().park(hostname, false, Agent.operator, getClass().getSimpleName());
+        host1 = tester.nodeRepository().nodes().node(hostname).get();
+        assertFalse(host1.status().wantToRetire());
+        assertFalse(host1.status().wantToDeprovision());
+        assertSame(Node.State.parked, host1.state());
     }
 
     private static Set<String> filterNodes(NodeRepositoryTester tester, Predicate<Node> filter) {

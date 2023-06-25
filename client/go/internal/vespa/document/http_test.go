@@ -3,6 +3,7 @@ package document
 import (
 	"bytes"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -89,17 +90,18 @@ func TestClientSend(t *testing.T) {
 			Latency: time.Second,
 		}
 		if i < 3 {
-			httpClient.NextResponseString(200, `{"message":"All good!"}`)
+			msg := `{"message":"All good!"}`
+			httpClient.NextResponseString(200, msg)
 			wantRes.Status = StatusSuccess
 			wantRes.HTTPStatus = 200
-			wantRes.Message = "All good!"
 			wantRes.BytesRecv = 23
 		} else {
-			httpClient.NextResponseString(502, `{"message":"Good bye, cruel world!"}`)
+			errMsg := `something went wront`
+			httpClient.NextResponseString(502, errMsg)
 			wantRes.Status = StatusVespaFailure
 			wantRes.HTTPStatus = 502
-			wantRes.Message = "Good bye, cruel world!"
-			wantRes.BytesRecv = 36
+			wantRes.Body = []byte(errMsg)
+			wantRes.BytesRecv = 20
 		}
 		res := client.Send(doc)
 		wantRes.BytesSent = int64(len(httpClient.LastBody))
@@ -111,8 +113,11 @@ func TestClientSend(t *testing.T) {
 		if r.Method != tt.method {
 			t.Errorf("got r.Method = %q, want %q", r.Method, tt.method)
 		}
-		if !reflect.DeepEqual(r.Header, defaultHeaders) {
-			t.Errorf("got r.Header = %v, want %v", r.Header, defaultHeaders)
+		var headers http.Header = map[string][]string{
+			"Content-Type": {"application/json; charset=utf-8"},
+		}
+		if !reflect.DeepEqual(r.Header, headers) {
+			t.Errorf("got r.Header = %v, want %v", r.Header, headers)
 		}
 		if r.URL.String() != tt.url {
 			t.Errorf("got r.URL = %q, want %q", r.URL, tt.url)
@@ -134,10 +139,42 @@ func TestClientSend(t *testing.T) {
 		MinLatency:   time.Second,
 		MaxLatency:   time.Second,
 		BytesSent:    75,
-		BytesRecv:    105,
+		BytesRecv:    89,
 	}
 	if !reflect.DeepEqual(want, stats) {
 		t.Errorf("got %+v, want %+v", stats, want)
+	}
+}
+
+func TestClientGet(t *testing.T) {
+	httpClient := mock.HTTPClient{ReadBody: true}
+	client, _ := NewClient(ClientOptions{
+		BaseURL: "https://example.com:1337",
+		Timeout: time.Duration(5 * time.Second),
+	}, []util.HTTPClient{&httpClient})
+	clock := manualClock{t: time.Now(), tick: time.Second}
+	client.now = clock.now
+	doc := `{
+    "pathId": "/document/v1/mynamespace/music/docid/doc1",
+    "id": "id:mynamespace:music::doc1",
+    "fields": {
+        "artist": "Metallica",
+        "album": "Master of Puppets"
+    }
+}`
+	id := Id{Namespace: "mynamespace", Type: "music", UserSpecific: "doc1"}
+	httpClient.NextResponseString(200, doc)
+	result := client.Get(id)
+	want := Result{
+		Id:         id,
+		Body:       []byte(doc),
+		Status:     StatusSuccess,
+		HTTPStatus: 200,
+		Latency:    time.Second,
+		BytesRecv:  192,
+	}
+	if !reflect.DeepEqual(want, result) {
+		t.Errorf("got %+v, want %+v", result, want)
 	}
 }
 

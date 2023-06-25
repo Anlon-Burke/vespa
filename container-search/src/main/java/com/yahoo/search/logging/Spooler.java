@@ -5,7 +5,6 @@ import ai.vespa.validation.Validation;
 import com.yahoo.vespa.defaults.Defaults;
 import java.io.File;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
@@ -16,6 +15,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -37,6 +38,7 @@ public class Spooler {
     private static final int defaultMaxEntriesPerFile = 100;
     // Maximum delay between first write to a file and when we should close file and move it for further processing
     static final Duration maxDelayAfterFirstWrite = Duration.ofSeconds(5);
+    private static final int maxFilesToRead = 50;
 
     private Path processingPath;
     private Path readyPath;
@@ -53,21 +55,25 @@ public class Spooler {
     private final Clock clock;
     private final AtomicReference<Instant> firstWriteTimestamp = new AtomicReference<>();
     private final boolean keepSuccessFiles;
+    private final int maxFailures;
+    private final Map<File, Integer> failures = new ConcurrentHashMap<>();
 
     public Spooler(Clock clock) {
-        this(clock, false);
+        this(clock, false, 1000);
     }
 
-    public Spooler(Clock clock, boolean keepSuccessFiles) {
-        this(defaultSpoolPath, defaultMaxEntriesPerFile, clock, keepSuccessFiles);
+    public Spooler(Clock clock, boolean keepSuccessFiles, int maxFailures) {
+        this(defaultSpoolPath, defaultMaxEntriesPerFile, clock, keepSuccessFiles, maxFailures);
     }
 
-    public Spooler(Path spoolPath, int maxEntriesPerFile, Clock clock, boolean keepSuccessFiles) {
+    // Note: Needs to be public, used in system tests
+    public Spooler(Path spoolPath, int maxEntriesPerFile, Clock clock, boolean keepSuccessFiles, int maxFailures) {
         this.spoolPath = spoolPath;
         this.maxEntriesPerFile = maxEntriesPerFile;
         this.clock = clock;
         this.fileNameBase.set(newFileNameBase(clock));
         this.keepSuccessFiles = keepSuccessFiles;
+        this.maxFailures = maxFailures;
         firstWriteTimestamp.set(Instant.EPOCH);
         createDirs(spoolPath);
     }
@@ -84,7 +90,7 @@ public class Spooler {
         }
         log.log(Level.FINE, "Files in ready path: " + files.size());
 
-        List<File> fileList = getFiles(files, 50); // TODO
+        List<File> fileList = getFiles(files);
         if ( ! fileList.isEmpty()) {
             processFiles(fileList, transport);
         }
@@ -105,31 +111,53 @@ public class Spooler {
     public void processFiles(List<File> files, Function<LoggerEntry, Boolean> transport) {
         for (File f : files) {
             log.log(Level.FINE, "Processing file " + f);
-            boolean succcess = false;
+            boolean success = false;
             try {
                 List<String> lines = Files.readAllLines(f.toPath());
                 for (String line : lines) {
                     LoggerEntry entry = LoggerEntry.deserialize(line);
                     log.log(Level.FINE, "Read entry " + entry + " from " + f);
-                    succcess = transport.apply(entry);
-                    if (! succcess) {
-                        log.log(Level.WARNING, "unsuccessful call to transport() for " + entry);
-                    }
-                };
-            } catch (IOException e) {
-                throw new UncheckedIOException("Unable to process file " + f.toPath(), e);
-                // TODO: Move to failures path
-            } finally {
-                if (succcess && keepSuccessFiles) {
-                    Path file = f.toPath();
-                    Path target = spoolPath.resolve(successesPath).resolve(f.toPath().relativize(file)).resolve(f.getName());
-                    try {
-                        Files.move(file, target);
-                    } catch (IOException e) {
-                        log.log(Level.SEVERE, "Unable to move processed file " + file + " to " + target, e);
+                    success = transport.apply(entry);
+                    if (! success) {
+                        throw new RuntimeException("Unable to process file " + f + ": unsuccessful call to transport() for " + entry);
                     }
                 }
+                failures.remove(f);
+            } catch (Exception e) {
+                handleFailure(f);
+            } finally {
+                if (success) {
+                    if (keepSuccessFiles)
+                        moveProcessedFile(f, successesPath);
+                    else
+                        try {
+                            Files.delete(f.toPath());
+                        } catch (IOException e) {
+                            log.log(Level.WARNING, "Unable to delete file " + f, e);
+                        }
+                }
             }
+        }
+    }
+
+    private void handleFailure(File file) {
+        failures.putIfAbsent(file, 0);
+        var failCount = failures.compute(file, (f, count) -> count + 1);
+        if (failCount > maxFailures) {
+            log.log(Level.WARNING, "Unable to process file " + file + " after trying " + maxFailures + " times, moving it to " + failuresPath);
+            moveProcessedFile(file, failuresPath);
+        } else {
+            log.log(Level.INFO, "Unable to process file " + file + " after trying " + maxFailures + " times, will retry");
+        }
+    }
+
+    private void moveProcessedFile(File f, Path path) {
+        Path file = f.toPath();
+        Path target = spoolPath.resolve(path).resolve(f.toPath().relativize(file)).resolve(f.getName());
+        try {
+            Files.move(file, target);
+        } catch (IOException e) {
+            log.log(Level.SEVERE, "Unable to move processed file " + file + " to " + target, e);
         }
     }
 
@@ -138,8 +166,8 @@ public class Spooler {
     public Path successesPath() { return successesPath; }
     public Path failuresPath() { return failuresPath; }
 
-    List<File> getFiles(List<Path> files, int count) {
-        Validation.requireAtLeast(count, "count must be a positive number", 1);
+    List<File> getFiles(List<Path> files) {
+        Validation.requireAtLeast(maxFilesToRead, "count must be a positive number", 1);
         List<File> fileList = new ArrayList<>();
 
         for (Path p : files) {
@@ -149,7 +177,7 @@ public class Spooler {
             }
 
             // Grab only some files
-            if (fileList.size() > count) {
+            if (fileList.size() > maxFilesToRead) {
                 break;
             }
         }
@@ -177,6 +205,8 @@ public class Spooler {
         Path file = spoolPath.resolve(processingPath).resolve(fileName);
         switchFileIfNeeded(file, fileName);
     }
+
+    Map<File, Integer> failures() { return failures; }
 
     private synchronized void switchFileIfNeeded(Path file, String fileName) throws IOException {
         if (file.toFile().exists()

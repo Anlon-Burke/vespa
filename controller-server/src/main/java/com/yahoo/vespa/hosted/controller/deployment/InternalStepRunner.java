@@ -356,7 +356,7 @@ public class InternalStepRunner implements StepRunner {
             if (summary.upgradingOs() > 0)
                 logger.log(summary.upgradingOs() + " nodes upgrading OS");
             if (summary.needNewConfig() > 0)
-                logger.log(summary.needNewConfig() + " application services upgrading");
+                logger.log(summary.needNewConfig() + " application services still deploying");
         }
         if (summary.converged()) {
             controller.jobController().locked(id, lockedRun -> lockedRun.withSummary(null));
@@ -912,6 +912,7 @@ public class InternalStepRunner implements StepRunner {
         TestPackage testPackage = new TestPackage(() -> controller.applications().applicationStore().streamTester(id.application().tenant(),
                                                                                                                   id.application().application(), revision),
                                                   controller.system().isPublic(),
+                                                  controller.zoneRegistry().get(id.type().zone()).getCloudName(),
                                                   id,
                                                   controller.controllerConfig().steprunner().testerapp(),
                                                   spec,

@@ -25,9 +25,10 @@ MultiValueAttribute<B, M>::
 MultiValueAttribute(const vespalib::string &baseFileName,
                     const AttributeVector::Config &cfg)
     : B(baseFileName, cfg),
-      _mvMapping(MultiValueMapping::optimizedConfigForHugePage(1023,
+      _mvMapping(MultiValueMapping::optimizedConfigForHugePage(MultiValueMapping::array_store_max_type_id,
                                                                vespalib::alloc::MemoryAllocator::HUGEPAGE_SIZE,
                                                                vespalib::alloc::MemoryAllocator::PAGE_SIZE,
+                                                               vespalib::datastore::ArrayStoreConfig::default_max_buffer_size,
                                                                8 * 1024,
                                                                cfg.getGrowStrategy().getMultiValueAllocGrowFactor(),
                                                                multivalueattribute::enable_free_lists),

@@ -368,13 +368,13 @@ TEST("test visit cache does not cache empty ones and is able to access some back
     IDataStore & datastore = store.getStore();
 
     VisitCache visitCache(datastore, 100000, CompressionConfig::Type::LZ4);
-    EXPECT_EQUAL(0u, visitCache.read({1}).size());
+    EXPECT_EQUAL(12u, visitCache.read({1}).bytesAllocated());
     EXPECT_TRUE(visitCache.read({1}).empty());
     datastore.write(1,1, A7, 7);
-    EXPECT_EQUAL(0u, visitCache.read({2}).size());
+    EXPECT_EQUAL(12u, visitCache.read({2}).bytesAllocated());
     CompressedBlobSet cbs = visitCache.read({1});
     EXPECT_FALSE(cbs.empty());
-    EXPECT_EQUAL(19u, cbs.size());
+    EXPECT_EQUAL(19u, cbs.bytesAllocated());
     BlobSet bs(cbs.getBlobSet());
     EXPECT_EQUAL(7u, bs.get(1).size());
     EXPECT_EQUAL(0, strncmp(A7, bs.get(1).c_str(), 7));
@@ -565,7 +565,7 @@ TEST("Control static memory usage") {
     IDocumentStore &ds = vcs.getStore();
     vespalib::MemoryUsage usage = ds.getMemoryUsage();
     constexpr size_t mutex_size = sizeof(std::mutex) * 2 * (113 + 1); // sizeof(std::mutex) is platform dependent
-    EXPECT_EQUAL(74572 + mutex_size, usage.allocatedBytes());
+    EXPECT_EQUAL(74668 + mutex_size, usage.allocatedBytes());
     EXPECT_EQUAL(944u + mutex_size, usage.usedBytes());
 }
 
@@ -575,29 +575,29 @@ TEST("test the update cache strategy") {
     for (size_t i(1); i <= 10; i++) {
         vcs.write(i);
     }
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 0, 0, 0));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 0, 0, 28));
     vcs.verifyRead(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 1, 221));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 1, 241));
     vcs.write(8);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 1, 221));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 1, 241));
     vcs.write(7, 17);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 1, 282));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 1, 302));
     vcs.verifyRead(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 1, 1, 282));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 1, 1, 302));
     vcs.remove(8);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 1, 1, 282));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 1, 1, 302));
     vcs.remove(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 1, 0, 0));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 1, 0, 28));
     vcs.write(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 1, 0, 0));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 1, 0, 28));
     vcs.verifyRead(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 2, 1, 221));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 2, 1, 241));
     vcs.write(7, 17);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 2, 1, 282));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 1, 2, 1, 302));
     vcs.recreate();
     IDocumentStore & ds2 = vcs.getStore();
     vcs.verifyRead(7);
-    TEST_DO(verifyCacheStats(ds2.getCacheStats(), 0, 1, 1, 282));
+    TEST_DO(verifyCacheStats(ds2.getCacheStats(), 0, 1, 1, 302));
 }
 
 TEST("test the invalidate cache strategy") {
@@ -606,23 +606,23 @@ TEST("test the invalidate cache strategy") {
     for (size_t i(1); i <= 10; i++) {
         vcs.write(i);
     }
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 0, 0, 0));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 0, 0, 28));
     vcs.verifyRead(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 1, 221));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 1, 241));
     vcs.write(8);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 1, 221));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 1, 241));
     vcs.write(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 0, 0));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 1, 0, 28));
     vcs.verifyRead(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 2, 1, 221));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 2, 1, 241));
     vcs.remove(8);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 2, 1, 221));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 2, 1, 241));
     vcs.remove(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 2, 0, 0));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 2, 0, 28));
     vcs.write(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 2, 0, 0));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 2, 0, 28));
     vcs.verifyRead(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 3, 1, 221));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 3, 1, 241));
 }
 
 TEST("test that the integrated visit cache works.") {
@@ -631,12 +631,12 @@ TEST("test that the integrated visit cache works.") {
     for (size_t i(1); i <= 100; i++) {
         vcs.write(i);
     }
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 0, 0, 0));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 0, 0, 28));
 
     for (size_t i(1); i <= 100; i++) {
         vcs.verifyRead(i);
     }
-    constexpr size_t BASE_SZ = 20594;
+    constexpr size_t BASE_SZ = 20602;
     TEST_DO(verifyCacheStats(ds.getCacheStats(), 0, 100, 100, BASE_SZ));
     for (size_t i(1); i <= 100; i++) {
         vcs.verifyRead(i);
@@ -646,32 +646,32 @@ TEST("test that the integrated visit cache works.") {
     vcs.verifyVisit({7,9,17,19,67,88}, false);
     TEST_DO(verifyCacheStats(ds.getCacheStats(), 100, 100, 100, BASE_SZ));
     vcs.verifyVisit({7,9,17,19,67,88}, true);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 100, 101, 101, BASE_SZ+557));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 100, 101, 101, BASE_SZ+16));
     vcs.verifyVisit({7,9,17,19,67,88}, true);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 101, 101, BASE_SZ+557));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 101, 101, BASE_SZ+16));
     vcs.rewrite(8);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 101, 100, BASE_SZ+328)); // From the individual cache.
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 101, 100, BASE_SZ-197)); // From the individual cache.
     vcs.rewrite(7);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 101, 98, BASE_SZ-442)); // From the both caches.
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 101, 98, BASE_SZ-166)); // From the both caches.
     vcs.verifyVisit({7,9,17,19,67,88}, true);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 102, 99, BASE_SZ+130));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 102, 99, BASE_SZ-410));
     vcs.verifyVisit({7,9,17,19,67,88,89}, true);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 103, 99, BASE_SZ+180));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 103, 99, BASE_SZ-406));
     vcs.rewrite(17);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 103, 97, BASE_SZ-671));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 103, 97, BASE_SZ-391));
     vcs.verifyVisit({7,9,17,19,67,88,89}, true);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 104, 98, BASE_SZ-20));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 104, 98, BASE_SZ-611));
     vcs.remove(17);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 104, 97, BASE_SZ-671));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 104, 97, BASE_SZ-391));
     vcs.verifyVisit({7,9,17,19,67,88,89}, {7,9,19,67,88,89}, true);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 105, 98, BASE_SZ-89));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 105, 98, BASE_SZ-611));
 
     vcs.verifyVisit({41, 42}, true);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 106, 99, BASE_SZ+215));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 106, 99, BASE_SZ-611));
     vcs.verifyVisit({43, 44}, true);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 107, 100, BASE_SZ+520));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 107, 100, BASE_SZ-611));
     vcs.verifyVisit({41, 42, 43, 44}, true);
-    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 108, 99, BASE_SZ+340));
+    TEST_DO(verifyCacheStats(ds.getCacheStats(), 101, 108, 99, BASE_SZ-611));
 }
 
 TEST("testWriteRead") {

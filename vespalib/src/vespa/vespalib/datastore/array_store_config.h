@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <vespa/vespalib/util/size_literals.h>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -39,6 +40,8 @@ public:
 
     using AllocSpecVector = std::vector<AllocSpec>;
 
+    static constexpr size_t default_max_buffer_size = 256_Mi;
+
 private:
     AllocSpecVector _allocSpecs;
     bool _enable_free_lists;
@@ -52,12 +55,12 @@ private:
 
 public:
     /**
-     * Setup an array store where buffer type ids [1-maxSmallArrayTypeId] are used to allocate small arrays in datastore buffers
+     * Setup an array store where buffer type ids [1-max_type_id] are used to allocate small arrays in datastore buffers
      * with the given default allocation spec. Larger arrays are heap allocated.
      */
-    ArrayStoreConfig(uint32_t maxSmallArrayTypeId, const AllocSpec &defaultSpec);
+    ArrayStoreConfig(uint32_t max_type_id, const AllocSpec &defaultSpec);
 
-    uint32_t maxSmallArrayTypeId() const { return _allocSpecs.size() - 1; }
+    uint32_t max_type_id() const { return _allocSpecs.size() - 1; }
     const AllocSpec &spec_for_type_id(uint32_t type_id) const;
     ArrayStoreConfig& enable_free_lists(bool enable) & noexcept {
         _enable_free_lists = enable;
@@ -72,12 +75,12 @@ public:
     /**
      * Generate a config that is optimized for the given memory huge page size.
      */
-    static ArrayStoreConfig optimizeForHugePage(uint32_t maxSmallArrayTypeId,
-                                                std::function<size_t(uint32_t)> type_id_to_array_size,
+    static ArrayStoreConfig optimizeForHugePage(uint32_t max_type_id,
+                                                std::function<size_t(uint32_t)> type_id_to_entry_size,
                                                 size_t hugePageSize,
                                                 size_t smallPageSize,
-                                                size_t elem_size,
                                                 size_t maxEntryRefOffset,
+                                                size_t max_buffer_size,
                                                 size_t min_num_entries_for_new_buffer,
                                                 float allocGrowFactor);
 };

@@ -65,10 +65,12 @@ vespa_define_module(
     src/tests/data/smart_buffer
     src/tests/datastore/array_store
     src/tests/datastore/array_store_config
+    src/tests/datastore/array_store_dynamic_type_mapper
     src/tests/datastore/buffer_stats
     src/tests/datastore/buffer_type
     src/tests/datastore/compact_buffer_candidates
     src/tests/datastore/datastore
+    src/tests/datastore/dynamic_array_buffer_type
     src/tests/datastore/fixed_size_hash_map
     src/tests/datastore/free_list
     src/tests/datastore/sharded_hash_map
@@ -124,6 +126,7 @@ vespa_define_module(
     src/tests/net/tls/policy_checking_certificate_verifier
     src/tests/net/tls/protocol_snooping
     src/tests/net/tls/transport_options
+    src/tests/nexus
     src/tests/nice
     src/tests/objects/identifiable
     src/tests/objects/nbostream
@@ -147,6 +150,7 @@ vespa_define_module(
     src/tests/require
     src/tests/runnable_pair
     src/tests/rusage
+    src/tests/rw_spin_lock
     src/tests/sequencedtaskexecutor
     src/tests/sha1
     src/tests/shared_operation_throttler

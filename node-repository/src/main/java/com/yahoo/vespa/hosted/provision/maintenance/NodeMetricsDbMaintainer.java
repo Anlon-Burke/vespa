@@ -40,9 +40,11 @@ public class NodeMetricsDbMaintainer extends NodeRepositoryMaintainer {
             Set<ApplicationId> applications = activeNodesByApplication().keySet();
             if (applications.isEmpty()) return 1.0;
 
-            long pauseMs = interval().toMillis() / applications.size() - 1; // spread requests over interval
+            long pauseMs = interval().toMillis() / Math.max(4, applications.size()); // spread requests over interval
             int done = 0;
             for (ApplicationId application : applications) {
+                if (shuttingDown()) return asSuccessFactorDeviation(attempts, failures.get());
+
                 attempts++;
                 metricsFetcher.fetchMetrics(application)
                               .whenComplete((metricsResponse, exception) -> handleResponse(metricsResponse,
@@ -60,6 +62,12 @@ public class NodeMetricsDbMaintainer extends NodeRepositoryMaintainer {
         catch (InterruptedException e) {
             return asSuccessFactorDeviation(attempts, failures.get());
         }
+    }
+
+    @Override
+    public void shutdown() {
+        super.shutdown();
+        metricsFetcher.deconstruct();
     }
 
     private void handleResponse(MetricsResponse response,

@@ -7,11 +7,11 @@ import com.yahoo.container.plugin.util.JarFiles;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.jar.Manifest;
 
 /**
@@ -34,18 +34,40 @@ public class AnalyzeBundle {
     }
 
     static List<Export> exportedPackages(File jarFile) {
+        var manifest = getOsgiManifest(jarFile);
+        if (manifest == null) return Collections.emptyList();
         try {
-            Optional<Manifest> jarManifest = JarFiles.getManifest(jarFile);
-            if (jarManifest.isPresent()) {
-                Manifest manifest = jarManifest.get();
-                if (isOsgiManifest(manifest)) {
-                    return parseExports(manifest);
-                }
-            }
-            return Collections.emptyList();
+            return parseExports(manifest);
         } catch (Exception e) {
             throw new RuntimeException(String.format("Invalid manifest in bundle '%s'", jarFile.getPath()), e);
         }
+    }
+
+    public static List<String> nonPublicApiPackagesAggregated(Collection<File> jarFiles) {
+        return jarFiles.stream()
+                .map(AnalyzeBundle::nonPublicApiPackages)
+                .flatMap(List::stream)
+                .distinct()
+                .toList();
+    }
+
+    private static List<String> nonPublicApiPackages(File jarFile) {
+        var manifest = getOsgiManifest(jarFile);
+        if (manifest == null) return Collections.emptyList();
+        return getMainAttributeValue(manifest, "X-JDisc-Non-PublicApi-Export-Package")
+                .map(s -> Arrays.asList(s.split(",")))
+                .orElseGet(ArrayList::new);
+    }
+
+    private static Manifest getOsgiManifest(File jarFile) {
+        Optional<Manifest> jarManifest = JarFiles.getManifest(jarFile);
+        if (jarManifest.isPresent()) {
+            Manifest manifest = jarManifest.get();
+            if (isOsgiManifest(manifest)) {
+                return manifest;
+            }
+        }
+        return null;
     }
 
     public static Optional<String> bundleSymbolicName(File jarFile) {
