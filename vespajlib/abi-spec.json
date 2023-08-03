@@ -419,7 +419,7 @@
       "public void <init>(java.lang.String, java.lang.String, int, java.lang.String)",
       "public boolean isValid()",
       "public java.lang.String getScheme()",
-      "public boolean isOpaque()",
+      "public final boolean isOpaque()",
       "public java.lang.String getHost()",
       "public int getPort()",
       "public java.lang.String getRest()",
@@ -1319,7 +1319,8 @@
     "superClass" : "java.lang.Object",
     "interfaces" : [ ],
     "attributes" : [
-      "public"
+      "public",
+      "final"
     ],
     "methods" : [
       "public void <init>()",
@@ -1705,6 +1706,24 @@
     ],
     "fields" : [ ]
   },
+  "com.yahoo.tensor.functions.CosineSimilarity" : {
+    "superClass" : "com.yahoo.tensor.functions.TensorFunction",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(com.yahoo.tensor.functions.TensorFunction, com.yahoo.tensor.functions.TensorFunction, java.lang.String)",
+      "public java.util.List arguments()",
+      "public com.yahoo.tensor.functions.TensorFunction withArguments(java.util.List)",
+      "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
+      "public com.yahoo.tensor.Tensor evaluate(com.yahoo.tensor.evaluation.EvaluationContext)",
+      "public com.yahoo.tensor.functions.PrimitiveTensorFunction toPrimitive()",
+      "public java.lang.String toString(com.yahoo.tensor.functions.ToStringContext)",
+      "public int hashCode()"
+    ],
+    "fields" : [ ]
+  },
   "com.yahoo.tensor.functions.Diag" : {
     "superClass" : "com.yahoo.tensor.functions.CompositeTensorFunction",
     "interfaces" : [ ],
@@ -1737,6 +1756,24 @@
       "public java.lang.String toString(com.yahoo.tensor.functions.ToStringContext)",
       "public static com.yahoo.tensor.functions.DynamicTensor from(com.yahoo.tensor.TensorType, java.util.Map)",
       "public static com.yahoo.tensor.functions.DynamicTensor from(com.yahoo.tensor.TensorType, java.util.List)"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.tensor.functions.EuclideanDistance" : {
+    "superClass" : "com.yahoo.tensor.functions.TensorFunction",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(com.yahoo.tensor.functions.TensorFunction, com.yahoo.tensor.functions.TensorFunction, java.lang.String)",
+      "public java.util.List arguments()",
+      "public com.yahoo.tensor.functions.TensorFunction withArguments(java.util.List)",
+      "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
+      "public com.yahoo.tensor.Tensor evaluate(com.yahoo.tensor.evaluation.EvaluationContext)",
+      "public com.yahoo.tensor.functions.PrimitiveTensorFunction toPrimitive()",
+      "public java.lang.String toString(com.yahoo.tensor.functions.ToStringContext)",
+      "public int hashCode()"
     ],
     "fields" : [ ]
   },

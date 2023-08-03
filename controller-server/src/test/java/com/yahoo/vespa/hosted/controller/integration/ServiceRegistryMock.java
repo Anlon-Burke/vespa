@@ -21,10 +21,11 @@ import com.yahoo.vespa.hosted.controller.api.integration.aws.MockRoleService;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingController;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingDatabaseClient;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingDatabaseClientMock;
+import com.yahoo.vespa.hosted.controller.api.integration.billing.BillingReporter;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.MockBillingController;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.PlanRegistry;
 import com.yahoo.vespa.hosted.controller.api.integration.billing.PlanRegistryMock;
-import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateMock;
+import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateProviderMock;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateValidator;
 import com.yahoo.vespa.hosted.controller.api.integration.certificates.EndpointCertificateValidatorMock;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.MemoryNameService;
@@ -69,7 +70,7 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     private final MemoryNameService memoryNameService = new MemoryNameService();
     private final MockVpcEndpointService vpcEndpointService = new MockVpcEndpointService(clock, memoryNameService);
     private final MockMailer mockMailer = new MockMailer();
-    private final EndpointCertificateMock endpointCertificateMock = new EndpointCertificateMock();
+    private final EndpointCertificateProviderMock endpointCertificateProviderMock = new EndpointCertificateProviderMock();
     private final EndpointCertificateValidatorMock endpointCertificateValidatorMock = new EndpointCertificateValidatorMock();
     private final MockContactRetriever mockContactRetriever = new MockContactRetriever();
     private final MockIssueHandler mockIssueHandler = new MockIssueHandler();
@@ -141,8 +142,8 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     }
 
     @Override
-    public EndpointCertificateMock endpointCertificateProvider() {
-        return endpointCertificateMock;
+    public EndpointCertificateProviderMock endpointCertificateProvider() {
+        return endpointCertificateProviderMock;
     }
 
     @Override
@@ -303,8 +304,8 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
         return mockContactRetriever;
     }
 
-    public EndpointCertificateMock endpointCertificateMock() {
-        return endpointCertificateMock;
+    public EndpointCertificateProviderMock endpointCertificateMock() {
+        return endpointCertificateProviderMock;
     }
 
     public RoleMaintainerMock roleMaintainerMock() {
@@ -312,4 +313,9 @@ public class ServiceRegistryMock extends AbstractComponent implements ServiceReg
     }
 
     public GcpSecretStore gcpSecretStore() { return new NoopGcpSecretStore(); }
+
+    @Override
+    public BillingReporter billingReporter() {
+        return () -> 0.0;
+    }
 }

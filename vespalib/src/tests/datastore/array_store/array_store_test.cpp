@@ -32,7 +32,7 @@ constexpr float ALLOC_GROW_FACTOR = 0.2;
 template <typename ElemT>
 class MyArrayStoreSimpleTypeMapper : public ArrayStoreSimpleTypeMapper<ElemT> {
 public:
-    MyArrayStoreSimpleTypeMapper(uint32_t, double)
+    MyArrayStoreSimpleTypeMapper(uint32_t, double, size_t)
         : ArrayStoreSimpleTypeMapper<ElemT>()
     {
     }
@@ -62,7 +62,7 @@ struct ArrayStoreTest : public TestT
     bool add_using_allocate;
     double type_mapper_grow_factor;
     ArrayStoreTest(uint32_t max_type_id = 3, bool enable_free_lists = true, bool add_using_allocate_in = false, double type_mapper_grow_factor_in = 2.0)
-        : type_mapper(max_type_id, type_mapper_grow_factor_in),
+        : type_mapper(max_type_id, type_mapper_grow_factor_in, ArrayStoreConfig::default_max_buffer_size),
           store(ArrayStoreConfig(max_type_id,
                                  ArrayStoreConfig::AllocSpec(16, RefT::offsetSize(), 8_Ki,
                                                              ALLOC_GROW_FACTOR)).enable_free_lists(enable_free_lists),
@@ -74,7 +74,7 @@ struct ArrayStoreTest : public TestT
           type_mapper_grow_factor(type_mapper_grow_factor_in)
     {}
     explicit ArrayStoreTest(const ArrayStoreConfig &storeCfg)
-        : type_mapper(storeCfg.max_type_id(), 2.0),
+        : type_mapper(storeCfg.max_type_id(), 2.0, ArrayStoreConfig::default_max_buffer_size),
           store(storeCfg, std::make_unique<MemoryAllocatorObserver>(stats), TypeMapperType(type_mapper)),
           refStore(),
           generation(1),
@@ -595,6 +595,16 @@ TEST_F(ByteStoreTest, offset_in_EntryRefT_is_within_bounds_when_allocating_memor
 TYPED_TEST(NumberStoreTest, provided_memory_allocator_is_used)
 {
     EXPECT_EQ(AllocStats(4, 0), this->stats);
+    this->assertAdd({1,2,3,4,5});
+    EXPECT_EQ(AllocStats(5, 0), this->stats);
+    this->assertAdd({2,3,4,5,6,7});
+    EXPECT_EQ(AllocStats(6, 0), this->stats);
+    this->remove({1,2,3,4,5});
+    this->remove({2,3,4,5,6,7});
+    this->reclaim_memory();
+    EXPECT_EQ(AllocStats(6, 2), this->stats);
+    this->assertAdd({1,2,3,4,5});
+    EXPECT_EQ(AllocStats(7, 2), this->stats);
 }
 
 GTEST_MAIN_RUN_ALL_TESTS()

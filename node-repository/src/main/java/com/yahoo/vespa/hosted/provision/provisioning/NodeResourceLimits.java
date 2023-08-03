@@ -35,6 +35,12 @@ public class NodeResourceLimits {
             illegal(type, "diskGb", "Gb", cluster, requested.diskGb(), minAdvertisedDiskGb(requested, cluster.isExclusive()));
     }
 
+    // TODO: Remove this when we are ready to fail, not just warn on this. */
+    public boolean isWithinAdvertisedDiskLimits(NodeResources requested, ClusterSpec cluster) {
+        if (requested.diskGbIsUnspecified() || requested.memoryGbIsUnspecified()) return true;
+        return requested.diskGb() >= minAdvertisedDiskGb(requested, cluster);
+    }
+
     /** Returns whether the real resources we'll end up with on a given tenant node are within limits */
     public boolean isWithinRealLimits(NodeCandidate candidateNode, ApplicationId applicationId, ClusterSpec cluster) {
         if (candidateNode.type() != NodeType.tenant) return true; // Resource limits only apply to tenant nodes
@@ -52,8 +58,11 @@ public class NodeResourceLimits {
        return true;
     }
 
-    public NodeResources enlargeToLegal(NodeResources requested, ApplicationId applicationId, ClusterSpec cluster, boolean exclusive) {
+    public NodeResources enlargeToLegal(NodeResources requested, ApplicationId applicationId, ClusterSpec cluster, boolean exclusive, boolean followRecommendations) {
         if (requested.isUnspecified()) return requested;
+
+        if (followRecommendations) // TODO: Do unconditionally when we enforce this limit
+            requested = requested.withDiskGb(Math.max(minAdvertisedDiskGb(requested, cluster), requested.diskGb()));
 
         return requested.withVcpu(Math.max(minAdvertisedVcpu(applicationId, cluster), requested.vcpu()))
                         .withMemoryGb(Math.max(minAdvertisedMemoryGb(cluster), requested.memoryGb()))
@@ -78,6 +87,15 @@ public class NodeResourceLimits {
         return minRealDiskGb() + reservedDiskSpaceGb(requested.storageType(), exclusive);
     }
 
+    // TODO: Move this check into the above when we are ready to fail, not just warn on this. */
+    private static double minAdvertisedDiskGb(NodeResources requested, ClusterSpec cluster) {
+        return requested.memoryGb() * switch (cluster.type()) {
+            case combined, content -> 3;
+            case container -> 2;
+            default -> 0; // No constraint on other types
+        };
+    }
+
     // Note: Assumes node type 'host'
     private long reservedDiskSpaceGb(NodeResources.StorageType storageType, boolean exclusive) {
         if (storageType == NodeResources.StorageType.local && ! zone().cloud().allowHostSharing())
@@ -90,16 +108,16 @@ public class NodeResourceLimits {
         return minAdvertisedVcpu(applicationId, cluster);
     }
 
-    private double minRealMemoryGb(ClusterSpec cluster) {
+    private static double minRealMemoryGb(ClusterSpec cluster) {
         if (cluster.type() == ClusterSpec.Type.admin) return 0.95; // TODO: Increase to 1.05 after March 2023
         return 2.3;
     }
 
-    private double minRealDiskGb() { return 6; }
+    private static double minRealDiskGb() { return 6; }
 
     private Zone zone() { return nodeRepository.zone(); }
 
-    private void illegal(String type, String resource, String unit, ClusterSpec cluster, double requested, double minAllowed) {
+    private static void illegal(String type, String resource, String unit, ClusterSpec cluster, double requested, double minAllowed) {
         if ( ! unit.isEmpty())
             unit = " " + unit;
         String message = String.format(Locale.ENGLISH,

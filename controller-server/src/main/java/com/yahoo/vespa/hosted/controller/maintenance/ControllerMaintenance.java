@@ -11,13 +11,11 @@ import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.api.integration.athenz.AthenzClientFactory;
 import com.yahoo.vespa.hosted.controller.api.integration.user.UserManagement;
 
-import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.temporal.TemporalUnit;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
@@ -85,7 +83,8 @@ public class ControllerMaintenance extends AbstractComponent {
         maintainers.add(new BillingDatabaseMaintainer(controller, intervals.billingDatabaseMaintainer));
         maintainers.add(new MeteringMonitorMaintainer(controller, intervals.meteringMonitorMaintainer, controller.serviceRegistry().resourceDatabase(), metric));
         maintainers.add(new EnclaveAccessMaintainer(controller, intervals.defaultInterval));
-        maintainers.add(new CertificatePoolMaintainer(controller, metric, intervals.certificatePoolMaintainer, new SecureRandom()));
+        maintainers.add(new CertificatePoolMaintainer(controller, metric, intervals.certificatePoolMaintainer));
+        maintainers.add(new BillingReportMaintainer(controller, intervals.billingReportMaintainer));
     }
 
     public Upgrader upgrader() { return upgrader; }
@@ -147,6 +146,7 @@ public class ControllerMaintenance extends AbstractComponent {
         private final Duration billingDatabaseMaintainer;
         private final Duration meteringMonitorMaintainer;
         private final Duration certificatePoolMaintainer;
+        private final Duration billingReportMaintainer;
 
         public Intervals(SystemName system) {
             this.system = Objects.requireNonNull(system);
@@ -183,6 +183,7 @@ public class ControllerMaintenance extends AbstractComponent {
             this.billingDatabaseMaintainer = duration(5, MINUTES);
             this.meteringMonitorMaintainer = duration(30, MINUTES);
             this.certificatePoolMaintainer = duration(15, MINUTES);
+            this.billingReportMaintainer = duration(60, MINUTES);
         }
 
         private Duration duration(long amount, TemporalUnit unit) {
@@ -197,15 +198,14 @@ public class ControllerMaintenance extends AbstractComponent {
 
     private static class SuccessFactorBaseline {
 
-        private final Double defaultSuccessFactorBaseline;
         private final Double deploymentMetricsMaintainerBaseline;
         private final Double trafficFractionUpdater;
 
         public SuccessFactorBaseline(SystemName system) {
             Objects.requireNonNull(system);
-            this.defaultSuccessFactorBaseline = 1.0;
             this.deploymentMetricsMaintainerBaseline = 0.90;
             this.trafficFractionUpdater = system.isCd() ? 0.5 : 0.65;
         }
+
     }
 }

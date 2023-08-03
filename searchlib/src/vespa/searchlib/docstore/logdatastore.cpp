@@ -12,9 +12,12 @@
 #include <vespa/vespalib/util/size_literals.h>
 #include <thread>
 #include <cassert>
+#include <filesystem>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".searchlib.docstore.logdatastore");
+
+namespace fs = std::filesystem;
 
 namespace search {
 
@@ -664,14 +667,8 @@ namespace {
 vespalib::string
 lsSingleFile(const vespalib::string & fileName)
 {
-    vespalib::string s;
-    FastOS_StatInfo stat;
-    if ( FastOS_File::Stat(fileName.c_str(), &stat)) {
-        s += make_string("%s  %20" PRIu64 "  %12" PRId64, fileName.c_str(), vespalib::count_ns(stat._modifiedTime.time_since_epoch()), stat._size);
-    } else {
-        s = make_string("%s 'stat' FAILED !!", fileName.c_str());
-    }
-    return s;
+    fs::path path(fileName);
+    return make_string("%s  %20" PRIu64 "  %12" PRId64, fileName.c_str(), vespalib::count_ns(fs::last_write_time(path).time_since_epoch()), fs::file_size(path));
 }
 
 }
@@ -694,7 +691,7 @@ hasNonHeaderData(const vespalib::string &name)
     FastOS_File file(name.c_str());
     if (!file.OpenReadOnly())
         return false;
-    int64_t fSize(file.GetSize());
+    int64_t fSize(file.getSize());
     uint32_t headerLen = 0;
     uint32_t minHeaderLen = vespalib::GenericHeader::getMinSize();
     if (fSize < minHeaderLen)
@@ -720,46 +717,34 @@ hasNonHeaderData(const vespalib::string &name)
 void
 LogDataStore::verifyModificationTime(const NameIdSet & partList)
 {
-    FastOS_StatInfo prevDatStat;
-    FastOS_StatInfo prevIdxStat;
     NameId nameId(*partList.begin());
     vespalib::string datName(createDatFileName(nameId));
     vespalib::string idxName(createIdxFileName(nameId));
-    if ( ! FastOS_File::Stat(datName.c_str(), &prevDatStat)) {
-        throw runtime_error(make_string("Failed to Stat '%s'\nDirectory =\n%s", datName.c_str(), ls(partList).c_str()));
-    }
-    if ( ! FastOS_File::Stat(idxName.c_str(), &prevIdxStat)) {
-        throw runtime_error(make_string("Failed to Stat '%s'\nDirectory =\n%s", idxName.c_str(), ls(partList).c_str()));
-    }
+    vespalib::file_time prevDatTime = fs::last_write_time(fs::path(datName));
+    vespalib::file_time prevIdxTime = fs::last_write_time(fs::path(idxName));;
     for (auto it(++partList.begin()), mt(partList.end()); it != mt; ++it) {
         vespalib::string prevDatNam(datName);
         vespalib::string prevIdxNam(idxName);
-        FastOS_StatInfo datStat;
-        FastOS_StatInfo idxStat;
         nameId = *it;
         datName = createDatFileName(nameId);
         idxName = createIdxFileName(nameId);
-        if ( ! FastOS_File::Stat(datName.c_str(), &datStat)) {
-            throw runtime_error(make_string("Failed to Stat '%s'\nDirectory =\n%s", datName.c_str(), ls(partList).c_str()));
-        }
-        if ( ! FastOS_File::Stat(idxName.c_str(), &idxStat)) {
-            throw runtime_error(make_string("Failed to Stat '%s'\nDirectory =\n%s", idxName.c_str(), ls(partList).c_str()));
-        }
+        vespalib::file_time datTime = fs::last_write_time(fs::path(datName));
+        vespalib::file_time idxTime = fs::last_write_time(fs::path(idxName));;
         ns_log::Logger::LogLevel logLevel = ns_log::Logger::debug;
-        if ((datStat._modifiedTime < prevDatStat._modifiedTime) && hasNonHeaderData(datName)) {
+        if ((datTime < prevDatTime) && hasNonHeaderData(datName)) {
             VLOG(logLevel, "Older file '%s' is newer (%s) than file '%s' (%s)\nDirectory =\n%s",
-                         prevDatNam.c_str(), to_string(prevDatStat._modifiedTime).c_str(),
-                         datName.c_str(), to_string(datStat._modifiedTime).c_str(),
+                         prevDatNam.c_str(), to_string(prevDatTime).c_str(),
+                         datName.c_str(), to_string(datTime).c_str(),
                          ls(partList).c_str());
         }
-        if ((idxStat._modifiedTime < prevIdxStat._modifiedTime) && hasNonHeaderData(idxName)) {
+        if ((idxTime < prevIdxTime) && hasNonHeaderData(idxName)) {
             VLOG(logLevel, "Older file '%s' is newer (%s) than file '%s' (%s)\nDirectory =\n%s",
-                         prevIdxNam.c_str(), to_string(prevIdxStat._modifiedTime).c_str(),
-                         idxName.c_str(), to_string(idxStat._modifiedTime).c_str(),
+                         prevIdxNam.c_str(), to_string(prevIdxTime).c_str(),
+                         idxName.c_str(), to_string(idxTime).c_str(),
                          ls(partList).c_str());
         }
-        prevDatStat = datStat;
-        prevIdxStat = idxStat;
+        prevDatTime = datTime;
+        prevIdxTime = idxTime;
     }
 }
 
@@ -777,8 +762,7 @@ LogDataStore::preload()
     if (!partList.empty()) {
         verifyModificationTime(partList);
         partList = scanDir(getBaseDir(), ".idx");
-        using It = NameIdSet::const_iterator;
-        for (It it(partList.begin()), mt(--partList.end()); it != mt; it++) {
+        for (auto it(partList.begin()), mt(--partList.end()); it != mt; it++) {
             _fileChunks.push_back(createReadOnlyFile(FileId(_fileChunks.size()), *it));
         }
         _fileChunks.push_back(isReadOnly()
@@ -824,7 +808,7 @@ LogDataStore::NameIdSet
 LogDataStore::findIncompleteCompactedFiles(const NameIdSet & partList) {
     NameIdSet incomplete;
     if ( !partList.empty()) {
-        NameIdSet::const_iterator it = partList.begin();
+        auto it = partList.begin();
         for (FileChunk::NameId prev = *it++; it != partList.end(); it++) {
             if (prev.next() == *it) {
                 if (!incomplete.empty() && (*incomplete.rbegin() == prev)) {
@@ -869,15 +853,13 @@ LogDataStore::eraseIncompleteCompactedFiles(NameIdSet partList)
 void
 LogDataStore::eraseDanglingDatFiles(const NameIdSet &partList, const NameIdSet &datPartList)
 {
-    using IT = NameIdSet::const_iterator;
-    
-    IT iib(partList.begin());
-    IT ii(iib);
-    IT iie(partList.end());
-    IT dib(datPartList.begin());
-    IT di(dib);
-    IT die(datPartList.end());
-    IT dirb(die);
+    auto iib = partList.begin();
+    auto ii = iib;
+    auto iie = partList.end();
+    auto dib = datPartList.begin();
+    auto di = dib;
+    auto die = datPartList.end();
+    auto dirb = die;
     NameId endMarker(NameId::last());
     
     if (dirb != dib) {

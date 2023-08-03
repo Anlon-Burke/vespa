@@ -7,9 +7,6 @@ import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.zone.RoutingMethod;
 import com.yahoo.config.provision.zone.ZoneId;
 import com.yahoo.transaction.Mutex;
-import com.yahoo.vespa.flags.BooleanFlag;
-import com.yahoo.vespa.flags.FetchVector;
-import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.hosted.controller.Application;
 import com.yahoo.vespa.hosted.controller.Controller;
 import com.yahoo.vespa.hosted.controller.api.identifiers.ClusterId;
@@ -19,16 +16,16 @@ import com.yahoo.vespa.hosted.controller.api.integration.dns.AliasTarget;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.DirectTarget;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.LatencyAliasTarget;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.Record;
-import com.yahoo.vespa.hosted.controller.api.integration.dns.Record.Type;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.RecordData;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.RecordName;
-import com.yahoo.vespa.hosted.controller.api.integration.dns.VpcEndpointService.DnsChallenge;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.VpcEndpointService.ChallengeState;
+import com.yahoo.vespa.hosted.controller.api.integration.dns.VpcEndpointService.DnsChallenge;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.WeightedAliasTarget;
 import com.yahoo.vespa.hosted.controller.api.integration.dns.WeightedDirectTarget;
 import com.yahoo.vespa.hosted.controller.application.Endpoint;
 import com.yahoo.vespa.hosted.controller.application.EndpointId;
 import com.yahoo.vespa.hosted.controller.application.EndpointList;
+import com.yahoo.vespa.hosted.controller.application.GeneratedEndpoint;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.dns.NameServiceForwarder;
 import com.yahoo.vespa.hosted.controller.dns.NameServiceQueue.Priority;
@@ -62,12 +59,10 @@ public class RoutingPolicies {
 
     private final Controller controller;
     private final CuratorDb db;
-    private final BooleanFlag createTokenEndpoint;
 
     public RoutingPolicies(Controller controller) {
         this.controller = Objects.requireNonNull(controller, "controller must be non-null");
         this.db = controller.curator();
-        this.createTokenEndpoint = Flags.ENABLE_DATAPLANE_PROXY.bindTo(controller.flagSource());
         try (var lock = db.lockRoutingPolicies()) { // Update serialized format
             for (var policy : db.readRoutingPolicies().entrySet()) {
                 db.writeRoutingPolicies(policy.getKey(), policy.getValue());
@@ -86,7 +81,7 @@ public class RoutingPolicies {
     }
 
     /** Read all routing policies for given application */
-    private RoutingPolicyList read(TenantAndApplicationId application) {
+    public RoutingPolicyList read(TenantAndApplicationId application) {
         return db.readRoutingPolicies((instance) -> TenantAndApplicationId.from(instance).equals(application))
                  .values()
                  .stream()
@@ -112,27 +107,25 @@ public class RoutingPolicies {
      * Refresh routing policies for instance in given zone. This is idempotent and changes will only be performed if
      * routing configuration affecting given deployment has changed.
      */
-    public void refresh(DeploymentId deployment, DeploymentSpec deploymentSpec) {
+    public void refresh(DeploymentId deployment, DeploymentSpec deploymentSpec, List<GeneratedEndpoint> generatedEndpoints) {
         ApplicationId instance = deployment.applicationId();
         List<LoadBalancer> loadBalancers = controller.serviceRegistry().configServer()
                                                      .getLoadBalancers(instance, deployment.zoneId());
         LoadBalancerAllocation allocation = new LoadBalancerAllocation(deployment, deploymentSpec, loadBalancers);
-        Set<ZoneId> inactiveZones = inactiveZones(instance, deploymentSpec);
         Optional<TenantAndApplicationId> owner = ownerOf(allocation);
         try (var lock = db.lockRoutingPolicies()) {
             RoutingPolicyList applicationPolicies = read(TenantAndApplicationId.from(instance));
-            RoutingPolicyList instancePolicies = applicationPolicies.instance(instance);
             RoutingPolicyList deploymentPolicies = applicationPolicies.deployment(allocation.deployment);
 
             removeGlobalDnsUnreferencedBy(allocation, deploymentPolicies, lock);
             removeApplicationDnsUnreferencedBy(allocation, deploymentPolicies, lock);
 
-            instancePolicies = storePoliciesOf(allocation, instancePolicies, lock);
+            RoutingPolicyList instancePolicies = storePoliciesOf(allocation, applicationPolicies, generatedEndpoints, lock);
             instancePolicies = removePoliciesUnreferencedBy(allocation, instancePolicies, lock);
 
-            applicationPolicies = applicationPolicies.replace(instance, instancePolicies);
-            updateGlobalDnsOf(instancePolicies, Optional.of(deployment), inactiveZones, owner, lock);
-            updateApplicationDnsOf(applicationPolicies, inactiveZones, deployment, owner, lock);
+            RoutingPolicyList updatedApplicationPolicies = applicationPolicies.replace(instance, instancePolicies);
+            updateGlobalDnsOf(instancePolicies, Optional.of(deployment), owner, lock);
+            updateApplicationDnsOf(updatedApplicationPolicies, deployment, owner, lock);
         }
     }
 
@@ -143,7 +136,7 @@ public class RoutingPolicies {
                                                                                        controller.clock().instant())));
             Map<ApplicationId, RoutingPolicyList> allPolicies = readAll().groupingBy(policy -> policy.id().owner());
             allPolicies.forEach((instance, policies) -> {
-                updateGlobalDnsOf(policies, Optional.empty(), Set.of(), Optional.of(TenantAndApplicationId.from(instance)), lock);
+                updateGlobalDnsOf(policies, Optional.empty(), Optional.of(TenantAndApplicationId.from(instance)), lock);
             });
         }
     }
@@ -163,17 +156,16 @@ public class RoutingPolicies {
             Map<ApplicationId, RoutingPolicyList> policiesByInstance = effectivePolicies.groupingBy(policy -> policy.id().owner());
             policiesByInstance.forEach((ignored, instancePolicies) -> updateGlobalDnsOf(instancePolicies,
                                                                                         Optional.of(deployment),
-                                                                                        Set.of(),
                                                                                         ownerOf(deployment),
                                                                                         lock));
-            updateApplicationDnsOf(effectivePolicies, Set.of(), deployment, ownerOf(deployment), lock);
+            updateApplicationDnsOf(effectivePolicies, deployment, ownerOf(deployment), lock);
             policiesByInstance.forEach((owner, instancePolicies) -> db.writeRoutingPolicies(owner, instancePolicies.asList()));
         }
     }
 
     /** Update global DNS records for given policies */
     private void updateGlobalDnsOf(RoutingPolicyList instancePolicies, Optional<DeploymentId> deployment,
-                                   Set<ZoneId> inactiveZones, Optional<TenantAndApplicationId> owner,
+                                   Optional<TenantAndApplicationId> owner,
                                    @SuppressWarnings("unused") Mutex lock) {
         Map<RoutingId, List<RoutingPolicy>> routingTable = instancePolicies.asInstanceRoutingTable();
         for (Map.Entry<RoutingId, List<RoutingPolicy>> routeEntry : routingTable.entrySet()) {
@@ -181,17 +173,17 @@ public class RoutingPolicies {
             controller.routing().readDeclaredEndpointsOf(routingId.instance())
                       .named(routingId.endpointId(), Endpoint.Scope.global)
                       .not().requiresRotation()
-                      .forEach(endpoint -> updateGlobalDnsOf(endpoint, inactiveZones, routeEntry.getValue(), deployment, owner));
+                      .forEach(endpoint -> updateGlobalDnsOf(endpoint, routeEntry.getValue(), deployment, owner));
         }
     }
 
     /** Update global DNS records for given global endpoint */
-    private void updateGlobalDnsOf(Endpoint endpoint, Set<ZoneId> inactiveZones, List<RoutingPolicy> policies,
+    private void updateGlobalDnsOf(Endpoint endpoint, List<RoutingPolicy> policies,
                                    Optional<DeploymentId> deployment, Optional<TenantAndApplicationId> owner) {
         if (endpoint.scope() != Endpoint.Scope.global) throw new IllegalArgumentException("Endpoint " + endpoint + " is not global");
         if (deployment.isPresent() && !endpoint.deployments().contains(deployment.get())) return;
 
-        Collection<RegionEndpoint> regionEndpoints = computeRegionEndpoints(policies, inactiveZones);
+        Collection<RegionEndpoint> regionEndpoints = computeRegionEndpoints(endpoint, policies);
         Set<AliasTarget> latencyTargets = new LinkedHashSet<>();
         Set<AliasTarget> inactiveLatencyTargets = new LinkedHashSet<>();
         for (var regionEndpoint : regionEndpoints) {
@@ -243,15 +235,18 @@ public class RoutingPolicies {
     }
 
     /** Compute region endpoints and their targets from given policies */
-    private Collection<RegionEndpoint> computeRegionEndpoints(List<RoutingPolicy> policies, Set<ZoneId> inactiveZones) {
+    private Collection<RegionEndpoint> computeRegionEndpoints(Endpoint parent, List<RoutingPolicy> policies) {
+        if (!parent.scope().multiDeployment()) {
+            throw new IllegalArgumentException(parent + " has unexpected scope");
+        }
         Map<Endpoint, RegionEndpoint> endpoints = new LinkedHashMap<>();
         for (var policy : policies) {
             if (policy.dnsZone().isEmpty() && policy.canonicalName().isPresent()) continue;
             if (controller.zoneRegistry().routingMethod(policy.id().zone()) != RoutingMethod.exclusive) continue;
-            Endpoint endpoint = policy.regionEndpointIn(controller.system(), RoutingMethod.exclusive);
+            Endpoint endpoint = policy.regionEndpointIn(controller.system(), RoutingMethod.exclusive, parent.generated());
             var zonePolicy = db.readZoneRoutingPolicy(policy.id().zone());
             long weight = 1;
-            if (isConfiguredOut(zonePolicy, policy, inactiveZones)) {
+            if (isConfiguredOut(zonePolicy, policy)) {
                 weight = 0; // A record with 0 weight will not receive traffic. If all records within a group have 0
                             // weight, traffic is routed to all records with equal probability.
             }
@@ -273,9 +268,8 @@ public class RoutingPolicies {
     }
 
 
-    private void updateApplicationDnsOf(RoutingPolicyList routingPolicies, Set<ZoneId> inactiveZones,
-                                        DeploymentId deployment, Optional<TenantAndApplicationId> owner,
-                                        @SuppressWarnings("unused") Mutex lock) {
+    private void updateApplicationDnsOf(RoutingPolicyList routingPolicies, DeploymentId deployment,
+                                        Optional<TenantAndApplicationId> owner, @SuppressWarnings("unused") Mutex lock) {
         // In the context of single deployment (which this is) there is only one routing policy per routing ID. I.e.
         // there is no scenario where more than one deployment within an instance can be a member the same
         // application-level endpoint. However, to allow this in the future the routing table remains
@@ -300,7 +294,7 @@ public class RoutingPolicies {
 
                         Set<Target> activeTargets = targetsByEndpoint.computeIfAbsent(endpoint, (k) -> new LinkedHashSet<>());
                         Set<Target> inactiveTargets = inactiveTargetsByEndpoint.computeIfAbsent(endpoint, (k) -> new LinkedHashSet<>());
-                        if (isConfiguredOut(zonePolicy, policy, inactiveZones)) {
+                        if (isConfiguredOut(zonePolicy, policy)) {
                             inactiveTargets.add(Target.weighted(policy, target));
                         } else {
                             activeTargets.add(Target.weighted(policy, target));
@@ -334,36 +328,24 @@ public class RoutingPolicies {
                 }
             }
             if (!aliasTargets.isEmpty()) {
-                nameServiceForwarderIn(targetZone).createAlias(
+                nameServiceForwarder(applicationEndpoint).createAlias(
                         RecordName.from(applicationEndpoint.dnsName()), aliasTargets, Priority.normal, owner);
-                nameServiceForwarderIn(targetZone).removeRecords(Type.ALIAS, RecordName.from(applicationEndpoint.legacyRegionalDnsName()),
-                                                                 Priority.normal, owner);
             }
             if (!directTargets.isEmpty()) {
-                nameServiceForwarderIn(targetZone).createDirect(
+                nameServiceForwarder(applicationEndpoint).createDirect(
                         RecordName.from(applicationEndpoint.dnsName()), directTargets, Priority.normal, owner);
-                nameServiceForwarderIn(targetZone).removeRecords(Type.DIRECT, RecordName.from(applicationEndpoint.legacyRegionalDnsName()),
-                                                                 Priority.normal, owner);
             }
         });
 
         // Remove DNS records for inactive targets
         inactiveTargetsByEndpoint.forEach((applicationEndpoint, targets) -> {
-            // Where multiple zones are permitted, they all have the same routing policy, and nameServiceForwarder.
-            ZoneId targetZone = applicationEndpoint.targets().iterator().next().deployment().zoneId();
             targets.forEach(target -> {
                 if (!target.deployment().equals(deployment)) return; // Do not update target not matching this deployment
-                nameServiceForwarderIn(targetZone).removeRecords(target.type(),
-                                                                 RecordName.from(applicationEndpoint.dnsName()),
-                                                                 target.data(),
-                                                                 Priority.normal,
-                                                                 owner);
-                // TODO(mpolden): Remove this and legacy name support in Endpoint after 2023-06-22
-                nameServiceForwarderIn(targetZone).removeRecords(target.type(),
-                                                                 RecordName.from(applicationEndpoint.legacyRegionalDnsName()),
-                                                                 target.data(),
-                                                                 Priority.normal,
-                                                                 owner);
+                nameServiceForwarder(applicationEndpoint).removeRecords(target.type(),
+                                                                        RecordName.from(applicationEndpoint.dnsName()),
+                                                                        target.data(),
+                                                                        Priority.normal,
+                                                                        owner);
             });
         });
     }
@@ -373,8 +355,8 @@ public class RoutingPolicies {
      *
      * @return the updated policies
      */
-    private RoutingPolicyList storePoliciesOf(LoadBalancerAllocation allocation, RoutingPolicyList instancePolicies, @SuppressWarnings("unused") Mutex lock) {
-        Map<RoutingPolicyId, RoutingPolicy> policies = new LinkedHashMap<>(instancePolicies.asMap());
+    private RoutingPolicyList storePoliciesOf(LoadBalancerAllocation allocation, RoutingPolicyList applicationPolicies, List<GeneratedEndpoint> generatedEndpoints, @SuppressWarnings("unused") Mutex lock) {
+        Map<RoutingPolicyId, RoutingPolicy> policies = new LinkedHashMap<>(applicationPolicies.instance(allocation.deployment.applicationId()).asMap());
         for (LoadBalancer loadBalancer : allocation.loadBalancers) {
             if (loadBalancer.hostname().isEmpty() && loadBalancer.ipAddress().isEmpty()) continue;
             var policyId = new RoutingPolicyId(loadBalancer.application(), loadBalancer.cluster(), allocation.deployment.zoneId());
@@ -384,10 +366,17 @@ public class RoutingPolicies {
                                               allocation.instanceEndpointsOf(loadBalancer),
                                               allocation.applicationEndpointsOf(loadBalancer),
                                               RoutingStatus.DEFAULT,
-                                              loadBalancer.isPublic());
-            // Preserve global routing status for existing policy
+                                              loadBalancer.isPublic(),
+                                              generatedEndpoints);
+            boolean addingGeneratedEndpoints = !generatedEndpoints.isEmpty() && (existingPolicy == null || existingPolicy.generatedEndpoints().isEmpty());
+            if (addingGeneratedEndpoints) {
+                generatedEndpoints.forEach(ge -> requireNonClashing(ge, applicationPolicies));
+            }
             if (existingPolicy != null) {
-                newPolicy = newPolicy.with(existingPolicy.routingStatus());
+                newPolicy = newPolicy.with(existingPolicy.routingStatus());          // Always preserve routing status
+                if (!addingGeneratedEndpoints) {
+                    newPolicy = newPolicy.with(existingPolicy.generatedEndpoints()); // Endpoints are generated once
+                }
             }
             updateZoneDnsOf(newPolicy, loadBalancer, allocation.deployment);
             policies.put(newPolicy.id(), newPolicy);
@@ -399,27 +388,34 @@ public class RoutingPolicies {
 
     /** Update zone DNS record for given policy */
     private void updateZoneDnsOf(RoutingPolicy policy, LoadBalancer loadBalancer, DeploymentId deploymentId) {
-        boolean addTokenEndpoint = createTokenEndpoint.with(FetchVector.Dimension.APPLICATION_ID, deploymentId.applicationId().serializedForm()).value();
-        for (var endpoint : policy.zoneEndpointsIn(controller.system(), RoutingMethod.exclusive, addTokenEndpoint)) {
-            var name = RecordName.from(endpoint.dnsName());
-            var record = policy.canonicalName().isPresent() ?
+        RoutingMethod routingMethod = controller.zoneRegistry().routingMethod(deploymentId.zoneId());
+        boolean addTokenEndpoint = controller.routing().tokenEndpointEnabled(deploymentId.applicationId());
+        for (var endpoint : policy.zoneEndpointsIn(controller.system(), routingMethod, addTokenEndpoint)) {
+            RecordName name = RecordName.from(endpoint.dnsName());
+            Record record = policy.canonicalName().isPresent() ?
                     new Record(Record.Type.CNAME, name, RecordData.fqdn(policy.canonicalName().get().value())) :
                     new Record(Record.Type.A, name, RecordData.from(policy.ipAddress().orElseThrow()));
-            nameServiceForwarderIn(policy.id().zone()).createRecord(record, Priority.normal, ownerOf(deploymentId));
+            nameServiceForwarder(endpoint).createRecord(record, Priority.normal, ownerOf(deploymentId));
             setPrivateDns(endpoint, loadBalancer, deploymentId);
         }
     }
 
     private void setPrivateDns(Endpoint endpoint, LoadBalancer loadBalancer, DeploymentId deploymentId) {
         if (loadBalancer.service().isEmpty()) return;
-        if (endpoint.isTokenEndpoint()) return;
+        // TODO(mpolden): Why is this done? Consider creating private DNS for all auth methods
+        boolean skipBasedOnAuthMethod = switch (endpoint.authMethod()) {
+            case token -> true;
+            case mtls -> false;
+        };
+        if (skipBasedOnAuthMethod) return;
+        if (endpoint.routingMethod() != RoutingMethod.exclusive) return; // Not supported for this routing method
         controller.serviceRegistry().vpcEndpointService()
                   .setPrivateDns(DomainName.of(endpoint.dnsName()),
                                  new ClusterId(deploymentId, endpoint.cluster()),
                                  loadBalancer.cloudAccount())
                   .ifPresent(challenge -> {
                       try (Mutex lock = db.lockNameServiceQueue()) {
-                          nameServiceForwarderIn(deploymentId.zoneId()).createTxt(challenge.name(), List.of(challenge.data()), Priority.high, ownerOf(deploymentId));
+                          controller.nameServiceForwarder().createTxt(challenge.name(), List.of(challenge.data()), Priority.high, ownerOf(deploymentId));
                           db.writeDnsChallenge(challenge);
                       }
                   });
@@ -458,8 +454,7 @@ public class RoutingPolicies {
     }
 
     private void removeDnsChallenge(DnsChallenge challenge) {
-        nameServiceForwarderIn(challenge.clusterId().deploymentId().zoneId())
-                .removeRecords(Type.TXT, challenge.name(), Priority.normal, ownerOf(challenge.clusterId().deploymentId()));
+        controller.nameServiceForwarder().removeRecords(Record.Type.TXT, challenge.name(), Priority.normal, ownerOf(challenge.clusterId().deploymentId()));
         db.deleteDnsChallenge(challenge.clusterId());
     }
 
@@ -469,17 +464,19 @@ public class RoutingPolicies {
      * @return the updated policies
      */
     private RoutingPolicyList removePoliciesUnreferencedBy(LoadBalancerAllocation allocation, RoutingPolicyList instancePolicies, @SuppressWarnings("unused") Mutex lock) {
-        boolean addTokenEndpoint = createTokenEndpoint.with(FetchVector.Dimension.APPLICATION_ID, allocation.deployment.applicationId().serializedForm()).value();
+        RoutingMethod routingMethod = controller.zoneRegistry().routingMethod(allocation.deployment.zoneId());
+        boolean addTokenEndpoint = controller.routing().tokenEndpointEnabled(allocation.deployment.applicationId());
         Map<RoutingPolicyId, RoutingPolicy> newPolicies = new LinkedHashMap<>(instancePolicies.asMap());
         Set<RoutingPolicyId> activeIds = allocation.asPolicyIds();
         RoutingPolicyList removable = instancePolicies.deployment(allocation.deployment)
                                                       .not().matching(policy -> activeIds.contains(policy.id()));
         for (var policy : removable) {
-            for (var endpoint : policy.zoneEndpointsIn(controller.system(), RoutingMethod.exclusive, addTokenEndpoint)) {
-                nameServiceForwarderIn(allocation.deployment.zoneId()).removeRecords(Record.Type.CNAME,
-                                                                                     RecordName.from(endpoint.dnsName()),
-                                                                                     Priority.normal,
-                                                                                     ownerOf(allocation));
+            for (var endpoint : policy.zoneEndpointsIn(controller.system(), routingMethod, addTokenEndpoint)) {
+                Record.Type type = policy.canonicalName().isPresent() ? Record.Type.CNAME : Record.Type.A;
+                nameServiceForwarder(endpoint).removeRecords(type,
+                                                             RecordName.from(endpoint.dnsName()),
+                                                             Priority.normal,
+                                                             ownerOf(allocation));
             }
             newPolicies.remove(policy.id());
         }
@@ -497,12 +494,20 @@ public class RoutingPolicies {
             EndpointList endpoints = controller.routing().readDeclaredEndpointsOf(id.instance())
                                                .not().requiresRotation()
                                                .named(id.endpointId(), Endpoint.Scope.global);
-            NameServiceForwarder forwarder = nameServiceForwarderIn(allocation.deployment.zoneId());
             // This removes all ALIAS records having this DNS name. There is no attempt to delete only the entry for the
             // affected zone. Instead, the correct set of records is (re)created by updateGlobalDnsOf
-            endpoints.forEach(endpoint -> forwarder.removeRecords(Record.Type.ALIAS, RecordName.from(endpoint.dnsName()),
-                                                                  Priority.normal,
-                                                                  ownerOf(allocation)));
+            for (var endpoint : endpoints) {
+                for (var regionEndpoint : computeRegionEndpoints(endpoint, deploymentPolicies.asList())) {
+                    Record.Type type = regionEndpoint.zoneDirectTargets().isEmpty() ? Record.Type.ALIAS : Record.Type.DIRECT;
+                    controller.nameServiceForwarder().removeRecords(type,
+                                                                    RecordName.from(regionEndpoint.target().name().value()),
+                                                                    Priority.normal,
+                                                                    ownerOf(allocation));
+                }
+                nameServiceForwarder(endpoint).removeRecords(Record.Type.ALIAS, RecordName.from(endpoint.dnsName()),
+                                                             Priority.normal,
+                                                             ownerOf(allocation));
+            }
         }
     }
 
@@ -520,27 +525,17 @@ public class RoutingPolicies {
             List<RoutingPolicy> policies = routingTable.get(id);
             for (var policy : policies) {
                 if (!policy.appliesTo(allocation.deployment)) continue;
-                NameServiceForwarder forwarder = nameServiceForwarderIn(policy.id().zone());
                 for (Endpoint endpoint : endpoints) {
+                    NameServiceForwarder forwarder = nameServiceForwarder(endpoint);
                     if (policy.canonicalName().isPresent()) {
                         forwarder.removeRecords(Record.Type.ALIAS,
                                                 RecordName.from(endpoint.dnsName()),
                                                 RecordData.fqdn(policy.canonicalName().get().value()),
                                                 Priority.normal,
                                                 ownerOf(allocation));
-                        forwarder.removeRecords(Record.Type.ALIAS,
-                                                RecordName.from(endpoint.legacyRegionalDnsName()),
-                                                RecordData.fqdn(policy.canonicalName().get().value()),
-                                                Priority.normal,
-                                                ownerOf(allocation));
                     } else {
                         forwarder.removeRecords(Record.Type.DIRECT,
                                                 RecordName.from(endpoint.dnsName()),
-                                                RecordData.from(policy.ipAddress().get()),
-                                                Priority.normal,
-                                                ownerOf(allocation));
-                        forwarder.removeRecords(Record.Type.DIRECT,
-                                                RecordName.from(endpoint.legacyRegionalDnsName()),
                                                 RecordData.from(policy.ipAddress().get()),
                                                 Priority.normal,
                                                 ownerOf(allocation));
@@ -573,14 +568,12 @@ public class RoutingPolicies {
     }
 
     /** Returns whether the endpoints of given policy are configured {@link RoutingStatus.Value#out} */
-    private static boolean isConfiguredOut(ZoneRoutingPolicy zonePolicy, RoutingPolicy policy, Set<ZoneId> inactiveZones) {
+    private static boolean isConfiguredOut(ZoneRoutingPolicy zonePolicy, RoutingPolicy policy) {
         // A deployment can be configured out from endpoints at any of the following levels:
         // - zone level (ZoneRoutingPolicy)
         // - deployment level (RoutingPolicy)
-        // - application package level (deployment.xml)
         return zonePolicy.routingStatus().value() == RoutingStatus.Value.out ||
-               policy.routingStatus().value() == RoutingStatus.Value.out ||
-               inactiveZones.contains(policy.id().zone());
+               policy.routingStatus().value() == RoutingStatus.Value.out;
     }
 
     /** Represents records for a region-wide endpoint */
@@ -660,10 +653,6 @@ public class RoutingPolicies {
             if (instanceSpec.isEmpty()) {
                 return Set.of();
             }
-            if (instanceSpec.get().globalServiceId().filter(id -> id.equals(loadBalancer.cluster().value())).isPresent()) {
-                // Legacy assignment always has the default endpoint ID
-                return Set.of(EndpointId.defaultId());
-            }
             return instanceSpec.get().endpoints().stream()
                                .filter(endpoint -> endpoint.containerId().equals(loadBalancer.cluster().value()))
                                .filter(endpoint -> endpoint.regions().contains(deployment.zoneId().region()))
@@ -689,22 +678,11 @@ public class RoutingPolicies {
 
     }
 
-    /** Returns zones where global routing is declared inactive for instance through deploymentSpec */
-    private static Set<ZoneId> inactiveZones(ApplicationId instance, DeploymentSpec deploymentSpec) {
-        var instanceSpec = deploymentSpec.instance(instance.instance());
-        if (instanceSpec.isEmpty()) return Set.of();
-        return instanceSpec.get().zones().stream()
-                           .filter(zone -> zone.environment().isProduction())
-                           .filter(zone -> !zone.active())
-                           .map(zone -> ZoneId.from(zone.environment(), zone.region().get()))
-                           .collect(Collectors.toUnmodifiableSet());
-    }
-
-    /** Returns the name updater to use for given zone */
-    private NameServiceForwarder nameServiceForwarderIn(ZoneId zone) {
-        return switch (controller.zoneRegistry().routingMethod(zone)) {
+    /** Returns the name updater to use for given endpoint */
+    private NameServiceForwarder nameServiceForwarder(Endpoint endpoint) {
+        return switch (endpoint.routingMethod()) {
             case exclusive -> controller.nameServiceForwarder();
-            case sharedLayer4 -> new NameServiceDiscarder(controller.curator());
+            case sharedLayer4 -> endpoint.generated().isPresent() ? controller.nameServiceForwarder() : new NameServiceDiscarder(controller.curator());
         };
     }
 
@@ -741,6 +719,16 @@ public class RoutingPolicies {
 
     private static Optional<TenantAndApplicationId> ownerOf(LoadBalancerAllocation allocation) {
         return ownerOf(allocation.deployment);
+    }
+
+    private static void requireNonClashing(GeneratedEndpoint generatedEndpoint, RoutingPolicyList applicationPolicies) {
+        for (var policy : applicationPolicies) {
+            for (var ge : policy.generatedEndpoints()) {
+                if (ge.clusterPart().equals(generatedEndpoint.clusterPart())) {
+                    throw new IllegalArgumentException(generatedEndpoint + " clashes with " + ge + " in " + policy.id());
+                }
+            }
+        }
     }
 
 }

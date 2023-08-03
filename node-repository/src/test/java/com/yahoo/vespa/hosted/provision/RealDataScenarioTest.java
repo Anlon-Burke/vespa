@@ -46,7 +46,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
@@ -105,7 +104,7 @@ public class RealDataScenarioTest {
         for (int i = 0; i < specs.length; i++) {
             contexts.add(new MockDeployer.ClusterContext(app, specs[i], capacities[i]));
         }
-        MockDeployer deployer = new MockDeployer(tester.provisioner(), tester.clock(), Map.of(app, new MockDeployer.ApplicationContext(app, contexts)));
+        MockDeployer deployer = new MockDeployer(tester.provisioner(), tester.clock(), List.of(new MockDeployer.ApplicationContext(app, contexts)));
         SwitchRebalancer rebalancer = new SwitchRebalancer(tester.nodeRepository(), Duration.ofDays(1), new MockMetric(), deployer);
         rebalancer.run();
     }
@@ -141,7 +140,7 @@ public class RealDataScenarioTest {
             if (nodeNext.get()) {
                 String json = input.substring(input.indexOf("{\""), input.lastIndexOf('}') + 1);
                 Node node = nodeSerializer.fromJson(json.getBytes(UTF_8));
-                nodeRepository.database().addNodesInState(List.of(node), node.state(), Agent.system);
+                nodeRepository.database().addNodesInState(new LockedNodeList(List.of(node), () -> { }), node.state(), Agent.system);
                 nodeNext.set(false);
             } else {
                 if (!zkNodePathPattern.matcher(input).matches()) return;

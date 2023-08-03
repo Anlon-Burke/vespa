@@ -22,6 +22,9 @@ responseHeaderSize                  int      default=65536
 # The accept queue size (also known as accept backlog).
 acceptQueueSize                     int      default=0
 
+# Max content size allowed for requests. Set to -1 to disable.
+maxContentSize                      long     default=-1
+
 # Whether the server socket reuses addresses.
 reuseAddress                        bool     default=true
 
@@ -135,3 +138,9 @@ serverName.fallback string default=""
 
 # The list of accepted server names. Empty list to accept any. Elements follows format of 'serverName.default'.
 serverName.allowed[] string
+
+# HTTP request headers that contain remote address
+accessLog.remoteAddressHeaders[]      string
+
+# HTTP request headers that contain remote port
+accessLog.remotePortHeaders[]         string

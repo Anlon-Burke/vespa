@@ -223,6 +223,7 @@ public class NodePatcher {
             case WANT_TO_RETIRE:
             case WANT_TO_DEPROVISION:
             case WANT_TO_REBUILD:
+            case WANT_TO_UPGRADE_FLAVOR:
                 // These needs to be handled as one, because certain combinations are not allowed.
                 return node.withWantToRetire(asOptionalBoolean(root.field(WANT_TO_RETIRE))
                                                      .orElseGet(node.status()::wantToRetire),
@@ -280,9 +281,9 @@ public class NodePatcher {
 
     private Node applyIpconfigField(Node node, String name, Inspector value, LockedNodeList nodes) {
         return switch (name) {
-            case "ipAddresses" -> IP.Config.verify(node.with(node.ipConfig().withPrimary(asStringSet(value))), nodes);
-            case "additionalIpAddresses" -> IP.Config.verify(node.with(node.ipConfig().withPool(node.ipConfig().pool().withIpAddresses(asStringSet(value)))), nodes);
-            case "additionalHostnames" -> IP.Config.verify(node.with(node.ipConfig().withPool(node.ipConfig().pool().withHostnames(asHostnames(value)))), nodes);
+            case "ipAddresses" -> IP.Config.verify(node.with(node.ipConfig().withPrimary(asStringSet(value))), nodes, nodeRepository.zone());
+            case "additionalIpAddresses" -> IP.Config.verify(node.with(node.ipConfig().withPool(node.ipConfig().pool().withIpAddresses(asStringSet(value)))), nodes, nodeRepository.zone());
+            case "additionalHostnames" -> IP.Config.verify(node.with(node.ipConfig().withPool(node.ipConfig().pool().withHostnames(asHostnames(value)))), nodes, nodeRepository.zone());
             default -> throw new IllegalArgumentException("Could not apply field '" + name + "' on a node: No such modifiable field");
         };
     }

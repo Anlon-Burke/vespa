@@ -9,7 +9,6 @@ import com.yahoo.config.provision.NodeResources;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
-import com.yahoo.vespa.hosted.provision.provisioning.NodeResourceLimits;
 
 import java.util.List;
 import java.util.Optional;
@@ -161,7 +160,7 @@ public class AllocatableClusterResources {
                                                              Limits applicationLimits,
                                                              List<NodeResources> availableRealHostResources,
                                                              NodeRepository nodeRepository) {
-        var systemLimits = new NodeResourceLimits(nodeRepository);
+        var systemLimits = nodeRepository.nodeResourceLimits();
         boolean exclusive = nodeRepository.exclusiveAllocation(clusterSpec);
         if (! exclusive) {
             // We decide resources: Add overhead to what we'll request (advertised) to make sure real becomes (at least) cappedNodeResources
@@ -195,6 +194,7 @@ public class AllocatableClusterResources {
         else { // Return the cheapest flavor satisfying the requested resources, if any
             NodeResources cappedWantedResources = applicationLimits.cap(wantedResources.nodeResources());
             Optional<AllocatableClusterResources> best = Optional.empty();
+            Optional<AllocatableClusterResources> bestDisregardingDiskLimit = Optional.empty();
             for (Flavor flavor : nodeRepository.flavors().getFlavors()) {
                 // Flavor decide resources: Real resources are the worst case real resources we'll get if we ask for these advertised resources
                 NodeResources advertisedResources = nodeRepository.resourcesCalculator().advertisedResourcesOf(flavor);
@@ -202,7 +202,9 @@ public class AllocatableClusterResources {
 
                 // Adjust where we don't need exact match to the flavor
                 if (flavor.resources().storageType() == NodeResources.StorageType.remote) {
-                    double diskGb = systemLimits.enlargeToLegal(cappedWantedResources, applicationId, clusterSpec, exclusive).diskGb();
+                    double diskGb = systemLimits.enlargeToLegal(cappedWantedResources, applicationId, clusterSpec, exclusive, true).diskGb();
+                    if (diskGb > applicationLimits.max().nodeResources().diskGb() || diskGb < applicationLimits.min().nodeResources().diskGb()) // TODO: Remove when disk limit is enforced
+                        diskGb = systemLimits.enlargeToLegal(cappedWantedResources, applicationId, clusterSpec, exclusive, false).diskGb();
                     advertisedResources = advertisedResources.withDiskGb(diskGb);
                     realResources = realResources.withDiskGb(diskGb);
                 }
@@ -213,14 +215,24 @@ public class AllocatableClusterResources {
 
                 if ( ! between(applicationLimits.min().nodeResources(), applicationLimits.max().nodeResources(), advertisedResources)) continue;
                 if ( ! systemLimits.isWithinRealLimits(realResources, applicationId, clusterSpec)) continue;
+
                 var candidate = new AllocatableClusterResources(wantedResources.with(realResources),
                                                                 advertisedResources,
                                                                 wantedResources,
                                                                 clusterSpec);
+
+                if ( ! systemLimits.isWithinAdvertisedDiskLimits(advertisedResources, clusterSpec)) { // TODO: Remove when disk limit is enforced
+                    if (bestDisregardingDiskLimit.isEmpty() || candidate.preferableTo(bestDisregardingDiskLimit.get())) {
+                        bestDisregardingDiskLimit = Optional.of(candidate);
+                    }
+                    continue;
+                }
                 if (best.isEmpty() || candidate.preferableTo(best.get())) {
                     best = Optional.of(candidate);
                 }
             }
+            if (best.isEmpty())
+                best = bestDisregardingDiskLimit;
             return best;
         }
     }
@@ -232,9 +244,9 @@ public class AllocatableClusterResources {
                                                                              Limits applicationLimits,
                                                                              boolean exclusive,
                                                                              boolean bestCase) {
-        var systemLimits = new NodeResourceLimits(nodeRepository);
+        var systemLimits = nodeRepository.nodeResourceLimits();
         var advertisedResources = nodeRepository.resourcesCalculator().realToRequest(wantedResources.nodeResources(), exclusive, bestCase);
-        advertisedResources = systemLimits.enlargeToLegal(advertisedResources, applicationId, clusterSpec, exclusive); // Ask for something legal
+        advertisedResources = systemLimits.enlargeToLegal(advertisedResources, applicationId, clusterSpec, exclusive, true); // Ask for something legal
         advertisedResources = applicationLimits.cap(advertisedResources); // Overrides other conditions, even if it will then fail
         var realResources = nodeRepository.resourcesCalculator().requestToReal(advertisedResources, exclusive, bestCase); // What we'll really get
         if ( ! systemLimits.isWithinRealLimits(realResources, applicationId, clusterSpec)

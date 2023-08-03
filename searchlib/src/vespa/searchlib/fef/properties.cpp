@@ -11,7 +11,7 @@ const Property::Value Property::_emptyValue;
 const Property::Values Property::_emptyValues;
 
 const Property::Value &
-Property::getAt(uint32_t idx) const
+Property::getAt(uint32_t idx) const noexcept
 {
     if (idx < (*_values).size()) {
         return (*_values)[idx];
@@ -22,7 +22,7 @@ Property::getAt(uint32_t idx) const
 //-----------------------------------------------------------------------------
 
 uint32_t
-Properties::rawHash(const void *buf, uint32_t len)
+Properties::rawHash(const void *buf, uint32_t len) noexcept
 {
     uint32_t res = 0;
     unsigned const char *pt = (unsigned const char *) buf;
@@ -33,7 +33,7 @@ Properties::rawHash(const void *buf, uint32_t len)
     return res;
 }
 
-Properties::Properties()
+Properties::Properties() noexcept
     : _numValues(0),
       _data()
 {
@@ -59,10 +59,10 @@ Properties::add(vespalib::stringref key, vespalib::stringref value)
 }
 
 uint32_t
-Properties::count(vespalib::stringref key) const
+Properties::count(vespalib::stringref key) const noexcept
 {
     if (!key.empty()) {
-        Map::const_iterator node = _data.find(key);
+        auto node = _data.find(key);
         if (node != _data.end()) {
             return node->second.size();
         }
@@ -74,7 +74,7 @@ Properties &
 Properties::remove(vespalib::stringref key)
 {
     if (!key.empty()) {
-        Map::iterator node = _data.find(key);
+        auto node = _data.find(key);
         if (node != _data.end()) {
             _numValues -= node->second.size();
             _data.erase(node);
@@ -86,15 +86,13 @@ Properties::remove(vespalib::stringref key)
 Properties &
 Properties::import(const Properties &src)
 {
-    Map::const_iterator itr = src._data.begin();
-    Map::const_iterator end = src._data.end();
-    for (; itr != end; ++itr) {
-        Map::insert_result res = _data.insert(Map::value_type(itr->first, itr->second));
+    for (const auto& elem : src._data) {
+        Map::insert_result res = _data.insert(Map::value_type(elem.first, elem.second));
         if ( ! res.second) {
             _numValues -= res.first->second.size();
-            res.first->second = itr->second;
+            res.first->second = elem.second;
         }
-        _numValues += itr->second.size();
+        _numValues += elem.second.size();
     }
     return *this;
 }
@@ -114,26 +112,22 @@ Properties::clear()
 }
 
 bool
-Properties::operator==(const Properties &rhs) const
+Properties::operator==(const Properties &rhs) const noexcept
 {
     return (_numValues == rhs._numValues &&
             _data == rhs._data);
 }
 
 uint32_t
-Properties::hashCode() const
+Properties::hashCode() const noexcept
 {
     uint32_t hash = numKeys() + numValues();
-    Map::const_iterator itr = _data.begin();
-    Map::const_iterator end = _data.end();
-    for (; itr != end; ++itr) {
-        const Key &key = itr->first;
-        const Value &value = itr->second;
-        Value::const_iterator v_itr = value.begin();
-        Value::const_iterator v_end = value.end();
+    for (const auto& elem : _data) {
+        const Key &key = elem.first;
+        const Value &value = elem.second;
         hash += rawHash(key.data(), key.size());
-        for (; v_itr != v_end; ++v_itr) {
-            hash += rawHash(v_itr->data(), v_itr->size());
+        for (const auto& velem : value) {
+            hash += rawHash(velem.data(), velem.size());
         }
     }
     return hash;
@@ -142,10 +136,8 @@ Properties::hashCode() const
 void
 Properties::visitProperties(IPropertiesVisitor &visitor) const
 {
-    Map::const_iterator itr = _data.begin();
-    Map::const_iterator end = _data.end();
-    for (; itr != end; ++itr) {
-        visitor.visitProperty(itr->first, Property(itr->second));
+    for (const auto& elem : _data) {
+        visitor.visitProperty(elem.first, Property(elem.second));
     }
 }
 
@@ -155,26 +147,24 @@ Properties::visitNamespace(vespalib::stringref ns,
 {
     vespalib::string tmp;
     vespalib::string prefix = ns + ".";
-    Map::const_iterator itr = _data.begin();
-    Map::const_iterator end = _data.end();
-    for (; itr != end; ++itr) {
-        if ((itr->first.find(prefix) == 0) &&
-            (itr->first.size() > prefix.size()))
+    for (const auto& elem : _data) {
+        if ((elem.first.find(prefix) == 0) &&
+            (elem.first.size() > prefix.size()))
         {
-            tmp = vespalib::stringref(itr->first.data() + prefix.size(),
-                                      itr->first.size() - prefix.size());
-            visitor.visitProperty(tmp, Property(itr->second));
+            tmp = vespalib::stringref(elem.first.data() + prefix.size(),
+                                      elem.first.size() - prefix.size());
+            visitor.visitProperty(tmp, Property(elem.second));
         }
     }
 }
 
 Property
-Properties::lookup(vespalib::stringref key) const
+Properties::lookup(vespalib::stringref key) const noexcept
 {
     if (key.empty()) {
         return Property();
     }
-    Map::const_iterator node = _data.find(key);
+    auto node = _data.find(key);
     if (node == _data.end()) {
         return Property();
     }
@@ -182,7 +172,7 @@ Properties::lookup(vespalib::stringref key) const
 }
 
 Property Properties::lookup(vespalib::stringref namespace1,
-                            vespalib::stringref key) const
+                            vespalib::stringref key) const noexcept
 {
     if (namespace1.empty() || key.empty()) {
         return Property();
@@ -194,7 +184,7 @@ Property Properties::lookup(vespalib::stringref namespace1,
 
 Property Properties::lookup(vespalib::stringref namespace1,
                             vespalib::stringref namespace2,
-                            vespalib::stringref key) const
+                            vespalib::stringref key) const noexcept
 {
     if (namespace1.empty() || namespace2.empty() || key.empty()) {
         return Property();
@@ -207,7 +197,7 @@ Property Properties::lookup(vespalib::stringref namespace1,
 Property Properties::lookup(vespalib::stringref namespace1,
                             vespalib::stringref namespace2,
                             vespalib::stringref namespace3,
-                            vespalib::stringref key) const
+                            vespalib::stringref key) const noexcept
 {
     if (namespace1.empty() || namespace2.empty() || namespace3.empty() || key.empty()) {
         return Property();
@@ -217,7 +207,7 @@ Property Properties::lookup(vespalib::stringref namespace1,
     return lookup(fullKey);
 }
 
-void Properties::swap(Properties & rhs)
+void Properties::swap(Properties & rhs) noexcept
 {
     _data.swap(rhs._data);
     std::swap(_numValues, rhs._numValues);

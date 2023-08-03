@@ -107,8 +107,8 @@ TransLogServer::TransLogServer(FNET_Transport & transport, const vespalib::strin
       _closed(false)
 {
     int retval(0);
-    if ((retval = makeDirectory(_baseDir.c_str())) == 0) {
-        if ((retval = makeDirectory(dir().c_str())) == 0) {
+    if ((retval = makeDirectory(_baseDir)) == 0) {
+        if ((retval = makeDirectory(dir())) == 0) {
             std::ifstream domainDir(domainList().c_str());
             while (domainDir.good() && !domainDir.eof()) {
                 vespalib::string domainName;
@@ -519,8 +519,8 @@ TransLogServer::listDomains(FRT_RPCRequest *req)
 
     vespalib::string domains;
     ReadGuard domainGuard(_domainMutex);
-    for(DomainList::const_iterator it(_domains.begin()), mt(_domains.end()); it != mt; it++) {
-        domains += it->second->name();
+    for (const auto& elem : _domains) {
+        domains += elem.second->name();
         domains += "\n";
     }
     ret.AddInt32(0);

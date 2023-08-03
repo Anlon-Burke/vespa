@@ -57,9 +57,9 @@ struct FieldName {
 
 template <typename T>
 uint32_t
-getFieldId(vespalib::stringref name, const T &map)
+getFieldId(vespalib::stringref name, const T &map) noexcept
 {
-    typename T::const_iterator it = map.find(name);
+    auto it = map.find(name);
     return (it != map.end()) ? it->second : Schema::UNKNOWN_FIELD_ID;
 }
 
@@ -111,7 +111,7 @@ Schema::Field::write(vespalib::asciistream & os, vespalib::stringref prefix) con
 }
 
 bool
-Schema::Field::operator==(const Field &rhs) const
+Schema::Field::operator==(const Field &rhs) const noexcept
 {
     return _name == rhs._name &&
            _dataType == rhs._dataType &&
@@ -120,7 +120,7 @@ Schema::Field::operator==(const Field &rhs) const
 }
 
 bool
-Schema::Field::operator!=(const Field &rhs) const
+Schema::Field::operator!=(const Field &rhs) const noexcept
 {
     return !((*this) == rhs);
 }
@@ -166,7 +166,7 @@ Schema::IndexField::write(vespalib::asciistream & os, vespalib::stringref prefix
 }
 
 bool
-Schema::IndexField::operator==(const IndexField &rhs) const
+Schema::IndexField::operator==(const IndexField &rhs) const noexcept
 {
     return Field::operator==(rhs) &&
             _avgElemLen == rhs._avgElemLen &&
@@ -174,7 +174,7 @@ Schema::IndexField::operator==(const IndexField &rhs) const
 }
 
 bool
-Schema::IndexField::operator!=(const IndexField &rhs) const
+Schema::IndexField::operator!=(const IndexField &rhs) const noexcept
 {
     return Field::operator!=(rhs) ||
             _avgElemLen != rhs._avgElemLen ||
@@ -197,14 +197,14 @@ Schema::FieldSet & Schema::FieldSet::operator = (const FieldSet &) = default;
 Schema::FieldSet::~FieldSet() = default;
 
 bool
-Schema::FieldSet::operator==(const FieldSet &rhs) const
+Schema::FieldSet::operator==(const FieldSet &rhs) const noexcept
 {
     return _name == rhs._name &&
          _fields == rhs._fields;
 }
 
 bool
-Schema::FieldSet::operator!=(const FieldSet &rhs) const
+Schema::FieldSet::operator!=(const FieldSet &rhs) const noexcept
 {
     return _name != rhs._name ||
          _fields != rhs._fields;
@@ -364,31 +364,31 @@ Schema::addFieldSet(const FieldSet &fieldSet)
 }
 
 uint32_t
-Schema::getIndexFieldId(vespalib::stringref name) const
+Schema::getIndexFieldId(vespalib::stringref name) const noexcept
 {
     return getFieldId(name, _indexIds);
 }
 
 uint32_t
-Schema::getAttributeFieldId(vespalib::stringref name) const
+Schema::getAttributeFieldId(vespalib::stringref name) const noexcept
 {
     return getFieldId(name, _attributeIds);
 }
 
 uint32_t
-Schema::getFieldSetId(vespalib::stringref name) const
+Schema::getFieldSetId(vespalib::stringref name) const noexcept
 {
     return getFieldId(name, _fieldSetIds);
 }
 
 bool
-Schema::isIndexField(vespalib::stringref name) const
+Schema::isIndexField(vespalib::stringref name) const noexcept
 {
     return _indexIds.find(name) != _indexIds.end();
 }
 
 bool
-Schema::isAttributeField(vespalib::stringref name) const
+Schema::isAttributeField(vespalib::stringref name) const noexcept
 {
     return _attributeIds.find(name) != _attributeIds.end();
 }
@@ -433,13 +433,12 @@ struct IntersectHelper {
     void intersect(const std::vector<T> &set1, const std::vector<T> &set2,
                    const Map &set2_map,
                    std::vector<T> &intersection, Map &intersection_map) {
-        for (typename std::vector<T>::const_iterator
-                 it = set1.begin(); it != set1.end(); ++it) {
-            typename Map::const_iterator it2 = set2_map.find(it->getName());
+        for (const auto& elem : set1) {
+            auto it2 = set2_map.find(elem.getName());
             if (it2 != set2_map.end()) {
-                if (is_matching(*it, set2[it2->second])) {
-                    intersection_map[it->getName()] = intersection.size();
-                    intersection.push_back(*it);
+                if (is_matching(elem, set2[it2->second])) {
+                    intersection_map[elem.getName()] = intersection.size();
+                    intersection.push_back(elem);
                 }
             }
         }
@@ -517,7 +516,7 @@ Schema::set_difference(const Schema &lhs, const Schema &rhs)
 }
 
 bool
-Schema::operator==(const Schema &rhs) const
+Schema::operator==(const Schema &rhs) const noexcept
 {
     return _indexFields == rhs._indexFields &&
             _attributeFields == rhs._attributeFields &&
@@ -526,7 +525,7 @@ Schema::operator==(const Schema &rhs) const
 }
 
 bool
-Schema::operator!=(const Schema &rhs) const
+Schema::operator!=(const Schema &rhs) const noexcept
 {
     return _indexFields != rhs._indexFields ||
             _attributeFields != rhs._attributeFields ||
@@ -535,7 +534,7 @@ Schema::operator!=(const Schema &rhs) const
 }
 
 bool
-Schema::empty() const
+Schema::empty() const noexcept
 {
     return _indexFields.empty() &&
             _attributeFields.empty() &&

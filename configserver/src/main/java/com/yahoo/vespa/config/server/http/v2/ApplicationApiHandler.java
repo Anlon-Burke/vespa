@@ -99,7 +99,7 @@ public class ApplicationApiHandler extends SessionHandler {
 
                 var message = "Deploy request from '" + tenantName.value() + "' contains invalid data: " + e.getMessage();
                 log.log(INFO, message + ", parts: " + parts, e);
-                throw new BadRequestException("Deploy request from '" + tenantName.value() + "' contains invalid data: " + e.getMessage());
+                throw new BadRequestException(message);
             }
         } else {
             prepareParams = PrepareParams.fromHttpRequest(request, tenantName, zookeeperBarrierTimeout);

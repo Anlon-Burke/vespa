@@ -15,6 +15,8 @@ import com.yahoo.vespa.hosted.controller.api.integration.dataplanetoken.TokenId;
 import com.yahoo.vespa.hosted.controller.persistence.CuratorDb;
 
 import java.security.Principal;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -30,6 +32,7 @@ public class DataplaneTokenService {
     private static final String TOKEN_PREFIX = "vespa_cloud_";
     private static final int TOKEN_BYTES = 32;
     private static final int CHECK_HASH_BYTES = 32;
+    public static final Duration DEFAULT_TTL = Duration.ofDays(30);
 
 
     private final Controller controller;
@@ -51,10 +54,11 @@ public class DataplaneTokenService {
      *
      * @param tenantName name of the tenant to connect the token to
      * @param tokenId The user generated name/id of the token
+     * @param expiration Token expiration
      * @param principal The principal making the request
      * @return a DataplaneToken containing the secret generated token
      */
-    public DataplaneToken generateToken(TenantName tenantName, TokenId tokenId, Principal principal) {
+    public DataplaneToken generateToken(TenantName tenantName, TokenId tokenId, Instant expiration, Principal principal) {
         TokenDomain tokenDomain = TokenDomain.of("Vespa Cloud tenant data plane:%s".formatted(tenantName.value()));
         Token token = TokenGenerator.generateToken(tokenDomain, TOKEN_PREFIX, TOKEN_BYTES);
         TokenCheckHash checkHash = TokenCheckHash.of(token, CHECK_HASH_BYTES);
@@ -62,6 +66,7 @@ public class DataplaneTokenService {
                 FingerPrint.of(token.fingerprint().toDelimitedHexString()),
                 checkHash.toHexString(),
                 controller.clock().instant(),
+                Optional.ofNullable(expiration),
                 principal.getName());
 
         CuratorDb curator = controller.curator();
@@ -85,7 +90,8 @@ public class DataplaneTokenService {
             curator.writeDataplaneTokens(tenantName, dataplaneTokenVersions);
 
             // Return the data plane token including the secret token.
-            return new DataplaneToken(tokenId, FingerPrint.of(token.fingerprint().toDelimitedHexString()), token.secretTokenString());
+            return new DataplaneToken(tokenId, FingerPrint.of(token.fingerprint().toDelimitedHexString()),
+                                      token.secretTokenString(), Optional.ofNullable(expiration));
         }
     }
 

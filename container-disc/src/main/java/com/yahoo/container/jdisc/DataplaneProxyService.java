@@ -36,8 +36,8 @@ public class DataplaneProxyService extends AbstractComponent {
     private final Path root;
 
     enum NginxState {INITIALIZING, RUNNING, RELOAD_REQUIRED, STOPPED};
-    private NginxState state;
-    private NginxState wantedState;
+    private volatile NginxState state;
+    private volatile NginxState wantedState;
 
     private DataplaneProxyConfig cfg;
     private Path proxyCredentialsCert;
@@ -103,7 +103,8 @@ public class DataplaneProxyService extends AbstractComponent {
                                                    proxyCredentialsKey,
                                                    serverCertificateFile,
                                                    serverKeyFile,
-                                                   config.port(),
+                                                   config.mtlsPort(),
+                                                   config.tokenPort(),
                                                    root
                                            ));
                 if (configChanged && state == NginxState.RUNNING) {
@@ -113,35 +114,46 @@ public class DataplaneProxyService extends AbstractComponent {
                 throw new RuntimeException("Error reconfiguring data plane proxy", e);
             }
         }
-        if (wantedState == NginxState.RUNNING) {
+        NginxState convergeTo = wantedState;
+        if (convergeTo == NginxState.RUNNING) {
             boolean nginxRunning = proxyCommands.isRunning();
             if (!nginxRunning) {
                 try {
                     proxyCommands.start(nginxConf);
-                    changeState(wantedState);
+                    changeState(convergeTo);
                 } catch (Exception e) {
                     logger.log(Level.INFO, "Failed to start nginx, will retry");
+                    logger.log(Level.FINE, "Exception from nginx start", e);
                 }
-            } else if (nginxRunning && state == NginxState.RELOAD_REQUIRED) {
-                try {
-                    proxyCommands.reload();
-                    changeState(wantedState);
-                } catch (Exception e) {
-                    logger.log(Level.INFO, "Failed to reconfigure nginx, will retry.");
+            } else {
+                if (state == NginxState.RELOAD_REQUIRED) {
+                    try {
+                        proxyCommands.reload();
+                        changeState(convergeTo);
+                    } catch (Exception e) {
+                        logger.log(Level.INFO, "Failed to reconfigure nginx, will retry.");
+                        logger.log(Level.FINE, "Exception from nginx reload", e);
+                    }
+                } else if (state != convergeTo) {
+                    // Already running, but state not updated
+                    changeState(convergeTo);
                 }
             }
-        } else if (wantedState == NginxState.STOPPED) {
+        } else if (convergeTo == NginxState.STOPPED) {
             if (proxyCommands.isRunning()) {
                 try {
                     proxyCommands.stop();
-                    changeState(wantedState);
-                    executorService.shutdownNow();
                 } catch (Exception e) {
                     logger.log(Level.INFO, "Failed to stop nginx, will retry");
+                    logger.log(Level.FINE, "Exception from nginx stop", e);
                 }
             }
+            if (! proxyCommands.isRunning()) {
+                changeState(convergeTo);
+                executorService.shutdownNow();
+            }
         } else {
-            logger.warning("Unknown state " + wantedState);
+            logger.warning("Unknown state " + convergeTo);
         }
     }
 
@@ -150,9 +162,9 @@ public class DataplaneProxyService extends AbstractComponent {
         super.deconstruct();
         wantedState = NginxState.STOPPED;
         try {
-            executorService.awaitTermination(5, TimeUnit.MINUTES);
+            executorService.awaitTermination(30, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
-            logger.log(Level.WARNING, "Error shutting down proxy reload thread");
+            logger.log(Level.WARNING, "Error shutting down proxy reload thread", e);
         }
     }
 
@@ -180,7 +192,8 @@ public class DataplaneProxyService extends AbstractComponent {
             Path clientKey,
             Path serverCert,
             Path serverKey,
-            int vespaPort,
+            int vespaMtlsPort,
+            int vespaTokenPort,
             Path root) {
 
         try {
@@ -189,7 +202,8 @@ public class DataplaneProxyService extends AbstractComponent {
             nginxTemplate = replace(nginxTemplate, "client_key", clientKey.toString());
             nginxTemplate = replace(nginxTemplate, "server_cert", serverCert.toString());
             nginxTemplate = replace(nginxTemplate, "server_key", serverKey.toString());
-            nginxTemplate = replace(nginxTemplate, "vespa_port", Integer.toString(vespaPort));
+            nginxTemplate = replace(nginxTemplate, "vespa_mtls_port", Integer.toString(vespaMtlsPort));
+            nginxTemplate = replace(nginxTemplate, "vespa_token_port", Integer.toString(vespaTokenPort));
             nginxTemplate = replace(nginxTemplate, "prefix", root.toString());
 
             // TODO: verify that all template vars have been expanded
@@ -203,10 +217,12 @@ public class DataplaneProxyService extends AbstractComponent {
         return template.replaceAll("\\$\\{%s\\}".formatted(key), value);
     }
 
+    // Used for testing
     NginxState state() {
         return state;
     }
 
+    // Used for testing
     NginxState wantedState() {
         return wantedState;
     }

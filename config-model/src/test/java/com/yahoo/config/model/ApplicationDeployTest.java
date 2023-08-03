@@ -1,7 +1,6 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.model;
 
-import com.google.common.io.Files;
 import com.yahoo.config.application.api.ApplicationMetaData;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.UnparsedConfigDefinition;
@@ -35,7 +34,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarEntry;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class ApplicationDeployTest {
 
@@ -168,7 +172,7 @@ public class ApplicationDeployTest {
     }
 
     @Test
-    void testThatAppWithIllegalDeploymentXmlIsNotValid() throws IOException {
+    void testThatAppWithIllegalDeploymentXmlIsNotValid() {
         assertThrows(IllegalArgumentException.class, () -> {
             File tmpDir = tmpFolder;
             IOUtils.copyDirectory(new File(TESTDIR, "app_invalid_deployment_xml"), tmpDir);
@@ -192,13 +196,15 @@ public class ApplicationDeployTest {
 
     @Test
     void testThatAppWithInvalidParallelDeploymentFails() throws IOException {
-        String expectedMessage = "4:  <staging/>\n" +
-                "5:  <prod global-service-id=\"query\">\n" +
-                "6:    <parallel>\n" +
-                "7:      <instance id=\"hello\" />\n" +
-                "8:    </parallel>\n" +
-                "9:  </prod>\n" +
-                "10:</deployment>\n";
+        String expectedMessage = """
+                4:  <staging/>
+                5:  <prod>
+                6:    <parallel>
+                7:      <instance id="hello" />
+                8:    </parallel>
+                9:  </prod>
+                10:</deployment>
+                """;
         File tmpDir = tmpFolder;
         IOUtils.copyDirectory(new File(TESTDIR, "invalid_parallel_deployment_xml"), tmpDir);
         try {
@@ -220,7 +226,7 @@ public class ApplicationDeployTest {
 
     @Test
     void testMetaData() throws IOException {
-        File tmp = Files.createTempDir();
+        File tmp = tmpFolder;
         String appPkg = TESTDIR + "app1";
         IOUtils.copyDirectory(new File(appPkg), tmp);
         ApplicationId applicationId = ApplicationId.from("tenant1", "application1", "instance1");

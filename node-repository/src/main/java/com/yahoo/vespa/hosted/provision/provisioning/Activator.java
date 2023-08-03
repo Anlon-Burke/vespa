@@ -14,7 +14,6 @@ import com.yahoo.vespa.hosted.provision.NodeMutex;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.applications.Application;
 import com.yahoo.vespa.hosted.provision.applications.ScalingEvent;
-import com.yahoo.vespa.hosted.provision.autoscale.Autoscaling;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.Allocation;
 
@@ -71,8 +70,8 @@ class Activator {
         NodeList allNodes = nodeRepository.nodes().list();
         NodeList applicationNodes = allNodes.owner(application);
 
-        NodeList reserved = updatePortsFrom(hosts, applicationNodes.state(Node.State.reserved)
-                                                                   .matching(node -> hostnames.contains(node.hostname())));
+        NodeList reserved = applicationNodes.state(Node.State.reserved).matching(node -> hostnames.contains(node.hostname()));
+        reserved = updatePortsFrom(hosts, reserved);
         nodeRepository.nodes().reserve(reserved.asList()); // Re-reserve nodes to avoid reservation expiry
 
         NodeList oldActive = applicationNodes.state(Node.State.active); // All nodes active now
@@ -88,7 +87,7 @@ class Activator {
 
         NodeList activeToRemove = oldActive.matching(node ->  ! hostnames.contains(node.hostname()));
         remove(activeToRemove, transaction); // TODO: Pass activation time in this call and next line
-        nodeRepository.nodes().activate(newActive.asList(), transaction.nested()); // activate also continued active to update node state
+        nodeRepository.nodes().activate(newActive.asList(), transaction); // activate also continued active to update node state
 
         rememberResourceChange(transaction, generation, activationTime,
                                oldActive.not().retired(),

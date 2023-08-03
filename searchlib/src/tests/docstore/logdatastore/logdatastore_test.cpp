@@ -184,15 +184,15 @@ TEST("test that DirectIOPadding works accordng to spec") {
     EXPECT_FALSE(file.DirectIOPadding(FILE_SIZE-1, 4_Ki, padBefore, padAfter));
     EXPECT_EQUAL(0u, padBefore);
     EXPECT_EQUAL(0u, padAfter);
-    EXPECT_EQUAL(FILE_SIZE, file.GetSize());
+    EXPECT_EQUAL(FILE_SIZE, file.getSize());
 
     FastOS_File file2("directio.test");
     file2.EnableDirectIO();
     EXPECT_TRUE(file2.OpenWriteOnlyExisting(true));
-    EXPECT_TRUE(file2.SetPosition(file2.GetSize()));
-    EXPECT_EQUAL(FILE_SIZE, file2.GetSize());
+    EXPECT_TRUE(file2.SetPosition(file2.getSize()));
+    EXPECT_EQUAL(FILE_SIZE, file2.getSize());
     EXPECT_EQUAL(FILE_SIZE, file2.Write2(buf.get(), FILE_SIZE));
-    EXPECT_EQUAL(FILE_SIZE*2, file2.GetSize());
+    EXPECT_EQUAL(FILE_SIZE*2, file2.getSize());
     EXPECT_TRUE(file2.Close());
 
     EXPECT_TRUE(file.DirectIOPadding(4097, 4_Ki, padBefore, padAfter));
@@ -204,7 +204,7 @@ TEST("test that DirectIOPadding works accordng to spec") {
     EXPECT_EQUAL(1u, padAfter);
 
     EXPECT_TRUE(file.Close());
-    FastOS_File::Delete(file.GetFileName());
+    std::filesystem::remove(std::filesystem::path(file.GetFileName()));
 }
 #endif
 
@@ -748,23 +748,6 @@ TEST("testWriteRead") {
     std::filesystem::remove_all(std::filesystem::path("empty"));
 }
 
-TEST("requireThatSyncTokenIsUpdatedAfterFlush") {
-#if 0
-    std::string file = "sync.dat";
-    FastOS_File::Delete(file.c_str());
-    {
-        vespalib::DataBuffer buf;
-        SimpleDataStore store(file);
-        EXPECT_EQUAL(0u, store.lastSyncToken());
-        makeData(buf, 10);
-        store.write(0, buf, 10);
-        store.flush(4);
-        EXPECT_EQUAL(4u, store.lastSyncToken());
-    }
-    FastOS_File::Delete(file.c_str());
-#endif
-}
-
 TEST("requireThatFlushTimeIsAvailableAfterFlush") {
     DirectoryHandler testDir("flushtime");
     vespalib::system_time before(vespalib::system_clock::now());
@@ -1022,7 +1005,7 @@ TEST_F("require that lid space can be increased after being compacted and then s
 TEST_F("require that there is control of static memory usage", Fixture)
 {
     vespalib::MemoryUsage usage = f.store.getMemoryUsage();
-    EXPECT_EQUAL(536u + sizeof(LogDataStore::NameIdSet) + sizeof(std::mutex), sizeof(LogDataStore));
+    EXPECT_EQUAL(520u + sizeof(LogDataStore::NameIdSet) + sizeof(std::mutex), sizeof(LogDataStore));
     EXPECT_EQUAL(74108u, usage.allocatedBytes());
     EXPECT_EQUAL(384u, usage.usedBytes());
 }

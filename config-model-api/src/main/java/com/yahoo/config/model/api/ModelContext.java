@@ -38,7 +38,6 @@ public interface ModelContext {
 
     ApplicationPackage applicationPackage();
     Optional<Model> previousModel();
-    default Optional<ApplicationPackage> permanentApplicationPackage() { return Optional.empty(); } // TODO: Remove when oldest model version is 8.95
     HostProvisioner getHostProvisioner();
     Provisioned provisioned();
     DeployLogger deployLogger();
@@ -109,38 +108,14 @@ public interface ModelContext {
         @ModelFeatureFlag(owners = {"hmusum"}) default Architecture adminClusterArchitecture() { return Architecture.getDefault(); }
         @ModelFeatureFlag(owners = {"tokle"}) default boolean enableProxyProtocolMixedMode() { return true; }
         @ModelFeatureFlag(owners = {"arnej"}) default String logFileCompressionAlgorithm(String defVal) { return defVal; }
-        @ModelFeatureFlag(owners = {"vekterli"}, removeAfter = "8.110") default boolean useTwoPhaseDocumentGc() { return true; }
         @ModelFeatureFlag(owners = {"tokle"}) default boolean useRestrictedDataPlaneBindings() { return false; }
-        @ModelFeatureFlag(owners = {"arnej","baldersheim"}, removeAfter = "8.110") default boolean useOldJdiscContainerStartup() { return false; }
-        @ModelFeatureFlag(owners = {"tokle, bjorncs"}, removeAfter = "8.108") default boolean enableDataPlaneFilter() { return true; }
         @ModelFeatureFlag(owners = {"arnej, bjorncs"}) default boolean enableGlobalPhase() { return true; }
         @ModelFeatureFlag(owners = {"baldersheim"}, comment = "Select summary decode type") default String summaryDecodePolicy() { return "eager"; }
         @ModelFeatureFlag(owners = {"hmusum"}) default boolean allowMoreThanOneContentGroupDown(ClusterSpec.Id id) { return false; }
-        @ModelFeatureFlag(owners = {"vekterli", "havardpe"}) default boolean enableConditionalPutRemoveWriteRepair() { return false; }
+        @ModelFeatureFlag(owners = {"vekterli", "havardpe"}, removeAfter = "8.207") default boolean enableConditionalPutRemoveWriteRepair() { return true; }
         @ModelFeatureFlag(owners = {"mortent", "olaa"}) default boolean enableDataplaneProxy() { return false; }
-
-        //Below are all flags that must be kept until 7 is out of the door
-        @ModelFeatureFlag(owners = {"arnej"}, removeAfter="7.last") default boolean ignoreThreadStackSizes() { return false; }
-        @ModelFeatureFlag(owners = {"vekterli"}, removeAfter="7.last") default boolean useThreePhaseUpdates() { return true; }
-        @ModelFeatureFlag(owners = {"baldersheim"}, removeAfter="7.last") default boolean skipCommunicationManagerThread() { return true; }
-        @ModelFeatureFlag(owners = {"baldersheim"}, removeAfter="7.last") default boolean skipMbusRequestThread() { return true; }
-        @ModelFeatureFlag(owners = {"baldersheim"}, removeAfter="7.last") default boolean skipMbusReplyThread() { return true; }
-        @ModelFeatureFlag(owners = {"arnej"}, removeAfter="7.last") default boolean useQrserverServiceName() { return true; }
-        @ModelFeatureFlag(owners = {"arnej"}, removeAfter="7.last") default boolean avoidRenamingSummaryFeatures() { return false; }
-        @ModelFeatureFlag(owners = {"arnej"}, removeAfter="7.last") default boolean experimentalSdParsing() { return true; } // TODO: Remove after June 2022
-        @ModelFeatureFlag(owners = {"baldersheim"}, removeAfter="7.last") default boolean enableBitVectors() { return true; }
-        @ModelFeatureFlag(owners = {"bjorncs"}, removeAfter="7.last") default boolean enableServerOcspStapling() { return true; }
-        @ModelFeatureFlag(owners = {"baldersheim"}, removeAfter="7.last") default int defaultPoolNumThreads() { return 1; }
-        @ModelFeatureFlag(owners = {"baldersheim"}, removeAfter="7.last") default int availableProcessors() { return 1; }
-        @ModelFeatureFlag(owners = {"vekterli", "geirst"}, removeAfter="7.last") default boolean unorderedMergeChaining() { return true; }
-        @ModelFeatureFlag(owners = {"vekterli"}, removeAfter="7.last") default String mergeThrottlingPolicy() { return "STATIC"; }
-        @ModelFeatureFlag(owners = {"vekterli"}, removeAfter="7.last") default double persistenceThrottlingWsDecrementFactor() { return 1.2; }
-        @ModelFeatureFlag(owners = {"vekterli"}, removeAfter="7.last") default double persistenceThrottlingWsBackoff() { return 0.95; }
-        @ModelFeatureFlag(owners = {"vekterli"}, removeAfter="7.last") default int persistenceThrottlingWindowSize() { return -1; }
-        @ModelFeatureFlag(owners = {"vekterli"}, removeAfter="7.last") default double persistenceThrottlingWsResizeRate() { return 3; }
-        @ModelFeatureFlag(owners = {"vekterli"}, removeAfter="7.last") default boolean persistenceThrottlingOfMergeFeedOps() { return true; }
-        @ModelFeatureFlag(owners = {"baldersheim"}, removeAfter="7.last") default int maxConcurrentMergesPerNode() { return 16; }
-        @ModelFeatureFlag(owners = {"baldersheim"}, removeAfter="7.last") default int maxMergeQueueSize() { return 100; }
+        @ModelFeatureFlag(owners = {"baldersheim"}) default boolean enableNestedMultivalueGrouping() { return false; }
+        @ModelFeatureFlag(owners = {"jonmv"}) default boolean useReconfigurableDispatcher() { return false; }
     }
 
     /** Warning: As elsewhere in this package, do not make backwards incompatible changes that will break old config models! */

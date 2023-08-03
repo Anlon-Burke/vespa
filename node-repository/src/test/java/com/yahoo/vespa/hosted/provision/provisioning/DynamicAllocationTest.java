@@ -2,6 +2,7 @@
 package com.yahoo.vespa.hosted.provision.provisioning;
 
 import com.yahoo.config.provision.ApplicationId;
+import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.ClusterResources;
@@ -12,6 +13,7 @@ import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.NodeAllocationException;
+import com.yahoo.config.provision.ProvisionLock;
 import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.Zone;
@@ -92,7 +94,6 @@ public class DynamicAllocationTest {
             hostsWithChildren.add(node.parentHostname().get());
         }
         assertEquals(4 - spareCount, hostsWithChildren.size());
-
     }
 
     /**
@@ -340,8 +341,8 @@ public class DynamicAllocationTest {
         tester.activate(application, hosts);
 
         NodeList activeNodes = tester.nodeRepository().nodes().list().owner(application);
-        assertEquals(Set.of("127.0.127.2", "::2"), activeNodes.asList().get(0).ipConfig().primary());
-        assertEquals(Set.of("127.0.127.13", "::d"), activeNodes.asList().get(1).ipConfig().primary());
+        assertEquals(Set.of("127.0.127.2", "::2"), activeNodes.asList().get(1).ipConfig().primary());
+        assertEquals(Set.of("127.0.127.13", "::d"), activeNodes.asList().get(0).ipConfig().primary());
     }
 
     @Test
@@ -540,9 +541,9 @@ public class DynamicAllocationTest {
                 clusterSpec.with(Optional.of(ClusterSpec.Group.from(0))), index); // Need to add group here so that group is serialized in node allocation
         Node node1aAllocation = node1a.allocate(id, clusterMembership1, node1a.resources(), Instant.now());
 
-        tester.nodeRepository().nodes().addNodes(Collections.singletonList(node1aAllocation), Agent.system);
+        tester.nodeRepository().nodes().addNodes(List.of(node1aAllocation), Agent.system);
         NestedTransaction transaction = new NestedTransaction().add(new CuratorTransaction(tester.getCurator()));
-        tester.nodeRepository().nodes().activate(Collections.singletonList(node1aAllocation), transaction);
+        tester.nodeRepository().nodes().activate(List.of(node1aAllocation), new ApplicationTransaction(new ProvisionLock(id, () -> { }), transaction));
         transaction.commit();
     }
 

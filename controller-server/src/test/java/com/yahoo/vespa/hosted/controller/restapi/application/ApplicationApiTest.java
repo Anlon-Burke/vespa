@@ -130,7 +130,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
     private static final ApplicationPackage applicationPackageDefault = new ApplicationPackageBuilder()
             .withoutAthenzIdentity()
             .instances("default")
-            .globalServiceId("foo")
+            .endpoint("default", "foo")
             .region("us-central-1")
             .region("us-east-3")
             .region("us-west-1")
@@ -140,7 +140,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
     private static final ApplicationPackage applicationPackageInstance1 = new ApplicationPackageBuilder()
             .withoutAthenzIdentity()
             .instances("instance1")
-            .globalServiceId("foo")
+            .endpoint("default", "foo")
             .region("us-central-1")
             .region("us-east-3")
             .region("us-west-1")
@@ -343,7 +343,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         ApplicationPackage applicationPackage = new ApplicationPackageBuilder()
                 .withoutAthenzIdentity()
                 .instances("instance1")
-                .globalServiceId("foo")
+                .endpoint("default", "foo")
                 .region("us-west-1")
                 .region("us-east-3")
                 .allow(ValidationId.globalEndpointChange)
@@ -787,6 +787,22 @@ public class ApplicationApiTest extends ControllerContainerTest {
                 },
                 200);
 
+        // GET searches deployments by endpoints
+        tester.assertResponse(request("/application/v4/search/deployment", GET).userIdentity(HOSTED_VESPA_OPERATOR),
+                              "{\"error-code\":\"BAD_REQUEST\",\"message\":\"Missing 'endpoint' query parameter\"}", 400);
+        tester.assertResponse(request("/application/v4/search/deployment", GET).properties(Map.of("endpoint", "https://instance1.application1.tenant1.global.vespa.oath.cloud:4443"))
+                                                                               .userIdentity(HOSTED_VESPA_OPERATOR),
+                              new File("search-deployments-multi.json"), 200);
+        tester.assertResponse(request("/application/v4/search/deployment", GET).properties(Map.of("endpoint", "instance1.application1.tenant1.global.vespa.oath.cloud"))
+                                                                               .userIdentity(HOSTED_VESPA_OPERATOR),
+                              new File("search-deployments-multi.json"), 200);
+        tester.assertResponse(request("/application/v4/search/deployment", GET).properties(Map.of("endpoint", "instance1.application1.tenant1.us-central-1.vespa.oath.cloud"))
+                                                                               .userIdentity(HOSTED_VESPA_OPERATOR),
+                              new File("search-deployments-single.json"), 200);
+        tester.assertResponse(request("/application/v4/search/deployment", GET).properties(Map.of("endpoint", "non-existent"))
+                                                                               .userIdentity(HOSTED_VESPA_OPERATOR),
+                              "{\"deployments\":[]}", 200);
+
         // DELETE application with active deployments fails
         tester.assertResponse(request("/application/v4/tenant/tenant1/application/application1/instance/instance1", DELETE)
                         .userIdentity(USER_ID)
@@ -848,7 +864,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         // Third attempt has a service under the domain of the tenant, and also succeeds.
         ApplicationPackage packageWithService = new ApplicationPackageBuilder()
                 .instances("instance1")
-                .globalServiceId("foo")
+                .endpoint("default", "foo")
                 .athenzIdentity(com.yahoo.config.provision.AthenzDomain.from(ATHENZ_TENANT_DOMAIN.getName()), AthenzService.from("service"))
                 .region("us-central-1")
                 .parallel("us-west-1", "us-east-3")
@@ -1027,7 +1043,7 @@ public class ApplicationApiTest extends ControllerContainerTest {
         var eastZone = ZoneId.from("prod", "us-east-3");
         var applicationPackage = new ApplicationPackageBuilder()
                 .instances("instance1")
-                .globalServiceId("foo")
+                .endpoint("default", "foo")
                 .region(westZone.region())
                 .region(eastZone.region())
                 .build();

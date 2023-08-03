@@ -7,11 +7,11 @@ import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.config.model.producer.AnyConfigProducer;
 import com.yahoo.config.model.producer.TreeConfigProducer;
 import com.yahoo.prelude.fastsearch.DocumentdbInfoConfig;
-import com.yahoo.search.config.IndexInfoConfig;
-import com.yahoo.search.config.SchemaInfoConfig;
 import com.yahoo.schema.DocumentOnlySchema;
 import com.yahoo.schema.derived.DerivedConfiguration;
 import com.yahoo.schema.derived.SchemaInfo;
+import com.yahoo.search.config.IndexInfoConfig;
+import com.yahoo.search.config.SchemaInfoConfig;
 import com.yahoo.vespa.config.search.AttributesConfig;
 import com.yahoo.vespa.config.search.DispatchConfig;
 import com.yahoo.vespa.config.search.DispatchConfig.DistributionPolicy;
@@ -19,8 +19,6 @@ import com.yahoo.vespa.config.search.DispatchNodesConfig;
 import com.yahoo.vespa.config.search.RankProfilesConfig;
 import com.yahoo.vespa.config.search.core.ProtonConfig;
 import com.yahoo.vespa.configdefinition.IlscriptsConfig;
-import com.yahoo.vespa.model.container.docproc.DocprocChain;
-import com.yahoo.vespa.model.content.DispatchSpec;
 import com.yahoo.vespa.model.content.DispatchTuning;
 import com.yahoo.vespa.model.content.SearchCoverage;
 
@@ -52,11 +50,8 @@ public class IndexedSearchCluster extends SearchCluster
     private final List<DocumentDatabase> documentDbs = new LinkedList<>();
     private final MultipleDocumentDatabasesConfigProducer documentDbsConfigProducer;
 
-    private int searchableCopies = 1;
     private int redundancy = 1;
 
-    private final DispatchGroup rootDispatch;
-    private DispatchSpec dispatchSpec;
     private final List<SearchNode> searchNodes = new ArrayList<>();
     private final DispatchTuning.DispatchPolicy defaultDispatchPolicy;
     private final double dispatchWarmup;
@@ -75,7 +70,6 @@ public class IndexedSearchCluster extends SearchCluster
         super(parent, clusterName, index);
         indexingDocproc = new IndexingDocproc();
         documentDbsConfigProducer = new MultipleDocumentDatabasesConfigProducer(this, documentDbs);
-        rootDispatch =  new DispatchGroup(this);
         defaultDispatchPolicy = DispatchTuning.Builder.toDispatchPolicy(featureFlags.queryDispatchPolicy());
         dispatchWarmup = featureFlags.queryDispatchWarmup();
         summaryDecodePolicy = featureFlags.summaryDecodePolicy();
@@ -86,11 +80,9 @@ public class IndexedSearchCluster extends SearchCluster
 
     public IndexingDocproc getIndexingDocproc() { return indexingDocproc; }
 
-    public DispatchGroup getRootDispatch() { return rootDispatch; }
 
     public void addSearcher(SearchNode searcher) {
         searchNodes.add(searcher);
-        rootDispatch.addSearcher(searcher);
     }
 
     public List<SearchNode> getSearchNodes() { return Collections.unmodifiableList(searchNodes); }
@@ -201,43 +193,8 @@ public class IndexedSearchCluster extends SearchCluster
         documentDbsConfigProducer.getConfig(builder);
     }
 
-    boolean useFixedRowInDispatch() {
-        for (SearchNode node : getSearchNodes()) {
-            if (node.getNodeSpec().groupIndex() > 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public int getSearchableCopies() {
-        return searchableCopies;
-    }
-
-    public void setSearchableCopies(int searchableCopies) {
-        this.searchableCopies = searchableCopies;
-    }
-
-    public int getRedundancy() {
-        return redundancy;
-    }
-
     public void setRedundancy(int redundancy) {
         this.redundancy = redundancy;
-    }
-
-    public void setDispatchSpec(DispatchSpec dispatchSpec) {
-        if (dispatchSpec.getNumDispatchGroups() != null) {
-            this.dispatchSpec = new DispatchSpec.Builder().setGroups
-                    (DispatchGroupBuilder.createDispatchGroups(getSearchNodes(),
-                                                               dispatchSpec.getNumDispatchGroups())).build();
-        } else {
-            this.dispatchSpec = dispatchSpec;
-        }
-    }
-
-    public DispatchSpec getDispatchSpec() {
-        return dispatchSpec;
     }
 
     private static DistributionPolicy.Enum toDistributionPolicy(DispatchTuning.DispatchPolicy tuning) {
@@ -275,7 +232,7 @@ public class IndexedSearchCluster extends SearchCluster
         if (tuning.dispatch.getMaxHitsPerPartition() != null)
             builder.maxHitsPerNode(tuning.dispatch.getMaxHitsPerPartition());
 
-        builder.redundancy(rootDispatch.getRedundancy());
+        builder.redundancy(redundancy);
         if (searchCoverage != null) {
             if (searchCoverage.getMinimum() != null)
                 builder.minSearchCoverage(searchCoverage.getMinimum() * 100.0);

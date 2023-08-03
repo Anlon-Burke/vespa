@@ -1,17 +1,26 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include <vespa/fastlib/io/bufferedfile.h>
 #include <vespa/vespalib/testkit/test_kit.h>
+#include <filesystem>
 
+namespace fs = std::filesystem;
+namespace {
+
+void remove_testfiles()
+{
+    fs::remove(fs::path("testfile1"));
+    fs::remove(fs::path("testfile2"));
+    fs::remove(fs::path("testfile3"));
+    fs::remove(fs::path("testfile4"));
+    fs::remove(fs::path("testfile5"));
+}
+
+}
 
 TEST("main") {
     int value = 0;
-    FastOS_StatInfo statInfo;
 
-    FastOS_File::Delete("testfile1");
-    FastOS_File::Delete("testfile2");
-    FastOS_File::Delete("testfile3");
-    FastOS_File::Delete("testfile4");
-    FastOS_File::Delete("testfile5");
+    remove_testfiles();
 
     Fast_BufferedFile bufFile(4096);
 
@@ -21,11 +30,7 @@ TEST("main") {
     bufFile.addNum(1,10,' ');
     ASSERT_TRUE(bufFile.CheckedWrite("\n",1));
     ASSERT_TRUE(bufFile.Close());
-    FastOS_File::Stat("testfile1", &statInfo);
-    if (statInfo._size != 11) {
-        printf (" -- FAILURE\n\n");
-        TEST_FATAL("exit 1");
-    }
+    ASSERT_EQUAL(11u, fs::file_size(fs::path("testfile1")));
     printf (" -- SUCCESS\n\n");
 
     // test 2
@@ -35,11 +40,7 @@ TEST("main") {
     memset(buf,0xff,8192);
     ASSERT_TRUE(bufFile.CheckedWrite(buf,4095)); // write almost 4K
     ASSERT_TRUE(bufFile.Close());
-    FastOS_File::Stat("testfile2", &statInfo);
-    if (statInfo._size != 4095) {
-        printf (" -- FAILURE\n\n");
-        TEST_FATAL("exit 1");
-    }
+    ASSERT_EQUAL(4095u, fs::file_size(fs::path("testfile2")));
     printf (" -- SUCCESS\n\n");
 
     // test 3
@@ -47,11 +48,7 @@ TEST("main") {
     bufFile.WriteOpen("testfile3");
     ASSERT_TRUE(bufFile.CheckedWrite(buf,4096));  // write exactly 4K
     ASSERT_TRUE(bufFile.Close());
-    FastOS_File::Stat("testfile3", &statInfo);
-    if (statInfo._size != 4096) {
-        printf (" -- FAILURE\n\n");
-        TEST_FATAL("exit 1");
-    }
+    ASSERT_EQUAL(4096u, fs::file_size(fs::path("testfile3")));
     printf (" -- SUCCESS\n\n");
 
     // test 4
@@ -59,11 +56,7 @@ TEST("main") {
     bufFile.WriteOpen("testfile4");
     ASSERT_TRUE(bufFile.CheckedWrite(buf,4097));   // write a bit over 4K
     ASSERT_TRUE(bufFile.Close());
-    FastOS_File::Stat("testfile4", &statInfo);
-    if (statInfo._size != 4097) {
-        printf (" -- FAILURE\n\n");
-        TEST_FATAL("exit 1");
-    }
+    ASSERT_EQUAL(4097u, fs::file_size(fs::path("testfile4")));
     printf (" -- SUCCESS\n\n");
 
     // test 5
@@ -77,18 +70,10 @@ TEST("main") {
         ASSERT_TRUE(bufFile.CheckedWrite("\n",1));
     }
     ASSERT_TRUE(bufFile.Close());
-    FastOS_File::Stat("testfile5", &statInfo);
-    if (statInfo._size != 610000) {
-        printf (" -- FAILURE\n\n");
-        TEST_FATAL("exit 1");
-    }
+    ASSERT_EQUAL(610000u, fs::file_size(fs::path("testfile5")));
     printf (" -- SUCCESS\n\n");
 
-    FastOS_File::Delete("testfile1");
-    FastOS_File::Delete("testfile2");
-    FastOS_File::Delete("testfile3");
-    FastOS_File::Delete("testfile4");
-    FastOS_File::Delete("testfile5");
+    remove_testfiles();
 
     printf ("All tests OK for bufferedfiletest\n");
     printf (" -- SUCCESS\n\n");

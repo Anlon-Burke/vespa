@@ -32,6 +32,7 @@
   "preferToRetire": false,
   "wantToDeprovision": false,
   "wantToRebuild": false,
+  "wantToUpgradeFlavor": false,
   "down": false,
   "history": [
     {
@@ -74,5 +75,5 @@
   ],
   "ipAddresses": ["127.0.5.1", "::5:1"],
   "additionalIpAddresses": [],
-  "cloudAccount": "aws:111222333444"
+  "cloudAccount": "aws:777888999000"
 }

@@ -2,6 +2,10 @@
 package com.yahoo.vespa.hosted.provision.persistence;
 
 import ai.vespa.http.DomainName;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.util.concurrent.UncheckedExecutionException;
+import com.yahoo.collections.Pair;
 import com.yahoo.component.Version;
 import com.yahoo.concurrent.UncheckedTimeoutException;
 import com.yahoo.config.provision.ApplicationId;
@@ -18,6 +22,7 @@ import com.yahoo.vespa.curator.Lock;
 import com.yahoo.vespa.curator.recipes.CuratorCounter;
 import com.yahoo.vespa.curator.transaction.CuratorOperations;
 import com.yahoo.vespa.curator.transaction.CuratorTransaction;
+import com.yahoo.vespa.hosted.provision.LockedNodeList;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.applications.Application;
 import com.yahoo.vespa.hosted.provision.archive.ArchiveUris;
@@ -37,6 +42,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.logging.Level;
@@ -79,6 +85,9 @@ public class CuratorDb {
     private final Clock clock;
     private final CuratorCounter provisionIndexCounter;
 
+    /** Simple cache for deserialized node objects, based on their ZK node version. */
+    private final Cache<Path, Pair<Integer, Node>> cachedNodes = CacheBuilder.newBuilder().recordStats().build();
+
     public CuratorDb(NodeFlavors flavors, Curator curator, Clock clock, boolean useCache, long nodeCacheSize) {
         this.nodeSerializer = new NodeSerializer(flavors, nodeCacheSize);
         this.db = new CachingCurator(curator, root, useCache);
@@ -105,7 +114,7 @@ public class CuratorDb {
     }
 
     /** Adds a set of nodes. Rollbacks/fails transaction if any node is not in the expected state. */
-    public List<Node> addNodesInState(List<Node> nodes, Node.State expectedState, Agent agent, NestedTransaction transaction) {
+    public List<Node> addNodesInState(LockedNodeList nodes, Node.State expectedState, Agent agent, NestedTransaction transaction) {
         CuratorTransaction curatorTransaction = db.newCuratorTransactionIn(transaction);
         for (Node node : nodes) {
             if (node.state() != expectedState)
@@ -116,10 +125,10 @@ public class CuratorDb {
             curatorTransaction.add(CuratorOperations.create(nodePath(node).getAbsolute(), serialized));
         }
         transaction.onCommitted(() -> nodes.forEach(node -> log.log(Level.INFO, "Added " + node)));
-        return nodes;
+        return nodes.asList();
     }
 
-    public List<Node> addNodesInState(List<Node> nodes, Node.State expectedState, Agent agent) {
+    public List<Node> addNodesInState(LockedNodeList nodes, Node.State expectedState, Agent agent) {
         NestedTransaction transaction = new NestedTransaction();
         List<Node> writtenNodes = addNodesInState(nodes, expectedState, agent, transaction);
         transaction.commit();
@@ -175,6 +184,7 @@ public class CuratorDb {
             return writtenNodes;
         }
     }
+
     public Node writeTo(Node.State toState, Node node, Agent agent, Optional<String> reason) {
         return writeTo(toState, Collections.singletonList(node), agent, reason).get(0);
     }
@@ -192,6 +202,12 @@ public class CuratorDb {
      */
     public List<Node> writeTo(Node.State toState, List<Node> nodes,
                               Agent agent, Optional<String> reason,
+                              ApplicationTransaction transaction) {
+        return writeTo(toState, nodes, agent, reason, transaction.nested());
+    }
+
+    public List<Node> writeTo(Node.State toState, List<Node> nodes,
+                              Agent agent, Optional<String> reason,
                               NestedTransaction transaction) {
         if (nodes.isEmpty()) return nodes;
 
@@ -199,7 +215,7 @@ public class CuratorDb {
 
         CuratorTransaction curatorTransaction = db.newCuratorTransactionIn(transaction);
         for (Node node : nodes) {
-            Node newNode = new Node(node.id(), node.ipConfig(), node.hostname(),
+            Node newNode = new Node(node.id(), node.extraId(), node.ipConfig(), node.hostname(),
                                     node.parentHostname(), node.flavor(),
                                     newNodeStatus(node, toState),
                                     toState,
@@ -236,7 +252,17 @@ public class CuratorDb {
     }
 
     private Optional<Node> readNode(CachingCurator.Session session, String hostname) {
-        return session.getData(nodePath(hostname)).map(nodeSerializer::fromJson);
+        Path path = nodePath(hostname);
+        return session.getStat(path)
+                      .map(stat -> {
+                          Pair<Integer, Node> cached = cachedNodes.getIfPresent(path);
+                          if (cached != null && cached.getFirst().equals(stat)) return cached.getSecond();
+                          cachedNodes.invalidate(path);
+                          Optional<Node> node = session.getData(path).filter(data -> data.length > 0).map(nodeSerializer::fromJson);
+                          if (node.isEmpty()) return null;
+                          cachedNodes.put(path, new Pair<>(stat, node.get()));
+                          return node.get();
+                      });
     }
 
     /** Read node with given hostname, if any such node exists */
@@ -478,7 +504,8 @@ public class CuratorDb {
     }
 
     public CacheStats nodeSerializerCacheStats() {
-        return nodeSerializer.cacheStats();
+        var stats = cachedNodes.stats();
+        return new CacheStats(stats.hitRate(), stats.evictionCount(), cachedNodes.size());
     }
 
     private <T> Optional<T> read(Path path, Function<byte[], T> mapper) {

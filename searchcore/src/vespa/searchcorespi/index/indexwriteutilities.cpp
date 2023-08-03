@@ -25,6 +25,7 @@ using search::index::SchemaUtil;
 using search::SerialNum;
 using vespalib::IllegalStateException;
 using vespalib::FileHeader;
+namespace fs = std::filesystem;
 
 namespace searchcorespi::index {
 
@@ -64,8 +65,9 @@ IndexWriteUtilities::writeSerialNum(SerialNum serialNum,
     vespalib::File::sync(dir);
 
     if (ok) {
-        FastOS_File renameFile(tmpFileName.c_str());
-        ok &= renameFile.Rename(fileName.c_str());
+        std::error_code ec;
+        fs::rename(fs::path(tmpFileName), fs::path(fileName), ec);
+        ok = !ec;
     }
     if (!ok) {
         std::ostringstream msg;
@@ -84,26 +86,15 @@ IndexWriteUtilities::copySerialNumFile(const vespalib::string &sourceDir,
     vespalib::string tmpDest = dest + ".tmp";
     std::error_code ec;
 
-    std::filesystem::copy_file(std::filesystem::path(source), std::filesystem::path(tmpDest), ec);
+    fs::copy_file(fs::path(source), fs::path(tmpDest), ec);
     if (ec) {
         LOG(error, "Unable to copy file '%s'", source.c_str());
         return false;
     }
-    FastOS_File file(tmpDest.c_str());
-    if (!file.OpenReadWrite()) {
-        LOG(error, "Unable to open '%s' for fsync", tmpDest.c_str());
-        return false;
-    }
-    if (!file.Sync()) {
-        LOG(error, "Unable to fsync '%s'", tmpDest.c_str());
-        return false;
-    }
-    if (!file.Close()) {
-        LOG(error, "Unable to close '%s'", tmpDest.c_str());
-        return false;
-    }
+    vespalib::File::sync(tmpDest);
     vespalib::File::sync(destDir);
-    if (!file.Rename(dest.c_str())) {
+    fs::rename(fs::path(tmpDest), fs::path(dest), ec);
+    if (ec) {
         LOG(error, "Unable to rename file '%s' to '%s'", tmpDest.c_str(), dest.c_str());
         return false;
     }
@@ -159,7 +150,7 @@ IndexWriteUtilities::updateDiskIndexSchema(const vespalib::string &indexDir,
     }
     vespalib::string schemaTmpName = schemaName + ".tmp";
     vespalib::string schemaOrigName = schemaName + ".orig";
-    vespalib::unlink(schemaTmpName);
+    fs::remove(fs::path(schemaTmpName));
     if (!newSchema->saveToFile(schemaTmpName)) {
         LOG(error, "Could not save schema to '%s'",
             schemaTmpName.c_str());
