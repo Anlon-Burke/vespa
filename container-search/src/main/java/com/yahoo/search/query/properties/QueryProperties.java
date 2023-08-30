@@ -91,6 +91,7 @@ public class QueryProperties extends Properties {
         addDualCasedRM(map, Matching.MINHITSPERTHREAD, GetterSetter.of(query -> query.getRanking().getMatching().getMinHitsPerThread(), (query, value) -> query.getRanking().getMatching().setMinHitsPerThread(asInteger(value, 0))));
         addDualCasedRM(map, Matching.POST_FILTER_THRESHOLD, GetterSetter.of(query -> query.getRanking().getMatching().getPostFilterThreshold(), (query, value) -> query.getRanking().getMatching().setPostFilterThreshold(asDouble(value, 1.0))));
         addDualCasedRM(map, Matching.APPROXIMATE_THRESHOLD, GetterSetter.of(query -> query.getRanking().getMatching().getApproximateThreshold(), (query, value) -> query.getRanking().getMatching().setApproximateThreshold(asDouble(value, 0.05))));
+        addDualCasedRM(map, Matching.TARGET_HITS_MAX_ADJUSTMENT_FACTOR, GetterSetter.of(query -> query.getRanking().getMatching().getTargetHitsMaxAdjustmentFactor(), (query, value) -> query.getRanking().getMatching().setTargetHitsMaxAdjustmentFactor(asDouble(value, 20.0))));
 
         map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCH_PHASE, MatchPhase.ATTRIBUTE), GetterSetter.of(query -> query.getRanking().getMatchPhase().getAttribute(), (query, value) -> query.getRanking().getMatchPhase().setAttribute(asString(value, null))));
         map.put(CompoundName.fromComponents(Ranking.RANKING, Ranking.MATCH_PHASE, MatchPhase.ASCENDING), GetterSetter.of(query -> query.getRanking().getMatchPhase().getAscending(), (query, value) -> query.getRanking().getMatchPhase().setAscending(asBoolean(value, false))));
@@ -169,7 +170,6 @@ public class QueryProperties extends Properties {
             return;
         }
 
-        //TODO Why is there error handling in set path and not in get path ?
         if (key.first().equals(Ranking.RANKING)) {
             if (key.size() > 2) {
                 String restKey = key.rest().rest().toString();
@@ -189,6 +189,7 @@ public class QueryProperties extends Properties {
             }
         }
         if (reservedPrefix.contains(key.first())) {
+            // Setting a property under the reserved paths are illegal, while retrieving(get) one is not.
             throwIllegalParameter(key.rest().toString(), key.first());
         } else {
             super.set(key, value, context);

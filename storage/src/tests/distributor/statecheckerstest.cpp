@@ -7,6 +7,7 @@
 #include <vespa/document/test/make_document_bucket.h>
 #include <vespa/storage/distributor/top_level_bucket_db_updater.h>
 #include <vespa/storage/distributor/top_level_distributor.h>
+#include <vespa/storage/distributor/activecopy.h>
 #include <vespa/storage/distributor/distributor_bucket_space.h>
 #include <vespa/storage/distributor/distributor_stripe.h>
 #include <vespa/storage/distributor/operations/idealstate/mergeoperation.h>
@@ -1383,9 +1384,8 @@ std::string StateCheckersTest::testGarbageCollection(
     getBucketDatabase().update(e);
 
     NodeMaintenanceStatsTracker statsTracker;
-    StateChecker::Context c(node_context(), operation_context(),
-                            getDistributorBucketSpace(), statsTracker,
-                            makeDocumentBucket(e.getBucketId()));
+    StateChecker::Context c(node_context(), operation_context(), getDistributorBucketSpace(),
+                            statsTracker, makeDocumentBucket(e.getBucketId()));
     getClock().setAbsoluteTimeInSeconds(nowTimestamp);
     return testStateChecker(checker, c, false, PendingMessage(), includePriority, includeSchedulingPri);
 }
@@ -1394,38 +1394,29 @@ TEST_F(StateCheckersTest, garbage_collection) {
     // BucketId(17, 0) has id (and thus 'hash') 0x4400000000000000. With a
     // check interval modulo of 3600, this implies a start point of 848.
 
-    EXPECT_EQ("NO OPERATIONS GENERATED",
-              testGarbageCollection(900, 3600 + 847, 3600));
+    EXPECT_EQ("NO OPERATIONS GENERATED", testGarbageCollection(900, 3600 + 847, 3600));
 
-    EXPECT_EQ("[Needs garbage collection: Last check at 900, current time 4448, "
-              "configured interval 3600]",
+    EXPECT_EQ("[Needs garbage collection: Last check at 900, current time 4448, configured interval 3600]",
               testGarbageCollection(900, 3600 + 848, 3600));
 
-    EXPECT_EQ("[Needs garbage collection: Last check at 3, current time 4000, "
-              "configured interval 3600]",
+    EXPECT_EQ("[Needs garbage collection: Last check at 3, current time 4000, configured interval 3600]",
               testGarbageCollection(3, 4000, 3600));
 
     // GC start point 3648.
-    EXPECT_EQ("NO OPERATIONS GENERATED",
-              testGarbageCollection(3, 3647, 8000));
+    EXPECT_EQ("NO OPERATIONS GENERATED", testGarbageCollection(3, 3647, 8000));
 
-    EXPECT_EQ("[Needs garbage collection: Last check at 3, current time 4000, "
-              "configured interval 3600]",
+    EXPECT_EQ("[Needs garbage collection: Last check at 3, current time 4000, configured interval 3600]",
               testGarbageCollection(3, 4000, 3600));
 
     // GC explicitly disabled.
-    EXPECT_EQ("NO OPERATIONS GENERATED",
-              testGarbageCollection(3, 4000, 0));
+    EXPECT_EQ("NO OPERATIONS GENERATED", testGarbageCollection(3, 4000, 0));
 
-    EXPECT_EQ("NO OPERATIONS GENERATED",
-              testGarbageCollection(3, 3, 1));
+    EXPECT_EQ("NO OPERATIONS GENERATED", testGarbageCollection(3, 3, 1));
 
-    EXPECT_EQ("[Needs garbage collection: Last check at 3, current time 4000, "
-              "configured interval 300] (pri 200)",
+    EXPECT_EQ("[Needs garbage collection: Last check at 3, current time 4000, configured interval 300] (pri 200)",
               testGarbageCollection(3, 4000, 300, 1, true));
 
-    EXPECT_EQ("NO OPERATIONS GENERATED",
-              testGarbageCollection(3850, 4000, 300, 1));
+    EXPECT_EQ("NO OPERATIONS GENERATED", testGarbageCollection(3850, 4000, 300, 1));
 }
 
 TEST_F(StateCheckersTest, gc_ops_are_prioritized_with_low_priority_category) {
@@ -1597,11 +1588,12 @@ TEST_F(StateCheckersTest, context_populates_ideal_state_containers) {
     StateChecker::Context c(node_context(), operation_context(),
                             getDistributorBucketSpace(), statsTracker, makeDocumentBucket({17, 0}));
 
-    ASSERT_THAT(c.idealState, ElementsAre(1, 3));
-    // TODO replace with UnorderedElementsAre once we can build gmock without issues
-    std::vector<uint16_t> ideal_state(c.unorderedIdealState.begin(), c.unorderedIdealState.end());
-    std::sort(ideal_state.begin(), ideal_state.end());
-    ASSERT_THAT(ideal_state, ElementsAre(1, 3));
+    ASSERT_EQ(2, c.idealState().size());
+    ASSERT_EQ(1, c.idealState()[0]);
+    ASSERT_EQ(3, c.idealState()[1]);
+    for (uint16_t node : c.idealState()) {
+        ASSERT_TRUE(c.idealStateBundle.is_nonretired_or_maintenance(node));
+    }
 }
 
 namespace {
@@ -1616,8 +1608,7 @@ public:
     explicit StateCheckerRunner(StateCheckersTest& fixture);
     ~StateCheckerRunner();
 
-    StateCheckerRunner& addToDb(const document::BucketId& bid,
-                                const std::string& bucketInfo)
+    StateCheckerRunner& addToDb(const document::BucketId& bid, const std::string& bucketInfo)
     {
         _fixture.addNodesToBucketDB(bid, bucketInfo);
         return *this;
@@ -1652,8 +1643,7 @@ public:
         Checker checker;
         StateChecker::Context c(_fixture.node_context(), _fixture.operation_context(),
                                 _fixture.getDistributorBucketSpace(), _statsTracker, makeDocumentBucket(bid));
-        _result = _fixture.testStateChecker(
-                checker, c, false, StateCheckersTest::PendingMessage(), false);
+        _result = _fixture.testStateChecker(checker, c, false, StateCheckersTest::PendingMessage(), false);
     }
 
     const std::string& result() const { return _result; }
@@ -1747,6 +1737,11 @@ TEST_F(StateCheckersTest, stats_updates_for_maximum_time_since_gc_run) {
           .runFor({17, 0});
 
     EXPECT_EQ(runner.stats().max_observed_time_since_last_gc(), 1900s);
+}
+
+TEST(ActiveCopyTest, control_size) {
+    EXPECT_EQ(12, sizeof(ActiveCopy));
+    EXPECT_EQ(64, sizeof(IdealServiceLayerNodesBundle));
 }
 
 }

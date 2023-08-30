@@ -17,6 +17,7 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.ApplicationV
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.SourceRevision;
+import com.yahoo.vespa.hosted.controller.api.integration.organization.AccountId;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.IssueId;
 import com.yahoo.vespa.hosted.controller.api.integration.organization.User;
 import com.yahoo.vespa.hosted.controller.application.AssignedRotation;
@@ -64,25 +65,30 @@ public class ApplicationSerializerTest {
     private static final Path testData = Paths.get("src/test/java/com/yahoo/vespa/hosted/controller/persistence/testdata/");
     private static final ZoneId zone1 = ZoneId.from("prod", "us-west-1");
     private static final ZoneId zone2 = ZoneId.from("prod", "us-east-3");
-    private static final PublicKey publicKey = KeyUtils.fromPemEncodedPublicKey("-----BEGIN PUBLIC KEY-----\n" +
-                                                                                "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEuKVFA8dXk43kVfYKzkUqhEY2rDT9\n" +
-                                                                                "z/4jKSTHwbYR8wdsOSrJGVEUPbS2nguIJ64OJH7gFnxM6sxUVj+Nm2HlXw==\n" +
-                                                                                "-----END PUBLIC KEY-----\n");
-    private static final PublicKey otherPublicKey = KeyUtils.fromPemEncodedPublicKey("-----BEGIN PUBLIC KEY-----\n" +
-                                                                                     "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEFELzPyinTfQ/sZnTmRp5E4Ve/sbE\n" +
-                                                                                     "pDhJeqczkyFcT2PysJ5sZwm7rKPEeXDOhzTPCyRvbUqc2SGdWbKUGGa/Yw==\n" +
-                                                                                     "-----END PUBLIC KEY-----\n");
+    private static final PublicKey publicKey = KeyUtils.fromPemEncodedPublicKey("""
+                                                                                -----BEGIN PUBLIC KEY-----
+                                                                                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEuKVFA8dXk43kVfYKzkUqhEY2rDT9
+                                                                                z/4jKSTHwbYR8wdsOSrJGVEUPbS2nguIJ64OJH7gFnxM6sxUVj+Nm2HlXw==
+                                                                                -----END PUBLIC KEY-----
+                                                                                """);
+    private static final PublicKey otherPublicKey = KeyUtils.fromPemEncodedPublicKey("""
+                                                                                     -----BEGIN PUBLIC KEY-----
+                                                                                     MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEFELzPyinTfQ/sZnTmRp5E4Ve/sbE
+                                                                                     pDhJeqczkyFcT2PysJ5sZwm7rKPEeXDOhzTPCyRvbUqc2SGdWbKUGGa/Yw==
+                                                                                     -----END PUBLIC KEY-----
+                                                                                     """);
 
     @Test
     void testSerialization() throws Exception {
-        DeploymentSpec deploymentSpec = DeploymentSpec.fromXml("<deployment version='1.0'>\n" +
-                "   <staging/>\n" +
-                "   <instance id=\"i1\">\n" +
-                "      <prod>\n" +
-                "         <region>us-west-1</region>\n" +
-                "      </prod>\n" +
-                "   </instance>\n" +
-                "</deployment>");
+        DeploymentSpec deploymentSpec = DeploymentSpec.fromXml("""
+                                                               <deployment version='1.0'>
+                                                                  <staging/>
+                                                                  <instance id="i1">
+                                                                     <prod>
+                                                                        <region>us-west-1</region>
+                                                                     </prod>
+                                                                  </instance>
+                                                               </deployment>""");
         ValidationOverrides validationOverrides = ValidationOverrides.fromXml("<validation-overrides version='1.0'>" +
                 "  <allow until='2017-06-15'>deployment-removal</allow>" +
                 "</validation-overrides>");
@@ -154,6 +160,7 @@ public class ApplicationSerializerTest {
                 Optional.of(IssueId.from("4321")),
                 Optional.of(IssueId.from("1234")),
                 Optional.of(User.from("by-username")),
+                Optional.of(new AccountId("foo8ar")),
                 OptionalInt.of(7),
                 new ApplicationMetrics(0.5, 0.9),
                 Set.of(publicKey, otherPublicKey),
@@ -206,7 +213,8 @@ public class ApplicationSerializerTest {
                 serialized.require(id1.instance()).jobPause(DeploymentContext.stagingTest));
 
         assertEquals(original.ownershipIssueId(), serialized.ownershipIssueId());
-        assertEquals(original.owner(), serialized.owner());
+        assertEquals(original.userOwner(), serialized.userOwner());
+        assertEquals(original.issueOwner(), serialized.issueOwner());
         assertEquals(original.majorVersion(), serialized.majorVersion());
         assertEquals(original.deployKeys(), serialized.deployKeys());
 

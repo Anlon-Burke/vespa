@@ -1,9 +1,9 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
-#include <unordered_map>
 #include <vespa/document/bucket/bucketspace.h>
 #include <vespa/vespalib/util/time.h>
+#include <vespa/vespalib/stllike/hash_map.h>
 
 namespace storage::distributor {
 
@@ -37,7 +37,13 @@ struct NodeMaintenanceStats
         return !(*this == other);
     }
 
-    void merge(const NodeMaintenanceStats& rhs);
+    void merge(const NodeMaintenanceStats& rhs) noexcept {
+        movingOut  += rhs.movingOut;
+        syncing    += rhs.syncing;
+        copyingIn  += rhs.copyingIn;
+        copyingOut += rhs.copyingOut;
+        total      += rhs.total;
+    }
 };
 
 std::ostream& operator<<(std::ostream&, const NodeMaintenanceStats&);
@@ -45,8 +51,23 @@ std::ostream& operator<<(std::ostream&, const NodeMaintenanceStats&);
 class NodeMaintenanceStatsTracker
 {
 public:
-    using BucketSpacesStats = std::unordered_map<document::BucketSpace, NodeMaintenanceStats, document::BucketSpace::hash>;
-    using PerNodeStats = std::unordered_map<uint16_t, BucketSpacesStats>;
+    class BucketSpaceAndNode {
+    public:
+        BucketSpaceAndNode(uint16_t node_in, document::BucketSpace bucketSpace_in) noexcept
+            : _bucketSpace(bucketSpace_in),
+              _node(node_in)
+        {}
+        uint32_t hash() const noexcept { return (uint32_t(_node) << 2) | (_bucketSpace.getId() & 0x3); }
+        bool operator == (const BucketSpaceAndNode & b) const noexcept {
+            return (_bucketSpace == b._bucketSpace) && (_node == b._node);
+        }
+        document::BucketSpace bucketSpace() const noexcept { return _bucketSpace; }
+        uint16_t node() const noexcept { return _node; }
+    private:
+        document::BucketSpace _bucketSpace;
+        uint16_t              _node;
+    };
+    using PerNodeStats = vespalib::hash_map<BucketSpaceAndNode, NodeMaintenanceStats>;
 
 private:
     PerNodeStats         _node_stats;
@@ -55,32 +76,39 @@ private:
 
     static const NodeMaintenanceStats _emptyNodeMaintenanceStats;
 
+    NodeMaintenanceStats & stats(uint16_t node, document::BucketSpace bucketSpace);
+    const NodeMaintenanceStats & stats(uint16_t node, document::BucketSpace bucketSpace) const noexcept;
 public:
-    NodeMaintenanceStatsTracker();
+    NodeMaintenanceStatsTracker() noexcept;
+    NodeMaintenanceStatsTracker(NodeMaintenanceStatsTracker &&) noexcept;
+    NodeMaintenanceStatsTracker & operator =(NodeMaintenanceStatsTracker &&) noexcept;
+    NodeMaintenanceStatsTracker(const NodeMaintenanceStatsTracker &);
     ~NodeMaintenanceStatsTracker();
+    void reset(size_t nodes);
+    size_t numNodes() const { return _node_stats.size(); }
 
     void incMovingOut(uint16_t node, document::BucketSpace bucketSpace) {
-        ++_node_stats[node][bucketSpace].movingOut;
+        ++stats(node, bucketSpace).movingOut;
         ++_total_stats.movingOut;
     }
 
     void incSyncing(uint16_t node, document::BucketSpace bucketSpace) {
-        ++_node_stats[node][bucketSpace].syncing;
+        ++stats(node, bucketSpace).syncing;
         ++_total_stats.syncing;
     }
 
     void incCopyingIn(uint16_t node, document::BucketSpace bucketSpace) {
-        ++_node_stats[node][bucketSpace].copyingIn;
+        ++stats(node, bucketSpace).copyingIn;
         ++_total_stats.copyingIn;
     }
 
     void incCopyingOut(uint16_t node, document::BucketSpace bucketSpace) {
-        ++_node_stats[node][bucketSpace].copyingOut;
+        ++stats(node, bucketSpace).copyingOut;
         ++_total_stats.copyingOut;
     }
 
     void incTotal(uint16_t node, document::BucketSpace bucketSpace) {
-        ++_node_stats[node][bucketSpace].total;
+        ++stats(node, bucketSpace).total;
         ++_total_stats.total;
     }
 
@@ -92,18 +120,9 @@ public:
      * Returned statistics for a given node index and bucket space, or all zero statistics
      * if none have been recorded yet
      */
-    const NodeMaintenanceStats& forNode(uint16_t node, document::BucketSpace bucketSpace) const {
-        auto nodeItr = _node_stats.find(node);
-        if (nodeItr != _node_stats.end()) {
-            auto bucketSpaceItr = nodeItr->second.find(bucketSpace);
-            if (bucketSpaceItr != nodeItr->second.end()) {
-                return bucketSpaceItr->second;
-            }
-        }
-        return _emptyNodeMaintenanceStats;
-    }
+    const NodeMaintenanceStats& forNode(uint16_t node, document::BucketSpace bucketSpace) const noexcept;
 
-    const PerNodeStats& perNodeStats() const {
+    const PerNodeStats& perNodeStats() const noexcept {
         return _node_stats;
     }
 
@@ -118,10 +137,7 @@ public:
         return _max_observed_time_since_last_gc;
     }
 
-    bool operator==(const NodeMaintenanceStatsTracker& rhs) const {
-        return ((_node_stats == rhs._node_stats) &&
-                (_max_observed_time_since_last_gc == rhs._max_observed_time_since_last_gc));
-    }
+    bool operator==(const NodeMaintenanceStatsTracker& rhs) const noexcept;
     void merge(const NodeMaintenanceStatsTracker& rhs);
 };
 

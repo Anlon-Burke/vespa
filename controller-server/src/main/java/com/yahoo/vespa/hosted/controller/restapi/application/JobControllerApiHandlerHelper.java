@@ -23,7 +23,6 @@ import com.yahoo.vespa.hosted.controller.api.integration.deployment.JobType;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RevisionId;
 import com.yahoo.vespa.hosted.controller.api.integration.deployment.RunId;
 import com.yahoo.vespa.hosted.controller.application.Change;
-import com.yahoo.vespa.hosted.controller.application.Deployment;
 import com.yahoo.vespa.hosted.controller.application.TenantAndApplicationId;
 import com.yahoo.vespa.hosted.controller.deployment.ConvergenceSummary;
 import com.yahoo.vespa.hosted.controller.deployment.DeploymentStatus;
@@ -53,7 +52,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Optional;
-import java.util.SortedMap;
 import java.util.stream.Stream;
 
 import static com.yahoo.config.application.api.DeploymentSpec.UpgradePolicy.canary;
@@ -109,10 +107,10 @@ class JobControllerApiHandlerHelper {
 
         int limit = limitStr.map(Integer::parseInt).orElse(Integer.MAX_VALUE);
         toSlime(cursor.setArray("runs"), runs.values(), application, limit, baseUriForJobType);
-        controller.applications().decideCloudAccountOf(new DeploymentId(id.application(),
-                                                                        runs.lastEntry().getValue().id().job().type().zone()), // Urgh, must use a job with actual zone.
-                                                       application.deploymentSpec())
-                  .ifPresent(cloudAccount -> cursor.setObject("enclave").setString("cloudAccount", cloudAccount.value()));
+        Optional.ofNullable(runs.lastEntry())
+                .map(entry -> new DeploymentId(id.application(), entry.getValue().id().job().type().zone())) // Urgh, must use a job with actual zone.
+                .flatMap(deployment -> controller.applications().decideCloudAccountOf(deployment, application.deploymentSpec()))
+                .ifPresent(cloudAccount -> cursor.setObject("enclave").setString("cloudAccount", cloudAccount.value()));
 
         return new SlimeJsonResponse(slime);
     }
@@ -220,7 +218,12 @@ class JobControllerApiHandlerHelper {
      * @return Response with the new application version
      */
     static HttpResponse submitResponse(JobController jobController, TenantAndApplicationId id, Submission submission, long projectId) {
-        return new MessageResponse("application " + jobController.submit(id, submission, projectId));
+        Slime slime = new Slime();
+        Cursor root = slime.setObject();
+        ApplicationVersion submitted = jobController.submit(id, submission, projectId);
+        root.setString("message", "application " + submitted);
+        root.setLong("build", submitted.buildNumber());
+        return new SlimeJsonResponse(slime);
     }
 
     /** Aborts any job of the given type. */
@@ -438,7 +441,7 @@ class JobControllerApiHandlerHelper {
     }
 
     static void toSlime(Cursor versionObject, ApplicationVersion version) {
-        version.buildNumber().ifPresent(id -> versionObject.setLong("build", id));
+        versionObject.setLong("build", version.buildNumber());
         version.compileVersion().ifPresent(platform -> versionObject.setString("compileVersion", platform.toFullString()));
         version.sourceUrl().ifPresent(url -> versionObject.setString("sourceUrl", url));
         version.commit().ifPresent(commit -> versionObject.setString("commit", commit));

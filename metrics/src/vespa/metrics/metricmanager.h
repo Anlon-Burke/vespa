@@ -123,7 +123,7 @@ private:
     
 public:
     MetricManager();
-    MetricManager(std::unique_ptr<Timer> timer);
+    explicit MetricManager(std::unique_ptr<Timer> timer);
     ~MetricManager();
 
     void stop();
@@ -218,7 +218,7 @@ public:
      * snapshots while you are accessing them.
      */
     MetricLockGuard getMetricLock() const {
-        return MetricLockGuard(_waiter);
+        return {_waiter};
     }
 
     /** While accessing the active metrics you should have the metric lock. */
@@ -266,6 +266,8 @@ public:
     MemoryConsumption::UP getMemoryConsumption(const MetricLockGuard & guard) const;
 
     bool isInitialized() const;
+
+    [[nodiscard]] bool any_snapshots_taken(const MetricLockGuard&) const noexcept;
 
 private:
     void takeSnapshots(const MetricLockGuard &, system_time timeToProcess);

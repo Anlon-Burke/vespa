@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 import java.util.List;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -324,9 +323,9 @@ public class SystemUpgraderTest {
         for (var zone : List.of(zone1, zone2)) {
             systemUpgrader.maintain();
             completeUpgrade(List.of(SystemApplication.tenantHost,
-                            SystemApplication.proxyHost,
-                            SystemApplication.configServerHost),
-                    version2, zone);
+                                    SystemApplication.proxyHost,
+                                    SystemApplication.configServerHost),
+                            version2, zone);
             completeUpgrade(SystemApplication.configServer, version2, zone);
             systemUpgrader.maintain();
             completeUpgrade(SystemApplication.proxy, version2, zone);
@@ -341,12 +340,12 @@ public class SystemUpgraderTest {
         for (var zone : List.of(zone2, zone1)) {
             systemUpgrader.maintain();
             completeUpgrade(List.of(SystemApplication.tenantHost,
-                            SystemApplication.configServerHost,
-                            SystemApplication.proxy),
-                    version1, zone);
+                                    SystemApplication.configServerHost,
+                                    SystemApplication.proxyHost,
+                                    SystemApplication.proxy),
+                            version1, zone);
             convergeServices(SystemApplication.proxy, zone);
-            List<SystemApplication> lastToDowngrade = List.of(SystemApplication.configServer,
-                    SystemApplication.proxyHost);
+            List<SystemApplication> lastToDowngrade = List.of(SystemApplication.configServer);
             assertWantedVersion(lastToDowngrade, version2, zone);
 
             // ... and then configserver and proxyhost
@@ -463,7 +462,7 @@ public class SystemUpgraderTest {
 
     private List<Node> listNodes(ZoneApi zone, SystemApplication application) {
         return nodeRepository().list(zone.getId(), NodeFilter.all().applications(application.id())).stream()
-                               .filter(SystemUpgrader::eligibleForUpgrade)
+                               .filter(node -> SystemUpgrader.eligibleForUpgrade(node, zone))
                                .toList();
     }
 

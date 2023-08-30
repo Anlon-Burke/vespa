@@ -1,49 +1,35 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "activecopy.h"
-
-#include <vespa/storage/storageutil/utils.h>
 #include <vespa/vdslib/distribution/distribution.h>
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <algorithm>
 #include <cassert>
+#include <ostream>
 
 namespace std {
-    template<typename T>
-    std::ostream& operator<<(std::ostream& out, const std::vector<T>& v) {
-        out << "[";
-        for (uint32_t i=0; i<v.size(); ++i) {
-            out << "\n  " << v[i];
-        }
-        if (!v.empty()) {
-            out << "\n";
-        }
-        return out << "]";
+
+template<typename T>
+std::ostream& operator<<(std::ostream& out, const std::vector<T>& v) {
+    out << "[";
+    for (uint32_t i=0; i<v.size(); ++i) {
+        out << "\n  " << v[i];
     }
+    if (!v.empty()) {
+        out << "\n";
+    }
+    return out << "]";
+}
+
 }
 
 namespace storage::distributor {
 
-ActiveCopy::ActiveCopy(uint16_t node, const BucketDatabase::Entry& e, const std::vector<uint16_t>& idealState) :
-    _nodeIndex(node),
-    _ideal(0xffff)
-{
-    const BucketCopy* copy = e->getNode(node);
-    assert(copy != nullptr);
-    _doc_count = copy->getDocumentCount();
-    _ready = copy->ready();
-    _active = copy->active();
-    for (uint32_t i=0; i<idealState.size(); ++i) {
-        if (idealState[i] == node) {
-            _ideal = i;
-            break;
-        }
-    }
-}
+using IndexList = lib::Distribution::IndexList;
 
 vespalib::string
 ActiveCopy::getReason() const {
-    if (_ready && (_doc_count > 0) && (_ideal < 0xffff)) {
+    if (_ready && (_doc_count > 0) && valid_ideal()) {
         vespalib::asciistream ost;
         ost << "copy is ready, has " << _doc_count
             << " docs and ideal state priority " << _ideal;
@@ -54,7 +40,7 @@ ActiveCopy::getReason() const {
         return ost.str();
     } else if (_ready) {
         return "copy is ready";
-    } else if ((_doc_count > 0) && (_ideal < 0xffff)) {
+    } else if ((_doc_count > 0) && valid_ideal()) {
         vespalib::asciistream ost;
         ost << "copy has " << _doc_count << " docs and ideal state priority " << _ideal;
         return ost.str();
@@ -64,7 +50,7 @@ ActiveCopy::getReason() const {
         return ost.str();
     } else if (_active) {
         return "copy is already active";
-    } else if (_ideal < 0xffff) {
+    } else if (valid_ideal()) {
         vespalib::asciistream ost;
         ost << "copy is ideal state priority " << _ideal;
         return ost.str();
@@ -82,7 +68,7 @@ operator<<(std::ostream& out, const ActiveCopy & e) {
     if (e._doc_count > 0) {
         out << ", doc_count " << e._doc_count;
     }
-    if (e._ideal < 0xffff) {
+    if (e.valid_ideal()) {
         out << ", ideal pri " << e._ideal;
     }
     out << ")";
@@ -91,66 +77,66 @@ operator<<(std::ostream& out, const ActiveCopy & e) {
 
 namespace {
 
-    struct ActiveStateOrder {
-        bool operator()(const ActiveCopy & e1, const ActiveCopy & e2) {
-            if (e1._ready != e2._ready) {
-                return e1._ready;
-            }
-            if (e1._doc_count != e2._doc_count) {
-                return e1._doc_count > e2._doc_count;
-            }
-            if (e1._ideal != e2._ideal) {
-                return e1._ideal < e2._ideal;
-            }
-            if (e1._active != e2._active) {
-                return e1._active;
-            }
-            return e1._nodeIndex < e2._nodeIndex;
-        }
-    };
-
-    std::vector<uint16_t>
-    buildValidNodeIndexList(BucketDatabase::Entry& e) {
-        std::vector<uint16_t> result;
-        result.reserve(e->getNodeCount());
-        for (uint32_t i=0, n=e->getNodeCount(); i < n; ++i) {
-            const BucketCopy& cp = e->getNodeRef(i);
-            if (!cp.valid()) {
-                continue;
-            }
+IndexList
+buildValidNodeIndexList(const BucketDatabase::Entry& e) {
+    IndexList result;
+    result.reserve(e->getNodeCount());
+    for (uint32_t i=0, n=e->getNodeCount(); i < n; ++i) {
+        const BucketCopy& cp = e->getNodeRef(i);
+        if (cp.valid()) {
             result.push_back(cp.getNode());
         }
-        return result;
     }
-
-    std::vector<ActiveCopy>
-    buildNodeList(BucketDatabase::Entry& e,
-                  const std::vector<uint16_t>& nodeIndexes,
-                  const std::vector<uint16_t>& idealState)
-    {
-        std::vector<ActiveCopy> result;
-        result.reserve(nodeIndexes.size());
-        for (uint16_t nodeIndex : nodeIndexes) {
-            result.emplace_back(nodeIndex, e, idealState);
-        }
-        return result;
-    }
+    return result;
 }
 
-ActiveList
-ActiveCopy::calculate(const std::vector<uint16_t>& idealState,
-                      const lib::Distribution& distribution,
-                      BucketDatabase::Entry& e,
-                      uint32_t max_activation_inhibited_out_of_sync_groups)
+using SmallActiveCopyList = vespalib::SmallVector<ActiveCopy, 2>;
+static_assert(sizeof(SmallActiveCopyList) == 40);
+
+SmallActiveCopyList
+buildNodeList(const BucketDatabase::Entry& e,vespalib::ConstArrayRef<uint16_t> nodeIndexes, const IdealServiceLayerNodesBundle::Node2Index & idealState)
 {
-    std::vector<uint16_t> validNodesWithCopy = buildValidNodeIndexList(e);
+    SmallActiveCopyList result;
+    result.reserve(nodeIndexes.size());
+    for (uint16_t nodeIndex : nodeIndexes) {
+        const BucketCopy *copy = e->getNode(nodeIndex);
+        assert(copy);
+        result.emplace_back(nodeIndex, *copy, idealState.lookup(nodeIndex));
+    }
+    return result;
+}
+
+}
+
+struct ActiveStateOrder {
+    bool operator()(const ActiveCopy & e1, const ActiveCopy & e2) noexcept {
+        if (e1._ready != e2._ready) {
+            return e1._ready;
+        }
+        if (e1._doc_count != e2._doc_count) {
+            return e1._doc_count > e2._doc_count;
+        }
+        if (e1._ideal != e2._ideal) {
+            return e1._ideal < e2._ideal;
+        }
+        if (e1._active != e2._active) {
+            return e1._active;
+        }
+        return e1.nodeIndex() < e2.nodeIndex();
+    }
+};
+
+ActiveList
+ActiveCopy::calculate(const Node2Index & idealState, const lib::Distribution& distribution,
+                      const BucketDatabase::Entry& e, uint32_t max_activation_inhibited_out_of_sync_groups)
+{
+    IndexList validNodesWithCopy = buildValidNodeIndexList(e);
     if (validNodesWithCopy.empty()) {
         return ActiveList();
     }
-    using IndexList = std::vector<uint16_t>;
     std::vector<IndexList> groups;
     if (distribution.activePerGroup()) {
-        groups = distribution.splitNodesIntoLeafGroups(std::move(validNodesWithCopy));
+        groups = distribution.splitNodesIntoLeafGroups(validNodesWithCopy);
     } else {
         groups.push_back(std::move(validNodesWithCopy));
     }
@@ -162,7 +148,7 @@ ActiveCopy::calculate(const std::vector<uint16_t>& idealState,
                                 : api::BucketInfo()); // Invalid by default
     uint32_t inhibited_groups = 0;
     for (const auto& group_nodes : groups) {
-        std::vector<ActiveCopy> entries = buildNodeList(e, group_nodes, idealState);
+        SmallActiveCopyList entries = buildNodeList(e, group_nodes, idealState);
         auto best = std::min_element(entries.begin(), entries.end(), ActiveStateOrder());
         if ((groups.size() > 1) &&
             (inhibited_groups < max_activation_inhibited_out_of_sync_groups) &&
@@ -180,24 +166,22 @@ ActiveCopy::calculate(const std::vector<uint16_t>& idealState,
 }
 
 void
-ActiveList::print(std::ostream& out, bool verbose,
-                  const std::string& indent) const
+ActiveList::print(std::ostream& out, bool verbose, const std::string& indent) const
 {
     out << "[";
     if (verbose) {
         for (size_t i=0; i<_v.size(); ++i) {
-            out << "\n" << indent << "  "
-                << _v[i]._nodeIndex << " " << _v[i].getReason();
+            out << "\n" << indent << "  " << _v[i].nodeIndex() << " " << _v[i].getReason();
         }
         if (!_v.empty()) {
             out << "\n" << indent;
         }
     } else {
         if (!_v.empty()) {
-            out << _v[0]._nodeIndex;
+            out << _v[0].nodeIndex();
         }
         for (size_t i=1; i<_v.size(); ++i) {
-            out << " " << _v[i]._nodeIndex;
+            out << " " << _v[i].nodeIndex();
         }
     }
     out << "]";
@@ -207,7 +191,7 @@ bool
 ActiveList::contains(uint16_t node) const noexcept
 {
     for (const auto& candidate : _v) {
-        if (node == candidate._nodeIndex) {
+        if (node == candidate.nodeIndex()) {
             return true;
         }
     }

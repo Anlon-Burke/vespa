@@ -45,12 +45,17 @@
     </dependency>
     <dependency>
       <groupId>org.hamcrest</groupId>
-      <artifactId>hamcrest-all</artifactId>
+      <artifactId>hamcrest</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.mockito</groupId>
       <artifactId>mockito-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.google.errorprone</groupId>
+      <artifactId>error_prone_annotations</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -64,7 +69,7 @@
       <plugin>
         <groupId>org.openclover</groupId>
         <artifactId>clover-maven-plugin</artifactId>
-        <version>4.3.1</version>
+        <version>${clover-maven-plugin.vespa.version}</version>
       </plugin>
         <plugin>
             <groupId>org.apache.maven.plugins</groupId>

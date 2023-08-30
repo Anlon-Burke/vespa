@@ -71,15 +71,17 @@ public:
 };
 
 class MetricSnapshotSet {
-    uint32_t _count; // Number of times we need to add to building period
-                     // before we have a full time window.
+    const uint32_t _count; // Number of times we need to add to building period
+                           // before we have a full time window.
     uint32_t _builderCount; // Number of times we've currently added to the
                             // building instance.
     std::unique_ptr<MetricSnapshot> _current; // The last full period
     std::unique_ptr<MetricSnapshot> _building; // The building period
+    bool _current_is_assigned;
 public:
     MetricSnapshotSet(const Metric::String& name, system_time::duration period, uint32_t count,
                       const MetricSet& source, bool snapshotUnsetMetrics);
+    ~MetricSnapshotSet();
 
     const Metric::String& getName() const { return _current->getName(); }
     system_time::duration getPeriod() const { return _current->getPeriod(); }
@@ -94,9 +96,7 @@ public:
     MetricSnapshot& getSnapshot(bool temporary) {
         return *((temporary && _count > 1) ? _building : _current);
     }
-    const MetricSnapshot& getSnapshot() const {
-        return getSnapshot(false);
-    }
+
     const MetricSnapshot& getSnapshot(bool temporary) const {
         return *((temporary && _count > 1) ? _building : _current);
     }
@@ -111,6 +111,13 @@ public:
     void recreateSnapshot(const MetricSet& metrics, bool copyUnset);
     void addMemoryUsage(MemoryConsumption&) const;
     void setFromTime(system_time fromTime);
+
+    [[nodiscard]] bool current_is_assigned() const noexcept {
+        return _current_is_assigned;
+    }
+    void tag_current_as_assigned() noexcept {
+        _current_is_assigned = true;
+    }
 };
 
 } // metrics

@@ -7,6 +7,7 @@ vespa_add_library(eval_instruction OBJECT
     dense_cell_range_function.cpp
     dense_dot_product_function.cpp
     dense_hamming_distance.cpp
+    dense_join_reduce_plan.cpp
     dense_lambda_peek_function.cpp
     dense_lambda_peek_optimizer.cpp
     dense_matmul_function.cpp
@@ -43,6 +44,7 @@ vespa_add_library(eval_instruction OBJECT
     sparse_112_dot_product.cpp
     sparse_dot_product_function.cpp
     sparse_full_overlap_join_function.cpp
+    sparse_join_reduce_plan.cpp
     sparse_merge_function.cpp
     sparse_no_overlap_join_function.cpp
     sparse_singledim_lookup.cpp

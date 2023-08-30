@@ -17,6 +17,7 @@
 #include <vespa/storageapi/message/state.h>
 #include <vespa/storageapi/message/bucketsplitting.h>
 #include <vespa/storageapi/message/stat.h>
+#include <vespa/metrics/jsonwriter.h>
 #include <vespa/document/bucket/fixed_bucket_spaces.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <ranges>
@@ -73,7 +74,8 @@ BucketManager::~BucketManager()
     closeNextLink();
 }
 
-void BucketManager::onClose()
+void
+BucketManager::onClose()
 {
     // Stop internal thread such that we don't send any more messages down.
     if (_thread) {
@@ -90,56 +92,60 @@ BucketManager::print(std::ostream& out, bool ,const std::string& ) const
 
 namespace {
 
-template<bool log>
 class DistributorInfoGatherer
 {
     using ResultArray = api::RequestBucketInfoReply::EntryVector;
 
     DistributorStateCache                      _state;
     std::unordered_map<uint16_t, ResultArray>& _result;
-    const document::BucketIdFactory&           _factory;
-    std::shared_ptr<const lib::Distribution>  _storageDistribution;
+    bool                                       _spam;
 
 public:
-    DistributorInfoGatherer(
-            const lib::ClusterState& systemState,
-            std::unordered_map<uint16_t, ResultArray>& result,
-            const document::BucketIdFactory& factory,
-            std::shared_ptr<const lib::Distribution> distribution)
-        : _state(*distribution, systemState),
-          _result(result),
-          _factory(factory),
-          _storageDistribution(std::move(distribution))
-    {
-    }
+    DistributorInfoGatherer(const lib::ClusterState& systemState,
+                            std::unordered_map<uint16_t, ResultArray>& result,
+                            const lib::Distribution & distribution,
+                            bool spam) noexcept;
 
-    StorBucketDatabase::Decision operator()(uint64_t bucketId,const StorBucketDatabase::Entry& data)
-    {
-        document::BucketId b(document::BucketId::keyToBucketId(bucketId));
-        try{
-            uint16_t i = _state.getOwner(b);
-            auto it = _result.find(i);
-            if constexpr (log) {
-                LOG(spam, "Bucket %s (reverse %" PRIu64 "), should be handled by distributor %u which we are %sgenerating state for.",
-                    b.toString().c_str(), bucketId, i, it == _result.end() ? "not " : "");
-            }
-            if (it != _result.end()) {
-                api::RequestBucketInfoReply::Entry entry;
-                entry._bucketId = b;
-                entry._info = data.getBucketInfo();
-                it->second.push_back(entry);
-            }
-        } catch (lib::TooFewBucketBitsInUseException& e) {
-            LOGBP(warning, "Cannot assign bucket %s to a distributor as bucket only specifies %u bits.",
-                  b.toString().c_str(), b.getUsedBits());
-        } catch (lib::NoDistributorsAvailableException& e) {
-            LOGBP(warning, "No distributors available while processing request bucket info. Distribution hash: %s, cluster state: %s",
-                  _state.getDistribution().getNodeGraph().getDistributionConfigHash().c_str(), _state.getClusterState().toString().c_str());
-        }
-        return StorBucketDatabase::Decision::CONTINUE;
-    }
+    StorBucketDatabase::Decision operator()(uint64_t bucketId, const StorBucketDatabase::Entry& data);
 
 };
+
+DistributorInfoGatherer::DistributorInfoGatherer(const lib::ClusterState& systemState,
+                                                 std::unordered_map<uint16_t, ResultArray>& result,
+                                                 const lib::Distribution & distribution,
+                                                 bool spam) noexcept
+        : _state(distribution, systemState),
+          _result(result),
+          _spam(spam)
+{
+}
+
+StorBucketDatabase::Decision
+DistributorInfoGatherer::operator()(uint64_t bucketId, const StorBucketDatabase::Entry& data)
+{
+    document::BucketId b(document::BucketId::keyToBucketId(bucketId));
+    try {
+        uint16_t i = _state.getOwner(b);
+        auto it = _result.find(i);
+        if (_spam) {
+            LOG(spam, "Bucket %s (reverse %" PRIu64 "), should be handled by distributor %u which we are %sgenerating state for.",
+                b.toString().c_str(), bucketId, i, it == _result.end() ? "not " : "");
+        }
+        if (it != _result.end()) {
+            api::RequestBucketInfoReply::Entry entry;
+            entry._bucketId = b;
+            entry._info = data.getBucketInfo();
+            it->second.push_back(entry);
+        }
+    } catch (lib::TooFewBucketBitsInUseException& e) {
+        LOGBP(warning, "Cannot assign bucket %s to a distributor as bucket only specifies %u bits.",
+              b.toString().c_str(), b.getUsedBits());
+    } catch (lib::NoDistributorsAvailableException& e) {
+        LOGBP(warning, "No distributors available while processing request bucket info. Distribution hash: %s, cluster state: %s",
+              _state.getDistribution().getNodeGraph().getDistributionConfigHash().c_str(), _state.getClusterState().toString().c_str());
+    }
+    return StorBucketDatabase::Decision::CONTINUE;
+}
 
 struct MetricsUpdater {
     struct Count {
@@ -151,7 +157,6 @@ struct MetricsUpdater {
 
         constexpr Count() noexcept : docs(0), bytes(0), buckets(0), active(0), ready(0) {}
     };
-
     Count    count;
     uint32_t lowestUsedBit;
 
@@ -193,58 +198,94 @@ struct MetricsUpdater {
 
 }   // End of anonymous namespace
 
-StorBucketDatabase::Entry
-BucketManager::getBucketInfo(const document::Bucket &bucket) const
-{
-    StorBucketDatabase::WrappedEntry entry(_component.getBucketDatabase(bucket.getBucketSpace()).get(bucket.getBucketId(), "BucketManager::getBucketInfo"));
-    return *entry;
+namespace {
+
+void
+output(vespalib::JsonStream & json, vespalib::stringref name, uint64_t value, vespalib::stringref bucketSpace) {
+    using namespace vespalib::jsonstream;
+    json << Object();
+    json << "name" << name;
+    json << "values" << Object() << "last" << value << End();
+    if ( ! bucketSpace.empty()) {
+        json << "dimensions" << Object();
+        json << "bucketSpace" << bucketSpace;
+        json << End();
+    }
+    json << End();
 }
 
 void
-BucketManager::updateMetrics(bool updateDocCount)
-{
-    LOG(debug, "Iterating bucket database to update metrics%s%s",
-        updateDocCount ? "" : ", minusedbits only",
-        _doneInitialized ? "" : ", server is not done initializing");
+output(vespalib::JsonStream & json, vespalib::stringref name, uint64_t value) {
+    output(json, name, value, "");
+}
 
-    if (!updateDocCount || _doneInitialized) {
-        MetricsUpdater total;
-        for (const auto& space : _component.getBucketSpaceRepo()) {
-            MetricsUpdater m;
-            auto guard = space.second->bucketDatabase().acquire_read_guard();
-            guard->for_each(std::ref(m));
-            total.add(m);
-            if (updateDocCount) {
-                auto bm = _metrics->bucket_spaces.find(space.first);
-                assert(bm != _metrics->bucket_spaces.end());
-                bm->second->buckets_total.set(m.count.buckets);
-                bm->second->docs.set(m.count.docs);
-                bm->second->bytes.set(m.count.bytes);
-                bm->second->active_buckets.set(m.count.active);
-                bm->second->ready_buckets.set(m.count.ready);
-            }
-        }
-        if (updateDocCount) {
-            auto & dest = *_metrics->disk;
-            const auto & src = total.count;
-            dest.buckets.addValue(src.buckets);
-            dest.docs.addValue(src.docs);
-            dest.bytes.addValue(src.bytes);
-            dest.active.addValue(src.active);
-            dest.ready.addValue(src.ready);
-        }
+MetricsUpdater
+getMetrics(const StorBucketDatabase & db) {
+    MetricsUpdater m;
+    auto guard = db.acquire_read_guard();
+    guard->for_each(std::ref(m));
+    return m;
+}
+
+}
+
+void
+BucketManager::report(vespalib::JsonStream & json) const {
+    MetricsUpdater total;
+    for (const auto& space : _component.getBucketSpaceRepo()) {
+        MetricsUpdater m = getMetrics(space.second->bucketDatabase());
+        output(json, "vds.datastored.bucket_space.buckets_total", m.count.buckets,
+               document::FixedBucketSpaces::to_string(space.first));
+        total.add(m);
     }
+    const auto & src = total.count;
+    output(json, "vds.datastored.alldisks.docs", src.docs);
+    output(json, "vds.datastored.alldisks.bytes", src.bytes);
+    output(json, "vds.datastored.alldisks.buckets", src.buckets);
+}
+
+StorBucketDatabase::Entry
+BucketManager::getBucketInfo(const document::Bucket &bucket) const
+{
+    return *_component.getBucketDatabase(bucket.getBucketSpace()).get(bucket.getBucketId(), "BucketManager::getBucketInfo");
+}
+
+void
+BucketManager::updateMetrics() const
+{
+    MetricsUpdater total;
+    for (const auto& space : _component.getBucketSpaceRepo()) {
+        MetricsUpdater m = getMetrics(space.second->bucketDatabase());
+        total.add(m);
+        auto bm = _metrics->bucket_spaces.find(space.first);
+        assert(bm != _metrics->bucket_spaces.end());
+        bm->second->buckets_total.set(m.count.buckets);
+        bm->second->docs.set(m.count.docs);
+        bm->second->bytes.set(m.count.bytes);
+        bm->second->active_buckets.set(m.count.active);
+        bm->second->ready_buckets.set(m.count.ready);
+    }
+    auto & dest = *_metrics->disk;
+    const auto & src = total.count;
+    dest.buckets.addValue(src.buckets);
+    dest.docs.addValue(src.docs);
+    dest.bytes.addValue(src.bytes);
+    dest.active.addValue(src.active);
+    dest.ready.addValue(src.ready);
     update_bucket_db_memory_usage_metrics();
 }
 
-void BucketManager::update_bucket_db_memory_usage_metrics() {
+
+void
+BucketManager::update_bucket_db_memory_usage_metrics() const {
     for (const auto& space : _component.getBucketSpaceRepo()) {
         auto bm = _metrics->bucket_spaces.find(space.first);
         bm->second->bucket_db_metrics.memory_usage.update(space.second->bucketDatabase().detailed_memory_usage());
     }
 }
 
-void BucketManager::updateMinUsedBits()
+void
+BucketManager::updateMinUsedBits()
 {
     MetricsUpdater m;
     _component.getBucketSpaceRepo().for_each_bucket(std::ref(m));
@@ -494,8 +535,7 @@ BucketManager::processRequestBucketInfoCommands(document::BucketSpace bucketSpac
         reqs.size(), bucketSpace.toString().c_str(), clusterState->toString().c_str(), our_hash.c_str());
 
     std::lock_guard clusterStateGuard(_clusterStateLock);
-    for (auto it = reqs.rbegin(); it != reqs.rend(); it++) {
-        const auto & req = *it;
+    for (const auto & req : std::ranges::reverse_view(reqs)) {
         // Currently small requests should not be forwarded to worker thread
         assert(req->hasSystemState());
         const auto their_hash = req->getDistributionHash();
@@ -566,13 +606,12 @@ BucketManager::processRequestBucketInfoCommands(document::BucketSpace bucketSpac
    framework::MilliSecTimer runStartTime(_component.getClock());
     // Don't allow logging to lower performance of inner loop.
     // Call other type of instance if logging
-    const document::BucketIdFactory& idFac(_component.getBucketIdFactory());
     if (LOG_WOULD_LOG(spam)) {
-        DistributorInfoGatherer<true> builder(*clusterState, result, idFac, distribution);
+        DistributorInfoGatherer builder(*clusterState, result, *distribution, true);
         _component.getBucketDatabase(bucketSpace).for_each_chunked(std::ref(builder),
                         "BucketManager::processRequestBucketInfoCommands-1");
     } else {
-        DistributorInfoGatherer<false> builder(*clusterState, result, idFac, distribution);
+        DistributorInfoGatherer builder(*clusterState, result, *distribution, false);
         _component.getBucketDatabase(bucketSpace).for_each_chunked(std::ref(builder),
                         "BucketManager::processRequestBucketInfoCommands-2");
     }

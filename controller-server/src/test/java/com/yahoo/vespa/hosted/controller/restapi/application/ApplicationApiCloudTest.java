@@ -27,7 +27,6 @@ import com.yahoo.vespa.hosted.controller.security.Auth0Credentials;
 import com.yahoo.vespa.hosted.controller.security.CloudTenantSpec;
 import com.yahoo.vespa.hosted.controller.security.Credentials;
 import com.yahoo.vespa.hosted.controller.tenant.CloudTenant;
-import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -35,7 +34,6 @@ import java.io.File;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import static com.yahoo.application.container.handler.Request.Method.DELETE;
 import static com.yahoo.application.container.handler.Request.Method.GET;
@@ -458,7 +456,7 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
                 request("/application/v4/tenant/scoober/application/unique/submit", POST)
                         .data(data)
                         .roles(Set.of(Role.developer(tenantName))),
-                "{\"message\":\"application build 1, source revision of repository 'repository1', branch 'master' with commit 'commit1', by a@b, built against 6.1 at 1970-01-01T00:00:01Z\"}");
+                "{\"message\":\"application build 1, source revision of repository 'repository1', branch 'master' with commit 'commit1', by a@b, built against 6.1 at 1970-01-01T00:00:01Z\",\"build\":1}");
 
         assertTrue(tester.controller().applications().getApplication(TenantAndApplicationId.from(tenantName, application)).isPresent());
     }
@@ -471,13 +469,13 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
 
         String regexGenerateToken = "\\{\"id\":\"myTokenId\",\"token\":\"vespa_cloud_.*\",\"fingerprint\":\".*\"}";
         tester.assertResponse(request("/application/v4/tenant/scoober/token/myTokenId", POST).roles(Role.developer(tenantName)),
-                       (response) -> Assertions.assertThat(new String(response.getBody(), UTF_8)).matches(Pattern.compile(regexGenerateToken)),
+                       (response) -> assertTrue(new String(response.getBody(), UTF_8).matches(regexGenerateToken)),
                        200);
 
         String regexListTokens = "\\{\"tokens\":\\[\\{\"id\":\"myTokenId\",\"versions\":\\[\\{\"fingerprint\":\".*\",\"created\":\".*\",\"author\":\"user@test\",\"expiration\":\".*\"}]}]}";
         tester.assertResponse(request("/application/v4/tenant/scoober/token", GET)
                                       .roles(Role.developer(tenantName)),
-                              (response) -> Assertions.assertThat(new String(response.getBody(), UTF_8)).matches(Pattern.compile(regexListTokens)),
+                              (response) -> assertTrue(new String(response.getBody(), UTF_8).matches(regexListTokens)),
                               200);
 
         // Rejects invalid tokenIds on create
@@ -567,7 +565,7 @@ public class ApplicationApiCloudTest extends ControllerContainerCloudTest {
                 "\"deployDirectly\":" + deployDirectly +
                 applicationVersion.map(version ->
                         "," +
-                                "\"buildNumber\":" + version.buildNumber().getAsLong() + "," +
+                                "\"buildNumber\":" + version.buildNumber() + "," +
                                 "\"sourceRevision\":{" +
                                 "\"repository\":\"" + version.source().get().repository() + "\"," +
                                 "\"branch\":\"" + version.source().get().branch() + "\"," +

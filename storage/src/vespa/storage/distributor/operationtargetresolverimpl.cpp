@@ -9,23 +9,8 @@
 
 namespace storage::distributor {
 
-namespace {
-
-lib::IdealNodeList
-make_node_list(const std::vector<uint16_t>& nodes)
-{
-    lib::IdealNodeList list;
-    for (auto node : nodes) {
-        list.push_back(lib::Node(lib::NodeType::STORAGE, node));
-    }
-    return list;
-}
-
-}
-
-BucketInstance::BucketInstance(
-        const document::BucketId& id, const api::BucketInfo& info,
-        lib::Node node, uint16_t idealLocationPriority, bool trusted, bool exist)
+BucketInstance::BucketInstance(const document::BucketId& id, const api::BucketInfo& info, lib::Node node,
+                               uint16_t idealLocationPriority, bool trusted, bool exist) noexcept
     : _bucket(id), _info(info), _node(node),
       _idealLocationPriority(idealLocationPriority), _trusted(trusted), _exist(exist)
 {
@@ -39,32 +24,25 @@ BucketInstance::print(vespalib::asciistream& out, const PrintProperties&) const
 
     std::ostringstream ost;
     ost << std::hex << _bucket.getId();
-    out << "(" << ost.str() << ", "
-        << infoString << ", node " << _node.getIndex()
-        << ", ideal " << _idealLocationPriority
-        << (_trusted ? ", trusted" : "")
-        << (_exist ? "" : ", new copy")
-        << ")";
+    out << "(" << ost.str() << ", " << infoString << ", node " << _node.getIndex() << ", ideal " << _idealLocationPriority
+        << (_trusted ? ", trusted" : "") << (_exist ? "" : ", new copy") << ")";
 }
 
 bool
 BucketInstanceList::contains(lib::Node node) const {
-    for (uint32_t i=0; i<_instances.size(); ++i) {
-        if (_instances[i]._node == node) return true;
+    for (const auto & instance : _instances) {
+        if (instance._node == node) return true;
     }
     return false;
 }
 
 void
-BucketInstanceList::add(BucketDatabase::Entry& e,
-                        const lib::IdealNodeList& idealState)
+BucketInstanceList::add(const BucketDatabase::Entry& e, const IdealServiceLayerNodesBundle::Node2Index & idealState)
 {
     for (uint32_t i = 0; i < e.getBucketInfo().getNodeCount(); ++i) {
         const BucketCopy& copy(e.getBucketInfo().getNodeRef(i));
         lib::Node node(lib::NodeType::STORAGE, copy.getNode());
-        _instances.push_back(BucketInstance(
-                e.getBucketId(), copy.getBucketInfo(), node,
-                idealState.indexOf(node), copy.trusted()));
+        _instances.emplace_back(e.getBucketId(), copy.getBucketInfo(), node, idealState.lookup(copy.getNode()), copy.trusted(), true);
     }
 }
 
@@ -73,9 +51,9 @@ BucketInstanceList::populate(const document::BucketId& specificId, const Distrib
 {
     std::vector<BucketDatabase::Entry> entries;
     db.getParents(specificId, entries);
-    for (uint32_t i=0; i<entries.size(); ++i) {
-        lib::IdealNodeList idealNodes(make_node_list(distributor_bucket_space.get_ideal_service_layer_nodes_bundle(entries[i].getBucketId()).get_available_nonretired_or_maintenance_nodes()));
-        add(entries[i], idealNodes);
+    for (const auto & entry : entries) {
+        auto node2Index = distributor_bucket_space.get_ideal_service_layer_nodes_bundle(entry.getBucketId()).nonretired_or_maintenance_to_index();
+        add(entry, node2Index);
     }
 }
 
@@ -102,40 +80,33 @@ BucketInstanceList::limitToRedundancyCopies(uint16_t redundancy)
 }
 
 document::BucketId
-BucketInstanceList::leastSpecificLeafBucketInSubtree(
-        const document::BucketId& candidateId,
-        const document::BucketId& mostSpecificId,
-        const BucketDatabase& db) const
+BucketInstanceList::leastSpecificLeafBucketInSubtree(const document::BucketId& candidateId,
+                                                     const document::BucketId& mostSpecificId,
+                                                     const BucketDatabase& db)
 {
     assert(candidateId.contains(mostSpecificId));
     document::BucketId treeNode = candidateId;
     // treeNode may reach at most 58 bits since buckets at 58 bits by definition
     // cannot have any children.
     while (db.childCount(treeNode) != 0) {
-        treeNode = document::BucketId(treeNode.getUsedBits() + 1,
-                                      mostSpecificId.getRawId());
+        treeNode = document::BucketId(treeNode.getUsedBits() + 1, mostSpecificId.getRawId());
     }
     assert(treeNode.contains(mostSpecificId));
     return treeNode;
 }
 
 void
-BucketInstanceList::extendToEnoughCopies(
-        const DistributorBucketSpace& distributor_bucket_space,
-        const BucketDatabase& db,
-        const document::BucketId& targetIfNonPreExisting,
-        const document::BucketId& mostSpecificId)
+BucketInstanceList::extendToEnoughCopies(const DistributorBucketSpace& distributor_bucket_space, const BucketDatabase& db,
+                                         const document::BucketId& targetIfNonPreExisting, const document::BucketId& mostSpecificId)
 {
-    document::BucketId newTarget(_instances.empty() ? targetIfNonPreExisting
-                                                    : _instances[0]._bucket);
+    document::BucketId newTarget(_instances.empty() ? targetIfNonPreExisting : _instances[0]._bucket);
     newTarget = leastSpecificLeafBucketInSubtree(newTarget, mostSpecificId, db);
 
-    lib::IdealNodeList idealNodes(make_node_list(distributor_bucket_space.get_ideal_service_layer_nodes_bundle(newTarget).get_available_nonretired_nodes()));
+    const auto & idealNodes = distributor_bucket_space.get_ideal_service_layer_nodes_bundle(newTarget).available_nonretired_nodes();
     for (uint32_t i=0; i<idealNodes.size(); ++i) {
-        if (!contains(idealNodes[i])) {
-            _instances.push_back(BucketInstance(
-                    newTarget, api::BucketInfo(), idealNodes[i],
-                    i, false, false));
+        lib::Node node(lib::NodeType::STORAGE, idealNodes[i]);
+        if (!contains(node)) {
+            _instances.emplace_back(newTarget, api::BucketInfo(), node, i, false, false);
         }
     }
 }
@@ -145,7 +116,7 @@ BucketInstanceList::createTargets(document::BucketSpace bucketSpace)
 {
     OperationTargetList result;
     for (const auto& bi : _instances) {
-        result.push_back(OperationTarget(document::Bucket(bucketSpace, bi._bucket), bi._node, !bi._exist));
+        result.emplace_back(document::Bucket(bucketSpace, bi._bucket), bi._node, !bi._exist);
     }
     return result;
 }
@@ -188,22 +159,17 @@ struct InstanceOrder {
 } // anonymous
 
 BucketInstanceList
-OperationTargetResolverImpl::getAllInstances(OperationType type,
-                                             const document::BucketId& id)
+OperationTargetResolverImpl::getAllInstances(OperationType type, const document::BucketId& id)
 {
     BucketInstanceList instances;
     if (type == PUT) {
         instances.populate(id, _distributor_bucket_space, _bucketDatabase);
         instances.sort(InstanceOrder());
         instances.removeNodeDuplicates();
-        instances.extendToEnoughCopies(
-                _distributor_bucket_space,
-                _bucketDatabase,
-                _bucketDatabase.getAppropriateBucket(_minUsedBucketBits, id),
-                id);
+        instances.extendToEnoughCopies(_distributor_bucket_space, _bucketDatabase,
+                                       _bucketDatabase.getAppropriateBucket(_minUsedBucketBits, id), id);
     } else {
-        throw vespalib::IllegalArgumentException(
-                "Unsupported operation type given", VESPA_STRLOC);
+        throw vespalib::IllegalArgumentException("Unsupported operation type given", VESPA_STRLOC);
     }
     return instances;
 }

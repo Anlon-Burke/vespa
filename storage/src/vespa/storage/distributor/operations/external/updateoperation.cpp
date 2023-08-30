@@ -106,19 +106,18 @@ UpdateOperation::onStart(DistributorStripeMessageSender& sender)
         const std::vector<uint16_t>& nodes = entry->getNodes();
 
         std::vector<MessageTracker::ToSend> messages;
+        messages.reserve(nodes.size());
 
         for (uint16_t node : nodes) {
-            auto command = std::make_shared<api::UpdateCommand>(
-                    document::Bucket(_msg->getBucket().getBucketSpace(), entry.getBucketId()),
-                    _msg->getUpdate(),
-                    _msg->getTimestamp());
+            auto command = std::make_shared<api::UpdateCommand>(document::Bucket(_msg->getBucket().getBucketSpace(), entry.getBucketId()),
+                                                                _msg->getUpdate(), _msg->getTimestamp());
             copyMessageSettings(*_msg, *command);
             command->setOldTimestamp(_msg->getOldTimestamp());
             command->setCondition(_msg->getCondition());
             messages.emplace_back(std::move(command), node);
         }
 
-        _tracker.queueMessageBatch(messages);
+        _tracker.queueMessageBatch(std::move(messages));
     }
 
     _tracker.flushQueue(sender);
@@ -207,6 +206,13 @@ UpdateOperation::onClose(DistributorStripeMessageSender& sender)
 {
     _tracker.fail(sender, api::ReturnCode(api::ReturnCode::ABORTED, "Process is shutting down"));
 }
+
+void
+UpdateOperation::on_cancel(DistributorStripeMessageSender&, const CancelScope& cancel_scope)
+{
+    _tracker.cancel(cancel_scope);
+}
+
 
 // The backend behavior of "create-if-missing" updates is to return the timestamp of the
 // _new_ update operation if the document was created from scratch. The two-phase update

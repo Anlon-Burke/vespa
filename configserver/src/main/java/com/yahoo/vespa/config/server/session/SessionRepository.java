@@ -6,7 +6,6 @@ import com.google.common.collect.Multiset;
 import com.yahoo.cloud.config.ConfigserverConfig;
 import com.yahoo.concurrent.DaemonThreadFactory;
 import com.yahoo.concurrent.StripedExecutor;
-import com.yahoo.config.FileReference;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.api.ConfigDefinitionRepo;
@@ -23,11 +22,10 @@ import com.yahoo.transaction.NestedTransaction;
 import com.yahoo.transaction.Transaction;
 import com.yahoo.vespa.config.server.ConfigServerDB;
 import com.yahoo.vespa.config.server.TimeoutBudget;
-import com.yahoo.vespa.config.server.application.ApplicationSet;
+import com.yahoo.vespa.config.server.application.ApplicationVersions;
 import com.yahoo.vespa.config.server.application.TenantApplications;
 import com.yahoo.vespa.config.server.configchange.ConfigChangeActions;
 import com.yahoo.vespa.config.server.deploy.TenantFileSystemDirs;
-import com.yahoo.vespa.config.server.filedistribution.FileDirectory;
 import com.yahoo.vespa.config.server.filedistribution.FileDistributionFactory;
 import com.yahoo.vespa.config.server.http.InvalidApplicationException;
 import com.yahoo.vespa.config.server.http.UnknownVespaVersionException;
@@ -41,7 +39,10 @@ import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.config.server.zookeeper.SessionCounter;
 import com.yahoo.vespa.config.server.zookeeper.ZKApplication;
 import com.yahoo.vespa.curator.Curator;
+import com.yahoo.vespa.curator.transaction.CuratorTransaction;
+import com.yahoo.vespa.flags.BooleanFlag;
 import com.yahoo.vespa.flags.FlagSource;
+import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.flags.LongFlag;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.flags.UnboundStringFlag;
@@ -127,6 +128,7 @@ public class SessionRepository {
     private final ConfigDefinitionRepo configDefinitionRepo;
     private final int maxNodeSize;
     private final LongFlag expiryTimeFlag;
+    private final BooleanFlag writeSessionData;
 
     public SessionRepository(TenantName tenantName,
                              TenantApplications applicationRepo,
@@ -168,7 +170,8 @@ public class SessionRepository {
         this.modelFactoryRegistry = modelFactoryRegistry;
         this.configDefinitionRepo = configDefinitionRepo;
         this.maxNodeSize = maxNodeSize;
-        expiryTimeFlag = PermanentFlags.CONFIG_SERVER_SESSION_EXPIRY_TIME.bindTo(flagSource);
+        this.expiryTimeFlag = PermanentFlags.CONFIG_SERVER_SESSION_EXPIRY_TIME.bindTo(flagSource);
+        this.writeSessionData = Flags.WRITE_CONFIG_SERVER_SESSION_DATA_AS_ONE_BLOB.bindTo(flagSource);
 
         loadSessions(); // Needs to be done before creating cache below
         this.directoryCache = curator.createDirectoryCache(sessionsPath.getAbsolute(), false, false, zkCacheExecutor);
@@ -237,16 +240,24 @@ public class SessionRepository {
                 throw new UnknownVespaVersionException("Vespa version '" + version + "' not known by this config server");
         });
 
-        applicationRepo.createApplication(params.getApplicationId()); // TODO jvenstad: This is wrong, but it has to be done now, since preparation can change the application ID of a session :(
-        logger.log(Level.FINE, "Created application " + params.getApplicationId());
+        ApplicationId applicationId = params.getApplicationId();
+        applicationRepo.createApplication(applicationId); // TODO jvenstad: This is wrong, but it has to be done now, since preparation can change the application ID of a session :(
+        logger.log(Level.FINE, "Created application " + applicationId);
         long sessionId = session.getSessionId();
         SessionZooKeeperClient sessionZooKeeperClient = createSessionZooKeeperClient(sessionId);
         Optional<CompletionWaiter> waiter = params.isDryRun()
                 ? Optional.empty()
                 : Optional.of(sessionZooKeeperClient.createPrepareWaiter());
-        Optional<ApplicationSet> activeApplicationSet = getActiveApplicationSet(params.getApplicationId());
+        Optional<ApplicationVersions> activeApplicationVersions = activeApplicationVersions(applicationId);
+        try (var transaction = new CuratorTransaction(curator)) {
+            applicationRepo.createWritePrepareTransaction(transaction,
+                                                          applicationId,
+                                                          sessionId,
+                                                          getActiveSessionId(applicationId))
+                    .commit();
+        }
         ConfigChangeActions actions = sessionPreparer.prepare(applicationRepo, logger, params,
-                                                              activeApplicationSet, now, getSessionAppDir(sessionId),
+                                                              activeApplicationVersions, now, getSessionAppDir(sessionId),
                                                               session.getApplicationPackage(), sessionZooKeeperClient)
                 .getConfigChangeActions();
         setPrepared(session);
@@ -266,24 +277,17 @@ public class SessionRepository {
                                                   boolean internalRedeploy,
                                                   TimeoutBudget timeoutBudget,
                                                   DeployLogger deployLogger) {
-        ApplicationId existingApplicationId = existingSession.getApplicationId();
+        ApplicationId applicationId = existingSession.getApplicationId();
         File existingApp = getSessionAppDir(existingSession.getSessionId());
+        Instant created = clock.instant();
         LocalSession session = createSessionFromApplication(existingApp,
-                                                            existingApplicationId,
+                                                            applicationId,
                                                             internalRedeploy,
                                                             timeoutBudget,
-                                                            deployLogger);
-        // Note: Setters below need to be kept in sync with calls in SessionPreparer.writeStateToZooKeeper()
-        session.setApplicationId(existingApplicationId);
-        session.setApplicationPackageReference(existingSession.getApplicationPackageReference());
-        session.setVespaVersion(existingSession.getVespaVersion());
-        session.setDockerImageRepository(existingSession.getDockerImageRepository());
-        session.setAthenzDomain(existingSession.getAthenzDomain());
-        session.setQuota(existingSession.getQuota());
-        session.setTenantSecretStores(existingSession.getTenantSecretStores());
-        session.setOperatorCertificates(existingSession.getOperatorCertificates());
-        session.setCloudAccount(existingSession.getCloudAccount());
-        session.setDataplaneTokens(existingSession.getDataplaneTokens());
+                                                            deployLogger,
+                                                            created);
+        applicationRepo.createApplication(applicationId);
+        write(existingSession, session, applicationId, created);
         return session;
     }
 
@@ -299,8 +303,10 @@ public class SessionRepository {
                                                             ApplicationId applicationId,
                                                             TimeoutBudget timeoutBudget,
                                                             DeployLogger deployLogger) {
+        LocalSession session = createSessionFromApplication(applicationDirectory, applicationId, false, timeoutBudget,
+                                            deployLogger, clock.instant());
         applicationRepo.createApplication(applicationId);
-        return createSessionFromApplication(applicationDirectory, applicationId, false, timeoutBudget, deployLogger);
+        return session;
     }
 
     /**
@@ -484,20 +490,20 @@ public class SessionRepository {
         notifyCompletion(waiter);
     }
 
-    public ApplicationSet ensureApplicationLoaded(RemoteSession session) {
-        if (session.applicationSet().isPresent()) {
-            return session.applicationSet().get();
+    public ApplicationVersions ensureApplicationLoaded(RemoteSession session) {
+        if (session.applicationVersions().isPresent()) {
+            return session.applicationVersions().get();
         }
         Optional<Long> activeSessionId = getActiveSessionId(session.getApplicationId());
-        Optional<ApplicationSet> previousApplicationSet = activeSessionId.filter(session::isNewerThan)
-                                                                         .flatMap(this::getApplicationSet);
-        ApplicationSet applicationSet = loadApplication(session, previousApplicationSet);
-        RemoteSession activated = session.activated(applicationSet);
+        Optional<ApplicationVersions> previousActiveApplicationVersions = activeSessionId.filter(session::isNewerThan)
+                                                                         .flatMap(this::activeApplicationVersions);
+        ApplicationVersions applicationVersions = loadApplication(session, previousActiveApplicationVersions);
+        RemoteSession activated = session.activated(applicationVersions);
         long sessionId = activated.getSessionId();
         remoteSessionCache.put(sessionId, activated);
         updateSessionStateWatcher(sessionId);
 
-        return applicationSet;
+        return applicationVersions;
     }
 
     void confirmUpload(Session session) {
@@ -531,10 +537,9 @@ public class SessionRepository {
         }
     }
 
-    private ApplicationSet loadApplication(Session session, Optional<ApplicationSet> previousApplicationSet) {
+    private ApplicationVersions loadApplication(Session session, Optional<ApplicationVersions> previousApplicationSet) {
         log.log(Level.FINE, () -> "Loading application for " + session);
         SessionZooKeeperClient sessionZooKeeperClient = createSessionZooKeeperClient(session.getSessionId());
-        ApplicationPackage applicationPackage = sessionZooKeeperClient.loadApplicationPackage();
         ActivatedModelsBuilder builder = new ActivatedModelsBuilder(session.getTenantName(),
                                                                     session.getSessionId(),
                                                                     sessionZooKeeperClient,
@@ -549,12 +554,12 @@ public class SessionRepository {
                                                                     zone,
                                                                     modelFactoryRegistry,
                                                                     configDefinitionRepo);
-        return ApplicationSet.fromList(builder.buildModels(session.getApplicationId(),
-                                                           sessionZooKeeperClient.readDockerImageRepository(),
-                                                           sessionZooKeeperClient.readVespaVersion(),
-                                                           applicationPackage,
-                                                           new AllocatedHostsFromAllModels(),
-                                                           clock.instant()));
+        return ApplicationVersions.fromList(builder.buildModels(session.getApplicationId(),
+                                                                session.getDockerImageRepository(),
+                                                                session.getVespaVersion(),
+                                                                sessionZooKeeperClient.loadApplicationPackage(),
+                                                                new AllocatedHostsFromAllModels(),
+                                                                clock.instant()));
     }
 
     private void nodeChanged() {
@@ -576,6 +581,25 @@ public class SessionRepository {
                 case CHILD_ADDED, CHILD_REMOVED, CONNECTION_RECONNECTED -> sessionsChanged();
             }
         });
+    }
+
+    // ---------------- Serialization ----------------------------------------------------------------
+
+    private void write(Session existingSession, LocalSession session, ApplicationId applicationId, Instant created) {
+        SessionSerializer sessionSerializer = new SessionSerializer();
+        sessionSerializer.write(session.getSessionZooKeeperClient(),
+                                applicationId,
+                                created,
+                                existingSession.getApplicationPackageReference(),
+                                existingSession.getDockerImageRepository(),
+                                existingSession.getVespaVersion(),
+                                existingSession.getAthenzDomain(),
+                                existingSession.getQuota(),
+                                existingSession.getTenantSecretStores(),
+                                existingSession.getOperatorCertificates(),
+                                existingSession.getCloudAccount(),
+                                existingSession.getDataplaneTokens(),
+                                writeSessionData);
     }
 
     // ---------------- Common stuff ----------------------------------------------------------------
@@ -720,14 +744,15 @@ public class SessionRepository {
                                                       ApplicationId applicationId,
                                                       boolean internalRedeploy,
                                                       TimeoutBudget timeoutBudget,
-                                                      DeployLogger deployLogger) {
+                                                      DeployLogger deployLogger,
+                                                      Instant created) {
         long sessionId = getNextSessionId();
         try {
             ensureSessionPathDoesNotExist(sessionId);
             ApplicationPackage app = createApplicationPackage(applicationDirectory, applicationId, sessionId, internalRedeploy, Optional.of(deployLogger));
             log.log(Level.FINE, () -> TenantRepository.logPre(tenantName) + "Creating session " + sessionId + " in ZooKeeper");
             SessionZooKeeperClient sessionZKClient = createSessionZooKeeperClient(sessionId);
-            sessionZKClient.createNewSession(clock.instant());
+            sessionZKClient.createNewSession(created);
             CompletionWaiter waiter = sessionZKClient.getUploadWaiter();
             LocalSession session = new LocalSession(tenantName, sessionId, app, sessionZKClient);
             waiter.awaitCompletion(Duration.ofSeconds(Math.min(120, timeoutBudget.timeLeft().getSeconds())));
@@ -761,11 +786,11 @@ public class SessionRepository {
         }
     }
 
-    public Optional<ApplicationSet> getActiveApplicationSet(ApplicationId appId) {
-        return applicationRepo.activeSessionOf(appId).flatMap(this::getApplicationSet);
+    public Optional<ApplicationVersions> activeApplicationVersions(ApplicationId appId) {
+        return applicationRepo.activeSessionOf(appId).flatMap(this::activeApplicationVersions);
     }
 
-    private Optional<ApplicationSet> getApplicationSet(long sessionId) {
+    private Optional<ApplicationVersions> activeApplicationVersions(long sessionId) {
         try {
             return Optional.ofNullable(getRemoteSession(sessionId)).map(this::ensureApplicationLoaded);
         } catch (IllegalArgumentException e) {
@@ -854,23 +879,18 @@ public class SessionRepository {
         }
 
         SessionZooKeeperClient sessionZKClient = createSessionZooKeeperClient(sessionId);
-        FileReference fileReference = sessionZKClient.readApplicationPackageReference();
+        var fileReference = sessionZKClient.readApplicationPackageReference();
         log.log(Level.FINE, () -> "File reference for session id " + sessionId + ": " + fileReference);
-        if (fileReference == null) return;
+        if (fileReference.isEmpty()) return;
 
-        File sessionDir;
-        FileDirectory fileDirectory = fileDistributionFactory.fileDirectory();
-        try {
-            sessionDir = fileDirectory.getFile(fileReference);
-        } catch (IllegalArgumentException e) {
-            // We cannot be guaranteed that the file reference exists (it could be that it has not
-            // been downloaded yet), and e.g. when bootstrapping we cannot throw an exception in that case
-            log.log(Level.FINE, () -> "File reference for session id " + sessionId + ": " + fileReference + " not found");
-            return;
-        }
+        Optional<File> sessionDir = fileDistributionFactory.fileDirectory().getFile(fileReference.get());
+        // We cannot be guaranteed that the file reference exists (it could be that it has not
+        // been downloaded yet), and e.g. when bootstrapping we cannot throw an exception in that case
+        if (sessionDir.isEmpty()) return;
+
         ApplicationId applicationId = sessionZKClient.readApplicationId();
         log.log(Level.FINE, () -> "Creating local session for tenant '" + tenantName + "' with session id " + sessionId);
-        createLocalSession(sessionDir, applicationId, sessionId);
+        createLocalSession(sessionDir.get(), applicationId, sessionId);
     }
 
     private Optional<Long> getActiveSessionId(ApplicationId applicationId) {
@@ -965,7 +985,7 @@ public class SessionRepository {
 
     public Transaction createActivateTransaction(Session session) {
         Transaction transaction = createSetStatusTransaction(session, Session.Status.ACTIVATE);
-        transaction.add(applicationRepo.createPutTransaction(session.getApplicationId(), session.getSessionId()).operations());
+        transaction.add(applicationRepo.createWriteActiveTransaction(transaction, session.getApplicationId(), session.getSessionId()).operations());
         return transaction;
     }
 

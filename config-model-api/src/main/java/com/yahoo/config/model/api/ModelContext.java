@@ -108,10 +108,10 @@ public interface ModelContext {
         @ModelFeatureFlag(owners = {"hmusum"}) default Architecture adminClusterArchitecture() { return Architecture.getDefault(); }
         @ModelFeatureFlag(owners = {"tokle"}) default boolean enableProxyProtocolMixedMode() { return true; }
         @ModelFeatureFlag(owners = {"arnej"}) default String logFileCompressionAlgorithm(String defVal) { return defVal; }
-        @ModelFeatureFlag(owners = {"tokle"}) default boolean useRestrictedDataPlaneBindings() { return false; }
+        @ModelFeatureFlag(owners = {"tokle"}, removeAfter = "8.210") default boolean useRestrictedDataPlaneBindings() { return true; }
         @ModelFeatureFlag(owners = {"arnej, bjorncs"}) default boolean enableGlobalPhase() { return true; }
         @ModelFeatureFlag(owners = {"baldersheim"}, comment = "Select summary decode type") default String summaryDecodePolicy() { return "eager"; }
-        @ModelFeatureFlag(owners = {"hmusum"}) default boolean allowMoreThanOneContentGroupDown(ClusterSpec.Id id) { return false; }
+        @ModelFeatureFlag(owners = {"hmusum"}, removeAfter = "8.219") default boolean allowMoreThanOneContentGroupDown(ClusterSpec.Id id) { return true; }
         @ModelFeatureFlag(owners = {"vekterli", "havardpe"}, removeAfter = "8.207") default boolean enableConditionalPutRemoveWriteRepair() { return true; }
         @ModelFeatureFlag(owners = {"mortent", "olaa"}) default boolean enableDataplaneProxy() { return false; }
         @ModelFeatureFlag(owners = {"baldersheim"}) default boolean enableNestedMultivalueGrouping() { return false; }

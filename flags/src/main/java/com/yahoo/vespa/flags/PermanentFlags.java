@@ -21,6 +21,7 @@ import static com.yahoo.vespa.flags.FetchVector.Dimension.HOSTNAME;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.NODE_TYPE;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.TENANT_ID;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.VESPA_VERSION;
+import static com.yahoo.vespa.flags.FetchVector.Dimension.ZONE_ID;
 
 /**
  * Definition for permanent feature flags
@@ -144,6 +145,12 @@ public class PermanentFlags {
             "docker-image-repo", "",
             "Override default docker image repo. Docker image version will be Vespa version.",
             "Takes effect on next deployment from controller",
+            APPLICATION_ID);
+
+    public static final UnboundBooleanFlag SEND_LIMITED_METRIC_SET = defineFeatureFlag(
+            "send-limited-metric-set", true,
+            "Whether a limited metric set should be fetched from metrics-proxy (CD systems only)",
+            "Takes effect on next host admin tick",
             APPLICATION_ID);
 
     private static final String VERSION_QUALIFIER_REGEX = "[a-zA-Z0-9_-]+";
@@ -346,11 +353,18 @@ public class PermanentFlags {
             "Takes effect immediately",
             TENANT_ID);
 
-    public static final UnboundIntFlag KEEP_FILE_REFERENCES_ON_TENANT_NODES = defineIntFlag(
-            "keep-file-references-on-tenant-nodes", 30,
+    public static final UnboundIntFlag KEEP_FILE_REFERENCES_DAYS = defineIntFlag(
+            "keep-file-references-days", 30,
             "How many days to keep file references on tenant nodes (based on last modification time)",
             "Takes effect on restart of Docker container",
             APPLICATION_ID
+    );
+
+    public static final UnboundIntFlag KEEP_FILE_REFERENCES_COUNT = defineIntFlag(
+            "keep-file-references-count", 20,
+            "How many file references to keep on tenant nodes (no matter what last modification time is)",
+            "Takes effect on restart of Docker container",
+            ZONE_ID, APPLICATION_ID
     );
 
     public static final UnboundIntFlag ENDPOINT_CONNECTION_TTL = defineIntFlag(
@@ -370,6 +384,30 @@ public class PermanentFlags {
             "The number of hosts that can be provisioned per hour in a zone, before throttling is " +
             "triggered",
             "Takes effect immediately");
+
+    public static final UnboundBooleanFlag DROP_CACHES = defineFeatureFlag(
+            "drop-caches", true,
+            "Drop pagecache. " +
+            "This is combined with the drop-dentries-and-inodes flag for a single write to /proc/sys/vm/drop_caches.",
+            "Takes effect on next tick",
+            // The application ID is the exclusive application ID associated with the host,
+            // if any, or otherwise hosted-vespa:tenant-host:default.
+            APPLICATION_ID, TENANT_ID, CLUSTER_ID, CLUSTER_TYPE);
+
+    public static final UnboundIntFlag DROP_DENTRIES = defineIntFlag(
+            "drop-dentries", -1,
+            "Drop dentries and inodes every N minutes.  0 means every tick. -1 means disabled. " +
+            "This is combined with the drop-caches flag for a single write to /proc/sys/vm/drop_caches.",
+            "Takes effect on next tick",
+            // The application ID is the exclusive application ID associated with the host,
+            // if any, or otherwise hosted-vespa:tenant-host:default.
+            APPLICATION_ID, TENANT_ID, CLUSTER_ID, CLUSTER_TYPE);
+
+    public static final UnboundIntFlag CERT_POOL_SIZE = defineIntFlag(
+            "cert-pool-size", 0,
+            "Target number of preprovisioned endpoints certificates to maintain",
+            "Takes effect on next run of CertPoolMaintainer"
+    );
 
     private PermanentFlags() {}
 

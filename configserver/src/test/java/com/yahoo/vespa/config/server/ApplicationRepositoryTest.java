@@ -97,7 +97,6 @@ public class ApplicationRepositoryTest {
 
     private ApplicationRepository applicationRepository;
     private TenantRepository tenantRepository;
-    private MockProvisioner provisioner;
     private OrchestratorMock orchestrator;
     private TimeoutBudget timeoutBudget;
     private Curator curator;
@@ -123,7 +122,7 @@ public class ApplicationRepositoryTest {
                 .build();
         flagSource = new InMemoryFlagSource();
         fileDirectory = new FileDirectory(configserverConfig);
-        provisioner = new MockProvisioner();
+        MockProvisioner provisioner = new MockProvisioner();
         tenantRepository = new TestTenantRepository.Builder()
                 .withClock(clock)
                 .withConfigserverConfig(configserverConfig)
@@ -326,7 +325,7 @@ public class ApplicationRepositoryTest {
             // Delete app and verify that it has been deleted from repos and no application set exists
             assertTrue(applicationRepository.delete(applicationId()));
             assertTrue(applicationRepository.getActiveSession(applicationId()).isEmpty());
-            assertEquals(Optional.empty(), sessionRepository.getRemoteSession(sessionId).applicationSet());
+            assertEquals(Optional.empty(), sessionRepository.getRemoteSession(sessionId).applicationVersions());
             assertTrue(curator.exists(sessionNode));
             assertEquals(Session.Status.DELETE.name(), Utf8.toString(curator.getData(sessionNode.append("sessionState")).get()));
             assertTrue(sessionFile.exists());

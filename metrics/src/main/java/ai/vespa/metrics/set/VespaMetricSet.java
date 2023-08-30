@@ -1,4 +1,7 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+
+// TODO: Keep the set of metrics in this set stable until Vespa 9.
+// TODO: Vespa 9: Let this class be replaced by Vespa9VespaMetricSet.
 package ai.vespa.metrics.set;
 
 import ai.vespa.metrics.ClusterControllerMetrics;
@@ -17,6 +20,7 @@ import ai.vespa.metrics.VespaMetrics;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 import static ai.vespa.metrics.Suffix.average;
@@ -29,7 +33,6 @@ import static ai.vespa.metrics.Suffix.ninety_nine_percentile;
 import static ai.vespa.metrics.Suffix.rate;
 import static ai.vespa.metrics.Suffix.sum;
 import static ai.vespa.metrics.set.DefaultVespaMetrics.defaultVespaMetricSet;
-import static java.util.Collections.singleton;
 
 /**
  * Encapsulates vespa service metrics.
@@ -38,9 +41,14 @@ import static java.util.Collections.singleton;
  */
 public class VespaMetricSet {
 
-    public static final MetricSet vespaMetricSet = new MetricSet("vespa",
-                                                                 getVespaMetrics(),
-                                                                 singleton(defaultVespaMetricSet));
+    public static final MetricSet vespaMetricSet = createMetricSet();
+
+    private static MetricSet createMetricSet() {
+        return new MetricSet("vespa",
+                             getVespaMetrics(),
+                             List.of(defaultVespaMetricSet,
+                                     BasicMetricSets.containerHttpStatusMetrics()));
+    }
 
     private static Set<Metric> getVespaMetrics() {
         Set<Metric> metrics = new LinkedHashSet<>();
@@ -62,7 +70,7 @@ public class VespaMetricSet {
         Set<Metric> metrics = new LinkedHashSet<>();
 
         addMetric(metrics, SentinelMetrics.SENTINEL_RESTARTS.count());
-        addMetric(metrics, SentinelMetrics.SENTINEL_TOTAL_RESTARTS.last());
+        addMetric(metrics, SentinelMetrics.SENTINEL_TOTAL_RESTARTS, EnumSet.of(max, sum, last)); // TODO: Vespa 9: Remove last, sum?
         addMetric(metrics, SentinelMetrics.SENTINEL_UPTIME.last());
         addMetric(metrics, SentinelMetrics.SENTINEL_RUNNING, EnumSet.of(count, last));
 
@@ -80,7 +88,7 @@ public class VespaMetricSet {
         // Java (JRT) TLS metrics
         addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_TLS_CERTIFICATE_VERIFICATION_FAILURES.baseName());
         addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_PEER_AUTHORIZATION_FAILURES.baseName());
-        addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_SERVER_TLS_CONNECIONTS_ESTABLISHED.baseName());
+        addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_SERVER_TLS_CONNECTIONS_ESTABLISHED.baseName());
         addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_CLIENT_TLS_CONNECTIONS_ESTABLISHED.baseName());
         addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_SERVER_UNENCRYPTED_CONNECTIONS_ESTABLISHED.baseName());
         addMetric(metrics, ContainerMetrics.JRT_TRANSPORT_CLIENT_UNENCRYPTED_CONNECTIONS_ESTABLISHED.baseName());
@@ -114,6 +122,12 @@ public class VespaMetricSet {
 
     private static Set<Metric> getContainerMetrics() {
         Set<Metric> metrics = new LinkedHashSet<>();
+
+        addMetric(metrics, ContainerMetrics.HTTP_STATUS_1XX.rate());
+        addMetric(metrics, ContainerMetrics.HTTP_STATUS_2XX.rate());
+        addMetric(metrics, ContainerMetrics.HTTP_STATUS_3XX.rate());
+        addMetric(metrics, ContainerMetrics.HTTP_STATUS_4XX.rate());
+        addMetric(metrics, ContainerMetrics.HTTP_STATUS_5XX.rate());
 
         addMetric(metrics, ContainerMetrics.APPLICATION_GENERATION.baseName());
 
@@ -173,10 +187,10 @@ public class VespaMetricSet {
         addMetric(metrics, ContainerMetrics.JDISC_GC_COUNT, EnumSet.of(average, max, last)); // TODO: Vespa 9: Remove last
         addMetric(metrics, ContainerMetrics.JDISC_GC_MS, EnumSet.of(average, max, last)); // TODO: Vespa 9: Remove last
 
-        addMetric(metrics, ContainerMetrics.JDISC_DEACTIVATED_CONTAINERS.last());
+        addMetric(metrics, ContainerMetrics.JDISC_DEACTIVATED_CONTAINERS_TOTAL, EnumSet.of(sum, last)); // TODO: Vespa 9: Remove last
         addMetric(metrics, ContainerMetrics.JDISC_DEACTIVATED_CONTAINERS_WITH_RETAINED_REFS.last());
 
-        addMetric(metrics, ContainerMetrics.JDISC_SINGLETON_IS_ACTIVE.last());
+        addMetric(metrics, ContainerMetrics.JDISC_SINGLETON_IS_ACTIVE, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
         addMetric(metrics, ContainerMetrics.JDISC_SINGLETON_ACTIVATION_COUNT.last());
         addMetric(metrics, ContainerMetrics.JDISC_SINGLETON_ACTIVATION_FAILURE_COUNT.last());
         addMetric(metrics, ContainerMetrics.JDISC_SINGLETON_ACTIVATION_MILLIS.last());
@@ -184,14 +198,8 @@ public class VespaMetricSet {
         addMetric(metrics, ContainerMetrics.JDISC_SINGLETON_DEACTIVATION_FAILURE_COUNT.last());
         addMetric(metrics, ContainerMetrics.JDISC_SINGLETON_DEACTIVATION_MILLIS.last());
 
-        addMetric(metrics, ContainerMetrics.ATHENZ_TENANT_CERT_EXPIRY_SECONDS.last());
+        addMetric(metrics, ContainerMetrics.ATHENZ_TENANT_CERT_EXPIRY_SECONDS, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
         addMetric(metrics, ContainerMetrics.CONTAINER_IAM_ROLE_EXPIRY_SECONDS.baseName());
-
-        addMetric(metrics, ContainerMetrics.HTTP_STATUS_1XX.rate());
-        addMetric(metrics, ContainerMetrics.HTTP_STATUS_2XX.rate());
-        addMetric(metrics, ContainerMetrics.HTTP_STATUS_3XX.rate());
-        addMetric(metrics, ContainerMetrics.HTTP_STATUS_4XX.rate());
-        addMetric(metrics, ContainerMetrics.HTTP_STATUS_5XX.rate());
 
         addMetric(metrics, ContainerMetrics.JDISC_HTTP_REQUEST_PREMATURELY_CLOSED.rate());
         addMetric(metrics, ContainerMetrics.JDISC_HTTP_REQUEST_REQUESTS_PER_CONNECTION, EnumSet.of(sum, count, min, max, average));
@@ -239,10 +247,10 @@ public class VespaMetricSet {
     private static Set<Metric> getClusterControllerMetrics() {
         Set<Metric> metrics = new LinkedHashSet<>();
 
-        addMetric(metrics, ClusterControllerMetrics.DOWN_COUNT.last());
-        addMetric(metrics, ClusterControllerMetrics.INITIALIZING_COUNT.last());
-        addMetric(metrics, ClusterControllerMetrics.MAINTENANCE_COUNT.last());
-        addMetric(metrics, ClusterControllerMetrics.RETIRED_COUNT.last());
+        addMetric(metrics, ClusterControllerMetrics.DOWN_COUNT, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ClusterControllerMetrics.INITIALIZING_COUNT, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ClusterControllerMetrics.MAINTENANCE_COUNT, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ClusterControllerMetrics.RETIRED_COUNT, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
         addMetric(metrics, ClusterControllerMetrics.STOPPING_COUNT.last());
         addMetric(metrics, ClusterControllerMetrics.UP_COUNT.last());
         addMetric(metrics, ClusterControllerMetrics.CLUSTER_STATE_CHANGE_COUNT.baseName());
@@ -251,7 +259,7 @@ public class VespaMetricSet {
 
         addMetric(metrics, ClusterControllerMetrics.WORK_MS, EnumSet.of(last, sum, count)); // TODO: Vespa 9: Remove last
 
-        addMetric(metrics, ClusterControllerMetrics.IS_MASTER.last());
+        addMetric(metrics, ClusterControllerMetrics.IS_MASTER, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
         addMetric(metrics, ClusterControllerMetrics.REMOTE_TASK_QUEUE_SIZE.last());
         // TODO(hakonhall): Update this name once persistent "count" metrics has been implemented.
         // DO NOT RELY ON THIS METRIC YET.
@@ -259,9 +267,9 @@ public class VespaMetricSet {
         addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_NODES_ABOVE_LIMIT, EnumSet.of(last, max)); // TODO: Vespa 9: Remove last
         addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_MAX_MEMORY_UTILIZATION, EnumSet.of(last, max)); // TODO: Vespa 9: Remove last
         addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_MAX_DISK_UTILIZATION, EnumSet.of(last, max)); // TODO: Vespa 9: Remove last
-        addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_MEMORY_LIMIT.last());
-        addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_DISK_LIMIT.last());
-        addMetric(metrics, ClusterControllerMetrics.REINDEXING_PROGRESS.last());
+        addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_MEMORY_LIMIT, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ClusterControllerMetrics.RESOURCE_USAGE_DISK_LIMIT, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, ClusterControllerMetrics.REINDEXING_PROGRESS, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
 
         return metrics;
     }
@@ -327,15 +335,15 @@ public class VespaMetricSet {
 
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_CONFIG_GENERATION.last());
 
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_DOCUMENTS_TOTAL.last());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_DOCUMENTS_READY.last());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_DOCUMENTS_ACTIVE.last());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_DOCUMENTS_REMOVED.last());
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_DOCUMENTS_TOTAL, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_DOCUMENTS_READY, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_DOCUMENTS_ACTIVE, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_DOCUMENTS_REMOVED, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
 
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_INDEX_DOCS_IN_MEMORY.last());
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_INDEX_DOCS_IN_MEMORY, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_DISK_USAGE.last());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_MEMORY_USAGE_ALLOCATED_BYTES.max());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_HEART_BEAT_AGE.last());
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_HEART_BEAT_AGE, EnumSet.of(min, last)); // TODO: Vespa 9: Remove last
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCSUM_DOCS.rate());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCSUM_LATENCY, EnumSet.of(max, sum, count));
 
@@ -406,22 +414,22 @@ public class VespaMetricSet {
         // lid space
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_READY_LID_SPACE_LID_BLOAT_FACTOR.average());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_READY_LID_SPACE_LID_FRAGMENTATION_FACTOR.average());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_READY_LID_SPACE_LID_LIMIT.last());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_READY_LID_SPACE_HIGHEST_USED_LID.last());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_READY_LID_SPACE_USED_LIDS.last());
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_READY_LID_SPACE_LID_LIMIT, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_READY_LID_SPACE_HIGHEST_USED_LID, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_READY_LID_SPACE_USED_LIDS, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_NOTREADY_LID_SPACE_LID_BLOAT_FACTOR.average());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_NOTREADY_LID_SPACE_LID_FRAGMENTATION_FACTOR.average());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_NOTREADY_LID_SPACE_LID_LIMIT.last());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_NOTREADY_LID_SPACE_HIGHEST_USED_LID.last());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_NOTREADY_LID_SPACE_USED_LIDS.last());
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_NOTREADY_LID_SPACE_LID_LIMIT, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_NOTREADY_LID_SPACE_HIGHEST_USED_LID, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_NOTREADY_LID_SPACE_USED_LIDS, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_REMOVED_LID_SPACE_LID_BLOAT_FACTOR.average());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_REMOVED_LID_SPACE_LID_FRAGMENTATION_FACTOR.average());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_REMOVED_LID_SPACE_LID_LIMIT.last());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_REMOVED_LID_SPACE_HIGHEST_USED_LID.last());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_REMOVED_LID_SPACE_USED_LIDS.last());
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_REMOVED_LID_SPACE_LID_LIMIT, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_REMOVED_LID_SPACE_HIGHEST_USED_LID, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_REMOVED_LID_SPACE_USED_LIDS, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
 
         // bucket move
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_BUCKET_MOVE_BUCKETS_PENDING.last());
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_BUCKET_MOVE_BUCKETS_PENDING, EnumSet.of(sum, last)); // TODO: Vespa 9: Remove last
 
         // resource usage
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_RESOURCE_USAGE_DISK.average());
@@ -434,7 +442,7 @@ public class VespaMetricSet {
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_RESOURCE_USAGE_MEMORY_USAGE_TRANSIENT.max());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_RESOURCE_USAGE_MEMORY_MAPPINGS.max());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_RESOURCE_USAGE_OPEN_FILE_DESCRIPTORS.max());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_RESOURCE_USAGE_FEEDING_BLOCKED, EnumSet.of(max,last)); // TODO: Vespa 9: Remove last
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_RESOURCE_USAGE_FEEDING_BLOCKED, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_RESOURCE_USAGE_MALLOC_ARENA.max());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_ATTRIBUTE_RESOURCE_USAGE_ADDRESS_SPACE.max());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_ATTRIBUTE_RESOURCE_USAGE_FEEDING_BLOCKED.max());
@@ -449,7 +457,7 @@ public class VespaMetricSet {
         // transaction log
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_TRANSACTIONLOG_ENTRIES.average());
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_TRANSACTIONLOG_DISK_USAGE.average());
-        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_TRANSACTIONLOG_REPLAY_TIME.last());
+        addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_TRANSACTIONLOG_REPLAY_TIME, EnumSet.of(max, last)); // TODO: Vespa 9: Remove last
 
         // document store
         addMetric(metrics, SearchNodeMetrics.CONTENT_PROTON_DOCUMENTDB_READY_DOCUMENT_STORE_DISK_USAGE.average());

@@ -14,8 +14,7 @@ import java.util.TreeMap;
 import java.util.function.Predicate;
 
 import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
-import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_ID;
-import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_TYPE;
+import static com.yahoo.vespa.flags.FetchVector.Dimension.CLOUD_ACCOUNT;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.CONSOLE_USER_EMAIL;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.HOSTNAME;
 import static com.yahoo.vespa.flags.FetchVector.Dimension.NODE_TYPE;
@@ -46,15 +45,6 @@ import static com.yahoo.vespa.flags.FetchVector.Dimension.VESPA_VERSION;
 public class Flags {
 
     private static volatile TreeMap<FlagId, FlagDefinition> flags = new TreeMap<>();
-
-    public static final UnboundBooleanFlag DROP_CACHES = defineFeatureFlag(
-            "drop-caches", false,
-            List.of("hakonhall", "baldersheim"), "2023-03-06", "2023-08-05",
-            "Drop caches on tenant hosts",
-            "Takes effect on next tick",
-            // The application ID is the exclusive application ID associated with the host,
-            // if any, or otherwise hosted-vespa:tenant-host:default.
-            APPLICATION_ID, TENANT_ID, CLUSTER_ID, CLUSTER_TYPE);
 
     public static final UnboundDoubleFlag DEFAULT_TERM_WISE_LIMIT = defineDoubleFlag(
             "default-term-wise-limit", 1.0,
@@ -223,14 +213,18 @@ public class Flags {
     public static final UnboundStringFlag SYSTEM_MEMORY_HIGH = defineStringFlag(
             "system-memory-high", "",
             List.of("baldersheim"), "2023-02-14", "2023-12-31",
-            "The value to write to /sys/fs/cgroup/system.slice/memory.high, if non-empty.",
+            "The value to write to /sys/fs/cgroup/system.slice/memory.high, if non-empty. " +
+            "You may want lower memory.high before lowering memory.max, " +
+            "and raise memory.high after raising memory.max.",
             "Takes effect on next tick.",
             NODE_TYPE);
 
     public static final UnboundStringFlag SYSTEM_MEMORY_MAX = defineStringFlag(
             "system-memory-max", "",
             List.of("baldersheim"), "2023-02-14", "2023-12-31",
-            "The value to write to /sys/fs/cgroup/system.slice/memory.max, if non-empty.",
+            "The value to write to /sys/fs/cgroup/system.slice/memory.max, if non-empty. " +
+            "You may want lower memory.high before lowering memory.max, " +
+            "and raise memory.high after raising memory.max.",
             "Takes effect on next tick.",
             NODE_TYPE);
 
@@ -285,13 +279,6 @@ public class Flags {
             APPLICATION_ID,HOSTNAME,NODE_TYPE,TENANT_ID,VESPA_VERSION
     );
 
-    public static final UnboundBooleanFlag RESTRICT_DATA_PLANE_BINDINGS = defineFeatureFlag(
-            "restrict-data-plane-bindings", false,
-            List.of("mortent"), "2022-09-08", "2023-09-01",
-            "Use restricted data plane bindings",
-            "Takes effect at redeployment",
-            APPLICATION_ID);
-
     public static final UnboundBooleanFlag ENABLE_OTELCOL = defineFeatureFlag(
             "enable-otel-collector", false,
             List.of("olaa"), "2022-09-23", "2023-09-01",
@@ -313,39 +300,25 @@ public class Flags {
             "Takes effect at redeployment",
             APPLICATION_ID);
 
-    public static final UnboundBooleanFlag NODE_ADMIN_TENANT_SERVICE_REGISTRY = defineFeatureFlag(
-            "node-admin-tenant-service-registry", true,
-            List.of("olaa"), "2023-04-12", "2023-08-07",
-            "Whether AthenzCredentialsMaintainer in node-admin should create tenant service identity certificate",
-            "Takes effect on next tick",
-            HOSTNAME, VESPA_VERSION, APPLICATION_ID
-    );
-
     public static final UnboundBooleanFlag ENABLE_CROWDSTRIKE = defineFeatureFlag(
-            "enable-crowdstrike", true, List.of("andreer"), "2023-04-13", "2023-08-31",
+            "enable-crowdstrike", true, List.of("andreer"), "2023-04-13", "2023-09-14",
             "Whether to enable CrowdStrike.", "Takes effect on next host admin tick",
             HOSTNAME);
 
     public static final UnboundBooleanFlag ALLOW_MORE_THAN_ONE_CONTENT_GROUP_DOWN = defineFeatureFlag(
-            "allow-more-than-one-content-group-down", false, List.of("hmusum"), "2023-04-14", "2023-08-15",
+            "allow-more-than-one-content-group-down", true, List.of("hmusum"), "2023-04-14", "2023-09-01",
             "Whether to enable possible configuration of letting more than one content group down",
             "Takes effect at redeployment",
             APPLICATION_ID);
 
     public static final UnboundBooleanFlag RANDOMIZED_ENDPOINT_NAMES = defineFeatureFlag(
-            "randomized-endpoint-names", false, List.of("andreer"), "2023-04-26", "2023-08-30",
+            "randomized-endpoint-names", false, List.of("andreer"), "2023-04-26", "2023-09-14",
             "Whether to use randomized endpoint names",
             "Takes effect on application deployment",
             APPLICATION_ID);
 
-    public static final UnboundIntFlag CERT_POOL_SIZE = defineIntFlag(
-            "cert-pool-size", 0, List.of("andreer"), "2023-06-19", "2023-08-25",
-            "Target number of preprovisioned endpoints certificates to maintain",
-            "Takes effect on next run of CertPoolMaintainer"
-    );
-
     public static final UnboundBooleanFlag ENABLE_THE_ONE_THAT_SHOULD_NOT_BE_NAMED = defineFeatureFlag(
-            "enable-the-one-that-should-not-be-named", false, List.of("hmusum"), "2023-05-08", "2023-08-15",
+            "enable-the-one-that-should-not-be-named", false, List.of("hmusum"), "2023-05-08", "2023-09-15",
             "Whether to enable the one program that should not be named",
             "Takes effect at next host-admin tick");
 
@@ -378,20 +351,40 @@ public class Flags {
 
     public static final UnboundBooleanFlag WRITE_CONFIG_SERVER_SESSION_DATA_AS_ONE_BLOB = defineFeatureFlag(
             "write-config-server-session-data-as-blob", false,
-            List.of("hmuusm"), "2023-07-19", "2023-09-01",
+            List.of("hmusum"), "2023-07-19", "2023-09-01",
             "Whether to write config server session data in one blob or as individual paths",
             "Takes effect immediately");
 
     public static final UnboundBooleanFlag READ_CONFIG_SERVER_SESSION_DATA_AS_ONE_BLOB = defineFeatureFlag(
             "read-config-server-session-data-as-blob", false,
-            List.of("hmuusm"), "2023-07-19", "2023-09-01",
+            List.of("hmusum"), "2023-07-19", "2023-09-01",
             "Whether to read config server session data from sesion data blob or from individual paths",
             "Takes effect immediately");
 
-    public static final UnboundBooleanFlag USE_VESPA_USER_EVERYWHERE = defineFeatureFlag(
-            "use-vespa-user-everywhere", false,
-            List.of("aressem"), "2023-07-28", "2023-09-01",
-            "Use the vespa user for running Vespa everywhere",
+    public static final UnboundBooleanFlag MORE_WIREGUARD = defineFeatureFlag(
+            "more-wireguard", false,
+            List.of("andreer"), "2023-08-21", "2023-09-21",
+            "Use wireguard in INternal enCLAVES",
+            "Takes effect on next host-admin run",
+            HOSTNAME, CLOUD_ACCOUNT);
+
+    public static final UnboundBooleanFlag IPV6_AWS_TARGET_GROUPS = defineFeatureFlag(
+            "ipv6-aws-target-groups", false,
+            List.of("andreer"), "2023-08-28", "2023-09-29",
+            "Always use IPv6 target groups for load balancers in aws",
+            "Takes effect on next load-balancer provisioning",
+            HOSTNAME, CLOUD_ACCOUNT);
+
+    public static final UnboundBooleanFlag WRITE_APPLICATION_DATA_AS_JSON = defineFeatureFlag(
+            "write-application-data-as-json", false,
+            List.of("hmusum"), "2023-08-27", "2023-09-27",
+            "Whether to write application data (active session id, last deployed session id etc. ) as json",
+            "Takes effect immediately");
+
+    public static final UnboundBooleanFlag READ_APPLICATION_DATA_AS_JSON = defineFeatureFlag(
+            "read-application-data-as-json", false,
+            List.of("hmusum"), "2023-08-27", "2023-09-27",
+            "Whether to read application data (active session id, last deployed session id etc. ) as json",
             "Takes effect immediately");
 
     /** WARNING: public for testing: All flags should be defined in {@link Flags}. */

@@ -19,7 +19,7 @@ import (
 
 func TestDeploy(t *testing.T) {
 	httpClient := mock.HTTPClient{}
-	target := LocalTarget(&httpClient, TLSOptions{})
+	target := LocalTarget(&httpClient, TLSOptions{}, 0)
 	appDir, _ := mock.ApplicationPackageDir(t, false, false)
 	opts := DeploymentOptions{
 		Target:             target,
@@ -38,7 +38,7 @@ func TestDeploy(t *testing.T) {
 
 func TestDeployCloud(t *testing.T) {
 	httpClient := mock.HTTPClient{}
-	target := createCloudTarget(t, "http://vespacloud", io.Discard)
+	target, _ := createCloudTarget(t, io.Discard)
 	cloudTarget, ok := target.(*cloudTarget)
 	require.True(t, ok)
 	cloudTarget.httpClient = &httpClient
@@ -51,7 +51,7 @@ func TestDeployCloud(t *testing.T) {
 	require.Nil(t, err)
 	assert.Equal(t, 1, len(httpClient.Requests))
 	req := httpClient.LastRequest
-	assert.Equal(t, "http://vespacloud/application/v4/tenant/t1/application/a1/instance/i1/deploy/dev-us-north-1", req.URL.String())
+	assert.Equal(t, "https://api-ctl.vespa-cloud.com:4443/application/v4/tenant/t1/application/a1/instance/i1/deploy/dev-us-north-1", req.URL.String())
 
 	values := parseMultiPart(t, req)
 	zipData := values["applicationZip"]
@@ -71,7 +71,7 @@ func TestDeployCloud(t *testing.T) {
 
 func TestSubmit(t *testing.T) {
 	httpClient := mock.HTTPClient{}
-	target := createCloudTarget(t, "http://vespacloud", io.Discard)
+	target, _ := createCloudTarget(t, io.Discard)
 	cloudTarget, ok := target.(*cloudTarget)
 	require.True(t, ok)
 	cloudTarget.httpClient = &httpClient
@@ -131,6 +131,11 @@ func TestFindApplicationPackage(t *testing.T) {
 		existingFile: filepath.Join(dir, "services.xml"),
 	})
 	assertFindApplicationPackage(t, dir, pkgFixture{
+		expectedPath:     dir,
+		expectedTestPath: dir,
+		existingFiles:    []string{filepath.Join(dir, "services.xml"), filepath.Join(dir, "tests", "foo.json")},
+	})
+	assertFindApplicationPackage(t, dir, pkgFixture{
 		expectedPath: filepath.Join(dir, "src", "main", "application"),
 		existingFile: filepath.Join(dir, "src", "main", "application") + string(os.PathSeparator),
 	})
@@ -149,17 +154,23 @@ func TestFindApplicationPackage(t *testing.T) {
 		existingFiles:    []string{filepath.Join(dir, "pom.xml"), filepath.Join(dir, "target", "application.zip")},
 		requirePackaging: true,
 	})
-	dir2 := t.TempDir()
-	assertFindApplicationPackage(t, dir2, pkgFixture{
-		expectedPath:     dir2,
-		expectedTestPath: dir2,
-		existingFiles:    []string{filepath.Join(dir2, "services.xml"), filepath.Join(dir2, "tests", "foo.json")},
+	assertFindApplicationPackage(t, dir, pkgFixture{
+		expectedPath:  filepath.Join(dir, "target", "application.zip"),
+		existingFiles: []string{filepath.Join(dir, "target", "application.zip")},
+	})
+	assertFindApplicationPackage(t, dir, pkgFixture{
+		expectedPath:  filepath.Join(dir, "target", "application"),
+		existingFiles: []string{filepath.Join(dir, "target", "application"), filepath.Join(dir, "target", "application.zip")},
+	})
+	zip := filepath.Join(dir, "myapp.zip")
+	assertFindApplicationPackage(t, zip, pkgFixture{
+		expectedPath: zip,
 	})
 }
 
 func TestDeactivate(t *testing.T) {
 	httpClient := mock.HTTPClient{}
-	target := LocalTarget(&httpClient, TLSOptions{})
+	target := LocalTarget(&httpClient, TLSOptions{}, 0)
 	opts := DeploymentOptions{Target: target}
 	require.Nil(t, Deactivate(opts))
 	assert.Equal(t, 1, len(httpClient.Requests))
@@ -170,7 +181,7 @@ func TestDeactivate(t *testing.T) {
 
 func TestDeactivateCloud(t *testing.T) {
 	httpClient := mock.HTTPClient{}
-	target := createCloudTarget(t, "http://vespacloud", io.Discard)
+	target, _ := createCloudTarget(t, io.Discard)
 	cloudTarget, ok := target.(*cloudTarget)
 	require.True(t, ok)
 	cloudTarget.httpClient = &httpClient
@@ -179,7 +190,7 @@ func TestDeactivateCloud(t *testing.T) {
 	assert.Equal(t, 1, len(httpClient.Requests))
 	req := httpClient.LastRequest
 	assert.Equal(t, "DELETE", req.Method)
-	assert.Equal(t, "http://vespacloud/application/v4/tenant/t1/application/a1/instance/i1/environment/dev/region/us-north-1", req.URL.String())
+	assert.Equal(t, "https://api-ctl.vespa-cloud.com:4443/application/v4/tenant/t1/application/a1/instance/i1/environment/dev/region/us-north-1", req.URL.String())
 }
 
 type pkgFixture struct {

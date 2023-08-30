@@ -150,7 +150,7 @@ public class DefParser {
         }
         // Only add lines that are not namespace or comment lines
         nd.addNormalizedLine(line);
-        DefLine defLine = new DefLine(line);
+        DefLine defLine = new DefLine(line, systemErrEnabled);
         root.setLeaf(root.getName() + "." + defLine.getName(), defLine, comment);
         comment = "";
     }
@@ -204,11 +204,8 @@ public class DefParser {
      */
     public static void dumpTree(CNode root, String indent) {
         StringBuilder sb = new StringBuilder(indent + root.getName());
-        if (root instanceof LeafCNode) {
-            LeafCNode leaf = ((LeafCNode)root);
-            if (leaf.getDefaultValue() != null) {
-                sb.append(" = ").append(((LeafCNode)root).getDefaultValue().getValue());
-            }
+        if (root instanceof LeafCNode leaf && leaf.getDefaultValue() != null) {
+            sb.append(" = ").append(((LeafCNode) root).getDefaultValue().getValue());
         }
         System.out.println(sb);
         if (!root.getComment().isEmpty()) {

@@ -66,9 +66,9 @@ RankSetup::RankSetup(const BlueprintFactory &factory, const IIndexEnvironment &i
       _diversityCutoffStrategy("loose"),
       _softTimeoutEnabled(false),
       _softTimeoutTailCost(0.1),
-      _softTimeoutFactor(0.5),
       _global_filter_lower_limit(0.0),
       _global_filter_upper_limit(1.0),
+      _target_hits_max_adjustment_factor(20.0),
       _mutateOnMatch(),
       _mutateOnFirstPhase(),
       _mutateOnSecondPhase(),
@@ -120,9 +120,9 @@ RankSetup::configure()
     setRankScoreDropLimit(hitcollector::RankScoreDropLimit::lookup(_indexEnv.getProperties()));
     setSoftTimeoutEnabled(softtimeout::Enabled::lookup(_indexEnv.getProperties()));
     setSoftTimeoutTailCost(softtimeout::TailCost::lookup(_indexEnv.getProperties()));
-    setSoftTimeoutFactor(softtimeout::Factor::lookup(_indexEnv.getProperties()));
     set_global_filter_lower_limit(matching::GlobalFilterLowerLimit::lookup(_indexEnv.getProperties()));
     set_global_filter_upper_limit(matching::GlobalFilterUpperLimit::lookup(_indexEnv.getProperties()));
+    set_target_hits_max_adjustment_factor(matching::TargetHitsMaxAdjustmentFactor::lookup(_indexEnv.getProperties()));
     _mutateOnMatch._attribute = mutate::on_match::Attribute::lookup(_indexEnv.getProperties());
     _mutateOnMatch._operation = mutate::on_match::Operation::lookup(_indexEnv.getProperties());
     _mutateOnFirstPhase._attribute = mutate::on_first_phase::Attribute::lookup(_indexEnv.getProperties());

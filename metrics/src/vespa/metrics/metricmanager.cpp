@@ -168,6 +168,11 @@ MetricManager::isInitialized() const {
     return static_cast<bool>(_configHandle);
 }
 
+bool
+MetricManager::any_snapshots_taken(const MetricLockGuard&) const noexcept {
+    return (!_snapshots.empty() && _snapshots[0]->current_is_assigned());
+}
+
 void
 MetricManager::init(const config::ConfigUri & uri, bool startThread)
 {
@@ -200,7 +205,7 @@ namespace {
 struct Path {
     vespalib::StringTokenizer _path;
 
-    Path(vespalib::stringref fullpath) : _path(fullpath, ".") { }
+    explicit Path(vespalib::stringref fullpath) : _path(fullpath, ".") { }
 
     vespalib::string toString() const {
         vespalib::asciistream ost;
@@ -246,7 +251,7 @@ struct ConsumerMetricBuilder : public MetricVisitor {
     };
     std::list<Result> result;
 
-    ConsumerMetricBuilder(const Config::Consumer& c) __attribute__((noinline));
+    explicit ConsumerMetricBuilder(const Config::Consumer& c) __attribute__((noinline));
     ~ConsumerMetricBuilder() __attribute__((noinline));
 
     bool tagAdded(const Metric& metric) {
@@ -486,7 +491,7 @@ MetricManager::configure(const MetricLockGuard & , std::unique_ptr<Config> confi
         _totalMetrics = std::make_shared<MetricSnapshot>("All time snapshot", 0s, _activeMetrics.getMetrics(), _snapshotUnsetMetrics);
         _totalMetrics->reset(currentTime);
     }
-    if (_config.get() == 0 || (_config->consumer.size() != config->consumer.size())) {
+    if ( !_config || (_config->consumer.size() != config->consumer.size())) {
         _consumerConfigChanged = true;
     } else {
         for (uint32_t i=0; i<_config->consumer.size(); ++i) {
@@ -553,7 +558,7 @@ MetricManager::visit(const MetricLockGuard & guard, const MetricSnapshot& snapsh
                      MetricVisitor& visitor, const std::string& consumer) const
 {
     if (visitor.visitSnapshot(snapshot)) {
-        if (consumer == "") {
+        if (consumer.empty()) {
             snapshot.getMetrics().visit(visitor);
         } else {
             const ConsumerSpec * consumerSpec = getConsumerSpec(guard, consumer);
@@ -795,6 +800,7 @@ MetricManager::takeSnapshots(const MetricLockGuard & guard, system_time timeToPr
     _activeMetrics.addToSnapshot(firstTarget, false, timeToProcess);
     _activeMetrics.addToSnapshot(*_totalMetrics, false, timeToProcess);
     _activeMetrics.reset(timeToProcess);
+    _snapshots[0]->tag_current_as_assigned();
     LOG(debug, "After snapshotting, active metrics goes from %s to %s, and 5 minute metrics goes from %s to %s.",
         to_string(_activeMetrics.getFromTime()).c_str(), to_string(_activeMetrics.getToTime()).c_str(),
         to_string(firstTarget.getFromTime()).c_str(), to_string(firstTarget.getToTime()).c_str());

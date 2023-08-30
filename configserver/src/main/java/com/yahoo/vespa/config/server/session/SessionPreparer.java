@@ -34,7 +34,7 @@ import com.yahoo.net.HostName;
 import com.yahoo.path.Path;
 import com.yahoo.vespa.config.server.ConfigServerSpec;
 import com.yahoo.vespa.config.server.TimeoutBudget;
-import com.yahoo.vespa.config.server.application.ApplicationSet;
+import com.yahoo.vespa.config.server.application.ApplicationVersions;
 import com.yahoo.vespa.config.server.configchange.ConfigChangeActions;
 import com.yahoo.vespa.config.server.deploy.ZooKeeperDeployer;
 import com.yahoo.vespa.config.server.filedistribution.FileDistributionFactory;
@@ -49,7 +49,9 @@ import com.yahoo.vespa.config.server.tenant.EndpointCertificateMetadataStore;
 import com.yahoo.vespa.config.server.tenant.EndpointCertificateRetriever;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.curator.Curator;
+import com.yahoo.vespa.flags.BooleanFlag;
 import com.yahoo.vespa.flags.FlagSource;
+import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.model.application.validation.BundleValidator;
 import org.xml.sax.SAXException;
 import javax.xml.parsers.ParserConfigurationException;
@@ -90,6 +92,7 @@ public class SessionPreparer {
     private final SecretStore secretStore;
     private final FlagSource flagSource;
     private final ExecutorService executor;
+    private final BooleanFlag writeSessionData;
 
     public SessionPreparer(ModelFactoryRegistry modelFactoryRegistry,
                            FileDistributionFactory fileDistributionFactory,
@@ -111,6 +114,7 @@ public class SessionPreparer {
         this.secretStore = secretStore;
         this.flagSource = flagSource;
         this.executor = executor;
+        this.writeSessionData = Flags.WRITE_CONFIG_SERVER_SESSION_DATA_AS_ONE_BLOB.bindTo(flagSource);
     }
 
     ExecutorService getExecutor() { return executor; }
@@ -121,14 +125,14 @@ public class SessionPreparer {
      * @param hostValidator               host validator
      * @param logger                      for storing logs returned in response to client.
      * @param params                      parameters controlling behaviour of prepare.
-     * @param activeApplicationSet        set of currently active applications.
+     * @param activeApplicationVersions   active application versions.
      * @return the config change actions that must be done to handle the activation of the models prepared.
      */
     public PrepareResult prepare(HostValidator hostValidator, DeployLogger logger, PrepareParams params,
-                                 Optional<ApplicationSet> activeApplicationSet, Instant now, File serverDbSessionDir,
+                                 Optional<ApplicationVersions> activeApplicationVersions, Instant now, File serverDbSessionDir,
                                  ApplicationPackage applicationPackage, SessionZooKeeperClient sessionZooKeeperClient) {
         ApplicationId applicationId = params.getApplicationId();
-        Preparation preparation = new Preparation(hostValidator, logger, params, activeApplicationSet,
+        Preparation preparation = new Preparation(hostValidator, logger, params, activeApplicationVersions,
                                                   TenantRepository.getTenantPath(applicationId.tenant()),
                                                   serverDbSessionDir, applicationPackage, sessionZooKeeperClient);
         preparation.preprocess();
@@ -180,7 +184,7 @@ public class SessionPreparer {
         private final FileRegistry fileRegistry;
 
         Preparation(HostValidator hostValidator, DeployLogger logger, PrepareParams params,
-                    Optional<ApplicationSet> currentActiveApplicationSet, Path tenantPath,
+                    Optional<ApplicationVersions> activeApplicationVersions, Path tenantPath,
                     File serverDbSessionDir, ApplicationPackage applicationPackage,
                     SessionZooKeeperClient sessionZooKeeperClient) {
             this.logger = logger;
@@ -213,7 +217,7 @@ public class SessionPreparer {
                                                                    hostValidator,
                                                                    logger,
                                                                    params,
-                                                                   currentActiveApplicationSet,
+                                                                   activeApplicationVersions,
                                                                    configserverConfig,
                                                                    zone);
         }
@@ -335,7 +339,8 @@ public class SessionPreparer {
             writeStateToZooKeeper(sessionZooKeeperClient,
                                   preprocessedApplicationPackage,
                                   applicationId,
-                                  filereference,
+                                  sessionZooKeeperClient.readCreateTime(),
+                                  Optional.of(filereference),
                                   dockerImageRepository,
                                   vespaVersion,
                                   logger,
@@ -377,7 +382,8 @@ public class SessionPreparer {
     private void writeStateToZooKeeper(SessionZooKeeperClient zooKeeperClient,
                                        ApplicationPackage applicationPackage,
                                        ApplicationId applicationId,
-                                       FileReference fileReference,
+                                       Instant created,
+                                       Optional<FileReference> fileReference,
                                        Optional<DockerImage> dockerImageRepository,
                                        Version vespaVersion,
                                        DeployLogger deployLogger,
@@ -389,22 +395,24 @@ public class SessionPreparer {
                                        List<X509Certificate> operatorCertificates,
                                        Optional<CloudAccount> cloudAccount,
                                        List<DataplaneToken> dataplaneTokens) {
-        ZooKeeperDeployer zkDeployer = zooKeeperClient.createDeployer(deployLogger);
+        var zooKeeperDeplyer = new ZooKeeperDeployer(curator, deployLogger, applicationId, zooKeeperClient.sessionId());
         try {
-            zkDeployer.deploy(applicationPackage, fileRegistryMap, allocatedHosts);
-            // Note: When changing the below you need to also change similar calls in SessionRepository.createSessionFromExisting()
-            zooKeeperClient.writeApplicationId(applicationId);
-            zooKeeperClient.writeApplicationPackageReference(Optional.of(fileReference));
-            zooKeeperClient.writeVespaVersion(vespaVersion);
-            zooKeeperClient.writeDockerImageRepository(dockerImageRepository);
-            zooKeeperClient.writeAthenzDomain(athenzDomain);
-            zooKeeperClient.writeQuota(quota);
-            zooKeeperClient.writeTenantSecretStores(tenantSecretStores);
-            zooKeeperClient.writeOperatorCertificates(operatorCertificates);
-            zooKeeperClient.writeCloudAccount(cloudAccount);
-            zooKeeperClient.writeDataplaneTokens(dataplaneTokens);
+            zooKeeperDeplyer.deploy(applicationPackage, fileRegistryMap, allocatedHosts);
+            new SessionSerializer().write(zooKeeperClient,
+                                          applicationId,
+                                          created,
+                                          fileReference,
+                                          dockerImageRepository,
+                                          vespaVersion,
+                                          athenzDomain,
+                                          quota,
+                                          tenantSecretStores,
+                                          operatorCertificates,
+                                          cloudAccount,
+                                          dataplaneTokens,
+                                          writeSessionData);
         } catch (RuntimeException | IOException e) {
-            zkDeployer.cleanup();
+            zooKeeperDeplyer.cleanup();
             throw new RuntimeException("Error preparing session", e);
         }
     }

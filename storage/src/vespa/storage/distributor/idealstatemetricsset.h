@@ -5,6 +5,7 @@
 #include <vespa/metrics/valuemetric.h>
 #include <vespa/metrics/countmetric.h>
 #include <vespa/storage/distributor/operations/idealstate/idealstateoperation.h>
+#include <span>
 
 namespace storage::distributor {
 
@@ -61,7 +62,7 @@ public:
     IdealStateMetricSet();
     ~IdealStateMetricSet() override;
 
-    void setPendingOperations(const std::vector<uint64_t>& newMetrics);
+    void setPendingOperations(std::span<uint64_t, IdealStateOperation::OPERATION_COUNT> newMetrics);
 };
 
 } // storage::distributor

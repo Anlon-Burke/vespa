@@ -10,7 +10,6 @@
 #include <vespa/storage/distributor/storage_node_up_states.h>
 #include <vespa/storageapi/message/persistence.h>
 #include <vespa/vdslib/distribution/distribution.h>
-#include <vespa/vdslib/distribution/idealnodecalculatorimpl.h>
 #include <vespa/vdslib/state/clusterstate.h>
 #include <algorithm>
 
@@ -67,13 +66,11 @@ PutOperation::insertDatabaseEntryAndScheduleCreateBucket(const OperationTargetLi
         assert(!multipleBuckets);
         (void) multipleBuckets;
         BucketDatabase::Entry entry(_bucket_space.getBucketDatabase().get(lastBucket));
-        std::vector<uint16_t> idealState(
-                _bucket_space.get_ideal_service_layer_nodes_bundle(lastBucket).get_available_nodes());
-        active = ActiveCopy::calculate(idealState, _bucket_space.getDistribution(), entry,
+        active = ActiveCopy::calculate(_bucket_space.get_ideal_service_layer_nodes_bundle(lastBucket).available_to_index(), _bucket_space.getDistribution(), entry,
                                        _op_ctx.distributor_config().max_activation_inhibited_out_of_sync_groups());
         LOG(debug, "Active copies for bucket %s: %s", entry.getBucketId().toString().c_str(), active.toString().c_str());
         for (uint32_t i=0; i<active.size(); ++i) {
-            BucketCopy copy(*entry->getNode(active[i]._nodeIndex));
+            BucketCopy copy(*entry->getNode(active[i].nodeIndex()));
             copy.setActive(true);
             entry->updateNode(copy);
         }
@@ -112,6 +109,8 @@ PutOperation::sendPutToBucketOnNode(document::BucketSpace bucketSpace, const doc
 
 bool PutOperation::has_unavailable_targets_in_pending_state(const OperationTargetList& targets) const {
     // TODO handle this explicitly as part of operation abort/cancel edge
+    //   -> we have yet to send anything at this point
+    //   -> shouldn't ExternalOperationHandler deal with this before starting the op?
     auto* pending_state = _op_ctx.pending_cluster_state_or_null(_msg->getBucket().getBucketSpace());
     if (!pending_state) {
         return false;
@@ -211,11 +210,11 @@ void PutOperation::start_direct_put_dispatch(DistributorStripeMessageSender& sen
         }
 
         if (!createBucketBatch.empty()) {
-            _tracker.queueMessageBatch(createBucketBatch);
+            _tracker.queueMessageBatch(std::move(createBucketBatch));
         }
 
         std::vector<PersistenceMessageTracker::ToSend> putBatch;
-
+        putBatch.reserve(targets.size());
         // Now send PUTs
         for (const auto& target : targets) {
             sendPutToBucketOnNode(_msg->getBucket().getBucketSpace(), target.getBucketId(),
@@ -223,7 +222,7 @@ void PutOperation::start_direct_put_dispatch(DistributorStripeMessageSender& sen
         }
 
         if (!putBatch.empty()) {
-            _tracker.queueMessageBatch(putBatch);
+            _tracker.queueMessageBatch(std::move(putBatch));
         } else {
             const char* error = "Can't store document: No storage nodes available";
             LOG(debug, "%s", error);
@@ -246,6 +245,15 @@ void PutOperation::start_direct_put_dispatch(DistributorStripeMessageSender& sen
     }
 
     _msg = std::shared_ptr<api::PutCommand>();
+}
+
+void
+PutOperation::on_cancel(DistributorStripeMessageSender& sender, const CancelScope& cancel_scope)
+{
+    if (_check_condition) {
+        _check_condition->cancel(sender, cancel_scope);
+    }
+    _tracker.cancel(cancel_scope);
 }
 
 bool
@@ -305,7 +313,7 @@ void
 PutOperation::onClose(DistributorStripeMessageSender& sender)
 {
     if (_check_condition) {
-        _check_condition->cancel(sender);
+        _check_condition->close(sender);
     }
     _tracker.fail(sender, api::ReturnCode(api::ReturnCode::ABORTED, "Process is shutting down"));
 }

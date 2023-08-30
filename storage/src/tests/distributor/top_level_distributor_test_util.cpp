@@ -10,6 +10,7 @@
 #include <vespa/storage/distributor/distributor_stripe_pool.h>
 #include <vespa/storage/distributor/distributor_stripe_thread.h>
 #include <vespa/storage/distributor/distributor_total_metrics.h>
+#include <vespa/storage/storageutil/utils.h>
 #include <vespa/storage/common/bucket_stripe_utils.h>
 #include <vespa/vdslib/distribution/distribution.h>
 #include <vespa/vespalib/text/stringtokenizer.h>
@@ -187,7 +188,7 @@ TopLevelDistributorTestUtil::get_ideal_str(document::BucketId id, const lib::Clu
         return id.toString();
     }
     std::vector<uint16_t> nodes;
-    _component->getDistribution()->getIdealNodes(lib::NodeType::STORAGE, state, id, nodes);
+    _component->getDistribution()->getIdealNodes(lib::NodeType::STORAGE, state, id, nodes, "uim");
     std::sort(nodes.begin(), nodes.end());
     std::ostringstream ost;
     ost << id << ": " << dumpVector(nodes);
@@ -205,14 +206,11 @@ TopLevelDistributorTestUtil::add_ideal_nodes(const lib::ClusterState& state, con
 
     std::vector<uint16_t> res;
     assert(_component.get());
-    _component->getDistribution()->getIdealNodes(lib::NodeType::STORAGE, state, id, res);
+    _component->getDistribution()->getIdealNodes(lib::NodeType::STORAGE, state, id, res, "uim");
 
     for (uint32_t i = 0; i < res.size(); ++i) {
-        if (state.getNodeState(lib::Node(lib::NodeType::STORAGE, res[i])).getState() !=
-            lib::State::MAINTENANCE)
-        {
-            entry->addNode(BucketCopy(0, res[i], api::BucketInfo(1,1,1)),
-                           toVector<uint16_t>(0));
+        if (state.getNodeState(lib::Node(lib::NodeType::STORAGE, res[i])).getState() != lib::State::MAINTENANCE) {
+            entry->addNode(BucketCopy(0, res[i], api::BucketInfo(1,1,1)), toVector<uint16_t>(0));
         }
     }
 

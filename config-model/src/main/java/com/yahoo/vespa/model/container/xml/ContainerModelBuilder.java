@@ -755,8 +755,13 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         Element modelsElement = XML.getChild(onnxElement, "models");
         for (Element modelElement : XML.getChildren(modelsElement, "model") ) {
             OnnxModel onnxModel = profiles.getOnnxModels().asMap().get(modelElement.getAttribute("name"));
-            if (onnxModel == null)
-                continue; // Skip if model is not found
+            if (onnxModel == null) {
+                String availableModels = String.join(", ", profiles.getOnnxModels().asMap().keySet());
+                context.getDeployState().getDeployLogger().logApplicationPackage(WARNING,
+                        "Model '" + modelElement.getAttribute("name") + "' not found. Available ONNX " +
+                        "models are: " + availableModels + ". Skipping this configuration.");
+                continue;
+            }
             onnxModel.setStatelessExecutionMode(getStringValue(modelElement, "execution-mode", null));
             onnxModel.setStatelessInterOpThreads(getIntValue(modelElement, "interop-threads", -1));
             onnxModel.setStatelessIntraOpThreads(getIntValue(modelElement, "intraop-threads", -1));
@@ -1114,7 +1119,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
     private void addSearchHandler(DeployState deployState, ApplicationContainerCluster cluster, Element searchElement, ConfigModelContext context) {
         var bindingPatterns = List.<BindingPattern>of(SearchHandler.DEFAULT_BINDING);
-        if (isHostedTenantApplication(context) && deployState.featureFlags().useRestrictedDataPlaneBindings()) {
+        if (isHostedTenantApplication(context)) {
             bindingPatterns = SearchHandler.bindingPattern(getDataplanePorts(deployState));
         }
         SearchHandler searchHandler = new SearchHandler(cluster,
@@ -1136,7 +1141,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
     private List<BindingPattern> toBindingList(DeployState deployState, ConfigModelContext context, List<Element> bindingElements) {
         List<BindingPattern> result = new ArrayList<>();
-        var portOverride = isHostedTenantApplication(context) && deployState.featureFlags().useRestrictedDataPlaneBindings() ? getDataplanePorts(deployState) : Set.<Integer>of();
+        var portOverride = isHostedTenantApplication(context) ? getDataplanePorts(deployState) : Set.<Integer>of();
         for (Element element: bindingElements) {
             String text = element.getTextContent().trim();
             if (!text.isEmpty())
@@ -1149,7 +1154,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         UserBindingPattern bindingPattern = UserBindingPattern.fromPattern(path);
         if (portBindingOverride.isEmpty()) return Set.of(bindingPattern);
         return portBindingOverride.stream()
-                .map(bindingPattern::withPort)
+                .map(bindingPattern::withOverriddenPort)
                 .toList();
     }
 
@@ -1160,7 +1165,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
         ContainerDocumentApi.HandlerOptions documentApiOptions = DocumentApiOptionsBuilder.build(documentApiElement);
         Element ignoreUndefinedFields = XML.getChild(documentApiElement, "ignore-undefined-fields");
-        var portBindingOverride = deployState.featureFlags().useRestrictedDataPlaneBindings() && isHostedTenantApplication(context)
+        var portBindingOverride = isHostedTenantApplication(context)
                 ? getDataplanePorts(deployState)
                 : Set.<Integer>of();
         return new ContainerDocumentApi(cluster, documentApiOptions,

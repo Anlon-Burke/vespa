@@ -257,7 +257,7 @@ StripeBucketDBUpdater::merge_entries_into_db(document::BucketSpace bucket_space,
                                              const lib::Distribution& distribution,
                                              const lib::ClusterState& new_state,
                                              const char* storage_up_states,
-                                             const std::unordered_set<uint16_t>& outdated_nodes,
+                                             const OutdatedNodes & outdated_nodes,
                                              const std::vector<dbtransition::Entry>& entries)
 {
     auto& s = _op_ctx.bucket_space_repo().get(bucket_space);
@@ -767,6 +767,7 @@ StripeBucketDBUpdater::MergingNodeRemover::merge(storage::BucketDatabase::Merger
     }
 
     std::vector<BucketCopy> remainingCopies;
+    remainingCopies.reserve(e->getNodeCount());
     for (uint16_t i = 0; i < e->getNodeCount(); i++) {
         const uint16_t node_idx = e->getNodeRef(i).getNode();
         if (storage_node_is_available(node_idx)) {

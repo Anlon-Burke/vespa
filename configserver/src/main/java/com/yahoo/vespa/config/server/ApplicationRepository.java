@@ -43,8 +43,9 @@ import com.yahoo.transaction.Transaction;
 import com.yahoo.vespa.applicationmodel.InfrastructureApplication;
 import com.yahoo.vespa.config.server.application.Application;
 import com.yahoo.vespa.config.server.application.ApplicationCuratorDatabase;
+import com.yahoo.vespa.config.server.application.ApplicationData;
 import com.yahoo.vespa.config.server.application.ApplicationReindexing;
-import com.yahoo.vespa.config.server.application.ApplicationSet;
+import com.yahoo.vespa.config.server.application.ApplicationVersions;
 import com.yahoo.vespa.config.server.application.ClusterReindexing;
 import com.yahoo.vespa.config.server.application.ClusterReindexingStatusClient;
 import com.yahoo.vespa.config.server.application.CompressedApplicationInputStream;
@@ -167,7 +168,6 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
                                  ConfigserverConfig configserverConfig,
                                  Orchestrator orchestrator,
                                  TesterClient testerClient,
-                                 Zone zone,
                                  HealthCheckerProvider healthCheckers,
                                  Metric metric,
                                  SecretStore secretStore,
@@ -446,9 +446,26 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
     public Optional<Instant> activationTime(ApplicationId application) {
         Tenant tenant = tenantRepository.getTenant(application.tenant());
         if (tenant == null) return Optional.empty();
+
         Optional<Instant> activatedTime = getActiveSession(tenant, application).map(Session::getActivatedTime);
         log.log(Level.FINEST, application + " last activated " + activatedTime.orElse(Instant.EPOCH));
         return activatedTime;
+    }
+
+    @Override
+    public Optional<Instant> deployTime(ApplicationId application) {
+        Tenant tenant = tenantRepository.getTenant(application.tenant());
+        if (tenant == null) return Optional.empty();
+
+        // TODO: Fallback to empty instead if no deploy time (in Vespa 9)
+        Optional<Long> lastDeployedSession = tenant.getApplicationRepo().applicationData(application)
+                .flatMap(ApplicationData::lastDeployedSession);
+        if (lastDeployedSession.isEmpty()) return activationTime(application);
+
+        Instant createTime = getRemoteSession(tenant, lastDeployedSession.get()).getCreateTime();
+        log.log(Level.FINEST, application + " last deployed " + createTime);
+
+        return Optional.of(createTime);
     }
 
     public ApplicationId activate(Tenant tenant,
@@ -659,10 +676,10 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         Tenant tenant = getTenant(applicationId);
         if (tenant == null) throw new NotFoundException("Tenant '" + applicationId.tenant() + "' not found");
 
-        Optional<ApplicationSet> activeApplicationSet = tenant.getSessionRepository().getActiveApplicationSet(applicationId);
-        if (activeApplicationSet.isEmpty()) throw new NotFoundException("Unknown application id '" + applicationId + "'");
+        Optional<ApplicationVersions> activeApplicationVersions = tenant.getSessionRepository().activeApplicationVersions(applicationId);
+        if (activeApplicationVersions.isEmpty()) throw new NotFoundException("Unknown application id '" + applicationId + "'");
 
-        return activeApplicationSet.get().getForVersionOrLatest(version, clock.instant());
+        return activeApplicationVersions.get().getForVersionOrLatest(version, clock.instant());
     }
 
     // Will return Optional.empty() if getting application fails (instead of throwing an exception)
@@ -698,19 +715,19 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         Optional<String> applicationPackage = Optional.empty();
         Optional<Session> session = getActiveSession(applicationId);
         if (session.isPresent()) {
-            FileReference applicationPackageReference = session.get().getApplicationPackageReference();
+            Optional<FileReference> applicationPackageReference = session.get().getApplicationPackageReference();
             File downloadDirectory = new File(Defaults.getDefaults().underVespaHome(configserverConfig().fileReferencesDir()));
-            if (applicationPackageReference != null && ! fileReferenceExistsOnDisk(downloadDirectory, applicationPackageReference))
-                applicationPackage = Optional.of(applicationPackageReference.value());
+            if (applicationPackageReference.isPresent() && ! fileReferenceExistsOnDisk(downloadDirectory, applicationPackageReference.get()))
+                applicationPackage = Optional.of(applicationPackageReference.get().value());
         }
         return applicationPackage;
     }
 
     public List<Version> getAllVersions(ApplicationId applicationId) {
-        Optional<ApplicationSet> applicationSet = getActiveApplicationSet(applicationId);
+        Optional<ApplicationVersions> applicationSet = getActiveApplicationSet(applicationId);
         return applicationSet.isEmpty()
                 ? List.of()
-                : applicationSet.get().getAllVersions(applicationId);
+                : applicationSet.get().versions(applicationId);
     }
 
     public HttpResponse validateSecretStore(ApplicationId applicationId, SystemName systemName, Slime slime) {
@@ -1019,8 +1036,8 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         return session;
     }
 
-    public Optional<ApplicationSet> getActiveApplicationSet(ApplicationId appId) {
-        return getTenant(appId).getSessionRepository().getActiveApplicationSet(appId);
+    public Optional<ApplicationVersions> getActiveApplicationSet(ApplicationId appId) {
+        return getTenant(appId).getSessionRepository().activeApplicationVersions(appId);
     }
 
     public Application getActiveApplication(ApplicationId applicationId) {

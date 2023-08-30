@@ -17,7 +17,7 @@ import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.path.Path;
 import com.yahoo.transaction.Transaction;
-import com.yahoo.vespa.config.server.application.ApplicationSet;
+import com.yahoo.vespa.config.server.application.ApplicationVersions;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
@@ -94,14 +94,10 @@ public abstract class Session implements Comparable<Session>  {
      * @return log preamble
      */
     public String logPre() {
-        Optional<ApplicationId> applicationId;
+        Optional<ApplicationId> applicationId = getOptionalApplicationId();
+
         // We might not be able to read application id from zookeeper
         // e.g. when the app has been deleted. Use tenant name in that case.
-        try {
-            applicationId = Optional.of(getApplicationId());
-        } catch (Exception e) {
-            applicationId = Optional.empty();
-        }
         return applicationId
                 .filter(appId -> ! appId.equals(ApplicationId.defaultId()))
                 .map(TenantRepository::logPre)
@@ -116,46 +112,6 @@ public abstract class Session implements Comparable<Session>  {
         return sessionZooKeeperClient.readActivatedTime();
     }
 
-    public void setApplicationId(ApplicationId applicationId) {
-        sessionZooKeeperClient.writeApplicationId(applicationId);
-    }
-
-    void setApplicationPackageReference(FileReference applicationPackageReference) {
-        sessionZooKeeperClient.writeApplicationPackageReference(Optional.ofNullable(applicationPackageReference));
-    }
-
-    public void setVespaVersion(Version version) {
-        sessionZooKeeperClient.writeVespaVersion(version);
-    }
-
-    public void setDockerImageRepository(Optional<DockerImage> dockerImageRepository) {
-        sessionZooKeeperClient.writeDockerImageRepository(dockerImageRepository);
-    }
-
-    public void setAthenzDomain(Optional<AthenzDomain> athenzDomain) {
-        sessionZooKeeperClient.writeAthenzDomain(athenzDomain);
-    }
-
-    public void setQuota(Optional<Quota> quota) {
-        sessionZooKeeperClient.writeQuota(quota);
-    }
-
-    public void setTenantSecretStores(List<TenantSecretStore> tenantSecretStores) {
-        sessionZooKeeperClient.writeTenantSecretStores(tenantSecretStores);
-    }
-
-    public void setOperatorCertificates(List<X509Certificate> operatorCertificates) {
-        sessionZooKeeperClient.writeOperatorCertificates(operatorCertificates);
-    }
-
-    public void setCloudAccount(Optional<CloudAccount> cloudAccount) {
-        sessionZooKeeperClient.writeCloudAccount(cloudAccount);
-    }
-
-    public void setDataplaneTokens(List<DataplaneToken> dataplaneTokens) {
-        sessionZooKeeperClient.writeDataplaneTokens(dataplaneTokens);
-    }
-
     /** Returns application id read from ZooKeeper. Will throw RuntimeException if not found */
     public ApplicationId getApplicationId() { return sessionZooKeeperClient.readApplicationId(); }
 
@@ -168,7 +124,7 @@ public abstract class Session implements Comparable<Session>  {
         }
     }
 
-    public FileReference getApplicationPackageReference() {return sessionZooKeeperClient.readApplicationPackageReference(); }
+    public Optional<FileReference> getApplicationPackageReference() { return sessionZooKeeperClient.readApplicationPackageReference(); }
 
     public Optional<DockerImage> getDockerImageRepository() { return sessionZooKeeperClient.readDockerImageRepository(); }
 
@@ -202,6 +158,8 @@ public abstract class Session implements Comparable<Session>  {
         return sessionZooKeeperClient.readDataplaneTokens();
     }
 
+    public SessionZooKeeperClient getSessionZooKeeperClient() { return sessionZooKeeperClient; }
+
     private Transaction createSetStatusTransaction(Status status) {
         return sessionZooKeeperClient.createWriteStatusTransaction(status);
     }
@@ -226,7 +184,7 @@ public abstract class Session implements Comparable<Session>  {
         return getApplicationPackage().getFile(relativePath);
     }
 
-    Optional<ApplicationSet> applicationSet() { return Optional.empty(); };
+    Optional<ApplicationVersions> applicationVersions() { return Optional.empty(); }
 
     private void markSessionEdited() {
         setStatus(Session.Status.NEW);

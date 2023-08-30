@@ -43,13 +43,9 @@ struct FileInfo {
 
     bool  _plainfile;
     bool  _directory;
-    bool  _symlink;
     off_t _size;
 
-    bool operator==(const FileInfo&) const;
 };
-
-std::ostream& operator<<(std::ostream&, const FileInfo&);
 
 /**
  * @brief A File instance is used to access a single open file.
@@ -61,74 +57,44 @@ std::ostream& operator<<(std::ostream&, const FileInfo&);
  */
 class File {
 private:
-    int _fd;
-    int _flags;
-    vespalib::string _filename;
-    bool _close;
-    mutable int _fileReads; // Tracks number of file reads done on this file
-    mutable int _fileWrites; // Tracks number of file writes done in this file
+    int         _fd;
+    string      _filename;
 
+    void sync();
     /**
-     * Verify that direct I/O alignment preconditions hold. Triggers assertion
-     * failure on violations.
+     * Get information about the current file. If file is opened, file descriptor
+     * will be used for stat. If file is not open, and the file does not exist
+     * yet, you will get fileinfo describing an empty file.
      */
-    void verifyDirectIO(uint64_t buf, size_t bufsize, off_t offset) const;
-
+    FileInfo stat() const;
 public:
     using UP = std::unique_ptr<File>;
 
     /**
      * If failing to open file using direct IO it will retry using cached IO.
      */
-    enum Flag { READONLY = 1, CREATE = 2, DIRECTIO = 4, TRUNC = 8 };
+    enum Flag { READONLY = 1, CREATE = 2, TRUNC = 8 };
 
     /** Create a file instance, without opening the file. */
-    File(vespalib::stringref filename);
-
-    /** Create a file instance of an already open file. */
-    File(int fileDescriptor, vespalib::stringref filename);
-
-    /** Copying a file instance, moves any open file descriptor. */
-    File(File& f);
-    File& operator=(File& f);
+    File(stringref filename);
 
     /** Closes the file if not instructed to do otherwise. */
-    virtual ~File();
+    ~File();
 
-    /**
-     * Make this instance point at another file.
-     * Closes the old file it it was open.
-     */
-    void setFilename(vespalib::stringref filename);
+    const string& getFilename() const { return _filename; }
 
-    const vespalib::string& getFilename() const { return _filename; }
-
-    virtual void open(int flags, bool autoCreateDirectories = false);
+    void open(int flags, bool autoCreateDirectories = false);
 
     bool isOpen() const { return (_fd != -1); }
-    bool isOpenWithDirectIO() const { return ((_flags & DIRECTIO) != 0); }
 
-    /**
-     * Whether or not file should be closed when this instance is destructed.
-     * By default it will be closed.
-     */
-    void closeFileWhenDestructed(bool close);
-
-    virtual int getFileDescriptor() const { return _fd; }
-
-    /**
-     * Get information about the current file. If file is opened, file descriptor
-     * will be used for stat. If file is not open, and the file does not exist
-     * yet, you will get fileinfo describing an empty file.
-     */
-    virtual FileInfo stat() const;
+    int getFileDescriptor() const { return _fd; }
 
     /**
      * Get the filesize of a file, specified by a file descriptor.
      *
      * @throw IoException If we failed to stat the file.
      */
-    virtual off_t getFileSize() const { return stat()._size; }
+    off_t getFileSize() const { return stat()._size; }
 
     /**
      * Resize the currently open file to a given size,
@@ -138,7 +104,7 @@ public:
      * @param size new size of file
      * @throw IoException If we failed to resize the file.
      */
-    virtual void resize(off_t size);
+    void resize(off_t size);
 
     /**
      * Writes data to file.
@@ -152,7 +118,7 @@ public:
      * @throw IoException If we failed to write to the file.
      * @return            Always return bufsize.
      */
-    virtual off_t write(const void *buf, size_t bufsize, off_t offset);
+    off_t write(const void *buf, size_t bufsize, off_t offset);
 
     /**
      * Read characters from a file.
@@ -167,7 +133,7 @@ public:
      * @return            The number of bytes actually read. If less than
      *                    bufsize, this indicates that EOF was reached.
      */
-    virtual size_t read(void *buf, size_t bufsize, off_t offset) const;
+    size_t read(void *buf, size_t bufsize, off_t offset) const;
 
     /**
      * Read the file into a string.
@@ -177,7 +143,7 @@ public:
      * @throw   IoException If we failed to read from file.
      * @return  The content of the file.
      */
-    vespalib::string readAll() const;
+    string readAll() const;
 
     /**
      * Read a file into a string.
@@ -188,7 +154,7 @@ public:
      * @throw   IoException If we failed to read from file.
      * @return  The content of the file.
      */
-    static vespalib::string readAll(vespalib::stringref path);
+    static string readAll(stringref path);
 
     /**
      * Sync file or directory.
@@ -198,24 +164,17 @@ public:
      *
      * @throw IoException If we failed to sync the file.
      */
-    static void sync(vespalib::stringref path);
+    static void sync(stringref path);
 
-    virtual void sync();
-    virtual bool close();
-    virtual bool unlink();
-
-    int getFileReadCount() const { return _fileReads; }
-    int getFileWriteCount() const { return _fileWrites; }
+    bool close();
+    bool unlink();
 };
 
 /**
  * List the contents of the given directory.
  */
-using DirectoryList = std::vector<vespalib::string>;
-extern DirectoryList listDirectory(const vespalib::string & path);
-
-extern MallocAutoPtr getAlignedBuffer(size_t size);
-
+using DirectoryList = std::vector<string>;
+extern DirectoryList listDirectory(const string & path);
 string dirname(stringref name);
 string getOpenErrorString(const int osError, stringref name);
 

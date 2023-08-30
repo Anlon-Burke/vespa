@@ -1,16 +1,21 @@
 // Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
+import com.yahoo.concurrent.DaemonThreadFactory;
 import com.yahoo.jdisc.Metric;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeMutex;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.provisioning.HostProvisioner;
+import com.yahoo.vespa.hosted.provision.provisioning.HostProvisioner.RebuildResult;
 import com.yahoo.yolean.Exceptions;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -22,8 +27,10 @@ import java.util.logging.Logger;
 public class DiskReplacer extends NodeRepositoryMaintainer {
 
     private static final Logger log = Logger.getLogger(DiskReplacer.class.getName());
+    private static final int maxBatchSize = 100;
 
     private final HostProvisioner hostProvisioner;
+    private final ExecutorService executor = Executors.newCachedThreadPool(new DaemonThreadFactory("disk-replacer"));
 
     DiskReplacer(NodeRepository nodeRepository, Duration interval, Metric metric, HostProvisioner hostProvisioner) {
         super(nodeRepository, interval, metric);
@@ -34,25 +41,28 @@ public class DiskReplacer extends NodeRepositoryMaintainer {
     protected double maintain() {
         NodeList nodes = nodeRepository().nodes().list().rebuilding(true);
         int failures = 0;
-        for (var host : nodes) {
-            Optional<NodeMutex> optionalMutex = nodeRepository().nodes().lockAndGet(host, Duration.ofSeconds(10));
-            if (optionalMutex.isEmpty()) continue;
-            try (NodeMutex mutex = optionalMutex.get()) {
-                // Re-check flag while holding lock
-                host = mutex.node();
-                if (!host.status().wantToRebuild()) {
-                    continue;
-                }
-                Node updatedNode = hostProvisioner.replaceRootDisk(host);
-                if (!updatedNode.status().wantToRebuild()) {
-                    nodeRepository().nodes().write(updatedNode, mutex);
-                }
-            } catch (RuntimeException e) {
-                failures++;
-                log.log(Level.WARNING, "Failed to rebuild " + host.hostname() + ", will retry in " +
-                                       interval() + ": " + Exceptions.toMessageString(e));
+        List<Node> rebuilding;
+        try (var locked = nodeRepository().nodes().lockAndGetAll(nodes.asList(), Optional.of(Duration.ofSeconds(10)))) {
+            rebuilding = locked.nodes().stream().map(NodeMutex::node).toList();
+            RebuildResult result = hostProvisioner.replaceRootDisk(rebuilding);
+
+            for (Node updated : result.rebuilt())
+                if (!updated.status().wantToRebuild())
+                    nodeRepository().nodes().write(updated, () -> { });
+
+            for (var entry : result.failed().entrySet()) {
+                ++failures;
+                log.log(Level.WARNING, "Failed to rebuild " + entry.getKey() + ", will retry in " +
+                                       interval() + ": " + Exceptions.toMessageString(entry.getValue()));
             }
         }
-        return this.asSuccessFactorDeviation(nodes.size(), failures);
+        return this.asSuccessFactorDeviation(rebuilding.size(), failures);
     }
+
+    @Override
+    public void shutdown() {
+        super.shutdown();
+        executor.shutdown();
+    }
+
 }

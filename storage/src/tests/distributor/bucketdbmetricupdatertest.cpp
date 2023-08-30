@@ -7,7 +7,6 @@
 #include <vespa/vespalib/util/memoryusage.h>
 #include <vespa/vespalib/gtest/gtest.h>
 #include <string>
-#include <sstream>
 
 namespace storage::distributor {
 
@@ -16,19 +15,16 @@ using namespace ::testing;
 
 struct BucketDBMetricUpdaterTest : Test {
     void visitBucketWith2Copies1Trusted(BucketDBMetricUpdater& metricUpdater);
-    void visitBucketWith2CopiesBothTrusted(
-            BucketDBMetricUpdater& metricUpdater);
+    void visitBucketWith2CopiesBothTrusted(BucketDBMetricUpdater& metricUpdater);
     void visitBucketWith1Copy(BucketDBMetricUpdater& metricUpdater);
 
-    using NodeToReplicasMap = std::unordered_map<uint16_t, uint32_t>;
+    using NodeToReplicasMap = MinReplicaMap;
     NodeToReplicasMap replicaStatsOf(BucketDBMetricUpdater& metricUpdater);
 
     BucketDBMetricUpdaterTest();
 };
 
-BucketDBMetricUpdaterTest::BucketDBMetricUpdaterTest()
-{
-}
+BucketDBMetricUpdaterTest::BucketDBMetricUpdaterTest() = default;
 
 namespace {
 
@@ -37,8 +33,6 @@ void addNode(BucketInfo& info, uint16_t node, uint32_t crc) {
     std::vector<uint16_t> order;
     info.addNode(BucketCopy(1234, node, apiInfo), order);
 }
-
-using Trusted = bool;
 
 BucketInfo
 makeInfo(uint32_t copy0Crc)
@@ -208,7 +202,7 @@ TEST_F(BucketDBMetricUpdaterTest, buckets_with_varying_trustedness) {
     {
         BucketInfo info(makeInfo(100, 200));
         info.resetTrusted();
-        BucketDatabase::Entry e(document::BucketId(16, 3), info);
+        BucketDatabase::Entry e(document::BucketId(16, 3), std::move(info));
         metricUpdater.visit(e, 2);
     }
     metricUpdater.completeRound(false);
@@ -239,7 +233,7 @@ TEST_F(BucketDBMetricUpdaterTest, pick_largest_copy_if_no_trusted) {
     // No trusted copies, so must pick second copy.
     BucketInfo info(makeInfo(100, 200));
     info.resetTrusted();
-    BucketDatabase::Entry e(document::BucketId(16, 2), info);
+    BucketDatabase::Entry e(document::BucketId(16, 2), std::move(info));
     metricUpdater.visit(e, 2);
     metricUpdater.completeRound(false);
     metricUpdater.getLastCompleteStats().propagateMetrics(ims, dms);
@@ -271,36 +265,33 @@ TEST_F(BucketDBMetricUpdaterTest, complete_round_clears_working_state) {
 
 // Replicas on nodes 0 and 1.
 void
-BucketDBMetricUpdaterTest::visitBucketWith2Copies1Trusted(
-        BucketDBMetricUpdater& metricUpdater)
+BucketDBMetricUpdaterTest::visitBucketWith2Copies1Trusted(BucketDBMetricUpdater& metricUpdater)
 {
     BucketInfo info;
     addNode(info, 0, 100);
     addNode(info, 1, 101);  // Note different checksums => #trusted = 1
-    BucketDatabase::Entry e(document::BucketId(16, 1), info);
+    BucketDatabase::Entry e(document::BucketId(16, 1), std::move(info));
     metricUpdater.visit(e, 2);
 }
 
 // Replicas on nodes 0 and 2.
 void
-BucketDBMetricUpdaterTest::visitBucketWith2CopiesBothTrusted(
-        BucketDBMetricUpdater& metricUpdater)
+BucketDBMetricUpdaterTest::visitBucketWith2CopiesBothTrusted(BucketDBMetricUpdater& metricUpdater)
 {
     BucketInfo info;
     addNode(info, 0, 200);
     addNode(info, 2, 200);
-    BucketDatabase::Entry e(document::BucketId(16, 2), info);
+    BucketDatabase::Entry e(document::BucketId(16, 2), std::move(info));
     metricUpdater.visit(e, 2);
 }
 
 // Single replica on node 2.
 void
-BucketDBMetricUpdaterTest::visitBucketWith1Copy(
-        BucketDBMetricUpdater& metricUpdater)
+BucketDBMetricUpdaterTest::visitBucketWith1Copy(BucketDBMetricUpdater& metricUpdater)
 {
     BucketInfo info;
     addNode(info, 2, 100);
-    BucketDatabase::Entry e(document::BucketId(16, 1), info);
+    BucketDatabase::Entry e(document::BucketId(16, 1), std::move(info));
     metricUpdater.visit(e, 2);
 }
 

@@ -29,6 +29,7 @@ import static com.yahoo.vespa.filedistribution.FileReferenceData.CompressionType
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class FileServerTest {
 
@@ -60,9 +61,9 @@ public class FileServerTest {
         String dir = "123";
         assertFalse(fileServer.hasFile(dir));
         FileReferenceDownload foo = new FileReferenceDownload(new FileReference(dir), "test");
-        assertFalse(fileServer.hasFileDownloadIfNeeded(foo));
+        assertFalse(fileServer.getFileDownloadIfNeeded(foo).isPresent());
         writeFile(dir);
-        assertTrue(fileServer.hasFileDownloadIfNeeded(foo));
+        assertTrue(fileServer.getFileDownloadIfNeeded(foo).isPresent());
     }
 
     @Test
@@ -78,7 +79,9 @@ public class FileServerTest {
         File dir = getFileServerRootDir();
         IOUtils.writeFile(dir + "/12y/f1", "dummy-data", true);
         CompletableFuture<byte []> content = new CompletableFuture<>();
-        fileServer.startFileServing(new FileReference("12y"), new FileReceiver(content), Set.of(gzip));
+        FileReference fileReference = new FileReference("12y");
+        var file = fileServer.getFileDownloadIfNeeded(new FileReferenceDownload(fileReference, "test"));
+        fileServer.startFileServing(fileReference, file.get(), new FileReceiver(content), Set.of(gzip));
         assertEquals(new String(content.get()), "dummy-data");
     }
 
@@ -89,7 +92,9 @@ public class FileServerTest {
         File dir = getFileServerRootDir();
         IOUtils.writeFile(dir + "/subdir/12z/f1", "dummy-data-2", true);
         CompletableFuture<byte []> content = new CompletableFuture<>();
-        fileServer.startFileServing(new FileReference("subdir"), new FileReceiver(content), Set.of(gzip, lz4));
+        FileReference fileReference = new FileReference("subdir");
+        var file = fileServer.getFileDownloadIfNeeded(new FileReferenceDownload(fileReference, "test"));
+        fileServer.startFileServing(fileReference, file.get(), new FileReceiver(content), Set.of(gzip, lz4));
 
         // Decompress with lz4 and check contents
         var compressor = new FileReferenceCompressor(FileReferenceData.Type.compressed, lz4);
@@ -130,6 +135,27 @@ public class FileServerTest {
         assertEquals(1, fileServer.downloader().connectionPool().getSize());
     }
 
+    @Test
+    public void requireThatErrorsAreHandled() throws IOException, ExecutionException, InterruptedException {
+        File dir = getFileServerRootDir();
+        IOUtils.writeFile(dir + "/12y/f1", "dummy-data", true);
+        CompletableFuture<byte []> content = new CompletableFuture<>();
+        FailingFileReceiver fileReceiver = new FailingFileReceiver(content);
+
+        // Should fail the first time, see FailingFileReceiver
+        FileReference reference = new FileReference("12y");
+        var file = fileServer.getFileDownloadIfNeeded(new FileReferenceDownload(reference, "test"));
+        try {
+            fileServer.startFileServing(reference, file.get(), fileReceiver, Set.of(gzip));
+            fail("Should have failed");
+        } catch (RuntimeException e) {
+            // expected
+        }
+
+        fileServer.startFileServing(reference, file.get(), fileReceiver, Set.of(gzip));
+        assertEquals(new String(content.get()), "dummy-data");
+    }
+
     private void writeFile(String dir) throws IOException {
         File rootDir = getFileServerRootDir();
         IOUtils.createDirectory(rootDir + "/" + dir);
@@ -150,6 +176,23 @@ public class FileServerTest {
         @Override
         public void receive(FileReferenceData fileData, FileServer.ReplayStatus status) {
             this.content.complete(fileData.content().array());
+        }
+    }
+
+    private static class FailingFileReceiver implements FileServer.Receiver {
+        final CompletableFuture<byte []> content;
+        int counter = 0;
+        FailingFileReceiver(CompletableFuture<byte []> content) {
+            this.content = content;
+        }
+        @Override
+        public void receive(FileReferenceData fileData, FileServer.ReplayStatus status) {
+            counter++;
+            if (counter <= 1)
+                throw new RuntimeException("Failed to receive file");
+            else {
+                this.content.complete(fileData.content().array());
+            }
         }
     }
 

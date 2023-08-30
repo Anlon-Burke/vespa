@@ -1,6 +1,6 @@
 ------------------------------ MODULE bucketinfo ------------------------------
 
-EXTENDS Naturals, FiniteSets, Sequences, Integers, TLC
+EXTENDS FiniteSets, Sequences, Integers, TLC
 
 (***************************************************************************)
 (* This spec models the state synchronization mechanisms for a single data *)
@@ -42,13 +42,13 @@ CONSTANTS DistributorNodes, ContentNode, ClusterStates,
           NodeEpochs, MutatingOps, Null
 
 ASSUME /\ IsFiniteSet(DistributorNodes)
-       /\ Cardinality(DistributorNodes) > 0
+       /\ DistributorNodes # {}
        /\ IsFiniteSet(ClusterStates)
-       /\ Cardinality(ClusterStates) > 0
+       /\ ClusterStates # {}
        /\ IsFiniteSet(NodeEpochs)
-       /\ Cardinality(NodeEpochs) > 0
+       /\ NodeEpochs # {}
        /\ IsFiniteSet(MutatingOps)
-       /\ Cardinality(MutatingOps) > 0
+       /\ MutatingOps # {}
        /\ ClusterStates \subseteq (Nat \ {0})
        /\ NodeEpochs \subseteq (Nat \ {0})
        /\ DistributorNodes \intersect {ContentNode} = {}
@@ -61,7 +61,7 @@ variables
   messages = {}; \* model messages as unordered set to test reordering "for free"
 
 define
-  SeqToSet(s) == {s[i]: i \in 1..Len(s)}
+  SeqToSet(s) == {s[i]: i \in DOMAIN s}
 
   HasMessage(t, d) == \E m \in messages: (m.type = t /\ m.dest = d)
 
@@ -368,11 +368,11 @@ end process;
 end algorithm;*)
 
 
-\* BEGIN TRANSLATION (chksum(pcal) = "7a179595" /\ chksum(tla) = "2d89f470")
+\* BEGIN TRANSLATION (chksum(pcal) = "7a26a2a5" /\ chksum(tla) = "379d6205")
 VARIABLES proposedMuts, publishedStates, storEpoch, messages
 
 (* define statement *)
-SeqToSet(s) == {s[i]: i \in 1..Len(s)}
+SeqToSet(s) == {s[i]: i \in DOMAIN s}
 
 HasMessage(t, d) == \E m \in messages: (m.type = t /\ m.dest = d)
 

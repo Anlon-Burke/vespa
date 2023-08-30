@@ -6,7 +6,6 @@ import com.yahoo.component.Version;
 import com.yahoo.component.Vtag;
 import com.yahoo.config.FileReference;
 import com.yahoo.config.application.api.ApplicationPackage;
-import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.api.ConfigDefinitionRepo;
 import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.model.api.TenantSecretStore;
@@ -23,8 +22,6 @@ import com.yahoo.text.Utf8;
 import com.yahoo.transaction.Transaction;
 import com.yahoo.vespa.config.server.NotFoundException;
 import com.yahoo.vespa.config.server.UserConfigDefinitionRepo;
-import com.yahoo.vespa.config.server.deploy.ZooKeeperClient;
-import com.yahoo.vespa.config.server.deploy.ZooKeeperDeployer;
 import com.yahoo.vespa.config.server.filedistribution.AddFileInterface;
 import com.yahoo.vespa.config.server.filedistribution.MockFileManager;
 import com.yahoo.vespa.config.server.tenant.CloudAccountSerializer;
@@ -45,6 +42,18 @@ import java.util.List;
 import java.util.Optional;
 import java.util.logging.Level;
 
+import static com.yahoo.vespa.config.server.session.SessionData.APPLICATION_ID_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.APPLICATION_PACKAGE_REFERENCE_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.ATHENZ_DOMAIN;
+import static com.yahoo.vespa.config.server.session.SessionData.CLOUD_ACCOUNT_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.CREATE_TIME_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.DATAPLANE_TOKENS_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.DOCKER_IMAGE_REPOSITORY_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.OPERATOR_CERTIFICATES_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.QUOTA_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.SESSION_DATA_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.TENANT_SECRET_STORES_PATH;
+import static com.yahoo.vespa.config.server.session.SessionData.VERSION_PATH;
 import static com.yahoo.vespa.config.server.zookeeper.ZKApplication.USER_DEFCONFIGS_ZK_SUBPATH;
 import static com.yahoo.vespa.curator.Curator.CompletionWaiter;
 import static com.yahoo.yolean.Exceptions.uncheck;
@@ -60,18 +69,6 @@ public class SessionZooKeeperClient {
     private static final java.util.logging.Logger log = java.util.logging.Logger.getLogger(SessionZooKeeperClient.class.getName());
 
     // NOTE: Any state added here MUST also be propagated in com.yahoo.vespa.config.server.deploy.Deployment.prepare()
-
-    static final String APPLICATION_ID_PATH = "applicationId";
-    static final String APPLICATION_PACKAGE_REFERENCE_PATH = "applicationPackageReference";
-    private static final String VERSION_PATH = "version";
-    private static final String CREATE_TIME_PATH = "createTime";
-    private static final String DOCKER_IMAGE_REPOSITORY_PATH = "dockerImageRepository";
-    private static final String ATHENZ_DOMAIN = "athenzDomain";
-    private static final String QUOTA_PATH = "quota";
-    private static final String TENANT_SECRET_STORES_PATH = "tenantSecretStores";
-    private static final String OPERATOR_CERTIFICATES_PATH = "operatorCertificates";
-    private static final String CLOUD_ACCOUNT_PATH = "cloudAccount";
-    private static final String DATAPLANE_TOKENS_PATH = "dataplaneTokens";
 
     private final Curator curator;
     private final TenantName tenantName;
@@ -180,11 +177,8 @@ public class SessionZooKeeperClient {
                 reference -> curator.set(applicationPackageReferencePath(), Utf8.toBytes(reference.value())));
     }
 
-    FileReference readApplicationPackageReference() {
-        Optional<byte[]> data = curator.getData(applicationPackageReferencePath());
-        if (data.isEmpty()) return null; // This should not happen.
-
-        return new FileReference(Utf8.toString(data.get()));
+    Optional<FileReference> readApplicationPackageReference() {
+        return curator.getData(applicationPackageReferencePath()).map(d -> new FileReference(Utf8.toString(d)));
     }
 
     private Path applicationPackageReferencePath() {
@@ -227,6 +221,14 @@ public class SessionZooKeeperClient {
        curator.set(versionPath(), Utf8.toBytes(version.toString()));
     }
 
+    public void writeSessionData(SessionData sessionData) {
+        curator.set(sessionPath.append(SESSION_DATA_PATH), sessionData.toJson());
+    }
+
+    public SessionData readSessionData() {
+        return SessionData.fromSlime(SlimeUtils.jsonToSlime(curator.getData(sessionPath.append(SESSION_DATA_PATH)).orElseThrow()));
+    }
+
     public Version readVespaVersion() {
         Optional<byte[]> data = curator.getData(versionPath());
         // TODO: Empty version should not be possible any more - verify and remove
@@ -259,11 +261,6 @@ public class SessionZooKeeperClient {
     AllocatedHosts getAllocatedHosts() {
         return loadApplicationPackage().getAllocatedHosts()
                                        .orElseThrow(() -> new IllegalStateException("Allocated hosts does not exists"));
-    }
-
-    public ZooKeeperDeployer createDeployer(DeployLogger logger) {
-        ZooKeeperClient zkClient = new ZooKeeperClient(curator, logger, sessionPath);
-        return new ZooKeeperDeployer(zkClient);
     }
 
     public Transaction createWriteStatusTransaction(Session.Status status) {
@@ -368,7 +365,7 @@ public class SessionZooKeeperClient {
         transaction.commit();
     }
 
-    private static Path getSessionPath(TenantName tenantName, long sessionId) {
+    public static Path getSessionPath(TenantName tenantName, long sessionId) {
         return TenantRepository.getSessionsPath(tenantName).append(String.valueOf(sessionId));
     }
 }

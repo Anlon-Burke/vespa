@@ -24,12 +24,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Clock;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static com.yahoo.yolean.Exceptions.uncheck;
+import static java.util.logging.Level.FINE;
+import static java.util.logging.Level.INFO;
 
 /**
  * Global file directory, holding files for file distribution for all deployed applications.
@@ -40,7 +43,6 @@ public class FileDirectory extends AbstractComponent {
     private static final Logger log = Logger.getLogger(FileDirectory.class.getName());
 
     private final Locks<FileReference> locks = new Locks<>(1, TimeUnit.MINUTES);
-
     private final File root;
 
     @Inject
@@ -67,7 +69,7 @@ public class FileDirectory extends AbstractComponent {
         }
     }
 
-    static private class Filter implements FilenameFilter {
+    private static class Filter implements FilenameFilter {
         @Override
         public boolean accept(File dir, String name) {
             return !".".equals(name) && !"..".equals(name) ;
@@ -78,17 +80,24 @@ public class FileDirectory extends AbstractComponent {
         return root.getAbsolutePath() + "/" + ref.value();
     }
 
-    public File getFile(FileReference reference) {
+    public Optional<File> getFile(FileReference reference) {
         ensureRootExist();
         File dir = new File(getPath(reference));
-        if (!dir.exists())
-            throw new IllegalArgumentException("File reference '" + reference.value() + "' with absolute path '" + dir.getAbsolutePath() + "' does not exist.");
-        if (!dir.isDirectory())
-            throw new IllegalArgumentException("File reference '" + reference.value() + "' with absolute path '" + dir.getAbsolutePath() + "' is not a directory.");
-        File [] files = dir.listFiles(new Filter());
-        if (files == null || files.length == 0)
-            throw new IllegalArgumentException("File reference '" + reference.value() + "' with absolute path '" + dir.getAbsolutePath() + " does not contain any files");
-        return files[0];
+        if (!dir.exists()) {
+            // This is common when config server has not yet received the file from one the server the app was deployed on
+            log.log(FINE, "File reference '" + reference.value() + "' ('" + dir.getAbsolutePath() + "') does not exist.");
+            return Optional.empty();
+        }
+        if (!dir.isDirectory()) {
+            log.log(INFO, "File reference '" + reference.value() + "' ('" + dir.getAbsolutePath() + ")' is not a directory.");
+            return Optional.empty();
+        }
+        File[] files = dir.listFiles(new Filter());
+        if (files == null || files.length == 0) {
+            log.log(INFO, "File reference '" + reference.value() + "' ('" + dir.getAbsolutePath() + "') does not contain any files");
+            return Optional.empty();
+        }
+        return Optional.of(files[0]);
     }
 
     public File getRoot() { return root; }
@@ -127,16 +136,16 @@ public class FileDirectory extends AbstractComponent {
     public void delete(FileReference fileReference, Function<FileReference, Boolean> isInUse) {
         try (Lock lock = locks.lock(fileReference)) {
             if (isInUse.apply(fileReference))
-                log.log(Level.FINE, "Unable to delete file reference '" + fileReference.value() + "' since it is still in use");
+                log.log(FINE, "Unable to delete file reference '" + fileReference.value() + "' since it is still in use");
             else
                 deleteDirRecursively(destinationDir(fileReference));
         }
     }
 
     private void deleteDirRecursively(File dir) {
-        log.log(Level.FINE, "Will delete dir " + dir);
+        log.log(FINE, "Will delete dir " + dir);
         if ( ! IOUtils.recursiveDeleteDir(dir))
-            log.log(Level.INFO, "Failed to delete " + dir);
+            log.log(INFO, "Failed to delete " + dir);
     }
 
     // Check if we should add file, it might already exist
@@ -156,7 +165,7 @@ public class FileDirectory extends AbstractComponent {
 
         // update last modified time so that maintainer deleting unused file references considers this as recently used
         destinationDir.setLastModified(Clock.systemUTC().instant().toEpochMilli());
-        log.log(Level.FINE, "Directory for file reference '" + fileReference.value() + "' already exists and has all content");
+        log.log(FINE, "Directory for file reference '" + fileReference.value() + "' already exists and has all content");
         return false;
     }
 
@@ -179,7 +188,7 @@ public class FileDirectory extends AbstractComponent {
 
             // Copy files to temp dir
             File tempDestination = new File(tempDestinationDir.toFile(), source.getName());
-            log.log(Level.FINE, () -> "Copying " + source.getAbsolutePath() + " to " + tempDestination.getAbsolutePath());
+            log.log(FINE, () -> "Copying " + source.getAbsolutePath() + " to " + tempDestination.getAbsolutePath());
             if (source.isDirectory())
                 IOUtils.copyDirectory(source, tempDestination, -1);
             else
@@ -187,7 +196,7 @@ public class FileDirectory extends AbstractComponent {
 
             // Move to destination dir
             Path destinationDir = destinationDir(reference).toPath();
-            log.log(Level.FINE, () -> "Moving " + tempDestinationDir + " to " + destinationDir);
+            log.log(FINE, () -> "Moving " + tempDestinationDir + " to " + destinationDir);
             Files.move(tempDestinationDir, destinationDir);
             return reference;
         } catch (IOException e) {
@@ -199,7 +208,7 @@ public class FileDirectory extends AbstractComponent {
 
     private void logfileInfo(File file ) throws IOException {
         BasicFileAttributes basicFileAttributes = Files.readAttributes(file.toPath(), BasicFileAttributes.class);
-        log.log(Level.FINE, () -> "Adding file " + file.getAbsolutePath() + " (created " + basicFileAttributes.creationTime() +
+        log.log(FINE, () -> "Adding file " + file.getAbsolutePath() + " (created " + basicFileAttributes.creationTime() +
                 ", modified " + basicFileAttributes.lastModifiedTime() +
                 ", size " + basicFileAttributes.size() + ")");
     }

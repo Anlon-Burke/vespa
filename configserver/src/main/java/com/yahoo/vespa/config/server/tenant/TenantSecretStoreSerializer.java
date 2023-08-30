@@ -30,8 +30,12 @@ public class TenantSecretStoreSerializer {
     public static Slime toSlime(List<TenantSecretStore> tenantSecretStores) {
         Slime slime = new Slime();
         Cursor cursor = slime.setArray();
-        tenantSecretStores.forEach(tenantSecretStore -> toSlime(tenantSecretStore, cursor.addObject()));
+        toSlime(tenantSecretStores, cursor);
         return slime;
+    }
+
+    public static void toSlime(List<TenantSecretStore> tenantSecretStores, Cursor cursor) {
+        tenantSecretStores.forEach(tenantSecretStore -> toSlime(tenantSecretStore, cursor.addObject()));
     }
 
     public static void toSlime(TenantSecretStore tenantSecretStore, Cursor object) {
@@ -56,4 +60,5 @@ public class TenantSecretStoreSerializer {
         inspector.traverse(((ArrayTraverser)(idx, store) -> tenantSecretStores.add(fromSlime(store))));
         return tenantSecretStores;
     }
+
 }
