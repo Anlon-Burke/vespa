@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.model;
 
 import com.yahoo.cloud.config.LbServicesConfig;
@@ -50,10 +50,11 @@ import static org.junit.Assert.assertTrue;
 public class LbServicesProducerTest {
 
     private static final Set<ContainerEndpoint> endpoints = Set.of(
+            new ContainerEndpoint("mydisc", ApplicationClusterEndpoint.Scope.zone, List.of("mydisc.foo.foo.endpoint1.suffix")),
+            new ContainerEndpoint("mydisc", ApplicationClusterEndpoint.Scope.zone, List.of("mydisc.foo.foo.endpoint2.suffix")),
             new ContainerEndpoint("mydisc", ApplicationClusterEndpoint.Scope.global, List.of("rotation-1", "rotation-2")),
             new ContainerEndpoint("mydisc", ApplicationClusterEndpoint.Scope.application, List.of("app-endpoint"))
     );
-    private static final List<String> zoneDnsSuffixes = List.of(".endpoint1.suffix", ".endpoint2.suffix");
 
     private final InMemoryFlagSource flagSource = new InMemoryFlagSource();
 
@@ -80,7 +81,7 @@ public class LbServicesProducerTest {
 
     private LbServicesConfig createModelAndGetLbServicesConfig(RegionName regionName) {
         Zone zone = new Zone(Environment.prod, regionName);
-        Map<TenantName, Set<ApplicationInfo>> testModel = createTestModel(new DeployState.Builder().zone(zone));
+        Map<TenantName, Set<ApplicationInfo>> testModel = createTestModel(new DeployState.Builder().endpoints(Set.of(new ContainerEndpoint("mydisc", ApplicationClusterEndpoint.Scope.zone, List.of("md.example.com")))).zone(zone));
         return getLbServicesConfig(new Zone(Environment.prod, regionName), testModel);
     }
 
@@ -125,7 +126,7 @@ public class LbServicesProducerTest {
 
     @Test
     public void testRoutingConfigForTesterApplication() {
-        Map<TenantName, Set<ApplicationInfo>> testModel = createTestModel(new DeployState.Builder());
+        Map<TenantName, Set<ApplicationInfo>> testModel = createTestModel(new DeployState.Builder().endpoints(Set.of(new ContainerEndpoint("mydisc", ApplicationClusterEndpoint.Scope.zone, List.of("md.example.com")))));
 
         // No config for tester application
         assertNull(getLbServicesConfig(Zone.defaultZone(), testModel)
@@ -228,7 +229,7 @@ public class LbServicesProducerTest {
     private TestProperties getTestproperties(ApplicationId applicationId) {
         return new TestProperties()
                 .setHostedVespa(true)
-                .setZoneDnsSuffixes(zoneDnsSuffixes)
                 .setApplicationId(applicationId);
     }
+
 }

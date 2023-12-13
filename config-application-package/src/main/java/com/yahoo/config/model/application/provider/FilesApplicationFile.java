@@ -1,17 +1,24 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.model.application.provider;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yahoo.config.application.api.ApplicationFile;
 import com.yahoo.io.IOUtils;
 import com.yahoo.path.Path;
-import java.util.logging.Level;
-import com.yahoo.yolean.Exceptions;
 import com.yahoo.vespa.config.util.ConfigUtils;
+import com.yahoo.yolean.Exceptions;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileFilter;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Reader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -207,6 +214,8 @@ public class FilesApplicationFile extends ApplicationFile {
             return null;
         }
     }
+
+    @Override public long getSize() { return file.length(); }
 
     @Override
     public int compareTo(ApplicationFile other) {

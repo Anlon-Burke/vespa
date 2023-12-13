@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<!-- Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
+<!-- Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
@@ -38,7 +38,7 @@
                         </goals>
                         <configuration>
                             <rules>
-                                <enforceDependencies implementation="com.yahoo.vespa.maven.plugin.enforcer.EnforceDependenciesAllProjects">
+                                <enforceDependencies implementation="com.yahoo.vespa.maven.plugin.enforcer.AllowedDependencies">
                                     <rootProjectId>com.yahoo.vespa:vespa</rootProjectId>
                                     <specFile>allowed-maven-dependencies.txt</specFile>
                                     <ignored>
@@ -47,14 +47,6 @@
                                         <i>com.yahoo.vespa.bundle-plugin:*:*</i>
                                         <i>com.yahoo.vespa.jdisc_core:*:*</i>
                                     </ignored>
-
-                                    <!-- Classifly all dependencies of below modules as 'test' -->
-                                    <testUtilProjects>
-                                        <!-- Misc -->
-                                        <i>com.yahoo.vespa:testutil</i>
-                                        <!-- Bundle plugin integration test -->
-                                        <i>com.yahoo.vespa.bundle-plugin:*</i>
-                                    </testUtilProjects>
                                 </enforceDependencies>
                             </rules>
                             <fail>true</fail>

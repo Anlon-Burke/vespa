@@ -1,3 +1,4 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package cmd
 
 import (
@@ -47,6 +48,7 @@ func TestFeed(t *testing.T) {
 
 	assert.Equal(t, "", stderr.String())
 	want := `{
+  "feeder.operation.count": 2,
   "feeder.seconds": 5.000,
   "feeder.ok.count": 2,
   "feeder.ok.rate": 0.400,
@@ -91,6 +93,11 @@ func TestFeed(t *testing.T) {
 	}
 	require.Nil(t, cli.Run("feed", jsonFile1))
 	assert.Equal(t, "feed: got error \"something else is broken\" (no body) for put id:ns:type::doc1: giving up after 10 attempts\n", stderr.String())
+
+	stderr.Reset()
+	httpClient.NextResponseString(400, `{"message": "bad request"}`)
+	require.Nil(t, cli.Run("feed", jsonFile1))
+	assert.Equal(t, "feed: got status 400 ({\"message\": \"bad request\"}) for put id:ns:type::doc1: not retryable\n", stderr.String())
 }
 
 func TestFeedInvalid(t *testing.T) {
@@ -116,6 +123,7 @@ func TestFeedInvalid(t *testing.T) {
 	require.NotNil(t, cli.Run("feed", "-t", "http://127.0.0.1:8080", jsonFile))
 
 	want := `{
+  "feeder.operation.count": 1,
   "feeder.seconds": 3.000,
   "feeder.ok.count": 1,
   "feeder.ok.rate": 0.333,

@@ -1,4 +1,4 @@
-# Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+# Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 vespa_define_module(
     DEPENDS
     vespalog
@@ -75,6 +75,8 @@ vespa_define_module(
     src/tests/attribute/bitvector_search_cache
     src/tests/attribute/changevector
     src/tests/attribute/compaction
+    src/tests/attribute/dfa_fuzzy_matcher
+    src/tests/attribute/direct_multi_term_blueprint
     src/tests/attribute/document_weight_iterator
     src/tests/attribute/document_weight_or_filter_search
     src/tests/attribute/enum_attribute_compaction
@@ -173,7 +175,7 @@ vespa_define_module(
     src/tests/hitcollector
     src/tests/index/field_length_calculator
     src/tests/indexmetainfo
-    src/tests/ld-library-path
+    src/tests/ld_library_path
     src/tests/memoryindex/compact_words_store
     src/tests/memoryindex/datastore
     src/tests/memoryindex/document_inverter
@@ -240,8 +242,10 @@ vespa_define_module(
     src/tests/url
     src/tests/util
     src/tests/util/bufferwriter
+    src/tests/util/folded_string_compare
     src/tests/util/searchable_stats
     src/tests/util/slime_output_raw_buf_adapter
+    src/tests/util/token_extractor
     src/tests/vespa-fileheader-inspect
 )
 

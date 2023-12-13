@@ -1,4 +1,4 @@
-# Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+# Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 schema rankexpression {
   
   document rankexpression {
@@ -60,6 +60,10 @@ schema rankexpression {
     }
 
     field t1 type tensor(m{},v[3]) {
+      indexing: attribute
+    }
+
+    field labels type array<string> {
       indexing: attribute
     }
   }
@@ -382,6 +386,124 @@ schema rankexpression {
       global-phase {
         expression: myplus()+sum(mymul())+firstPhase + term(0).significance + fieldLength(artist) + fieldTermMatch(title,0).occurrences + termDistance(title,1,2).reverse + closeness(field, t1)
         rerank-count: 42
+      }
+  }
+
+  rank-profile layered {
+      inputs {
+         query(v) tensor(v[3])
+      }
+      function mymul() {
+        expression: tensorFromLabels(attribute(labels), m) * query(v)
+      }
+      first-phase {
+        expression: attribute(foo1)
+      }
+      global-phase {
+        expression: sum(mymul())
+        rerank-count: 123
+      }
+      match-features {
+        mymul
+      }
+  }
+
+  rank-profile withtfl {
+      inputs {
+         query(v) tensor(v[3])
+      }
+      function mymul() {
+        expression: tensorFromLabels(attribute(labels), m) * query(v)
+      }
+      first-phase {
+        expression: attribute(foo1)
+      }
+      global-phase {
+        expression: sum(mymul)
+      }
+      match-features {
+        tensorFromLabels(attribute(labels), m)
+      }
+  }
+
+  rank-profile withtfl2 {
+      inputs {
+         query(v) tensor(v[3])
+      }
+      function mymul() {
+        expression: tensorFromLabels(attribute(labels), m) * query(v)
+      }
+      first-phase {
+        expression: attribute(foo1)
+      }
+      global-phase {
+        expression: sum(mymul)
+      }
+  }
+
+  rank-profile withnorm {
+      first-phase {
+        expression: attribute(foo1)
+      }
+      function normBar() {
+        expression: attribute(foo1) + attribute(year)
+      }
+      global-phase {
+        expression: normalize_linear(nativeRank) + reciprocal_rank(normBar(), 42.0)
+        rerank-count: 123
+      }
+      match-features: nativeRank
+  }
+
+  rank-profile withfusion {
+      first-phase {
+        expression: attribute(foo1)
+      }
+      function normBar() {
+        expression: attribute(foo1) + attribute(year)
+      }
+      global-phase {
+        expression: reciprocal_rank_fusion(normBar, nativeRank)
+        rerank-count: 456
+      }
+      match-features: nativeRank
+  }
+
+  rank-profile function-with-arg-as-summary-feature {
+      function plusOne(x) {
+        expression: x + 1
+      }
+      function useAttr(name, weight) {
+        expression: attribute(name) * weight
+      }
+      first-phase {
+        expression: nativeRank
+      }
+      summary-features {
+        attribute(t1)
+        plusOne(41)
+        useAttr(foo1, 17)
+      }
+  }
+
+  rank-profile function-with-arg-in-global-phase {
+      function plusOne(x) {
+        expression: x + 1
+      }
+      function useAttr(name, weight) {
+        expression: attribute(name) * weight
+      }
+      function withIndirect(name) {
+        expression: useAttr(name, 1.25)
+      }
+      first-phase {
+        expression: nativeRank
+      }
+      global-phase {
+        expression: sum(useAttr(t1, 42) + plusOne(2) + withIndirect(foo1) + plusOne(attribute(foo2)))
+      }
+      match-features {
+          plusOne(attribute(foo2))
       }
   }
 

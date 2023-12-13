@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.application;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
@@ -125,10 +125,12 @@ public class TenantApplicationsTest {
         writeActiveTransaction(repo, myapp, 3);
         String path = TenantRepository.getApplicationsPath(tenantName).append(myapp.serializedForm()).getAbsolute();
         assertNotNull(curatorFramework.checkExists().forPath(path));
-        assertEquals("3", Utf8.toString(curatorFramework.getData().forPath(path)));
+        assertEquals("{\"applicationId\":\"tenant:myapp:myinst\",\"activeSession\":3,\"lastDeployedSession\":3}",
+                     Utf8.toString(curatorFramework.getData().forPath(path)));
         writeActiveTransaction(repo, myapp, 5);
         assertNotNull(curatorFramework.checkExists().forPath(path));
-        assertEquals("5", Utf8.toString(curatorFramework.getData().forPath(path)));
+        assertEquals("{\"applicationId\":\"tenant:myapp:myinst\",\"activeSession\":5,\"lastDeployedSession\":5}",
+                     Utf8.toString(curatorFramework.getData().forPath(path)));
     }
 
     @Test

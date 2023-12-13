@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage;
 
 import com.yahoo.vespa.indexinglanguage.expressions.*;
@@ -70,7 +70,7 @@ public class ExpressionOptimizer extends ExpressionConverter {
         }
         return exp instanceof InputExpression ||
                exp instanceof NowExpression ||
-               exp instanceof SetValueExpression ||
+               exp instanceof ConstantExpression ||
                exp instanceof HostNameExpression ||
                exp instanceof GetVarExpression;
     }

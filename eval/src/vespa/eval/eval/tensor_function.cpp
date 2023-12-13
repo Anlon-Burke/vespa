@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "tensor_function.h"
 #include "value.h"
@@ -12,6 +12,7 @@
 #include <vespa/eval/instruction/generic_join.h>
 #include <vespa/eval/instruction/generic_lambda.h>
 #include <vespa/eval/instruction/generic_map.h>
+#include <vespa/eval/instruction/generic_map_subspaces.h>
 #include <vespa/eval/instruction/generic_merge.h>
 #include <vespa/eval/instruction/generic_peek.h>
 #include <vespa/eval/instruction/generic_reduce.h>
@@ -168,6 +169,20 @@ Map::visit_self(vespalib::ObjectVisitor &visitor) const
 {
     Super::visit_self(visitor);
     ::visit(visitor, "function", _function);
+}
+
+//-----------------------------------------------------------------------------
+
+InterpretedFunction::Instruction
+MapSubspaces::compile_self(const ValueBuilderFactory &factory, Stash &stash) const
+{
+    return instruction::GenericMapSubspaces::make_instruction(*this, factory, stash);
+}
+
+void
+MapSubspaces::visit_self(vespalib::ObjectVisitor &visitor) const
+{
+    Super::visit_self(visitor);
 }
 
 //-----------------------------------------------------------------------------
@@ -350,12 +365,12 @@ Peek::make_spec() const
     // the value peeked is child 0, so
     // children (for label computation) in spec start at 1:
     size_t child_idx = 1;
-    for (const auto & [dim_name, label_or_child] : map()) {
+    for (const auto & [outer_dim_name, label_or_child] : map()) {
         std::visit(vespalib::overload {
-                [&,&dim_name = dim_name](const TensorSpec::Label &label) {
+                [&,&dim_name = outer_dim_name](const TensorSpec::Label &label) {
                     generic_spec.emplace(dim_name, label);
                 },
-                [&,&dim_name = dim_name](const TensorFunction::Child &) {
+                [&,&dim_name = outer_dim_name](const TensorFunction::Child &) {
                     generic_spec.emplace(dim_name, child_idx++);
                 }
             }, label_or_child);
@@ -453,6 +468,11 @@ const TensorFunction &reduce(const TensorFunction &child, Aggr aggr, const std::
 const TensorFunction &map(const TensorFunction &child, map_fun_t function, Stash &stash) {
     ValueType result_type = child.result_type().map();
     return stash.create<Map>(result_type, child, function);
+}
+
+const TensorFunction &map_subspaces(const TensorFunction &child, const Function &function, NodeTypes node_types, Stash &stash) {
+    auto result_type = child.result_type().strip_indexed_dimensions().wrap(node_types.get_type(function.root()));
+    return stash.create<MapSubspaces>(result_type, child, function, std::move(node_types));
 }
 
 const TensorFunction &join(const TensorFunction &lhs, const TensorFunction &rhs, join_fun_t function, Stash &stash) {

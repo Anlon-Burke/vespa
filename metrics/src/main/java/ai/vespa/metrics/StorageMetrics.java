@@ -1,3 +1,4 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.metrics;
 
 /**
@@ -88,6 +89,9 @@ public enum StorageMetrics implements VespaMetrics {
     VDS_FILESTOR_ALLTHREADS_DELETEBUCKETS_COUNT("vds.filestor.allthreads.deletebuckets.count", Unit.REQUEST, "Number of requests processed."),
     VDS_FILESTOR_ALLTHREADS_DELETEBUCKETS_FAILED("vds.filestor.allthreads.deletebuckets.failed", Unit.REQUEST, "Number of failed requests."),
     VDS_FILESTOR_ALLTHREADS_DELETEBUCKETS_LATENCY("vds.filestor.allthreads.deletebuckets.latency", Unit.MILLISECOND, "Latency of successful requests."),
+    VDS_FILESTOR_ALLTHREADS_REMOVE_BY_GID_COUNT("vds.filestor.allthreads.remove_by_gid.count", Unit.REQUEST, "Number of requests processed."),
+    VDS_FILESTOR_ALLTHREADS_REMOVE_BY_GID_FAILED("vds.filestor.allthreads.remove_by_gid.failed", Unit.REQUEST, "Number of failed requests."),
+    VDS_FILESTOR_ALLTHREADS_REMOVE_BY_GID_LATENCY("vds.filestor.allthreads.remove_by_gid.latency", Unit.MILLISECOND, "Latency of successful requests."),
     VDS_FILESTOR_ALLTHREADS_SETBUCKETSTATES_COUNT("vds.filestor.allthreads.setbucketstates.count", Unit.REQUEST, "Number of requests processed."),
     VDS_FILESTOR_ALLTHREADS_SETBUCKETSTATES_FAILED("vds.filestor.allthreads.setbucketstates.failed", Unit.REQUEST, "Number of failed requests."),
     VDS_FILESTOR_ALLTHREADS_SETBUCKETSTATES_LATENCY("vds.filestor.allthreads.setbucketstates.latency", Unit.MILLISECOND, "Latency of successful requests."),
@@ -95,6 +99,7 @@ public enum StorageMetrics implements VespaMetrics {
     VDS_MERGETHROTTLER_AVERAGEQUEUEWAITINGTIME("vds.mergethrottler.averagequeuewaitingtime", Unit.MILLISECOND, "Time merges spent in the throttler queue"),
     VDS_MERGETHROTTLER_QUEUESIZE("vds.mergethrottler.queuesize", Unit.INSTANCE, "Length of merge queue"),
     VDS_MERGETHROTTLER_ACTIVE_WINDOW_SIZE("vds.mergethrottler.active_window_size", Unit.INSTANCE, "Number of merges active within the pending window size"),
+    VDS_MERGETHROTTLER_ESTIMATED_MERGE_MEMORY_USAGE("vds.mergethrottler.estimated_merge_memory_usage", Unit.BYTE, "An estimated upper bound of the  memory usage (in bytes) of the merges currently in the active window"),
     VDS_MERGETHROTTLER_BOUNCED_DUE_TO_BACK_PRESSURE("vds.mergethrottler.bounced_due_to_back_pressure", Unit.INSTANCE, "Number of merges bounced due to resource exhaustion back-pressure"),
     VDS_MERGETHROTTLER_LOCALLYEXECUTEDMERGES_OK("vds.mergethrottler.locallyexecutedmerges.ok", Unit.INSTANCE, "The number of successful merges for 'locallyexecutedmerges'"),
     VDS_MERGETHROTTLER_LOCALLYEXECUTEDMERGES_FAILURES_ABORTED("vds.mergethrottler.locallyexecutedmerges.failures.aborted", Unit.OPERATION, "The number of merges that failed because the storage node was (most likely) shutting down"),

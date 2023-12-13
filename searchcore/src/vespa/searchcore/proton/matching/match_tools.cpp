@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "match_tools.h"
 #include "querynodes.h"
@@ -17,6 +17,7 @@ using search::queryeval::IDiversifier;
 using search::attribute::diversity::DiversityFilter;
 using search::attribute::BasicType;
 using search::attribute::AttributeBlueprintParams;
+using search::queryeval::ExecuteInfo;
 using vespalib::Issue;
 
 using namespace search::fef::indexproperties::matchphase;
@@ -174,24 +175,28 @@ MatchToolsFactory(QueryLimiter               & queryLimiter,
                   const Properties           & featureOverrides,
                   vespalib::ThreadBundle     & thread_bundle,
                   const search::IDocumentMetaStoreContext::IReadGuard::SP * metaStoreReadGuard,
+                  uint32_t                     maxNumHits,
                   bool                         is_search)
     : _queryLimiter(queryLimiter),
       _attribute_blueprint_params(extract_attribute_blueprint_params(rankSetup, rankProperties, metaStore.getNumActiveLids(), searchContext.getDocIdLimit())),
       _query(),
       _match_limiter(),
       _queryEnv(indexEnv, attributeContext, rankProperties, searchContext.getIndexes()),
-      _requestContext(doom, attributeContext, _queryEnv, _queryEnv.getObjectStore(), _attribute_blueprint_params, metaStoreReadGuard),
+      _requestContext(doom, thread_bundle, attributeContext, _queryEnv, _queryEnv.getObjectStore(),
+                      _attribute_blueprint_params, metaStoreReadGuard),
       _mdl(),
       _rankSetup(rankSetup),
       _featureOverrides(featureOverrides),
       _diversityParams(),
       _valid(false)
 {
+    if (doom.soft_doom()) return;
     auto trace = root_trace.make_trace();
     trace.addEvent(4, "Start query setup");
     _query.setWhiteListBlueprint(metaStore.createWhiteListBlueprint());
     trace.addEvent(5, "Deserialize and build query tree");
-    _valid = _query.buildTree(queryStack, location, viewResolver, indexEnv, true);
+    _valid = _query.buildTree(queryStack, location, viewResolver, indexEnv,
+                              AlwaysMarkPhraseExpensive::check(_queryEnv.getProperties(), rankSetup.always_mark_phrase_expensive()));
     if (_valid) {
         _query.extractTerms(_queryEnv.terms());
         _query.extractLocations(_queryEnv.locations());
@@ -200,12 +205,16 @@ MatchToolsFactory(QueryLimiter               & queryLimiter,
         trace.addEvent(5, "Optimize query execution plan");
         _query.optimize();
         trace.addEvent(4, "Perform dictionary lookups and posting lists initialization");
-        _query.fetchPostings();
+        double hitRate = std::min(1.0, double(maxNumHits)/double(searchContext.getDocIdLimit()));
+        bool create_postinglist_when_non_strict = CreatePostingListWhenNonStrict::check(_queryEnv.getProperties(), rankSetup.create_postinglist_when_non_strict());
+        bool use_estimate_for_fetch_postings = UseEstimateForFetchPostings::check(_queryEnv.getProperties(), rankSetup.use_estimate_for_fetch_postings());
+        _query.fetchPostings(ExecuteInfo::create(is_search, hitRate, &_requestContext.getDoom(), thread_bundle,
+                                                 create_postinglist_when_non_strict, use_estimate_for_fetch_postings));
         if (is_search) {
-            _query.handle_global_filter(searchContext.getDocIdLimit(),
+            _query.handle_global_filter(_requestContext, searchContext.getDocIdLimit(),
                                         _attribute_blueprint_params.global_filter_lower_limit,
                                         _attribute_blueprint_params.global_filter_upper_limit,
-                                        thread_bundle, trace);
+                                        trace, create_postinglist_when_non_strict, use_estimate_for_fetch_postings);
         }
         _query.freeze();
         trace.addEvent(5, "Prepare shared state for multi-threaded rank executors");
@@ -330,6 +339,7 @@ MatchToolsFactory::extract_attribute_blueprint_params(const RankSetup& rank_setu
     double lower_limit = GlobalFilterLowerLimit::lookup(rank_properties, rank_setup.get_global_filter_lower_limit());
     double upper_limit = GlobalFilterUpperLimit::lookup(rank_properties, rank_setup.get_global_filter_upper_limit());
     double target_hits_max_adjustment_factor = TargetHitsMaxAdjustmentFactor::lookup(rank_properties, rank_setup.get_target_hits_max_adjustment_factor());
+    auto fuzzy_matching_algorithm = FuzzyAlgorithm::lookup(rank_properties, rank_setup.get_fuzzy_matching_algorithm());
 
     // Note that we count the reserved docid 0 as active.
     // This ensures that when searchable-copies=1, the ratio is 1.0.
@@ -337,7 +347,8 @@ MatchToolsFactory::extract_attribute_blueprint_params(const RankSetup& rank_setu
 
     return {lower_limit * active_hit_ratio,
             upper_limit * active_hit_ratio,
-            target_hits_max_adjustment_factor};
+            target_hits_max_adjustment_factor,
+            fuzzy_matching_algorithm};
 }
 
 AttributeOperationTask::AttributeOperationTask(const RequestContext & requestContext,

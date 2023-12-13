@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
 import com.yahoo.component.Version;
@@ -242,8 +242,8 @@ public class NodeFailTester {
         int lastOctetOfPoolAddress = 0;
         for (int i = startIndex; i < startIndex + count; i++) {
             String hostname = "host" + i;
-            Set<String> ipPool = nodeType.isHost() ? Set.of("127.0." + i + "." + (++lastOctetOfPoolAddress)) : Set.of();
-            IP.Config ipConfig = IP.Config.of(nodeRepository.nameResolver().resolveAll(hostname),
+            List<String> ipPool = nodeType.isHost() ? List.of("127.0." + i + "." + (++lastOctetOfPoolAddress)) : List.of();
+            IP.Config ipConfig = IP.Config.of(List.copyOf(nodeRepository.nameResolver().resolveAll(hostname)),
                                               ipPool);
             Node.Builder builder = Node.create("node" + i, ipConfig, hostname, flavor, nodeType);
             parentHostname.ifPresent(builder::parentHostname);

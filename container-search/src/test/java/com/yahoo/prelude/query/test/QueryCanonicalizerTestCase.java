@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query.test;
 
 import com.yahoo.prelude.query.*;
@@ -464,27 +464,6 @@ public class QueryCanonicalizerTestCase {
             root.addItem(theOther);
             assertCanonicalized("'a b'", null, root);
         }
-    }
-
-    @Test
-    void testRankDuplicateCheapification() {
-        AndItem and = new AndItem();
-        WordItem shoe = new WordItem("shoe", "prod");
-        and.addItem(shoe);
-        and.addItem(new WordItem("apparel & accessories", "tcnm"));
-        RankItem rank = new RankItem();
-        rank.addItem(and);
-
-        rank.addItem(new WordItem("shoe", "prod")); // rank item which also ossurs in first argument
-        for (int i = 0; i < 25; i++)
-            rank.addItem(new WordItem("word" + i, "normbrnd"));
-        QueryTree tree = new QueryTree(rank);
-
-        assertTrue(shoe.isRanked());
-        assertTrue(shoe.usePositionData());
-        QueryCanonicalizer.canonicalize(tree);
-        assertFalse(shoe.isRanked());
-        assertFalse(shoe.usePositionData());
     }
 
     @Test

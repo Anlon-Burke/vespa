@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "isequencedtaskexecutor.h"
@@ -29,6 +29,14 @@ public:
     void sync_all() override;
     ExecutorStats getStats() override;
     void wakeup() override;
+
+    /**
+     * Returns the ExecutorStats of each underlying executor.
+     *
+     * Calling this function resets the statistics of each underlying executor,
+     * similar to calling getStats().
+     */
+    std::vector<ExecutorStats> get_raw_stats();
 
     static std::unique_ptr<ISequencedTaskExecutor>
     create(Runnable::init_fun_t func, uint32_t threads);

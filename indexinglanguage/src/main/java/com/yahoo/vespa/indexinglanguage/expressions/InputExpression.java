@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
@@ -42,7 +42,7 @@ public final class InputExpression extends Expression {
     protected void doVerify(VerificationContext context) {
         DataType val = context.getInputType(this, fieldName);
         if (val == null)
-            throw new VerificationException(this, "Field '" + fieldName + "' not found.");
+            throw new VerificationException(this, "Field '" + fieldName + "' not found");
         context.setValueType(val);
     }
 

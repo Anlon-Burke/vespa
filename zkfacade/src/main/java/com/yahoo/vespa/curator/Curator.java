@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.curator;
 
 import com.yahoo.cloud.config.CuratorConfig;
@@ -166,19 +166,19 @@ public class Curator extends AbstractComponent implements AutoCloseable {
     private void addLoggingListener() {
         curatorFramework.getConnectionStateListenable().addListener((curatorFramework, connectionState) -> {
             switch (connectionState) {
-                case SUSPENDED: LOG.info("ZK connection state change: SUSPENDED"); break;
-                case RECONNECTED: LOG.info("ZK connection state change: RECONNECTED"); break;
-                case LOST: LOG.warning("ZK connection state change: LOST"); break;
+                case SUSPENDED -> LOG.info("ZK connection state change: SUSPENDED");
+                case RECONNECTED -> LOG.info("ZK connection state change: RECONNECTED");
+                case LOST -> LOG.warning("ZK connection state change: LOST");
             }
         });
     }
 
-    public CompletionWaiter getCompletionWaiter(Path waiterPath, String id, Duration waitForAll) {
-        return CuratorCompletionWaiter.create(this, waiterPath, id, waitForAll);
+    public CompletionWaiter getCompletionWaiter(Path barrierPath, String id, Duration waitForAll) {
+        return CuratorCompletionWaiter.create(this, barrierPath, id, waitForAll);
     }
 
-    public CompletionWaiter createCompletionWaiter(Path parentPath, String waiterNode, String id, Duration waitForAll) {
-        return CuratorCompletionWaiter.createAndInitialize(this, parentPath, waiterNode, id, waitForAll);
+    public CompletionWaiter createCompletionWaiter(Path barrierPath, String id, Duration waitForAll) {
+        return CuratorCompletionWaiter.createAndInitialize(this, barrierPath, id, waitForAll);
     }
 
     /** Creates a listenable cache which keeps in sync with changes to all the immediate children of a path */

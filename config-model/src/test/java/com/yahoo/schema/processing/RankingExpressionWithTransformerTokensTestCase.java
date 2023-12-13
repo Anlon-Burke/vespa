@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.schema.processing;
 
 import com.yahoo.config.model.application.provider.BaseDeployLogger;
@@ -32,6 +32,17 @@ public class RankingExpressionWithTransformerTokensTestCase {
         String b = "tensor(d0[3]):[3,4,5]";
         String c = "tensor(d0[2]):[6,7]";
         String expression = "tokenInputIds(12, a, b, c)";
+        Tensor result = evaluateExpression(expression, a, b, c);
+        assertEquals(Tensor.from(expected), result);
+    }
+
+    @Test
+    void testTokenInputIdsCustomPadTokens() throws Exception {
+        String expected = "tensor(d0[1],d1[13]):[1,11,12,2,13,14,15,2,16,17,2,0,0]";
+        String a = "tensor(d0[2]):[11,12]";
+        String b = "tensor(d0[3]):[13,14,15]";
+        String c = "tensor(d0[2]):[16,17]";
+        String expression = "customTokenInputIds(1, 2, 13, a, b, c)";
         Tensor result = evaluateExpression(expression, a, b, c);
         assertEquals(Tensor.from(expected), result);
     }

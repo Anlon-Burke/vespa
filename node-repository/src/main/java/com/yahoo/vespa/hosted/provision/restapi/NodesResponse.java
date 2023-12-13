@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.restapi;
 
 import com.yahoo.component.Version;
@@ -8,11 +8,12 @@ import com.yahoo.config.provision.ClusterMembership;
 import com.yahoo.config.provision.DockerImage;
 import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.NodeResources;
+import com.yahoo.config.provision.WireguardKeyWithTimestamp;
 import com.yahoo.config.provision.serialization.NetworkPortsSerializer;
 import com.yahoo.container.jdisc.HttpRequest;
 import com.yahoo.restapi.SlimeJsonResponse;
 import com.yahoo.slime.Cursor;
-import com.yahoo.vespa.flags.FetchVector;
+import com.yahoo.vespa.flags.Dimension;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.flags.StringFlag;
 import com.yahoo.vespa.hosted.provision.Node;
@@ -133,6 +134,7 @@ class NodesResponse extends SlimeJsonResponse {
         object.setString("flavor", node.flavor().name());
         node.reservedTo().ifPresent(reservedTo -> object.setString("reservedTo", reservedTo.value()));
         node.exclusiveToApplicationId().ifPresent(applicationId -> object.setString("exclusiveTo", applicationId.serializedForm()));
+        node.provisionedForApplicationId().ifPresent(applicationId -> object.setString("provisionedFor", applicationId.serializedForm()));
         node.hostTTL().ifPresent(ttl -> object.setLong("hostTTL", ttl.toMillis()));
         node.hostEmptyAt().ifPresent(emptyAt -> object.setLong("hostEmptyAt", emptyAt.toEpochMilli()));
         node.exclusiveToClusterType().ifPresent(clusterType -> object.setString("exclusiveToClusterType", clusterType.name()));
@@ -182,7 +184,7 @@ class NodesResponse extends SlimeJsonResponse {
         toSlime(node.history().events(), object.setArray("history"));
         toSlime(node.history().log(), object.setArray("log"));
         ipAddressesToSlime(node.ipConfig().primary(), object.setArray("ipAddresses"));
-        ipAddressesToSlime(node.ipConfig().pool().asSet(), object.setArray("additionalIpAddresses"));
+        ipAddressesToSlime(node.ipConfig().pool().ips(), object.setArray("additionalIpAddresses"));
         hostnamesToSlime(node.ipConfig().pool().hostnames(), object);
         node.reports().toSlime(object, "reports");
         node.modelName().ifPresent(modelName -> object.setString("modelName", modelName));
@@ -192,18 +194,18 @@ class NodesResponse extends SlimeJsonResponse {
         if (!node.cloudAccount().isUnspecified()) {
             object.setString("cloudAccount", node.cloudAccount().value());
         }
-        node.wireguardPubKey().ifPresent(key -> object.setString("wireguardPubkey", key.value()));
+        node.wireguardPubKey().ifPresent(key -> toSlime(key, object.setObject("wireguard")));
     }
 
     private Version resolveVersionFlag(StringFlag flag, Node node, Allocation allocation) {
         String value = flag
-                .with(FetchVector.Dimension.HOSTNAME, node.hostname())
-                .with(FetchVector.Dimension.NODE_TYPE, node.type().name())
-                .with(FetchVector.Dimension.TENANT_ID, allocation.owner().tenant().value())
-                .with(FetchVector.Dimension.APPLICATION_ID, allocation.owner().serializedForm())
-                .with(FetchVector.Dimension.CLUSTER_TYPE, allocation.membership().cluster().type().name())
-                .with(FetchVector.Dimension.CLUSTER_ID, allocation.membership().cluster().id().value())
-                .with(FetchVector.Dimension.VESPA_VERSION, allocation.membership().cluster().vespaVersion().toFullString())
+                .with(Dimension.HOSTNAME, node.hostname())
+                .with(Dimension.NODE_TYPE, node.type().name())
+                .with(Dimension.TENANT_ID, allocation.owner().tenant().value())
+                .with(Dimension.INSTANCE_ID, allocation.owner().serializedForm())
+                .with(Dimension.CLUSTER_TYPE, allocation.membership().cluster().type().name())
+                .with(Dimension.CLUSTER_ID, allocation.membership().cluster().id().value())
+                .with(Dimension.VESPA_VERSION, allocation.membership().cluster().vespaVersion().toFullString())
                 .value();
 
         return value.isEmpty() ?
@@ -234,6 +236,11 @@ class NodesResponse extends SlimeJsonResponse {
             object.setLong("at", event.at().toEpochMilli());
             object.setString("agent", event.agent().name());
         }
+    }
+
+    static void toSlime(WireguardKeyWithTimestamp keyWithTimestamp, Cursor object) {
+        object.setString("key", keyWithTimestamp.key().value());
+        object.setLong("timestamp", keyWithTimestamp.timestamp().toEpochMilli());
     }
 
     private Optional<DockerImage> currentContainerImage(Node node) {

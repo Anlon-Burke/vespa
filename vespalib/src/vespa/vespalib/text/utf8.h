@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // $Id$
 
 #pragma once
@@ -321,6 +321,7 @@ public:
         return i;
     }
 
+    const char* get_current_ptr() const noexcept { return _p; }
 };
 
 

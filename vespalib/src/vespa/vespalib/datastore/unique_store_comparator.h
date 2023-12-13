@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -96,27 +96,25 @@ protected:
     using RefType = RefT;
     using DataStoreType = DataStoreT<RefT>;
     const DataStoreType &_store;
-    const EntryType _fallback_value;
+    const EntryType _lookup_value;
 
     inline const EntryType &get(EntryRef ref) const {
         if (ref.valid()) {
             RefType iRef(ref);
             return _store.template getEntry<WrappedEntryType>(iRef)->value();
         } else {
-            return _fallback_value;
+            return _lookup_value;
         }
     }
-
-public:
-    UniqueStoreComparator(const DataStoreType &store, const EntryType &fallback_value)
+    UniqueStoreComparator(const DataStoreType &store, const EntryType &lookup_value)
         : _store(store),
-          _fallback_value(fallback_value)
+          _lookup_value(lookup_value)
     {
     }
-
+public:
     UniqueStoreComparator(const DataStoreType &store)
         : _store(store),
-          _fallback_value()
+          _lookup_value()
     {
     }
 
@@ -133,6 +131,10 @@ public:
     size_t hash(const EntryRef rhs) const override {
         const EntryType &rhsValue = get(rhs);
         return UniqueStoreComparatorHelper<EntryT>::hash(rhsValue);
+    }
+
+    UniqueStoreComparator<EntryT, RefT> make_for_lookup(const EntryType& lookup_value) const {
+        return UniqueStoreComparator<EntryT, RefT>(_store, lookup_value);
     }
 };
 

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.provision;
 
 import java.time.Duration;
@@ -59,6 +59,9 @@ public interface Deployer {
 
     /** Returns the time of last deployed session for this application or empty if there are no deployments */
     Optional<Instant> deployTime(ApplicationId application);
+
+    /** Returns whether the application has reindexing ready to go, which was readied after the given instant. */
+    boolean readiedReindexingAfter(ApplicationId application, Instant instant);
 
     /** Whether the deployer is bootstrapping, some users of the deployer will want to hold off with deployments in that case. */
     default boolean bootstrapping() { return false; }

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage;
 
 import com.yahoo.document.DataType;
@@ -152,7 +152,7 @@ public class FieldUpdateAdapter implements UpdateAdapter {
                 if (val instanceof Array) {
                     lst.addAll(createMapValueUpdatesForArray((Array)val, (MapValueUpdate)upd));
                 } else if (val instanceof MapFieldValue) {
-                    throw new UnsupportedOperationException("Can not map into a " + val.getClass().getName() + ".");
+                    throw new UnsupportedOperationException("Can not map into a " + val.getClass().getName());
                 } else if (val instanceof StructuredFieldValue) {
                     lst.addAll(createMapValueUpdatesForStruct((StructuredFieldValue)val, (MapValueUpdate)upd));
                 } else if (val instanceof WeightedSet) {
@@ -168,7 +168,7 @@ public class FieldUpdateAdapter implements UpdateAdapter {
                 lst.add(upd);
             } else {
                 throw new UnsupportedOperationException(
-                        "Value update type " + upd.getClass().getName() + " not supported.");
+                        "Value update type " + upd.getClass().getName() + " not supported");
             }
             return lst;
         }

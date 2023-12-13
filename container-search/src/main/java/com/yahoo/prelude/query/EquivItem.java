@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
 import com.yahoo.protect.Validator;
@@ -84,6 +84,11 @@ public class EquivItem extends CompositeTaggableItem {
         Validator.ensure("Could not add an item of type " + item.getItemType() +
                          ": Equiv can only have word, wordAlternatives, int, exact, or phrase as children",
                          acceptsChildrenOfType(item.getItemType()));
+    }
+
+    @Override
+    public boolean acceptsItemsOfType(ItemType itemType) {
+        return acceptsChildrenOfType(itemType);
     }
 
     /** Returns true if this accepts child items of the given type */

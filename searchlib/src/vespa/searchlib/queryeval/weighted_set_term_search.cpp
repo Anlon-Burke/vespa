@@ -1,7 +1,8 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "weighted_set_term_search.h"
 #include <vespa/searchlib/common/bitvector.h>
+#include <vespa/searchlib/attribute/document_weight_or_filter_search.h>
 #include <vespa/vespalib/objects/visit.h>
 #include <vespa/searchcommon/attribute/i_search_context.h>
 
@@ -17,11 +18,11 @@ template <typename HEAP, typename IteratorPack>
 class WeightedSetTermSearchImpl : public WeightedSetTermSearch
 {
 private:
-    using ref_t = uint32_t;
+    using ref_t = IteratorPack::ref_t;
 
     struct CmpDocId {
         const uint32_t *termPos;
-        CmpDocId(const uint32_t *tp) : termPos(tp) {}
+        explicit CmpDocId(const uint32_t *tp) : termPos(tp) {}
         bool operator()(const ref_t &a, const ref_t &b) const {
             return (termPos[a] < termPos[b]);
         }
@@ -29,13 +30,14 @@ private:
 
     struct CmpWeight {
         const int32_t *weight;
-        CmpWeight(const int32_t *w) : weight(w) {}
+        explicit CmpWeight(const int32_t *w) : weight(w) {}
         bool operator()(const ref_t &a, const ref_t &b) const {
             return (weight[a] > weight[b]);
         }
     };
 
     fef::TermFieldMatchData                       &_tmd;
+    std::vector<int32_t>                           _weights_data;
     const std::vector<int32_t>                    &_weights;
     std::vector<uint32_t>                          _termPos;
     CmpDocId                                       _cmpDocId;
@@ -45,7 +47,7 @@ private:
     ref_t                                         *_data_stash;
     ref_t                                         *_data_end;
     IteratorPack                                   _children;
-    bool                                           _field_is_filter;
+    bool                                           _need_match_data;
 
     void seek_child(ref_t child, uint32_t docId) {
         _termPos[child] = _children.seek(child, docId);
@@ -61,13 +63,14 @@ private:
     }
 
 public:
-    WeightedSetTermSearchImpl(search::fef::TermFieldMatchData &tmd,
+    WeightedSetTermSearchImpl(fef::TermFieldMatchData &tmd,
                               bool field_is_filter,
-                              const std::vector<int32_t> &weights,
+                              std::variant<std::reference_wrapper<const std::vector<int32_t>>, std::vector<int32_t>> weights,
                               IteratorPack &&iteratorPack)
         : _tmd(tmd),
-          _weights(weights),
-          _termPos(weights.size()),
+          _weights_data((weights.index() == 1) ? std::move(std::get<1>(weights)) : std::vector<int32_t>()),
+          _weights((weights.index() == 1) ? _weights_data : std::get<0>(weights).get()),
+          _termPos(_weights.size()),
           _cmpDocId(&_termPos[0]),
           _cmpWeight(&_weights[0]),
           _data_space(),
@@ -75,7 +78,7 @@ public:
           _data_stash(nullptr),
           _data_end(nullptr),
           _children(std::move(iteratorPack)),
-          _field_is_filter(field_is_filter)
+          _need_match_data(!field_is_filter && !_tmd.isNotNeeded())
     {
         HEAP::require_left_heap();
         assert(_children.size() > 0);
@@ -86,7 +89,7 @@ public:
         }
         _data_begin = &_data_space[0];
         _data_end = _data_begin + _data_space.size();
-        if (!_field_is_filter && !_tmd.isNotNeeded()) {
+        if (_need_match_data) {
             _tmd.reservePositions(_children.size());
         }
     }
@@ -112,7 +115,7 @@ public:
     }
 
     void doUnpack(uint32_t docId) override {
-        if (!_field_is_filter && !_tmd.isNotNeeded()) {
+        if (_need_match_data) {
             _tmd.reset(docId);
             pop_matching_children(docId);
             std::sort(_data_stash, _data_end, _cmpWeight);
@@ -171,27 +174,31 @@ WeightedSetTermSearch::create(const std::vector<SearchIterator *> &children,
     using ArrayHeapImpl = WeightedSetTermSearchImpl<vespalib::LeftArrayHeap, SearchIteratorPack>;
     using HeapImpl = WeightedSetTermSearchImpl<vespalib::LeftHeap, SearchIteratorPack>;
 
-    if (children.size() < 128) {
-        return SearchIterator::UP(new ArrayHeapImpl(tmd, field_is_filter, weights, SearchIteratorPack(children, std::move(match_data))));
+    if (tmd.isNotNeeded()) {
+        return attribute::DocumentWeightOrFilterSearch::create(children, std::move(match_data));
     }
-    return SearchIterator::UP(new HeapImpl(tmd, field_is_filter, weights, SearchIteratorPack(children, std::move(match_data))));
+
+    if (children.size() < 128) {
+        return SearchIterator::UP(new ArrayHeapImpl(tmd, field_is_filter, std::cref(weights), SearchIteratorPack(children, std::move(match_data))));
+    }
+    return SearchIterator::UP(new HeapImpl(tmd, field_is_filter, std::cref(weights), SearchIteratorPack(children, std::move(match_data))));
 }
 
 //-----------------------------------------------------------------------------
 
 SearchIterator::UP
-WeightedSetTermSearch::create(search::fef::TermFieldMatchData &tmd,
+WeightedSetTermSearch::create(fef::TermFieldMatchData &tmd,
                               bool field_is_filter,
-                              const std::vector<int32_t> &weights,
-                              std::vector<DocumentWeightIterator> &&iterators)
+                              std::variant<std::reference_wrapper<const std::vector<int32_t>>, std::vector<int32_t>> weights,
+                              std::vector<DocidWithWeightIterator> &&iterators)
 {
-    using ArrayHeapImpl = WeightedSetTermSearchImpl<vespalib::LeftArrayHeap, AttributeIteratorPack>;
-    using HeapImpl = WeightedSetTermSearchImpl<vespalib::LeftHeap, AttributeIteratorPack>;
+    using ArrayHeapImpl = WeightedSetTermSearchImpl<vespalib::LeftArrayHeap, DocidWithWeightIteratorPack>;
+    using HeapImpl = WeightedSetTermSearchImpl<vespalib::LeftHeap, DocidWithWeightIteratorPack>;
 
     if (iterators.size() < 128) {
-        return SearchIterator::UP(new ArrayHeapImpl(tmd, field_is_filter, weights, AttributeIteratorPack(std::move(iterators))));
+        return SearchIterator::UP(new ArrayHeapImpl(tmd, field_is_filter, weights, DocidWithWeightIteratorPack(std::move(iterators))));
     }
-    return SearchIterator::UP(new HeapImpl(tmd, field_is_filter, weights, AttributeIteratorPack(std::move(iterators))));
+    return SearchIterator::UP(new HeapImpl(tmd, field_is_filter, weights, DocidWithWeightIteratorPack(std::move(iterators))));
 }
 
 //-----------------------------------------------------------------------------

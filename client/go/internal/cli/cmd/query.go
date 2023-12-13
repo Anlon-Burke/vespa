@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // vespa query command
 // author: bratseth
 
@@ -16,7 +16,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/vespa-engine/vespa/client/go/internal/curl"
-	"github.com/vespa-engine/vespa/client/go/internal/util"
+	"github.com/vespa-engine/vespa/client/go/internal/ioutil"
 	"github.com/vespa-engine/vespa/client/go/internal/vespa"
 )
 
@@ -29,7 +29,7 @@ func newQueryCmd(cli *CLI) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "query query-parameters",
 		Short:   "Issue a query to Vespa",
-		Example: `$ vespa query "yql=select * from music where album contains 'head';" hits=5`,
+		Example: `$ vespa query "yql=select * from music where album contains 'head'" hits=5`,
 		Long: `Issue a query to Vespa.
 
 Any parameter from https://docs.vespa.ai/en/reference/query-api-reference.html
@@ -64,7 +64,7 @@ func query(cli *CLI, arguments []string, timeoutSecs, waitSecs int, curl bool) e
 	if err != nil {
 		return err
 	}
-	waiter := cli.waiter(false, time.Duration(waitSecs)*time.Second)
+	waiter := cli.waiter(time.Duration(waitSecs) * time.Second)
 	service, err := waiter.Service(target, cli.config.cluster())
 	if err != nil {
 		return err
@@ -98,11 +98,11 @@ func query(cli *CLI, arguments []string, timeoutSecs, waitSecs int, curl bool) e
 	defer response.Body.Close()
 
 	if response.StatusCode == 200 {
-		log.Print(util.ReaderToJSON(response.Body))
+		log.Print(ioutil.ReaderToJSON(response.Body))
 	} else if response.StatusCode/100 == 4 {
-		return fmt.Errorf("invalid query: %s\n%s", response.Status, util.ReaderToJSON(response.Body))
+		return fmt.Errorf("invalid query: %s\n%s", response.Status, ioutil.ReaderToJSON(response.Body))
 	} else {
-		return fmt.Errorf("%s from container at %s\n%s", response.Status, color.CyanString(url.Host), util.ReaderToJSON(response.Body))
+		return fmt.Errorf("%s from container at %s\n%s", response.Status, color.CyanString(url.Host), ioutil.ReaderToJSON(response.Body))
 	}
 	return nil
 }

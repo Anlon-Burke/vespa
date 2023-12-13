@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container.http;
 
 import com.yahoo.config.model.builder.xml.test.DomBuilderTest;
@@ -7,6 +7,8 @@ import com.yahoo.vespa.model.container.http.xml.HttpBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.w3c.dom.Element;
+
+import java.util.Set;
 
 import static com.yahoo.collections.CollectionUtil.first;
 import static com.yahoo.vespa.model.container.http.FilterConfigProvider.configProviderId;
@@ -22,7 +24,7 @@ public class FilterConfigTest extends DomBuilderTest {
 
     @BeforeEach
     public void setupFilterChains() {
-        http = new HttpBuilder().build(root.getDeployState(), root, servicesXml());
+        http = new HttpBuilder(Set.of()).build(root.getDeployState(), root, servicesXml());
         root.freezeModelTopology();
     }
 

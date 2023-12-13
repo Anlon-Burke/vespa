@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.language.opennlp;
 
 import com.yahoo.language.Language;
@@ -83,6 +83,7 @@ class OpenNlpDetector implements Detector {
         return new Detection(detectLanguage(input), UTF_8.name(), false);
     }
 
+    @SuppressWarnings("removal")
     private Language detectLanguage(String input) {
         var prediction = detector.probingPredictLanguages(input, config).getLanguages()[0];
         var result = prediction.getConfidence() > 0.02 ? languagesByISO3.get(prediction.getLang()) : null;

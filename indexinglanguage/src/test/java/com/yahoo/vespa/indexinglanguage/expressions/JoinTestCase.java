@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
@@ -36,8 +36,8 @@ public class JoinTestCase {
         Expression exp = new JoinExpression(";");
         assertVerify(DataType.getArray(DataType.INT), exp, DataType.STRING);
         assertVerify(DataType.getArray(DataType.STRING), exp, DataType.STRING);
-        assertVerifyThrows(null, exp, "Expected any input, got null.");
-        assertVerifyThrows(DataType.INT, exp, "Expected Array input, got int.");
+        assertVerifyThrows(null, exp, "Expected any input, but no input is specified");
+        assertVerifyThrows(DataType.INT, exp, "Expected Array input, got int");
     }
 
     @Test
@@ -58,7 +58,7 @@ public class JoinTestCase {
             new JoinExpression(";").execute(new StringFieldValue("foo"));
             fail();
         } catch (IllegalArgumentException e) {
-            assertEquals("Expected Array input, got string.", e.getMessage());
+            assertEquals("Expected Array input, got string", e.getMessage());
         }
     }
 

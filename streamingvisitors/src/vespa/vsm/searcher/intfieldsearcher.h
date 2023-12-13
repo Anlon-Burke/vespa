@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "fieldsearcher.h"
@@ -20,7 +20,7 @@ protected:
     class IntInfo
     {
     public:
-        IntInfo(int64_t low, int64_t high, bool v) : _lower(low), _upper(high), _valid(v) { if (low > high) { _lower = high; _upper = low; } }
+        IntInfo(int64_t low, int64_t high, bool v) noexcept : _lower(low), _upper(high), _valid(v) { }
         bool cmp(int64_t key) const { return (_lower <= key) && (key <= _upper); }
         bool valid()          const { return _valid; }
     private:

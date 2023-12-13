@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.search;
 
 import com.yahoo.cloud.config.filedistribution.FiledistributorrpcConfig;
@@ -15,6 +15,7 @@ import com.yahoo.vespa.config.content.core.StorServerConfig;
 import com.yahoo.vespa.config.content.core.StorStatusConfig;
 import com.yahoo.vespa.config.search.core.ProtonConfig;
 import com.yahoo.vespa.model.AbstractService;
+import com.yahoo.vespa.model.ConfigProxy;
 import com.yahoo.vespa.model.PortAllocBridge;
 import com.yahoo.vespa.model.admin.monitoring.Monitoring;
 import com.yahoo.vespa.model.application.validation.RestartConfigs;
@@ -22,8 +23,6 @@ import com.yahoo.vespa.model.builder.xml.dom.VespaDomBuilder;
 import com.yahoo.vespa.model.content.ContentNode;
 import com.yahoo.vespa.model.content.Redundancy;
 import com.yahoo.vespa.model.content.ResourceLimits;
-import com.yahoo.vespa.model.filedistribution.FileDistributionConfigProducer;
-import com.yahoo.vespa.model.filedistribution.FileDistributionConfigProvider;
 import org.w3c.dom.Element;
 
 import java.util.HashMap;
@@ -256,11 +255,7 @@ public class SearchNode extends AbstractService implements
 
     @Override
     public void getConfig(FiledistributorrpcConfig.Builder builder) {
-        FileDistributionConfigProducer fileDistribution = getRoot().getFileDistributionConfigProducer();
-        if (fileDistribution != null) {
-            FileDistributionConfigProvider configProducer = fileDistribution.getConfigProducer(getHost().getHost());
-            configProducer.getConfig(builder);
-        }
+        builder.connectionspec("tcp/" + getHostName() + ":" + ConfigProxy.BASEPORT);
     }
 
     @Override
@@ -284,7 +279,7 @@ public class SearchNode extends AbstractService implements
         if (nodeResources.isPresent()) {
             var nodeResourcesTuning = new NodeResourcesTuning(nodeResources.get(),
                                                               tuning.map(Tuning::threadsPerSearch).orElse(1),
-                                                              fractionOfMemoryReserved, redundancyProvider.redundancy());
+                                                              fractionOfMemoryReserved);
             nodeResourcesTuning.getConfig(builder);
 
             tuning.ifPresent(t -> t.getConfig(builder));

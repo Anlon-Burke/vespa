@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.models.evaluation;
 
 import org.junit.Test;
@@ -73,5 +73,18 @@ public class RankProfileImportingTest {
         assertEquals(2, args.size());
         assertEquals("tensor(d0[2])", args.get("attribute(doc_vec)").toString());
         assertEquals("tensor(d0[2])", args.get("query(query_vec)").toString());
+    }
+
+    @Test
+    public void testImportingLayeredGlobalPhase() {
+        ModelTester tester = new ModelTester("src/test/resources/config/layered/");
+        assertEquals(1, tester.models().size());
+        Model m = tester.models().get("layered");
+        assertEquals("layered", m.name());
+        var func = m.function("globalphase");
+        assertEquals("globalphase", func.getName());
+        var args = func.argumentTypes();
+        assertEquals(1, args.size());
+        assertEquals("tensor(m{},v[3])", args.get("rankingExpression(mymul)").toString());
     }
 }

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
@@ -46,8 +46,8 @@ public class NGramTestCase {
     public void requireThatExpressionCanBeVerified() {
         Expression exp = new NGramExpression(new SimpleLinguistics(), 69);
         assertVerify(DataType.STRING, exp, DataType.STRING);
-        assertVerifyThrows(null, exp, "Expected string input, got null.");
-        assertVerifyThrows(DataType.INT, exp, "Expected string input, got int.");
+        assertVerifyThrows(null, exp, "Expected string input, but no input is specified");
+        assertVerifyThrows(DataType.INT, exp, "Expected string input, got int");
     }
 
     @Test
@@ -57,8 +57,8 @@ public class NGramTestCase {
         new NGramExpression(new SimpleLinguistics(), 3).execute(context);
 
         StringFieldValue value = (StringFieldValue)context.getValue();
-        assertEquals("Grams are pure annotations - field value is unchanged", "en gul Bille sang... ",
-                     value.getString());
+        assertEquals("Grams are pure annotations - field value is unchanged",
+                     "en gul Bille sang... ", value.getString());
         SpanTree gramTree = value.getSpanTree(SpanTrees.LINGUISTICS);
         assertNotNull(gramTree);
         SpanList grams = (SpanList)gramTree.getRoot();

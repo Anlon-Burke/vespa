@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.deploy;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
@@ -13,6 +13,7 @@ import com.yahoo.config.model.api.EndpointCertificateSecrets;
 import com.yahoo.config.model.api.HostProvisioner;
 import com.yahoo.config.model.api.Model;
 import com.yahoo.config.model.api.ModelContext;
+import com.yahoo.config.model.api.OnnxModelCost;
 import com.yahoo.config.model.api.Provisioned;
 import com.yahoo.config.model.api.Quota;
 import com.yahoo.config.model.api.Reindexing;
@@ -27,7 +28,7 @@ import com.yahoo.config.provision.HostName;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.container.jdisc.secretstore.SecretStore;
 import com.yahoo.vespa.config.server.tenant.SecretStoreExternalIdRetriever;
-import com.yahoo.vespa.flags.FetchVector;
+import com.yahoo.vespa.flags.Dimension;
 import com.yahoo.vespa.flags.FlagSource;
 import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.flags.PermanentFlags;
@@ -44,9 +45,8 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Predicate;
 
-import static com.yahoo.config.provision.NodeResources.Architecture;
 import static com.yahoo.vespa.config.server.ConfigServerSpec.fromConfig;
-import static com.yahoo.vespa.flags.FetchVector.Dimension.CLUSTER_TYPE;
+import static com.yahoo.vespa.flags.Dimension.CLUSTER_TYPE;
 
 /**
  * Implementation of {@link ModelContext} for configserver.
@@ -66,6 +66,7 @@ public class ModelContextImpl implements ModelContext {
     private final Optional<? extends Reindexing> reindexing;
     private final ModelContext.Properties properties;
     private final Optional<File> appDir;
+    private final OnnxModelCost onnxModelCost;
 
     private final Optional<DockerImage> wantedDockerImageRepository;
 
@@ -92,6 +93,7 @@ public class ModelContextImpl implements ModelContext {
                             Provisioned provisioned,
                             ModelContext.Properties properties,
                             Optional<File> appDir,
+                            OnnxModelCost onnxModelCost,
                             Optional<DockerImage> wantedDockerImageRepository,
                             Version modelVespaVersion,
                             Version wantedNodeVespaVersion) {
@@ -109,6 +111,7 @@ public class ModelContextImpl implements ModelContext {
         this.wantedDockerImageRepository = wantedDockerImageRepository;
         this.modelVespaVersion = modelVespaVersion;
         this.wantedNodeVespaVersion = wantedNodeVespaVersion;
+        this.onnxModelCost = onnxModelCost;
     }
 
     @Override
@@ -150,6 +153,8 @@ public class ModelContextImpl implements ModelContext {
     @Override
     public Optional<File> appDir() { return appDir; }
 
+    @Override public OnnxModelCost onnxModelCost() { return onnxModelCost; }
+
     @Override
     public Optional<DockerImage> wantedDockerImageRepo() { return wantedDockerImageRepository; }
 
@@ -184,7 +189,6 @@ public class ModelContextImpl implements ModelContext {
         private final boolean useV8GeoPositions;
         private final int maxCompactBuffers;
         private final List<String> ignoredHttpUserAgents;
-        private final Architecture adminClusterArchitecture;
         private final boolean enableProxyProtocolMixedMode;
         private final boolean sharedStringRepoNoReclaim;
         private final String logFileCompressionAlgorithm;
@@ -196,11 +200,17 @@ public class ModelContextImpl implements ModelContext {
         private final int rpc_num_targets;
         private final int rpc_events_before_wakeup;
         private final int heapPercentage;
-        private final boolean enableGlobalPhase;
         private final String summaryDecodePolicy;
-        private final boolean enableDataplaneProxy;
-        private final boolean enableNestedMultivalueGrouping;
-        private final boolean useReconfigurableDispatcher;
+        private final boolean alwaysMarkPhraseExpensive;
+        private final boolean createPostinglistWhenNonStrict;
+        private final boolean useEstimateForFetchPostings;
+        private final int contentLayerMetadataFeatureLevel;
+        private final boolean dynamicHeapSize;
+        private final String unknownConfigDefinition;
+        private final int searchHandlerThreadpool;
+        private final long mergingMaxMemoryUsagePerNode;
+        private final boolean usePerDocumentThrottledDeleteBucket;
+        private final boolean restartOnDeployWhenOnnxModelChanges;
 
         public FeatureFlags(FlagSource source, ApplicationId appId, Version version) {
             this.defaultTermwiseLimit = flagValue(source, appId, version, Flags.DEFAULT_TERM_WISE_LIMIT);
@@ -225,7 +235,6 @@ public class ModelContextImpl implements ModelContext {
             this.useV8GeoPositions = flagValue(source, appId, version, Flags.USE_V8_GEO_POSITIONS);
             this.maxCompactBuffers = flagValue(source, appId, version, Flags.MAX_COMPACT_BUFFERS);
             this.ignoredHttpUserAgents = flagValue(source, appId, version, PermanentFlags.IGNORED_HTTP_USER_AGENTS);
-            this.adminClusterArchitecture = Architecture.valueOf(flagValue(source, appId, version, PermanentFlags.ADMIN_CLUSTER_NODE_ARCHITECTURE));
             this.enableProxyProtocolMixedMode = flagValue(source, appId, version, Flags.ENABLE_PROXY_PROTOCOL_MIXED_MODE);
             this.sharedStringRepoNoReclaim = flagValue(source, appId, version, Flags.SHARED_STRING_REPO_NO_RECLAIM);
             this.logFileCompressionAlgorithm = flagValue(source, appId, version, Flags.LOG_FILE_COMPRESSION_ALGORITHM);
@@ -238,11 +247,17 @@ public class ModelContextImpl implements ModelContext {
             this.queryDispatchPolicy = flagValue(source, appId, version, Flags.QUERY_DISPATCH_POLICY);
             this.queryDispatchWarmup = flagValue(source, appId, version, PermanentFlags.QUERY_DISPATCH_WARMUP);
             this.heapPercentage = flagValue(source, appId, version, PermanentFlags.HEAP_SIZE_PERCENTAGE);
-            this.enableGlobalPhase = flagValue(source, appId, version, Flags.ENABLE_GLOBAL_PHASE);
             this.summaryDecodePolicy = flagValue(source, appId, version, Flags.SUMMARY_DECODE_POLICY);
-            this.enableDataplaneProxy = flagValue(source, appId, version, Flags.ENABLE_DATAPLANE_PROXY);
-            this.enableNestedMultivalueGrouping = flagValue(source, appId, version, Flags.ENABLE_NESTED_MULTIVALUE_GROUPING);
-            this.useReconfigurableDispatcher = flagValue(source, appId, version, Flags.USE_RECONFIGURABLE_DISPATCHER);
+            this.contentLayerMetadataFeatureLevel = flagValue(source, appId, version, Flags.CONTENT_LAYER_METADATA_FEATURE_LEVEL);
+            this.dynamicHeapSize = flagValue(source, appId, version, Flags.DYNAMIC_HEAP_SIZE);
+            this.unknownConfigDefinition = flagValue(source, appId, version, Flags.UNKNOWN_CONFIG_DEFINITION);
+            this.searchHandlerThreadpool = flagValue(source, appId, version, Flags.SEARCH_HANDLER_THREADPOOL);
+            this.mergingMaxMemoryUsagePerNode = flagValue(source, appId, version, Flags.MERGING_MAX_MEMORY_USAGE_PER_NODE);
+            this.usePerDocumentThrottledDeleteBucket = flagValue(source, appId, version, Flags.USE_PER_DOCUMENT_THROTTLED_DELETE_BUCKET);
+            this.alwaysMarkPhraseExpensive =  flagValue(source, appId, version, Flags.ALWAYS_MARK_PHRASE_EXPENSIVE);
+            this.createPostinglistWhenNonStrict = flagValue(source, appId, version, Flags.CREATE_POSTINGLIST_WHEN_NON_STRICT);
+            this.useEstimateForFetchPostings = flagValue(source, appId, version, Flags.USE_ESTIMATE_FOR_FETCH_POSTINGS);
+            this.restartOnDeployWhenOnnxModelChanges = flagValue(source, appId, version, Flags.RESTART_ON_DEPLOY_WHEN_ONNX_MODEL_CHANGES);
         }
 
         @Override public int heapSizePercentage() { return heapPercentage; }
@@ -273,7 +288,6 @@ public class ModelContextImpl implements ModelContext {
         @Override public boolean useV8GeoPositions() { return useV8GeoPositions; }
         @Override public int maxCompactBuffers() { return maxCompactBuffers; }
         @Override public List<String> ignoredHttpUserAgents() { return ignoredHttpUserAgents; }
-        @Override public Architecture adminClusterArchitecture() { return adminClusterArchitecture; }
         @Override public boolean enableProxyProtocolMixedMode() { return enableProxyProtocolMixedMode; }
         @Override public boolean sharedStringRepoNoReclaim() { return sharedStringRepoNoReclaim; }
         @Override public int mbusJavaRpcNumTargets() { return mbus_java_num_targets; }
@@ -284,21 +298,28 @@ public class ModelContextImpl implements ModelContext {
         @Override public int rpcEventsBeforeWakeup() { return rpc_events_before_wakeup; }
         @Override public String logFileCompressionAlgorithm(String defVal) {
             var fflag = this.logFileCompressionAlgorithm;
-            if (fflag != null && ! fflag.equals("")) {
+            if (fflag != null && ! fflag.isEmpty()) {
                 return fflag;
             }
             return defVal;
         }
-        @Override public boolean enableGlobalPhase() { return enableGlobalPhase; }
-        @Override public boolean enableDataplaneProxy() { return enableDataplaneProxy; }
-        @Override public boolean enableNestedMultivalueGrouping() { return enableNestedMultivalueGrouping; }
-        @Override public boolean useReconfigurableDispatcher() { return useReconfigurableDispatcher; }
+        @Override public boolean alwaysMarkPhraseExpensive() { return alwaysMarkPhraseExpensive; }
+        @Override public boolean createPostinglistWhenNonStrict() { return createPostinglistWhenNonStrict; }
+        @Override public boolean useEstimateForFetchPostings() { return useEstimateForFetchPostings; }
+        @Override public int contentLayerMetadataFeatureLevel() { return contentLayerMetadataFeatureLevel; }
+        @Override public boolean dynamicHeapSize() { return dynamicHeapSize; }
+        @Override public String unknownConfigDefinition() { return unknownConfigDefinition; }
+        @Override public int searchHandlerThreadpool() { return searchHandlerThreadpool; }
+        @Override public long mergingMaxMemoryUsagePerNode() { return mergingMaxMemoryUsagePerNode; }
+        @Override public boolean usePerDocumentThrottledDeleteBucket() { return usePerDocumentThrottledDeleteBucket; }
+        @Override public boolean restartOnDeployWhenOnnxModelChanges() { return restartOnDeployWhenOnnxModelChanges; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, Version vespaVersion, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)
-                    .with(FetchVector.Dimension.APPLICATION_ID, appId.serializedForm())
-                    .with(FetchVector.Dimension.VESPA_VERSION, vespaVersion.toFullString())
-                    .with(FetchVector.Dimension.TENANT_ID, appId.tenant().value())
+                    .with(Dimension.INSTANCE_ID, appId.serializedForm())
+                    .with(Dimension.APPLICATION, appId.toSerializedFormWithoutInstance())
+                    .with(Dimension.VESPA_VERSION, vespaVersion.toFullString())
+                    .with(Dimension.TENANT_ID, appId.tenant().value())
                     .boxedValue();
         }
 
@@ -308,9 +329,10 @@ public class ModelContextImpl implements ModelContext {
                                        ClusterSpec.Type clusterType,
                                        UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)
-                       .with(FetchVector.Dimension.APPLICATION_ID, appId.serializedForm())
-                       .with(FetchVector.Dimension.CLUSTER_TYPE, clusterType.name())
-                       .with(FetchVector.Dimension.VESPA_VERSION, vespaVersion.toFullString())
+                       .with(Dimension.INSTANCE_ID, appId.serializedForm())
+                       .with(Dimension.APPLICATION, appId.toSerializedFormWithoutInstance())
+                       .with(Dimension.CLUSTER_TYPE, clusterType.name())
+                       .with(Dimension.VESPA_VERSION, vespaVersion.toFullString())
                        .boxedValue();
         }
 
@@ -320,9 +342,10 @@ public class ModelContextImpl implements ModelContext {
                                        ClusterSpec.Id clusterId,
                                        UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)
-                       .with(FetchVector.Dimension.APPLICATION_ID, appId.serializedForm())
-                       .with(FetchVector.Dimension.CLUSTER_ID, clusterId.value())
-                       .with(FetchVector.Dimension.VESPA_VERSION, vespaVersion.toFullString())
+                       .with(Dimension.INSTANCE_ID, appId.serializedForm())
+                       .with(Dimension.APPLICATION, appId.toSerializedFormWithoutInstance())
+                       .with(Dimension.CLUSTER_ID, clusterId.value())
+                       .with(Dimension.VESPA_VERSION, vespaVersion.toFullString())
                        .boxedValue();
         }
 
@@ -397,21 +420,16 @@ public class ModelContextImpl implements ModelContext {
             this.tenantSecretStores = tenantSecretStores;
             this.secretStore = secretStore;
             this.jvmGCOptionsFlag = PermanentFlags.JVM_GC_OPTIONS.bindTo(flagSource)
-                    .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm());
-            this.allowDisableMtls = PermanentFlags.ALLOW_DISABLE_MTLS.bindTo(flagSource)
-                    .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
+                    .with(Dimension.INSTANCE_ID, applicationId.serializedForm())
+                    .with(Dimension.APPLICATION, applicationId.toSerializedFormWithoutInstance());
+            this.allowDisableMtls = flagValue(flagSource, applicationId, PermanentFlags.ALLOW_DISABLE_MTLS);
             this.operatorCertificates = operatorCertificates;
-            this.tlsCiphersOverride = PermanentFlags.TLS_CIPHERS_OVERRIDE.bindTo(flagSource)
-                    .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
+            this.tlsCiphersOverride = flagValue(flagSource, applicationId, PermanentFlags.TLS_CIPHERS_OVERRIDE);
             this.zoneDnsSuffixes = configserverConfig.zoneDnsSuffixes();
-            this.environmentVariables = PermanentFlags.ENVIRONMENT_VARIABLES.bindTo(flagSource)
-                    .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
+            this.environmentVariables = flagValue(flagSource, applicationId, PermanentFlags.ENVIRONMENT_VARIABLES);
             this.cloudAccount = cloudAccount;
-            this.allowUserFilters = PermanentFlags.ALLOW_USER_FILTERS.bindTo(flagSource)
-                    .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value();
-            this.endpointConnectionTtl = Duration.ofSeconds(
-                    PermanentFlags.ENDPOINT_CONNECTION_TTL.bindTo(flagSource)
-                            .with(FetchVector.Dimension.APPLICATION_ID, applicationId.serializedForm()).value());
+            this.allowUserFilters = flagValue(flagSource, applicationId, PermanentFlags.ALLOW_USER_FILTERS);
+            this.endpointConnectionTtl = Duration.ofSeconds(flagValue(flagSource, applicationId, PermanentFlags.ENDPOINT_CONNECTION_TTL));
             this.dataplaneTokens = dataplaneTokens;
         }
 
@@ -512,4 +530,10 @@ public class ModelContextImpl implements ModelContext {
         @Override public Duration endpointConnectionTtl() { return endpointConnectionTtl; }
     }
 
+    private static <V> V flagValue(FlagSource source, ApplicationId appId, UnboundFlag<? extends V, ?, ?> flag) {
+        return flag.bindTo(source)
+                .with(Dimension.INSTANCE_ID, appId.serializedForm())
+                .with(Dimension.APPLICATION, appId.toSerializedFormWithoutInstance())
+                .boxedValue();
+    }
 }

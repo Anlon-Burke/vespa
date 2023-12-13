@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.session;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
@@ -118,26 +118,26 @@ public class SessionZooKeeperClient {
 
     public long sessionId() { return sessionId; }
 
-    public CompletionWaiter createActiveWaiter() { return createCompletionWaiter(ACTIVE_BARRIER); }
+    public CompletionWaiter createActiveWaiter() { return createCompletionWaiter(barrierPath(ACTIVE_BARRIER)); }
 
-    CompletionWaiter createPrepareWaiter() { return createCompletionWaiter(PREPARE_BARRIER); }
+    CompletionWaiter createPrepareWaiter() { return createCompletionWaiter(barrierPath(PREPARE_BARRIER)); }
 
-    CompletionWaiter getPrepareWaiter() { return getCompletionWaiter(getWaiterPath(PREPARE_BARRIER)); }
+    CompletionWaiter getPrepareWaiter() { return getCompletionWaiter(barrierPath(PREPARE_BARRIER)); }
 
-    CompletionWaiter getActiveWaiter() { return getCompletionWaiter(getWaiterPath(ACTIVE_BARRIER)); }
+    CompletionWaiter getActiveWaiter() { return getCompletionWaiter(barrierPath(ACTIVE_BARRIER)); }
 
-    CompletionWaiter getUploadWaiter() { return getCompletionWaiter(getWaiterPath(UPLOAD_BARRIER)); }
+    CompletionWaiter getUploadWaiter() { return getCompletionWaiter(barrierPath(UPLOAD_BARRIER)); }
 
     private static final String PREPARE_BARRIER = "prepareBarrier";
     private static final String ACTIVE_BARRIER = "activeBarrier";
     private static final String UPLOAD_BARRIER = "uploadBarrier";
 
-    private Path getWaiterPath(String barrierName) {
+    private Path barrierPath(String barrierName) {
         return sessionPath.append(barrierName);
     }
 
-    private CompletionWaiter createCompletionWaiter(String waiterNode) {
-        return curator.createCompletionWaiter(sessionPath, waiterNode, serverId, barrierWaitForAllTimeout);
+    private CompletionWaiter createCompletionWaiter(Path path) {
+        return curator.createCompletionWaiter(path, serverId, barrierWaitForAllTimeout);
     }
 
     private CompletionWaiter getCompletionWaiter(Path path) {
@@ -228,6 +228,8 @@ public class SessionZooKeeperClient {
     public SessionData readSessionData() {
         return SessionData.fromSlime(SlimeUtils.jsonToSlime(curator.getData(sessionPath.append(SESSION_DATA_PATH)).orElseThrow()));
     }
+
+    public boolean sessionDataExists() { return curator.exists(sessionPath.append(SESSION_DATA_PATH)); }
 
     public Version readVespaVersion() {
         Optional<byte[]> data = curator.getData(versionPath());

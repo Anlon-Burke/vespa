@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.schema.derived;
 
 import ai.vespa.rankingexpression.importer.configmodelview.ImportedMlModels;
@@ -19,6 +19,7 @@ import com.yahoo.searchlib.rankingexpression.Reference;
 import com.yahoo.searchlib.rankingexpression.parser.ParseException;
 import com.yahoo.searchlib.rankingexpression.rule.ReferenceNode;
 import com.yahoo.searchlib.rankingexpression.rule.SerializationContext;
+import com.yahoo.tensor.evaluation.TypeContext;
 import com.yahoo.vespa.config.search.RankProfilesConfig;
 import static com.yahoo.searchlib.rankingexpression.Reference.wrapInRankingExpression;
 
@@ -35,7 +36,6 @@ import java.util.ListIterator;
 import java.util.Map;
 import java.util.OptionalDouble;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * A rank profile derived from a search definition, containing exactly the features available natively in the server
@@ -53,6 +53,7 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
 
     private final String name;
     private final Compressor.Compression compressedProperties;
+    private final Map<String, RankProfile.RankFeatureNormalizer> featureNormalizers;
 
     /**  The compiled profile this is created from. */
     private final Collection<RankProfile.Constant> constants;
@@ -65,13 +66,14 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
         this.name = rankProfile.name();
         /*
          * Forget the RankProfiles as soon as possible. They can become very large and memory hungry
-         * Especially do not refer then through any member variables due to the RawRankProfile living forever.
+         * Especially do not refer them through any member variables due to the RawRankProfile living forever.
          */
         RankProfile compiled = rankProfile.compile(queryProfiles, importedModels);
         constants = compiled.constants().values();
         onnxModels = compiled.onnxModels().values();
-        compressedProperties = compress(new Deriver(compiled, attributeFields, deployProperties, queryProfiles)
-                                                .derive(largeExpressions));
+        var deriver = new Deriver(compiled, attributeFields, deployProperties, queryProfiles);
+        compressedProperties = compress(deriver.derive(largeExpressions));
+        this.featureNormalizers = compiled.getFeatureNormalizers();
     }
 
     public Collection<RankProfile.Constant> constants() { return constants; }
@@ -110,6 +112,18 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
         b.fef(fefB);
     }
 
+    private void buildNormalizers(RankProfilesConfig.Rankprofile.Builder b) {
+        for (var normalizer : featureNormalizers.values()) {
+            var nBuilder = new RankProfilesConfig.Rankprofile.Normalizer.Builder();
+            nBuilder.name(normalizer.name());
+            nBuilder.input(normalizer.input());
+            var algo = RankProfilesConfig.Rankprofile.Normalizer.Algo.Enum.valueOf(normalizer.algo());
+            nBuilder.algo(algo);
+            nBuilder.kparam(normalizer.kparam());
+            b.normalizer(nBuilder);
+        }
+     }
+
     /**
      * Returns the properties of this as an unmodifiable list.
      * Note: This method is expensive.
@@ -120,6 +134,7 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
     public void getConfig(RankProfilesConfig.Builder builder) {
         RankProfilesConfig.Rankprofile.Builder b = new RankProfilesConfig.Rankprofile.Builder().name(getName());
         getRankProperties(b);
+        buildNormalizers(b);
         builder.rankprofile(b);
     }
 
@@ -133,7 +148,7 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
         private final Map<String, FieldRankSettings> fieldRankSettings = new java.util.LinkedHashMap<>();
         private final Set<ReferenceNode> summaryFeatures;
         private final Set<ReferenceNode> matchFeatures;
-        private final Collection<String> hiddenMatchFeatures;
+        private final Set<ReferenceNode> hiddenMatchFeatures;
         private final Set<ReferenceNode> rankFeatures;
         private final Map<String, String> featureRenames = new java.util.LinkedHashMap<>();
         private final List<RankProfile.RankProperty> rankProperties;
@@ -155,7 +170,9 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
         private final OptionalDouble approximateThreshold;
         private final OptionalDouble targetHitsMaxAdjustmentFactor;
         private final double rankScoreDropLimit;
-        private final boolean enableNestedMultivalueGrouping;
+        private final boolean alwaysMarkPhraseExpensive;
+        private final boolean createPostinglistWhenNonStrict;
+        private final boolean useEstimateForFetchPostings;
 
         /**
          * The rank type definitions used to derive settings for the native rank features
@@ -170,6 +187,7 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
         private RankingExpression secondPhaseRanking;
         private RankingExpression globalPhaseRanking;
         private final int globalPhaseRerankCount;
+        private final SerializationContext functionSerializationContext;
 
         /**
          * Creates a raw rank profile from the given rank profile
@@ -187,6 +205,7 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             summaryFeatures = new LinkedHashSet<>(compiled.getSummaryFeatures());
             matchFeatures = new LinkedHashSet<>(compiled.getMatchFeatures());
             hiddenMatchFeatures = compiled.getHiddenMatchFeatures();
+            matchFeatures.addAll(hiddenMatchFeatures);
             rankFeatures = compiled.getRankFeatures();
             rerankCount = compiled.getRerankCount();
             globalPhaseRerankCount = compiled.getGlobalPhaseRerankCount();
@@ -195,7 +214,9 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             minHitsPerThread = compiled.getMinHitsPerThread();
             numSearchPartitions = compiled.getNumSearchPartitions();
             termwiseLimit = compiled.getTermwiseLimit().orElse(deployProperties.featureFlags().defaultTermwiseLimit());
-            enableNestedMultivalueGrouping = deployProperties.featureFlags().enableNestedMultivalueGrouping();
+            alwaysMarkPhraseExpensive = deployProperties.featureFlags().alwaysMarkPhraseExpensive();
+            createPostinglistWhenNonStrict = deployProperties.featureFlags().createPostinglistWhenNonStrict();
+            useEstimateForFetchPostings = deployProperties.featureFlags().useEstimateForFetchPostings();
             postFilterThreshold = compiled.getPostFilterThreshold();
             approximateThreshold = compiled.getApproximateThreshold();
             targetHitsMaxAdjustmentFactor = compiled.getTargetHitsMaxAdjustmentFactor();
@@ -207,10 +228,8 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             Map<String, RankProfile.RankingExpressionFunction> functions = compiled.getFunctions();
             List<ExpressionFunction> functionExpressions = functions.values().stream().map(RankProfile.RankingExpressionFunction::function).toList();
             Map<String, String> functionProperties = new LinkedHashMap<>();
-            SerializationContext functionSerializationContext = new SerializationContext(functionExpressions,
-                                                                                         Map.of(),
-                                                                                         compiled.typeContext(queryProfiles));
-
+            var typeContext = compiled.typeContext(queryProfiles);
+            this.functionSerializationContext = new SerializationContext(functionExpressions, Map.of(), typeContext);
             if (firstPhaseRanking != null) {
                 functionProperties.putAll(firstPhaseRanking.getRankProperties(functionSerializationContext));
             }
@@ -220,12 +239,27 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             if (globalPhaseRanking != null) {
                 functionProperties.putAll(globalPhaseRanking.getRankProperties(functionSerializationContext));
             }
+            deriveFeatureDeclarations(matchFeatures, typeContext, functionProperties);
+            deriveFeatureDeclarations(summaryFeatures, typeContext, functionProperties);
             derivePropertiesAndFeaturesFromFunctions(functions, functionProperties, functionSerializationContext);
             deriveOnnxModelFunctionsAndFeatures(compiled);
 
             deriveRankTypeSetting(compiled, attributeFields);
             deriveFilterFields(compiled);
             deriveWeightProperties(compiled);
+        }
+
+        private void deriveFeatureDeclarations(Collection<ReferenceNode> features,
+                                               TypeContext typeContext,
+                                               Map<String, String> functionProperties)
+        {
+            for (ReferenceNode feature : features) {
+                var tt = feature.type(typeContext);
+                if (tt != null && tt.rank() > 0) {
+                    String k = "vespa.type.feature." + feature.getName() + feature.getArguments();
+                    functionProperties.put(k, tt.toString());
+                }
+            }
         }
 
         private void deriveFilterFields(RankProfile rp) {
@@ -235,8 +269,6 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
         private void derivePropertiesAndFeaturesFromFunctions(Map<String, RankProfile.RankingExpressionFunction> functions,
                                                               Map<String, String> functionProperties,
                                                               SerializationContext functionContext) {
-            if (functions.isEmpty()) return;
-
             replaceFunctionFeatures(summaryFeatures, functionContext);
             replaceFunctionFeatures(matchFeatures, functionContext);
 
@@ -271,28 +303,41 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
 
         private void replaceFunctionFeatures(Set<ReferenceNode> features, SerializationContext context) {
             if (features == null) return;
-            Map<String, ReferenceNode> functionFeatures = new LinkedHashMap<>();
+            Set<ReferenceNode> functionFeatures = new LinkedHashSet<>();
             for (Iterator<ReferenceNode> i = features.iterator(); i.hasNext(); ) {
                 ReferenceNode referenceNode = i.next();
                 // Is the feature a function?
                 ExpressionFunction function = context.getFunction(referenceNode.getName());
                 if (function != null) {
-                    String propertyName = RankingExpression.propertyName(referenceNode.getName());
-                    String expressionString = function.getBody().getRoot().toString(context).toString();
+                    if (referenceNode.getOutput() != null) {
+                        throw new IllegalArgumentException("function " + referenceNode.getName() +
+                                                           " cannot provide output " + referenceNode.getOutput() +
+                                                           " demanded by feature " + referenceNode);
+                    }
+                    int needArgs = function.arguments().size();
+                    var useArgs = referenceNode.getArguments();
+                    if (needArgs != useArgs.size()) {
+                        throw new IllegalArgumentException("function " + referenceNode.getName() +
+                                                           " needs " + needArgs +
+                                                           " arguments but gets " + useArgs.size() +
+                                                           " from feature " + referenceNode);
+                    }
+                    var instance = function.expand(context, useArgs.expressions(), new java.util.ArrayDeque<>());
+                    String propertyName = RankingExpression.propertyName(instance.getName());
+                    String expressionString = instance.getExpressionString();
                     context.addFunctionSerialization(propertyName, expressionString);
-                    function.returnType().ifPresent(t -> context.addFunctionTypeSerialization(referenceNode.getName(), t));
-                    var backendReferenceNode = new ReferenceNode(wrapInRankingExpression(referenceNode.getName()),
-                                                                 referenceNode.getArguments().expressions(),
-                                                                 referenceNode.getOutput());
+                    function.returnType().ifPresent(t -> context.addFunctionTypeSerialization(instance.getName(), t));
+                    String backendReference = wrapInRankingExpression(instance.getName());
+                    var backendReferenceNode = new ReferenceNode(backendReference, List.of(), null);
                     // tell backend to map back to the name the user expects:
-                    featureRenames.put(backendReferenceNode.toString(), referenceNode.toString());
-                    functionFeatures.put(referenceNode.getName(), backendReferenceNode);
+                    featureRenames.put(backendReference, referenceNode.toString());
+                    functionFeatures.add(backendReferenceNode);
                     i.remove(); // Will add the expanded one in next block
                 }
             }
             // Then, replace the features that were functions
-            for (Map.Entry<String, ReferenceNode> e : functionFeatures.entrySet()) {
-                features.add(e.getValue());
+            for (ReferenceNode mappedFun : functionFeatures) {
+                features.add(mappedFun);
             }
         }
 
@@ -400,8 +445,8 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             for (ReferenceNode feature : matchFeatures) {
                 properties.add(new Pair<>("vespa.match.feature", feature.toString()));
             }
-            for (String feature : hiddenMatchFeatures) {
-                properties.add(new Pair<>("vespa.hidden.matchfeature", feature));
+            for (ReferenceNode feature : hiddenMatchFeatures) {
+                properties.add(new Pair<>("vespa.hidden.matchfeature", feature.toString()));
             }
             for (ReferenceNode feature : rankFeatures) {
                 properties.add(new Pair<>("vespa.dump.feature", feature.toString()));
@@ -422,8 +467,14 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             if (termwiseLimit < 1.0) {
                 properties.add(new Pair<>("vespa.matching.termwise_limit", termwiseLimit + ""));
             }
-            if (enableNestedMultivalueGrouping) {
-                properties.add(new Pair<>("vespa.temporary.enable_nested_multivalue_grouping", String.valueOf(enableNestedMultivalueGrouping)));
+            if (alwaysMarkPhraseExpensive) {
+                properties.add(new Pair<>("vespa.matching.always_mark_phrase_expensive", String.valueOf(alwaysMarkPhraseExpensive)));
+            }
+            if ( ! createPostinglistWhenNonStrict) {
+                properties.add(new Pair<>("vespa.matching.create_postinglist_when_non_strict", String.valueOf(createPostinglistWhenNonStrict)));
+            }
+            if (useEstimateForFetchPostings) {
+                properties.add(new Pair<>("vespa.matching.use_estimate_for_fetch_postings", String.valueOf(useEstimateForFetchPostings)));
             }
             if (postFilterThreshold.isPresent()) {
                 properties.add(new Pair<>("vespa.matching.global_filter.upper_limit", String.valueOf(postFilterThreshold.getAsDouble())));
@@ -513,11 +564,12 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             if ("".equals(name))
                 name = phase;
 
+            String expressionAsString = expression.getRoot().toString(functionSerializationContext).toString();
             if (expression.getRoot() instanceof ReferenceNode) {
-                properties.add(new Pair<>("vespa.rank." + phase, expression.getRoot().toString()));
+                properties.add(new Pair<>("vespa.rank." + phase, expressionAsString));
             } else {
                 properties.add(new Pair<>("vespa.rank." + phase, wrapInRankingExpression(name)));
-                properties.add(new Pair<>(RankingExpression.propertyName(name), expression.getRoot().toString()));
+                properties.add(new Pair<>(RankingExpression.propertyName(name), expressionAsString));
             }
             return properties;
         }

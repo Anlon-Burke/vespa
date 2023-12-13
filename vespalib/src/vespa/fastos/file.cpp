@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 //************************************************************************
 /**
  * Implementation of FastOS_FileInterface methods.
@@ -306,10 +306,3 @@ FastOS_FileInterface::getLastErrorString()
 void FastOS_FileInterface::dropFromCache() const
 {
 }
-
-FastOS_DirectoryScanInterface::FastOS_DirectoryScanInterface(const char *path)
-    : _searchPath(path)
-{
-}
-
-FastOS_DirectoryScanInterface::~FastOS_DirectoryScanInterface() = default;

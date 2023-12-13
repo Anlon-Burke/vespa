@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.jdisc.http.server.jetty;
 
 import com.yahoo.jdisc.Metric;
@@ -25,7 +25,7 @@ public class SslHandshakeFailedListenerTest {
     @Test
     void includes_client_ip_dimension_present_when_peer_available() {
         listener.handshakeFailed(handshakeEvent(true), new SSLHandshakeException("Empty server certificate chain"));
-        verify(metrics).createContext(eq(Map.of("clientIp", "127.0.0.1", "serverName", "connector", "serverPort", 1234)));
+        verify(metrics).createContext(eq(Map.of("serverName", "connector", "serverPort", 1234)));
     }
 
     @Test

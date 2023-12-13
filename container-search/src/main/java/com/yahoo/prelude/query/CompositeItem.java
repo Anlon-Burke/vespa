@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
 
@@ -309,6 +309,10 @@ public abstract class CompositeItem extends Item {
     /** Returns the single child of this, if this can be omitted without changes to recall semantics. */
     public Optional<Item> extractSingleChild() {
         return getItemCount() == 1 ? Optional.of(getItem(0)) : Optional.empty();
+    }
+
+    public boolean acceptsItemsOfType(ItemType itemType) {
+        return true;
     }
 
     /** Handles mutator calls correctly */

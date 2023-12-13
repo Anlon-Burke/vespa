@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.provisioning;
 
 import com.yahoo.component.Version;
@@ -9,6 +9,7 @@ import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Environment;
 import com.yahoo.config.provision.NodeResources;
+import com.yahoo.config.provision.NodeResources.DiskSpeed;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.flags.StringFlag;
@@ -18,7 +19,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import static com.yahoo.config.provision.NodeResources.Architecture;
-import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
+import static com.yahoo.vespa.flags.Dimension.INSTANCE_ID;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -90,7 +91,10 @@ public class CapacityPolicies {
     }
 
     public NodeResources specifyFully(NodeResources resources, ClusterSpec clusterSpec, ApplicationId applicationId) {
-        return resources.withUnspecifiedNumbersFrom(defaultResources(clusterSpec, applicationId));
+        NodeResources amended = resources.withUnspecifiedFieldsFrom(defaultResources(clusterSpec, applicationId).with(DiskSpeed.any));
+        // TODO jonmv: remove this after all apps are 8.248.8 or above; architecture for admin nodes was not picked up before this.
+        if (clusterSpec.vespaVersion().isBefore(Version.fromString("8.248.8"))) amended = amended.with(resources.architecture());
+        return amended;
     }
 
     private NodeResources defaultResources(ClusterSpec clusterSpec, ApplicationId applicationId) {
@@ -113,11 +117,13 @@ public class CapacityPolicies {
         }
 
         if (clusterSpec.type() == ClusterSpec.Type.content) {
+            // When changing defaults here update cloud.vespa.ai/en/reference/services
             return zone.cloud().dynamicProvisioning()
                    ? versioned(clusterSpec, Map.of(new Version(0), new NodeResources(2, 16, 300, 0.3)))
                    : versioned(clusterSpec, Map.of(new Version(0), new NodeResources(1.5, 8, 50, 0.3)));
         }
         else {
+            // When changing defaults here update cloud.vespa.ai/en/reference/services
             return zone.cloud().dynamicProvisioning()
                    ? versioned(clusterSpec, Map.of(new Version(0), new NodeResources(2.0, 8, 50, 0.3)))
                    : versioned(clusterSpec, Map.of(new Version(0), new NodeResources(1.5, 8, 50, 0.3)));
@@ -144,10 +150,12 @@ public class CapacityPolicies {
     }
 
     private Architecture adminClusterArchitecture(ApplicationId instance) {
-        return Architecture.valueOf(adminClusterNodeArchitecture.with(APPLICATION_ID, instance.serializedForm()).value());
+        return Architecture.valueOf(adminClusterNodeArchitecture.with(INSTANCE_ID, instance.serializedForm()).value());
     }
 
-    /** Returns the resources for the newest version not newer than that requested in the cluster spec. */
+    /**
+     * Returns the resources for the newest version not newer than that requested in the cluster spec.
+     */
     static NodeResources versioned(ClusterSpec spec, Map<Version, NodeResources> resources) {
         return requireNonNull(new TreeMap<>(resources).floorEntry(spec.vespaVersion()),
                               "no default resources applicable for " + spec + " among: " + resources)

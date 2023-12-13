@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.rankingexpression.importer.operations;
 
 import ai.vespa.rankingexpression.importer.DimensionRenamer;
@@ -55,18 +55,18 @@ public class Gemm extends IntermediateOperation {
                 TensorType.Dimension dimC0 = cDimensions.get(0);
                 TensorType.Dimension dimC1 = cDimensions.get(1);
 
-                if ( ! (dimA.size().get().equals(dimC0.size().get()) || dimC0.size().get() == 1) ) {
+                if ( ! (dimA.size().equals(dimC0.size()) || dimC0.size().get() == 1) ) {
                     throw new IllegalArgumentException("GEMM: type of optional input C " + inputs.get(2).type().get() +
                             " is not compatible or not broadcastable to " + result.type());
                 }
-                if ( ! (dimB.size().get().equals(dimC1.size().get()) || dimC1.size().get() == 1) ) {
+                if ( ! (dimB.size().equals(dimC1.size()) || dimC1.size().get() == 1) ) {
                     throw new IllegalArgumentException("GEMM: type of optional input C " + inputs.get(2).type().get() +
                             " is not compatible or not broadcastable to " + result.type());
                 }
 
             } else if (cDimensions.size() == 1) {
                 TensorType.Dimension dimC0 = cDimensions.get(0);
-                if ( ! (dimB.size().get().equals(dimC0.size().get()) || dimC0.size().get() == 1) ) {
+                if ( ! (dimB.size().equals(dimC0.size()) || dimC0.size().get() == 1) ) {
                     throw new IllegalArgumentException("GEMM: type of optional input C " + inputs.get(2).type().get() +
                             " is not compatible or not broadcastable to " + result.type());
                 }

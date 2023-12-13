@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "intermediate_blueprints.h"
 #include "andnotsearch.h"
@@ -34,13 +34,13 @@ size_t lookup_create_source(std::vector<std::unique_ptr<CombineType> > &sources,
 template <typename CombineType>
 void optimize_source_blenders(IntermediateBlueprint &self, size_t begin_idx) {
     std::vector<size_t> source_blenders;
-    SourceBlenderBlueprint *reference = nullptr;
+    const SourceBlenderBlueprint * reference = nullptr;
     for (size_t i = begin_idx; i < self.childCnt(); ++i) {
-        if (self.getChild(i).isSourceBlender()) {
-            auto *child = static_cast<SourceBlenderBlueprint *>(&self.getChild(i));
-            if (reference == nullptr || reference->isCompatibleWith(*child)) {
+        const SourceBlenderBlueprint * sbChild = self.getChild(i).asSourceBlender();
+        if (sbChild) {
+            if (reference == nullptr || reference->isCompatibleWith(*sbChild)) {
                 source_blenders.push_back(i);
-                reference = child;
+                reference = sbChild;
             }
         }
     }
@@ -50,16 +50,14 @@ void optimize_source_blenders(IntermediateBlueprint &self, size_t begin_idx) {
         while (!source_blenders.empty()) {
             blender_up = self.removeChild(source_blenders.back());
             source_blenders.pop_back();
-            assert(blender_up->isSourceBlender());
-            auto *blender = static_cast<SourceBlenderBlueprint *>(blender_up.get());
+            SourceBlenderBlueprint * blender = blender_up->asSourceBlender();
             while (blender->childCnt() > 0) {
-                Blueprint::UP child_up = blender->removeChild(blender->childCnt() - 1);
+                Blueprint::UP child_up = blender->removeLastChild();
                 size_t source_idx = lookup_create_source(sources, child_up->getSourceId(), self.get_docid_limit());
                 sources[source_idx]->addChild(std::move(child_up));
             }
         }
-        assert(blender_up->isSourceBlender());
-        auto *top = static_cast<SourceBlenderBlueprint *>(blender_up.get());
+        SourceBlenderBlueprint * top = blender_up->asSourceBlender();
         while (!sources.empty()) {
             top->addChild(std::move(sources.back()));
             sources.pop_back();
@@ -83,15 +81,40 @@ need_normal_features_for_children(const IntermediateBlueprint &blueprint, fef::M
     }
 }
 
+double rel_est_first_child(const Blueprint::Children &children) {
+    return children.empty() ? 0.0 : children[0]->getState().relative_estimate();
+}
+
+double rel_est_and(const Blueprint::Children &children) {
+    double flow = 1.0;
+    for (const Blueprint::UP &child: children) {
+        flow *= child->getState().relative_estimate();
+    }
+    return children.empty() ? 0.0 : flow;
+}
+
+double rel_est_or(const Blueprint::Children &children) {
+    double flow = 1.0;
+    for (const Blueprint::UP &child: children) {
+        flow *= (1.0 - child->getState().relative_estimate());
+    }
+    return (1.0 - flow);
+}
+
 } // namespace search::queryeval::<unnamed>
 
 //-----------------------------------------------------------------------------
+
+double
+AndNotBlueprint::calculate_relative_estimate() const {
+    return rel_est_first_child(get_children());
+}
 
 Blueprint::HitEstimate
 AndNotBlueprint::combine(const std::vector<HitEstimate> &data) const
 {
     if (data.empty()) {
-        return HitEstimate();
+        return {};
     }
     return data[0];
 }
@@ -99,29 +122,41 @@ AndNotBlueprint::combine(const std::vector<HitEstimate> &data) const
 FieldSpecBaseList
 AndNotBlueprint::exposeFields() const
 {
-    return FieldSpecBaseList();
+    return {};
 }
 
 void
-AndNotBlueprint::optimize_self()
+AndNotBlueprint::optimize_self(OptimizePass pass)
 {
     if (childCnt() == 0) {
         return;
     }
-    if (getChild(0).isAndNot()) {
-        auto *child = static_cast<AndNotBlueprint *>(&getChild(0));
-        while (child->childCnt() > 1) {
-            addChild(child->removeChild(1));
+    if (pass == OptimizePass::FIRST) {
+        if (auto *child = getChild(0).asAndNot()) {
+            while (child->childCnt() > 1) {
+                addChild(child->removeLastChild());
+            }
+            insertChild(1, child->removeChild(0));
+            removeChild(0);
         }
-        insertChild(1, child->removeChild(0));
-        removeChild(0);
-    }
-    for (size_t i = 1; i < childCnt(); ++i) {
-        if (getChild(i).getState().estimate().empty) {
-            removeChild(i--);
+        if (auto *child = getChild(0).asAnd()) {
+            for (size_t i = 0; i < child->childCnt(); ++i) {
+                if (auto *grand_child = child->getChild(i).asAndNot()) {
+                    while (grand_child->childCnt() > 1) {
+                        addChild(grand_child->removeLastChild());
+                    }
+                    child->addChild(grand_child->removeChild(0));
+                    child->removeChild(i--);
+                }
+            }
+        }
+        for (size_t i = 1; i < childCnt(); ++i) {
+            if (getChild(i).getState().estimate().empty) {
+                removeChild(i--);
+            }
         }
     }
-    if ( !(getParent() && getParent()->isAndNot()) ) {
+    if (pass == OptimizePass::LAST) {
         optimize_source_blenders<OrBlueprint>(*this, 1);
     }
 }
@@ -132,7 +167,7 @@ AndNotBlueprint::get_replacement()
     if (childCnt() == 1) {
         return removeChild(0);
     }
-    return Blueprint::UP();
+    return {};
 }
 
 void
@@ -178,6 +213,11 @@ AndNotBlueprint::createFilterSearch(bool strict, FilterConstraint constraint) co
 
 //-----------------------------------------------------------------------------
 
+double
+AndBlueprint::calculate_relative_estimate() const {
+    return rel_est_and(get_children());
+}
+
 Blueprint::HitEstimate
 AndBlueprint::combine(const std::vector<HitEstimate> &data) const
 {
@@ -187,22 +227,23 @@ AndBlueprint::combine(const std::vector<HitEstimate> &data) const
 FieldSpecBaseList
 AndBlueprint::exposeFields() const
 {
-    return FieldSpecBaseList();
+    return {};
 }
 
 void
-AndBlueprint::optimize_self()
+AndBlueprint::optimize_self(OptimizePass pass)
 {
-    for (size_t i = 0; i < childCnt(); ++i) {
-        if (getChild(i).isAnd()) {
-            auto *child = static_cast<AndBlueprint *>(&getChild(i));
-            while (child->childCnt() > 0) {
-                addChild(child->removeChild(0));
+    if (pass == OptimizePass::FIRST) {
+        for (size_t i = 0; i < childCnt(); ++i) {
+            if (auto *child = getChild(i).asAnd()) {
+                while (child->childCnt() > 0) {
+                    addChild(child->removeLastChild());
+                }
+                removeChild(i--);
             }
-            removeChild(i--);
         }
     }
-    if ( !(getParent() && getParent()->isAnd()) ) {
+    if (pass == OptimizePass::LAST) {
         optimize_source_blenders<AndBlueprint>(*this, 0);
     }
 }
@@ -213,7 +254,7 @@ AndBlueprint::get_replacement()
     if (childCnt() == 1) {
         return removeChild(0);
     }
-    return Blueprint::UP();
+    return {};
 }
 
 void
@@ -259,13 +300,31 @@ AndBlueprint::createFilterSearch(bool strict, FilterConstraint constraint) const
 }
 
 double
-AndBlueprint::computeNextHitRate(const Blueprint & child, double hitRate) const {
-    return hitRate * child.hit_ratio();
+AndBlueprint::computeNextHitRate(const Blueprint & child, double hit_rate, bool use_estimate) const {
+    double estimate = use_estimate ? child.estimate() : child.hit_ratio();
+    return hit_rate * estimate;
+}
+
+double
+OrBlueprint::computeNextHitRate(const Blueprint & child, double hit_rate, bool use_estimate) const {
+    // Avoid dropping hitRate to zero when meeting a conservatively high hitrate in a child.
+    // Happens at least when using non fast-search attributes, and with AND nodes.
+    constexpr double MIN_INVERSE_HIT_RATIO = 0.10;
+    double estimate = use_estimate ? child.estimate() : child.hit_ratio();
+    double inverse_child_estimate = 1.0 - estimate;
+    return (use_estimate || (inverse_child_estimate > MIN_INVERSE_HIT_RATIO))
+        ? hit_rate * inverse_child_estimate
+        : hit_rate;
 }
 
 //-----------------------------------------------------------------------------
 
 OrBlueprint::~OrBlueprint() = default;
+
+double
+OrBlueprint::calculate_relative_estimate() const {
+    return rel_est_or(get_children());
+}
 
 Blueprint::HitEstimate
 OrBlueprint::combine(const std::vector<HitEstimate> &data) const
@@ -280,20 +339,21 @@ OrBlueprint::exposeFields() const
 }
 
 void
-OrBlueprint::optimize_self()
+OrBlueprint::optimize_self(OptimizePass pass)
 {
-    for (size_t i = 0; (childCnt() > 1) && (i < childCnt()); ++i) {
-        if (getChild(i).isOr()) {
-            auto *child = static_cast<OrBlueprint *>(&getChild(i));
-            while (child->childCnt() > 0) {
-                addChild(child->removeChild(0));
+    if (pass == OptimizePass::FIRST) {
+        for (size_t i = 0; (childCnt() > 1) && (i < childCnt()); ++i) {
+            if (auto *child = getChild(i).asOr()) {
+                while (child->childCnt() > 0) {
+                    addChild(child->removeLastChild());
+                }
+                removeChild(i--);
+            } else if (getChild(i).getState().estimate().empty) {
+                removeChild(i--);
             }
-            removeChild(i--);
-        } else if (getChild(i).getState().estimate().empty) {
-            removeChild(i--);
         }
     }
-    if ( !(getParent() && getParent()->isOr()) ) {
+    if (pass == OptimizePass::LAST) {
         optimize_source_blenders<OrBlueprint>(*this, 0);
     }
 }
@@ -304,7 +364,7 @@ OrBlueprint::get_replacement()
     if (childCnt() == 1) {
         return removeChild(0);
     }
-    return Blueprint::UP();
+    return {};
 }
 
 void
@@ -344,8 +404,25 @@ OrBlueprint::createFilterSearch(bool strict, FilterConstraint constraint) const
     return create_or_filter(get_children(), strict, constraint);
 }
 
+uint8_t
+OrBlueprint::calculate_cost_tier() const
+{
+    uint8_t cost_tier = State::COST_TIER_NORMAL;
+    for (const Blueprint::UP &child : get_children()) {
+        cost_tier = std::max(cost_tier, child->getState().cost_tier());
+    }
+    return cost_tier;
+}
+
 //-----------------------------------------------------------------------------
 WeakAndBlueprint::~WeakAndBlueprint() = default;
+
+double
+WeakAndBlueprint::calculate_relative_estimate() const {
+    double child_est = rel_est_or(get_children());
+    double my_est = abs_to_rel_est(_n, get_docid_limit());
+    return std::min(my_est, child_est);
+}
 
 Blueprint::HitEstimate
 WeakAndBlueprint::combine(const std::vector<HitEstimate> &data) const
@@ -361,7 +438,7 @@ WeakAndBlueprint::combine(const std::vector<HitEstimate> &data) const
 FieldSpecBaseList
 WeakAndBlueprint::exposeFields() const
 {
-    return FieldSpecBaseList();
+    return {};
 }
 
 void
@@ -391,9 +468,9 @@ WeakAndBlueprint::createIntermediateSearch(MultiSearch::Children sub_searches,
     assert(_weights.size() == childCnt());
     for (size_t i = 0; i < sub_searches.size(); ++i) {
         // TODO: pass ownership with unique_ptr
-        terms.push_back(wand::Term(sub_searches[i].release(),
-                                   _weights[i],
-                                   getChild(i).getState().estimate().estHits));
+        terms.emplace_back(sub_searches[i].release(),
+                           _weights[i],
+                           getChild(i).getState().estimate().estHits);
     }
     return WeakAndSearch::create(terms, _n, strict);
 }
@@ -406,6 +483,11 @@ WeakAndBlueprint::createFilterSearch(bool strict, FilterConstraint constraint) c
 
 //-----------------------------------------------------------------------------
 
+double
+NearBlueprint::calculate_relative_estimate() const {
+    return rel_est_and(get_children());
+}
+
 Blueprint::HitEstimate
 NearBlueprint::combine(const std::vector<HitEstimate> &data) const
 {
@@ -415,7 +497,7 @@ NearBlueprint::combine(const std::vector<HitEstimate> &data) const
 FieldSpecBaseList
 NearBlueprint::exposeFields() const
 {
-    return FieldSpecBaseList();
+    return {};
 }
 
 void
@@ -459,6 +541,11 @@ NearBlueprint::createFilterSearch(bool strict, FilterConstraint constraint) cons
 
 //-----------------------------------------------------------------------------
 
+double
+ONearBlueprint::calculate_relative_estimate() const {
+    return rel_est_and(get_children());
+}
+
 Blueprint::HitEstimate
 ONearBlueprint::combine(const std::vector<HitEstimate> &data) const
 {
@@ -468,7 +555,7 @@ ONearBlueprint::combine(const std::vector<HitEstimate> &data) const
 FieldSpecBaseList
 ONearBlueprint::exposeFields() const
 {
-    return FieldSpecBaseList();
+    return {};
 }
 
 void
@@ -515,11 +602,16 @@ ONearBlueprint::createFilterSearch(bool strict, FilterConstraint constraint) con
 
 //-----------------------------------------------------------------------------
 
+double
+RankBlueprint::calculate_relative_estimate() const {
+    return rel_est_first_child(get_children());
+}
+
 Blueprint::HitEstimate
 RankBlueprint::combine(const std::vector<HitEstimate> &data) const
 {
     if (data.empty()) {
-        return HitEstimate();
+        return {};
     }
     return data[0];
 }
@@ -527,18 +619,22 @@ RankBlueprint::combine(const std::vector<HitEstimate> &data) const
 FieldSpecBaseList
 RankBlueprint::exposeFields() const
 {
-    return FieldSpecBaseList();
+    return {};
 }
 
 void
-RankBlueprint::optimize_self()
+RankBlueprint::optimize_self(OptimizePass pass)
 {
-    for (size_t i = 1; i < childCnt(); ++i) {
-        if (getChild(i).getState().estimate().empty) {
-            removeChild(i--);
+    if (pass == OptimizePass::FIRST) {
+        for (size_t i = 1; i < childCnt(); ++i) {
+            if (getChild(i).getState().estimate().empty) {
+                removeChild(i--);
+            }
         }
     }
-    optimize_source_blenders<OrBlueprint>(*this, 1);
+    if (pass == OptimizePass::LAST) {
+        optimize_source_blenders<OrBlueprint>(*this, 1);
+    }
 }
 
 Blueprint::UP
@@ -547,7 +643,7 @@ RankBlueprint::get_replacement()
     if (childCnt() == 1) {
         return removeChild(0);
     }
-    return Blueprint::UP();
+    return {};
 }
 
 void
@@ -581,7 +677,7 @@ RankBlueprint::createIntermediateSearch(MultiSearch::Children sub_searches,
             }
         }
         if (require_unpack.size() == 1) {
-            return SearchIterator::UP(std::move(require_unpack[0]));
+            return std::move(require_unpack[0]);
         } else {
             return RankSearch::create(std::move(require_unpack), strict);
         }
@@ -596,12 +692,17 @@ RankBlueprint::createFilterSearch(bool strict, FilterConstraint constraint) cons
 
 //-----------------------------------------------------------------------------
 
-SourceBlenderBlueprint::SourceBlenderBlueprint(const ISourceSelector &selector)
+SourceBlenderBlueprint::SourceBlenderBlueprint(const ISourceSelector &selector) noexcept
     : _selector(selector)
 {
 }
 
 SourceBlenderBlueprint::~SourceBlenderBlueprint() = default;
+
+double
+SourceBlenderBlueprint::calculate_relative_estimate() const {
+    return rel_est_or(get_children());
+}
 
 Blueprint::HitEstimate
 SourceBlenderBlueprint::combine(const std::vector<HitEstimate> &data) const
@@ -626,27 +727,6 @@ SourceBlenderBlueprint::inheritStrict(size_t) const
     return true;
 }
 
-class FindSource : public Blueprint::IPredicate
-{
-public:
-    FindSource(uint32_t sourceId) : _sourceId(sourceId) { }
-    bool check(const Blueprint & bp) const override { return bp.getSourceId() == _sourceId; }
-private:
-    uint32_t _sourceId;
-};
-
-ssize_t
-SourceBlenderBlueprint::findSource(uint32_t sourceId) const
-{
-    ssize_t index(-1);
-    FindSource fs(sourceId);
-    IndexList list = find(fs);
-    if ( ! list.empty()) {
-        index = list.front();
-    }
-    return index;
-}
-
 SearchIterator::UP
 SourceBlenderBlueprint::createIntermediateSearch(MultiSearch::Children sub_searches,
                                                  bool strict, search::fef::MatchData &) const
@@ -655,12 +735,10 @@ SourceBlenderBlueprint::createIntermediateSearch(MultiSearch::Children sub_searc
     assert(sub_searches.size() == childCnt());
     for (size_t i = 0; i < sub_searches.size(); ++i) {
         // TODO: pass ownership with unique_ptr
-        children.push_back(SourceBlenderSearch::Child(sub_searches[i].release(),
-                                                      getChild(i).getSourceId()));
+        children.emplace_back(sub_searches[i].release(), getChild(i).getSourceId());
         assert(children.back().sourceId != 0xffffffff);
     }
-    return SourceBlenderSearch::create(_selector.createIterator(),
-                                       children, strict);
+    return SourceBlenderSearch::create(_selector.createIterator(), children, strict);
 }
 
 SearchIterator::UP
@@ -673,6 +751,16 @@ bool
 SourceBlenderBlueprint::isCompatibleWith(const SourceBlenderBlueprint &other) const
 {
     return (&_selector == &other._selector);
+}
+
+uint8_t
+SourceBlenderBlueprint::calculate_cost_tier() const
+{
+    uint8_t cost_tier = State::COST_TIER_NORMAL;
+    for (const Blueprint::UP &child : get_children()) {
+        cost_tier = std::max(cost_tier, child->getState().cost_tier());
+    }
+    return cost_tier;
 }
 
 //-----------------------------------------------------------------------------

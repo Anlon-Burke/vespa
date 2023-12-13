@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.ml;
 
 import ai.vespa.modelintegration.evaluator.OnnxRuntime;
@@ -82,6 +82,30 @@ public class ModelEvaluationTest {
             IOUtils.recursiveDeleteDir(appDir.append(ApplicationPackage.MODELS_GENERATED_DIR).toFile());
             IOUtils.recursiveDeleteDir(storedAppDir.toFile());
         }
+    }
+
+    @Test
+    void testContainerSpecificModelSettings() {
+        Path appDir = Path.fromString("src/test/cfg/application/onnx_cluster_specific");
+        try {
+            ImportedModelTester tester = new ImportedModelTester("mul", appDir);
+            VespaModel model = tester.createVespaModel();
+            OnnxModelsConfig.Model c1Model = getOnnxModelsConfig(model.getContainerClusters().get("c1"));
+            OnnxModelsConfig.Model c2Model = getOnnxModelsConfig(model.getContainerClusters().get("c2"));
+            assertEquals(2, c1Model.stateless_intraop_threads());
+            assertEquals(4, c2Model.stateless_intraop_threads());
+            assertEquals(0, c1Model.gpu_device());
+            assertEquals(1, c2Model.gpu_device());
+        } finally {
+            IOUtils.recursiveDeleteDir(appDir.append(ApplicationPackage.MODELS_GENERATED_DIR).toFile());
+        }
+
+    }
+
+    private OnnxModelsConfig.Model getOnnxModelsConfig(ApplicationContainerCluster cluster) {
+        OnnxModelsConfig.Builder ob = new OnnxModelsConfig.Builder();
+        cluster.getConfig(ob);
+        return new OnnxModelsConfig(ob).model(0);
     }
 
     private void assertHasMlModels(VespaModel model, Path appDir) {

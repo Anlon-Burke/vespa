@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.tenant;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
@@ -6,6 +6,7 @@ import com.yahoo.cloud.config.ZookeeperServerConfig;
 import com.yahoo.component.Version;
 import com.yahoo.concurrent.InThreadExecutorService;
 import com.yahoo.concurrent.StripedExecutor;
+import com.yahoo.config.model.api.OnnxModelCost;
 import com.yahoo.config.model.test.MockApplicationPackage;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
@@ -230,7 +231,8 @@ public class TenantRepositoryTest {
                   new TestConfigDefinitionRepo(),
                   new TenantApplicationsTest.MockConfigActivationListener(),
                   new MockTenantListener(),
-                  new ZookeeperServerConfig.Builder().myid(0).build());
+                  new ZookeeperServerConfig.Builder().myid(0).build(),
+                  OnnxModelCost.disabled());
         }
 
         @Override

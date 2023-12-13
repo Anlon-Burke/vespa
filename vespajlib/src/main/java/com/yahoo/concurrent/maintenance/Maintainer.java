@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.concurrent.maintenance;
 
 import com.yahoo.concurrent.UncheckedTimeoutException;
@@ -108,7 +108,7 @@ public abstract class Maintainer implements Runnable {
 
     /** Convenience methods to convert attempts and failures into a success factor deviation from the baseline, and return   */
     protected final double asSuccessFactorDeviation(int attempts, int failures) {
-        double factor = attempts == 0 ? 1.0 : 1 - (double)failures / attempts;
+        double factor = attempts == 0 ? 1.0 : 1 - (double) failures / attempts;
         return new BigDecimal(factor - successFactorBaseline).setScale(2, RoundingMode.HALF_UP).doubleValue();
     }
 

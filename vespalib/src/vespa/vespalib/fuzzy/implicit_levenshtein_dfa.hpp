@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "dfa_stepping_base.h"
@@ -29,11 +29,23 @@ struct ImplicitDfaMatcher : public DfaSteppingBase<Traits> {
     using Base::is_match;
     using Base::can_match;
 
-    explicit ImplicitDfaMatcher(std::span<const uint32_t> u32_str) noexcept
-        : Base(u32_str)
+    std::span<const char>     _target_as_utf8;
+    std::span<const uint32_t> _target_utf8_char_offsets;
+    const bool                _is_cased;
+
+    ImplicitDfaMatcher(std::span<const uint32_t> u32_str,
+                       std::span<const char>     target_as_utf8,
+                       std::span<const uint32_t> target_utf8_char_offsets,
+                       bool is_cased) noexcept
+        : Base(u32_str),
+          _target_as_utf8(target_as_utf8),
+          _target_utf8_char_offsets(target_utf8_char_offsets),
+          _is_cased(is_cased)
     {}
 
     // start, is_match, can_match, match_edit_distance are all provided by base type
+
+    bool is_cased() const noexcept { return _is_cased; }
 
     template <typename F>
     bool has_any_char_matching(const StateType& state, F&& f) const noexcept(noexcept(f(uint32_t{}))) {
@@ -104,12 +116,42 @@ struct ImplicitDfaMatcher : public DfaSteppingBase<Traits> {
     StateType edge_to_state(const StateType& state, EdgeType edge) const noexcept {
         return step(state, edge);
     }
+    bool implies_exact_match_suffix(const StateType& state) const noexcept {
+        // Only one entry in the sparse matrix row and it implies no edits can be done.
+        // I.e. only way to match the target string suffix is to match it _exactly_.
+        return (state.size() == 1 && state.cost(0) == max_edits());
+    }
+    // Precondition: implies_match_suffix(state)
+    void emit_exact_match_suffix(const StateType& state, std::string& u8_out) const {
+        const uint32_t target_u8_offset = _target_utf8_char_offsets[state.index(0)];
+        u8_out.append(_target_as_utf8.data() + target_u8_offset, _target_as_utf8.size() - target_u8_offset);
+    }
+    void emit_exact_match_suffix(const StateType& state, std::vector<uint32_t>& u32_out) const {
+        // TODO ranged insert
+        for (uint32_t i = state.index(0); i < _u32_str.size(); ++i) {
+            u32_out.push_back(_u32_str[i]);
+        }
+    }
 };
 
 template <typename Traits>
 LevenshteinDfa::MatchResult
-ImplicitLevenshteinDfa<Traits>::match(std::string_view u8str, std::string* successor_out) const {
-    ImplicitDfaMatcher<Traits> matcher(_u32_str_buf);
+ImplicitLevenshteinDfa<Traits>::match(std::string_view u8str) const {
+    ImplicitDfaMatcher<Traits> matcher(_u32_str_buf, _target_as_utf8, _target_utf8_char_offsets, _is_cased);
+    return MatchAlgorithm<Traits::max_edits()>::match(matcher, u8str);
+}
+
+template <typename Traits>
+LevenshteinDfa::MatchResult
+ImplicitLevenshteinDfa<Traits>::match(std::string_view u8str, std::string& successor_out) const {
+    ImplicitDfaMatcher<Traits> matcher(_u32_str_buf, _target_as_utf8, _target_utf8_char_offsets, _is_cased);
+    return MatchAlgorithm<Traits::max_edits()>::match(matcher, u8str, successor_out);
+}
+
+template <typename Traits>
+LevenshteinDfa::MatchResult
+ImplicitLevenshteinDfa<Traits>::match(std::string_view u8str, std::vector<uint32_t>& successor_out) const {
+    ImplicitDfaMatcher<Traits> matcher(_u32_str_buf, _target_as_utf8, _target_utf8_char_offsets, _is_cased);
     return MatchAlgorithm<Traits::max_edits()>::match(matcher, u8str, successor_out);
 }
 

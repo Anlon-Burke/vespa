@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
 import com.yahoo.config.provision.CloudAccount;
@@ -10,6 +10,7 @@ import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.NodeMutex;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
 import com.yahoo.vespa.hosted.provision.node.Agent;
+import com.yahoo.vespa.hosted.provision.node.Dns;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.provisioning.FatalProvisioningException;
 import com.yahoo.vespa.hosted.provision.provisioning.HostIpConfig;
@@ -60,10 +61,13 @@ public class HostResumeProvisioner extends NodeRepositoryMaintainer {
                 log.log(Level.INFO, "Could not provision " + host.hostname() + ", will retry in " +
                                     interval() + ": " + Exceptions.toMessageString(e));
             } catch (FatalProvisioningException e) {
+                // FatalProvisioningException is thrown if node is not found in the cloud, allow for
+                // some time for the state to propagate
+                if (host.history().age(clock().instant()).getSeconds() < 30) continue;
                 failures++;
                 log.log(Level.SEVERE, "Failed to provision " + host.hostname() + ", failing out the host recursively", e);
-                nodeRepository().nodes().failOrMarkRecursively(
-                        host.hostname(), Agent.HostResumeProvisioner, "Failed by HostResumeProvisioner due to provisioning failure");
+                nodeRepository().nodes().parkRecursively(
+                        host.hostname(), Agent.HostResumeProvisioner, true, "Failed by HostResumeProvisioner due to provisioning failure");
             } catch (RuntimeException e) {
                 if (e.getCause() instanceof NamingException)
                     log.log(Level.INFO, "Could not provision " + host.hostname() + ", will retry in " + interval() + ": " + Exceptions.toMessageString(e));
@@ -98,7 +102,7 @@ public class HostResumeProvisioner extends NodeRepositoryMaintainer {
     /** Verify DNS configuration of given node */
     private void verifyDns(String hostname, NodeType hostType, CloudAccount cloudAccount, IP.Config ipConfig) {
         for (String ipAddress : ipConfig.primary()) {
-            IP.verifyDns(hostname, ipAddress, hostType, nodeRepository().nameResolver(), cloudAccount, nodeRepository().zone());
+            Dns.verify(hostname, ipAddress, hostType, nodeRepository().nameResolver(), cloudAccount, nodeRepository().zone());
         }
     }
 

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.application;
 
 import com.yahoo.vespa.config.server.application.ApplicationReindexing.Status;
@@ -40,6 +40,11 @@ public class ApplicationReindexingTest {
 
         assertEquals(Optional.empty(),
                      reindexing.status("three", "a"));
+
+        assertEquals(Optional.empty(),
+                     reindexing.lastReadiedAt());
+        assertEquals(Optional.of(Instant.ofEpochMilli(3)),
+                     reindexing.withoutPending("two", "b").lastReadiedAt());
 
         // Remove "a" in "one", and "one" entirely.
         assertEquals(Optional.empty(),

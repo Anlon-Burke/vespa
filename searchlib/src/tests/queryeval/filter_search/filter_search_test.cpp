@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/searchlib/queryeval/simpleresult.h>
 #include <vespa/searchlib/queryeval/emptysearch.h>
@@ -47,7 +47,8 @@ concept ChildCollector = requires(T a, std::unique_ptr<Blueprint> bp) {
 
 // inherit Blueprint to capture the default filter factory
 struct DefaultBlueprint : Blueprint {
-    void optimize(Blueprint* &) override { abort(); }
+    double calculate_relative_estimate() const override { abort(); }
+    void optimize(Blueprint* &, OptimizePass) override { abort(); }
     const State &getState() const override { abort(); }
     void fetchPostings(const ExecuteInfo &) override { abort(); }
     void freeze() override { abort(); }

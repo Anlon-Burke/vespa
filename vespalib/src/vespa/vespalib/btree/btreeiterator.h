@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -166,7 +166,7 @@ private:
     /*
      * Find the previous leaf node, called by operator--() as needed.
      */
-    VESPA_DLL_LOCAL void findPrevLeafNode();
+    void findPrevLeafNode();
 
 protected:
     /*
@@ -219,7 +219,30 @@ protected:
      * Step iterator backwards.  If at end then place it at last valid
      * position in tree (cf. rbegin())
      */
-    BTreeIteratorBase & operator--();
+    BTreeIteratorBase & operator--() {
+        if (_leaf.getNode() == nullptr) {
+            rbegin();
+            return *this;
+        }
+        if (_leaf.getIdx() > 0u) {
+            _leaf.decIdx();
+            return *this;
+        }
+        findPrevLeafNode();
+        return *this;
+    }
+
+    void set_subtree_position(const InternalNodeType* node, uint32_t level, uint32_t idx, size_t position);
+
+    /*
+     * Step iterator forwards the given number of steps.
+     */
+    void step_forward(size_t steps);
+
+    /*
+     * Step iterator backwards the given number of steps.
+     */
+    void step_backward(size_t steps);
 
     ~BTreeIteratorBase();
     BTreeIteratorBase(const BTreeIteratorBase &other);
@@ -302,22 +325,22 @@ public:
     /**
      * Get key at current iterator location.
      */
-    const KeyType & getKey() const { return _leaf.getKey(); }
+    const KeyType & getKey() const noexcept { return _leaf.getKey(); }
 
     /**
      * Get data at current iterator location.
      */
-    const DataType & getData() const { return _leaf.getData(); }
+    const DataType & getData() const noexcept { return _leaf.getData(); }
 
     /**
      * Check if iterator is at a valid element, i.e. not at end.
      */
-    bool valid() const { return _leaf.valid(); }
+    bool valid() const noexcept{ return _leaf.valid(); }
 
     /**
      * Return the number of elements in the tree.
      */
-    size_t size() const;
+    size_t size() const noexcept;
 
 
     /**
@@ -333,7 +356,7 @@ public:
     /**
      * Return if the tree has data or not (e.g. keys and data or only keys).
      */
-    static bool hasData() { return LeafNodeType::hasData(); }
+    static bool hasData() noexcept { return LeafNodeType::hasData(); }
 
     /**
      * Move the iterator directly to end.  Used by findHelper method in BTree.
@@ -491,6 +514,8 @@ protected:
     using ParentType::_compatLeafNode;
     using ParentType::clearPath;
     using ParentType::setupEmpty;
+    using ParentType::step_backward;
+    using ParentType::step_forward;
 public:
     using ParentType::end;
 
@@ -546,6 +571,21 @@ public:
         return *this;
     }
 
+    /*
+     * Step iterator forwards the given number of steps.
+     */
+    BTreeConstIterator & operator+=(size_t steps) {
+        step_forward(steps);
+        return *this;
+    }
+
+    /*
+     * Step iterator backward the given number of steps.
+     */
+    BTreeConstIterator & operator-=(size_t steps) {
+        step_backward(steps);
+        return *this;
+    }
     /**
      * Position iterator at first position with a key that is greater
      * than or equal to the key argument.  The iterator must be set up
@@ -688,6 +728,8 @@ public:
     using ParentType::_leafRoot;
     using ParentType::_compatLeafNode;
     using ParentType::end;
+    using ParentType::step_backward;
+    using ParentType::step_forward;
     using EntryRef = datastore::EntryRef;
 
     BTreeIterator(BTreeNode::Ref root, const NodeAllocatorType &allocator)
@@ -713,6 +755,16 @@ public:
 
     BTreeIterator & operator--() {
         ParentType::operator--();
+        return *this;
+    }
+
+    BTreeIterator & operator+=(size_t steps) {
+        step_forward(steps);
+        return *this;
+    }
+
+    BTreeIterator & operator-=(size_t steps) {
+        step_backward(steps);
         return *this;
     }
 

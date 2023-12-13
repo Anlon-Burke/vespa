@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include "mmappool.h"
 #include "common.h"
 #include <sys/mman.h>
@@ -10,12 +10,12 @@ namespace vespamalloc {
 MMapPool::MMapPool()
     : _page_size(getpagesize()),
       _huge_flags((getenv("VESPA_USE_HUGEPAGES") != nullptr) ? MAP_HUGETLB : 0),
+      _peakBytes(0ul),
+      _currentBytes(0ul),
       _count(0),
       _mutex(),
       _mappings()
-{
-
-}
+{ }
 
 MMapPool::~MMapPool() {
     ASSERT_STACKTRACE(_mappings.empty());
@@ -30,9 +30,13 @@ MMapPool::getNumMappings() const {
 size_t
 MMapPool::getMmappedBytes() const {
     std::lock_guard guard(_mutex);
-    size_t sum(0);
-    std::for_each(_mappings.begin(), _mappings.end(), [&sum](const auto & e){ sum += e.second._sz; });
-    return sum;
+    return _currentBytes;
+}
+
+size_t
+MMapPool::getMmappedBytesPeak() const {
+    std::lock_guard guard(_mutex);
+    return _peakBytes;
 }
 
 void *
@@ -78,10 +82,10 @@ MMapPool::mmap(size_t sz) {
         std::lock_guard guard(_mutex);
         auto [it, inserted] = _mappings.insert(std::make_pair(buf, MMapInfo(mmapId, sz)));
         ASSERT_STACKTRACE(inserted);
+        _currentBytes += sz;
+        _peakBytes = std::max(_peakBytes, _currentBytes);
         if (sz >= _G_bigBlockLimit) {
-            size_t sum(0);
-            std::for_each(_mappings.begin(), _mappings.end(), [&sum](const auto & e){ sum += e.second._sz; });
-            fprintf(_G_logFile, "%ld mappings of accumulated size %ld\n", _mappings.size(), sum);
+            fprintf(_G_logFile, "%ld mappings of accumulated size %ld\n", _mappings.size(), _currentBytes);
         }
     }
     return buf;
@@ -100,6 +104,7 @@ MMapPool::unmap(void * ptr) {
         }
         sz = found->second._sz;
         _mappings.erase(found);
+        _currentBytes -= sz;
     }
     int munmap_ok = ::munmap(ptr, sz);
     ASSERT_STACKTRACE(munmap_ok == 0);
@@ -111,6 +116,17 @@ MMapPool::get_size(void * ptr) const {
     auto found = _mappings.find(ptr);
     ASSERT_STACKTRACE(found != _mappings.end());
     return found->second._sz;
+}
+
+void
+MMapPool::info(FILE * os, size_t) const {
+    fprintf(os, "MMapPool has %zu mappings, accumulated count is %lu,  with a total of %zu mapped bytes\n",
+            getNumMappings(), _count.load(std::memory_order_relaxed), getMmappedBytes());
+    std::lock_guard guard(_mutex);
+    size_t i(0);
+    for (const auto & e : _mappings) {
+        fprintf(os, "%4zu: (id=%zu, sz=%zu) = %p\n", i++, e.second._id, e.second._sz, e.first);
+    }
 }
 
 }

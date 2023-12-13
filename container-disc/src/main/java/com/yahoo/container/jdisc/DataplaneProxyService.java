@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.container.jdisc;
 
 import com.yahoo.cloud.config.DataplaneProxyConfig;
@@ -11,10 +11,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 /**
  * Configures a data plane proxy. Currently using Nginx.
@@ -23,7 +25,7 @@ import java.util.logging.Logger;
  */
 public class DataplaneProxyService extends AbstractComponent {
 
-    private static Logger logger = Logger.getLogger(DataplaneProxyService.class.getName());
+    private static final Logger logger = Logger.getLogger(DataplaneProxyService.class.getName());
     private static final String PREFIX = "/opt/vespa";
 
     private final Path configTemplate;
@@ -105,8 +107,12 @@ public class DataplaneProxyService extends AbstractComponent {
                                                    serverKeyFile,
                                                    config.mtlsPort(),
                                                    config.tokenPort(),
-                                                   root
-                                           ));
+                                                   config.tokenEndpoints(),
+                                                   root));
+                if (configChanged) {
+                    logger.log(Level.INFO, "Configuring data plane proxy service. Token endpoints: [%s]"
+                            .formatted(String.join(", ", config.tokenEndpoints())));
+                }
                 if (configChanged && state == NginxState.RUNNING) {
                     changeState(NginxState.RELOAD_REQUIRED);
                 }
@@ -194,6 +200,7 @@ public class DataplaneProxyService extends AbstractComponent {
             Path serverKey,
             int vespaMtlsPort,
             int vespaTokenPort,
+            List<String> tokenEndpoints,
             Path root) {
 
         try {
@@ -205,6 +212,10 @@ public class DataplaneProxyService extends AbstractComponent {
             nginxTemplate = replace(nginxTemplate, "vespa_mtls_port", Integer.toString(vespaMtlsPort));
             nginxTemplate = replace(nginxTemplate, "vespa_token_port", Integer.toString(vespaTokenPort));
             nginxTemplate = replace(nginxTemplate, "prefix", root.toString());
+            String tokenmapping = tokenEndpoints.stream()
+                    .map("        %s vespatoken;"::formatted)
+                    .collect(Collectors.joining("\n"));
+            nginxTemplate = replace(nginxTemplate, "vespa_token_endpoints", tokenmapping);
 
             // TODO: verify that all template vars have been expanded
             return nginxTemplate;

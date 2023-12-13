@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.schema;
 
 import com.yahoo.config.FileReference;
@@ -8,7 +8,7 @@ import com.yahoo.path.Path;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
-public class DistributableResource implements Comparable <DistributableResource> {
+public class DistributableResource implements Comparable <DistributableResource>, Cloneable {
 
     public enum PathType { FILE, URI, BLOB }
 
@@ -33,6 +33,11 @@ public class DistributableResource implements Comparable <DistributableResource>
         this.name = name;
         this.path = path;
         this.pathType = type;
+    }
+
+    @Override
+    public DistributableResource clone() throws CloneNotSupportedException {
+        return (DistributableResource) super.clone();
     }
 
     // TODO: Remove and make path/pathType final

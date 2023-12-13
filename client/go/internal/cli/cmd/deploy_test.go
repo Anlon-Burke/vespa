@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // deploy command tests
 // Author: bratseth
 
@@ -84,7 +84,7 @@ func TestDeployWait(t *testing.T) {
 	mockServiceStatus(client, "foo") // Look up services
 	assert.Nil(t, cli.Run("deploy", "--wait=3", pkg))
 	assert.Equal(t,
-		"\nSuccess: Deployed "+pkg+" with session ID 1\n",
+		"\nSuccess: Deployed '"+pkg+"' with session ID 1\n",
 		stdout.String())
 }
 
@@ -112,7 +112,7 @@ func TestDeployZipWithURLTargetArgument(t *testing.T) {
 	cli.httpClient = client
 	assert.Nil(t, cli.Run(arguments...))
 	assert.Equal(t,
-		"\nSuccess: Deployed "+applicationPackage+" with session ID 0\n",
+		"\nSuccess: Deployed '"+applicationPackage+"' with session ID 0\n",
 		stdout.String())
 	assertDeployRequestMade("http://target:19071", client, t)
 }
@@ -133,7 +133,7 @@ func TestDeployApplicationDirectoryWithSource(t *testing.T) {
 }
 
 func TestDeployApplicationDirectoryWithPomAndTarget(t *testing.T) {
-	assertDeploy("testdata/applications/withTarget/target/application.zip",
+	assertDeploy("testdata/applications/withTarget/target/application",
 		[]string{"deploy", "--wait=0", "testdata/applications/withTarget"}, t)
 }
 
@@ -141,7 +141,7 @@ func TestDeployApplicationDirectoryWithPomAndEmptyTarget(t *testing.T) {
 	cli, _, stderr := newTestCLI(t)
 	assert.NotNil(t, cli.Run("deploy", "--wait=0", "testdata/applications/withEmptyTarget"))
 	assert.Equal(t,
-		"Error: found pom.xml, but target/application.zip does not exist: run 'mvn package' first\n",
+		"Error: found pom.xml, but testdata/applications/withEmptyTarget/target/application does not exist: run 'mvn package' first\n",
 		stderr.String())
 }
 
@@ -188,7 +188,7 @@ func assertDeploy(applicationPackage string, arguments []string, t *testing.T) {
 	cli.httpClient = client
 	assert.Nil(t, cli.Run(arguments...))
 	assert.Equal(t,
-		"\nSuccess: Deployed "+applicationPackage+" with session ID 0\n",
+		"\nSuccess: Deployed '"+applicationPackage+"' with session ID 0\n",
 		stdout.String())
 	assertDeployRequestMade("http://127.0.0.1:19071", client, t)
 }
@@ -202,7 +202,7 @@ func assertPrepare(applicationPackage string, arguments []string, t *testing.T) 
 	cli.httpClient = client
 	assert.Nil(t, cli.Run(arguments...))
 	assert.Equal(t,
-		"Success: Prepared "+applicationPackage+" with session 42\n",
+		"Success: Prepared '"+applicationPackage+"' with session 42\n",
 		stdout.String())
 
 	assertPackageUpload(0, "http://127.0.0.1:19071/application/v2/tenant/default/session", client, t)
@@ -276,6 +276,6 @@ func assertDeployServerError(t *testing.T, status int, errorMessage string) {
 	cli.httpClient = client
 	assert.NotNil(t, cli.Run("deploy", "--wait=0", "testdata/applications/withTarget/target/application.zip"))
 	assert.Equal(t,
-		"Error: error from deploy api at 127.0.0.1:19071 (Status "+strconv.Itoa(status)+"):\n"+errorMessage+"\n",
+		"Error: error from deploy API at 127.0.0.1:19071 (Status "+strconv.Itoa(status)+"):\n"+errorMessage+"\n",
 		stderr.String())
 }

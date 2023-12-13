@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.provisioning;
 
 import com.yahoo.config.provision.ApplicationId;
@@ -29,7 +29,6 @@ import com.yahoo.vespa.hosted.provision.testutils.InMemoryProvisionLogger;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -116,9 +115,9 @@ public class DynamicProvisioningTester {
 
     public void makeReady(String hostname) {
         Node node = nodeRepository().nodes().node(hostname).get();
-        provisioningTester.patchNode(node, (n) -> n.with(IP.Config.of(Set.of("::" + 0 + ":0"), Set.of())));
+        provisioningTester.patchNode(node, (n) -> n.with(IP.Config.ofEmptyPool("::" + 0 + ":0")));
         Node host = nodeRepository().nodes().node(node.parentHostname().get()).get();
-        host = host.with(IP.Config.of(Set.of("::" + 0 + ":0"), Set.of("::" + 0 + ":2")));
+        host = host.with(IP.Config.of(List.of("::" + 0 + ":0"), List.of("::" + 0 + ":2")));
         if (host.state() == Node.State.provisioned)
             provisioningTester.move(Node.State.ready, host);
     }
@@ -201,7 +200,7 @@ public class DynamicProvisioningTester {
                                             int nodeCount, int groupCount,
                                             double approxCpu, double approxMemory, double approxDisk,
                                             Autoscaling autoscaling) {
-        assertTrue("Resources are present: " + message + " (" + autoscaling + ": " + autoscaling.status() + ")",
+        assertTrue("Resources should be present: " + message + " (" + autoscaling + ": " + autoscaling.status() + ")",
                    autoscaling.resources().isPresent());
         var resources = autoscaling.resources().get();
         assertResources(message, nodeCount, groupCount, approxCpu, approxMemory, approxDisk, resources);
@@ -288,6 +287,11 @@ public class DynamicProvisioningTester {
                 flavorResources = flavorResources.withBandwidthGbps(resources.bandwidthGbps());
 
             return flavorResources.compatibleWith(resources);
+        }
+
+        @Override
+        public boolean satisfies(Flavor flavor, NodeResources resources) {
+            return hostResourcesCalculator.advertisedResourcesOf(flavor).satisfies(resources);
         }
 
     }

@@ -1,8 +1,8 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include <vespa/log/log.h>
 LOG_SETUP(".prod_features_framework");
 
-#include "prod_features.h"
+#include "prod_features_test.h"
 #include <vespa/searchlib/features/valuefeature.h>
 
 using namespace search::features;

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
@@ -30,8 +30,8 @@ public class ZCurveTestCase {
     public void requireThatExpressionCanBeVerified() {
         Expression exp = new ZCurveExpression();
         assertVerify(PositionDataType.INSTANCE, exp, DataType.LONG);
-        assertVerifyThrows(null, exp, "Expected position input, got null.");
-        assertVerifyThrows(DataType.INT, exp, "Expected position input, got int.");
+        assertVerifyThrows(null, exp, "Expected position input, but no input is specified");
+        assertVerifyThrows(DataType.INT, exp, "Expected position input, got int");
     }
 
     @Test

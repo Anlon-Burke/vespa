@@ -1,9 +1,10 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/searchcommon/attribute/config.h>
 #include <vespa/searchlib/attribute/attributefactory.h>
 #include <vespa/searchlib/attribute/attributeiterators.h>
 #include <vespa/searchlib/attribute/flagattribute.h>
+#include <vespa/searchlib/attribute/postinglistsearchcontext.h>
 #include <vespa/searchlib/attribute/searchcontextelementiterator.h>
 #include <vespa/searchlib/attribute/singleboolattribute.h>
 #include <vespa/searchlib/attribute/stringbase.h>
@@ -215,7 +216,7 @@ private:
     // test search iterator unpacking
     void fillForSearchIteratorUnpackingTest(IntegerAttribute * ia, bool extra);
     void testSearchIteratorUnpacking(const AttributePtr & ptr, SearchContext & sc, bool extra, bool strict) {
-        sc.fetchPostings(queryeval::ExecuteInfo::create(strict, 1.0));
+        sc.fetchPostings(queryeval::ExecuteInfo::createForTest(strict));
         for (bool withElementId : {false, true}) {
             testSearchIteratorUnpacking(ptr, sc, extra, strict, withElementId);
         }
@@ -232,6 +233,7 @@ private:
     void testRangeSearch(const AttributePtr & ptr, uint32_t numDocs, std::vector<ValueType> values);
     void testRangeSearch();
     void testRangeSearchLimited();
+    void testRangeSearchLimitedHugeDictionary();
 
 
     // test case insensitive search
@@ -503,7 +505,7 @@ SearchContextTest::checkResultSet(const ResultSet & rs, const DocSet & expected,
             ASSERT_TRUE(array != nullptr);
             uint32_t i = 0;
             for (auto iter = expected.begin(); iter != expected.end(); ++iter, ++i) {
-                EXPECT_TRUE(array[i].getDocId() == *iter);
+                EXPECT_EQUAL(array[i].getDocId(), *iter);
             }
         }
     }
@@ -648,7 +650,7 @@ public:
     ~Verifier() override;
     SearchIterator::UP
     create(bool strict) const override {
-        _sc->fetchPostings(queryeval::ExecuteInfo::create(strict, 1.0));
+        _sc->fetchPostings(queryeval::ExecuteInfo::createForTest(strict));
         return _sc->createIterator(&_dummy, strict);
     }
 private:
@@ -1175,6 +1177,42 @@ SearchContextTest::testRangeSearch(const AttributePtr & ptr, uint32_t numDocs, s
     }
 }
 
+DocSet
+createDocs(uint32_t from, int32_t count) {
+    DocSet docs;
+    if (count >= 0) {
+        for (int32_t i(0); i < count; i++) {
+            docs.put(from + i);
+        }
+    } else {
+        for (int32_t i(0); i > count; i--) {
+            docs.put(from + i);
+        }
+    }
+    return docs;
+}
+
+void
+SearchContextTest::testRangeSearchLimitedHugeDictionary() {
+    Config cfg(BasicType::INT32, CollectionType::SINGLE);
+    cfg.setFastSearch(true);
+    std::vector<int32_t> v;
+    v.reserve(2000);
+    for (size_t i(0); i < v.capacity(); i++) {
+        v.push_back(i);
+    }
+    auto ptr = AttributeBuilder("limited-int32", cfg).fill(v).get();
+    auto& vec = dynamic_cast<IntegerAttribute &>(*ptr);
+
+    performRangeSearch(vec, "[1;9;1200]", createDocs(2, 9));
+    performRangeSearch(vec, "[1;1109;1200]", createDocs(2, 1109));
+    performRangeSearch(vec, "[1;3009;1200]", createDocs(2, 1200));
+
+    performRangeSearch(vec, "[1;9;-1200]", createDocs(2, 9));
+    performRangeSearch(vec, "[1;1109;-1200]", createDocs(2, 1109));
+    performRangeSearch(vec, "[1;3009;-1200]", createDocs(2000, -1200));
+}
+
 void
 SearchContextTest::testRangeSearchLimited()
 {
@@ -1424,6 +1462,25 @@ SearchContextTest::testPrefixSearch(const vespalib::string& name, const Config& 
             }
         }
     }
+
+    // Long range of prefixes with unique strings that causes
+    // PostingListFoldedSearchContextT<DataT>::countHits() to populate
+    // partial vector of posting indexes, with scan resumed by
+    // fillArray or fillBitVector.
+    auto& vec = dynamic_cast<StringAttribute &>(*attr.get());
+    uint32_t old_size = attr->getNumDocs();
+    constexpr uint32_t longrange_values = search::attribute::PostingListFoldedSearchContextT<int32_t>::MAX_POSTING_INDEXES_SIZE + 100;
+    attr->addDocs(longrange_values);
+    DocSet exp_longrange;
+    for (uint32_t i = 0; i < longrange_values; ++i) {
+        vespalib::asciistream ss;
+        ss << "lpref" << i;
+        vespalib::string sss(ss.str());
+        exp_longrange.put(old_size + i);
+        vec.update(old_size + i, vespalib::string(ss.str()).c_str());
+    }
+    attr->commit();
+    performSearch(*attr, "lpref", exp_longrange, TermType::PREFIXTERM);
 }
 
 
@@ -1960,6 +2017,7 @@ SearchContextTest::Main()
     testSearchIterator();
     testRangeSearch();
     testRangeSearchLimited();
+    testRangeSearchLimitedHugeDictionary();
     testCaseInsensitiveSearch();
     testRegexSearch();
     testPrefixSearch();

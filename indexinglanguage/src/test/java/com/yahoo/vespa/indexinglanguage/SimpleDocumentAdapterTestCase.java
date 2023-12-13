@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage;
 
 import com.yahoo.document.*;
@@ -48,7 +48,7 @@ public class SimpleDocumentAdapterTestCase {
             adapter.getInputType(null, "foo");
             fail();
         } catch (VerificationException e) {
-            assertEquals("Input field 'foo' not found.", e.getMessage());
+            assertEquals("Input field 'foo' not found", e.getMessage());
         }
         assertNull(adapter.getInputValue("foo"));
     }

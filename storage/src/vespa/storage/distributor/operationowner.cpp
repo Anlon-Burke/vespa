@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "operationowner.h"
 #include <vespa/storage/distributor/operations/operation.h>
@@ -70,10 +70,27 @@ OperationOwner::onClose()
     }
 }
 
-void
+std::shared_ptr<Operation>
+OperationOwner::find_by_id(api::StorageMessage::Id msg_id) const noexcept
+{
+    return _sentMessageMap.find_by_id_or_empty(msg_id);
+}
+
+bool
+OperationOwner::try_cancel_by_id(api::StorageMessage::Id id, const CancelScope& cancel_scope)
+{
+    auto* op = _sentMessageMap.find_by_id_or_nullptr(id);
+    if (!op) {
+        return false;
+    }
+    op->cancel(_sender, cancel_scope);
+    return true;
+}
+
+std::shared_ptr<Operation>
 OperationOwner::erase(api::StorageMessage::Id msgId)
 {
-    (void)_sentMessageMap.pop(msgId);
+    return _sentMessageMap.pop(msgId);
 }
 
 }

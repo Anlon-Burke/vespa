@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "dot_product_blueprint.h"
 #include "dot_product_search.h"
@@ -66,7 +66,7 @@ DotProductBlueprint::createFilterSearch(bool strict, FilterConstraint constraint
 void
 DotProductBlueprint::fetchPostings(const ExecuteInfo &execInfo)
 {
-    ExecuteInfo childInfo = ExecuteInfo::create(true, execInfo.hitRate());
+    ExecuteInfo childInfo = ExecuteInfo::create(true, execInfo);
     for (size_t i = 0; i < _terms.size(); ++i) {
         _terms[i]->fetchPostings(childInfo);
     }    

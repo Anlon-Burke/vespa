@@ -1,7 +1,8 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include <vespa/storage/distributor/maintenance/maintenanceoperation.h>
+#include <vespa/storage/distributor/operations/cancel_scope.h>
 #include <vespa/storageapi/messageapi/storagemessage.h>
 #include <vespa/storageapi/messageapi/storagereply.h>
 #include <vespa/storageapi/messageapi/maintenancecommand.h>
@@ -110,7 +111,7 @@ public:
     using Vector = std::vector<SP>;
     using Map = std::map<document::BucketId, SP>;
 
-    IdealStateOperation(const BucketAndNodes& bucketAndNodes);
+    explicit IdealStateOperation(const BucketAndNodes& bucketAndNodes);
 
     ~IdealStateOperation() override;
 

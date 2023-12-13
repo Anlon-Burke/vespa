@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.collections.Pair;
@@ -65,7 +65,7 @@ public final class SelectInputExpression extends CompositeExpression {
         for (Pair<String, Expression> entry : cases) {
             DataType val = context.getInputType(this, entry.getFirst());
             if (val == null) {
-                throw new VerificationException(this, "Field '" + entry.getFirst() + "' not found.");
+                throw new VerificationException(this, "Field '" + entry.getFirst() + "' not found");
             }
             context.setValueType(val).execute(entry.getSecond());
         }

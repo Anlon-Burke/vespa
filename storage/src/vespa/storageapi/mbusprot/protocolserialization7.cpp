@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "protocolserialization7.h"
 #include "serializationhelper.h"
@@ -624,42 +624,6 @@ api::StorageReply::UP ProtocolSerialization7::onDecodeGetReply(const SCmd& cmd, 
 }
 
 // -----------------------------------------------------------------
-// Revert
-// -----------------------------------------------------------------
-
-void ProtocolSerialization7::onEncode(GBBuf& buf, const api::RevertCommand& msg) const {
-    encode_bucket_request<protobuf::RevertRequest>(buf, msg, [&](auto& req) {
-        auto* tokens = req.mutable_revert_tokens();
-        assert(msg.getRevertTokens().size() <= INT_MAX);
-        tokens->Reserve(static_cast<int>(msg.getRevertTokens().size()));
-        for (auto token : msg.getRevertTokens()) {
-            tokens->Add(token);
-        }
-    });
-}
-
-void ProtocolSerialization7::onEncode(GBBuf& buf, const api::RevertReply& msg) const {
-    encode_bucket_info_response<protobuf::RevertResponse>(buf, msg, no_op_encode);
-}
-
-api::StorageCommand::UP ProtocolSerialization7::onDecodeRevertCommand(BBuf& buf) const {
-    return decode_bucket_request<protobuf::RevertRequest>(buf, [&](auto& req, auto& bucket) {
-        std::vector<api::Timestamp> tokens;
-        tokens.reserve(req.revert_tokens_size());
-        for (auto token : req.revert_tokens()) {
-            tokens.emplace_back(api::Timestamp(token));
-        }
-        return std::make_unique<api::RevertCommand>(bucket, std::move(tokens));
-    });
-}
-
-api::StorageReply::UP ProtocolSerialization7::onDecodeRevertReply(const SCmd& cmd, BBuf& buf) const {
-    return decode_bucket_info_response<protobuf::RevertResponse>(buf, [&]([[maybe_unused]] auto& res) {
-        return std::make_unique<api::RevertReply>(static_cast<const api::RevertCommand&>(cmd));
-    });
-}
-
-// -----------------------------------------------------------------
 // RemoveLocation
 // -----------------------------------------------------------------
 
@@ -837,6 +801,7 @@ void ProtocolSerialization7::onEncode(GBBuf& buf, const api::MergeBucketCommand&
         req.set_max_timestamp(msg.getMaxTimestamp());
         req.set_cluster_state_version(msg.getClusterStateVersion());
         req.set_unordered_forwarding(msg.use_unordered_forwarding());
+        req.set_estimated_memory_footprint(msg.estimated_memory_footprint());
         for (uint16_t chain_node : msg.getChain()) {
             req.add_node_chain(chain_node);
         }
@@ -859,6 +824,7 @@ api::StorageCommand::UP ProtocolSerialization7::onDecodeMergeBucketCommand(BBuf&
         }
         cmd->setChain(std::move(chain));
         cmd->set_use_unordered_forwarding(req.unordered_forwarding());
+        cmd->set_estimated_memory_footprint(req.estimated_memory_footprint());
         return cmd;
     });
 }

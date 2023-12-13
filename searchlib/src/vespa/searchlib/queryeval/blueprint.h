@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -26,6 +26,14 @@ namespace search::queryeval {
 class SearchIterator;
 class ExecuteInfo;
 class MatchingElementsSearch;
+class LeafBlueprint;
+class IntermediateBlueprint;
+class SourceBlenderBlueprint;
+class WeakAndBlueprint;
+class AndBlueprint;
+class AndNotBlueprint;
+class OrBlueprint;
+class EmptyBlueprint;
 
 /**
  * A Blueprint is an intermediate representation of a search. More
@@ -44,6 +52,8 @@ public:
     using Children = std::vector<Blueprint::UP>;
     using SearchIteratorUP = std::unique_ptr<SearchIterator>;
 
+    enum class OptimizePass { FIRST, LAST };
+    
     struct HitEstimate {
         uint32_t estHits;
         bool     empty;
@@ -65,6 +75,7 @@ public:
     {
     private:
         FieldSpecBaseList _fields;
+        double            _relative_estimate;
         uint32_t          _estimateHits;
         uint32_t          _tree_size : 20;
         bool              _estimateEmpty : 1;
@@ -78,8 +89,8 @@ public:
         static constexpr uint8_t COST_TIER_MAX = 255;
 
         State() noexcept;
-        State(FieldSpecBase field) noexcept;
-        State(FieldSpecBaseList fields_in) noexcept;
+        explicit State(FieldSpecBase field) noexcept;
+        explicit State(FieldSpecBaseList fields_in) noexcept;
         State(const State &rhs) = delete;
         State(State &&rhs) noexcept = default;
         State &operator=(const State &rhs) = delete;
@@ -100,16 +111,20 @@ public:
             return nullptr;
         }
 
+        void relative_estimate(double value) noexcept { _relative_estimate = value; }
+        double relative_estimate() const noexcept { return _relative_estimate; }
+        
         void estimate(HitEstimate est) noexcept {
             _estimateHits = est.estHits;
             _estimateEmpty = est.empty;
         }
-        HitEstimate estimate() const noexcept { return HitEstimate(_estimateHits, _estimateEmpty); }
+        //TODO replace use of estimate by using empty/estHits directly and then have a real estimate here
+        HitEstimate estimate() const noexcept { return {_estimateHits, _estimateEmpty}; }
+
         double hit_ratio(uint32_t docid_limit) const noexcept {
-            uint32_t total_hits = _estimateHits;
-            uint32_t total_docs = std::max(total_hits, docid_limit);
-            return (total_docs == 0) ? 0.0 : double(total_hits) / double(total_docs);
+            return abs_to_rel_est(_estimateHits, docid_limit);
         }
+
         void tree_size(uint32_t value) noexcept {
             assert(value < 0x100000);
             _tree_size = value;
@@ -122,6 +137,12 @@ public:
         void cost_tier(uint8_t value) noexcept { _cost_tier = value; }
         uint8_t cost_tier() const noexcept { return _cost_tier; }
     };
+    
+    // converts from an absolute to a relative estimate
+    static double abs_to_rel_est(uint32_t est, uint32_t docid_limit) noexcept {
+        uint32_t total_docs = std::max(est, docid_limit);
+        return (total_docs == 0) ? 0.0 : double(est) / double(total_docs);
+    }
 
     // utility that just takes maximum estimate
     static HitEstimate max(const std::vector<HitEstimate> &data);
@@ -205,8 +226,8 @@ public:
     uint32_t get_docid_limit() const noexcept { return _docid_limit; }
 
     static Blueprint::UP optimize(Blueprint::UP bp);
-    virtual void optimize(Blueprint* &self) = 0;
-    virtual void optimize_self();
+    virtual void optimize(Blueprint* &self, OptimizePass pass) = 0;
+    virtual void optimize_self(OptimizePass pass);
     virtual Blueprint::UP get_replacement();
     virtual bool should_optimize_children() const { return true; }
 
@@ -227,7 +248,9 @@ public:
     virtual const State &getState() const = 0;
     const Blueprint &root() const;
 
-    double hit_ratio() const noexcept { return getState().hit_ratio(_docid_limit); }
+    double hit_ratio() const { return getState().hit_ratio(_docid_limit); }
+    double estimate() const { return getState().relative_estimate(); }
+    virtual double calculate_relative_estimate() const = 0;
 
     virtual void fetchPostings(const ExecuteInfo &execInfo) = 0;
     virtual void freeze() = 0;
@@ -248,15 +271,23 @@ public:
     vespalib::slime::Cursor & asSlime(const vespalib::slime::Inserter & cursor) const;
     virtual vespalib::string getClassName() const;
     virtual void visitMembers(vespalib::ObjectVisitor &visitor) const;
-    virtual bool isEquiv() const { return false; }
-    virtual bool isWhiteList() const { return false; }
-    virtual bool isIntermediate() const { return false; }
-    virtual bool isAnd() const { return false; }
-    virtual bool isAndNot() const { return false; }
-    virtual bool isOr() const { return false; }
-    virtual bool isSourceBlender() const { return false; }
-    virtual bool isRank() const { return false; }
-    virtual const attribute::ISearchContext *get_attribute_search_context() const { return nullptr; }
+    virtual bool isEquiv() const noexcept { return false; }
+    virtual bool isWhiteList() const noexcept { return false; }
+    virtual IntermediateBlueprint * asIntermediate() noexcept { return nullptr; }
+    const IntermediateBlueprint * asIntermediate() const noexcept { return const_cast<Blueprint *>(this)->asIntermediate(); }
+    virtual const LeafBlueprint * asLeaf() const noexcept { return nullptr; }
+    virtual AndBlueprint * asAnd() noexcept { return nullptr; }
+    bool isAnd() const noexcept { return const_cast<Blueprint *>(this)->asAnd() != nullptr; }
+    virtual AndNotBlueprint * asAndNot() noexcept { return nullptr; }
+    bool isAndNot() const noexcept { return const_cast<Blueprint *>(this)->asAndNot() != nullptr; }
+    virtual OrBlueprint * asOr() noexcept { return nullptr; }
+    virtual SourceBlenderBlueprint * asSourceBlender() noexcept { return nullptr; }
+    virtual WeakAndBlueprint * asWeakAnd() noexcept { return nullptr; }
+    virtual bool isRank() const noexcept { return false; }
+    virtual const attribute::ISearchContext *get_attribute_search_context() const noexcept { return nullptr; }
+
+    // to avoid replacing an empty blueprint with another empty blueprint
+    virtual EmptyBlueprint *as_empty() noexcept { return nullptr; }
 
     // For document summaries with matched-elements-only set.
     virtual std::unique_ptr<MatchingElementsSearch> create_matching_elements_search(const MatchingElementsFields &fields) const;
@@ -296,13 +327,13 @@ class IntermediateBlueprint : public blueprint::StateCache
 private:
     Children _children;
     HitEstimate calculateEstimate() const;
-    uint8_t calculate_cost_tier() const;
+    virtual uint8_t calculate_cost_tier() const;
     uint32_t calculate_tree_size() const;
     bool infer_allow_termwise_eval() const;
     bool infer_want_global_filter() const;
 
     size_t count_termwise_nodes(const UnpackInfo &unpack) const;
-    virtual double computeNextHitRate(const Blueprint & child, double hitRate) const;
+    virtual double computeNextHitRate(const Blueprint & child, double hit_rate, bool use_estimate) const;
 
 protected:
     // returns an empty collection if children have empty or
@@ -324,7 +355,7 @@ public:
 
     void setDocIdLimit(uint32_t limit) noexcept final;
 
-    void optimize(Blueprint* &self) final;
+    void optimize(Blueprint* &self, OptimizePass pass) final;
     void set_global_filter(const GlobalFilter &global_filter, double estimated_hit_ratio) override;
 
     IndexList find(const IPredicate & check) const;
@@ -335,8 +366,9 @@ public:
     IntermediateBlueprint & insertChild(size_t n, Blueprint::UP child);
     IntermediateBlueprint &addChild(Blueprint::UP child);
     Blueprint::UP removeChild(size_t n);
+    Blueprint::UP removeLastChild() { return removeChild(childCnt() - 1); }
     SearchIteratorUP createSearch(fef::MatchData &md, bool strict) const override;
-
+    
     virtual HitEstimate combine(const std::vector<HitEstimate> &data) const = 0;
     virtual FieldSpecBaseList exposeFields() const = 0;
     virtual void sort(Children &children) const = 0;
@@ -350,7 +382,7 @@ public:
     void freeze() final;
 
     UnpackInfo calculateUnpackInfo(const fef::MatchData & md) const;
-    bool isIntermediate() const override { return true; }
+    IntermediateBlueprint * asIntermediate() noexcept final { return this; }
 };
 
 
@@ -359,9 +391,10 @@ class LeafBlueprint : public Blueprint
 private:
     State _state;
 protected:
-    void optimize(Blueprint* &self) final;
+    void optimize(Blueprint* &self, OptimizePass pass) final;
     void setEstimate(HitEstimate est) {
         _state.estimate(est);
+        _state.relative_estimate(calculate_relative_estimate());
         notifyChange();
     }
     void set_cost_tier(uint32_t value);
@@ -372,7 +405,7 @@ protected:
     void set_want_global_filter(bool value);
     void set_tree_size(uint32_t value);
 
-    LeafBlueprint(bool allow_termwise_eval) noexcept
+    explicit LeafBlueprint(bool allow_termwise_eval) noexcept
         : _state()
     {
         _state.allow_termwise_eval(allow_termwise_eval);
@@ -392,10 +425,12 @@ protected:
 public:
     ~LeafBlueprint() override = default;
     const State &getState() const final { return _state; }
-    void setDocIdLimit(uint32_t limit) noexcept final { Blueprint::setDocIdLimit(limit); }
+    void setDocIdLimit(uint32_t limit) noexcept final;
+    double calculate_relative_estimate() const override;
     void fetchPostings(const ExecuteInfo &execInfo) override;
     void freeze() final;
     SearchIteratorUP createSearch(fef::MatchData &md, bool strict) const override;
+    const LeafBlueprint * asLeaf() const noexcept final { return this; }
 
     virtual bool getRange(vespalib::string & from, vespalib::string & to) const;
     virtual SearchIteratorUP createLeafSearch(const fef::TermFieldMatchDataArray &tfmda, bool strict) const = 0;

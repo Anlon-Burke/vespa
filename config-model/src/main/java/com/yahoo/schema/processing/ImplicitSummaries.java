@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.schema.processing;
 
 import com.yahoo.config.application.api.DeployLogger;
@@ -185,7 +185,7 @@ public class ImplicitSummaries extends Processor {
             Attribute attribute = sourceField.getAttributes().get(sourceField.getName());
             if (attribute != null) {
                 String destinations = "document summary 'default'";
-                if (summaryField.getDestinations().size()  >0) {
+                if (summaryField.getDestinations().size() > 0) {
                     destinations = "document summaries " + summaryField.getDestinations();
                 }
                 deployLogger.logApplicationPackage(Level.WARNING,

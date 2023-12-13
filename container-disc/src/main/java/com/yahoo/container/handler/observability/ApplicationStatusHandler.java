@@ -1,6 +1,7 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.container.handler.observability;
 
+import com.yahoo.json.Jackson;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,6 +16,8 @@ import com.yahoo.component.provider.ComponentRegistry;
 import com.yahoo.container.Container;
 import com.yahoo.container.core.ApplicationMetadataConfig;
 import com.yahoo.container.jdisc.JdiscBindingsConfig;
+import com.yahoo.jdisc.Request;
+import com.yahoo.jdisc.Response;
 import com.yahoo.jdisc.handler.AbstractRequestHandler;
 import com.yahoo.jdisc.handler.CompletionHandler;
 import com.yahoo.jdisc.handler.ContentChannel;
@@ -52,7 +55,7 @@ public class ApplicationStatusHandler extends AbstractRequestHandler {
         Map<String, ? extends JsonNode> produceExtraFields(ApplicationStatusHandler handler);
     }
 
-    private static final ObjectMapper jsonMapper = new ObjectMapper();
+    private static final ObjectMapper jsonMapper = Jackson.mapper();
 
     private final JsonNode applicationJson;
     private final JsonNode clientsJson;
@@ -82,22 +85,18 @@ public class ApplicationStatusHandler extends AbstractRequestHandler {
     }
 
     @Override
-    public ContentChannel handleRequest(com.yahoo.jdisc.Request request, ResponseHandler handler) {
-        FastContentWriter writer = new FastContentWriter(new ResponseDispatch() {
-            @Override
-            protected com.yahoo.jdisc.Response newResponse() {
-                com.yahoo.jdisc.Response response = new com.yahoo.jdisc.Response(com.yahoo.jdisc.Response.Status.OK);
+    public ContentChannel handleRequest(Request request, ResponseHandler handler) {
+        try (FastContentWriter writer = new FastContentWriter(new ResponseDispatch() {
+            @Override protected Response newResponse() {
+                Response response = new Response(Response.Status.OK);
                 response.headers().add("Content-Type", List.of("application/json"));
                 return response;
             }
-        }.connect(handler));
-
-        try {
+        }.connect(handler))) {
             writer.write(jsonMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(render()));
         } catch (JsonProcessingException e) {
             throw new RuntimeException("Invalid JSON: " + e.getMessage(), e);
         }
-        writer.close();
 
         return new IgnoredContent();
     }
@@ -273,7 +272,7 @@ public class ApplicationStatusHandler extends AbstractRequestHandler {
         return ret;
     }
 
-    private class IgnoredContent implements ContentChannel {
+    private static class IgnoredContent implements ContentChannel {
         @Override
         public void write(ByteBuffer buf, CompletionHandler handler) {
             handler.completed();

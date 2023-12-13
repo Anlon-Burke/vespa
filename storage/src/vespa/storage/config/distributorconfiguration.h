@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include <vespa/storage/config/config-stor-distributormanager.h>
@@ -263,9 +263,6 @@ public:
         return _max_activation_inhibited_out_of_sync_groups;
     }
 
-    bool enable_revert() const noexcept {
-        return _enable_revert;
-    }
     [[nodiscard]] bool implicitly_clear_priority_on_schedule() const noexcept {
         return _implicitly_clear_priority_on_schedule;
     }
@@ -292,6 +289,12 @@ public:
     }
     [[nodiscard]] bool enable_condition_probing() const noexcept {
         return _enable_condition_probing;
+    }
+    void set_enable_operation_cancellation(bool enable) noexcept {
+        _enable_operation_cancellation = enable;
+    }
+    [[nodiscard]] bool enable_operation_cancellation() const noexcept {
+        return _enable_operation_cancellation;
     }
 
     uint32_t num_distributor_stripes() const noexcept { return _num_distributor_stripes; }
@@ -348,12 +351,12 @@ private:
     bool _use_weak_internal_read_consistency_for_client_gets;
     bool _enable_metadata_only_fetch_phase_for_inconsistent_updates;
     bool _prioritize_global_bucket_merges;
-    bool _enable_revert;
     bool _implicitly_clear_priority_on_schedule;
     bool _use_unordered_merge_chaining;
     bool _inhibit_default_merges_when_global_merges_pending;
     bool _enable_two_phase_garbage_collection;
     bool _enable_condition_probing;
+    bool _enable_operation_cancellation;
 
     DistrConfig::MinimumReplicaCountingMode _minimumReplicaCountingMode;
 

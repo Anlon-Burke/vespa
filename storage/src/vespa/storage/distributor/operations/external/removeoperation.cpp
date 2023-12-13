@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include "removeoperation.h"
 #include <vespa/storageapi/message/persistence.h>
 #include <vespa/storage/distributor/distributor_bucket_space.h>
@@ -19,10 +19,7 @@ RemoveOperation::RemoveOperation(const DistributorNodeContext& node_ctx,
                                  PersistenceOperationMetricSet& condition_probe_metrics,
                                  SequencingHandle sequencingHandle)
     : SequencedOperation(std::move(sequencingHandle)),
-      _tracker_instance(metric,
-               std::make_shared<api::RemoveReply>(*msg),
-               node_ctx, op_ctx, msg->getTimestamp()),
-      _tracker(_tracker_instance),
+      _tracker(metric, std::make_shared<api::RemoveReply>(*msg), node_ctx, op_ctx, _cancel_scope),
       _msg(std::move(msg)),
       _doc_id_bucket_id(document::BucketIdFactory{}.getBucketId(_msg->getDocumentId())),
       _node_ctx(node_ctx),
@@ -168,7 +165,6 @@ RemoveOperation::on_cancel(DistributorStripeMessageSender& sender, const CancelS
     if (_check_condition) {
         _check_condition->cancel(sender, cancel_scope);
     }
-    _tracker.cancel(cancel_scope);
 }
 
 bool RemoveOperation::has_condition() const noexcept {

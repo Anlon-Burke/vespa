@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "bucketcopy.h"
@@ -86,6 +86,7 @@ public:
      * Returns the bucket copy struct for the given node, null if nonexisting
      */
     const BucketCopy* getNode(uint16_t node) const noexcept;
+    uint16_t internal_entry_index(uint16_t node) const noexcept;
 
     /**
      * Returns the number of nodes this entry has.

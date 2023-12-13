@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -26,7 +26,7 @@ public:
     ~SameElementBlueprint() override;
 
     // no match data
-    bool isWhiteList() const override { return true; }
+    bool isWhiteList() const noexcept final { return true; }
 
     // used by create visitor
     FieldSpec getNextChildField(const vespalib::string &field_name, uint32_t field_id);
@@ -34,7 +34,7 @@ public:
     // used by create visitor
     void addTerm(Blueprint::UP term);
 
-    void optimize_self() override;
+    void optimize_self(OptimizePass pass) override;
     void fetchPostings(const ExecuteInfo &execInfo) override;
 
     std::unique_ptr<SameElementSearch> create_same_element_search(search::fef::TermFieldMatchData& tfmd, bool strict) const;

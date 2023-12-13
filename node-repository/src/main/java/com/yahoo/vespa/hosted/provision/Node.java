@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision;
 
 import com.yahoo.component.Version;
@@ -10,7 +10,7 @@ import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.TenantName;
-import com.yahoo.config.provision.WireguardKey;
+import com.yahoo.config.provision.WireguardKeyWithTimestamp;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancers;
 import com.yahoo.vespa.hosted.provision.node.Agent;
@@ -56,6 +56,7 @@ public final class Node implements Nodelike {
     private final Optional<String> modelName;
     private final Optional<TenantName> reservedTo;
     private final Optional<ApplicationId> exclusiveToApplicationId;
+    private final Optional<ApplicationId> provisionedForApplicationId;
     private final Optional<Duration> hostTTL;
     private final Optional<Instant> hostEmptyAt;
     private final Optional<ClusterSpec.Type> exclusiveToClusterType;
@@ -64,7 +65,7 @@ public final class Node implements Nodelike {
     private final CloudAccount cloudAccount;
 
     /** Only set for configservers and exclave nodes */
-    private final Optional<WireguardKey> wireguardPubKey;
+    private final Optional<WireguardKeyWithTimestamp> wireguardPubKey;
 
     /** Record of the last event of each type happening to this node */
     private final History history;
@@ -73,7 +74,7 @@ public final class Node implements Nodelike {
     private final Optional<Allocation> allocation;
 
     /** Creates a node builder in the initial state (reserved) */
-    public static Node.Builder reserve(Set<String> ipAddresses, String hostname, String parentHostname, NodeResources resources, NodeType type) {
+    public static Node.Builder reserve(List<String> ipAddresses, String hostname, String parentHostname, NodeResources resources, NodeType type) {
         return new Node.Builder(UUID.randomUUID().toString(), hostname, new Flavor(resources), State.reserved, type)
                 .ipConfig(IP.Config.ofEmptyPool(ipAddresses))
                 .parentHostname(parentHostname);
@@ -93,9 +94,10 @@ public final class Node implements Nodelike {
     public Node(String id, Optional<String> extraId, IP.Config ipConfig, String hostname, Optional<String> parentHostname,
                 Flavor flavor, Status status, State state, Optional<Allocation> allocation, History history,
                 NodeType type, Reports reports, Optional<String> modelName, Optional<TenantName> reservedTo,
-                Optional<ApplicationId> exclusiveToApplicationId, Optional<Duration> hostTTL, Optional<Instant> hostEmptyAt,
-                Optional<ClusterSpec.Type> exclusiveToClusterType, Optional<String> switchHostname,
-                List<TrustStoreItem> trustStoreItems, CloudAccount cloudAccount, Optional<WireguardKey> wireguardPubKey) {
+                Optional<ApplicationId> exclusiveToApplicationId, Optional<ApplicationId> provisionedForApplicationId,
+                Optional<Duration> hostTTL, Optional<Instant> hostEmptyAt, Optional<ClusterSpec.Type> exclusiveToClusterType,
+                Optional<String> switchHostname, List<TrustStoreItem> trustStoreItems, CloudAccount cloudAccount,
+                Optional<WireguardKeyWithTimestamp> wireguardPubKey) {
         this.id = Objects.requireNonNull(id, "A node must have an ID");
         this.extraId = Objects.requireNonNull(extraId, "Extra ID cannot be null");
         this.hostname = requireNonEmptyString(hostname, "A node must have a hostname");
@@ -111,6 +113,7 @@ public final class Node implements Nodelike {
         this.modelName = Objects.requireNonNull(modelName, "A null modelName is not permitted");
         this.reservedTo = Objects.requireNonNull(reservedTo, "reservedTo cannot be null");
         this.exclusiveToApplicationId = Objects.requireNonNull(exclusiveToApplicationId, "exclusiveToApplicationId cannot be null");
+        this.provisionedForApplicationId = Objects.requireNonNull(provisionedForApplicationId, "provisionedForApplicationId cannot be null");
         this.hostTTL = Objects.requireNonNull(hostTTL, "hostTTL cannot be null");
         this.hostEmptyAt = Objects.requireNonNull(hostEmptyAt, "hostEmptyAt cannot be null");
         this.exclusiveToClusterType = Objects.requireNonNull(exclusiveToClusterType, "exclusiveToClusterType cannot be null");
@@ -124,11 +127,11 @@ public final class Node implements Nodelike {
 
         if (state == State.ready && type.isHost()) {
             requireNonEmpty(ipConfig.primary(), "A " + type + " must have at least one primary IP address in state " + state);
-            requireNonEmpty(ipConfig.pool().asSet(), "A " + type + " must have a non-empty IP address pool in state " + state);
+            requireNonEmpty(ipConfig.pool().ips(), "A " + type + " must have a non-empty IP address pool in state " + state);
         }
 
         if (parentHostname.isPresent()) {
-            if (!ipConfig.pool().asSet().isEmpty()) throw new IllegalArgumentException("A child node cannot have an IP address pool");
+            if (!ipConfig.pool().ips().isEmpty()) throw new IllegalArgumentException("A child node cannot have an IP address pool");
             if (modelName.isPresent()) throw new IllegalArgumentException("A child node cannot have model name set");
             if (switchHostname.isPresent()) throw new IllegalArgumentException("A child node cannot have switch hostname set");
             if (status.wantToRebuild()) throw new IllegalArgumentException("A child node cannot be rebuilt");
@@ -139,6 +142,9 @@ public final class Node implements Nodelike {
 
         if (type != NodeType.host && exclusiveToApplicationId.isPresent())
             throw new IllegalArgumentException("Only tenant hosts can be exclusive to an application");
+
+        if (provisionedForApplicationId.isPresent() && ! exclusiveToApplicationId.equals(provisionedForApplicationId))
+            throw new IllegalArgumentException("exclusiveToApplicationId must be the same as provisionedForApplicationId when this is set");
 
         if (type != NodeType.host && hostTTL.isPresent())
             throw new IllegalArgumentException("Only tenant hosts can have a TTL");
@@ -220,10 +226,19 @@ public final class Node implements Nodelike {
 
     /**
      * Returns the application this host is exclusive to, if any. Only tenant hosts can be exclusive to an application.
-     * If this is set, resources on this host cannot be allocated to any other application. This is set during
-     * provisioning and applies for the entire lifetime of the host
+     * If this is set, resources on this host cannot be allocated to any other application. Additionally, the host will
+     * not be reused once its allocated containers are deleted, i.e., this property can only be set <em>once</em> per host.
      */
     public Optional<ApplicationId> exclusiveToApplicationId() { return exclusiveToApplicationId; }
+
+    /**
+     * Returns the application this host was provisioned specifically for, if any. Only tenant hosts can be exclusive
+     * to an application. This property, when set, also implies {@link #exclusiveToApplicationId()}.
+     * This is set during provisioning and applies for the entire lifetime of the host. Provisioning a host specifically
+     * for an application allows access to application-specific resources, through integration with cloud providers'
+     * provisioning-with-secrets mechanisms.
+     */
+    public Optional<ApplicationId> provisionedForApplicationId() { return provisionedForApplicationId; }
 
     /**
      * Returns the additional time to live of tenant host, in a dynamically provisioned zone, after all its child
@@ -261,7 +276,7 @@ public final class Node implements Nodelike {
     }
 
     /** Returns the wireguard public key of this node. Only relevant for enclave nodes. */
-    public Optional<WireguardKey> wireguardPubKey() {
+    public Optional<WireguardKeyWithTimestamp> wireguardPubKey() {
         return wireguardPubKey;
     }
 
@@ -358,14 +373,14 @@ public final class Node implements Nodelike {
     /** Returns a node with the status assigned to the given value */
     public Node with(Status status) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history, type,
-                        reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     /** Returns a node with the type assigned to the given value */
     public Node with(NodeType type) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history, type,
-                        reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
@@ -374,35 +389,35 @@ public final class Node implements Nodelike {
         if (flavor.equals(this.flavor)) return this;
         History updateHistory = history.with(new History.Event(History.Event.Type.resized, agent, instant));
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, updateHistory, type,
-                        reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     /** Returns a copy of this with the reboot generation set to generation */
     public Node withReboot(Generation generation) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status.withReboot(generation), state, allocation,
-                        history, type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        history, type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     /** Returns a copy of this with given id set */
     public Node withId(String id) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation,
-                        history, type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        history, type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     /** Returns a copy of this with model name set to given value */
     public Node withModelName(String modelName) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, Optional.of(modelName), reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        type, reports, Optional.of(modelName), reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     /** Returns a copy of this with model name cleared */
     public Node withoutModelName() {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, Optional.empty(), reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        type, reports, Optional.empty(), reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
@@ -444,21 +459,21 @@ public final class Node implements Nodelike {
      */
     public Node with(Allocation allocation) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, Optional.of(allocation), history,
-                        type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     /** Returns a copy of this node with IP config set to the given value. */
     public Node with(IP.Config ipConfig) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     /** Returns a copy of this node with the parent hostname assigned to the given value. */
     public Node withParentHostname(String parentHostname) {
         return new Node(id, extraId, ipConfig, hostname, Optional.of(parentHostname), flavor, status, state, allocation,
-                        history, type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        history, type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
@@ -466,58 +481,66 @@ public final class Node implements Nodelike {
         if (type != NodeType.host)
             throw new IllegalArgumentException("Only host nodes can be reserved, " + hostname + " has type " + type);
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, Optional.of(tenant), exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        type, reports, modelName, Optional.of(tenant), exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     /** Returns a copy of this node which is not reserved to a tenant */
     public Node withoutReservedTo() {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, Optional.empty(), exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        type, reports, modelName, Optional.empty(), exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     public Node withExclusiveToApplicationId(ApplicationId exclusiveTo) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, reservedTo, Optional.ofNullable(exclusiveTo), hostTTL, hostEmptyAt,
+                        type, reports, modelName, reservedTo, Optional.ofNullable(exclusiveTo), provisionedForApplicationId, hostTTL, hostEmptyAt,
+                        exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
+    }
+
+    public Node withProvisionedForApplicationId(ApplicationId provisionedFor) {
+        return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
+                        type, reports, modelName, reservedTo, Optional.ofNullable(provisionedFor), Optional.ofNullable(provisionedFor), hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     public Node withExtraId(Optional<String> extraId) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     public Node withHostTTL(Duration hostTTL) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, reservedTo, exclusiveToApplicationId, Optional.ofNullable(hostTTL), hostEmptyAt,
+                        type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, Optional.ofNullable(hostTTL), hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     public Node withHostEmptyAt(Instant hostEmptyAt) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, Optional.ofNullable(hostEmptyAt),
+                        type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, Optional.ofNullable(hostEmptyAt),
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     public Node withExclusiveToClusterType(ClusterSpec.Type exclusiveTo) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         Optional.ofNullable(exclusiveTo), switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
-    public Node withWireguardPubkey(WireguardKey wireguardPubkey) {
+    public Node withWireguardPubkey(WireguardKeyWithTimestamp wireguardPubkey) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
-                        exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, Optional.ofNullable(wireguardPubkey));
+                        type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
+                        exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount,
+                        Optional.ofNullable(wireguardPubkey));
     }
 
     /** Returns a copy of this node with switch hostname set to given value */
     public Node withSwitchHostname(String switchHostname) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
-                        exclusiveToClusterType, Optional.ofNullable(switchHostname), trustStoreItems, cloudAccount, wireguardPubKey);
+                        type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
+                        exclusiveToClusterType, Optional.ofNullable(switchHostname), trustStoreItems, cloudAccount,
+                        wireguardPubKey);
     }
 
     /** Returns a copy of this node with switch hostname unset */
@@ -569,19 +592,19 @@ public final class Node implements Nodelike {
     /** Returns a copy of this node with the given history. */
     public Node with(History history) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     public Node with(Reports reports) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
     public Node with(List<TrustStoreItem> trustStoreItems) {
         return new Node(id, extraId, ipConfig, hostname, parentHostname, flavor, status, state, allocation, history,
-                        type, reports, modelName, reservedTo, exclusiveToApplicationId, hostTTL, hostEmptyAt,
+                        type, reports, modelName, reservedTo, exclusiveToApplicationId, provisionedForApplicationId, hostTTL, hostEmptyAt,
                         exclusiveToClusterType, switchHostname, trustStoreItems, cloudAccount, wireguardPubKey);
     }
 
@@ -598,7 +621,7 @@ public final class Node implements Nodelike {
         return value;
     }
 
-    private static Set<String> requireNonEmpty(Set<String> values, String message) {
+    private static List<String> requireNonEmpty(List<String> values, String message) {
         if (values == null || values.isEmpty())
             throw new IllegalArgumentException(message);
         return values;
@@ -719,6 +742,7 @@ public final class Node implements Nodelike {
         private String modelName;
         private TenantName reservedTo;
         private ApplicationId exclusiveToApplicationId;
+        private ApplicationId provisionedForApplicationId;
         private Duration hostTTL;
         private Instant hostEmptyAt;
         private ClusterSpec.Type exclusiveToClusterType;
@@ -730,7 +754,7 @@ public final class Node implements Nodelike {
         private History history;
         private List<TrustStoreItem> trustStoreItems;
         private CloudAccount cloudAccount = CloudAccount.empty;
-        private WireguardKey wireguardPubKey;
+        private WireguardKeyWithTimestamp wireguardPubKey;
 
         private Builder(String id, String hostname, Flavor flavor, State state, NodeType type) {
             this.id = id;
@@ -758,6 +782,11 @@ public final class Node implements Nodelike {
         public Builder exclusiveToApplicationId(ApplicationId exclusiveTo) {
             this.exclusiveToApplicationId = exclusiveTo;
             return this;
+        }
+
+        public Builder provisionedForApplicationId(ApplicationId provisionedFor) {
+            this.provisionedForApplicationId = provisionedFor;
+            return exclusiveToApplicationId(provisionedFor);
         }
 
         public Builder hostTTL(Duration hostTTL) {
@@ -790,7 +819,7 @@ public final class Node implements Nodelike {
             return this;
         }
 
-        public Builder ipConfigWithEmptyPool(Set<String> primary) {
+        public Builder ipConfigWithEmptyPool(List<String> primary) {
             this.ipConfig = IP.Config.ofEmptyPool(primary);
             return this;
         }
@@ -820,7 +849,7 @@ public final class Node implements Nodelike {
             return this;
         }
 
-        public Builder wireguardPubKey(WireguardKey wireguardPubKey) {
+        public Builder wireguardKey(WireguardKeyWithTimestamp wireguardPubKey) {
             this.wireguardPubKey = wireguardPubKey;
             return this;
         }
@@ -830,9 +859,9 @@ public final class Node implements Nodelike {
                             flavor, Optional.ofNullable(status).orElseGet(Status::initial), state, Optional.ofNullable(allocation),
                             Optional.ofNullable(history).orElseGet(History::empty), type, Optional.ofNullable(reports).orElseGet(Reports::new),
                             Optional.ofNullable(modelName), Optional.ofNullable(reservedTo), Optional.ofNullable(exclusiveToApplicationId),
-                            Optional.ofNullable(hostTTL), Optional.ofNullable(hostEmptyAt), Optional.ofNullable(exclusiveToClusterType),
-                            Optional.ofNullable(switchHostname), Optional.ofNullable(trustStoreItems).orElseGet(List::of), cloudAccount,
-                            Optional.ofNullable(wireguardPubKey));
+                            Optional.ofNullable(provisionedForApplicationId), Optional.ofNullable(hostTTL), Optional.ofNullable(hostEmptyAt),
+                            Optional.ofNullable(exclusiveToClusterType), Optional.ofNullable(switchHostname),
+                            Optional.ofNullable(trustStoreItems).orElseGet(List::of), cloudAccount, Optional.ofNullable(wireguardPubKey));
         }
 
     }

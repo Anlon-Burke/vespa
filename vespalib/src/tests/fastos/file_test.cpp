@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/fastos/file.h>
 #include <vespa/vespalib/gtest/gtest.h>
@@ -179,16 +179,6 @@ TEST(FileTest, ReadWriteTest) {
     EXPECT_EQ(myFile->getPosition(), 6);
     EXPECT_TRUE(myFile->Close());
     EXPECT_TRUE(std::filesystem::remove(std::filesystem::path(rwFilename)));
-}
-
-TEST(FileTest, ScanDirectoryTest) {
-    auto scanDir = std::make_unique<FastOS_DirectoryScan>(".");
-    while (scanDir->ReadNext()) {
-        const char *name = scanDir->GetName();
-        bool isDirectory = scanDir->IsDirectory();
-        bool isRegular   = scanDir->IsRegular();
-        fprintf(stderr, "%-30s %s\n", name, isDirectory ? "DIR" : (isRegular ? "FILE" : "UNKN"));
-    }
 }
 
 TEST(FileTest, ReadBufTest) {

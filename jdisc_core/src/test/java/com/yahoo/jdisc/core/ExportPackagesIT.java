@@ -1,3 +1,4 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.jdisc.core;
 
 import com.google.common.collect.Sets;
@@ -36,7 +37,7 @@ public class ExportPackagesIT {
     // This list must be kept in sync with the list in the export-packages execution in pom.xml.
     private static final List<String> RE_EXPORTED_BUNDLES = Stream.of(
             "guava.jar",
-            "guice-no_aop.jar",
+            "guice.jar",
             "slf4j-api.jar",
             "slf4j-jdk14.jar",
             "jcl-over-slf4j.jar",

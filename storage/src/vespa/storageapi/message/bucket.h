@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 /**
  * @file bucketinfo.h
  *
@@ -106,7 +106,8 @@ public:
         uint16_t index;
         bool sourceOnly;
 
-        Node(uint16_t index_, bool sourceOnly_ = false) noexcept
+        Node(uint16_t index_) noexcept : Node(index_, false) { }
+        Node(uint16_t index_, bool sourceOnly_) noexcept
             : index(index_), sourceOnly(sourceOnly_) {}
 
         bool operator==(const Node& n) const noexcept
@@ -117,6 +118,7 @@ private:
     std::vector<Node> _nodes;
     Timestamp _maxTimestamp;
     uint32_t _clusterStateVersion;
+    uint32_t _estimated_memory_footprint;
     std::vector<uint16_t> _chain;
     bool _use_unordered_forwarding;
 
@@ -139,6 +141,12 @@ public:
     }
     [[nodiscard]] bool use_unordered_forwarding() const noexcept { return _use_unordered_forwarding; }
     [[nodiscard]] bool from_distributor() const noexcept { return _chain.empty(); }
+    void set_estimated_memory_footprint(uint32_t footprint_bytes) noexcept {
+        _estimated_memory_footprint = footprint_bytes;
+    }
+    [[nodiscard]] uint32_t estimated_memory_footprint() const noexcept {
+        return _estimated_memory_footprint;
+    }
     void print(std::ostream& out, bool verbose, const std::string& indent) const override;
     DECLARE_STORAGECOMMAND(MergeBucketCommand, onMergeBucket)
 };
@@ -471,21 +479,15 @@ public:
 class SetBucketStateCommand : public MaintenanceCommand
 {
 public:
-    enum BUCKET_STATE
-    {
-        INACTIVE,
-        ACTIVE
-    };
-private:
-    BUCKET_STATE _state;
-public:
+    enum BUCKET_STATE { INACTIVE, ACTIVE };
     SetBucketStateCommand(const document::Bucket &bucket, BUCKET_STATE state);
     void print(std::ostream& out, bool verbose, const std::string& indent) const override;
     BUCKET_STATE getState() const { return _state; }
-    DECLARE_STORAGECOMMAND(SetBucketStateCommand, onSetBucketState)
+    static BUCKET_STATE toState(bool active) noexcept { return active ? ACTIVE : INACTIVE; }
+    DECLARE_STORAGECOMMAND(SetBucketStateCommand, onSetBucketState);
 private:
-
     vespalib::string getSummary() const override;
+    BUCKET_STATE _state;
 };
 
 /**

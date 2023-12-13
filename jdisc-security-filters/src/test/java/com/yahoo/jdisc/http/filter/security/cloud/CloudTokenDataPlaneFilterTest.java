@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.jdisc.http.filter.security.cloud;
 
 import com.yahoo.container.jdisc.AclMapping.Action;
@@ -166,6 +166,29 @@ class CloudTokenDataPlaneFilterTest {
         assertEquals(FORBIDDEN, responseHandler.getResponse().getStatus());
     }
 
+    @Test
+    void rejects_tokens_on_empty_clients() {
+        var req = FilterTestUtils.newRequestBuilder()
+                .withMethod(Method.GET)
+                .withHeader("Authorization", "Bearer " + UNKNOWN_TOKEN.secretTokenString())
+                .build();
+        var responseHandler = new MockResponseHandler();
+        newFilterWithEmptyClientsConfig().filter(req, responseHandler);
+        assertNotNull(responseHandler.getResponse());
+        assertEquals(FORBIDDEN, responseHandler.getResponse().getStatus());
+    }
+
+    @Test
+    void rejects_missing_tokens_on_empty_clients() {
+        var req = FilterTestUtils.newRequestBuilder()
+                .withMethod(Method.GET)
+                .build();
+        var responseHandler = new MockResponseHandler();
+        newFilterWithEmptyClientsConfig().filter(req, responseHandler);
+        assertNotNull(responseHandler.getResponse());
+        assertEquals(UNAUTHORIZED, responseHandler.getResponse().getStatus());
+    }
+
     private CloudTokenDataPlaneFilter newFilterWithClientsConfig() {
         return new CloudTokenDataPlaneFilter(
                 new CloudTokenDataPlaneFilterConfig.Builder()
@@ -187,6 +210,14 @@ class CloudTokenDataPlaneFilterTest {
                                                         .expirations(TOKEN_EXPIRATION.toString()))
                                         .permissions(WRITE.asString())
                                         .id(TOKEN_FEED_CLIENT)))
+                        .build(),
+                clock);
+    }
+
+    private CloudTokenDataPlaneFilter newFilterWithEmptyClientsConfig() {
+        return new CloudTokenDataPlaneFilter(
+                new CloudTokenDataPlaneFilterConfig.Builder()
+                        .tokenContext(TOKEN_CONTEXT)
                         .build(),
                 clock);
     }

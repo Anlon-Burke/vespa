@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "matcher.h"
 #include "isearchcontext.h"
@@ -155,7 +155,7 @@ Matcher::create_match_tools_factory(const search::engine::Request &request, ISea
                                     IAttributeContext &attrContext, const search::IDocumentMetaStore &metaStore,
                                     const Properties &feature_overrides, vespalib::ThreadBundle &thread_bundle,
                                     const IDocumentMetaStoreContext::IReadGuard::SP * metaStoreReadGuard,
-                                    bool is_search) const
+                                    uint32_t maxHits, bool is_search) const
 {
     const Properties & rankProperties = request.propertiesMap.rankProperties();
     bool softTimeoutEnabled = softtimeout::Enabled::lookup(rankProperties, _rankSetup->getSoftTimeoutEnabled());
@@ -176,7 +176,7 @@ Matcher::create_match_tools_factory(const search::engine::Request &request, ISea
                                                request.trace(), request.getStackRef(), request.location,
                                                _viewResolver, metaStore, _indexEnv, *_rankSetup,
                                                rankProperties, feature_overrides, thread_bundle,
-                                               metaStoreReadGuard, is_search);
+                                               metaStoreReadGuard, maxHits, is_search);
 }
 
 size_t
@@ -249,7 +249,7 @@ Matcher::match(const SearchRequest &request, vespalib::ThreadBundle &threadBundl
     { // we want to measure full set-up and tear-down time as part of
       // collateral time
         GroupingContext groupingContext(metaStore.getValidLids(), _clock, request.getTimeOfDoom(),
-                                        request.groupSpec.data(), request.groupSpec.size(), _rankSetup->enableNestedMultivalueGrouping());
+                                        request.groupSpec.data(), request.groupSpec.size());
         SessionId sessionId(request.sessionId.data(), request.sessionId.size());
         bool shouldCacheSearchSession = false;
         bool shouldCacheGroupingSession = false;
@@ -272,10 +272,15 @@ Matcher::match(const SearchRequest &request, vespalib::ThreadBundle &threadBundl
         }
 
         MatchToolsFactory::UP mtf = create_match_tools_factory(request, searchContext, attrContext, metaStore,
-                                                               *feature_overrides, threadBundle, &owned_objects.readGuard, true);
+                                                               *feature_overrides, threadBundle, &owned_objects.readGuard,
+                                                               searchContext.getDocIdLimit(), true);
         isDoomExplicit = mtf->get_request_context().getDoom().isExplicitSoftDoom();
         traceQuery(6, request.trace(), mtf->query());
         if (!mtf->valid()) {
+            return reply;
+        }
+        if (mtf->get_request_context().getDoom().soft_doom()) {
+            vespalib::Issue::report("Search request soft doomed during query setup and initialization.");
             return reply;
         }
 
@@ -407,7 +412,7 @@ Matcher::create_docsum_matcher(const DocsumRequest &req, ISearchContext &search_
     StupidMetaStore meta;
     MatchToolsFactory::UP mtf = create_match_tools_factory(req, search_ctx, attr_ctx, meta,
                                                            req.propertiesMap.featureOverrides(),
-                                                           vespalib::ThreadBundle::trivial(), nullptr, false);
+                                                           vespalib::ThreadBundle::trivial(), nullptr, docs.size(), false);
     if (!mtf->valid()) {
         LOG(warning, "could not initialize docsum matching: %s",
             (expectedSessionCached) ? "session has expired" : "invalid query");

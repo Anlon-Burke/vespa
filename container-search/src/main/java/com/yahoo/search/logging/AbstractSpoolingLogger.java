@@ -1,9 +1,8 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.logging;
 
 import com.yahoo.concurrent.DaemonThreadFactory;
 
-import java.io.IOException;
 import java.time.Clock;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -13,7 +12,8 @@ import java.util.logging.Level;
 
 /**
  * Abstract class that deals with storing event entries on disk and making sure all stored
- * entries are eventually sent
+ * entries are eventually sent. Note that the {@link #start()} method needs to be called by subclasses as
+ * the last statement in their constructor.
  *
  * @author hmusum
  */
@@ -24,6 +24,7 @@ public abstract class AbstractSpoolingLogger extends AbstractThreadedLogger impl
     private final ScheduledExecutorService executorService;
     protected final Spooler spooler;
 
+    @SuppressWarnings("unused") // Used by subclasses
     public AbstractSpoolingLogger() {
         this(new Spooler(Clock.systemUTC()));
     }
@@ -31,7 +32,11 @@ public abstract class AbstractSpoolingLogger extends AbstractThreadedLogger impl
     public AbstractSpoolingLogger(Spooler spooler) {
         this.spooler = spooler;
         this.executorService = new ScheduledThreadPoolExecutor(1, new DaemonThreadFactory("AbstractSpoolingLogger-send-"));
-        executorService.scheduleWithFixedDelay(this, 0, 1L, TimeUnit.SECONDS);
+    }
+
+    /** Start processing files, must be called by subclasses */
+    public void start() {
+        this.executorService.scheduleWithFixedDelay(this, 0, 1L, TimeUnit.SECONDS);
     }
 
     public void run() {
@@ -54,8 +59,15 @@ public abstract class AbstractSpoolingLogger extends AbstractThreadedLogger impl
         return true;
     }
 
-    // TODO Call from a component or make this class a component
-    public void shutdown() {
+    @Deprecated
+    /*
+      @deprecated use {@link #deconstruct()} instead
+     */
+    public void shutdown() { deconstruct(); }
+
+    @Override
+    public void deconstruct() {
+        super.deconstruct();
         executorService.shutdown();
         try {
             if ( ! executorService.awaitTermination(10, TimeUnit.SECONDS))

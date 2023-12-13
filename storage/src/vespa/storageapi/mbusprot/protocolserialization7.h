@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -40,12 +40,6 @@ public:
     void onEncode(GBBuf&, const api::GetReply&) const override;
     SCmd::UP onDecodeGetCommand(BBuf&) const override;
     SRep::UP onDecodeGetReply(const SCmd&, BBuf&) const override;
-
-    // Revert - TODO this is deprecated, no?
-    void onEncode(GBBuf&, const api::RevertCommand&) const override;
-    void onEncode(GBBuf&, const api::RevertReply&) const override;
-    SCmd::UP onDecodeRevertCommand(BBuf&) const override;
-    SRep::UP onDecodeRevertReply(const SCmd&, BBuf&) const override;
 
     // DeleteBucket
     void onEncode(GBBuf&, const api::DeleteBucketCommand&) const override;

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config;
 
 import java.io.File;
@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * A vector of leaf nodes.
@@ -57,7 +58,7 @@ public class LeafNodeVector<REAL, NODE extends LeafNode<REAL>> extends NodeVecto
     // TODO: Try to eliminate the need for this method when we have moved FileAcquirer to the config library
     // It is needed now because the builder has a list of String, while REAL=FileReference.
     public static LeafNodeVector<FileReference, FileNode> createFileNodeVector(Collection<String> values) {
-        List<FileReference> fileReferences = new ArrayList<FileReference>();
+        List<FileReference> fileReferences = new ArrayList<>();
          for (String s : values)
              fileReferences.add(new FileReference(ReferenceNode.stripQuotes(s)));
 
@@ -69,6 +70,13 @@ public class LeafNodeVector<REAL, NODE extends LeafNode<REAL>> extends NodeVecto
         for (FileReference fileReference : values)
             paths.add(Paths.get(fileReference.value()));
         return new LeafNodeVector<>(paths, new PathNode());
+    }
+
+    public static LeafNodeVector<Optional<Path>, OptionalPathNode> createOptionalPathNodeVector(Collection<Optional<FileReference>> values) {
+        List<Optional<Path>> paths = new ArrayList<>();
+        for (Optional<FileReference> fileReference : values)
+            paths.add(fileReference.map(reference -> Paths.get(reference.value())));
+        return new LeafNodeVector<>(paths, new OptionalPathNode());
     }
 
     public static LeafNodeVector<File, UrlNode> createUrlNodeVector(Collection<UrlReference> values) {

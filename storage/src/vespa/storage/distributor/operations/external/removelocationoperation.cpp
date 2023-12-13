@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "removelocationoperation.h"
 #include <vespa/storageapi/message/removelocation.h>
@@ -23,12 +23,7 @@ RemoveLocationOperation::RemoveLocationOperation(
         std::shared_ptr<api::RemoveLocationCommand> msg,
         PersistenceOperationMetricSet& metric)
     : Operation(),
-      _trackerInstance(metric,
-               std::make_shared<api::RemoveLocationReply>(*msg),
-               node_ctx,
-               op_ctx,
-               0),
-      _tracker(_trackerInstance),
+      _tracker(metric, std::make_shared<api::RemoveLocationReply>(*msg), node_ctx, op_ctx, _cancel_scope),
       _msg(std::move(msg)),
       _node_ctx(node_ctx),
       _parser(parser),

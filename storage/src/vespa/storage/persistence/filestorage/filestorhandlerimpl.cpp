@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "filestorhandlerimpl.h"
 #include "filestormetrics.h"
@@ -14,7 +14,6 @@
 #include <vespa/vespalib/stllike/hash_map.hpp>
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/util/string_escape.h>
-#include <xxhash.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".persistence.filestor.handler.impl");
@@ -286,7 +285,6 @@ FileStorHandlerImpl::messageMayBeAborted(const api::StorageMessage& msg)
     switch (msg.getType().getId()) {
     case api::MessageType::PUT_ID:
     case api::MessageType::REMOVE_ID:
-    case api::MessageType::REVERT_ID:
     case api::MessageType::MERGEBUCKET_ID:
     case api::MessageType::GETBUCKETDIFF_ID:
     case api::MessageType::APPLYBUCKETDIFF_ID:
@@ -611,7 +609,6 @@ FileStorHandlerImpl::remapMessage(api::StorageMessage& msg, const document::Buck
         break;
     }
     case api::MessageType::STAT_ID:
-    case api::MessageType::REVERT_ID:
     case api::MessageType::REMOVELOCATION_ID:
     case api::MessageType::SETBUCKETSTATE_ID:
     {
@@ -898,8 +895,7 @@ FileStorHandlerImpl::flush()
 
 uint64_t
 FileStorHandlerImpl::dispersed_bucket_bits(const document::Bucket& bucket) noexcept {
-    const uint64_t raw_id = bucket.getBucketId().getId();
-    return XXH3_64bits(&raw_id, sizeof(uint64_t));
+    return vespalib::xxhash::xxh3_64(bucket.getBucketId().getId());
 }
 
 FileStorHandlerImpl::Stripe::Stripe(const FileStorHandlerImpl & owner, MessageSender & messageSender)
@@ -1131,7 +1127,7 @@ FileStorHandlerImpl::Stripe::flush()
 namespace {
 
 bool
-message_type_is_merge_related(api::MessageType::Id msg_type_id) {
+message_type_is_merge_related(api::MessageType::Id msg_type_id) noexcept {
     switch (msg_type_id) {
     case api::MessageType::MERGEBUCKET_ID:
     case api::MessageType::MERGEBUCKET_REPLY_ID:
@@ -1139,6 +1135,11 @@ message_type_is_merge_related(api::MessageType::Id msg_type_id) {
     case api::MessageType::GETBUCKETDIFF_REPLY_ID:
     case api::MessageType::APPLYBUCKETDIFF_ID:
     case api::MessageType::APPLYBUCKETDIFF_REPLY_ID:
+    // DeleteBucket is usually (but not necessarily) executed in the context of a higher-level
+    // merge operation, but we include it here since we want to enforce that not all threads
+    // in a stripe can dispatch a bucket delete at the same time. This also provides a strict
+    // upper bound on the number of in-flight bucket deletes in the persistence core.
+    case api::MessageType::DELETEBUCKET_ID:
         return true;
     default: return false;
     }

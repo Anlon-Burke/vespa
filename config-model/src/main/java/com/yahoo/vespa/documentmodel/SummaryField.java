@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.documentmodel;
 
 import com.yahoo.document.DataType;
@@ -7,6 +7,7 @@ import com.yahoo.schema.document.TypedKey;
 
 import java.io.Serializable;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static com.yahoo.text.Lowercase.toLowerCase;
 
@@ -17,9 +18,7 @@ import static com.yahoo.text.Lowercase.toLowerCase;
  */
 public class SummaryField extends Field implements Cloneable, TypedKey {
 
-    /**
-     * A source (field name).
-     */
+    /** A source (field name). */
     public static class Source implements Serializable {
 
         private final String name;
@@ -38,12 +37,8 @@ public class SummaryField extends Field implements Cloneable, TypedKey {
 
         @Override
         public boolean equals(Object obj) {
-            if (!(obj instanceof Source)) {
-                return false;
-            }
-            Source other = (Source)obj;
-            return name.equals(other.name) &&
-                    override == other.override;
+            if (!(obj instanceof Source other)) return false;
+            return name.equals(other.name) && override == other.override;
         }
 
         @Override
@@ -67,14 +62,15 @@ public class SummaryField extends Field implements Cloneable, TypedKey {
      */
     private Set<Source> sources = new java.util.LinkedHashSet<>();
 
-    private Set<String> destinations=new java.util.LinkedHashSet<>();
+    private Set<String> destinations  =new java.util.LinkedHashSet<>();
 
     /** True if this field was defined implicitly */
-    private boolean implicit=false;
+    private boolean implicit = false;
+    private boolean unresolvedType = false;
 
     /** Creates a summary field with NONE as transform */
     public SummaryField(String name, DataType type) {
-        this(name,type, SummaryTransform.NONE);
+        this(name, type, SummaryTransform.NONE);
     }
 
     /** Creates a summary field with NONE as transform */
@@ -92,12 +88,26 @@ public class SummaryField extends Field implements Cloneable, TypedKey {
         this.transform=transform;
     }
 
+    public static SummaryField createWithUnresolvedType(String name) {
+        /*
+         * Data type is not available during conversion of
+         * parsed schema to schema. Use a placeholder data type and tag the summary
+         * field as having an unresolved type.
+         */
+        var summaryField = new SummaryField(name, DataType.NONE);
+        summaryField.unresolvedType = true;
+        return summaryField;
+    }
+
+
     public void setImplicit(boolean implicit) { this.implicit=implicit; }
 
     public boolean isImplicit() { return implicit; }
 
+    public boolean hasUnresolvedType() { return unresolvedType; }
+
     public void setTransform(SummaryTransform transform) {
-        this.transform=transform;
+        this.transform = transform;
         if (SummaryTransform.DYNAMICTEASER.equals(transform) || SummaryTransform.BOLDED.equals(transform)) {
             // This is the kind of logic we want to have in processing,
             // but can't because of deriveDocuments mode, which doesn't run
@@ -110,9 +120,9 @@ public class SummaryField extends Field implements Cloneable, TypedKey {
 
     /** Returns the first source field of this, or null if the source field is not present */
     public String getSourceField() {
-        String sourceName=getName();
-        if (sources.size()>0)
-            sourceName=sources.iterator().next().getName();
+        String sourceName = getName();
+        if ( ! sources.isEmpty())
+            sourceName = sources.iterator().next().getName();
         return sourceName;
     }
 
@@ -137,7 +147,7 @@ public class SummaryField extends Field implements Cloneable, TypedKey {
 
     /** Returns the first source name of this, or the field name if no source has been set */
     public String getSingleSource() {
-        if (sources.size()==0) return getName();
+        if (sources.isEmpty()) return getName();
         return sources.iterator().next().getName();
     }
 
@@ -229,23 +239,18 @@ public class SummaryField extends Field implements Cloneable, TypedKey {
         return true;
     }
 
-    private String getDestinationString()
-    {
-        StringBuilder destinationString = new StringBuilder("destinations(");
-        for (String destination : destinations) {
-            destinationString.append(destination).append(" ");
-        }
-        destinationString.append(")");
-        return destinationString.toString();
+    private String getDestinationString() {
+        return destinations.stream().map(destination -> "document-summary '" + destination + "'").collect(Collectors.joining(", "));
     }
 
+    @Override
     public String toString() {
         return "summary field '" + getName() + "'";
     }
 
     /** Returns a string which aids locating this field in the source search definition */
     public String toLocateString() {
-        return "'summary " + getName() + " type " + toLowerCase(getDataType().getName()) + "' in '" + getDestinationString() + "'";
+        return "summary " + getName() + " type " + toLowerCase(getDataType().getName()) + " in " + getDestinationString();
     }
 
     @Override
@@ -256,6 +261,7 @@ public class SummaryField extends Field implements Cloneable, TypedKey {
                 clone.sources = new LinkedHashSet<>(this.sources);
             if (this.destinations != null)
                 clone.destinations = new LinkedHashSet<>(destinations);
+            clone.unresolvedType = unresolvedType;
             return clone;
         }
         catch (CloneNotSupportedException e) {
@@ -280,6 +286,14 @@ public class SummaryField extends Field implements Cloneable, TypedKey {
             return false;
         }
         return true;
+    }
+
+    public void setResolvedDataType(DataType type) {
+        this.dataType = type;
+        if (!hasForcedId()) {
+            this.fieldId = calculateIdV7(null);
+        }
+        unresolvedType = false;
     }
 
     public VsmCommand getVsmCommand() {

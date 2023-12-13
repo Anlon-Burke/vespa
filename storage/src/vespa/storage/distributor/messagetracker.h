@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include <vespa/storage/common/cluster_context.h>
@@ -25,7 +25,7 @@ public:
         uint16_t _target;
     };
 
-    MessageTracker(const ClusterContext& cluster_context);
+    explicit MessageTracker(const ClusterContext& cluster_context);
     MessageTracker(MessageTracker&&) noexcept = default;
     MessageTracker& operator=(MessageTracker&&) noexcept = delete;
     MessageTracker(const MessageTracker &) = delete;

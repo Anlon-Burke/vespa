@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "check_condition.h"
@@ -32,8 +32,7 @@ public:
     void on_cancel(DistributorStripeMessageSender& sender, const CancelScope& cancel_scope) override;
 
 private:
-    PersistenceMessageTrackerImpl       _tracker_instance;
-    PersistenceMessageTracker&          _tracker;
+    PersistenceMessageTracker           _tracker;
     std::shared_ptr<api::RemoveCommand> _msg;
     document::BucketId                  _doc_id_bucket_id;
     const DistributorNodeContext&       _node_ctx;

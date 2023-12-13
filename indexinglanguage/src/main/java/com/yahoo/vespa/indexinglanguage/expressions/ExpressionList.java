@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
@@ -21,9 +21,9 @@ public abstract class ExpressionList<T extends Expression> extends CompositeExpr
 
     private final List<T> expressions = new LinkedList<T>();
 
-    protected ExpressionList(Iterable<? extends T> lst, DataType inputType) {
+    protected ExpressionList(Iterable<? extends T> expressions, DataType inputType) {
         super(inputType);
-        for (T exp : lst) {
+        for (T exp : expressions) {
             this.expressions.add(exp);
         }
     }

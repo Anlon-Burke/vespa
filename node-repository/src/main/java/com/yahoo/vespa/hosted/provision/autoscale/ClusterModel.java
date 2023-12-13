@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.autoscale;
 
 import com.yahoo.config.provision.ClusterSpec;
@@ -72,7 +72,7 @@ public class ClusterModel {
     // Lazily initialized members
     private Double queryFractionOfMax = null;
     private Double maxQueryGrowthRate = null;
-    private OptionalDouble averageQueryRate = null;
+    private OptionalDouble averageQueryRate = OptionalDouble.empty();
 
     public ClusterModel(NodeRepository nodeRepository,
                         Application application,
@@ -307,7 +307,7 @@ public class ClusterModel {
 
     /** Returns the average query rate in the scaling window. */
     private OptionalDouble averageQueryRate() {
-        if (averageQueryRate != null) return averageQueryRate;
+        if (averageQueryRate.isPresent()) return averageQueryRate;
         return averageQueryRate = clusterTimeseries().queryRate(scalingDuration(), clock);
     }
 

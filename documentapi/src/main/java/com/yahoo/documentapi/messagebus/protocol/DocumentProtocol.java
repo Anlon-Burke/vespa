@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.documentapi.messagebus.protocol;
 
 import com.yahoo.collections.Tuple2;
@@ -157,7 +157,7 @@ public class DocumentProtocol implements Protocol {
     /** We failed accessing the disk, which we think is a disk hardware problem. */
     public static final int ERROR_DISK_FAILURE = ErrorCode.APP_TRANSIENT_ERROR + 1007;
 
-    /** We failed during an IO operation, we dont think is a specific disk hardware problem. */
+    /** We failed during an IO operation, we don't think is a specific disk hardware problem. */
     public static final int ERROR_IO_FAILURE = ErrorCode.APP_TRANSIENT_ERROR + 1008;
 
     /**

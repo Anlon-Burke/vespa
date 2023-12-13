@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.testutils;
 
 import com.yahoo.component.Version;
@@ -21,6 +21,7 @@ import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.WireguardKey;
+import com.yahoo.config.provision.WireguardKeyWithTimestamp;
 import com.yahoo.config.provision.Zone;
 import com.yahoo.config.provision.ZoneEndpoint;
 import com.yahoo.config.provision.ZoneEndpoint.AccessType;
@@ -30,6 +31,7 @@ import com.yahoo.transaction.Mutex;
 import com.yahoo.transaction.NestedTransaction;
 import com.yahoo.vespa.curator.mock.MockCurator;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
+import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeMutex;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
@@ -38,10 +40,12 @@ import com.yahoo.vespa.hosted.provision.applications.Cluster;
 import com.yahoo.vespa.hosted.provision.autoscale.Autoscaling;
 import com.yahoo.vespa.hosted.provision.autoscale.Load;
 import com.yahoo.vespa.hosted.provision.autoscale.MemoryMetricsDb;
+import com.yahoo.vespa.hosted.provision.lb.LoadBalancerService;
 import com.yahoo.vespa.hosted.provision.node.Agent;
 import com.yahoo.vespa.hosted.provision.node.IP;
 import com.yahoo.vespa.hosted.provision.node.Status;
 import com.yahoo.vespa.hosted.provision.provisioning.EmptyProvisionServiceProvider;
+import com.yahoo.vespa.hosted.provision.provisioning.LoadBalancerProvisioner;
 import com.yahoo.vespa.hosted.provision.provisioning.NodeRepositoryProvisioner;
 import com.yahoo.vespa.service.duper.ConfigServerApplication;
 import com.yahoo.vespa.service.duper.InfraApplication;
@@ -52,7 +56,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 
@@ -92,7 +95,7 @@ public class MockNodeRepository extends NodeRepository {
               DockerImage.fromString("docker-registry.domain.tld:8080/dist/vespa"),
               Optional.empty(),
               Optional.empty(),
-              new InMemoryFlagSource(),
+              new InMemoryFlagSource().withIntFlag(PermanentFlags.PRE_PROVISIONED_LB_COUNT.id(), 1),
               new MemoryMetricsDb(Clock.fixed(Instant.ofEpochMilli(123), ZoneId.of("Z"))),
               new OrchestratorMock(),
               true,
@@ -105,7 +108,9 @@ public class MockNodeRepository extends NodeRepository {
     }
 
     private void populate() {
-        NodeRepositoryProvisioner provisioner = new NodeRepositoryProvisioner(this, Zone.defaultZone(), new MockProvisionServiceProvider(), new MockMetric());
+        MockProvisionServiceProvider provisionServiceProvider = new MockProvisionServiceProvider();
+        provisionServiceProvider.getLoadBalancerService().ifPresent(service -> new LoadBalancerProvisioner(this, service).refreshPool());
+        NodeRepositoryProvisioner provisioner = new NodeRepositoryProvisioner(this, Zone.defaultZone(), provisionServiceProvider, new MockMetric());
         List<Node> nodes = new ArrayList<>();
 
         // Regular nodes
@@ -162,7 +167,8 @@ public class MockNodeRepository extends NodeRepository {
         // Emulate host in tenant account
         nodes.add(Node.create("dockerhost2", ipConfig(101, 1, 3), "dockerhost2.yahoo.com",
                               flavors.getFlavorOrThrow("large"), NodeType.host)
-                          .wireguardPubKey(WireguardKey.from("000011112222333344445555666677778888999900c="))
+                          .wireguardKey(new WireguardKeyWithTimestamp(WireguardKey.from("000011112222333344445555666677778888999900c="),
+                                                                      Instant.ofEpochMilli(123L)))
                           .cloudAccount(tenantAccount).build());
         nodes.add(Node.create("dockerhost3", ipConfig(102, 1, 3), "dockerhost3.yahoo.com",
                              flavors.getFlavorOrThrow("large"), NodeType.host).cloudAccount(defaultCloudAccount).build());
@@ -176,7 +182,9 @@ public class MockNodeRepository extends NodeRepository {
         // Config servers
         nodes.add(Node.create("cfg1", ipConfig(201), "cfg1.yahoo.com", flavors.getFlavorOrThrow("default"), NodeType.config)
                       .cloudAccount(defaultCloudAccount)
-                      .wireguardPubKey(WireguardKey.from("lololololololololololololololololololololoo=")).build());
+                      .wireguardKey(new WireguardKeyWithTimestamp(WireguardKey.from("lololololololololololololololololololololoo="),
+                                                                  Instant.ofEpochMilli(456L)))
+                      .build());
         nodes.add(Node.create("cfg2", ipConfig(202), "cfg2.yahoo.com", flavors.getFlavorOrThrow("default"), NodeType.config)
                       .cloudAccount(defaultCloudAccount)
                       .build());
@@ -271,8 +279,8 @@ public class MockNodeRepository extends NodeRepository {
     }
 
     private IP.Config ipConfig(int nodeIndex, int primarySize, int poolSize) {
-        var primary = new LinkedHashSet<String>();
-        var ipPool = new LinkedHashSet<String>();
+        var primary = new ArrayList<String>();
+        var ipPool = new ArrayList<String>();
         for (int i = 1; i <= primarySize + poolSize; i++) {
             var set = primary;
             if (i > primarySize) {

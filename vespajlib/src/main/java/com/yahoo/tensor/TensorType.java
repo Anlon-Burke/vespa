@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.tensor;
 
 import com.yahoo.text.Ascii7BitMatcher;
@@ -80,7 +80,7 @@ public class TensorType {
     };
 
     /** The empty tensor type - which is the same as a double */
-    public static final TensorType empty = new TensorType(Value.DOUBLE, Collections.emptyList());
+    public static final TensorType empty = new TensorType();
 
     private final Value valueType;
 
@@ -90,17 +90,25 @@ public class TensorType {
     private final TensorType mappedSubtype;
     private final TensorType indexedSubtype;
 
+    // only used to initialize the "empty" instance
+    private TensorType() {
+        this.valueType = Value.DOUBLE;
+        this.dimensions = List.of();
+        this.mappedSubtype = this;
+        this.indexedSubtype = this;
+    }
+
     public TensorType(Value valueType, Collection<Dimension> dimensions) {
         this.valueType = valueType;
         List<Dimension> dimensionList = new ArrayList<>(dimensions);
         Collections.sort(dimensionList);
         this.dimensions = List.copyOf(dimensionList);
 
-        if (dimensionList.stream().allMatch(d -> d.isIndexed())) {
+        if (dimensionList.stream().allMatch(Dimension::isIndexed)) {
             mappedSubtype = empty;
             indexedSubtype = this;
         }
-        else if (dimensionList.stream().noneMatch(d -> d.isIndexed())) {
+        else if (dimensionList.stream().noneMatch(Dimension::isIndexed)) {
             mappedSubtype = this;
             indexedSubtype = empty;
         }
@@ -158,7 +166,7 @@ public class TensorType {
 
     /** Returns the dimension with this name, or empty if not present */
     public Optional<Dimension> dimension(String name) {
-        return indexOfDimension(name).map(i -> dimensions.get(i));
+        return indexOfDimension(name).map(dimensions::get);
     }
 
     /** Returns the 0-base index of this dimension, or empty if it is not present */
@@ -172,7 +180,7 @@ public class TensorType {
     /* Returns the bound of this dimension if it is present and bound in this, empty otherwise */
     public Optional<Long> sizeOfDimension(String dimension) {
         Optional<Dimension> d = dimension(dimension);
-        if ( ! d.isPresent()) return Optional.empty();
+        if (d.isEmpty()) return Optional.empty();
         return d.get().size();
     }
 
@@ -213,12 +221,12 @@ public class TensorType {
             if (thisDimension.isIndexed() != generalizationDimension.isIndexed()) return false;
             if (considerName && ! thisDimension.name().equals(generalizationDimension.name())) return false;
             if (generalizationDimension.size().isPresent()) {
-                if ( ! thisDimension.size().isPresent()) return false;
+                if (thisDimension.size().isEmpty()) return false;
                 if (convertible) {
                     if (thisDimension.size().get() > generalizationDimension.size().get()) return false;
                 }
                 else { // assignable
-                    if (!thisDimension.size().get().equals(generalizationDimension.size().get())) return false;
+                    if (!thisDimension.size().equals(generalizationDimension.size())) return false;
                 }
             }
         }
@@ -269,7 +277,7 @@ public class TensorType {
             if ( ! thisDim.name().equals(otherDim.name())) return Optional.empty();
             if (thisDim.isIndexed() && otherDim.isIndexed()) {
                 if (thisDim.size().isPresent() && otherDim.size().isPresent()) {
-                    if ( ! thisDim.size().get().equals(otherDim.size().get()))
+                    if ( ! thisDim.size().equals(otherDim.size()))
                         return Optional.empty();
                     b.dimension(thisDim); // both are equal and bound
                 }
@@ -314,7 +322,12 @@ public class TensorType {
 
         public final String name() { return name; }
 
-        /** Returns the size of this dimension if it is bound, empty otherwise */
+        /**
+         *  Returns the size of this dimension if it is bound, empty otherwise
+         *  Beware not use == != when comparing size. Use equals
+         */
+        // TODO Optional<Long> => OptionalLong to avoid mistakes when comparing values
+        // Deprecate if we find an alternative good name for size()
         public abstract Optional<Long> size();
 
         public abstract Type type();
@@ -337,7 +350,7 @@ public class TensorType {
          * [] + {} = {}
          */
         Dimension combineWith(Optional<Dimension> other, boolean allowDifferentSizes) {
-            if ( ! other.isPresent()) return this;
+            if (other.isEmpty()) return this;
             if (this instanceof MappedDimension) return this;
             if (other.get() instanceof MappedDimension) return other.get();
             // both are indexed
@@ -600,9 +613,9 @@ public class TensorType {
 
         public Builder dimension(String name, Dimension.Type type) {
             switch (type) {
-                case mapped : mapped(name); break;
-                case indexedUnbound : indexed(name); break;
-                default : throw new IllegalArgumentException("This can not create a dimension of type " + type);
+                case mapped -> mapped(name);
+                case indexedUnbound -> indexed(name);
+                default -> throw new IllegalArgumentException("This can not create a dimension of type " + type);
             }
             return this;
         }

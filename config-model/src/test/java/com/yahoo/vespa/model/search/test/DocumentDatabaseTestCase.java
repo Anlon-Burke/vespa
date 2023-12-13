@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.search.test;
 
 import com.google.common.collect.ImmutableMap;
@@ -171,16 +171,6 @@ public class DocumentDatabaseTestCase {
         final long DEFAULT = 1024L;
         verifyInitialDocumentCount(List.of(DocType.create("a", "index"), DocType.create("b", "streaming")),
                 "", List.of(DEFAULT, DEFAULT));
-    }
-
-    @Test
-    void requireThatMixedModeInitialDocumentCountIsReflected() {
-        final long INITIAL = 1000000000L;
-        String feedTuning = "<resizing>" +
-                "  <initialdocumentcount>1000000000</initialdocumentcount>" +
-                "</resizing>\n";
-        verifyInitialDocumentCount(List.of(DocType.create("a", "index"), DocType.create("b", "streaming")),
-                feedTuning, List.of(INITIAL, INITIAL));
     }
 
     private void assertDocTypeConfig(VespaModel model, String configId, String indexField, String attributeField) {

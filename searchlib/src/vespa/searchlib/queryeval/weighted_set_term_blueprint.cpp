@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "weighted_set_term_blueprint.h"
 #include "weighted_set_term_search.h"
@@ -33,10 +33,8 @@ WeightedSetTermMatchingElementsSearch::WeightedSetTermMatchingElementsSearch(con
       _search()
 {
     _tfmda.add(&_tfmd);
-    auto generic_search = bp.createLeafSearch(_tfmda, false);
-    auto weighted_set_term_search = dynamic_cast<WeightedSetTermSearch *>(generic_search.get());
-    generic_search.release();
-    _search.reset(weighted_set_term_search);
+    _search.reset(static_cast<WeightedSetTermSearch *>(bp.createLeafSearch(_tfmda, false).release()));
+
 }
 
 WeightedSetTermMatchingElementsSearch::~WeightedSetTermMatchingElementsSearch() = default;
@@ -94,16 +92,23 @@ WeightedSetTermBlueprint::addTerm(Blueprint::UP term, int32_t weight, HitEstimat
     _terms.push_back(std::move(term));
 }
 
-
 SearchIterator::UP
 WeightedSetTermBlueprint::createLeafSearch(const fef::TermFieldMatchDataArray &tfmda, bool) const
 {
     assert(tfmda.size() == 1);
+    if ((_terms.size() == 1) && tfmda[0]->isNotNeeded()) {
+        if (const LeafBlueprint * leaf = _terms[0]->asLeaf(); leaf != nullptr) {
+            // Always returnin a strict iterator independently of what was required,
+            // as that is what we do with all the children when there are more.
+            return leaf->createLeafSearch(tfmda, true);
+        }
+    }
     fef::MatchData::UP md = _layout.createMatchData();
-    std::vector<SearchIterator*> children(_terms.size());
-    for (size_t i = 0; i < _terms.size(); ++i) {
+    std::vector<SearchIterator*> children;
+    children.reserve(_terms.size());
+    for (const auto & _term : _terms) {
         // TODO: pass ownership with unique_ptr
-        children[i] = _terms[i]->createSearch(*md, true).release();
+        children.push_back(_term->createSearch(*md, true).release());
     }
     return WeightedSetTermSearch::create(children, *tfmda[0], _children_field.isFilter(), _weights, std::move(md));
 }
@@ -120,16 +125,16 @@ WeightedSetTermBlueprint::create_matching_elements_search(const MatchingElements
     if (fields.has_field(_children_field.getName())) {
         return std::make_unique<WeightedSetTermMatchingElementsSearch>(*this, _children_field.getName(), _terms);
     } else {
-        return std::unique_ptr<MatchingElementsSearch>();
+        return {};
     }
 }
 
 void
 WeightedSetTermBlueprint::fetchPostings(const ExecuteInfo &execInfo)
 {
-    ExecuteInfo childInfo = ExecuteInfo::create(true, execInfo.hitRate());
-    for (size_t i = 0; i < _terms.size(); ++i) {
-        _terms[i]->fetchPostings(childInfo);
+    ExecuteInfo childInfo = ExecuteInfo::create(true, execInfo);
+    for (const auto & _term : _terms) {
+        _term->fetchPostings(childInfo);
     }
 }
 

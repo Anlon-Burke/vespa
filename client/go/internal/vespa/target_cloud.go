@@ -1,3 +1,4 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package vespa
 
 import (
@@ -11,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/vespa-engine/vespa/client/go/internal/util"
+	"github.com/vespa-engine/vespa/client/go/internal/httputil"
 	"github.com/vespa-engine/vespa/client/go/internal/version"
 )
 
@@ -34,16 +35,17 @@ type cloudTarget struct {
 	apiOptions        APIOptions
 	deploymentOptions CloudDeploymentOptions
 	logOptions        LogOptions
-	httpClient        util.HTTPClient
+	httpClient        httputil.Client
 	apiAuth           Authenticator
 	deploymentAuth    Authenticator
 	retryInterval     time.Duration
 }
 
 type deploymentEndpoint struct {
-	Cluster string `json:"cluster"`
-	URL     string `json:"url"`
-	Scope   string `json:"scope"`
+	Cluster    string `json:"cluster"`
+	URL        string `json:"url"`
+	Scope      string `json:"scope"`
+	AuthMethod string `json:"authMethod"`
 }
 
 type deploymentResponse struct {
@@ -72,7 +74,7 @@ type logMessage struct {
 }
 
 // CloudTarget creates a Target for the Vespa Cloud or hosted Vespa platform.
-func CloudTarget(httpClient util.HTTPClient, apiAuth Authenticator, deploymentAuth Authenticator,
+func CloudTarget(httpClient httputil.Client, apiAuth Authenticator, deploymentAuth Authenticator,
 	apiOptions APIOptions, deploymentOptions CloudDeploymentOptions,
 	logOptions LogOptions, retryInterval time.Duration) (Target, error) {
 	return &cloudTarget{
@@ -369,15 +371,18 @@ func (t *cloudTarget) discoverEndpoints(timeout time.Duration) (map[string]strin
 			if endpoint.Scope != "zone" {
 				continue
 			}
+			if endpoint.AuthMethod == "token" {
+				continue
+			}
 			urlsByCluster[endpoint.Cluster] = endpoint.URL
 		}
 		return true, nil
 	}
 	if _, err := t.deployServiceWait(endpointFunc, func() *http.Request { return req }, timeout); err != nil {
-		return nil, fmt.Errorf("no endpoints found%s: %w", waitDescription(timeout), err)
+		return nil, fmt.Errorf("no endpoints found in zone %s%s: %w", t.deploymentOptions.Deployment.Zone, waitDescription(timeout), err)
 	}
 	if len(urlsByCluster) == 0 {
-		return nil, fmt.Errorf("no endpoints found%s", waitDescription(timeout))
+		return nil, fmt.Errorf("no endpoints found in zone %s%s", t.deploymentOptions.Deployment.Zone, waitDescription(timeout))
 	}
 	return urlsByCluster, nil
 }

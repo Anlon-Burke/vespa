@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.testutils;
 
 import com.yahoo.component.Version;
@@ -50,6 +50,7 @@ public class MockDeployer implements Deployer {
 
     private boolean failActivate = false;
     private boolean bootstrapping = true;
+    private Instant readiedReindexingAt = null;
 
     /** Create a mock deployer which returns empty on every deploy request. */
     @Inject
@@ -91,6 +92,8 @@ public class MockDeployer implements Deployer {
 
     public void setBootstrapping(boolean bootstrapping) { this.bootstrapping = bootstrapping; }
 
+    public void setReadiedReindexingAt(Instant readiedReindexingAt) { this.readiedReindexingAt = readiedReindexingAt; }
+
     @Override
     public Optional<Deployment> deployFromLocalActive(ApplicationId id, boolean bootstrap) {
         return deployFromLocalActive(id, Duration.ofSeconds(60));
@@ -128,6 +131,11 @@ public class MockDeployer implements Deployer {
     @Override
     public Optional<Instant> deployTime(ApplicationId application) {
         return Optional.ofNullable(lastPrepareTimes.get(application));
+    }
+
+    @Override
+    public boolean readiedReindexingAfter(ApplicationId application, Instant instant) {
+        return readiedReindexingAt != null && readiedReindexingAt.isAfter(instant);
     }
 
     @Override

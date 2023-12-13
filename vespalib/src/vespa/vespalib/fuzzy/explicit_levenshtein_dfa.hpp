@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "explicit_levenshtein_dfa.h"
@@ -21,12 +21,16 @@ struct ExplicitDfaMatcher {
     using StateParamType = const DfaNodeType*;
 
     const std::span<const DfaNodeType> _nodes;
+    const bool                         _is_cased;
 
-    explicit ExplicitDfaMatcher(const std::span<const DfaNodeType> nodes) noexcept
-        : _nodes(nodes)
+    ExplicitDfaMatcher(const std::span<const DfaNodeType> nodes, bool is_cased) noexcept
+        : _nodes(nodes),
+          _is_cased(is_cased)
     {}
 
     static constexpr uint8_t max_edits() noexcept { return MaxEdits; }
+
+    bool is_cased() const noexcept { return _is_cased; }
 
     StateType start() const noexcept {
         return &_nodes[0];
@@ -75,12 +79,38 @@ struct ExplicitDfaMatcher {
     StateType edge_to_state([[maybe_unused]] StateType node, EdgeType edge) const noexcept {
         return &_nodes[edge->node];
     }
+    constexpr bool implies_exact_match_suffix(const StateType&) const noexcept {
+        // TODO; caller will currently just fall back to explicit state stepping
+        return false;
+    }
+    void emit_exact_match_suffix(const StateType&, std::string&) const {
+        // TODO (will never be called as long as `implies_exact_match_suffix()` returns false)
+        abort();
+    }
+    void emit_exact_match_suffix(const StateType&, std::vector<uint32_t>&) const {
+        // TODO (will never be called as long as `implies_exact_match_suffix()` returns false)
+        abort();
+    }
 };
 
 template <uint8_t MaxEdits>
 LevenshteinDfa::MatchResult
-ExplicitLevenshteinDfaImpl<MaxEdits>::match(std::string_view u8str, std::string* successor_out) const {
-    ExplicitDfaMatcher<MaxEdits> matcher(_nodes);
+ExplicitLevenshteinDfaImpl<MaxEdits>::match(std::string_view u8str) const {
+    ExplicitDfaMatcher<MaxEdits> matcher(_nodes, _is_cased);
+    return MatchAlgorithm<MaxEdits>::match(matcher, u8str);
+}
+
+template <uint8_t MaxEdits>
+LevenshteinDfa::MatchResult
+ExplicitLevenshteinDfaImpl<MaxEdits>::match(std::string_view u8str, std::string& successor_out) const {
+    ExplicitDfaMatcher<MaxEdits> matcher(_nodes, _is_cased);
+    return MatchAlgorithm<MaxEdits>::match(matcher, u8str, successor_out);
+}
+
+template <uint8_t MaxEdits>
+LevenshteinDfa::MatchResult
+ExplicitLevenshteinDfaImpl<MaxEdits>::match(std::string_view u8str, std::vector<uint32_t>& successor_out) const {
+    ExplicitDfaMatcher<MaxEdits> matcher(_nodes, _is_cased);
     return MatchAlgorithm<MaxEdits>::match(matcher, u8str, successor_out);
 }
 
@@ -97,7 +127,7 @@ void ExplicitLevenshteinDfaImpl<MaxEdits>::dump_as_graphviz(std::ostream& os) co
         }
         for (const auto& edge : node.match_out_edges()) {
             std::string as_utf8;
-            append_utf32_char_as_utf8(as_utf8, edge.u32ch);
+            append_utf32_char(as_utf8, edge.u32ch);
             os << "    " << i << " -> " << edge.node << " [label=\"" << as_utf8 << "\"];\n";
         }
         if (node.wildcard_edge_to != DOOMED) {
@@ -164,9 +194,12 @@ class ExplicitLevenshteinDfaBuilderImpl : public DfaSteppingBase<Traits> {
     using Base::is_match;
     using Base::can_match;
     using Base::transitions;
+
+    const bool _is_cased;
 public:
-    explicit ExplicitLevenshteinDfaBuilderImpl(std::span<const uint32_t> str) noexcept
-        : DfaSteppingBase<Traits>(str)
+    ExplicitLevenshteinDfaBuilderImpl(std::span<const uint32_t> str, bool is_cased) noexcept
+        : DfaSteppingBase<Traits>(str),
+          _is_cased(is_cased)
     {
         assert(str.size() < UINT32_MAX / max_out_edges_per_node());
     }
@@ -181,7 +214,7 @@ public:
 
 template <typename Traits>
 LevenshteinDfa ExplicitLevenshteinDfaBuilderImpl<Traits>::build_dfa() const {
-    auto dfa = std::make_unique<ExplicitLevenshteinDfaImpl<max_edits()>>();
+    auto dfa = std::make_unique<ExplicitLevenshteinDfaImpl<max_edits()>>(_is_cased);
     ExploreState<StateType> exp;
     // Use BFS instead of DFS to ensure most node edges point to nodes that are allocated _after_
     // the parent node, which means the CPU can skip ahead instead of ping-ponging back and forth.
@@ -221,7 +254,7 @@ LevenshteinDfa ExplicitLevenshteinDfaBuilderImpl<Traits>::build_dfa() const {
 
 template <typename Traits>
 LevenshteinDfa ExplicitLevenshteinDfaBuilder<Traits>::build_dfa() const {
-    ExplicitLevenshteinDfaBuilderImpl<Traits> builder(_u32_str_buf);
+    ExplicitLevenshteinDfaBuilderImpl<Traits> builder(_u32_str_buf, _is_cased);
     return builder.build_dfa();
 }
 

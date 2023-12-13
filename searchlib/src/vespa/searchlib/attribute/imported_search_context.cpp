@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "imported_search_context.h"
 #include "bitvector_search_cache.h"
@@ -128,7 +128,7 @@ ImportedSearchContext::createIterator(fef::TermFieldMatchData* matchData, bool s
             return SearchIterator::UP(new EmptySearch());
         } else {
             using Posting = vespalib::btree::BTreeKeyData<uint32_t, int32_t>;
-            using DocIt = DocIdIterator<Posting>;
+            using DocIt = ArrayIterator<Posting>;
             DocIt postings;
             auto array = _merger.getArray();
             postings.set(&array[0], &array[array.size()]);
@@ -308,7 +308,7 @@ void
 ImportedSearchContext::fetchPostings(const queryeval::ExecuteInfo &execInfo) {
     if (!_searchCacheLookup) {
         _target_search_context->fetchPostings(execInfo);
-        if (!_merger.merge_done() && (execInfo.isStrict() || (_target_attribute.getIsFastSearch() && execInfo.hitRate() > 0.01))) {
+        if (!_merger.merge_done() && (execInfo.is_strict() || (_target_attribute.getIsFastSearch() && execInfo.hit_rate() > 0.01))) {
                 makeMergedPostings(_target_attribute.getIsFilter());
                 considerAddSearchCacheEntry();
         }

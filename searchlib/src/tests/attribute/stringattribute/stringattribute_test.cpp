@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/searchlib/attribute/enumstore.h>
 #include <vespa/searchlib/attribute/singlestringattribute.h>
@@ -389,8 +389,8 @@ testSingleValue(Attribute & svsa, Config &cfg)
 TEST("testSingleValue")
 {
     EXPECT_EQUAL(24u, sizeof(SearchContext));
-    EXPECT_EQUAL(40u, sizeof(StringSearchHelper));
-    EXPECT_EQUAL(96u, sizeof(attribute::SingleStringEnumSearchContext));
+    EXPECT_EQUAL(48u, sizeof(StringSearchHelper));
+    EXPECT_EQUAL(104u, sizeof(attribute::SingleStringEnumSearchContext));
     {
         Config cfg(BasicType::STRING, CollectionType::SINGLE);
         SingleValueStringAttribute svsa("svsa", cfg);
@@ -423,6 +423,14 @@ TEST("test uncased match") {
     EXPECT_FALSE(helper.isMatch("Xy"));
 }
 
+namespace {
+
+const char* char_from_u8(const char8_t* p) {
+    return reinterpret_cast<const char*>(p);
+}
+
+}
+
 TEST("test uncased prefix match") {
     QueryTermUCS4 xyz("xyz", QueryTermSimple::Type::PREFIXTERM);
     StringSearchHelper helper(xyz, false);
@@ -435,6 +443,12 @@ TEST("test uncased prefix match") {
     EXPECT_TRUE(helper.isMatch("xyz"));
     EXPECT_TRUE(helper.isMatch("XyZ"));
     EXPECT_FALSE(helper.isMatch("Xy"));
+    QueryTermUCS4 aa(char_from_u8(u8"å"), QueryTermSimple::Type::PREFIXTERM);
+    StringSearchHelper aa_helper(aa, false);
+    EXPECT_FALSE(aa_helper.isMatch("alle"));
+    EXPECT_TRUE(aa_helper.isMatch(char_from_u8(u8"ås")));
+    EXPECT_TRUE(aa_helper.isMatch(char_from_u8(u8"Ås")));
+    EXPECT_FALSE(aa_helper.isMatch(char_from_u8(u8"Ørn")));
 }
 
 TEST("test cased match") {
@@ -464,6 +478,12 @@ TEST("test cased prefix match") {
     EXPECT_FALSE(helper.isMatch("Xyz"));
     EXPECT_TRUE(helper.isMatch("XyZ"));
     EXPECT_FALSE(helper.isMatch("Xy"));
+    QueryTermUCS4 aa(char_from_u8(u8"å"), QueryTermSimple::Type::PREFIXTERM);
+    StringSearchHelper aa_helper(aa, true);
+    EXPECT_FALSE(aa_helper.isMatch("alle"));
+    EXPECT_TRUE(aa_helper.isMatch(char_from_u8(u8"ås")));
+    EXPECT_FALSE(aa_helper.isMatch(char_from_u8(u8"Ås")));
+    EXPECT_FALSE(aa_helper.isMatch(char_from_u8(u8"Ørn")));
 }
 
 TEST("test uncased regex match") {

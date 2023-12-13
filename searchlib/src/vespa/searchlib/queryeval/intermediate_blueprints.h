@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -15,10 +15,11 @@ class AndNotBlueprint : public IntermediateBlueprint
 {
 public:
     bool supports_termwise_children() const override { return true; }
+    double calculate_relative_estimate() const final;
     HitEstimate combine(const std::vector<HitEstimate> &data) const override;
     FieldSpecBaseList exposeFields() const override;
-    void optimize_self() override;
-    bool isAndNot() const override { return true; }
+    void optimize_self(OptimizePass pass) override;
+    AndNotBlueprint * asAndNot() noexcept final { return this; }
     Blueprint::UP get_replacement() override;
     void sort(Children &children) const override;
     bool inheritStrict(size_t i) const override;
@@ -28,6 +29,9 @@ public:
     SearchIterator::UP
     createFilterSearch(bool strict, FilterConstraint constraint) const override;
 private:
+    uint8_t calculate_cost_tier() const override {
+        return (childCnt() > 0) ? get_children()[0]->getState().cost_tier() : State::COST_TIER_NORMAL;
+    }
     bool isPositive(size_t index) const override { return index == 0; }
 };
 
@@ -38,10 +42,11 @@ class AndBlueprint : public IntermediateBlueprint
 {
 public:
     bool supports_termwise_children() const override { return true; }
+    double calculate_relative_estimate() const final;
     HitEstimate combine(const std::vector<HitEstimate> &data) const override;
     FieldSpecBaseList exposeFields() const override;
-    void optimize_self() override;
-    bool isAnd() const override { return true; }
+    void optimize_self(OptimizePass pass) override;
+    AndBlueprint * asAnd() noexcept final { return this; }
     Blueprint::UP get_replacement() override;
     void sort(Children &children) const override;
     bool inheritStrict(size_t i) const override;
@@ -51,7 +56,7 @@ public:
     SearchIterator::UP
     createFilterSearch(bool strict, FilterConstraint constraint) const override;
 private:
-    double computeNextHitRate(const Blueprint & child, double hitRate) const override;
+    double computeNextHitRate(const Blueprint & child, double hit_rate, bool use_estimate) const override;
 };
 
 //-----------------------------------------------------------------------------
@@ -62,10 +67,11 @@ class OrBlueprint : public IntermediateBlueprint
 public:
     ~OrBlueprint() override;
     bool supports_termwise_children() const override { return true; }
+    double calculate_relative_estimate() const final;
     HitEstimate combine(const std::vector<HitEstimate> &data) const override;
     FieldSpecBaseList exposeFields() const override;
-    void optimize_self() override;
-    bool isOr() const override { return true; }
+    void optimize_self(OptimizePass pass) override;
+    OrBlueprint * asOr() noexcept final { return this; }
     Blueprint::UP get_replacement() override;
     void sort(Children &children) const override;
     bool inheritStrict(size_t i) const override;
@@ -74,6 +80,9 @@ public:
                              bool strict, fef::MatchData &md) const override;
     SearchIterator::UP
     createFilterSearch(bool strict, FilterConstraint constraint) const override;
+private:
+    double computeNextHitRate(const Blueprint & child, double hit_rate, bool use_estimate) const override;
+    uint8_t calculate_cost_tier() const override;
 };
 
 //-----------------------------------------------------------------------------
@@ -85,18 +94,20 @@ private:
     std::vector<uint32_t> _weights;
 
 public:
+    double calculate_relative_estimate() const final;
     HitEstimate combine(const std::vector<HitEstimate> &data) const override;
     FieldSpecBaseList exposeFields() const override;
     void sort(Children &children) const override;
     bool inheritStrict(size_t i) const override;
     bool always_needs_unpack() const override;
+    WeakAndBlueprint * asWeakAnd() noexcept final { return this; }
     SearchIterator::UP
     createIntermediateSearch(MultiSearch::Children subSearches,
                              bool strict, fef::MatchData &md) const override;
     SearchIterator::UP createFilterSearch(bool strict, FilterConstraint constraint) const override;
 
-    WeakAndBlueprint(uint32_t n) : _n(n) {}
-    ~WeakAndBlueprint();
+    explicit WeakAndBlueprint(uint32_t n) noexcept : _n(n) {}
+    ~WeakAndBlueprint() override;
     void addTerm(Blueprint::UP bp, uint32_t weight) {
         addChild(std::move(bp));
         _weights.push_back(weight);
@@ -113,6 +124,7 @@ private:
     uint32_t _window;
 
 public:
+    double calculate_relative_estimate() const final;
     HitEstimate combine(const std::vector<HitEstimate> &data) const override;
     FieldSpecBaseList exposeFields() const override;
     bool should_optimize_children() const override { return false; }
@@ -124,7 +136,7 @@ public:
                              bool strict, fef::MatchData &md) const override;
     SearchIterator::UP createFilterSearch(bool strict, FilterConstraint constraint) const override;
 
-    NearBlueprint(uint32_t window) : _window(window) {}
+    explicit NearBlueprint(uint32_t window) noexcept : _window(window) {}
 };
 
 //-----------------------------------------------------------------------------
@@ -135,6 +147,7 @@ private:
     uint32_t _window;
 
 public:
+    double calculate_relative_estimate() const final;
     HitEstimate combine(const std::vector<HitEstimate> &data) const override;
     FieldSpecBaseList exposeFields() const override;
     bool should_optimize_children() const override { return false; }
@@ -146,7 +159,7 @@ public:
                              bool strict, fef::MatchData &md) const override;
     SearchIterator::UP createFilterSearch(bool strict, FilterConstraint constraint) const override;
 
-    ONearBlueprint(uint32_t window) : _window(window) {}
+    explicit ONearBlueprint(uint32_t window) noexcept : _window(window) {}
 };
 
 //-----------------------------------------------------------------------------
@@ -154,18 +167,22 @@ public:
 class RankBlueprint final : public IntermediateBlueprint
 {
 public:
+    double calculate_relative_estimate() const final;
     HitEstimate combine(const std::vector<HitEstimate> &data) const override;
     FieldSpecBaseList exposeFields() const override;
-    void optimize_self() override;
+    void optimize_self(OptimizePass pass) override;
     Blueprint::UP get_replacement() override;
     void sort(Children &children) const override;
     bool inheritStrict(size_t i) const override;
-    bool isRank() const override { return true; }
+    bool isRank() const noexcept final { return true; }
     SearchIterator::UP
     createIntermediateSearch(MultiSearch::Children subSearches,
                              bool strict, fef::MatchData &md) const override;
     SearchIterator::UP
     createFilterSearch(bool strict, FilterConstraint constraint) const override;
+    uint8_t calculate_cost_tier() const override {
+        return (childCnt() > 0) ? get_children()[0]->getState().cost_tier() : State::COST_TIER_NORMAL;
+    }
 };
 
 //-----------------------------------------------------------------------------
@@ -176,18 +193,13 @@ private:
     const ISourceSelector &_selector;
 
 public:
-    SourceBlenderBlueprint(const ISourceSelector &selector);
+    explicit SourceBlenderBlueprint(const ISourceSelector &selector) noexcept;
     ~SourceBlenderBlueprint() override;
+    double calculate_relative_estimate() const final;
     HitEstimate combine(const std::vector<HitEstimate> &data) const override;
     FieldSpecBaseList exposeFields() const override;
     void sort(Children &children) const override;
     bool inheritStrict(size_t i) const override;
-    /**
-     * Will return the index matching the given sourceId.
-     * @param sourceId The sourceid to find.
-     * @return The index to the child representing the sourceId. -1 if not found.
-     */
-    ssize_t findSource(uint32_t sourceId) const;
     SearchIterator::UP
     createIntermediateSearch(MultiSearch::Children subSearches,
                              bool strict, fef::MatchData &md) const override;
@@ -196,7 +208,8 @@ public:
 
     /** check if this blueprint has the same source selector as the other */
     bool isCompatibleWith(const SourceBlenderBlueprint &other) const;
-    bool isSourceBlender() const override { return true; }
+    SourceBlenderBlueprint * asSourceBlender() noexcept final { return this; }
+    uint8_t calculate_cost_tier() const override;
 };
 
 }

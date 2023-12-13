@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.modelfactory;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
@@ -207,11 +207,12 @@ public abstract class ModelsBuilder<MODELRESULT extends ModelResult> {
                 builtModelVersions.add(modelVersion);
             } catch (RuntimeException e) {
                 // allow failure to create old config models if there is a validation override that allow skipping old
-                // config models or we're manually deploying
+                // config models, or we're manually deploying
                 if (builtModelVersions.size() > 0 &&
                     ( builtModelVersions.get(0).getModel().skipOldConfigModels(now) || zone().environment().isManuallyDeployed()))
-                    log.log(Level.INFO, applicationId + ": Failed to build version " + version +
-                                        ", but allow failure due to validation override or manual deployment");
+                    log.log(Level.WARNING, applicationId + ": Failed to build version " + version +
+                            ", but allow failure due to validation override or manual deployment:"
+                            + Exceptions.toMessageString(e));
                 else {
                     log.log(Level.SEVERE, applicationId + ": Failed to build version " + version);
                     throw e;

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.dispatch.searchcluster;
 
 import com.yahoo.container.handler.VipStatus;
@@ -6,11 +6,10 @@ import com.yahoo.net.HostName;
 import com.yahoo.prelude.Pong;
 import com.yahoo.search.cluster.ClusterMonitor;
 import com.yahoo.search.cluster.NodeManager;
-import com.yahoo.yolean.UncheckedInterruptedException;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -18,6 +17,7 @@ import java.util.concurrent.Executor;
 import java.util.logging.Logger;
 
 import static java.util.stream.Collectors.groupingBy;
+import static java.util.stream.Collectors.toMap;
 
 /**
  * A model of a search cluster we might want to dispatch queries to.
@@ -31,7 +31,8 @@ public class SearchCluster implements NodeManager<Node> {
     private final String clusterId;
     private final VipStatus vipStatus;
     private final PingFactory pingFactory;
-    private volatile SearchGroupsImpl groups;
+    private volatile SearchGroupsImpl groups;           // Groups in this cluster
+    private volatile SearchGroupsImpl monitoredGroups;  // Same as groups, except during reconfiguration.
     private volatile long nextLogTime = 0;
 
     /**
@@ -42,7 +43,7 @@ public class SearchCluster implements NodeManager<Node> {
      * if it only queries this cluster when the local node cannot be used, to avoid unnecessary
      * cross-node network traffic.
      */
-    private final Node localCorpusDispatchTarget;
+    private volatile Node localCorpusDispatchTarget;
 
     public SearchCluster(String clusterId, double minActivedocsPercentage, Collection<Node> nodes,
                          VipStatus vipStatus, PingFactory pingFactory) {
@@ -53,6 +54,7 @@ public class SearchCluster implements NodeManager<Node> {
         this.clusterId = clusterId;
         this.vipStatus = vipStatus;
         this.pingFactory = pingFactory;
+        this.monitoredGroups = groups;
         this.groups = groups;
         this.localCorpusDispatchTarget = findLocalCorpusDispatchTarget(HostName.getLocalhost(), groups);
     }
@@ -61,26 +63,24 @@ public class SearchCluster implements NodeManager<Node> {
     public String name() { return clusterId; }
 
     /** Sets the new nodes to monitor to be the new nodes, but keep any existing node instances which equal the new ones. */
-    public ClusterMonitor<Node> updateNodes(Collection<Node> newNodes, double minActivedocsPercentage) {
-        Collection<Node> retainedNodes = groups.nodes();
-        Collection<Node> currentNodes = new HashSet<>(newNodes);
-        retainedNodes.retainAll(currentNodes);          // Throw away all old nodes which are not in the new set.
-        currentNodes.removeIf(retainedNodes::contains); // Throw away all new nodes for which we have more information in an old object.
-        Collection<Node> addedNodes = List.copyOf(currentNodes);
-        currentNodes.addAll(retainedNodes);             // Keep the old nodes that were replaced in the new set.
+    public void updateNodes(Collection<Node> newNodes, ClusterMonitor<Node> monitor, double minActivedocsPercentage) {
+        List<Node> currentNodes = new ArrayList<>(newNodes);
+        List<Node> addedNodes = new ArrayList<>();
+        Map<Node, Node> retainedNodes = groups.nodes().stream().collect(toMap(node -> node, node -> node));
+        for (int i = 0; i < currentNodes.size(); i++) {
+            Node retained = retainedNodes.get(currentNodes.get(i));
+            if (retained != null) currentNodes.set(i, retained);
+            else addedNodes.add(currentNodes.get(i));
+        }
         SearchGroupsImpl groups = toGroups(currentNodes, minActivedocsPercentage);
-        ClusterMonitor<Node> monitor = new ClusterMonitor<>(this, false);
-        for (Node node : groups.nodes()) monitor.add(node, true);
-        monitor.start();
-        try { while (addedNodes.stream().anyMatch(node -> node.isWorking() == null)) { Thread.sleep(1); } }
-        catch (InterruptedException e) { throw new UncheckedInterruptedException(e, true); }
-        pingIterationCompleted(groups);
+        this.localCorpusDispatchTarget = findLocalCorpusDispatchTarget(HostName.getLocalhost(), groups);
+        this.monitoredGroups = groups;
+        monitor.reconfigure(groups.nodes());
         this.groups = groups;
-        return monitor;
     }
 
     public void addMonitoring(ClusterMonitor<Node> clusterMonitor) {
-        for (Node node : groups.nodes()) clusterMonitor.add(node, true);
+        for (Node node : monitoredGroups.nodes()) clusterMonitor.add(node, true);
     }
 
     private static Node findLocalCorpusDispatchTarget(String selfHostname, SearchGroups groups) {
@@ -139,6 +139,7 @@ public class SearchCluster implements NodeManager<Node> {
     }
 
     private void updateWorkingState(Node node, boolean isWorking) {
+        log.fine(() -> "Updating working state of " + node + " to " + isWorking);
         node.setWorking(isWorking);
         updateVipStatusOnNodeChange(node, isWorking);
     }
@@ -192,15 +193,15 @@ public class SearchCluster implements NodeManager<Node> {
     }
 
     public boolean hasInformationAboutAllNodes() {
-        return groups().stream().allMatch(group -> group.nodes().stream().allMatch(node -> node.isWorking() != null));
+        return monitoredGroups.nodes().stream().allMatch(node -> node.isWorking() != null);
     }
 
     long nonWorkingNodeCount() {
-        return groups().stream().flatMap(group -> group.nodes().stream()).filter(node -> node.isWorking() == Boolean.FALSE).count();
+        return monitoredGroups.nodes().stream().filter(node -> node.isWorking() == Boolean.FALSE).count();
     }
 
     private boolean hasWorkingNodes() {
-        return groups().stream().anyMatch(group -> group.nodes().stream().anyMatch(node -> node.isWorking() != Boolean.FALSE));
+        return monitoredGroups.nodes().stream().anyMatch(node -> node.isWorking() != Boolean.FALSE);
     }
 
     private boolean usesLocalCorpusIn(Node node) {
@@ -214,6 +215,7 @@ public class SearchCluster implements NodeManager<Node> {
     /** Used by the cluster monitor to manage node status */
     @Override
     public void ping(ClusterMonitor<Node> clusterMonitor, Node node, Executor executor) {
+        log.fine(() -> "Pinging " + node);
         Pinger pinger = pingFactory.createPinger(node, clusterMonitor, new PongCallback(node, clusterMonitor));
         pinger.ping();
     }
@@ -245,7 +247,7 @@ public class SearchCluster implements NodeManager<Node> {
      */
     @Override
     public void pingIterationCompleted() {
-        pingIterationCompleted(groups);
+        pingIterationCompleted(monitoredGroups);
     }
 
     private void pingIterationCompleted(SearchGroupsImpl groups) {
@@ -300,6 +302,7 @@ public class SearchCluster implements NodeManager<Node> {
 
         @Override
         public void handle(Pong pong) {
+            log.fine(() -> "Got pong from " + node + ": " + pong);
             if (pong.badResponse()) {
                 clusterMonitor.failed(node, pong.error().get());
             } else {

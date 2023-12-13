@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -8,6 +8,7 @@
 #include "blueprintresolver.h"
 #include "rank_program.h"
 #include <vespa/searchlib/common/stringmap.h>
+#include <vespa/vespalib/fuzzy/fuzzy_matching_algorithm.h>
 
 namespace search::fef {
 
@@ -31,7 +32,7 @@ public:
             : _attribute(attribute),
               _operation(operation)
         {}
-        bool enabled() const { return !_attribute.empty() && !_operation.empty(); }
+        bool enabled() const noexcept { return !_attribute.empty() && !_operation.empty(); }
         vespalib::string _attribute;
         vespalib::string _operation;
     };
@@ -68,6 +69,9 @@ private:
     bool                     _compiled;
     bool                     _compileError;
     bool                     _degradationAscendingOrder;
+    bool                     _always_mark_phrase_expensive;
+    bool                     _create_postinglist_when_non_strict;
+    bool                     _use_estimate_for_fetch_postings;
     vespalib::string         _diversityAttribute;
     uint32_t                 _diversityMinGroups;
     double                   _diversityCutoffFactor;
@@ -77,12 +81,12 @@ private:
     double                   _global_filter_lower_limit;
     double                   _global_filter_upper_limit;
     double                   _target_hits_max_adjustment_factor;
+    vespalib::FuzzyMatchingAlgorithm _fuzzy_matching_algorithm;
     MutateOperation          _mutateOnMatch;
     MutateOperation          _mutateOnFirstPhase;
     MutateOperation          _mutateOnSecondPhase;
     MutateOperation          _mutateOnSummary;
     bool                     _mutateAllowQueryOverride;
-    bool                     _enableNestedMultivalueGrouping;
 
     void compileAndCheckForErrors(BlueprintResolver &bp);
 public:
@@ -219,6 +223,9 @@ public:
     bool isDegradationOrderAscending() const {
         return _degradationAscendingOrder;
     }
+    bool always_mark_phrase_expensive() const noexcept { return _always_mark_phrase_expensive; }
+    bool create_postinglist_when_non_strict() const noexcept { return _create_postinglist_when_non_strict; }
+    bool use_estimate_for_fetch_postings() const noexcept { return _use_estimate_for_fetch_postings; }
     /** get number of hits to collect during graceful degradation in match phase */
     uint32_t getDegradationMaxHits() const {
         return _degradationMaxHits;
@@ -396,6 +403,8 @@ public:
     double get_global_filter_upper_limit() const { return _global_filter_upper_limit; }
     void set_target_hits_max_adjustment_factor(double v) { _target_hits_max_adjustment_factor = v; }
     double get_target_hits_max_adjustment_factor() const { return _target_hits_max_adjustment_factor; }
+    void set_fuzzy_matching_algorithm(vespalib::FuzzyMatchingAlgorithm v) { _fuzzy_matching_algorithm = v; }
+    vespalib::FuzzyMatchingAlgorithm get_fuzzy_matching_algorithm() const { return _fuzzy_matching_algorithm; }
 
     /**
      * This method may be used to indicate that certain features
@@ -454,7 +463,6 @@ public:
     const MutateOperation & getMutateOnSummary() const { return _mutateOnSummary; }
 
     bool allowMutateQueryOverride() const { return _mutateAllowQueryOverride; }
-    bool enableNestedMultivalueGrouping() const { return _enableNestedMultivalueGrouping; }
 };
 
 }

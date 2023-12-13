@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.zookeeper;
 
 import com.yahoo.io.reader.NamedReader;
@@ -109,6 +109,12 @@ public class ZKApplication {
 
     public byte[] getBytes(Path path) {
         return getBytesInternal(getFullPath(path));
+    }
+
+    public long getSize(Path path) {
+        return curator.getStat(path).map(stat -> (long)stat.getDataLength())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Could not get size from '" + path + "' in zookeeper"));
     }
 
     void putData(Path path, String data) {

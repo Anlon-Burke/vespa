@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "queryterm.h"
 #include <vespa/vespalib/objects/visit.h>
@@ -74,8 +74,8 @@ QueryTerm::QueryTerm(std::unique_ptr<QueryNodeResultBase> org, const string & te
 
 void QueryTerm::getPhrases(QueryNodeRefList & tl)            { (void) tl; }
 void QueryTerm::getPhrases(ConstQueryNodeRefList & tl) const { (void) tl; }
-void QueryTerm::getLeafs(QueryTermList & tl)                 { tl.push_back(this); }
-void QueryTerm::getLeafs(ConstQueryTermList & tl)      const { tl.push_back(this); }
+void QueryTerm::getLeaves(QueryTermList & tl)                 { tl.push_back(this); }
+void QueryTerm::getLeaves(ConstQueryTermList & tl)      const { tl.push_back(this); }
 bool QueryTerm::evaluate()                             const { return !_hitList.empty(); }
 void QueryTerm::reset()                                      { _hitList.clear(); }
 const HitList & QueryTerm::evaluateHits(HitList &) const { return _hitList; }
@@ -94,6 +94,12 @@ void QueryTerm::add(unsigned pos, unsigned context, uint32_t elemId, int32_t wei
 
 NearestNeighborQueryNode*
 QueryTerm::as_nearest_neighbor_query_node() noexcept
+{
+    return nullptr;
+}
+
+MultiTerm*
+QueryTerm::as_multi_term() noexcept
 {
     return nullptr;
 }

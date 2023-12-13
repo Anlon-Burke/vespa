@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "check_condition.h"
 #include "putoperation.h"
@@ -28,8 +28,7 @@ PutOperation::PutOperation(const DistributorNodeContext& node_ctx,
                            PersistenceOperationMetricSet& condition_probe_metrics,
                            SequencingHandle sequencing_handle)
     : SequencedOperation(std::move(sequencing_handle)),
-      _tracker_instance(metric, std::make_shared<api::PutReply>(*msg), node_ctx, op_ctx, msg->getTimestamp()),
-      _tracker(_tracker_instance),
+      _tracker(metric, std::make_shared<api::PutReply>(*msg), node_ctx, op_ctx, _cancel_scope),
       _msg(std::move(msg)),
       _doc_id_bucket_id(document::BucketIdFactory{}.getBucketId(_msg->getDocumentId())),
       _node_ctx(node_ctx),
@@ -70,7 +69,7 @@ PutOperation::insertDatabaseEntryAndScheduleCreateBucket(const OperationTargetLi
                                        _op_ctx.distributor_config().max_activation_inhibited_out_of_sync_groups());
         LOG(debug, "Active copies for bucket %s: %s", entry.getBucketId().toString().c_str(), active.toString().c_str());
         for (uint32_t i=0; i<active.size(); ++i) {
-            BucketCopy copy(*entry->getNode(active[i].nodeIndex()));
+            BucketCopy copy(entry->getNodeRef(active[i].entryIndex()));
             copy.setActive(true);
             entry->updateNode(copy);
         }
@@ -253,7 +252,6 @@ PutOperation::on_cancel(DistributorStripeMessageSender& sender, const CancelScop
     if (_check_condition) {
         _check_condition->cancel(sender, cancel_scope);
     }
-    _tracker.cancel(cancel_scope);
 }
 
 bool

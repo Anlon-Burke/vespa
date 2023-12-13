@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -26,6 +26,36 @@ public:
     vespalib::string dump(DumpContext &ctx) const override {
         vespalib::string str;
         str += "map(";
+        str += _child->dump(ctx);
+        str += ",";
+        str += _lambda->dump_as_lambda();
+        str += ")";
+        return str;
+    }
+    void accept(NodeVisitor &visitor) const override;
+    size_t num_children() const override { return 1; }
+    const Node &get_child(size_t idx) const override {
+        (void) idx;
+        assert(idx == 0);
+        return *_child;
+    }
+    void detach_children(NodeHandler &handler) override {
+        handler.handle(std::move(_child));
+    }
+};
+
+class TensorMapSubspaces : public Node {
+private:
+    Node_UP _child;
+    std::shared_ptr<Function const> _lambda;
+public:
+    TensorMapSubspaces(Node_UP child, std::shared_ptr<Function const> lambda)
+        : _child(std::move(child)), _lambda(std::move(lambda)) {}
+    const Node &child() const { return *_child; }
+    const Function &lambda() const { return *_lambda; }
+    vespalib::string dump(DumpContext &ctx) const override {
+        vespalib::string str;
+        str += "map_subspaces(";
         str += _child->dump(ctx);
         str += ",";
         str += _lambda->dump_as_lambda();

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "hit.h"
@@ -12,6 +12,7 @@
 namespace search::streaming {
 
 class NearestNeighborQueryNode;
+class MultiTerm;
 
 /**
    This is a leaf in the Query tree. All terms are leafs.
@@ -62,8 +63,8 @@ public:
     bool evaluate() const override;
     const HitList & evaluateHits(HitList & hl) const override;
     void reset() override;
-    void getLeafs(QueryTermList & tl) override;
-    void getLeafs(ConstQueryTermList & tl) const override;
+    void getLeaves(QueryTermList & tl) override;
+    void getLeaves(ConstQueryTermList & tl) const override;
     /// Gives you all phrases of this tree.
     void getPhrases(QueryNodeRefList & tl) override;
     /// Gives you all phrases of this tree. Indicating that they are all const.
@@ -89,6 +90,7 @@ public:
     void setFuzzyMaxEditDistance(uint32_t fuzzyMaxEditDistance) { _fuzzyMaxEditDistance = fuzzyMaxEditDistance; }
     void setFuzzyPrefixLength(uint32_t fuzzyPrefixLength) { _fuzzyPrefixLength = fuzzyPrefixLength; }
     virtual NearestNeighborQueryNode* as_nearest_neighbor_query_node() noexcept;
+    virtual MultiTerm* as_multi_term() noexcept;
 protected:
     using QueryNodeResultBaseContainer = std::unique_ptr<QueryNodeResultBase>;
     string                       _index;

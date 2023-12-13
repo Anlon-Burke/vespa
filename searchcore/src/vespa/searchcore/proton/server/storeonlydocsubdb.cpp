@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "storeonlydocsubdb.h"
 #include "docstorevalidator.h"
@@ -74,7 +74,7 @@ StoreOnlyDocSubDB::Context::Context(IDocumentSubDBOwner &owner,
                                     bucketdb::IBucketDBHandlerInitializer & bucketDBHandlerInitializer,
                                     DocumentDBTaggedMetrics &metrics,
                                     std::mutex &configMutex,
-                                    const HwInfo &hwInfo)
+                                    const vespalib::HwInfo &hwInfo)
     : _owner(owner),
       _tlSyncer(tlSyncer),
       _getSerialNum(getSerialNum),
@@ -113,7 +113,7 @@ StoreOnlyDocSubDB::StoreOnlyDocSubDB(const Config &cfg, const Context &ctx)
       _dmsFlushTarget(),
       _dmsShrinkTarget(),
       _pendingLidsForCommit(std::make_shared<PendingLidTracker>()),
-      _nodeRetired(false),
+      _node_retired_or_maintenance(false),
       _lastConfiguredCompactionStrategy(),
       _subDbId(cfg._subDbId),
       _subDbType(cfg._subDbType),
@@ -268,11 +268,11 @@ createDocumentMetaStoreInitializer(const AllocStrategy& alloc_strategy,
 
 
 void
-StoreOnlyDocSubDB::setupDocumentMetaStore(DocumentMetaStoreInitializerResult::SP dmsResult)
+StoreOnlyDocSubDB::setupDocumentMetaStore(const DocumentMetaStoreInitializerResult & dmsResult)
 {
     vespalib::string baseDir(_baseDir + "/documentmetastore");
     vespalib::string name = DocumentMetaStore::getFixedName();
-    DocumentMetaStore::SP dms(dmsResult->documentMetaStore());
+    DocumentMetaStore::SP dms(dmsResult.documentMetaStore());
     if (dms->isLoaded()) {
         _flushedDocumentMetaStoreSerialNum = dms->getStatus().getLastSyncToken();
     }
@@ -281,7 +281,7 @@ StoreOnlyDocSubDB::setupDocumentMetaStore(DocumentMetaStoreInitializerResult::SP
     LOG(debug, "Added document meta store '%s' with flushed serial num %" PRIu64,
                name.c_str(), _flushedDocumentMetaStoreSerialNum);
     _dms = dms;
-    _dmsFlushTarget = std::make_shared<DocumentMetaStoreFlushTarget>(dms, _tlsSyncer, baseDir, dmsResult->tuneFile(),
+    _dmsFlushTarget = std::make_shared<DocumentMetaStoreFlushTarget>(dms, _tlsSyncer, baseDir, dmsResult.tuneFile(),
                                                                      _fileHeaderContext, _hwInfo);
     using Type = IFlushTarget::Type;
     using Component = IFlushTarget::Component;
@@ -289,6 +289,19 @@ StoreOnlyDocSubDB::setupDocumentMetaStore(DocumentMetaStoreInitializerResult::SP
                                                                    Component::ATTRIBUTE, _flushedDocumentMetaStoreSerialNum,
                                                                    _dmsFlushTarget->getLastFlushTime(), dms);
     _lastConfiguredCompactionStrategy = dms->getConfig().getCompactionStrategy();
+}
+
+namespace {
+
+search::LogDocumentStore::Config
+createStoreConfig(const search::LogDocumentStore::Config &original, SubDbType subDbType) {
+    search::LogDocumentStore::Config cfg = original;
+    if (subDbType == SubDbType::REMOVED) {
+        cfg.disableCache();
+    }
+    return cfg;
+}
+
 }
 
 DocumentSubDbInitializer::UP
@@ -301,7 +314,7 @@ StoreOnlyDocSubDB::createInitializer(const DocumentDBConfig &configSnapshot, Ser
                                                           configSnapshot.getTuneFileDocumentDBSP()->_attr,
                                                           result->writableResult().writableDocumentMetaStore());
     result->addDocumentMetaStoreInitTask(dmsInitTask);
-    auto summaryTask = createSummaryManagerInitializer(configSnapshot.getStoreConfig(),
+    auto summaryTask = createSummaryManagerInitializer(createStoreConfig(configSnapshot.getStoreConfig(), _subDbType),
                                                        alloc_strategy,
                                                        configSnapshot.getTuneFileDocumentDBSP()->_summary,
                                                        result->result().documentMetaStore()->documentMetaStore(),
@@ -316,7 +329,7 @@ StoreOnlyDocSubDB::createInitializer(const DocumentDBConfig &configSnapshot, Ser
 void
 StoreOnlyDocSubDB::setup(const DocumentSubDbInitializerResult &initResult)
 {
-    setupDocumentMetaStore(initResult.documentMetaStore());
+    setupDocumentMetaStore(*initResult.documentMetaStore());
     setupSummaryManager(initResult.summaryManager());
 }
 
@@ -459,7 +472,7 @@ struct UpdateConfig : public search::attribute::IAttributeFunctor {
 
 CompactionStrategy
 StoreOnlyDocSubDB::computeCompactionStrategy(CompactionStrategy strategy) const {
-    return isNodeRetired()
+    return is_node_retired_or_maintenance()
            ? CompactionStrategy(RETIRED_DEAD_RATIO, RETIRED_DEAD_RATIO)
            : strategy;
 }
@@ -480,9 +493,9 @@ StoreOnlyDocSubDB::reconfigure(const search::LogDocumentStore::Config & config, 
 
 void
 StoreOnlyDocSubDB::setBucketStateCalculator(const std::shared_ptr<IBucketStateCalculator> & calc, OnDone onDone) {
-    bool wasNodeRetired = isNodeRetired();
-    _nodeRetired = calc->nodeRetired();
-    if (wasNodeRetired != isNodeRetired()) {
+    bool was_node_retired_or_maintenance = is_node_retired_or_maintenance();
+    _node_retired_or_maintenance = calc->node_retired_or_maintenance();
+    if (was_node_retired_or_maintenance != is_node_retired_or_maintenance()) {
         CompactionStrategy compactionStrategy = computeCompactionStrategy(_lastConfiguredCompactionStrategy);
         auto cfg = _dms->getConfig();
         cfg.setCompactionStrategy(compactionStrategy);

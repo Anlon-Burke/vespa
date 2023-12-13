@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -43,7 +43,7 @@ void
 SingleValueStringPostingAttributeT<B>::mergeMemoryStats(vespalib::MemoryUsage & total)
 {
     auto& compaction_strategy = this->getConfig().getCompactionStrategy();
-    total.merge(this->_postingList.update_stat(compaction_strategy));
+    total.merge(this->_posting_store.update_stat(compaction_strategy));
 }
 
 template <typename B>
@@ -125,16 +125,16 @@ void
 SingleValueStringPostingAttributeT<B>::reclaim_memory(generation_t oldest_used_gen)
 {
     SingleValueStringAttributeT<B>::reclaim_memory(oldest_used_gen);
-    _postingList.reclaim_memory(oldest_used_gen);
+    _posting_store.reclaim_memory(oldest_used_gen);
 }
 
 template <typename B>
 void
 SingleValueStringPostingAttributeT<B>::before_inc_generation(generation_t current_gen)
 {
-    _postingList.freeze();
+    _posting_store.freeze();
     SingleValueStringAttributeT<B>::before_inc_generation(current_gen);
-    _postingList.assign_generation(current_gen);
+    _posting_store.assign_generation(current_gen);
 }
 
 template <typename B>
@@ -146,7 +146,7 @@ SingleValueStringPostingAttributeT<B>::getSearch(QueryTermSimpleUP qTerm,
     using SC = attribute::StringPostingSearchContext<BaseSC, SelfType, vespalib::btree::BTreeNoLeafData>;
     bool cased = this->get_match_is_cased();
     auto docid_limit = this->getCommittedDocIdLimit();
-    BaseSC base_sc(std::move(qTerm), cased, *this, this->_enumIndices.make_read_view(docid_limit), this->_enumStore);
+    BaseSC base_sc(std::move(qTerm), cased, params.fuzzy_matching_algorithm(), *this, this->_enumIndices.make_read_view(docid_limit), this->_enumStore);
     return std::make_unique<SC>(std::move(base_sc),
                                 params.useBitVector(),
                                 *this);

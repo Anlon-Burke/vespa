@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.codegen;
 
 import org.junit.jupiter.api.Disabled;
@@ -28,7 +28,7 @@ public class DefParserTest {
         CNode root = new DefParser("test", new FileReader(defFile)).getTree();
         assertNotNull(root);
         CNode[] children = root.getChildren();
-        assertEquals(37, children.length);
+        assertEquals(38, children.length);
 
         int numGrandChildren = 0;
         int numGreatGrandChildren = 0;
@@ -70,7 +70,7 @@ public class DefParserTest {
     void testMd5Sum() throws IOException {
         File defFile = new File(DEF_NAME);
         CNode root = new DefParser("test", new FileReader(defFile)).getTree();
-        assertEquals("0501f9e2c4ecc8c283e100e0b1178ca4", root.defMd5);
+        assertEquals("ee37973499305fde315da46256e64b2e", root.defMd5);
     }
 
     @Test
@@ -262,6 +262,12 @@ public class DefParserTest {
     void testReservedWordInCAndJavaForArray() {
         assertLineFails("continue[] int",
                 "continue is a reserved word in C and Java");
+    }
+
+    @Test
+    void testParsePathWithDefaultValue() {
+        assertLineFails("somePath path default=\"foo\"",
+                        "Invalid default value");
     }
 
     static StringBuilder createDefTemplate() {

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "computer.h"
 #include "computer_shared_state.h"
@@ -113,7 +113,7 @@ Computer::reset(uint32_t docId)
 void
 Computer::handleError(uint32_t fieldPos, uint32_t docId) const
 {
-    static int errcnt;
+    static std::atomic<int> errcnt(0);
     if (errcnt < 1000) {
         errcnt++;
         const FieldInfo * finfo = _splitter.get_query_env().getIndexEnvironment().getField(getFieldId());

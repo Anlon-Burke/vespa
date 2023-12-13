@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.document.json;
 
 import com.fasterxml.jackson.core.JsonFactory;
@@ -146,8 +146,6 @@ public class JsonWriter implements DocumentWriter {
             fieldNameIfNotNull(generator, field);
             generator.writeStartObject();
 
-            // this makes it impossible to refeed directly, not sure what's correct
-            // perhaps just change to "put"?
             generator.writeStringField("id", value.getId().toString());
 
             writeFields(value);

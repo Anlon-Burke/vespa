@@ -1,3 +1,4 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.metrics;
 
 /**
@@ -67,6 +68,7 @@ public enum SearchNodeMetrics implements VespaMetrics {
     CONTENT_PROTON_EXECUTOR_FIELD_WRITER_ACCEPTED("content.proton.executor.field_writer.accepted", Unit.TASK, "Number of accepted executor field writer tasks"),
     CONTENT_PROTON_EXECUTOR_FIELD_WRITER_WAKEUPS("content.proton.executor.field_writer.wakeups", Unit.WAKEUP, "Number of times a executor field writer worker thread has been woken up"),
     CONTENT_PROTON_EXECUTOR_FIELD_WRITER_UTILIZATION("content.proton.executor.field_writer.utilization", Unit.FRACTION, "Ratio of time the executor fieldwriter worker threads has been active"),
+    CONTENT_PROTON_EXECUTOR_FIELD_WRITER_SATURATION("content.proton.executor.field_writer.saturation", Unit.FRACTION, "Ratio indicating the max saturation of underlying worker threads. A higher saturation than utilization indicates a bottleneck in one of the worker threads."),
     CONTENT_PROTON_EXECUTOR_FIELD_WRITER_REJECTED("content.proton.executor.field_writer.rejected", Unit.TASK, "Number of rejected tasks"),
 
     // jobs

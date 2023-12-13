@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.document.datatypes;
 
 import com.yahoo.collections.Hashlet;
@@ -218,8 +218,7 @@ public class Struct extends StructuredFieldValue {
         StringBuilder retVal = new StringBuilder();
         retVal.append("Struct (").append(getDataType()).append("): ");
         int [] increasing = getInOrder();
-        for (int i = 0; i < increasing.length; i++) {
-            int id = increasing[i];
+        for (int id : increasing) {
             retVal.append(getDataType().getField(id)).append("=").append(values.get(id)).append(", ");
         }
         return retVal.toString();

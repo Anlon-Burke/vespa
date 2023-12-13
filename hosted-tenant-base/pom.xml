@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
+<!-- Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -43,8 +43,8 @@
         <bundle-plugin.failOnWarnings>false</bundle-plugin.failOnWarnings>
         <target_jdk_version>17</target_jdk_version>
 
-        <!-- NOTE: this must not be overriden by users, and must be in sync with junit version specified in 'tenant-cd-api' -->
-        <junit.vespa.tenant.version>5.8.1</junit.vespa.tenant.version>
+        <!-- NOTE: junit version must not be overridden by users -->
+
         <test.categories>!integration</test.categories>
 
         <!-- To allow specialized base pom to include additional "test provided" dependencies -->
@@ -117,6 +117,24 @@
                 <version>${junit.vespa.tenant.version}</version>
             </dependency>
 
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-params</artifactId>
+                <version>${junit.vespa.tenant.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.junit.platform</groupId>
+                <artifactId>junit-platform-engine</artifactId>
+                <version>${junit.platform.vespa.tenant.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.junit.platform</groupId>
+                <artifactId>junit-platform-commons</artifactId>
+                <version>${junit.platform.vespa.tenant.version}</version>
+            </dependency>
+
             <!-- Transitive dependency of junit4 -->
             <dependency>
                 <groupId>org.hamcrest</groupId>
@@ -174,7 +192,7 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-surefire-plugin</artifactId>
-                        <version>${surefire.vespa.version}</version>
+                        <version>${surefire.vespa.tenant.version}</version>
                         <configuration>
                             <groups>${test.categories}</groups>
                             <redirectTestOutputToFile>false</redirectTestOutputToFile>
@@ -197,7 +215,7 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-surefire-report-plugin</artifactId>
-                        <version>${surefire.vespa.version}</version>
+                        <version>${surefire.vespa.tenant.version}</version>
                         <configuration>
                             <reportsDirectory>${env.TEST_DIR}</reportsDirectory>
                         </configuration>
@@ -244,6 +262,38 @@
                                 </configuration>
                             </execution>
                             <execution>
+                                <id>enforce-no-compile-scope</id>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <bannedDependencies>
+                                            <level>ERROR</level>
+                                            <excludes>
+                                                <exclude>javax.ws.rs:javax.ws.rs-api:*:jar:compile</exclude>
+                                                <exclude>org.slf4j:slf4j-api:*:jar:compile</exclude>
+                                            </excludes>
+                                            <!-- Single line as maven-enforcer-plugin renders multiline messages badly :( -->
+                                            <message>
+                                                Dependency graph contains 'compile' scoped artifacts that are provided by the container. These may cause the application to fail. Either exclude artifacts (if unused) or override to scope 'provided'.
+                                            </message>
+                                        </bannedDependencies>
+                                        <bannedDependencies>
+                                            <level>WARN</level>
+                                            <excludes>
+                                                <exclude>com.google.inject:guice:*:jar:compile</exclude>
+                                                <exclude>javax.inject:javax.inject:*:jar:compile</exclude>
+                                            </excludes>
+                                            <!-- Single line as maven-enforcer-plugin renders multiline messages badly :( -->
+                                            <message>
+                                                Dependency graph contains 'compile' scoped artifacts that are provided by the container. These may result in unexpected behaviour and will result in a larger application package than necessary. Either exclude artifacts (if unused) or override to scope 'provided'.
+                                            </message>
+                                        </bannedDependencies>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                            <execution>
                                 <id>enforce-just-our-jupiter</id>
                                 <goals>
                                     <goal>enforce</goal>
@@ -251,13 +301,21 @@
                                 <configuration>
                                     <rules>
                                         <bannedDependencies>
-                                            <!-- Fail validation for apps with junit-jupiter-api in compile scope, or on wrong version. -->
                                             <excludes>
+                                                <!-- Fail validation for apps with junit-jupiter-api in compile scope, or on wrong version. -->
                                                 <exclude>org.junit.jupiter:junit-jupiter-api:*:jar:compile</exclude>
                                                 <exclude>org.junit.jupiter:junit-jupiter-api:*:jar:provided</exclude>
                                                 <exclude>org.junit.jupiter:junit-jupiter-api:*:jar:runtime</exclude>
                                                 <exclude>org.junit.jupiter:junit-jupiter-api:(,${junit.vespa.tenant.version}):jar:*</exclude>
                                                 <exclude>org.junit.jupiter:junit-jupiter-api:(${junit.vespa.tenant.version},):jar:*</exclude>
+
+                                                <!-- Fail validation of junit artifacts on wrong version. -->
+                                                <exclude>org.junit.jupiter:junit-jupiter-params:(,${junit.vespa.tenant.version}):jar:*</exclude>
+                                                <exclude>org.junit.jupiter:junit-jupiter-params:(${junit.vespa.tenant.version},):jar:*</exclude>
+                                                <exclude>org.junit.platform:junit-platform-engine:(,${junit.platform.vespa.tenant.version}):jar:*</exclude>
+                                                <exclude>org.junit.platform:junit-platform-engine:(${junit.platform.vespa.tenant.version},):jar:*</exclude>
+                                                <exclude>org.junit.platform:junit-platform-commons:(,${junit.platform.vespa.tenant.version}):jar:*</exclude>
+                                                <exclude>org.junit.platform:junit-platform-commons:(${junit.platform.vespa.tenant.version},):jar:*</exclude>
                                             </excludes>
                                         </bannedDependencies>
                                     </rules>
@@ -415,7 +473,7 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-gpg-plugin</artifactId>
-                        <version>${maven.gpg.plugin.version}</version>
+                        <version>${maven-gpg-plugin.vespa.version}</version>
                         <executions>
                             <execution>
                                 <id>sign-artifacts</id>

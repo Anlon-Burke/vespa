@@ -1,10 +1,11 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.model.api;
 
 import org.junit.Test;
-import com.google.common.testing.EqualsTester;
-
 import java.util.Arrays;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 
 public class HostInfoTest {
     @Test
@@ -14,10 +15,12 @@ public class HostInfoTest {
         HostInfo c = new HostInfo("foo.yahoo.com", Arrays.asList(new ServiceInfo("foo", "baz", null, null, "config-id", "host-name")));
         HostInfo d = new HostInfo("foo.yahoo.com", Arrays.asList(new ServiceInfo("bar", "baz", null, null, "config-id", "host-name")));
         HostInfo e = new HostInfo("bar.yahoo.com", null);
-        new EqualsTester()
-                .addEqualityGroup(a, b)
-                .addEqualityGroup(c)
-                .addEqualityGroup(d)
-                .addEqualityGroup(e).testEquals();
+        assertEquals(a, b);
+        assertNotEquals(a, c);
+        assertNotEquals(a, d);
+        assertNotEquals(a, d);
+        assertNotEquals(c, d);
+        assertNotEquals(c, e);
+        assertNotEquals(d, e);
     }
 }

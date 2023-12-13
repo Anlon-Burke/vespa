@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.provisioning;
 
 import com.yahoo.component.Version;
@@ -8,6 +8,7 @@ import com.yahoo.config.provision.ApplicationName;
 import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.Capacity;
 import com.yahoo.config.provision.Cloud;
+import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.DockerImage;
@@ -21,7 +22,7 @@ import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeResources.DiskSpeed;
 import com.yahoo.config.provision.NodeResources.StorageType;
 import com.yahoo.config.provision.NodeType;
-import com.yahoo.config.provision.ProvisionLock;
+import com.yahoo.config.provision.ApplicationMutex;
 import com.yahoo.config.provision.RegionName;
 import com.yahoo.config.provision.SystemName;
 import com.yahoo.config.provision.TenantName;
@@ -65,7 +66,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -211,7 +211,7 @@ public class ProvisioningTester {
             try (var lock = nodeRepository.nodes().lockAndGetRequired(prepared.hostname())) {
                 Node node = lock.node();
                 if (node.ipConfig().primary().isEmpty()) {
-                    node = node.with(IP.Config.of(Set.of("::" + 0 + ":0"), Set.of()));
+                    node = node.with(IP.Config.of(List.of("::" + 0 + ":0"), List.of()));
                     nodeRepository.nodes().write(node, lock);
                 }
                 if (node.parentHostname().isEmpty()) continue;
@@ -219,8 +219,8 @@ public class ProvisioningTester {
                 if (parent.state() == Node.State.active) continue;
                 NestedTransaction t = new NestedTransaction();
                 if (parent.ipConfig().primary().isEmpty())
-                    parent = parent.with(IP.Config.of(Set.of("::" + 0 + ":0"), Set.of("::" + 0 + ":2")));
-                nodeRepository.nodes().activate(List.of(parent), new ApplicationTransaction(new ProvisionLock(application, () -> { }), t));
+                    parent = parent.with(IP.Config.of(List.of("::" + 0 + ":0"), List.of("::" + 0 + ":2")));
+                nodeRepository.nodes().activate(List.of(parent), new ApplicationTransaction(new ApplicationMutex(application, () -> { }), t));
                 t.commit();
             }
         }
@@ -271,7 +271,7 @@ public class ProvisioningTester {
     public void deactivate(ApplicationId applicationId) {
         try (var lock = nodeRepository.applications().lock(applicationId)) {
             NestedTransaction deactivateTransaction = new NestedTransaction();
-            nodeRepository.remove(new ApplicationTransaction(new ProvisionLock(applicationId, lock),
+            nodeRepository.remove(new ApplicationTransaction(new ApplicationMutex(applicationId, lock),
                                                              deactivateTransaction));
             deactivateTransaction.commit();
         }
@@ -421,6 +421,10 @@ public class ProvisioningTester {
     }
 
     public List<Node> makeProvisionedNodes(int n, Function<Integer, String> nodeNamer, Flavor flavor, Optional<TenantName> reservedTo, NodeType type, int ipAddressPoolSize, boolean dualStack) {
+        return makeProvisionedNodes(n, nodeNamer, flavor, reservedTo, type, ipAddressPoolSize, dualStack, nodeRepository.zone().cloud().account());
+    }
+
+    public List<Node> makeProvisionedNodes(int n, Function<Integer, String> nodeNamer, Flavor flavor, Optional<TenantName> reservedTo, NodeType type, int ipAddressPoolSize, boolean dualStack, CloudAccount cloudAccount) {
         if (ipAddressPoolSize == 0 && type == NodeType.host) {
             ipAddressPoolSize = 1; // Tenant hosts must have at least one IP in their pool
         }
@@ -445,11 +449,11 @@ public class ProvisioningTester {
             String ipv6 = String.format("::%x", nextIP);
 
             nameResolver.addRecord(hostname, ipv4, ipv6);
-            HashSet<String> hostIps = new HashSet<>();
+            var hostIps = new ArrayList<String>();
             hostIps.add(ipv4);
             hostIps.add(ipv6);
 
-            Set<String> ipAddressPool = new LinkedHashSet<>();
+            var ipAddressPool = new ArrayList<String>();
             for (int poolIp = 1; poolIp <= ipAddressPoolSize; poolIp++) {
                 nextIP++;
                 String nodeHostname = hostnameParts[0] + "-" + poolIp + (hostnameParts.length > 1 ? "." + hostnameParts[1] : "");
@@ -463,7 +467,7 @@ public class ProvisioningTester {
                 }
             }
             Node.Builder builder = Node.create(hostname, IP.Config.of(hostIps, ipAddressPool), hostname, flavor, type)
-                    .cloudAccount(nodeRepository.zone().cloud().account());
+                    .cloudAccount(cloudAccount);
             reservedTo.ifPresent(builder::reservedTo);
             nodes.add(builder.build());
         }
@@ -480,7 +484,7 @@ public class ProvisioningTester {
             String ipv4 = "127.0.1." + i;
 
             nameResolver.addRecord(hostname, ipv4);
-            Node node = Node.create(hostname, IP.Config.of(Set.of(ipv4), Set.of()), hostname,
+            Node node = Node.create(hostname, IP.Config.of(List.of(ipv4), List.of()), hostname,
                                     nodeFlavors.getFlavorOrThrow(flavor), NodeType.config).build();
             nodes.add(node);
         }
@@ -548,7 +552,7 @@ public class ProvisioningTester {
         List<Node> nodes = new ArrayList<>(count);
         for (int i = startIndex; i < count + startIndex; i++) {
             String hostname = nodeNamer.apply(i);
-            IP.Config ipConfig = IP.Config.of(nodeRepository.nameResolver().resolveAll(hostname), Set.of());
+            IP.Config ipConfig = IP.Config.of(List.copyOf(nodeRepository.nameResolver().resolveAll(hostname)), List.of());
             Node node = Node.create("node-id", ipConfig, hostname, new Flavor(resources), nodeType)
                             .parentHostname(parentHostname)
                             .build();
@@ -763,8 +767,8 @@ public class ProvisioningTester {
             flavor.minMainMemoryAvailableGb(resources.memoryGb());
             flavor.minDiskAvailableGb(resources.diskGb());
             flavor.bandwidth(resources.bandwidthGbps() * 1000);
-            flavor.fastDisk(resources.diskSpeed().compatibleWith(NodeResources.DiskSpeed.fast));
-            flavor.remoteStorage(resources.storageType().compatibleWith(NodeResources.StorageType.remote));
+            flavor.fastDisk(resources.diskSpeed().compatibleWith(com.yahoo.config.provision.NodeResources.DiskSpeed.fast));
+            flavor.remoteStorage(resources.storageType().compatibleWith(com.yahoo.config.provision.NodeResources.StorageType.remote));
             flavor.architecture(resources.architecture().toString());
             flavor.gpuCount(resources.gpuResources().count());
             flavor.gpuMemoryGb(resources.gpuResources().memoryGb());

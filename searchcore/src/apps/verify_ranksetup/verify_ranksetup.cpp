@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "verify_ranksetup.h"
 #include "config-verify-ranksetup.h"
@@ -164,8 +164,8 @@ VerifyRankSetup::~VerifyRankSetup() = default;
 
 bool
 VerifyRankSetup::verify(const search::index::Schema &schema,
-            const search::fef::Properties &props,
-            const IRankingAssetsRepo &repo)
+                        const search::fef::Properties &props,
+                        const IRankingAssetsRepo &repo)
 {
     proton::matching::IndexEnvironment indexEnv(0, schema, props, repo);
     search::fef::BlueprintFactory factory;
@@ -195,12 +195,12 @@ VerifyRankSetup::verify(const search::index::Schema &schema,
 
 bool
 VerifyRankSetup::verifyConfig(const VerifyRanksetupConfig &myCfg,
-                  const RankProfilesConfig &rankCfg,
-                  const IndexschemaConfig &schemaCfg,
-                  const AttributesConfig &attributeCfg,
-                  const RankingConstantsConfig &constantsCfg,
-                  const RankingExpressionsConfig &expressionsCfg,
-                  const OnnxModelsConfig &modelsCfg)
+                              const RankProfilesConfig &rankCfg,
+                              const IndexschemaConfig &schemaCfg,
+                              const AttributesConfig &attributeCfg,
+                              const RankingConstantsConfig &constantsCfg,
+                              const RankingExpressionsConfig &expressionsCfg,
+                              const OnnxModelsConfig &modelsCfg)
 {
     bool ok = true;
     search::index::Schema schema;

@@ -20,9 +20,9 @@
     "@fortawesome/free-regular-svg-icons": "^6",
     "@fortawesome/free-solid-svg-icons": "^6",
     "@fortawesome/react-fontawesome": "^0",
-    "@mantine/core": "^6.0.0",
-    "@mantine/hooks": "^6.0.0",
-    "@mantine/notifications": "^6.0.0",
+    "@mantine/core": "^5",
+    "@mantine/hooks": "^5",
+    "@mantine/notifications": "^5",
     "@vitejs/plugin-react": "^4",
     "esbuild-jest": "^0",
     "eslint": "^8",
@@ -39,7 +39,7 @@
     "pretty-quick": "^3",
     "react-router-dom": "^6",
     "use-context-selector": "^1",
-    "vite": "^4"
+    "vite": "^5.0.5"
   },
   "jest": {
     "testMatch": [

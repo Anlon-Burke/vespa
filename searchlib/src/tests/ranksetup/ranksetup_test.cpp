@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/util/stringfmt.h>
@@ -536,6 +536,7 @@ void RankSetupTest::testRankSetup()
     env.getProperties().add(matching::GlobalFilterLowerLimit::NAME, "0.3");
     env.getProperties().add(matching::GlobalFilterUpperLimit::NAME, "0.7");
     env.getProperties().add(matching::TargetHitsMaxAdjustmentFactor::NAME, "5.0");
+    env.getProperties().add(matching::FuzzyAlgorithm::NAME, "dfa_implicit");
 
     RankSetup rs(_factory, env);
     EXPECT_FALSE(rs.has_match_features());
@@ -577,6 +578,7 @@ void RankSetupTest::testRankSetup()
     EXPECT_EQUAL(rs.get_global_filter_lower_limit(), 0.3);
     EXPECT_EQUAL(rs.get_global_filter_upper_limit(), 0.7);
     EXPECT_EQUAL(rs.get_target_hits_max_adjustment_factor(), 5.0);
+    EXPECT_EQUAL(rs.get_fuzzy_matching_algorithm(), vespalib::FuzzyMatchingAlgorithm::DfaImplicit);
 }
 
 bool

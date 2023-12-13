@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 /**
  * @class storage::api::BucketCommand
  * @ingroup messageapi
@@ -18,7 +18,7 @@ class BucketCommand : public StorageCommand {
     document::BucketId _originalBucket;
 
 protected:
-    BucketCommand(const MessageType& type, const document::Bucket &bucket);
+    BucketCommand(const MessageType& type, const document::Bucket &bucket) noexcept;
 
 public:
     DECLARE_POINTER_TYPEDEFS(BucketCommand);

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.schema.derived;
 
 import com.yahoo.document.CollectionDataType;
@@ -52,6 +52,7 @@ public class IndexInfo extends Derived implements IndexInfoConfig.Producer {
     private static final String CMD_PREDICATE = "predicate";
     private static final String CMD_PREDICATE_BOUNDS = "predicate-bounds";
     private static final String CMD_NUMERICAL = "numerical";
+    private static final String CMD_INTEGER = "integer";
     private static final String CMD_STRING = "string";
     private static final String CMD_PHRASE_SEGMENTING = "phrase-segmenting";
     private final Set<IndexCommand> commands = new java.util.LinkedHashSet<>();
@@ -82,13 +83,20 @@ public class IndexInfo extends Derived implements IndexInfoConfig.Producer {
         }
 
         // Commands for summary fields
-        // TODO: Move to fieldinfo and implement differently. This is not right
+        // TODO: Move to schemainfo and implement differently
         for (SummaryField summaryField : schema.getUniqueNamedSummaryFields().values()) {
             if (summaryField.getTransform().isTeaser()) {
                 addIndexCommand(summaryField.getName(), CMD_DYNTEASER);
             }
             if (summaryField.getTransform().isBolded()) {
                 addIndexCommand(summaryField.getName(), CMD_HIGHLIGHT);
+            }
+
+            var sourceField = schema.getField(summaryField.getSourceField()); // Take the first as they should all be consistent
+            if (sourceField != null && sourceField.getMatching().getType().equals(MatchType.GRAM)) {
+                addIndexCommand(summaryField.getName(),
+                                "ngram " + (sourceField.getMatching().getGramSize().orElse(NGramMatch.DEFAULT_GRAM_SIZE)));
+
             }
         }
     }
@@ -165,9 +173,12 @@ public class IndexInfo extends Derived implements IndexInfoConfig.Producer {
         if (isUriField(field)) {
             addUriIndexCommands(field);
         }
-
         if (field.getDataType().getPrimitiveType() instanceof NumericDataType) {
             addIndexCommand(field, CMD_NUMERICAL);
+            if (isTypeOrNested(field, DataType.INT) || isTypeOrNested(field, DataType.LONG) ||
+                    isTypeOrNested(field, DataType.BYTE)) {
+                addIndexCommand(field, CMD_INTEGER);
+            }
         }
         if (isTypeOrNested(field, DataType.STRING)) {
             addIndexCommand(field, CMD_STRING);
@@ -340,6 +351,7 @@ public class IndexInfo extends Derived implements IndexInfoConfig.Producer {
         boolean anyStemming = false;
         boolean anyNormalizing = false;
         boolean anyString = false;
+        boolean anyInteger = false;
         String phraseSegmentingCommand = null;
         String stemmingCommand = null;
         Matching fieldSetMatching = fieldSet.getMatching(); // null if no explicit matching
@@ -370,6 +382,10 @@ public class IndexInfo extends Derived implements IndexInfoConfig.Producer {
             Optional<String> explicitPhraseSegmentingCommand = field.getQueryCommands().stream().filter(c -> c.startsWith(CMD_PHRASE_SEGMENTING)).findFirst();
             if (explicitPhraseSegmentingCommand.isPresent()) {
                 phraseSegmentingCommand = explicitPhraseSegmentingCommand.get();
+            }
+            if (isTypeOrNested(field, DataType.INT) || isTypeOrNested(field, DataType.LONG) ||
+                    isTypeOrNested(field, DataType.BYTE)) {
+                anyInteger = true;
             }
         }
         if (anyIndexing && anyAttributing && fieldSet.getMatching() == null) {
@@ -434,6 +450,9 @@ public class IndexInfo extends Derived implements IndexInfoConfig.Producer {
         if (anyString) {
             addIndexCommand(iiB, fieldSet.getName(), CMD_STRING);
         }
+        if (anyInteger) {
+            addIndexCommand(iiB, fieldSet.getName(), CMD_INTEGER);
+        }
         if (fieldSetMatching != null) {
             // Explicit matching set on fieldset
             if (fieldSetMatching.getType().equals(MatchType.EXACT)) {
@@ -452,7 +471,7 @@ public class IndexInfo extends Derived implements IndexInfoConfig.Producer {
                 iiB.command(
                         new IndexInfoConfig.Indexinfo.Command.Builder()
                             .indexname(fieldSet.getName())
-                            .command("ngram "+(fieldSetMatching.getGramSize()>0 ? fieldSetMatching.getGramSize() : NGramMatch.DEFAULT_GRAM_SIZE)));
+                            .command("ngram " + fieldSetMatching.getGramSize().orElse(NGramMatch.DEFAULT_GRAM_SIZE)));
             } else if (fieldSetMatching.getType().equals(MatchType.TEXT)) {
                 
             }

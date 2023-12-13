@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "operation.h"
 #include <vespa/storage/common/distributorcomponent.h>
@@ -13,7 +13,7 @@ namespace storage::distributor {
 
 Operation::Operation()
     : _startTime(),
-      _cancelled(false)
+      _cancel_scope()
 {
 }
 
@@ -47,7 +47,7 @@ Operation::copyMessageSettings(const api::StorageCommand& source, api::StorageCo
 }
 
 void Operation::cancel(DistributorStripeMessageSender& sender, const CancelScope& cancel_scope) {
-    _cancelled = true;
+    _cancel_scope.merge(cancel_scope);
     on_cancel(sender, cancel_scope);
 }
 

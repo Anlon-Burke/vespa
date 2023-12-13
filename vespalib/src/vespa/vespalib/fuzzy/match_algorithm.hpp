@@ -1,9 +1,10 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "dfa_matcher.h"
 #include "levenshtein_dfa.h"
 #include "unicode_utils.h"
+#include <vespa/vespalib/text/lowercase.h>
 #include <vespa/vespalib/text/utf8.h>
 #include <cassert>
 #include <concepts>
@@ -135,50 +136,46 @@ struct MatchAlgorithm {
      * that has nothing in common with the source altogether.
      *   Example: "gp" -> "hfood" (+1 char value case)
      *
-     * Performance note:
-     * Both the input and successor output strings are in UTF-8 format. To avoid doing
-     * duplicate work, we keep track of the byte length of the string prefix that will be
-     * part of the successor and simply copy it verbatim instead of building the string
-     * from converted UTF-32 -> UTF-8 chars as we go.
+     * Note for cased vs. uncased matching: when uncased matching is specified, we always
+     * match "as if" both the target and source strings are lowercased. This means that
+     * successor strings are generated based on this form, _not_ on the original form.
+     * Example: uncased matching for target "food" with input "FOXX". This generates the
+     * successor "foyd" (and _not_ "FOyd"), as the latter would imply a completely different
+     * ordering when compared byte-wise against an implicitly lowercased dictionary.
      *
-     * TODO we could probably also optimize the smallest suffix generation with this when
-     *   we know we can no longer insert any smaller char substitutions and the only way
-     *   to complete the string is to emit it verbatim.
-     *    - To do this we'd need both the original UTF-8 target string as well as a
-     *      secondary vector that maps u32 character index to the corresponding UTF-8 index.
-     *      Both trivial to get as part of DFA initialization.
+     * TODO let matcher know if source string is pre-normalized (i.e. lowercased).
      */
-    template <DfaMatcher Matcher>
+    template <DfaMatcher Matcher, typename SuccessorT>
     static MatchResult match(const Matcher& matcher,
                              std::string_view source,
-                             std::string* successor_out)
+                             SuccessorT& successor_out)
     {
         using StateType = typename Matcher::StateType;
-        vespalib::Utf8Reader u8_reader(source.data(), source.size());
-        uint32_t n_prefix_u8_bytes = 0;
+        Utf8Reader u8_reader(source.data(), source.size());
+        uint32_t n_prefix_chars    = static_cast<uint32_t>(successor_out.size()); // Don't touch any existing prefix
         uint32_t char_after_prefix = 0;
         StateType last_state_with_higher_out = StateType{};
 
         StateType state = matcher.start();
         while (u8_reader.hasMore()) {
-            const auto u8_pos_before_char = u8_reader.getPos();
-            const uint32_t mch = u8_reader.getChar();
-            if (successor_out && matcher.has_higher_out_edge(state, mch)) {
+            const auto pos_before_char = static_cast<uint32_t>(successor_out.size());
+            const uint32_t raw_mch     = u8_reader.getChar();
+            const uint32_t mch         = normalized_match_char(raw_mch, matcher.is_cased());
+            append_utf32_char(successor_out, mch);
+            if (matcher.has_higher_out_edge(state, mch)) {
                 last_state_with_higher_out = state;
-                n_prefix_u8_bytes = u8_pos_before_char;
+                n_prefix_chars = pos_before_char;
                 char_after_prefix = mch;
             }
             auto maybe_next = matcher.match_input(state, mch);
             if (matcher.can_match(maybe_next)) {
                 state = maybe_next;
             } else {
-                // Can never match; find the successor if requested
-                if (successor_out) {
-                    *successor_out = source.substr(0, n_prefix_u8_bytes);
-                    assert(matcher.valid_state(last_state_with_higher_out));
-                    backtrack_and_emit_greater_suffix(matcher, last_state_with_higher_out,
-                                                      char_after_prefix, *successor_out);
-                }
+                // Can never match; find the successor
+                successor_out.resize(n_prefix_chars); // Always <= successor_out.size()
+                assert(matcher.valid_state(last_state_with_higher_out));
+                backtrack_and_emit_greater_suffix(matcher, last_state_with_higher_out,
+                                                  char_after_prefix, successor_out);
                 return MatchResult::make_mismatch(max_edits());
             }
         }
@@ -186,9 +183,32 @@ struct MatchAlgorithm {
         if (edits <= max_edits()) {
             return MatchResult::make_match(max_edits(), edits);
         }
-        if (successor_out) {
-            *successor_out = source;
-            emit_smallest_matching_suffix(matcher, state, *successor_out);
+        // Successor prefix already filled, just need to emit the suffix
+        emit_smallest_matching_suffix(matcher, state, successor_out);
+        return MatchResult::make_mismatch(max_edits());
+    }
+
+    /**
+     * Simplified match loop which does _not_ emit a successor on mismatch. Otherwise the
+     * exact same semantics as the successor-emitting `match()` overload.
+     */
+    template <DfaMatcher Matcher>
+    static MatchResult match(const Matcher& matcher, std::string_view source) {
+        using StateType = typename Matcher::StateType;
+        Utf8Reader u8_reader(source.data(), source.size());
+        StateType state = matcher.start();
+        while (u8_reader.hasMore()) {
+            const uint32_t mch = normalized_match_char(u8_reader.getChar(), matcher.is_cased());
+            auto maybe_next    = matcher.match_input(state, mch);
+            if (matcher.can_match(maybe_next)) {
+                state = maybe_next;
+            } else {
+                return MatchResult::make_mismatch(max_edits());
+            }
+        }
+        const auto edits = matcher.match_edit_distance(state);
+        if (edits <= max_edits()) {
+            return MatchResult::make_match(max_edits(), edits);
         }
         return MatchResult::make_mismatch(max_edits());
     }
@@ -204,12 +224,12 @@ struct MatchAlgorithm {
      * precondition: `last_node_with_higher_out` has either a wildcard edge or a char match
      *    edge that compares greater than `input_at_branch`.
      */
-    template <DfaMatcher Matcher>
+    template <DfaMatcher Matcher, typename SuccessorT>
     static void backtrack_and_emit_greater_suffix(
             const Matcher& matcher,
             typename Matcher::StateParamType last_state_with_higher_out,
             const uint32_t input_at_branch,
-            std::string& successor)
+            SuccessorT& successor)
     {
         auto wildcard_state = matcher.match_wildcard(last_state_with_higher_out);
         if (matcher.can_match(wildcard_state)) {
@@ -222,14 +242,14 @@ struct MatchAlgorithm {
             // instead of the wildcard edge, or we'll end up in the wrong state.
             const auto next_char = input_at_branch + 1;
             if (!matcher.has_exact_explicit_out_edge(last_state_with_higher_out, next_char)) {
-                append_utf32_char_as_utf8(successor, next_char);
+                append_utf32_char(successor, next_char);
                 emit_smallest_matching_suffix(matcher, wildcard_state, successor);
                 return;
             } // else: handle exact match below (it will be found as the first higher out edge)
         }
         const auto first_highest_edge = matcher.lowest_higher_explicit_out_edge(last_state_with_higher_out, input_at_branch);
         assert(matcher.valid_edge(first_highest_edge));
-        append_utf32_char_as_utf8(successor, matcher.edge_to_u32char(first_highest_edge));
+        append_utf32_char(successor, matcher.edge_to_u32char(first_highest_edge));
         emit_smallest_matching_suffix(matcher, matcher.edge_to_state(last_state_with_higher_out, first_highest_edge), successor);
     }
 
@@ -264,27 +284,38 @@ struct MatchAlgorithm {
      */
      // TODO consider variant for only emitting _prefix of suffix_ to avoid having to generate
      //  the full string? Won't generate a matching string, but will be lexicographically greater.
-    template <DfaMatcher Matcher>
+    template <DfaMatcher Matcher, typename SuccessorT>
     static void emit_smallest_matching_suffix(
             const Matcher& matcher,
             typename Matcher::StateParamType from,
-            std::string& str)
+            SuccessorT& str)
     {
         auto state = from;
         while (!matcher.is_match(state)) {
+            // Optimization: if the only way for the remaining suffix to match is for it to be
+            // exactly equal to the suffix of the target string, emit it directly instead of
+            // stepping the state per character. This allows for matcher-specific shortcuts.
+            if (matcher.implies_exact_match_suffix(state)) {
+                matcher.emit_exact_match_suffix(state, str);
+                return;
+            }
             // If we can take a wildcard path, emit the smallest possible valid UTF-8 character (0x01).
             // Otherwise, find the smallest char that can eventually lead us to a match.
             auto wildcard_state = matcher.match_wildcard(state);
             if (matcher.can_match(wildcard_state)) {
-                str += '\x01';
+                str.push_back(0x01);
                 state = wildcard_state;
             } else {
                 const auto smallest_out_edge = matcher.smallest_explicit_out_edge(state);
                 assert(matcher.valid_edge(smallest_out_edge));
-                append_utf32_char_as_utf8(str, matcher.edge_to_u32char(smallest_out_edge));
+                append_utf32_char(str, matcher.edge_to_u32char(smallest_out_edge));
                 state = matcher.edge_to_state(state, smallest_out_edge);
             }
         }
+    }
+
+    static uint32_t normalized_match_char(uint32_t in_ch, bool is_cased) noexcept {
+        return (is_cased ? in_ch : LowerCase::convert(in_ch));
     }
 };
 

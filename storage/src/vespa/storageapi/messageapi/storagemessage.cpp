@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "storagemessage.h"
 #include <vespa/messagebus/routing/verbatimdirective.h>
@@ -13,7 +13,7 @@ namespace storage::api {
 
 namespace {
 
-std::atomic<uint64_t> _G_lastMsgId(1000);
+std::atomic<uint64_t> _g_lastMsgId(1000);
 
 }
 
@@ -44,8 +44,6 @@ const MessageType MessageType::UPDATE("Update", UPDATE_ID);
 const MessageType MessageType::UPDATE_REPLY("Update Reply", UPDATE_REPLY_ID, &MessageType::UPDATE);
 const MessageType MessageType::REMOVE("Remove", REMOVE_ID);
 const MessageType MessageType::REMOVE_REPLY("Remove Reply", REMOVE_REPLY_ID, &MessageType::REMOVE);
-const MessageType MessageType::REVERT("Revert", REVERT_ID);
-const MessageType MessageType::REVERT_REPLY("Revert Reply", REVERT_REPLY_ID, &MessageType::REVERT);
 const MessageType MessageType::VISITOR_CREATE("Visitor Create", VISITOR_CREATE_ID);
 const MessageType MessageType::VISITOR_CREATE_REPLY("Visitor Create Reply", VISITOR_CREATE_REPLY_ID, &MessageType::VISITOR_CREATE);
 const MessageType MessageType::VISITOR_DESTROY("Visitor Destroy", VISITOR_DESTROY_ID);
@@ -233,7 +231,7 @@ TransportContext::~TransportContext() = default;
 StorageMessage::Id
 StorageMessage::generateMsgId() noexcept
 {
-    return _G_lastMsgId.fetch_add(1, std::memory_order_relaxed);
+    return _g_lastMsgId.fetch_add(1, std::memory_order_relaxed);
 }
 
 StorageMessage::StorageMessage(const MessageType& type, Id internal_id, Id originator_id) noexcept

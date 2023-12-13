@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.application;
 
 import com.yahoo.config.provision.ApplicationId;
@@ -74,18 +74,31 @@ public class ApplicationCuratorDatabase {
     /**
      * Creates a node for the given application, marking its existence.
      */
-    public void createApplication(ApplicationId id, boolean writeAsJson) {
+    public void createApplication(ApplicationId id) {
         if ( ! id.tenant().equals(tenant))
             throw new IllegalArgumentException("Cannot write application id '" + id + "' for tenant '" + tenant + "'");
 
         try (Lock lock = lock(id)) {
-            if (writeAsJson) {
-                var applicationData = new ApplicationData(id, OptionalLong.empty(), OptionalLong.empty());
-                curator.set(applicationPath(id), applicationData.toJson());
-            } else {
-                if (curator.exists(applicationPath(id))) return;
-                curator.create(applicationPath(id));
-            }
+            if (curator.exists(applicationPath(id))) return;
+
+            var applicationData = new ApplicationData(id, OptionalLong.empty(), OptionalLong.empty());
+            curator.set(applicationPath(id), applicationData.toJson());
+            modifyReindexing(id, ApplicationReindexing.empty(), UnaryOperator.identity());
+        }
+    }
+
+    /**
+     * Creates a node for the given application, marking its existence.
+     */
+    // TODO: Remove in Vespa 9
+    public void createApplicationInOldFormat(ApplicationId id) {
+        if (! id.tenant().equals(tenant))
+            throw new IllegalArgumentException("Cannot write application id '" + id + "' for tenant '" + tenant + "'");
+
+        try (Lock lock = lock(id)) {
+            if (curator.exists(applicationPath(id))) return;
+
+            curator.create(applicationPath(id));
             modifyReindexing(id, ApplicationReindexing.empty(), UnaryOperator.identity());
         }
     }
@@ -94,13 +107,23 @@ public class ApplicationCuratorDatabase {
      * Returns a transaction which writes the given session id as the currently active for the given application.
      *
      * @param applicationId An {@link ApplicationId} that represents an active application.
+     * @param sessionId     session id belonging to the application package for this application id.
+     */
+    public Transaction createWriteActiveTransaction(Transaction transaction, ApplicationId applicationId, long sessionId) {
+        String path = applicationPath(applicationId).getAbsolute();
+        return transaction.add(setData(path, new ApplicationData(applicationId, OptionalLong.of(sessionId), OptionalLong.of(sessionId)).toJson()));
+    }
+
+    /**
+     * Returns a transaction which writes the given session id as the currently active for the given application.
+     *
+     * @param applicationId An {@link ApplicationId} that represents an active application.
      * @param sessionId session id belonging to the application package for this application id.
      */
-    public Transaction createWriteActiveTransaction(Transaction transaction, ApplicationId applicationId, long sessionId, boolean writeAsJson) {
+    // TODO: Remove in Vespa 9
+    public Transaction createWriteActiveTransactionInOldFormat(Transaction transaction, ApplicationId applicationId, long sessionId) {
         String path = applicationPath(applicationId).getAbsolute();
-        return transaction.add(writeAsJson
-                                       ? setData(path, new ApplicationData(applicationId, OptionalLong.of(sessionId), OptionalLong.of(sessionId)).toJson())
-                                       : setData(path, Utf8.toAsciiBytes(sessionId)));
+        return transaction.add(setData(path, Utf8.toAsciiBytes(sessionId)));
     }
 
     /**
@@ -112,16 +135,10 @@ public class ApplicationCuratorDatabase {
     public Transaction createWritePrepareTransaction(Transaction transaction,
                                                      ApplicationId applicationId,
                                                      long sessionId,
-                                                     OptionalLong activeSessionId,
-                                                     boolean writeAsJson) {
-
+                                                     OptionalLong activeSessionId) {
         // Needs to read or be supplied current active session id, to avoid overwriting a newer session id.
-
         String path = applicationPath(applicationId).getAbsolute();
-        if (writeAsJson)
-            return transaction.add(setData(path, new ApplicationData(applicationId, activeSessionId, OptionalLong.of(sessionId)).toJson()));
-        else
-            return transaction;  // Do nothing, as there is nothing to write in this case
+        return transaction.add(setData(path, new ApplicationData(applicationId, activeSessionId, OptionalLong.of(sessionId)).toJson()));
     }
 
     /**

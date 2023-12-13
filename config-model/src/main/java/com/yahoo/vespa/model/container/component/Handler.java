@@ -1,9 +1,11 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container.component;
 
+import com.yahoo.config.model.deploy.DeployState;
 import com.yahoo.container.handler.threadpool.ContainerThreadpoolConfig;
 import com.yahoo.osgi.provider.model.ComponentModel;
 import com.yahoo.vespa.model.container.ContainerThreadpool;
+import org.w3c.dom.Element;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -62,8 +64,8 @@ public class Handler extends Component<Component<?, ?>, ComponentModel> {
         clientBindings.addAll(Arrays.asList(bindings));
     }
 
-    public final Set<BindingPattern> getServerBindings() {
-        return Collections.unmodifiableSet(serverBindings);
+    public final Collection<BindingPattern> getServerBindings() {
+        return List.copyOf(serverBindings);
     }
 
     public final List<BindingPattern> getClientBindings() {
@@ -76,8 +78,8 @@ public class Handler extends Component<Component<?, ?>, ComponentModel> {
      */
     public static class DefaultHandlerThreadpool extends ContainerThreadpool {
 
-        public DefaultHandlerThreadpool() {
-            super("default-handler-common", null);
+        public DefaultHandlerThreadpool(DeployState ds, Element options) {
+            super(ds, "default-handler-common", options);
         }
 
         @Override

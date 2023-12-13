@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
 import ai.vespa.metrics.ConfigServerMetrics;
@@ -169,8 +169,9 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
      * NB: Keep this metric set in sync with internal configserver metric pre-aggregation
      */
     private void updateNodeMetrics(Node node, ServiceModel serviceModel) {
+        if (node.state() != State.active)
+            return;
         Metric.Context context;
-
         Optional<Allocation> allocation = node.allocation();
         if (allocation.isPresent()) {
             ApplicationId applicationId = allocation.get().owner();
@@ -310,42 +311,47 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
     }
 
     private void updateLockMetrics() {
+        Set<Pair<Metric.Context, String>> currentNonZeroMetrics = new HashSet<>();
         LockStats.getGlobal().getLockMetricsByPath()
                 .forEach((lockPath, lockMetrics) -> {
                     Metric.Context context = getContext(Map.of("lockPath", lockPath));
 
                     LatencyMetrics acquireLatencyMetrics = lockMetrics.getAndResetAcquireLatencyMetrics();
-                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_ACQUIRE_MAX_ACTIVE_LATENCY.baseName(), acquireLatencyMetrics.maxActiveLatencySeconds(), context);
-                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_ACQUIRE_HZ.baseName(), acquireLatencyMetrics.startHz(), context);
-                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_ACQUIRE_LOAD.baseName(), acquireLatencyMetrics.load(), context);
+                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_ACQUIRE_MAX_ACTIVE_LATENCY.baseName(), acquireLatencyMetrics.maxActiveLatencySeconds(), context, currentNonZeroMetrics);
+                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_ACQUIRE_HZ.baseName(), acquireLatencyMetrics.startHz(), context, currentNonZeroMetrics);
+                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_ACQUIRE_LOAD.baseName(), acquireLatencyMetrics.load(), context, currentNonZeroMetrics);
 
                     LatencyMetrics lockedLatencyMetrics = lockMetrics.getAndResetLockedLatencyMetrics();
-                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_LOCKED_LATENCY.baseName(), lockedLatencyMetrics.maxLatencySeconds(), context);
-                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_LOCKED_LOAD.baseName(), lockedLatencyMetrics.load(), context);
+                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_LOCKED_LATENCY.baseName(), lockedLatencyMetrics.maxLatencySeconds(), context, currentNonZeroMetrics);
+                    lockedLatencyMetrics.loadByThread().forEach((name, load) -> {
+                        setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_LOCKED_LOAD.baseName(), load, getContext(Map.of("lockPath", lockPath, "thread", name)), currentNonZeroMetrics);
+                    });
 
-                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_ACQUIRE_TIMED_OUT.baseName(), lockMetrics.getAndResetAcquireTimedOutCount(), context);
-                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_DEADLOCK.baseName(), lockMetrics.getAndResetDeadlockCount(), context);
+                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_ACQUIRE_TIMED_OUT.baseName(), lockMetrics.getAndResetAcquireTimedOutCount(), context, currentNonZeroMetrics);
+                    setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_DEADLOCK.baseName(), lockMetrics.getAndResetDeadlockCount(), context, currentNonZeroMetrics);
 
                     // bucket for various rare errors - to reduce #metrics
                     setNonZero(ConfigServerMetrics.LOCK_ATTEMPT_ERRORS.baseName(),
-                            lockMetrics.getAndResetAcquireFailedCount() +
-                                    lockMetrics.getAndResetReleaseFailedCount() +
-                                    lockMetrics.getAndResetNakedReleaseCount() +
-                                    lockMetrics.getAndResetAcquireWithoutReleaseCount() +
-                                    lockMetrics.getAndResetForeignReleaseCount(),
-                            context);
+                               lockMetrics.getAndResetAcquireFailedCount() +
+                               lockMetrics.getAndResetReleaseFailedCount() +
+                               lockMetrics.getAndResetNakedReleaseCount() +
+                               lockMetrics.getAndResetAcquireWithoutReleaseCount() +
+                               lockMetrics.getAndResetForeignReleaseCount(),
+                               context,
+                               currentNonZeroMetrics);
                 });
+        // Need to set the metric to 0 after it has been set to non-zero, to avoid carrying a non-zero 'last' from earlier periods.
+        nonZeroMetrics.removeIf(currentNonZeroMetrics::contains); // Retain those that turned zero for this period.
+        nonZeroMetrics.forEach(metricKey -> metric.set(metricKey.getSecond(), 0, metricKey.getFirst()));
+        nonZeroMetrics.clear();
+        nonZeroMetrics.addAll(currentNonZeroMetrics);
     }
 
-    private void setNonZero(String key, Number value, Metric.Context context) {
+    private void setNonZero(String key, Number value, Metric.Context context, Set<Pair<Metric.Context, String>> nonZeroMetrics) {
         var metricKey = new Pair<>(context, key);
         if (Double.compare(value.doubleValue(), 0.0) != 0) {
             metric.set(key, value, context);
             nonZeroMetrics.add(metricKey);
-        } else if (nonZeroMetrics.remove(metricKey)) {
-            // Need to set the metric to 0 after it has been set to non-zero, to avoid carrying
-            // a non-zero 'last' from earlier periods.
-            metric.set(key, value, context);
         }
     }
 
@@ -397,12 +403,12 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
                                                 node.exclusiveToApplicationId().isPresent())
                               .matching(host -> host.history().hasEventBefore(History.Event.Type.activated,
                                                                               now.minus(minActivePeriod)))
-                              .matching(host -> nodes.childrenOf(host).state(State.active).isEmpty())
+                              .matching(host -> nodes.childrenOf(host).isEmpty())
                               .size();
         metric.set(ConfigServerMetrics.NODES_EMPTY_EXCLUSIVE.baseName(), emptyHosts, null);
     }
 
-    static Map<String, String> dimensions(ApplicationId application, ClusterSpec.Id cluster) {
+    public static Map<String, String> dimensions(ApplicationId application, ClusterSpec.Id cluster) {
         Map<String, String> dimensions = new HashMap<>(dimensions(application));
         dimensions.put("clusterid", cluster.value());
         return dimensions;

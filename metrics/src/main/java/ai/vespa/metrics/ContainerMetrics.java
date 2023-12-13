@@ -1,3 +1,4 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.metrics;
 
 /**
@@ -17,6 +18,7 @@ public enum ContainerMetrics implements VespaMetrics {
     JDISC_GC_COUNT("jdisc.gc.count", Unit.OPERATION, "Number of JVM garbage collections done"),
     JDISC_GC_MS("jdisc.gc.ms", Unit.MILLISECOND, "Time spent in JVM garbage collection"),
     JDISC_JVM("jdisc.jvm", Unit.VERSION, "JVM runtime version"),
+    CPU("cpu", Unit.THREAD, "Container service CPU pressure"),
     JDISC_MEMORY_MAPPINGS("jdisc.memory_mappings", Unit.OPERATION, "JDISC Memory mappings"),
     JDISC_OPEN_FILE_DESCRIPTORS("jdisc.open_file_descriptors", Unit.ITEM, "JDISC Open file descriptors"),
 
@@ -200,9 +202,10 @@ public enum ContainerMetrics implements VespaMetrics {
     SERVER_TOTAL_FAILED_RESPONSE_LATENCY("serverTotalFailedResponseLatency", Unit.MILLISECOND, "Total duration for execution of failed responses"),
     SERVER_TIME_TO_FIRST_BYTE("serverTimeToFirstByte", Unit.MILLISECOND, "Time from request has been received by the server until the first byte is returned to the client"),
 
-    SERVER_STARTED_MILLIS("serverStartedMillis", Unit.MILLISECOND, "Time since the service was started");
+    SERVER_STARTED_MILLIS("serverStartedMillis", Unit.MILLISECOND, "Time since the service was started"),
 
-
+    EMBEDDER_LATENCY("embedder.latency", Unit.MILLISECOND, "Time spent creating an embedding"),
+    EMBEDDER_SEQUENCE_LENGTH("embedder.sequence_length", Unit.BYTE, "Size of sequence produced by tokenizer");
 
     private final String name;
     private final Unit unit;

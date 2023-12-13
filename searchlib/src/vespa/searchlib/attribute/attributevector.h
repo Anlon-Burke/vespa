@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -47,7 +47,7 @@ namespace search {
     class AttributeSaver;
     class IEnumStore;
     class IAttributeSaveTarget;
-    struct IDocumentWeightAttribute;
+    class IDocidWithWeightPostingStore;
     class QueryTermSimple;
     class QueryTermUCS4;
 
@@ -120,15 +120,8 @@ protected:
      */
     void updateStat(bool forceUpdate);
 
-    void
-    updateStatistics(uint64_t numValues,
-                     uint64_t numUniqueValue,
-                     uint64_t allocated,
-                     uint64_t used,
-                     uint64_t dead,
-                     uint64_t onHold);
-
-    void performCompactionWarning();
+    void updateStatistics(uint64_t numValues, uint64_t numUniqueValue, uint64_t allocated,
+                          uint64_t used, uint64_t dead, uint64_t onHold);
 
     AttributeVector(vespalib::stringref baseFileName, const Config & c);
 
@@ -138,8 +131,7 @@ protected:
         }
     }
 
-    void setEnumMax(uint32_t e)          { _enumMax = e; setEnum(); }
-    void setEnum(bool hasEnum_=true)     { _hasEnum = hasEnum_; }
+    void setEnum(bool hasEnum_)          { _hasEnum = hasEnum_; }
     void setNumDocs(uint32_t n)          { _status.setNumDocs(n); }
     void incNumDocs()                    { _status.incNumDocs(); }
 
@@ -392,8 +384,7 @@ public:
 
 ////// Search API
 
-    // type-safe down-cast to attribute supporting direct document weight iterators
-    const IDocumentWeightAttribute *asDocumentWeightAttribute() const override;
+    const IDocidWithWeightPostingStore *as_docid_with_weight_posting_store() const override;
 
     const tensor::ITensorAttribute *asTensorAttribute() const override;
     const attribute::IMultiValueAttribute* as_multi_value_attribute() const override;

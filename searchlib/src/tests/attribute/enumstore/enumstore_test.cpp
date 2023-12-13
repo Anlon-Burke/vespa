@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/searchlib/attribute/enumstore.hpp>
 #include <vespa/searchlib/attribute/enum_store_loaders.h>
@@ -8,7 +8,9 @@
 #include <vespa/log/log.h>
 LOG_SETUP("enumstore_test");
 
-using Type = search::DictionaryConfig::Type;
+using DictionaryConfig = search::DictionaryConfig;
+using Type = DictionaryConfig::Type;
+using Match = DictionaryConfig::Match;
 using vespalib::datastore::AtomicEntryRef;
 using vespalib::datastore::CompactionStrategy;
 using vespalib::datastore::EntryRef;
@@ -41,61 +43,91 @@ using StringEnumStore = EnumStoreT<const char*>;
 struct BTreeDoubleEnumStore {
     using EnumStoreType = DoubleEnumStore;
     static constexpr Type type = Type::BTREE;
+    static constexpr Match match = Match::UNCASED;
 };
 
 struct HybridDoubleEnumStore {
     using EnumStoreType = DoubleEnumStore;
     static constexpr Type type = Type::BTREE_AND_HASH;
+    static constexpr Match match = Match::UNCASED;
 };
 
 struct HashDoubleEnumStore {
     using EnumStoreType = DoubleEnumStore;
     static constexpr Type type = Type::HASH;
+    static constexpr Match match = Match::UNCASED;
 };
 
 struct BTreeFloatEnumStore {
     using EnumStoreType = FloatEnumStore;
     static constexpr Type type = Type::BTREE;
+    static constexpr Match match = Match::UNCASED;
 };
 
 struct HybridFloatEnumStore {
     using EnumStoreType = FloatEnumStore;
     static constexpr Type type = Type::BTREE_AND_HASH;
+    static constexpr Match match = Match::UNCASED;
 };
 
 struct HashFloatEnumStore {
     using EnumStoreType = FloatEnumStore;
     static constexpr Type type = Type::HASH;
+    static constexpr Match match = Match::UNCASED;
 };
 
 struct BTreeNumericEnumStore {
     using EnumStoreType = NumericEnumStore;
     static constexpr Type type = Type::BTREE;
+    static constexpr Match match = Match::UNCASED;
 };
 
 struct HybridNumericEnumStore {
     using EnumStoreType = NumericEnumStore;
     static constexpr Type type = Type::BTREE_AND_HASH;
+    static constexpr Match match = Match::UNCASED;
 };
 
 struct HashNumericEnumStore {
     using EnumStoreType = NumericEnumStore;
     static constexpr Type type = Type::HASH;
+    static constexpr Match match = Match::UNCASED;
 };
 
 struct BTreeStringEnumStore {
     using EnumStoreType = StringEnumStore;
     static constexpr Type type = Type::BTREE;
+    static constexpr Match match = Match::UNCASED;
 };
 
 struct HybridStringEnumStore {
     using EnumStoreType = StringEnumStore;
     static constexpr Type type = Type::BTREE_AND_HASH;
+    static constexpr Match match = Match::UNCASED;
 };
 
 struct HashStringEnumStore {
     using EnumStoreType = StringEnumStore;
     static constexpr Type type = Type::HASH;
+    static constexpr Match match = Match::UNCASED;
+};
+
+struct BTreeCasedStringEnumStore {
+    using EnumStoreType = StringEnumStore;
+    static constexpr Type type = Type::BTREE;
+    static constexpr Match match = Match::CASED;
+};
+
+struct HybridCasedStringEnumStore {
+    using EnumStoreType = StringEnumStore;
+    static constexpr Type type = Type::BTREE_AND_HASH;
+    static constexpr Match match = Match::CASED;
+};
+
+struct HashCasedStringEnumStore {
+    using EnumStoreType = StringEnumStore;
+    static constexpr Type type = Type::HASH;
+    static constexpr Match match = Match::CASED;
 };
 
 using StringVector = std::vector<std::string>;
@@ -146,7 +178,7 @@ public:
     using EnumStoreType = typename EnumStoreTypeAndDictionaryType::EnumStoreType;
     EnumStoreType es;
     FloatEnumStoreTest()
-        : es(false, EnumStoreTypeAndDictionaryType::type)
+        : es(false, DictionaryConfig(EnumStoreTypeAndDictionaryType::type, EnumStoreTypeAndDictionaryType::match))
     {}
 };
 
@@ -555,7 +587,7 @@ public:
 
 };
 
-using LoaderTestTypes = ::testing::Types<BTreeNumericEnumStore, BTreeFloatEnumStore, BTreeStringEnumStore, HybridNumericEnumStore, HybridFloatEnumStore, HybridStringEnumStore, HashNumericEnumStore, HashFloatEnumStore, HashStringEnumStore>;
+using LoaderTestTypes = ::testing::Types<BTreeNumericEnumStore, BTreeFloatEnumStore, BTreeStringEnumStore, HybridNumericEnumStore, HybridFloatEnumStore, HybridStringEnumStore, HashNumericEnumStore, HashFloatEnumStore, HashStringEnumStore, BTreeCasedStringEnumStore, HybridCasedStringEnumStore, HashCasedStringEnumStore>;
 TYPED_TEST_SUITE(LoaderTest, LoaderTestTypes);
 
 TYPED_TEST(LoaderTest, store_is_instantiated_with_enumerated_loader)

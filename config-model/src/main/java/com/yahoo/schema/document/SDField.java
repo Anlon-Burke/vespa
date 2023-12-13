@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.schema.document;
 
 import com.yahoo.document.CollectionDataType;
@@ -195,6 +195,8 @@ public class SDField extends Field implements TypedKey, ImmutableSDField {
     public boolean isExtraField() {
         return isExtraField;
     }
+
+    public boolean isDocumentField() { return ! isExtraField; }
 
     @Override
     public boolean isImportedField() {
@@ -613,11 +615,8 @@ public class SDField extends Field implements TypedKey, ImmutableSDField {
     @Override
     public RankType getRankType() { return this.rankType; }
 
-    /**
-     * Returns the search-time attribute settings of this field or null if none is set.
-     *
-     * <p>TODO: Make unmodifiable.</p>
-     */
+    /** Returns the search-time attribute settings of this field or null if none is set. */
+     // TODO: Make unmodifiable
     @Override
     public Map<String, Attribute> getAttributes() { return attributes; }
 

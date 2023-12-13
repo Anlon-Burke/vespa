@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.schema.parser;
 
 import com.yahoo.config.model.application.provider.BaseDeployLogger;
@@ -269,7 +269,6 @@ public class SchemaParserTestCase {
         checkFileParses("src/test/examples/implicitsummaryfields.sd");
         checkFileParses("src/test/examples/incorrectrankingexpressionfileref.sd");
         checkFileParses("src/test/examples/indexing_extra.sd");
-        checkFileParses("src/test/examples/indexing_modify_field_no_output.sd");
         checkFileParses("src/test/examples/indexing.sd");
         checkFileParses("src/test/examples/indexrewrite.sd");
         checkFileParses("src/test/examples/indexsettings.sd");

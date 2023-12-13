@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "juniper_query_adapter.h"
 #include "i_query_term_filter.h"
@@ -136,6 +136,9 @@ JuniperQueryAdapter::Traverse(juniper::IQueryVisitor *v) const
         case search::ParseItem::ITEM_SAME_ELEMENT:
         case search::ParseItem::ITEM_NEAREST_NEIGHBOR:
         case search::ParseItem::ITEM_GEO_LOCATION_TERM:
+        case search::ParseItem::ITEM_FUZZY:
+        case search::ParseItem::ITEM_STRING_IN:
+        case search::ParseItem::ITEM_NUMERIC_IN:
             if (!v->VisitOther(&item, iterator.getArity())) {
                 rc = skipItem(&iterator);
             }

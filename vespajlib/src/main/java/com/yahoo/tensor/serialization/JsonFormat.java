@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.tensor.serialization;
 
 import com.yahoo.lang.MutableInteger;
@@ -151,22 +151,14 @@ public class JsonFormat {
 
         // Create tensor type for mapped dimensions subtype
         TensorType mappedSubType = new TensorType.Builder(mappedDimensions).build();
-
-        // Find all unique indices for the mapped dimensions
-        Set<TensorAddress> denseSubSpaceAddresses = new HashSet<>();
-        tensor.cellIterator().forEachRemaining((cell) -> {
-            denseSubSpaceAddresses.add(subAddress(cell.getKey(), mappedSubType, tensor.type()));
-        });
-
-        // Slice out dense subspace of each and encode dense subspace as a list
-        for (TensorAddress denseSubSpaceAddress : denseSubSpaceAddresses) {
-            IndexedTensor denseSubspace = (IndexedTensor) sliceSubAddress(tensor, denseSubSpaceAddress, mappedSubType);
-
+        TensorType denseSubType = tensor.type().indexedSubtype();
+        for (var subspace : tensor.getInternalDenseSubspaces()) {
+            IndexedTensor denseSubspace = IndexedTensor.Builder.of(denseSubType, subspace.cells).build();
             if (mappedDimensions.size() == 1) {
-                encodeValues(denseSubspace, cursor.setArray(denseSubSpaceAddress.label(0)), new long[denseSubspace.dimensionSizes().dimensions()], 0);
+                encodeValues(denseSubspace, cursor.setArray(subspace.sparseAddress.label(0)), new long[denseSubspace.dimensionSizes().dimensions()], 0);
             } else {
                 Cursor block = cursor.addObject();
-                encodeAddress(mappedSubType, denseSubSpaceAddress, block.setObject("address"));
+                encodeAddress(mappedSubType, subspace.sparseAddress, block.setObject("address"));
                 encodeValues(denseSubspace, block.setArray("values"), new long[denseSubspace.dimensionSizes().dimensions()], 0);
             }
 
@@ -408,13 +400,23 @@ public class JsonFormat {
         };
     }
 
+    private static void decodeMaybeNestedValuesInBlock(Inspector arrayField, double[] target, MutableInteger index) {
+        if (arrayField.entries() == 0) {
+            throw new IllegalArgumentException("The block value array does not contain any values");
+        }
+        arrayField.traverse((ArrayTraverser) (__, value) -> {
+                if (value.type() == Type.ARRAY) {
+                    decodeMaybeNestedValuesInBlock(value, target, index);
+                } else {
+                    target[index.next()] = decodeNumeric(value);
+                }
+            });
+    }
+
     private static double[] decodeValuesInBlock(Inspector valuesField, MixedTensor.BoundBuilder mixedBuilder) {
         double[] values = new double[(int)mixedBuilder.denseSubspaceSize()];
         if (valuesField.type() == Type.ARRAY) {
-            if (valuesField.entries() == 0) {
-                throw new IllegalArgumentException("The block value array does not contain any values");
-            }
-            valuesField.traverse((ArrayTraverser) (index, value) -> values[index] = decodeNumeric(value));
+            decodeMaybeNestedValuesInBlock(valuesField, values, new MutableInteger(0));
         } else if (valuesField.type() == Type.STRING) {
             double[] decoded = decodeHexString(valuesField.asString(), mixedBuilder.type().valueType());
             if (decoded.length == 0) {

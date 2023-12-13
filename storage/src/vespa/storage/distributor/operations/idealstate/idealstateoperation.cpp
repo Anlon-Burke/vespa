@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include "idealstateoperation.h"
 #include <vespa/storage/distributor/idealstatemanager.h>
 #include <vespa/storage/distributor/pendingmessagetracker.h>
@@ -28,6 +28,7 @@ IdealStateOperation::IdealStateOperation(const BucketAndNodes& bucketAndNodes)
     : _manager(nullptr),
       _bucketSpace(nullptr),
       _bucketAndNodes(bucketAndNodes),
+      _detailedReason(),
       _priority(255),
       _ok(true)
 {

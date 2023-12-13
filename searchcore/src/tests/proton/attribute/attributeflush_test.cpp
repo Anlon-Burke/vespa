@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/fastos/file.h>
 #include <vespa/searchcore/proton/attribute/attribute_writer.h>
@@ -39,6 +39,7 @@ using AVCollectionType = search::attribute::CollectionType;
 using searchcorespi::IFlushTarget;
 using searchcorespi::FlushStats;
 using std::chrono::duration_cast;
+using vespalib::HwInfo;
 using namespace std::literals;
 
 using GateSP = std::shared_ptr<Gate>;

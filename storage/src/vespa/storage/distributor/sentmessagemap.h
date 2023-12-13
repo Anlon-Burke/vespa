@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include <map>
@@ -14,6 +14,11 @@ public:
 
     SentMessageMap();
     ~SentMessageMap();
+
+    // Find by message ID, or nullptr if not found
+    [[nodiscard]] Operation* find_by_id_or_nullptr(api::StorageMessage::Id id) const noexcept;
+    // Find by message ID, or empty shared_ptr if not found
+    [[nodiscard]] std::shared_ptr<Operation> find_by_id_or_empty(api::StorageMessage::Id id) const noexcept;
 
     [[nodiscard]] std::shared_ptr<Operation> pop(api::StorageMessage::Id id);
     [[nodiscard]] std::shared_ptr<Operation> pop();

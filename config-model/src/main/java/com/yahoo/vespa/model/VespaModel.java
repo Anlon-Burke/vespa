@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model;
 
 import ai.vespa.rankingexpression.importer.configmodelview.ImportedMlModel;
@@ -50,7 +50,6 @@ import com.yahoo.vespa.model.container.ContainerModel;
 import com.yahoo.vespa.model.container.search.QueryProfiles;
 import com.yahoo.vespa.model.content.Content;
 import com.yahoo.vespa.model.content.cluster.ContentCluster;
-import com.yahoo.vespa.model.filedistribution.FileDistributionConfigProducer;
 import com.yahoo.vespa.model.ml.ConvertedModel;
 import com.yahoo.vespa.model.ml.ModelName;
 import com.yahoo.vespa.model.ml.OnnxModelInfo;
@@ -631,10 +630,6 @@ public final class VespaModel extends AbstractConfigProducerRoot implements Mode
     /** Returns the routing config model. This might be null. */
     public Routing getRouting() {
         return configModelRepo.getRouting();
-    }
-
-    public FileDistributionConfigProducer getFileDistributionConfigProducer() {
-        return root.getFileDistributionConfigProducer();
     }
 
     /** Returns an unmodifiable view of the mapping of config id to {@link ConfigProducer} */

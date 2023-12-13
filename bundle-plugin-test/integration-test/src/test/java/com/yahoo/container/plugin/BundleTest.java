@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.container.plugin;
 
 import com.yahoo.vespa.config.VespaVersion;
@@ -123,7 +123,7 @@ public class BundleTest {
         assertNotNull(nonPublicApiAttribute);
         var nonPublicApi = Arrays.stream(nonPublicApiAttribute.split(",")).collect(Collectors.toSet());
 
-        var expected = List.of("ai.vespa.lib.non_public", "com.yahoo.lib.non_public", "com.yahoo.non_public");
+        var expected = List.of("ai.vespa.internal", "ai.vespa.lib.non_public", "com.yahoo.lib.non_public", "com.yahoo.non_public");
         assertEquals(expected.size(), nonPublicApi.size());
         expected.forEach(pkg -> assertTrue(nonPublicApi.contains(pkg), "Non-public api did not contain %s".formatted(pkg)));
    }

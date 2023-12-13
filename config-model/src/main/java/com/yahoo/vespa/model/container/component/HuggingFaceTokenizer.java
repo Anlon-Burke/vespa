@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container.component;
 
 import com.yahoo.config.ModelReference;
@@ -7,7 +7,6 @@ import com.yahoo.language.huggingface.config.HuggingFaceTokenizerConfig;
 import com.yahoo.language.huggingface.config.HuggingFaceTokenizerConfig.Padding;
 import com.yahoo.language.huggingface.config.HuggingFaceTokenizerConfig.Truncation;
 import com.yahoo.text.XML;
-import com.yahoo.vespa.model.container.xml.ModelIdResolver;
 import org.w3c.dom.Element;
 
 import java.util.Map;
@@ -26,7 +25,7 @@ public class HuggingFaceTokenizer extends TypedComponent implements HuggingFaceT
         super("com.yahoo.language.huggingface.HuggingFaceTokenizer", LINGUISTICS_BUNDLE_NAME, xml);
         for (Element element : XML.getChildren(xml, "model")) {
             var lang = element.hasAttribute("language") ? element.getAttribute("language") : "unknown";
-            langToModel.put(lang, ModelIdResolver.resolveToModelReference(element, state));
+            langToModel.put(lang, Model.fromXml(state, element).modelReference());
         }
     }
 

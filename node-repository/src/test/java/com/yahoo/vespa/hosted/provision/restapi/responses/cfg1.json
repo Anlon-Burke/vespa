@@ -114,10 +114,13 @@
     }
   ],
   "ipAddresses": [
-    "127.0.201.1",
-    "::201:1"
+    "::201:1",
+    "127.0.201.1"
   ],
   "additionalIpAddresses": [],
   "cloudAccount": "aws:111222333444",
-  "wireguardPubkey":"lololololololololololololololololololololoo="
+  "wireguard": {
+    "key": "lololololololololololololololololololololoo=",
+    "timestamp": 456
+  }
 }

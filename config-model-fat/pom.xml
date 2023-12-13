@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<!-- Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
+<!-- Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
@@ -98,16 +98,10 @@
               javax.security.auth.callback,
               javax.security.auth.x500,
               javax.security.auth,
-              javax.xml.datatype,
-              javax.xml.namespace,
-              javax.xml.parsers,
-              javax.xml.transform,
-              javax.xml.xpath,
+              javax.xml.*, <!-- expands to all packages in Java module java.xml -->
               org.bouncycastle.*, <!-- expands to all BC packages by Felix plugin -->
-              org.w3c.dom.bootstrap,
-              org.w3c.dom.ls,
-              org.w3c.dom,
-              org.xml.sax,
+              org.w3c.dom.*,  <!-- expands to all packages in Java module java.xml -->
+              org.xml.sax.*,  <!-- expands to all packages in Java module java.xml -->
               <!-- TODO: The fat bundle becomes more brittle for each package added below. Use interfaces in model-api instead. -->
               com.yahoo.vespa.config,
               com.yahoo.vespa.config.buildergen,
@@ -144,7 +138,6 @@
                     <i>com.yahoo.vespa:fat-model-dependencies:*:*</i>
 
                     <!-- Vespa artifacts embedded -->
-                    <i>com.yahoo.vespa:airlift-zstd:*:*</i>
                     <i>com.yahoo.vespa:annotations:*:*</i>
                     <i>com.yahoo.vespa:component:*:*</i>
                     <i>com.yahoo.vespa:config:*:*</i>
@@ -195,18 +188,20 @@
                     <i>com.google.errorprone:error_prone_annotations:*:*</i>
                     <i>com.google.guava:failureaccess:*:*</i>
                     <i>com.google.guava:guava:*:*</i>
-                    <i>com.google.inject:guice:jar:no_aop:*:*</i>
+                    <i>com.google.inject:guice:jar:*:*</i>
                     <i>com.google.j2objc:j2objc-annotations:*:*</i>
                     <i>com.google.protobuf:protobuf-java:*:*</i>
                     <i>com.sun.activation:javax.activation:*:*</i>
                     <i>com.sun.xml.bind:jaxb-core:*:*</i>
                     <i>com.sun.xml.bind:jaxb-impl:*:*</i>
                     <i>com.thaiopensource:jing:*:*</i>
+                    <i>io.airlift:aircompressor:*:*</i>
                     <i>io.prometheus:simpleclient:*:*</i>
                     <i>io.prometheus:simpleclient_common:*:*</i>
                     <i>io.prometheus:simpleclient_tracer_common:*:*</i>
                     <i>io.prometheus:simpleclient_tracer_otel:*:*</i>
                     <i>io.prometheus:simpleclient_tracer_otel_agent:*:*</i>
+                    <i>jakarta.inject:jakarta.inject-api:*:*</i>
                     <i>javax.inject:javax.inject:*:*</i>
                     <i>net.openhft:zero-allocation-hashing:*:*</i>
                     <i>org.antlr:antlr-runtime:*:*</i>
@@ -219,7 +214,6 @@
                     <i>org.slf4j:slf4j-api:*:*</i>
                     <i>org.slf4j:slf4j-jdk14:*:*</i>
                     <i>xerces:xercesImpl:*:*</i>
-                    <i>xml-apis:xml-apis:*:*</i>
                   </allowed>
                 </enforceDependencies>
               </rules>

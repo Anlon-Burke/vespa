@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.provision;
 
 import java.util.Map;
@@ -48,6 +48,12 @@ public class CloudAccount implements Comparable<CloudAccount> {
     public boolean isExclave(Zone zone) {
         return !isUnspecified() &&
                zone.system().isPublic() &&
+               !equals(zone.cloud().account());
+    }
+
+    /** Returns true if this is an enclave account. */
+    public boolean isEnclave(Zone zone) {
+        return !isUnspecified() &&
                !equals(zone.cloud().account());
     }
 

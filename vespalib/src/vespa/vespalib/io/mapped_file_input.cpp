@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "mapped_file_input.h"
 #include <fcntl.h>
@@ -20,7 +20,9 @@ MappedFileInput::MappedFileInput(const vespalib::string &file_name)
         if (_data != MAP_FAILED) {
             _size = info.st_size;
             madvise(_data, _size, MADV_SEQUENTIAL);
+#ifdef __linux__
             madvise(_data, _size, MADV_DONTDUMP);
+#endif
         }
     }
 }

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.provision;
 
 import java.util.Objects;
@@ -144,11 +144,21 @@ public class NodeResources {
         public static GpuResources getDefault() { return zero; }
 
         public GpuResources plus(GpuResources other) {
-            return new GpuResources(this.count + other.count, this.memoryGb + other.memoryGb);
+            if (other.isZero()) return this;
+            var thisMem = this.count() * this.memoryGb();
+            var otherMem = other.count() * other.memoryGb();
+            return new NodeResources.GpuResources(1, thisMem + otherMem);
         }
 
         public GpuResources minus(GpuResources other) {
-            return new GpuResources(this.count - other.count, this.memoryGb - other.memoryGb);
+            if (other.isZero()) return this;
+            var thisMem = this.count() * this.memoryGb();
+            var otherMem = other.count() * other.memoryGb();
+            return new NodeResources.GpuResources(1, thisMem - otherMem);
+        }
+
+        public GpuResources multipliedBy(double factor) {
+            return new GpuResources(this.count, this.memoryGb * factor);
         }
 
         @Override
@@ -268,7 +278,7 @@ public class NodeResources {
         return new NodeResources(vcpu, memoryGb, diskGb, bandwidthGbps, diskSpeed, storageType, architecture, gpuResources);
     }
 
-    public NodeResources withUnspecifiedNumbersFrom(NodeResources fullySpecified) {
+    public NodeResources withUnspecifiedFieldsFrom(NodeResources fullySpecified) {
         var resources = this;
         if (resources.vcpuIsUnspecified())
             resources = resources.withVcpu(fullySpecified.vcpu());
@@ -278,6 +288,13 @@ public class NodeResources {
             resources = resources.withDiskGb(fullySpecified.diskGb());
         if (resources.bandwidthGbpsIsUnspecified())
             resources = resources.withBandwidthGbps(fullySpecified.bandwidthGbps());
+        if (resources.diskSpeed() == DiskSpeed.any)
+            resources = resources.with(fullySpecified.diskSpeed());
+        if (resources.storageType() == StorageType.any)
+            resources = resources.with(fullySpecified.storageType());
+        if (resources.architecture() == Architecture.any)
+            resources = resources.with(fullySpecified.architecture());
+        assert fullySpecified.gpuResources() == GpuResources.zero : "Not handled";
         return resources;
     }
 
@@ -323,10 +340,12 @@ public class NodeResources {
     }
 
     public NodeResources multipliedBy(double factor) {
+        if (isUnspecified()) return this;
         return this.withVcpu(vcpu * factor)
                    .withMemoryGb(memoryGb * factor)
                    .withDiskGb(diskGb * factor)
-                   .withBandwidthGbps(bandwidthGbps * factor);
+                   .withBandwidthGbps(bandwidthGbps * factor)
+                   .with(gpuResources.multipliedBy(factor));
     }
 
     private boolean isInterchangeableWith(NodeResources other) {

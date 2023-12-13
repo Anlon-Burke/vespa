@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.text;
 
 import org.junit.Ignore;
@@ -50,6 +50,38 @@ public class TextTestCase {
         validateText(OptionalInt.empty(), new StringBuilder().appendCodePoint(0xD800).appendCodePoint(0xDC00).toString());
     }
 
+    static private String fromCP(String prefix, int [] codePoints, String suffix) {
+        StringBuilder sb = new StringBuilder(prefix);
+        for (int cp : codePoints) {
+            sb.appendCodePoint(cp);
+        }
+        sb.append(suffix);
+        return sb.toString();
+    }
+
+    @Test
+    public void testSubstringByCodePoint() {
+        assertEquals("", Text.substringByCodepoints("", 0, 0));
+        assertEquals("", Text.substringByCodepoints("abcdef", 0, 0));
+        assertEquals("", Text.substringByCodepoints("abcdef", 3, 3));
+        assertEquals("", Text.substringByCodepoints("abcdef", 3, 2));
+        assertEquals("", Text.substringByCodepoints("abcdef", 7, 9));
+        assertEquals("abcdef", Text.substringByCodepoints("abcdef", 0, 9));
+        assertEquals("a", Text.substringByCodepoints("abcdef", 0, 1));
+        assertEquals("cd", Text.substringByCodepoints("abcdef", 2, 4));
+
+        String withSurrogates = fromCP("abc", new int[]{0x10F000, 0x10F001, 0x10F002}, "def");
+        assertEquals(withSurrogates, Text.substringByCodepoints(withSurrogates, 0, 11));
+        assertEquals(withSurrogates, Text.substringByCodepoints(withSurrogates, 0, 20));
+        assertEquals("", Text.substringByCodepoints(withSurrogates, 10, 11));
+        assertEquals(fromCP("bc", new int[]{0x10F000, 0x10F001}, ""),
+                     Text.substringByCodepoints(withSurrogates, 1, 5));
+        assertEquals(fromCP("", new int[]{0x10F001}, ""),
+                     Text.substringByCodepoints(withSurrogates, 4, 5));
+        assertEquals(fromCP("", new int[]{0x10F001, 0x10F002}, "de"),
+                     Text.substringByCodepoints(withSurrogates, 4, 8));
+    }
+
     @Test
     public void testIsDisplayable() {
         assertTrue(Text.isDisplayable('A'));
@@ -72,6 +104,9 @@ public class TextTestCase {
         assertEquals("",   Text.truncate("ab", 0));
         assertEquals("ab c",  Text.truncate("ab cde", 4));
         assertEquals("a ...", Text.truncate("ab cde", 5));
+        assertEquals("abc ...", Text.truncate("abc\uD83D\uDE48\uD83D\uDE49\uD83D\uDE4Adef", 7));
+        assertEquals("abc\uD83D\uDE48 ...", Text.truncate("abc\uD83D\uDE48\uD83D\uDE49\uD83D\uDE4Adef", 8));
+        assertEquals("abc\uD83D\uDE48\uD83D\uDE49\uD83D\uDE4Adef", Text.truncate("abc\uD83D\uDE48\uD83D\uDE49\uD83D\uDE4Adef", 9));
     }
 
     @Test
@@ -120,6 +155,6 @@ public class TextTestCase {
         sum = benchmarkIsValid(strings, 100000000);
         diff = System.nanoTime() - start;
         System.out.println("Validation num isValid = " + sum + ". Took " + diff + "ns");
-
     }
+
 }

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include "mysearch.h"
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/searchlib/queryeval/blueprint.h>
@@ -22,6 +22,7 @@ class MyOr : public IntermediateBlueprint
 {
 private:
 public:
+    double calculate_relative_estimate() const final { return 0.5; }
     HitEstimate combine(const std::vector<HitEstimate> &data) const override {
         return max(data);
     }
@@ -81,7 +82,7 @@ public:
     }
 
     FieldSpecBaseList exposeFields() const override {
-        return FieldSpecBaseList();
+        return {};
     }
 
     bool inheritStrict(size_t i) const override {
@@ -140,7 +141,7 @@ struct MyTerm : SimpleLeafBlueprint {
         setEstimate(HitEstimate(hitEstimate, false));
     }
     SearchIterator::UP createLeafSearch(const search::fef::TermFieldMatchDataArray &, bool) const override {
-        return SearchIterator::UP();
+        return {};
     }
     SearchIteratorUP createFilterSearch(bool strict, FilterConstraint constraint) const override {
         return create_default_filter(strict, constraint);
@@ -311,13 +312,13 @@ TEST("testHitEstimateCalculation")
 
 TEST("testHitEstimatePropagation")
 {
-    MyLeaf *leaf1 = new MyLeaf();
+    auto *leaf1 = new MyLeaf();
     leaf1->estimate(10);
 
-    MyLeaf *leaf2 = new MyLeaf();
+    auto *leaf2 = new MyLeaf();
     leaf2->estimate(20);
 
-    MyLeaf *leaf3 = new MyLeaf();
+    auto *leaf3 = new MyLeaf();
     leaf3->estimate(30);
 
     MyOr *parent = new MyOr();
@@ -346,7 +347,7 @@ TEST("testHitEstimatePropagation")
     leaf3->estimate(25);
     EXPECT_EQUAL(20u, root->getState().estimate().estHits);
     parent->addChild(std::move(tmp));
-    EXPECT_TRUE(tmp.get() == 0);
+    EXPECT_FALSE(tmp);
     EXPECT_EQUAL(25u, root->getState().estimate().estHits);
 }
 
@@ -572,7 +573,7 @@ TEST_F("testSearchCreation", Fixture)
                              .addField(3, 3).create());
         SearchIterator::UP leafsearch = f.create(*l);
 
-        MySearch *lw = new MySearch("leaf", true, true);
+        auto *lw = new MySearch("leaf", true, true);
         lw->addHandle(1).addHandle(2).addHandle(3);
         SearchIterator::UP wantleaf(lw);
 
@@ -584,11 +585,11 @@ TEST_F("testSearchCreation", Fixture)
                              .add(MyLeafSpec(2).addField(2, 2).create()));
         SearchIterator::UP andsearch = f.create(*a);
 
-        MySearch *l1 = new MySearch("leaf", true, true);
-        MySearch *l2 = new MySearch("leaf", true, false);
+        auto *l1 = new MySearch("leaf", true, true);
+        auto *l2 = new MySearch("leaf", true, false);
         l1->addHandle(1);
         l2->addHandle(2);
-        MySearch *aw = new MySearch("and", false, true);
+        auto *aw = new MySearch("and", false, true);
         aw->add(l1);
         aw->add(l2);
         SearchIterator::UP wanted(aw);
@@ -600,11 +601,11 @@ TEST_F("testSearchCreation", Fixture)
                              .add(MyLeafSpec(2).addField(2, 22).create()));
         SearchIterator::UP orsearch = f.create(*o);
 
-        MySearch *l1 = new MySearch("leaf", true, true);
-        MySearch *l2 = new MySearch("leaf", true, true);
+        auto *l1 = new MySearch("leaf", true, true);
+        auto *l2 = new MySearch("leaf", true, true);
         l1->addHandle(11);
         l2->addHandle(22);
-        MySearch *ow = new MySearch("or", false, true);
+        auto *ow = new MySearch("or", false, true);
         ow->add(l1);
         ow->add(l2);
         SearchIterator::UP wanted(ow);
@@ -619,7 +620,7 @@ TEST("testBlueprintMakeNew")
                             .add(MyLeafSpec(2).addField(2, 22).create()));
     orig->setSourceId(42);
     MyOr *myOr = dynamic_cast<MyOr*>(orig.get());
-    ASSERT_TRUE(myOr != 0);
+    ASSERT_TRUE(myOr != nullptr);
     EXPECT_EQUAL(42u, orig->getSourceId());
     EXPECT_EQUAL(2u, orig->getState().numFields());
 }
@@ -639,6 +640,7 @@ getExpectedBlueprint()
            "    estimate: HitEstimate {\n"
            "        empty: false\n"
            "        estHits: 9\n"
+           "        relative_estimate: 0.5\n"
            "        cost_tier: 1\n"
            "        tree_size: 2\n"
            "        allow_termwise_eval: false\n"
@@ -658,6 +660,7 @@ getExpectedBlueprint()
            "            estimate: HitEstimate {\n"
            "                empty: false\n"
            "                estHits: 9\n"
+           "                relative_estimate: 0.5\n"
            "                cost_tier: 1\n"
            "                tree_size: 1\n"
            "                allow_termwise_eval: true\n"
@@ -687,6 +690,7 @@ getExpectedSlimeBlueprint() {
            "        '[type]': 'HitEstimate',"
            "        empty: false,"
            "        estHits: 9,"
+           "        relative_estimate: 0.5,"
            "        cost_tier: 1,"
            "        tree_size: 2,"
            "        allow_termwise_eval: false"
@@ -711,6 +715,7 @@ getExpectedSlimeBlueprint() {
            "                '[type]': 'HitEstimate',"
            "                empty: false,"
            "                estHits: 9,"
+           "                relative_estimate: 0.5,"
            "                cost_tier: 1,"
            "                tree_size: 1,"
            "                allow_termwise_eval: true"
@@ -767,9 +772,9 @@ TEST("requireThatDocIdLimitInjectionWorks")
 }
 
 TEST("Control object sizes") {
-    EXPECT_EQUAL(32u, sizeof(Blueprint::State));
+    EXPECT_EQUAL(40u, sizeof(Blueprint::State));
     EXPECT_EQUAL(32u, sizeof(Blueprint));
-    EXPECT_EQUAL(64u, sizeof(LeafBlueprint));
+    EXPECT_EQUAL(72u, sizeof(LeafBlueprint));
 }
 
 TEST_MAIN() {

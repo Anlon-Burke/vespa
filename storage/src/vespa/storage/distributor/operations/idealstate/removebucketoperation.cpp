@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "removebucketoperation.h"
 #include <vespa/storage/distributor/idealstatemanager.h>
@@ -20,8 +20,7 @@ RemoveBucketOperation::onStartInternal(DistributorStripeMessageSender& sender)
 
     BucketDatabase::Entry entry = _bucketSpace->getBucketDatabase().get(getBucketId());
 
-    for (uint32_t i = 0; i < getNodes().size(); ++i) {
-        uint16_t node = getNodes()[i];
+    for (uint16_t node : getNodes()) {
         const BucketCopy* copy(entry->getNode(node));
         if (!copy) {
             LOG(debug, "Node %u was removed between scheduling remove operation and starting it; not sending DeleteBucket to it", node);
@@ -31,7 +30,7 @@ RemoveBucketOperation::onStartInternal(DistributorStripeMessageSender& sender)
         auto msg = std::make_shared<api::DeleteBucketCommand>(getBucket());
         setCommandMeta(*msg);
         msg->setBucketInfo(copy->getBucketInfo());
-        msgs.push_back(std::make_pair(node, msg));
+        msgs.emplace_back(node, msg);
     }
 
     _ok = true;
@@ -60,13 +59,14 @@ RemoveBucketOperation::onReceiveInternal(const std::shared_ptr<api::StorageReply
 {
     auto* rep = dynamic_cast<api::DeleteBucketReply*>(msg.get());
 
-    uint16_t node = _tracker.handleReply(*rep);
+    const uint16_t node = _tracker.handleReply(*rep);
 
-    LOG(debug, "Got DeleteBucket reply for %s from node %u",
-        getBucketId().toString().c_str(),
-        node);
+    LOG(debug, "Got DeleteBucket reply for %s from node %u", getBucketId().toString().c_str(), node);
 
-    if (rep->getResult().failed()) {
+    if (_cancel_scope.node_is_cancelled(node)) {
+        LOG(debug, "DeleteBucket operation for %s has been cancelled", getBucketId().toString().c_str());
+        _ok = false;
+    } else if (rep->getResult().failed()) {
         if (rep->getResult().getResult() == api::ReturnCode::REJECTED
             && rep->getBucketInfo().valid())
         {

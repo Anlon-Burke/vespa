@@ -1,6 +1,7 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.provisioning;
 
+import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.HostEvent;
 import com.yahoo.config.provision.NodeAllocationException;
@@ -22,14 +23,21 @@ public interface HostProvisioner {
 
     enum HostSharing {
 
-        /** The host must be provisioned exclusively for the applicationId */
+        /** The host must be provisioned exclusively for the application ID. */
+        provision,
+
+        /** The host must be exclusive to a single application ID */
         exclusive,
 
         /** The host must be provisioned to be shared with other applications. */
         shared,
 
         /** The client has no requirements on whether the host must be provisioned exclusively or shared. */
-        any
+        any;
+
+        public boolean isExclusiveAllocation() {
+            return this == provision || this == exclusive;
+        }
 
     }
 
@@ -43,11 +51,13 @@ public interface HostProvisioner {
      *                        written to ZK immediately in case the config server goes down while waiting
      *                        for the provisioning to finish.
      * @throws NodeAllocationException if the cloud provider cannot satisfy the request
+     * @return a runnable that waits for the provisioning request to finish. It can be run without holding any locks,
+     * but may fail with an exception that should be propagated to the user initiating prepare()
      */
-    void provisionHosts(HostProvisionRequest request, Predicate<NodeResources> realHostResourcesWithinLimits, Consumer<List<ProvisionedHost>> whenProvisioned) throws NodeAllocationException;
+    Runnable provisionHosts(HostProvisionRequest request, Predicate<NodeResources> realHostResourcesWithinLimits, Consumer<List<ProvisionedHost>> whenProvisioned) throws NodeAllocationException;
 
     /**
-     * Continue provisioning of given list of Nodes.
+     * Continue provisioning of the given host.
      *
      * @param host the host to provision
      * @return IP config for the provisioned host and its children
@@ -71,7 +81,7 @@ public interface HostProvisioner {
      *
      * @return the node objects for which updates were made
      */
-    default RebuildResult replaceRootDisk(Collection<Node> hosts) { throw new UnsupportedOperationException(); }
+    default RebuildResult replaceRootDisk(Collection<Node> hosts) { return new RebuildResult(List.of(), Map.of()); }
 
     record RebuildResult(List<Node> rebuilt, Map<Node, Exception> failed) { }
 
@@ -83,5 +93,8 @@ public interface HostProvisioner {
 
     /** Returns whether flavor for given host can be upgraded to a newer generation */
     boolean canUpgradeFlavor(Node host, Node child, Predicate<NodeResources> realHostResourcesWithinLimits);
+
+    /** Updates the given hosts to indicate that they are allocated to the given application. */
+    default void updateAllocation(Collection<Node> hosts, ApplicationId owner) { }
 
 }

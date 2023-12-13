@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.ArrayDataType;
@@ -106,7 +106,7 @@ public class EmbedExpression extends Expression  {
 
     private Tensor embed(String input, TensorType targetType, ExecutionContext context) {
         return embedder.embed(input,
-                              new Embedder.Context(destination).setLanguage(context.getLanguage()),
+                              new Embedder.Context(destination).setLanguage(context.getLanguage()).setEmbedderId(embedderId),
                               targetType);
 
     }
@@ -116,7 +116,7 @@ public class EmbedExpression extends Expression  {
         String outputField = context.getOutputField();
         if (outputField == null)
             throw new VerificationException(this, "No output field in this statement: " +
-                                                  "Don't know what tensor type to embed into.");
+                                                  "Don't know what tensor type to embed into");
         targetType = toTargetTensor(context.getInputType(this, outputField));
         if ( ! validTarget(targetType))
             throw new VerificationException(this, "The embedding target field must either be a dense 1d tensor, " +

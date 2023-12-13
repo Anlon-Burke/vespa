@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.metricsproxy.node;
 
 import ai.vespa.metricsproxy.core.MetricsManager;
@@ -42,13 +42,9 @@ public class NodeMetricGatherer {
     }
 
     public List<MetricsPacket> gatherMetrics()  {
-        FileWrapper fileWrapper = new FileWrapper();
         List<MetricsPacket.Builder> metricPacketBuilders = new ArrayList<>();
 
-        if (SystemPollerProvider.runningOnLinux()) {
-            JsonNode packet = HostLifeGatherer.getHostLifePacket(fileWrapper);
-            addObjectToBuilders(metricPacketBuilders, packet);
-        }
+        addObjectToBuilders(metricPacketBuilders, HostLifeGatherer.getHostLifePacket());
 
         return metricPacketBuilders.stream()
                 .map(metricPacketBuilder ->

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.curator.mock;
 
 import com.yahoo.component.annotation.Inject;
@@ -82,12 +82,12 @@ public class MockCurator extends Curator {
     }
 
     @Override
-    public CompletionWaiter getCompletionWaiter(Path parentPath, String id, Duration waitForAll) {
+    public CompletionWaiter getCompletionWaiter(Path barrierPath, String id, Duration waitForAll) {
         return mockFramework().createCompletionWaiter();
     }
 
     @Override
-    public CompletionWaiter createCompletionWaiter(Path parentPath, String waiterNode, String id, Duration waitForAll) {
+    public CompletionWaiter createCompletionWaiter(Path barrierPath, String id, Duration waitForAll) {
         return mockFramework().createCompletionWaiter();
     }
 

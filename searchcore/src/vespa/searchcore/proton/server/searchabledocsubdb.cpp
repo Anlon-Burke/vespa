@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "searchabledocsubdb.h"
 #include "fast_access_document_retriever.h"
@@ -183,7 +183,7 @@ SearchableDocSubDB::applyFlushConfig(const DocumentDBFlushConfig &flushConfig)
 void
 SearchableDocSubDB::propagateFlushConfig()
 {
-    uint32_t maxFlushed = isNodeRetired() ? _flushConfig.getMaxFlushedRetired() : _flushConfig.getMaxFlushed();
+    uint32_t maxFlushed = is_node_retired_or_maintenance() ? _flushConfig.getMaxFlushedRetired() : _flushConfig.getMaxFlushed();
     _indexMgr->setMaxFlushed(maxFlushed);
 }
 
@@ -346,6 +346,12 @@ SearchableDocSubDB::clearViews() {
     _rFeedView.clear();
     _rSearchView.clear();
     Parent::clearViews();
+}
+
+std::shared_ptr<IAttributeWriter>
+SearchableDocSubDB::get_attribute_writer() const
+{
+    return _rFeedView.get()->getAttributeWriter();
 }
 
 TransientResourceUsage

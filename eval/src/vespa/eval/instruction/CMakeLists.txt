@@ -1,4 +1,4 @@
-# Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+# Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 vespa_add_library(eval_instruction OBJECT
     SOURCES
@@ -24,6 +24,7 @@ vespa_add_library(eval_instruction OBJECT
     generic_join.cpp
     generic_lambda.cpp
     generic_map.cpp
+    generic_map_subspaces.cpp
     generic_merge.cpp
     generic_peek.cpp
     generic_reduce.cpp
@@ -49,6 +50,7 @@ vespa_add_library(eval_instruction OBJECT
     sparse_no_overlap_join_function.cpp
     sparse_singledim_lookup.cpp
     sum_max_dot_product_function.cpp
+    universal_dot_product.cpp
     unpack_bits_function.cpp
     vector_from_doubles_function.cpp
 )

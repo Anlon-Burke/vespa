@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "reference_attribute.h"
 #include "attributesaver.h"
@@ -52,6 +52,7 @@ ReferenceAttribute::ReferenceAttribute(const vespalib::stringref baseFileName, c
       _gidToLidMapperFactory(),
       _referenceMappings(getGenerationHolder(), getCommittedDocIdLimitRef(), get_initial_alloc())
 {
+    //TODO this is not safe without implementing getEnum
     setEnum(true);
 }
 
@@ -233,9 +234,8 @@ ReferenceAttribute::onLoad(vespalib::Executor *)
     setCreateSerialNum(attrReader.getCreateSerialNum());
     assert(attrReader.getEnumerated());
     assert(!attrReader.hasIdx());
-    size_t numDocs(0);
     uint64_t numValues = attrReader.getEnumCount();
-    numDocs = numValues;
+    size_t numDocs = numValues;
     auto udatBuffer = attribute::LoadUtils::loadUDAT(*this);
     const GenericHeader &header = udatBuffer->getHeader();
     uint32_t uniqueValueCount = extractUniqueValueCount(header);

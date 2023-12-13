@@ -1,9 +1,10 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "iterator_pack.h"
 #include "termwise_helper.h"
 #include <vespa/searchlib/fef/matchdata.h>
 #include <cassert>
+#include <limits>
 
 namespace search::queryeval {
 
@@ -28,6 +29,7 @@ SearchIteratorPack::SearchIteratorPack(const std::vector<SearchIterator*> &child
         _children.emplace_back(child);
     }
     assert((_children.size() == _childMatch.size()) || _childMatch.empty());
+    assert(_children.size() <= std::numeric_limits<ref_t>::max());
 }
 
 SearchIteratorPack::SearchIteratorPack(const std::vector<SearchIterator*> &children, MatchDataUP md)
@@ -36,7 +38,6 @@ SearchIteratorPack::SearchIteratorPack(const std::vector<SearchIterator*> &child
 
 std::unique_ptr<BitVector>
 SearchIteratorPack::get_hits(uint32_t begin_id, uint32_t end_id) const {
-
     BitVector::UP result = TermwiseHelper::orChildren(_children.begin(), _children.end(), begin_id);
     if (! result ) {
         result = BitVector::create(begin_id, end_id);

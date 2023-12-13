@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.content.cluster;
 
 import com.google.common.base.Preconditions;
@@ -256,7 +256,7 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
             for (ContainerModel containerModel : containers) {
                 Optional<String> hostClusterId = containerModel.getCluster().getHostClusterId();
                 if (hostClusterId.isPresent() && hostClusterId.get().equals(clusterId) && containerModel.getCluster().getMemoryPercentage().isPresent()) {
-                    return containerModel.getCluster().getMemoryPercentage().get() * 0.01;
+                    return containerModel.getCluster().getMemoryPercentage().get().percentage() * 0.01;
                 }
             }
             return 0.0;
@@ -598,9 +598,6 @@ public class ContentCluster extends TreeConfigProducer<AnyConfigProducer> implem
         builder.consumer(
                 new MetricsmanagerConfig.Consumer.Builder().
                         name("health"));
-        builder.consumer(
-                new MetricsmanagerConfig.Consumer.Builder().
-                        name("fleetcontroller"));
         builder.consumer(
                 new MetricsmanagerConfig.Consumer.Builder().
                         name("statereporter").

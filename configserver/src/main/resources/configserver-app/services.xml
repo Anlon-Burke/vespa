@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<!-- Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
+<!-- Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
 <services version="1.0" xmlns:preprocess="properties">
   <container id="configserver" version="1.0">
     <config name="container.jdisc.config.health-monitor">
@@ -26,6 +26,7 @@
     <component id="com.yahoo.vespa.config.server.tenant.TenantRepository" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.host.HostRegistry" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.ApplicationRepository" bundle="configserver" />
+    <component id="com.yahoo.vespa.config.server.FallbackOnnxModelCostProvider" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.HealthCheckerProviderProvider" bundle="configserver" />
     <component id="com.yahoo.vespa.config.server.version.VersionState" bundle="configserver" />
     <component id="com.yahoo.config.provision.Zone" bundle="config-provisioning" />
@@ -144,7 +145,8 @@
       <server port="19071" id="configserver">
         <config name="jdisc.http.connector">
           <!-- Limit max request content size accepted -->
-          <maxContentSize>2000000000</maxContentSize> <!-- ~2GB -->
+          <maxContentSize>0</maxContentSize> <!-- 0 => scale based on max heap size -->
+          <maxContentSizeErrorMessageTemplate>Application package is too large (%1$d > %2$d bytes). Try increasing heap as described in https://docs.vespa.ai/en/performance/container-tuning.html#config-server-and-config-proxy.</maxContentSizeErrorMessageTemplate>
         </config>
       </server>
       <preprocess:include file='http-server.xml' required='false' />

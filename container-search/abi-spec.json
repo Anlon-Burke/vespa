@@ -454,6 +454,7 @@
       "public boolean isLocked()",
       "public int getTermCount()",
       "public java.util.Optional extractSingleChild()",
+      "public boolean acceptsItemsOfType(com.yahoo.prelude.query.Item$ItemType)",
       "public bridge synthetic com.yahoo.prelude.query.Item clone()",
       "public bridge synthetic java.lang.Object clone()"
     ],
@@ -509,6 +510,7 @@
       "public com.yahoo.prelude.query.Item$ItemType getItemType()",
       "public java.lang.String getName()",
       "protected void adding(com.yahoo.prelude.query.Item)",
+      "public boolean acceptsItemsOfType(com.yahoo.prelude.query.Item$ItemType)",
       "public static boolean acceptsChildrenOfType(com.yahoo.prelude.query.Item$ItemType)"
     ],
     "fields" : [ ]
@@ -640,6 +642,23 @@
     "fields" : [
       "public static final java.lang.String HIGHLIGHTTERMS"
     ]
+  },
+  "com.yahoo.prelude.query.InItem" : {
+    "superClass" : "com.yahoo.prelude.query.Item",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public",
+      "abstract"
+    ],
+    "methods" : [
+      "public void <init>(java.lang.String)",
+      "public void setIndexName(java.lang.String)",
+      "public java.lang.String getIndexName()",
+      "public java.lang.String getName()",
+      "public boolean equals(java.lang.Object)",
+      "public int hashCode()"
+    ],
+    "fields" : [ ]
   },
   "com.yahoo.prelude.query.IndexedItem" : {
     "superClass" : "java.lang.Object",
@@ -779,6 +798,8 @@
       "public static final enum com.yahoo.prelude.query.Item$ItemType TRUE",
       "public static final enum com.yahoo.prelude.query.Item$ItemType FALSE",
       "public static final enum com.yahoo.prelude.query.Item$ItemType FUZZY",
+      "public static final enum com.yahoo.prelude.query.Item$ItemType STRING_IN",
+      "public static final enum com.yahoo.prelude.query.Item$ItemType NUMERIC_IN",
       "public final int code"
     ]
   },
@@ -1066,6 +1087,26 @@
     ],
     "fields" : [ ]
   },
+  "com.yahoo.prelude.query.NumericInItem" : {
+    "superClass" : "com.yahoo.prelude.query.InItem",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(java.lang.String)",
+      "public com.yahoo.prelude.query.Item$ItemType getItemType()",
+      "public int encode(java.nio.ByteBuffer)",
+      "protected void encodeThis(java.nio.ByteBuffer)",
+      "public int getTermCount()",
+      "protected void appendBodyString(java.lang.StringBuilder)",
+      "public void addToken(long)",
+      "public java.util.Collection getTokens()",
+      "public boolean equals(java.lang.Object)",
+      "public int hashCode()"
+    ],
+    "fields" : [ ]
+  },
   "com.yahoo.prelude.query.ONearItem" : {
     "superClass" : "com.yahoo.prelude.query.NearItem",
     "interfaces" : [ ],
@@ -1109,6 +1150,7 @@
       "public void setExplicit(boolean)",
       "public boolean isExplicit()",
       "public void addItem(com.yahoo.prelude.query.Item)",
+      "public boolean acceptsItemsOfType(com.yahoo.prelude.query.Item$ItemType)",
       "public void addItem(int, com.yahoo.prelude.query.Item)",
       "public com.yahoo.prelude.query.Item setItem(int, com.yahoo.prelude.query.Item)",
       "public java.util.Optional extractSingleChild()",
@@ -1523,6 +1565,27 @@
       "public boolean hasExplicitSignificance()",
       "public double getSignificance()",
       "public boolean hasUniqueID()"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.prelude.query.StringInItem" : {
+    "superClass" : "com.yahoo.prelude.query.InItem",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(java.lang.String)",
+      "public com.yahoo.prelude.query.Item$ItemType getItemType()",
+      "public int encode(java.nio.ByteBuffer)",
+      "protected void encodeThis(java.nio.ByteBuffer)",
+      "public int getTermCount()",
+      "protected void appendBodyString(java.lang.StringBuilder)",
+      "public void addToken(java.lang.String)",
+      "public void removeToken(java.lang.String)",
+      "public java.util.Collection getTokens()",
+      "public boolean equals(java.lang.Object)",
+      "public int hashCode()"
     ],
     "fields" : [ ]
   },
@@ -2169,13 +2232,14 @@
     ],
     "methods" : [
       "public void <init>(com.yahoo.search.cluster.NodeManager, boolean)",
+      "public synchronized void reconfigure(java.util.Collection)",
       "public void start()",
       "public com.yahoo.search.cluster.MonitorConfiguration getConfiguration()",
       "public boolean isClosed()",
       "public void add(java.lang.Object, boolean)",
       "public synchronized void failed(java.lang.Object, com.yahoo.search.result.ErrorMessage)",
       "public synchronized void responded(java.lang.Object)",
-      "public void ping(java.util.concurrent.Executor)",
+      "public synchronized void ping(java.util.concurrent.Executor)",
       "public java.util.Iterator nodeMonitorIterator()",
       "public java.util.List nodeMonitors()",
       "public void shutdown()"
@@ -5430,6 +5494,7 @@
       "public void setListFeatures(boolean)",
       "public boolean getListFeatures()",
       "public com.yahoo.search.query.ranking.MatchPhase getMatchPhase()",
+      "public com.yahoo.search.query.ranking.GlobalPhase getGlobalPhase()",
       "public com.yahoo.search.query.ranking.Matching getMatching()",
       "public com.yahoo.search.query.ranking.SoftTimeout getSoftTimeout()",
       "public com.yahoo.search.query.Sorting getSorting()",
@@ -5457,6 +5522,7 @@
       "public static final java.lang.String KEEPRANKCOUNT",
       "public static final java.lang.String RANKSCOREDROPLIMIT",
       "public static final java.lang.String MATCH_PHASE",
+      "public static final java.lang.String GLOBAL_PHASE",
       "public static final java.lang.String DIVERSITY",
       "public static final java.lang.String SOFTTIMEOUT",
       "public static final java.lang.String MATCHING",
@@ -6930,6 +6996,26 @@
       "public static final java.lang.String STRATEGY"
     ]
   },
+  "com.yahoo.search.query.ranking.GlobalPhase" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [
+      "java.lang.Cloneable"
+    ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>()",
+      "public static com.yahoo.search.query.profile.types.QueryProfileType getArgumentType()",
+      "public void setRerankCount(int)",
+      "public java.lang.Integer getRerankCount()",
+      "public int hashCode()",
+      "public boolean equals(java.lang.Object)",
+      "public com.yahoo.search.query.ranking.GlobalPhase clone()",
+      "public bridge synthetic java.lang.Object clone()"
+    ],
+    "fields" : [ ]
+  },
   "com.yahoo.search.query.ranking.MatchPhase" : {
     "superClass" : "java.lang.Object",
     "interfaces" : [
@@ -7050,6 +7136,7 @@
       "public void put(java.lang.String, java.lang.String)",
       "public void put(java.lang.String, java.lang.Object)",
       "public java.util.List get(java.lang.String)",
+      "public java.util.Optional getAsTensor(java.lang.String)",
       "public void remove(java.lang.String)",
       "public boolean isEmpty()",
       "public java.util.Map asMap()",

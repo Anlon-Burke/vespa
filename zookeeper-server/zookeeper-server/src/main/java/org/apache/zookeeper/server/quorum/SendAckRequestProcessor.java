@@ -18,6 +18,9 @@
 
 package org.apache.zookeeper.server.quorum;
 
+import java.io.Flushable;
+import java.io.IOException;
+import java.net.Socket;
 import org.apache.zookeeper.ZooDefs.OpCode;
 import org.apache.zookeeper.server.Request;
 import org.apache.zookeeper.server.RequestProcessor;
@@ -25,15 +28,11 @@ import org.apache.zookeeper.server.ServerMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.Flushable;
-import java.io.IOException;
-import java.net.Socket;
-
 public class SendAckRequestProcessor implements RequestProcessor, Flushable {
 
     private static final Logger LOG = LoggerFactory.getLogger(SendAckRequestProcessor.class);
 
-    Learner learner;
+    final Learner learner;
 
     SendAckRequestProcessor(Learner peer) {
         this.learner = peer;

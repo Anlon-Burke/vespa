@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config;
 
 import java.util.ArrayList;
@@ -63,8 +63,8 @@ public class ChangesRequiringRestart {
         }
     }
 
-    private ArrayList<ReportLine> report = new ArrayList<>();
-    private String componentName;
+    private final ArrayList<ReportLine> report = new ArrayList<>();
+    private final String componentName;
 
     public ChangesRequiringRestart(String componentName) {
         this.componentName = componentName;
@@ -105,14 +105,14 @@ public class ChangesRequiringRestart {
             int commonElements = Math.min(from.size(), to.size());
             for (int i = 0; i < commonElements; ++i) {
                 ChangesRequiringRestart childReport = func.getChangesRequiringRestart(from.get(i), to.get(i));
-                String prefix = childReport.componentName + "[" + Integer.toString(i) + "]";
+                String prefix = childReport.componentName + "[" + i + "]";
                 mergeChanges(prefix, childReport);
             }
             for (int i = commonElements; i < from.size(); ++i) {
-                report.add(new ReportLine(name + "[" + Integer.toString(i) + "]", from.get(i), null, comment));
+                report.add(new ReportLine(name + "[" + i + "]", from.get(i), null, comment));
             }
             for (int i = commonElements; i < to.size(); ++i) {
-                report.add(new ReportLine(name + "[" + Integer.toString(i) + "]", null, to.get(i), comment));
+                report.add(new ReportLine(name + "[" + i + "]", null, to.get(i), comment));
             }
         }
         return this;

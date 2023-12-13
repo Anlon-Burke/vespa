@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "portal.h"
 #include "http_connection.h"
@@ -200,7 +200,7 @@ Portal::Portal(CryptoEngine::SP crypto, int port)
                                                            handle_accept(std::move(guard), std::move(socket));
                                                        }
                                                    });
-    _my_host = vespalib::make_string("%s:%d", HostName::get().c_str(), listen_port());
+    _my_host = make_string("%s:%d", HostName::get().c_str(), listen_port());
 }
 
 Portal::~Portal()

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // Unit tests for query.
 
 #include <vespa/searchcore/proton/matching/fakesearchcontext.h>
@@ -289,6 +289,7 @@ public:
     void visit(ProtonPredicateQuery &) override {}
     void visit(ProtonRegExpTerm &) override {}
     void visit(ProtonNearestNeighborTerm &) override {}
+    void visit(ProtonInTerm&) override {}
 };
 
 void Test::requireThatTermsAreLookedUp() {
@@ -441,6 +442,7 @@ public:
     void visit(ProtonRegExpTerm &) override {}
     void visit(ProtonNearestNeighborTerm &) override {}
     void visit(ProtonFuzzyTerm &) override {}
+    void visit(ProtonInTerm&) override { }
 };
 
 void Test::requireThatTermDataIsFilledIn() {
@@ -711,7 +713,7 @@ void Test::requireThatQueryGluesEverythingTogether() {
     EXPECT_EQUAL(1u, md->getNumTermFields());
 
     query.optimize();
-    query.fetchPostings();
+    query.fetchPostings(ExecuteInfo::TRUE);
     SearchIterator::UP search = query.createSearch(*md);
     ASSERT_TRUE(search.get());
 }
@@ -744,7 +746,7 @@ void checkQueryAddsLocation(const string &loc_in, const string &loc_out) {
     MatchData::UP md = mdl.createMatchData();
     EXPECT_EQUAL(2u, md->getNumTermFields());
 
-    query.fetchPostings();
+    query.fetchPostings(ExecuteInfo::TRUE);
     SearchIterator::UP search = query.createSearch(*md);
     ASSERT_TRUE(search.get());
     if (!EXPECT_NOT_EQUAL(string::npos, search->asString().find(loc_out))) {
@@ -966,7 +968,7 @@ Test::requireThatWhiteListBlueprintCanBeUsed()
     MatchData::UP md = mdl.createMatchData();
 
     query.optimize();
-    query.fetchPostings();
+    query.fetchPostings(ExecuteInfo::TRUE);
     SearchIterator::UP search = query.createSearch(*md);
     SimpleResult exp = SimpleResult().addHit(1).addHit(5).addHit(7).addHit(11);
     SimpleResult act;
@@ -1129,12 +1131,14 @@ public:
     {
         set_want_global_filter(want_global_filter);
     }
-    ~GlobalFilterBlueprint() {}
+    ~GlobalFilterBlueprint() override;
     void set_global_filter(const GlobalFilter& filter_, double estimated_hit_ratio_) override {
         filter = filter_.shared_from_this();
         estimated_hit_ratio = estimated_hit_ratio_;
     }
 };
+
+GlobalFilterBlueprint::~GlobalFilterBlueprint() = default;
 
 void
 Test::global_filter_is_calculated_and_handled()

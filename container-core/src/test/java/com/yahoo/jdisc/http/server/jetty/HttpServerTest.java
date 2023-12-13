@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.jdisc.http.server.jetty;
 
 import com.google.inject.AbstractModule;
@@ -156,6 +156,20 @@ public class HttpServerTest {
                         .requestHeaderSize(1));
         driver.client().get("/status.html")
                 .expectStatusCode(is(REQUEST_URI_TOO_LONG));
+        assertTrue(driver.close());
+    }
+
+    @Test
+    void requireThatTooLargePayloadFailsWith413() throws Exception {
+        final JettyTestDriver driver = JettyTestDriver.newConfiguredInstance(
+                new EchoRequestHandler(),
+                new ServerConfig.Builder(),
+                new ConnectorConfig.Builder()
+                        .maxContentSize(100));
+        driver.client().newPost("/status.html")
+                .setBinaryContent(new byte[200])
+                .execute()
+                .expectStatusCode(is(REQUEST_TOO_LONG));
         assertTrue(driver.close());
     }
 

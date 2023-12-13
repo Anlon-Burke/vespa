@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.restapi;
 
 import com.google.common.collect.Maps;
@@ -11,6 +11,7 @@ import com.yahoo.config.provision.NodeFlavors;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.WireguardKey;
+import com.yahoo.config.provision.WireguardKeyWithTimestamp;
 import com.yahoo.slime.Cursor;
 import com.yahoo.slime.Inspector;
 import com.yahoo.slime.ObjectTraverser;
@@ -41,7 +42,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import static com.yahoo.config.provision.NodeResources.DiskSpeed.fast;
@@ -109,7 +109,7 @@ public class NodePatcher {
                                               "reports",
                                               "trustStore",
                                               "vespaVersion",
-                                              "wireguardPubkey"));
+                                              "wireguard"));
             if (!disallowedFields.isEmpty()) {
                 throw new IllegalArgumentException("Patching fields not supported: " + disallowedFields);
             }
@@ -262,6 +262,8 @@ public class NodePatcher {
             case "exclusiveTo":
             case "exclusiveToApplicationId":
                 return node.withExclusiveToApplicationId(SlimeUtils.optionalString(value).map(ApplicationId::fromSerializedForm).orElse(null));
+            case "provisionedFor":
+                return node.withProvisionedForApplicationId(SlimeUtils.optionalString(value).map(ApplicationId::fromSerializedForm).orElse(null));
             case "hostTTL":
                 return node.withHostTTL(SlimeUtils.optionalDuration(value).orElse(null));
             case "hostEmptyAt":
@@ -272,17 +274,19 @@ public class NodePatcher {
                 return value.type() == Type.NIX ? node.withoutSwitchHostname() : node.withSwitchHostname(value.asString());
             case "trustStore":
                 return nodeWithTrustStore(node, value);
-            case "wireguardPubkey":
-                return node.withWireguardPubkey(SlimeUtils.optionalString(value).map(WireguardKey::new).orElse(null));
-            default :
+            case "wireguard":
+                // This is where we set the key timestamp.
+                var key = SlimeUtils.optionalString(value.field("key")).map(WireguardKey::new).orElse(null);
+                return node.withWireguardPubkey(new WireguardKeyWithTimestamp(key, clock.instant()));
+            default:
                 throw new IllegalArgumentException("Could not apply field '" + name + "' on a node: No such modifiable field");
         }
     }
 
     private Node applyIpconfigField(Node node, String name, Inspector value, LockedNodeList nodes) {
         return switch (name) {
-            case "ipAddresses" -> IP.Config.verify(node.with(node.ipConfig().withPrimary(asStringSet(value))), nodes, nodeRepository.zone());
-            case "additionalIpAddresses" -> IP.Config.verify(node.with(node.ipConfig().withPool(node.ipConfig().pool().withIpAddresses(asStringSet(value)))), nodes, nodeRepository.zone());
+            case "ipAddresses" -> IP.Config.verify(node.with(node.ipConfig().withPrimary(asStringList(value))), nodes, nodeRepository.zone());
+            case "additionalIpAddresses" -> IP.Config.verify(node.with(node.ipConfig().withPool(node.ipConfig().pool().withIpAddresses(asStringList(value)))), nodes, nodeRepository.zone());
             case "additionalHostnames" -> IP.Config.verify(node.with(node.ipConfig().withPool(node.ipConfig().pool().withHostnames(asHostnames(value)))), nodes, nodeRepository.zone());
             default -> throw new IllegalArgumentException("Could not apply field '" + name + "' on a node: No such modifiable field");
         };
@@ -335,11 +339,11 @@ public class NodePatcher {
         return node.with(trustStoreItems);
     }
 
-    private Set<String> asStringSet(Inspector field) {
+    private List<String> asStringList(Inspector field) {
         if ( ! field.type().equals(Type.ARRAY))
             throw new IllegalArgumentException("Expected an ARRAY value, got a " + field.type());
 
-        TreeSet<String> strings = new TreeSet<>();
+        var strings = new ArrayList<String>();
         for (int i = 0; i < field.entries(); i++) {
             Inspector entry = field.entry(i);
             if ( ! entry.type().equals(Type.STRING))

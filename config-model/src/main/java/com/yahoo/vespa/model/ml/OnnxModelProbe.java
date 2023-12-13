@@ -1,12 +1,14 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.ml;
 
+import com.yahoo.json.Jackson;
 import com.fasterxml.jackson.core.JsonEncoding;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yahoo.config.application.api.ApplicationFile;
 import com.yahoo.config.application.api.ApplicationPackage;
+import com.yahoo.config.model.api.OnnxMemoryStats;
 import com.yahoo.io.IOUtils;
 import com.yahoo.path.Path;
 import com.yahoo.tensor.TensorType;
@@ -41,8 +43,9 @@ public class OnnxModelProbe {
             // Otherwise, run vespa-analyze-onnx-model if the model is available
             if (outputType.equals(TensorType.empty) && app.getFile(modelPath).exists()) {
                 String jsonInput = createJsonInput(app.getFileReference(modelPath).getAbsolutePath(), inputTypes);
-                String jsonOutput = callVespaAnalyzeOnnxModel(jsonInput);
+                var jsonOutput = callVespaAnalyzeOnnxModel(jsonInput);
                 outputType = outputTypeFromJson(jsonOutput, outputName);
+                writeMemoryStats(app, modelPath, OnnxMemoryStats.fromJson(jsonOutput));
                 if ( ! outputType.equals(TensorType.empty)) {
                     writeProbedOutputType(app, modelPath, contextKey, outputType);
                 }
@@ -51,6 +54,11 @@ public class OnnxModelProbe {
         } catch (IllegalArgumentException | IOException | InterruptedException ignored) { }
 
         return outputType;
+    }
+
+    private static void writeMemoryStats(ApplicationPackage app, Path modelPath, OnnxMemoryStats memoryStats) throws IOException {
+        String path = app.getFileReference(OnnxMemoryStats.memoryStatsFilePath(modelPath)).getAbsolutePath();
+        IOUtils.writeFile(path, memoryStats.toJson().toPrettyString(), false);
     }
 
     private static String createContextKey(String onnxName, Map<String, TensorType> inputTypes) {
@@ -95,9 +103,7 @@ public class OnnxModelProbe {
         return TensorType.empty;
     }
 
-    private static TensorType outputTypeFromJson(String json, String outputName) throws IOException {
-        ObjectMapper m = new ObjectMapper();
-        JsonNode root = m.readTree(json);
+    private static TensorType outputTypeFromJson(JsonNode root, String outputName) throws IOException {
         if ( ! root.isObject() || ! root.has("outputs")) {
             return TensorType.empty;
         }
@@ -123,7 +129,7 @@ public class OnnxModelProbe {
         return out.toString();
     }
 
-    private static String callVespaAnalyzeOnnxModel(String jsonInput) throws IOException, InterruptedException {
+    private static JsonNode callVespaAnalyzeOnnxModel(String jsonInput) throws IOException, InterruptedException {
         StringBuilder output = new StringBuilder();
 
         ProcessBuilder processBuilder = new ProcessBuilder(binary, "--probe-types");
@@ -148,7 +154,6 @@ public class OnnxModelProbe {
             throw new IllegalArgumentException("Error from '" + binary + "'. Return code: " + returnCode + ". " +
                                                "Output: '" + output + "'");
         }
-        return output.toString();
+        return Jackson.mapper().readTree(output.toString());
     }
-
 }

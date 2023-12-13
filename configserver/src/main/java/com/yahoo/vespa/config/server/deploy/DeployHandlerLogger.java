@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.deploy;
 
 import com.yahoo.config.application.api.DeployLogger;
@@ -11,6 +11,7 @@ import com.yahoo.slime.Slime;
 import com.yahoo.vespa.config.server.session.PrepareParams;
 import com.yahoo.vespa.config.server.tenant.TenantRepository;
 
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -35,15 +36,17 @@ public class DeployHandlerLogger implements DeployLogger {
         this.logroot = slime.setObject().setArray("log");
     }
 
+    @Override public void log(Level level, String message) { log(level, () -> message); }
+    @Override public void log(Level level, Supplier<String> message) { log(level, message, null); }
+
     @Override
     @SuppressWarnings("deprecation")
-    public void log(Level level, String message) {
-        if (level.intValue() <= LogLevel.DEBUG.intValue() && !verbose)
-            return;
+    public void log(Level level, Supplier<String> supplier, Throwable throwable) {
+        // Also tee to a normal log, Vespa log for example, but use level fine
+        log.log(Level.FINE, throwable, () -> prefix + supplier.get());
 
-        logJson(level, message);
-        // Also tee to a normal log, Vespa log for example, but use level fine 
-        log.log(Level.FINE, () -> prefix + message);
+        if (level.intValue() <= LogLevel.DEBUG.intValue() && !verbose) return;
+        logJson(level, supplier.get());
     }
 
     @Override

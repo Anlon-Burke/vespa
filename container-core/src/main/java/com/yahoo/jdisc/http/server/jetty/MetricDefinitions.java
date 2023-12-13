@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.jdisc.http.server.jetty;
 
 import ai.vespa.metrics.ContainerMetrics;
@@ -14,7 +14,6 @@ class MetricDefinitions {
     static final String METHOD_DIMENSION = "httpMethod";
     static final String SCHEME_DIMENSION = "scheme";
     static final String REQUEST_TYPE_DIMENSION = "requestType";
-    static final String CLIENT_IP_DIMENSION = "clientIp";
     static final String CLIENT_AUTHENTICATED_DIMENSION = "clientAuthenticated";
     static final String REQUEST_SERVER_NAME_DIMENSION = "requestServerName";
     static final String FILTER_CHAIN_ID_DIMENSION = "chainId";

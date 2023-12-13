@@ -1,7 +1,6 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.persistence;
 
-import com.google.common.collect.ImmutableSet;
 import com.yahoo.component.Version;
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.ApplicationName;
@@ -17,6 +16,7 @@ import com.yahoo.config.provision.NodeResources;
 import com.yahoo.config.provision.NodeType;
 import com.yahoo.config.provision.TenantName;
 import com.yahoo.config.provision.WireguardKey;
+import com.yahoo.config.provision.WireguardKeyWithTimestamp;
 import com.yahoo.config.provision.host.FlavorOverrides;
 import com.yahoo.config.provision.serialization.NetworkPortsSerializer;
 import com.yahoo.slime.ArrayTraverser;
@@ -41,7 +41,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * Serializes a node to/from JSON.
@@ -51,7 +50,7 @@ import java.util.Set;
  */
 public class NodeSerializer {
 
-    // WARNING: Since there are multiple servers in a ZooKeeper cluster and they upgrade one by one
+    // WARNING: Since there are multiple servers in a ZooKeeper cluster, and they upgrade one by one
     //          (and rewrite all nodes on startup), changes to the serialized format must be made
     //          such that what is serialized on version N+1 can be read by version N:
     //          - ADDING FIELDS: Always ok
@@ -93,6 +92,7 @@ public class NodeSerializer {
     private static final String modelNameKey = "modelName";
     private static final String reservedToKey = "reservedTo";
     private static final String exclusiveToApplicationIdKey = "exclusiveTo";
+    private static final String provisionedForApplicationIdKey = "provisionedFor";
     private static final String hostTTLKey = "hostTTL";
     private static final String hostEmptyAtKey = "hostEmptyAt";
     private static final String exclusiveToClusterTypeKey = "exclusiveToClusterType";
@@ -100,6 +100,7 @@ public class NodeSerializer {
     private static final String trustedCertificatesKey = "trustedCertificates";
     private static final String cloudAccountKey = "cloudAccount";
     private static final String wireguardPubKeyKey = "wireguardPubkey";
+    private static final String wireguardKeyTimestampKey = "wireguardKeyTimestamp";
 
     // Node resource fields
     private static final String flavorKey = "flavor";
@@ -152,8 +153,8 @@ public class NodeSerializer {
     private void toSlime(Node node, Cursor object) {
         object.setString(hostnameKey, node.hostname());
         object.setString(stateKey, toString(node.state()));
-        toSlime(node.ipConfig().primary(), object.setArray(ipAddressesKey));
-        toSlime(node.ipConfig().pool().asSet(), object.setArray(ipAddressPoolKey));
+        toSlime(node.ipConfig().primary(), object.setArray(ipAddressesKey), true);
+        toSlime(node.ipConfig().pool().ips(), object.setArray(ipAddressPoolKey), true);
         toSlime(node.ipConfig().pool().hostnames(), object);
         object.setString(idKey, node.id());
         node.extraId().ifPresent(id -> object.setString(extraIdKey, id));
@@ -182,6 +183,7 @@ public class NodeSerializer {
         node.modelName().ifPresent(modelName -> object.setString(modelNameKey, modelName));
         node.reservedTo().ifPresent(tenant -> object.setString(reservedToKey, tenant.value()));
         node.exclusiveToApplicationId().ifPresent(applicationId -> object.setString(exclusiveToApplicationIdKey, applicationId.serializedForm()));
+        node.provisionedForApplicationId().ifPresent(applicationId -> object.setString(provisionedForApplicationIdKey, applicationId.serializedForm()));
         node.hostTTL().ifPresent(hostTTL -> object.setLong(hostTTLKey, hostTTL.toMillis()));
         node.hostEmptyAt().ifPresent(emptyAt -> object.setLong(hostEmptyAtKey, emptyAt.toEpochMilli()));
         node.exclusiveToClusterType().ifPresent(clusterType -> object.setString(exclusiveToClusterTypeKey, clusterType.name()));
@@ -189,7 +191,10 @@ public class NodeSerializer {
         if (!node.cloudAccount().isUnspecified()) {
             object.setString(cloudAccountKey, node.cloudAccount().value());
         }
-        node.wireguardPubKey().ifPresent(pubKey -> object.setString(wireguardPubKeyKey, pubKey.value()));
+        node.wireguardPubKey().ifPresent(pubKey -> {
+            object.setString(wireguardPubKeyKey, pubKey.key().value());
+            object.setLong(wireguardKeyTimestampKey, pubKey.timestamp().toEpochMilli());
+        });
     }
 
     private void toSlime(Flavor flavor, Cursor object) {
@@ -231,10 +236,10 @@ public class NodeSerializer {
         object.setString(agentKey, toString(event.agent()));
     }
 
-    private void toSlime(Set<String> ipAddresses, Cursor array) {
+    private void toSlime(List<String> addresses, Cursor array, boolean dummyDueToErasure) {
         // Validating IP address string literals is expensive, so we do it at serialization time instead of Node
         // construction time
-        ipAddresses.stream().map(IP::parse).sorted(IP.NATURAL_ORDER).map(IP::asString).forEach(array::addString);
+        addresses.stream().map(IP::parse).map(IP::asString).forEach(array::addString);
     }
 
     private void toSlime(List<HostName> hostnames, Cursor object) {
@@ -278,13 +283,14 @@ public class NodeSerializer {
                         SlimeUtils.optionalString(object.field(modelNameKey)),
                         SlimeUtils.optionalString(object.field(reservedToKey)).map(TenantName::from),
                         SlimeUtils.optionalString(object.field(exclusiveToApplicationIdKey)).map(ApplicationId::fromSerializedForm),
+                        SlimeUtils.optionalString(object.field(provisionedForApplicationIdKey)).map(ApplicationId::fromSerializedForm),
                         SlimeUtils.optionalDuration(object.field(hostTTLKey)),
                         SlimeUtils.optionalInstant(object.field(hostEmptyAtKey)),
                         SlimeUtils.optionalString(object.field(exclusiveToClusterTypeKey)).map(ClusterSpec.Type::from),
                         SlimeUtils.optionalString(object.field(switchHostnameKey)),
                         trustedCertificatesFromSlime(object),
                         SlimeUtils.optionalString(object.field(cloudAccountKey)).map(CloudAccount::from).orElse(CloudAccount.empty),
-                        SlimeUtils.optionalString(object.field(wireguardPubKeyKey)).map(WireguardKey::from));
+                        wireguardKeyWithTimestampFromSlime(object.field(wireguardPubKeyKey), object.field(wireguardKeyTimestampKey)));
     }
 
     private Status statusFromSlime(Inspector object) {
@@ -377,10 +383,10 @@ public class NodeSerializer {
         return SlimeUtils.optionalString(object).map(DockerImage::fromString);
     }
 
-    private Set<String> ipAddressesFromSlime(Inspector object, String key) {
-        ImmutableSet.Builder<String> ipAddresses = ImmutableSet.builder();
+    private List<String> ipAddressesFromSlime(Inspector object, String key) {
+        var ipAddresses = new ArrayList<String>();
         object.field(key).traverse((ArrayTraverser) (i, item) -> ipAddresses.add(item.asString()));
-        return ipAddresses.build();
+        return ipAddresses;
     }
 
     private List<HostName> hostnamesFromSlime(Inspector object) {
@@ -394,6 +400,13 @@ public class NodeSerializer {
                          .map(elem -> new TrustStoreItem(elem.field(fingerprintKey).asString(),
                                                          Instant.ofEpochMilli(elem.field(expiresKey).asLong())))
                          .toList();
+    }
+
+    private Optional<WireguardKeyWithTimestamp> wireguardKeyWithTimestampFromSlime(Inspector keyObject, Inspector timestampObject) {
+        if ( ! keyObject.valid()) return Optional.empty();
+        return SlimeUtils.optionalString(keyObject).map(
+                key -> new WireguardKeyWithTimestamp(WireguardKey.from(key),
+                                                     SlimeUtils.optionalInstant(timestampObject).orElse(null)));
     }
 
     // ----------------- Enum <-> string mappings ----------------------------------------

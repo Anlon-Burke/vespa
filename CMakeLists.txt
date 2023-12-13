@@ -1,4 +1,4 @@
-# Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+# Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 # @author Vegard Sjonfjell
 # @author Eirik Nygaard
 # @author Arnstein Ressem
@@ -51,9 +51,6 @@ find_package(JNI REQUIRED)
 
 find_package(GTest REQUIRED)
 
-find_package(Python 3.6 COMPONENTS Interpreter Development REQUIRED)
-find_package(pybind11 CONFIG REQUIRED)
-
 find_package(Protobuf REQUIRED)
 
 include(build_settings.cmake)
@@ -61,14 +58,44 @@ include(build_settings.cmake)
 # Enable CTest unit testing
 enable_testing()
 
+# Export vespa cmake config, to be used by other cmake project depending on vespa
+set(VESPA_CMAKECONFIG_INSTALL_DIR ${CMAKE_INSTALL_DATAROOTDIR}/cmake/vespa)
+string(REGEX REPLACE "-DV_TAG_COMPONENT=\\\\\"(.*)\\\\\"" "\\1" VESPA_VERSION ${V_TAG_COMPONENT})
+message("-- VESPA_VERSION is ${VESPA_VERSION}")
+
+include(CMakePackageConfigHelpers)
+function(vespa_configure_exported_config)
+  set(INCLUDE_INSTALL_DIR ${CMAKE_INSTALL_INCLUDEDIR})
+  set(INSTALL_PREFIX_DIR ${CMAKE_INSTALL_PREFIX})
+  set(CMAKECONFIG_DIR ${VESPA_CMAKECONFIG_INSTALL_DIR})
+  configure_package_config_file(cmake/vespaConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/vespaConfig.cmake
+    INSTALL_DESTINATION ${VESPA_CMAKECONFIG_INSTALL_DIR}
+    PATH_VARS INCLUDE_INSTALL_DIR INSTALL_PREFIX_DIR CMAKECONFIG_DIR)
+endfunction()
+function(vespa_configure_exported_configversion)
+  write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/vespaConfigVersion.cmake
+    VERSION ${VESPA_VERSION}
+    COMPATIBILITY AnyNewerVersion)
+endfunction()
+vespa_configure_exported_config()
+vespa_configure_exported_configversion()
+install(FILES
+  functions.cmake
+  build_settings.cmake
+  default_build_settings.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/vespaConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/vespaConfigVersion.cmake
+  cmake/vespaTargets.cmake
+  DESTINATION ${VESPA_CMAKECONFIG_INSTALL_DIR})
+# End of exporting vespa cmake config
+
 vespa_install_data(valgrind-suppressions.txt etc/vespa)
 vespa_install_data(tsan-suppressions.txt etc/vespa)
 
 # Include vespa config definitions in every target
 include_directories(BEFORE ${CMAKE_BINARY_DIR}/configdefinitions/src)
 
-add_subdirectory(airlift-zstd)
-add_subdirectory(ann_benchmark)
 add_subdirectory(application-model)
 add_subdirectory(client)
 add_subdirectory(cloud-tenant-cd)
@@ -126,7 +153,6 @@ add_subdirectory(metrics)
 add_subdirectory(metrics-proxy)
 add_subdirectory(model-evaluation)
 add_subdirectory(model-integration)
-add_subdirectory(node-admin)
 add_subdirectory(node-repository)
 add_subdirectory(orchestrator)
 add_subdirectory(persistence)

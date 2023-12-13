@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "same_element_blueprint.h"
 #include "same_element_search.h"
@@ -28,7 +28,7 @@ SameElementBlueprint::~SameElementBlueprint() = default;
 FieldSpec
 SameElementBlueprint::getNextChildField(const vespalib::string &field_name, uint32_t field_id)
 {
-    return FieldSpec(field_name, field_id, _layout.allocTermField(field_id), false);
+    return {field_name, field_id, _layout.allocTermField(field_id), false};
 }
 
 void
@@ -45,19 +45,28 @@ SameElementBlueprint::addTerm(Blueprint::UP term)
 }
 
 void
-SameElementBlueprint::optimize_self()
+SameElementBlueprint::optimize_self(OptimizePass pass)
 {
-    std::sort(_terms.begin(), _terms.end(),
-              [](const auto &a, const auto &b) {
-                  return (a->getState().estimate() < b->getState().estimate());
-              });
+    if (pass == OptimizePass::LAST) {
+        std::sort(_terms.begin(), _terms.end(),
+                  [](const auto &a, const auto &b) {
+                      return (a->getState().estimate() < b->getState().estimate());
+                  });
+    }
 }
 
 void
 SameElementBlueprint::fetchPostings(const ExecuteInfo &execInfo)
 {
-    for (size_t i = 0; i < _terms.size(); ++i) {
-        _terms[i]->fetchPostings(ExecuteInfo::create(execInfo.isStrict() && (i == 0), execInfo.hitRate()));
+    if (_terms.empty()) return;
+    _terms[0]->fetchPostings(execInfo);
+    double estimate = execInfo.use_estimate_for_fetch_postings() ? _terms[0]->hit_ratio() : _terms[0]->estimate();
+    double hit_rate = execInfo.hit_rate() * estimate;
+    for (size_t i = 1; i < _terms.size(); ++i) {
+        Blueprint & term = *_terms[i];
+        term.fetchPostings(ExecuteInfo::create(false, hit_rate, execInfo));
+        estimate = execInfo.use_estimate_for_fetch_postings() ? _terms[0]->hit_ratio() : _terms[0]->estimate();
+        hit_rate = hit_rate * estimate;
     }
 }
 

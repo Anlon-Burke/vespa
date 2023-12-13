@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.lb;
 
 import ai.vespa.http.DomainName;
@@ -31,18 +31,11 @@ public class SharedLoadBalancerService implements LoadBalancerService {
 
     @Override
     public LoadBalancerInstance provision(LoadBalancerSpec spec) {
-        return create(spec);
-    }
-
-    @Override
-    public LoadBalancerInstance configure(LoadBalancerInstance instance, LoadBalancerSpec spec, boolean force) {
-        return instance.with(spec.reals(), spec.settings(), Optional.empty());
-    }
-
-    private LoadBalancerInstance create(LoadBalancerSpec spec) {
         if ( ! spec.settings().isPublicEndpoint())
             throw new IllegalArgumentException("non-public endpoints is not supported with " + getClass());
+
         return new LoadBalancerInstance(Optional.of(DomainName.of(vipHostname)),
+                                        Optional.empty(),
                                         Optional.empty(),
                                         Optional.empty(),
                                         Set.of(4443),
@@ -51,6 +44,16 @@ public class SharedLoadBalancerService implements LoadBalancerService {
                                         spec.settings(),
                                         List.of(),
                                         spec.cloudAccount());
+    }
+
+    @Override
+    public LoadBalancerInstance configure(LoadBalancerInstance instance, LoadBalancerSpec spec, boolean force) {
+        return instance.with(spec.reals(), spec.settings(), Optional.empty());
+    }
+
+    @Override
+    public void reallocate(LoadBalancerSpec spec) {
+        throw new UnsupportedOperationException("reallocate is not supported with " + getClass());
     }
 
     @Override
@@ -71,7 +74,7 @@ public class SharedLoadBalancerService implements LoadBalancerService {
     }
 
     @Override
-    public Availability healthy(Endpoint endpoint) {
+    public Availability healthy(Endpoint endpoint, String idSeed) {
         return Availability.ready;
     }
 

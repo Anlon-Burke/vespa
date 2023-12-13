@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.restapi;
 
 import ai.vespa.http.HttpURL;
@@ -15,6 +15,7 @@ import com.yahoo.security.tls.ConnectionAuthContext;
 
 import javax.net.ssl.SSLSession;
 import java.io.InputStream;
+import java.net.InetSocketAddress;
 import java.security.Principal;
 import java.util.List;
 import java.util.Optional;
@@ -153,6 +154,7 @@ public interface RestApi {
         Principal userPrincipalOrThrow();
         Optional<SSLSession> sslSession();
         Optional<ConnectionAuthContext> connectionAuthContext();
+        InetSocketAddress remoteAddress();
 
         interface Parameters {
             Optional<String> getString(String name);
@@ -193,6 +195,7 @@ public interface RestApi {
     interface FilterContext {
         RequestContext requestContext();
         String route();
+        void setPrincipal(Principal principal);
         HttpResponse executeNext();
     }
 }

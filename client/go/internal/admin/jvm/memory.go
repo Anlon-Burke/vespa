@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // Author: arnej
 
 package jvm
@@ -56,6 +56,7 @@ func (v AmountOfMemory) AsJvmSpec() string {
 	}
 	return fmt.Sprintf("%d%s", val, suffix)
 }
+
 func (v AmountOfMemory) String() string {
 	val := v.numBytes
 	idx := 0
@@ -75,11 +76,11 @@ func ParseJvmMemorySpec(spec string) (result AmountOfMemory, err error) {
 	n, err = fmt.Sscanf(spec, "%d%c", &val, &suffix)
 	if n == 2 && err == nil {
 		switch suffix {
-		case 'k':
+		case 'k', 'K':
 			result = KiloBytesOfMemory(val)
-		case 'm':
+		case 'm', 'M':
 			result = MegaBytesOfMemory(int(val))
-		case 'g':
+		case 'g', 'G':
 			result = GigaBytesOfMemory(int(val))
 		default:
 			err = fmt.Errorf("Unknown suffix in JVM memory spec '%s'", spec)

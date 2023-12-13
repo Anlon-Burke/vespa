@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 // Author: mpolden
 
 package cmd
@@ -46,16 +46,10 @@ func testCert(t *testing.T, subcommand []string) {
 	certificate := filepath.Join(homeDir, app.String(), "data-plane-public-cert.pem")
 	privateKey := filepath.Join(homeDir, app.String(), "data-plane-private-key.pem")
 
-	assert.Equal(t, fmt.Sprintf("Success: Certificate written to %s\nSuccess: Private key written to %s\nSuccess: Copied certificate from %s to %s\n", certificate, privateKey, certificate, pkgCertificate), stdout.String())
+	assert.Equal(t, fmt.Sprintf("Success: Certificate written to '%s'\nSuccess: Private key written to '%s'\nSuccess: Copied certificate from '%s' to '%s'\n", certificate, privateKey, certificate, pkgCertificate), stdout.String())
 }
 
 func TestCertCompressedPackage(t *testing.T) {
-	t.Run("auth cert", func(t *testing.T) {
-		testCertCompressedPackage(t, []string{"auth", "cert"})
-	})
-}
-
-func testCertCompressedPackage(t *testing.T, subcommand []string) {
 	_, pkgDir := mock.ApplicationPackageDir(t, true, false)
 	zipFile := filepath.Join(pkgDir, "target", "application.zip")
 	err := os.MkdirAll(filepath.Dir(zipFile), 0755)
@@ -68,16 +62,14 @@ func testCertCompressedPackage(t *testing.T, subcommand []string) {
 	stdout.Reset()
 	stderr.Reset()
 
-	args := append(subcommand, pkgDir)
-	err = cli.Run(args...)
+	err = cli.Run("auth", "cert", zipFile)
 	assert.NotNil(t, err)
 	assert.Contains(t, stderr.String(), "Error: cannot add certificate to compressed application package")
 
 	err = os.Remove(zipFile)
 	assert.Nil(t, err)
 
-	args = append(subcommand, "-f", pkgDir)
-	err = cli.Run(args...)
+	err = cli.Run("auth", "cert", "-f", pkgDir)
 	assert.Nil(t, err)
 	assert.Contains(t, stdout.String(), "Success: Certificate written to")
 	assert.Contains(t, stdout.String(), "Success: Private key written to")
@@ -95,13 +87,13 @@ func TestCertAdd(t *testing.T) {
 	pkgCertificate := filepath.Join(appDir, "security", "clients.pem")
 	homeDir := cli.config.homeDir
 	certificate := filepath.Join(homeDir, "t1.a1.i1", "data-plane-public-cert.pem")
-	assert.Equal(t, fmt.Sprintf("Success: Copied certificate from %s to %s\n", certificate, pkgCertificate), stdout.String())
+	assert.Equal(t, fmt.Sprintf("Success: Copied certificate from '%s' to '%s'\n", certificate, pkgCertificate), stdout.String())
 
 	require.NotNil(t, cli.Run("auth", "cert", "add", pkgDir))
-	assert.Contains(t, stderr.String(), fmt.Sprintf("Error: application package %s already contains a certificate", appDir))
+	assert.Contains(t, stderr.String(), fmt.Sprintf("Error: application package '%s' already contains a certificate", appDir))
 	stdout.Reset()
 	require.Nil(t, cli.Run("auth", "cert", "add", "-f", pkgDir))
-	assert.Equal(t, fmt.Sprintf("Success: Copied certificate from %s to %s\n", certificate, pkgCertificate), stdout.String())
+	assert.Equal(t, fmt.Sprintf("Success: Copied certificate from '%s' to '%s'\n", certificate, pkgCertificate), stdout.String())
 }
 
 func TestCertNoAdd(t *testing.T) {
@@ -116,17 +108,17 @@ func TestCertNoAdd(t *testing.T) {
 
 	certificate := filepath.Join(homeDir, app.String(), "data-plane-public-cert.pem")
 	privateKey := filepath.Join(homeDir, app.String(), "data-plane-private-key.pem")
-	assert.Equal(t, fmt.Sprintf("Success: Certificate written to %s\nSuccess: Private key written to %s\n", certificate, privateKey), stdout.String())
+	assert.Equal(t, fmt.Sprintf("Success: Certificate written to '%s'\nSuccess: Private key written to '%s'\n", certificate, privateKey), stdout.String())
 
 	require.NotNil(t, cli.Run("auth", "cert", "-N"))
-	assert.Contains(t, stderr.String(), fmt.Sprintf("Error: private key %s already exists", privateKey))
+	assert.Contains(t, stderr.String(), fmt.Sprintf("Error: private key '%s' already exists", privateKey))
 	require.Nil(t, os.Remove(privateKey))
 
 	stderr.Reset()
 	require.NotNil(t, cli.Run("auth", "cert", "-N"))
-	assert.Contains(t, stderr.String(), fmt.Sprintf("Error: certificate %s already exists", certificate))
+	assert.Contains(t, stderr.String(), fmt.Sprintf("Error: certificate '%s' already exists", certificate))
 
 	stdout.Reset()
 	require.Nil(t, cli.Run("auth", "cert", "-N", "-f"))
-	assert.Equal(t, fmt.Sprintf("Success: Certificate written to %s\nSuccess: Private key written to %s\n", certificate, privateKey), stdout.String())
+	assert.Equal(t, fmt.Sprintf("Success: Certificate written to '%s'\nSuccess: Private key written to '%s'\n", certificate, privateKey), stdout.String())
 }

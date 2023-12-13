@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/searchcorespi/index/fusionrunner.h>
 #include <vespa/document/fieldvalue/document.h>
@@ -25,7 +25,6 @@
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/util/size_literals.h>
 #include <vespa/vespalib/stllike/asciistream.h>
-#include <vespa/fastos/file.h>
 #include <filesystem>
 #include <set>
 
@@ -193,8 +192,8 @@ void Test::createIndex(const string &dir, uint32_t id, bool fusion) {
     DocBuilder doc_builder(add_fields);
     auto schema = SchemaBuilder(doc_builder).add_all_indexes().build();
     MemoryIndex memory_index(schema, MockFieldLengthInspector(),
-                             _service.write().indexFieldInverter(),
-                             _service.write().indexFieldWriter());
+                             _service.write().field_writer(),
+                             _service.write().field_writer());
     addDocument(doc_builder, memory_index, *_selector, id, id + 0, term);
     addDocument(doc_builder, memory_index, *_selector, id, id + 1, "bar");
     addDocument(doc_builder, memory_index, *_selector, id, id + 2, "baz");
@@ -213,22 +212,16 @@ void Test::createIndex(const string &dir, uint32_t id, bool fusion) {
 
 set<uint32_t> readFusionIds(const string &dir) {
     set<uint32_t> ids;
-    FastOS_DirectoryScan dir_scan(dir.c_str());
-    while (dir_scan.ReadNext()) {
-        if (!dir_scan.IsDirectory()) {
-            continue;
+    const vespalib::string prefix("index.fusion.");
+    std::filesystem::directory_iterator dir_scan(dir);
+    for (auto& entry : dir_scan) {
+        if (entry.is_directory() && entry.path().filename().string().find(prefix) == 0) {
+            auto idString = entry.path().filename().string().substr(prefix.size());
+            vespalib::asciistream ist(idString);
+            uint32_t id;
+            ist >> id;
+            ids.insert(id);
         }
-        vespalib::string name = dir_scan.GetName();
-        const vespalib::string prefix("index.fusion.");
-        vespalib::string::size_type pos = name.find(prefix);
-        if (pos != 0) {
-            continue;
-        }
-        vespalib::string idString = name.substr(prefix.size());
-        vespalib::asciistream ist(idString);
-        uint32_t id;
-        ist >> id;
-        ids.insert(id);
     }
     return ids;
 }

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "fieldsearcher.h"
@@ -20,7 +20,7 @@ protected:
     class FloatInfo
     {
     public:
-        FloatInfo(T low, T high, bool v) : _lower(low), _upper(high), _valid(v) { if (low > high) { _lower = high; _upper = low; } }
+        FloatInfo(T low, T high, bool v) noexcept : _lower(low), _upper(high), _valid(v) { }
         bool cmp(T key) const;
         bool valid()          const { return _valid; }
         void setValid(bool v)       { _valid = v; }

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 /**
  * Superclass for all storage commands.
  *
@@ -20,7 +20,8 @@ class StorageCommand : public StorageMessage {
 
 protected:
     StorageCommand(const StorageCommand& other);
-    explicit StorageCommand(const MessageType& type, Priority p = NORMAL);
+    explicit StorageCommand(const MessageType& type) noexcept : StorageCommand(type, NORMAL) { }
+    explicit StorageCommand(const MessageType& type, Priority p) noexcept;
 
 public:
     DECLARE_POINTER_TYPEDEFS(StorageCommand);

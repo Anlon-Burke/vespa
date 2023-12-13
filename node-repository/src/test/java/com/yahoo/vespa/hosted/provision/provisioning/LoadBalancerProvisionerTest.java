@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.provisioning;
 
 import ai.vespa.http.DomainName;
@@ -12,6 +12,7 @@ import com.yahoo.config.provision.ClusterInfo;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.Environment;
+import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.HostSpec;
 import com.yahoo.config.provision.IntRange;
 import com.yahoo.config.provision.NodeResources;
@@ -31,6 +32,7 @@ import com.yahoo.vespa.hosted.provision.Node;
 import com.yahoo.vespa.hosted.provision.NodeList;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancer;
 import com.yahoo.vespa.hosted.provision.lb.LoadBalancerList;
+import com.yahoo.vespa.hosted.provision.lb.LoadBalancerSpec;
 import com.yahoo.vespa.hosted.provision.lb.Real;
 import com.yahoo.vespa.hosted.provision.maintenance.LoadBalancerExpirer;
 import com.yahoo.vespa.hosted.provision.maintenance.TestMetric;
@@ -48,6 +50,7 @@ import java.util.SortedSet;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import static com.yahoo.vespa.hosted.provision.lb.LoadBalancerSpec.preProvisionOwner;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertSame;
@@ -66,7 +69,8 @@ public class LoadBalancerProvisionerTest {
 
     private final InMemoryFlagSource flagSource = new InMemoryFlagSource();
     private final ProvisioningTester tester = new ProvisioningTester.Builder().flagSource(flagSource)
-            .zone(new Zone(Cloud.builder().allowEnclave(true).account(CloudAccount.from("001122334455")).build(), SystemName.main, Environment.prod, RegionName.defaultName())).build();
+            .zone(new Zone(Cloud.builder().allowEnclave(true).account(CloudAccount.from("001122334455")).build(),
+                           SystemName.main, Environment.prod, RegionName.defaultName())).build();
 
     @Test
     public void provision_load_balancer() {
@@ -177,6 +181,43 @@ public class LoadBalancerProvisionerTest {
                                                        .filter(lb -> lb.state() == LoadBalancer.State.active).toList();
         assertEquals(1, activeLoadBalancers.size());
         assertEquals(Set.of(), activeLoadBalancers.get(0).instance().get().reals());
+    }
+
+    @Test
+    public void pre_provision_load_balancers() {
+        flagSource.withIntFlag(PermanentFlags.PRE_PROVISIONED_LB_COUNT.id(), 2);
+        LoadBalancerProvisioner provisioner = new LoadBalancerProvisioner(tester.nodeRepository(), tester.loadBalancerService());
+        LoadBalancerExpirer expirer = new LoadBalancerExpirer(tester.nodeRepository(), Duration.ofDays(1), tester.loadBalancerService(), new NullMetric());
+        provisioner.refreshPool();
+        expirer.run();
+        assertEquals(2, tester.nodeRepository().loadBalancers().list().size());
+        assertEquals(2, tester.nodeRepository().loadBalancers().list(preProvisionOwner).size());
+
+        // Provision a load balancer when the pool has two entries.
+        ClusterSpec.Id containerCluster = ClusterSpec.Id.from("qrs");
+        prepare(app1, clusterRequest(ClusterSpec.Type.container, containerCluster));
+        List<LoadBalancer> loadBalancers = tester.nodeRepository().loadBalancers().list(app1).asList();
+        assertEquals(1, loadBalancers.size());
+        assertEquals(1, tester.nodeRepository().loadBalancers().list(preProvisionOwner).asList().size());
+        assertEquals(":" + preProvisionOwner.serializedForm() + ":1:", loadBalancers.get(0).idSeed());
+
+        // Shrink pool to 0 entries.
+        flagSource.withIntFlag(PermanentFlags.PRE_PROVISIONED_LB_COUNT.id(), 0);
+        provisioner.refreshPool();
+        expirer.run();
+        assertEquals(loadBalancers.stream().map(LoadBalancer::id).toList(),
+                     tester.nodeRepository().loadBalancers().list().mapToList(LoadBalancer::id));
+
+        // Increase pool to 1 entry again. Creating an LB fails; the slot and idSeed are reused on retry.
+        tester.loadBalancerService().throwOnCreate(true);
+        flagSource.withIntFlag(PermanentFlags.PRE_PROVISIONED_LB_COUNT.id(), 1);
+        assertEquals("Did not expect a new load balancer to be created",
+                     assertThrows(IllegalStateException.class, provisioner::refreshPool).getMessage());
+        tester.loadBalancerService().throwOnCreate(false);
+        provisioner.refreshPool();
+        assertEquals(List.of(":" + preProvisionOwner.serializedForm() + ":3:"),
+                     tester.nodeRepository().loadBalancers().list(preProvisionOwner)
+                           .mapToList(LoadBalancer::idSeed));
     }
 
     @Test
@@ -300,6 +341,17 @@ public class LoadBalancerProvisionerTest {
         loadBalancers = lbs.get();
         assertSame(LoadBalancer.State.active, loadBalancers.get(0).state());
         assertTrue("Load balancer has instance", loadBalancers.get(0).instance().isPresent());
+
+        // Reconfiguration of load balancer fails on next prepare, but instance is preserved
+        tester.loadBalancerService().throwOnCreate(true);
+        ZoneEndpoint settings = new ZoneEndpoint(true, true, List.of(new AllowedUrn(AccessType.awsPrivateLink, "alice"), new AllowedUrn(AccessType.gcpServiceConnect, "bob")));
+        try {
+            prepare(app1, clusterRequest(ClusterSpec.Type.container, cluster, Optional.empty(), settings));
+            fail("Expected exception");
+        } catch (LoadBalancerServiceException ignored) {
+        }
+        assertSame(LoadBalancer.State.active, loadBalancers.get(0).state());
+        assertTrue("Load balancer has instance", loadBalancers.get(0).instance().isPresent());
     }
 
     @Test
@@ -402,7 +454,7 @@ public class LoadBalancerProvisionerTest {
             assertTrue(e.getMessage().contains("due to change in cloud account"));
         }
 
-        // Existing LB is removed
+        // Existing LB and nodes are removed
         loadBalancers = tester.nodeRepository().loadBalancers().list();
         assertEquals(1, loadBalancers.size());
         assertSame(LoadBalancer.State.removable, loadBalancers.first().get().state());
@@ -412,6 +464,8 @@ public class LoadBalancerProvisionerTest {
                                                               new TestMetric());
         expirer.run();
         assertEquals(0, tester.nodeRepository().loadBalancers().list().in(LoadBalancer.State.removable).size());
+        tester.deactivate(app1);
+        tester.nodeRepository().nodes().list().forEach(node -> tester.nodeRepository().nodes().removeRecursively(node, true));
 
         // Next deployment provisions a new LB
         tester.activate(app1, prepare(app1, capacity, clusterRequest(ClusterSpec.Type.container, ClusterSpec.Id.from("c1"))));
@@ -462,7 +516,11 @@ public class LoadBalancerProvisionerTest {
         if (capacity.type().isConfigServerLike()) {
             nodeCount = 3;
         }
-        tester.makeReadyNodes(specs.length * nodeCount, nodeResources, capacity.type());
+        List<Node> provisioned = tester.makeProvisionedNodes(specs.length * nodeCount, (index) -> "host-" + index + ".yahoo.com", new Flavor(nodeResources),
+                                                             Optional.empty(), capacity.type(), 0, false,
+                                                             capacity.cloudAccount().filter(acc -> !acc.isUnspecified())
+                                                                     .orElse(tester.nodeRepository().zone().cloud().account()));
+        tester.move(Node.State.ready, provisioned);
         Set<HostSpec> allNodes = new LinkedHashSet<>();
         for (ClusterSpec spec : specs) {
             allNodes.addAll(tester.prepare(application, spec, capacity));
@@ -473,7 +531,7 @@ public class LoadBalancerProvisionerTest {
     private void assignIps(NodeList nodes) {
         try (var lock = tester.nodeRepository().nodes().lockUnallocated()) {
             for (int i = 0; i < nodes.size(); i++) {
-                tester.nodeRepository().nodes().write(nodes.asList().get(i).with(IP.Config.EMPTY.withPrimary(Set.of("127.0.0." + i))), lock);
+                tester.nodeRepository().nodes().write(nodes.asList().get(i).with(IP.Config.EMPTY.withPrimary(List.of("127.0.0." + i))), lock);
             }
         }
     }

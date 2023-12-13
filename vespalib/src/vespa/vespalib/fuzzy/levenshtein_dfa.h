@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include <cstdint>
@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace vespalib::fuzzy {
 
@@ -57,8 +58,8 @@ namespace vespalib::fuzzy {
  * ====== Unicode support ======
  *
  * Matching and successor generation is fully Unicode-aware. All input strings are expected
- * to be in UTF-8, and the generated successor is also encoded as UTF-8 (with some caveats;
- * see the documentation for match()).
+ * to be in UTF-8, and the generated successor is encoded as UTF-8 (with some caveats; see
+ * the documentation for match()) or UTF-32, depending on the chosen `match()` overload.
  *
  * Internally, matching is done on UTF-32 code points and the DFA itself is built around
  * UTF-32. This is unlike Lucene, which converts a UTF-32 DFA to an equivalent UTF-8 DFA.
@@ -139,7 +140,9 @@ public:
 
     struct Impl {
         virtual ~Impl() = default;
-        [[nodiscard]] virtual MatchResult match(std::string_view u8str, std::string* successor_out) const = 0;
+        [[nodiscard]] virtual MatchResult match(std::string_view u8str) const = 0;
+        [[nodiscard]] virtual MatchResult match(std::string_view u8str, std::string& successor_out) const = 0;
+        [[nodiscard]] virtual MatchResult match(std::string_view u8str, std::vector<uint32_t>& successor_out) const = 0;
         [[nodiscard]] virtual size_t memory_usage() const noexcept = 0;
         virtual void dump_as_graphviz(std::ostream& out) const = 0;
     };
@@ -156,7 +159,7 @@ public:
 
     /**
      * Attempts to match the source string `source` with the target string this DFA was
-     * built with, emitting a successor string on mismatch if `successor_out` != nullptr.
+     * built with.
      *
      * `source` must not contain any null UTF-8 chars.
      *
@@ -169,10 +172,30 @@ public:
      * Iff `source` is _beyond_ the maximum edit distance, returns a MatchResult with
      * matches() == false.
      *
-     * Iff `successor_out` is not nullptr, the following holds:
-     *   - `successor_out` is modified to contain the next (in byte-wise ordering) possible
-     *     _matching_ string S so that there exists no other matching string S' that is
-     *     greater than `source` but smaller than S.
+     */
+    [[nodiscard]] MatchResult match(std::string_view source) const;
+
+    /**
+     * Attempts to match the source string `source` with the target string this DFA was
+     * built with, emitting a successor string into `successor_out` on mismatch.
+     *
+     * In the case of a _match_, the following holds:
+     *
+     *   - The returned MatchResult has the same semantics as `match(source)`.
+     *   - `successor_out` has a _prefix_ equal to its value that was originally passed
+     *     in at the time of match() being called. The _suffix_ of the string is unspecified,
+     *     i.e. it may or may not have been modified.
+     *
+     * In the case of a _mismatch_, the following holds:
+     *
+     *   - `successor_out` has a _prefix_ equal to its value that was originally passed
+     *      in at the time of match() being called.
+     *   - `successor_out` has a _suffix_ that contains the next (in byte-wise ordering)
+     *     possible _matching_ string S so that there exists no other matching string S'
+     *     that is greater than `source` but smaller than S.
+     *     The caller must explicitly be aware of any prefixes it sends in, as it is
+     *     entirely ignored for the purposes of ordering the successor string vis-a-vis
+     *     the input source string.
      *   - `successor_out` contains UTF-8 bytes that are within what UTF-8 can legally
      *     encode in bitwise form, but the _code points_ they encode may not be valid.
      *     In particular, surrogate pair ranges and U+10FFFF+1 may be encoded, neither of
@@ -182,17 +205,31 @@ public:
      * memcmp()-ordering of strings and not whether they are technically valid Unicode.
      * This should be the case for low-level dictionary data structures etc.
      *
+     * Ordering notes: when the DFA is created as Uncased, the target and source strings
+     * are treated as lowercase when matching. The successor string is in this case generated
+     * _as if_ the input source string was originally lowercase. This is a special case
+     * intended for case-folded dictionaries that implicitly order strings by their lowercased
+     * form, but where they are stored in their original cased form. The (raw) cased form
+     * is what is passed to the DFA match() function.
+     *
      * Memory allocation:
-     * This function does not directly or indirectly allocate any heap memory if either:
-     *
-     *   - the input string is within the max edit distance, or
-     *   - `successor_out` is nullptr, or
-     *   - `successor_out` has sufficient capacity to hold the generated successor
-     *
+     * This function does not directly or indirectly allocate any heap memory if the
+     * `successor_out` string provided is large enough to fit any generated successor.
      * By reusing the successor string across many calls, this therefore amortizes memory
      * allocations down to near zero per invocation.
      */
-    [[nodiscard]] MatchResult match(std::string_view source, std::string* successor_out) const;
+    [[nodiscard]] MatchResult match(std::string_view source, std::string& successor_out) const;
+
+    /**
+     * Same as `match(source, successor_out)`, but where the successor string is defined in
+     * terms of UTF-32, not UTF-8. This avoids the need for encoding characters to UTF-8
+     * internally, and is therefore expected to be more efficient.
+     *
+     * The code point ordering of the UTF-32 successor string is identical to that its UTF-8
+     * equivalent. This includes the special cases where the successor may contain code points
+     * outside the legal Unicode range.
+     */
+    [[nodiscard]] MatchResult match(std::string_view source, std::vector<uint32_t>& successor_out) const;
 
     /**
      * Returns how much memory is used by the underlying DFA representation, in bytes.
@@ -201,7 +238,31 @@ public:
 
     enum class DfaType {
         Implicit,
-        Explicit
+        Explicit,
+        Table
+    };
+
+    /**
+     * Specifies the character case matching semantics of the DFA.
+     */
+    enum class Casing {
+        /**
+         * Characters are case-normalized (i.e. lowercased) prior to matching.
+         * Example: In uncased mode, 'A' and 'a' are considered exact matches and do not
+         * consume edits.
+         *
+         * See the ordering notes for `match()` on what Uncased implies when generating
+         * successor strings.
+         */
+        Uncased,
+        /**
+         * Characters are not case-normalized prior to matching.
+         * Example: 'A' and 'a' are considered separate characters and will consume edits.
+         *
+         * Cased mode preserves strict memcmp() UTF-8 ordering between source and successor
+         * strings.
+         */
+        Cased
     };
 
     /**
@@ -212,14 +273,13 @@ public:
      *
      * `target_string` must not contain any null UTF-8 chars.
      */
-    [[nodiscard]] static LevenshteinDfa build(std::string_view target_string,
-                                              uint8_t max_edits,
-                                              DfaType dfa_type);
+    [[nodiscard]] static LevenshteinDfa build(std::string_view target_string, uint8_t max_edits,
+                                              Casing casing, DfaType dfa_type);
 
     /**
      * Same as build() but currently always returns an implicit DFA.
      */
-    [[nodiscard]] static LevenshteinDfa build(std::string_view target_string, uint8_t max_edits);
+    [[nodiscard]] static LevenshteinDfa build(std::string_view target_string, uint8_t max_edits, Casing casing);
 
     /**
      * Dumps the DFA as a Graphviz graph in text format to the provided output stream.
@@ -239,6 +299,7 @@ public:
 };
 
 std::ostream& operator<<(std::ostream& os, const LevenshteinDfa::MatchResult& mos);
-std::ostream& operator<<(std::ostream& os, const LevenshteinDfa::DfaType& dt);
+std::ostream& operator<<(std::ostream& os, LevenshteinDfa::DfaType dt);
+std::ostream& operator<<(std::ostream& os, LevenshteinDfa::Casing c);
 
 }

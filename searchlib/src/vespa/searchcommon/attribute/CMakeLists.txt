@@ -1,4 +1,4 @@
-# Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+# Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 vespa_add_library(searchcommon_searchcommon_attribute OBJECT
     SOURCES
     attribute_utils.cpp
@@ -9,3 +9,6 @@ vespa_add_library(searchcommon_searchcommon_attribute OBJECT
     status.cpp
     DEPENDS
 )
+
+file(GLOB HEADERS *.h)
+install(FILES ${HEADERS} DESTINATION include/vespa/searchcommon/attribute)

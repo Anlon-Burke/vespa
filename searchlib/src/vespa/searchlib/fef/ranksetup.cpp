@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "ranksetup.h"
 #include "blueprint.h"
@@ -60,6 +60,9 @@ RankSetup::RankSetup(const BlueprintFactory &factory, const IIndexEnvironment &i
       _compiled(false),
       _compileError(false),
       _degradationAscendingOrder(false),
+      _always_mark_phrase_expensive(false),
+      _create_postinglist_when_non_strict(true),
+      _use_estimate_for_fetch_postings(false),
       _diversityAttribute(),
       _diversityMinGroups(1),
       _diversityCutoffFactor(10.0),
@@ -69,12 +72,12 @@ RankSetup::RankSetup(const BlueprintFactory &factory, const IIndexEnvironment &i
       _global_filter_lower_limit(0.0),
       _global_filter_upper_limit(1.0),
       _target_hits_max_adjustment_factor(20.0),
+      _fuzzy_matching_algorithm(vespalib::FuzzyMatchingAlgorithm::DfaTable),
       _mutateOnMatch(),
       _mutateOnFirstPhase(),
       _mutateOnSecondPhase(),
       _mutateOnSummary(),
-      _mutateAllowQueryOverride(false),
-      _enableNestedMultivalueGrouping(false)
+      _mutateAllowQueryOverride(false)
 { }
 
 RankSetup::~RankSetup() = default;
@@ -123,6 +126,7 @@ RankSetup::configure()
     set_global_filter_lower_limit(matching::GlobalFilterLowerLimit::lookup(_indexEnv.getProperties()));
     set_global_filter_upper_limit(matching::GlobalFilterUpperLimit::lookup(_indexEnv.getProperties()));
     set_target_hits_max_adjustment_factor(matching::TargetHitsMaxAdjustmentFactor::lookup(_indexEnv.getProperties()));
+    set_fuzzy_matching_algorithm(matching::FuzzyAlgorithm::lookup(_indexEnv.getProperties()));
     _mutateOnMatch._attribute = mutate::on_match::Attribute::lookup(_indexEnv.getProperties());
     _mutateOnMatch._operation = mutate::on_match::Operation::lookup(_indexEnv.getProperties());
     _mutateOnFirstPhase._attribute = mutate::on_first_phase::Attribute::lookup(_indexEnv.getProperties());
@@ -132,7 +136,9 @@ RankSetup::configure()
     _mutateOnSummary._attribute = mutate::on_summary::Attribute::lookup(_indexEnv.getProperties());
     _mutateOnSummary._operation = mutate::on_summary::Operation::lookup(_indexEnv.getProperties());
     _mutateAllowQueryOverride = mutate::AllowQueryOverride::check(_indexEnv.getProperties());
-    _enableNestedMultivalueGrouping = temporary::EnableNestedMultivalueGrouping::check(_indexEnv.getProperties());
+    _always_mark_phrase_expensive = matching::AlwaysMarkPhraseExpensive::check(_indexEnv.getProperties());
+    _create_postinglist_when_non_strict = matching::CreatePostingListWhenNonStrict::check(_indexEnv.getProperties());
+    _use_estimate_for_fetch_postings = matching::UseEstimateForFetchPostings::check(_indexEnv.getProperties());
 }
 
 void

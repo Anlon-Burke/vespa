@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.*;
@@ -52,7 +52,7 @@ public final class ForEachExpression extends CompositeExpression {
             context.setValue(new MyConverter(context, exp).convert(input));
         } else {
             throw new IllegalArgumentException("Expected Array, Struct or WeightedSet input, got " +
-                                               input.getDataType().getName() + ".");
+                                               input.getDataType().getName());
         }
     }
 
@@ -80,13 +80,13 @@ public final class ForEachExpression extends CompositeExpression {
                 DataType structValueType = context.setValueType(fieldType).execute(exp).getValueType();
                 if (!fieldType.isAssignableFrom(structValueType))
                     throw new VerificationException(this, "Expected " + fieldType.getName() + " output, got " +
-                                                          structValueType.getName() + ".");
+                                                          structValueType.getName());
             }
             context.setValueType(valueType);
         }
         else {
             throw new VerificationException(this, "Expected Array, Struct or WeightedSet input, got " +
-                                                  valueType.getName() + ".");
+                                                  valueType.getName());
         }
     }
 

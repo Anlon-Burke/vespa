@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
@@ -26,9 +26,9 @@ public class SubstringTestCase {
     @Test
     public void requireThatHashCodeAndEqualsAreImplemented() {
         Expression exp = new SubstringExpression(6, 9);
-        assertFalse(exp.equals(new Object()));
-        assertFalse(exp.equals(new SubstringExpression(66, 99)));
-        assertFalse(exp.equals(new SubstringExpression(6, 99)));
+        assertNotEquals(exp, new Object());
+        assertNotEquals(exp, new SubstringExpression(66, 99));
+        assertNotEquals(exp, new SubstringExpression(6, 99));
         assertEquals(exp, new SubstringExpression(6, 9));
         assertEquals(exp.hashCode(), new SubstringExpression(6, 9).hashCode());
     }
@@ -37,8 +37,8 @@ public class SubstringTestCase {
     public void requireThatExpressionCanBeVerified() {
         Expression exp = new SubstringExpression(6, 9);
         assertVerify(DataType.STRING, exp, DataType.STRING);
-        assertVerifyThrows(null, exp, "Expected string input, got null.");
-        assertVerifyThrows(DataType.INT, exp, "Expected string input, got int.");
+        assertVerifyThrows(null, exp, "Expected string input, but no input is specified");
+        assertVerifyThrows(DataType.INT, exp, "Expected string input, got int");
     }
 
     @Test

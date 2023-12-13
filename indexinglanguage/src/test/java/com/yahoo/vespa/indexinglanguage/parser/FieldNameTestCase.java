@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.parser;
 
 import com.yahoo.document.datatypes.StringFieldValue;
@@ -23,7 +23,7 @@ public class FieldNameTestCase {
     public void requireThatCatDotIsNotConfusedWithFieldName() throws ParseException {
         assertEquals(new CatExpression(new InputExpression("foo"), new InputExpression("bar")),
                      Expression.fromString("input foo . input bar"));
-        assertEquals(new CatExpression(new InputExpression("foo"), new SetValueExpression(new StringFieldValue("bar"))),
+        assertEquals(new CatExpression(new InputExpression("foo"), new ConstantExpression(new StringFieldValue("bar"))),
                      Expression.fromString("input foo . 'bar'"));
     }
 }

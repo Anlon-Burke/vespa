@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container;
 
 import com.yahoo.container.bundle.BundleInstantiationSpecification;
@@ -152,6 +152,7 @@ public class PlatformBundles {
             "com.yahoo.search.searchchain.ForkingSearcher",
             "com.yahoo.search.searchchain.example.ExampleSearcher",
             "com.yahoo.search.searchers.CacheControlSearcher",
+            "com.yahoo.search.searchers.RateLimitingSearcher",
             "com.yahoo.vespa.streamingvisitors.MetricsSearcher",
             "com.yahoo.vespa.streamingvisitors.VdsStreamingSearcher"
     );

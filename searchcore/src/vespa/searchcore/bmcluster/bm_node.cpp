@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "bm_node.h"
 #include "bm_cluster.h"
@@ -87,7 +87,6 @@ using proton::BootstrapConfig;
 using proton::DocTypeName;
 using proton::DocumentDB;
 using proton::DocumentDBConfig;
-using proton::HwInfo;
 using search::index::Schema;
 using search::transactionlog::TransLogServer;
 using storage::MergeThrottler;
@@ -120,6 +119,7 @@ using vespa::config::search::core::ProtonConfig;
 using vespa::config::search::core::ProtonConfigBuilder;
 using vespa::config::search::summary::JuniperrcConfig;
 using vespalib::compression::CompressionConfig;
+using vespalib::HwInfo;
 
 namespace search::bmcluster {
 
@@ -243,7 +243,7 @@ public:
 MyServiceLayerProcess::MyServiceLayerProcess(const config::ConfigUri&  configUri,
                                              PersistenceProvider& provider,
                                              std::unique_ptr<storage::IStorageChainBuilder> chain_builder)
-    : ServiceLayerProcess(configUri),
+    : ServiceLayerProcess(configUri, vespalib::HwInfo()),
       _provider(provider)
 {
     if (chain_builder) {
@@ -497,7 +497,7 @@ MyBmNode::MyBmNode(const vespalib::string& base_dir, int base_port, uint32_t nod
       _metrics_wire_service(),
       _config_stores(),
       _summary_executor(8),
-      _shared_service(_summary_executor, _summary_executor),
+      _shared_service(_summary_executor),
       _tls(_shared_service.transport(), "tls", _tls_listen_port, _base_dir, _file_header_context),
       _document_db_owner(),
       _bucket_space(document::test::makeBucketSpace(_doc_type_name.getName())),

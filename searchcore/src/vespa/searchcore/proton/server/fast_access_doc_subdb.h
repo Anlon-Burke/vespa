@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "storeonlydocsubdb.h"
@@ -119,6 +119,7 @@ public:
     applyConfig(const DocumentDBConfig &newConfigSnapshot, const DocumentDBConfig &oldConfigSnapshot,
                 SerialNum serialNum, const ReconfigParams &params, IDocumentDBReferenceResolver &resolver, const DocumentSubDBReconfig& prepared_reconfig) override;
 
+    std::shared_ptr<IAttributeWriter> get_attribute_writer() const override;
     std::shared_ptr<IAttributeManager> getAttributeManager() const override;
     IDocumentRetriever::UP getDocumentRetriever() override;
     void onReplayDone() override;

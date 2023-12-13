@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "fieldsearchspec.h"
 #include <vespa/vespalib/stllike/asciistream.h>
@@ -186,7 +186,7 @@ bool FieldSearchSpecMap::buildFieldsInQuery(const Query & query, StringFieldIdTM
 {
     bool retval(true);
     ConstQueryTermList qtl;
-    query.getLeafs(qtl);
+    query.getLeaves(qtl);
 
     for (const auto & term : qtl) {
         for (const auto & dtm : documentTypeMap()) {
@@ -282,7 +282,7 @@ void
 FieldSearchSpecMap::reconfigFromQuery(const Query & query)
 {
     ConstQueryTermList qtl;
-    query.getLeafs(qtl);
+    query.getLeaves(qtl);
 
     for (const auto & termA : qtl) {
         for (const auto & ifm : documentTypeMap()) {

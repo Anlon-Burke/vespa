@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "fileutil.hpp"
 #include "filesizecalculator.h"
@@ -36,7 +36,9 @@ LoadedMmap::LoadedMmap(const vespalib::string &fileName)
             if (sz) {
                 void *tmpBuffer = mmap(nullptr, sz, PROT_READ, MAP_PRIVATE, fd.fd(), 0);
                 if (tmpBuffer != MAP_FAILED) {
+#ifdef __linux__
                     madvise(tmpBuffer, sz, MADV_DONTDUMP);
+#endif
                     _mapSize = sz;
                     _mapBuffer = tmpBuffer;
                     uint32_t hl = GenericHeader::getMinSize();

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "distributor_message_sender_stub.h"
@@ -138,6 +138,7 @@ public:
 
     // TODO explicit notion of bucket spaces for tests
     DistributorBucketSpace& getDistributorBucketSpace();
+    const DistributorBucketSpace& getDistributorBucketSpace() const;
     BucketDatabase& getBucketDatabase(); // Implicit default space only
     BucketDatabase& getBucketDatabase(document::BucketSpace space);
     const BucketDatabase& getBucketDatabase() const; // Implicit default space only
@@ -175,6 +176,8 @@ public:
     void set_redundancy(uint32_t redundancy);
 
     void trigger_distribution_change(std::shared_ptr<lib::Distribution> distr);
+    void simulate_distribution_config_change(std::shared_ptr<lib::Distribution> new_config);
+    static std::shared_ptr<lib::Distribution> make_default_distribution_config(uint16_t redundancy, uint16_t node_count);
 
     using ConfigBuilder = vespa::config::content::core::StorDistributormanagerConfigBuilder;
 

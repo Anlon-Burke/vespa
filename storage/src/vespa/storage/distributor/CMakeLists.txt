@@ -1,9 +1,10 @@
-# Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+# Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 vespa_add_library(storage_distributor OBJECT
     SOURCES
     activecopy.cpp
     blockingoperationstarter.cpp
     bucket_db_prune_elision.cpp
+    bucket_ownership_calculator.cpp
     bucket_space_distribution_configs.cpp
     bucket_space_distribution_context.cpp
     bucket_space_state_map.cpp

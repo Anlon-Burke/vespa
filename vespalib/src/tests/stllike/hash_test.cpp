@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/stllike/hash_set.hpp>
@@ -492,6 +492,14 @@ TEST("test hash set initializer list - empty")
 {
     IntHashSet s = {};
     EXPECT_EQUAL(0u, s.size());
+}
+
+TEST("empty hash_set can be looked up")
+{
+    IntHashSet s;
+    EXPECT_EQUAL(0u, s.size());
+    EXPECT_EQUAL(1u, s.capacity());
+    EXPECT_TRUE(s.find(1) == s.end());
 }
 
 TEST("test hash set initializer list - 1 element")

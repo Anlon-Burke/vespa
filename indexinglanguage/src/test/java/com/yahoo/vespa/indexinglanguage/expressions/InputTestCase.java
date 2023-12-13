@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.*;
@@ -40,7 +40,7 @@ public class InputTestCase {
             new InputExpression("bar").verify(adapter);
             fail();
         } catch (VerificationException e) {
-            assertEquals("Field 'bar' not found.", e.getMessage());
+            assertEquals("Field 'bar' not found", e.getMessage());
         }
     }
 

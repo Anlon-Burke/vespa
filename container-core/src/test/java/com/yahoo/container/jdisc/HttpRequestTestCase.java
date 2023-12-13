@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.container.jdisc;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -19,7 +19,7 @@ import com.yahoo.text.Utf8;
 /**
  * API control of HttpRequest.
  *
- * @author <a href="mailto:steinar@yahoo-inc.com">Steinar Knutsen</a>
+ * @author Steinar Knutsen
  */
 public class HttpRequestTestCase {
     private static final String X_RAY_YANKEE_ZULU = "x-ray yankee zulu";

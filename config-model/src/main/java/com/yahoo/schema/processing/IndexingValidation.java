@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.schema.processing;
 
 import com.yahoo.config.application.api.DeployLogger;
@@ -24,6 +24,7 @@ import com.yahoo.vespa.indexinglanguage.expressions.SummaryExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.VerificationContext;
 import com.yahoo.vespa.indexinglanguage.expressions.VerificationException;
 import com.yahoo.vespa.model.container.search.QueryProfiles;
+import com.yahoo.yolean.Exceptions;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -51,7 +52,7 @@ public class IndexingValidation extends Processor {
                     converter.convert(exp); // TODO: stop doing this explicitly when visiting a script does not branch
                 }
             } catch (VerificationException e) {
-                fail(schema, field, "For expression '" + e.getExpression() + "': " + e.getMessage());
+                fail(schema, field, "For expression '" + e.getExpression() + "': " + Exceptions.toMessageString(e));
             }
         }
     }
@@ -130,10 +131,18 @@ public class IndexingValidation extends Processor {
             } else if (exp instanceof SummaryExpression) {
                 SummaryField field = schema.getSummaryField(fieldName);
                 if (field == null) {
-                    throw new VerificationException(exp, "Summary field '" + fieldName + "' not found.");
+                    // Use document field if summary field is not found
+                    SDField sdField = schema.getConcreteField(fieldName);
+                    if (sdField != null && sdField.doesSummarying()) {
+                        fieldDesc = "document field";
+                        fieldType = sdField.getDataType();
+                    } else {
+                        throw new VerificationException(exp, "Summary field '" + fieldName + "' not found.");
+                    }
+                } else {
+                    fieldDesc = "summary field";
+                    fieldType = field.getDataType();
                 }
-                fieldDesc = "summary field";
-                fieldType = field.getDataType();
             } else {
                 throw new UnsupportedOperationException();
             }

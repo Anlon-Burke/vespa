@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/util/compress.h>
@@ -26,6 +26,9 @@ CompressTest::verifyPositiveNumber(uint64_t n, const uint8_t * expected, size_t 
     for (size_t i(0); i < sz; i++) {
         EXPECT_EQUAL(expected[i], buf[i]);
     }
+    EXPECT_FALSE(Integer::check_decompress_positive_space(expected, 0u));
+    EXPECT_FALSE(Integer::check_decompress_positive_space(expected, sz - 1));
+    EXPECT_TRUE(Integer::check_decompress_positive_space(expected, sz));
     uint64_t v(0);
     EXPECT_EQUAL(sz, Integer::decompressPositive(v, expected));
     EXPECT_EQUAL(n, v);
@@ -39,6 +42,9 @@ CompressTest::verifyNumber(int64_t n, const uint8_t * expected, size_t sz) {
     for (size_t i(0); i < sz; i++) {
         EXPECT_EQUAL(expected[i], buf[i]);
     }
+    EXPECT_FALSE(Integer::check_decompress_space(expected, 0u));
+    EXPECT_FALSE(Integer::check_decompress_space(expected, sz - 1));
+    EXPECT_TRUE(Integer::check_decompress_space(expected, sz));
     int64_t v(0);
     EXPECT_EQUAL(sz, Integer::decompress(v, expected));
     EXPECT_EQUAL(n, v);

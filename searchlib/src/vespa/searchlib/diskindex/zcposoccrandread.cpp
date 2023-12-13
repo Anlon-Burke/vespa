@@ -1,10 +1,11 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "zcposoccrandread.h"
 #include "zcposocciterators.h"
 #include <vespa/vespalib/data/fileheader.h>
 #include <vespa/searchlib/queryeval/emptysearch.h>
 #include <vespa/fastos/file.h>
+#include <cassert>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".diskindex.zcposoccrandread");

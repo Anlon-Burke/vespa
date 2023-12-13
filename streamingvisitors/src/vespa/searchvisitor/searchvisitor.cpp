@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "querytermdata.h"
 #include "searchenvironment.h"
@@ -781,7 +781,7 @@ void
 SearchVisitor::setupSnippetModifiers()
 {
     QueryTermList qtl;
-    _query.getLeafs(qtl);
+    _query.getLeaves(qtl);
     _snippetModifierManager.setup(qtl, _fieldSearchSpecMap.specMap(), _fieldSearchSpecMap.documentTypeMap().begin()->second,
                                   *_fieldPathMap, _rankController.getRankProcessor()->get_query_env());
 }

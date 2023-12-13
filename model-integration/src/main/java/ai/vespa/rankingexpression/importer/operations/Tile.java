@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package ai.vespa.rankingexpression.importer.operations;
 
 import ai.vespa.rankingexpression.importer.OrderedTensorType;
@@ -47,7 +47,7 @@ public class Tile extends IntermediateOperation {
             throw new IllegalArgumentException("Tile " + name + ": repeats must be a 1-d tensor.");
 
         OrderedTensorType inputType = inputs.get(0).type().get();
-        if (shape.type().dimensions().get(0).size().get() != inputType.rank())
+        if (shape.type().dimensions().get(0).size().get().intValue() != inputType.rank())
             throw new IllegalArgumentException("Tile " + name + ": repeats must be the same size as input rank.");
 
         List<Integer> dimSizes = new ArrayList<>(inputType.rank());

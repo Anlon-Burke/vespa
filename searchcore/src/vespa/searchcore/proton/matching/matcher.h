@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -112,7 +112,7 @@ public:
                                IAttributeContext &attrContext, const search::IDocumentMetaStore &metaStore,
                                const Properties &feature_overrides, vespalib::ThreadBundle &thread_bundle,
                                const IDocumentMetaStoreContext::IReadGuard::SP * metaStoreReadGuard,
-                               bool is_search) const;
+                               uint32_t maxHits, bool is_search) const;
 
     /**
      * Perform a search against this matcher.

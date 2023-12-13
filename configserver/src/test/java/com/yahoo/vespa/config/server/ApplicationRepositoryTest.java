@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server;
 
 import ai.vespa.http.DomainName;
@@ -31,7 +31,9 @@ import com.yahoo.vespa.config.PayloadChecksums;
 import com.yahoo.vespa.config.protocol.ConfigResponse;
 import com.yahoo.vespa.config.protocol.DefContent;
 import com.yahoo.vespa.config.protocol.VespaVersion;
+import com.yahoo.vespa.config.server.application.ApplicationData;
 import com.yahoo.vespa.config.server.application.OrchestratorMock;
+import com.yahoo.vespa.config.server.application.TenantApplications;
 import com.yahoo.vespa.config.server.deploy.DeployTester;
 import com.yahoo.vespa.config.server.deploy.TenantFileSystemDirs;
 import com.yahoo.vespa.config.server.filedistribution.FileDirectory;
@@ -49,6 +51,7 @@ import com.yahoo.vespa.config.server.tenant.TenantRepository;
 import com.yahoo.vespa.config.server.tenant.TestTenantRepository;
 import com.yahoo.vespa.curator.Curator;
 import com.yahoo.vespa.curator.mock.MockCurator;
+import com.yahoo.vespa.flags.Flags;
 import com.yahoo.vespa.flags.InMemoryFlagSource;
 import com.yahoo.vespa.flags.PermanentFlags;
 import com.yahoo.vespa.model.VespaModelFactory;
@@ -57,6 +60,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -216,6 +220,26 @@ public class ApplicationRepositoryTest {
 
         Session session = applicationRepository.getActiveLocalSession(tenant(), applicationId()).get();
         assertEquals(firstSessionId, session.getMetaData().getPreviousActiveGeneration());
+    }
+
+    @Test
+    public void applicationData() {
+        long firstSessionId = deployApp(testApp).sessionId();
+        assertApplicationData(firstSessionId, firstSessionId);
+        assertEquals(firstSessionId, applicationRepository.getActiveSession(applicationId()).get().getSessionId());
+
+        // Create new session, no changes to application data
+        long secondSessionId = createSession(applicationId(), timeoutBudget, testApp);
+        assertNotEquals(firstSessionId, secondSessionId);
+        assertApplicationData(firstSessionId, firstSessionId);
+
+        // Prepare, last deployed session id should be the new one
+        prepare(testApp, secondSessionId);
+        assertApplicationData(firstSessionId, secondSessionId);
+
+        // Activate, active session id should be the new one
+        activate(applicationId(), secondSessionId, timeoutBudget);
+        assertApplicationData(secondSessionId, secondSessionId);
     }
 
     @Test
@@ -581,7 +605,7 @@ public class ApplicationRepositoryTest {
         long sessionId = result.sessionId();
 
         exceptionRule.expect(IllegalArgumentException.class);
-        exceptionRule.expectMessage("Session is active: 2");
+        exceptionRule.expectMessage("Session 2 for 'test1' is active");
         applicationRepository.prepare(sessionId, prepareParams());
 
         exceptionRule.expect(IllegalArgumentException.class);
@@ -678,6 +702,11 @@ public class ApplicationRepositoryTest {
 
     private PrepareResult prepareAndActivate(File application) {
         return applicationRepository.deploy(application, prepareParams());
+    }
+
+    private long prepare(File application, long sessionId) {
+        applicationRepository.prepare(sessionId, prepareParams());
+        return sessionId;
     }
 
     private PrepareResult deployApp(File applicationPackage) {
@@ -806,6 +835,14 @@ public class ApplicationRepositoryTest {
 
     private long createSessionFromExisting(ApplicationId applicationId, TimeoutBudget timeoutBudget) {
         return applicationRepository.createSessionFromExisting(applicationId, false, timeoutBudget, new BaseDeployLogger());
+    }
+
+    private void assertApplicationData(long expectedActiveSesionId, long expectedLastDeployedSessionId) {
+        TenantApplications applications = tenantRepository.getTenant(applicationId().tenant()).getApplicationRepo();
+        ApplicationData applicationData = applications.applicationData(applicationId()).get();
+        assertEquals(applicationId(), applicationData.applicationId());
+        assertEquals(expectedActiveSesionId, applicationData.activeSession().get().longValue());
+        assertEquals(expectedLastDeployedSessionId, applicationData.lastDeployedSession().get().longValue());
     }
 
 }

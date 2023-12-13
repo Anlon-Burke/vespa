@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
@@ -73,12 +73,12 @@ public final class StatementExpression extends ExpressionList<Expression> {
             context.execute(expression);
     }
 
-    private static DataType resolveInputType(Iterable<Expression> lst) {
-        for (Expression exp : lst) {
-            DataType type = exp.requiredInputType();
+    private static DataType resolveInputType(Iterable<Expression> expressions) {
+        for (Expression expression : expressions) {
+            DataType type = expression.requiredInputType();
             if (type != null) return type;
 
-            type = exp.createdOutputType();
+            type = expression.createdOutputType();
             if (type != null) return null;
         }
         return null;

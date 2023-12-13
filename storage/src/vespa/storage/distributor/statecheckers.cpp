@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "statecheckers.h"
 #include "activecopy.h"
@@ -23,10 +23,10 @@ using document::BucketSpace;
 namespace storage::distributor {
 
 bool
-SplitBucketStateChecker::validForSplit(Context& c)
+SplitBucketStateChecker::validForSplit(const Context& c)
 {
     // Can't split if we have no nodes.
-    if (c.entry->getNodeCount() == 0) {
+    if (c.entry()->getNodeCount() == 0) {
         LOG(spam, "Can't split bucket %s, since it has no copies", c.bucket.toString().c_str());
         return false;
     }
@@ -40,9 +40,9 @@ SplitBucketStateChecker::validForSplit(Context& c)
 }
 
 double
-SplitBucketStateChecker::getBucketSizeRelativeToMax(Context& c)
+SplitBucketStateChecker::getBucketSizeRelativeToMax(const Context& c)
 {
-    auto highest = c.entry.getBucketInfo().getHighest();
+    auto highest = c.entry().getBucketInfo().getHighest();
 
     if (highest._documentCount < 2) {
         return 0;
@@ -73,9 +73,9 @@ SplitBucketStateChecker::getBucketSizeRelativeToMax(Context& c)
 }
 
 StateChecker::Result
-SplitBucketStateChecker::generateMinimumBucketSplitOperation(Context& c)
+SplitBucketStateChecker::generateMinimumBucketSplitOperation(const Context& c)
 {
-    auto so = std::make_unique<SplitOperation>(c.node_ctx, BucketAndNodes(c.getBucket(), c.entry->getNodes()),
+    auto so = std::make_unique<SplitOperation>(c.node_ctx, BucketAndNodes(c.getBucket(), c.entry()->getNodes()),
                                                c.distributorConfig.getMinimalBucketSplit(), 0, 0);
 
     so->setPriority(c.distributorConfig.getMaintenancePriorities().splitDistributionBits);
@@ -84,14 +84,14 @@ SplitBucketStateChecker::generateMinimumBucketSplitOperation(Context& c)
 }
 
 StateChecker::Result
-SplitBucketStateChecker::generateMaxSizeExceededSplitOperation(Context& c)
+SplitBucketStateChecker::generateMaxSizeExceededSplitOperation(const Context& c)
 {
-    auto so = std::make_unique<SplitOperation>(c.node_ctx, BucketAndNodes(c.getBucket(), c.entry->getNodes()), 58,
+    auto so = std::make_unique<SplitOperation>(c.node_ctx, BucketAndNodes(c.getBucket(), c.entry()->getNodes()), 58,
                                                c.distributorConfig.getSplitCount(), c.distributorConfig.getSplitSize());
 
     so->setPriority(c.distributorConfig.getMaintenancePriorities().splitLargeBucket);
 
-    auto highest = c.entry.getBucketInfo().getHighest();
+    auto highest = c.entry().getBucketInfo().getHighest();
     vespalib::asciistream ost;
     ost << "[Splitting bucket because its maximum size ("
         << highest._totalDocumentSize << " b, "
@@ -108,7 +108,7 @@ SplitBucketStateChecker::generateMaxSizeExceededSplitOperation(Context& c)
 }
 
 StateChecker::Result
-SplitBucketStateChecker::check(Context& c) const {
+SplitBucketStateChecker::check(const Context &c) const {
     if (!validForSplit(c)) {
         return StateChecker::Result::noMaintenanceNeeded();
     }
@@ -134,6 +134,22 @@ JoinBucketsStateChecker::isFirstSibling(const document::BucketId& bucketId)
 namespace {
 
 using ConstNodesRef = IdealServiceLayerNodesBundle::ConstNodesRef;
+using Node2Index = IdealServiceLayerNodesBundle::Node2Index;
+
+bool
+equalNodeSet(const Node2Index & node2Index, ConstNodesRef idealState, const BucketDatabase::Entry& dbEntry)
+{
+    if (idealState.size() != dbEntry->getNodeCount()) {
+        return false;
+    }
+    for (uint16_t i = 0; i < dbEntry->getNodeCount(); i++) {
+        const BucketCopy & info = dbEntry->getNodeRef(i);
+        if ( ! node2Index.lookup(info.getNode()).valid() ) {
+            return false;
+        }
+    }
+    return true;
+}
 
 bool
 equalNodeSet(ConstNodesRef idealState, const BucketDatabase::Entry& dbEntry)
@@ -154,7 +170,7 @@ equalNodeSet(ConstNodesRef idealState, const BucketDatabase::Entry& dbEntry)
 bool
 bucketAndSiblingReplicaLocationsEqualIdealState(const StateChecker::Context& context)
 {
-    if (!equalNodeSet(context.idealState(), context.entry)) {
+    if (!equalNodeSet(context.idealStateBundle.nonretired_or_maintenance_to_index(), context.idealState(), context.entry())) {
         return false;
     }
     std::vector<uint16_t> siblingIdealState = context.distribution.getIdealStorageNodes(context.systemState, context.siblingBucket);
@@ -191,7 +207,7 @@ isInconsistentlySplit(const StateChecker::Context& c)
 bool
 contextBucketHasTooManyReplicas(const StateChecker::Context& c)
 {
-    return (c.entry->getNodeCount() > c.distribution.getRedundancy());
+    return (c.entry()->getNodeCount() > c.distribution.getRedundancy());
 }
 
 bool
@@ -218,7 +234,7 @@ bucketHasMultipleChildren(const document::BucketId& bucket, const StateChecker::
 bool
 JoinBucketsStateChecker::siblingsAreInSync(const Context& context)
 {
-    const auto& entry(context.entry);
+    const auto& entry(context.entry());
     const auto& siblingEntry(context.siblingEntry);
 
     if (entry->getNodeCount() != siblingEntry->getNodeCount()) {
@@ -275,7 +291,7 @@ JoinBucketsStateChecker::singleBucketJoinIsEnabled(const Context& c)
 bool
 JoinBucketsStateChecker::shouldJoin(const Context& c)
 {
-    if (c.entry->getNodeCount() == 0) {
+    if (c.entry()->getNodeCount() == 0) {
         LOG(spam, "Not joining bucket %s because it has no nodes", c.bucket.toString().c_str());
         return false;
     }
@@ -296,7 +312,7 @@ JoinBucketsStateChecker::shouldJoin(const Context& c)
         return false;
     }
 
-    if (c.entry->hasRecentlyCreatedEmptyCopy()) {
+    if (c.entry()->hasRecentlyCreatedEmptyCopy()) {
         return false;
     }
 
@@ -334,7 +350,7 @@ JoinBucketsStateChecker::shouldJoin(const Context& c)
 uint64_t
 JoinBucketsStateChecker::getTotalUsedFileSize(const Context& c)
 {
-    return (c.entry.getBucketInfo().getHighestUsedFileSize()
+    return (c.entry().getBucketInfo().getHighestUsedFileSize()
             + c.getSiblingEntry().getBucketInfo().getHighestUsedFileSize());
 }
 
@@ -345,7 +361,7 @@ JoinBucketsStateChecker::getTotalUsedFileSize(const Context& c)
 uint64_t
 JoinBucketsStateChecker::getTotalMetaCount(const Context& c)
 {
-    return (c.entry.getBucketInfo().getHighestMetaCount()
+    return (c.entry().getBucketInfo().getHighestMetaCount()
             + c.getSiblingEntry().getBucketInfo().getHighestMetaCount());
 }
 
@@ -392,7 +408,7 @@ JoinBucketsStateChecker::computeJoinBucket(const Context& c)
 }
 
 StateChecker::Result
-JoinBucketsStateChecker::check(Context& c) const
+JoinBucketsStateChecker::check(const Context &c) const
 {
     // At this point in time, bucket is consistently split as the state checker
     // would otherwise be pre-empted by the inconsistent state checker.
@@ -410,7 +426,7 @@ JoinBucketsStateChecker::check(Context& c) const
         sourceBuckets.push_back(c.getBucketId());
     }
     sourceBuckets.push_back(c.getBucketId());
-    auto op = std::make_unique<JoinOperation>(c.node_ctx, BucketAndNodes(joinedBucket, c.entry->getNodes()), sourceBuckets);
+    auto op = std::make_unique<JoinOperation>(c.node_ctx, BucketAndNodes(joinedBucket, c.entry()->getNodes()), sourceBuckets);
     op->setPriority(c.distributorConfig.getMaintenancePriorities().joinBuckets);
     vespalib::asciistream ost;
     ost << "[Joining buckets " << sourceBuckets[1].toString() << " and " << sourceBuckets[0].toString()
@@ -471,7 +487,7 @@ SplitInconsistentStateChecker::getReason(const document::BucketId& bucketId, con
 }
 
 StateChecker::Result
-SplitInconsistentStateChecker::check(Context& c) const
+SplitInconsistentStateChecker::check(const Context &c) const
 {
     if (!isInconsistentlySplit(c)) {
         return Result::noMaintenanceNeeded();
@@ -481,7 +497,7 @@ SplitInconsistentStateChecker::check(Context& c) const
         return Result::noMaintenanceNeeded();
     }
     
-    auto op = std::make_unique<SplitOperation>(c.node_ctx, BucketAndNodes(c.getBucket(), c.entry->getNodes()),
+    auto op = std::make_unique<SplitOperation>(c.node_ctx, BucketAndNodes(c.getBucket(), c.entry()->getNodes()),
                                                getHighestUsedBits(c.entries), 0, 0);
 
     op->setPriority(c.distributorConfig.getMaintenancePriorities().splitInconsistentBucket);
@@ -641,7 +657,7 @@ MergeNodes::markMoveToIdealLocation(uint16_t node, uint8_t msgPriority) {
 
 void
 MergeNodes::markOutOfSync(const StateChecker::Context& c, uint8_t msgPriority) {
-    _reason << "[Synchronizing buckets with different checksums " << c.entry->toString() << "]";
+    _reason << "[Synchronizing buckets with different checksums " << c.entry()->toString() << "]";
     addProblem(OUT_OF_SYNC);
     updatePriority(msgPriority);
 }
@@ -665,11 +681,11 @@ addStatisticsForNonIdealNodes(const StateChecker::Context& c, bool missingReplic
 {
     // Common case is that ideal state == actual state with no missing replicas.
     // If so, do nothing.
-    if (!missingReplica && (c.idealState().size() == c.entry->getNodeCount())) {
+    if (!missingReplica && (c.idealState().size() == c.entry()->getNodeCount())) {
         return;
     }
-    for (uint32_t j = 0; j < c.entry->getNodeCount(); ++j) {
-        const uint16_t node(c.entry->getNodeRef(j).getNode());
+    for (uint32_t j = 0; j < c.entry()->getNodeCount(); ++j) {
+        const uint16_t node(c.entry()->getNodeRef(j).getNode());
         if (!presentInIdealState(c, node)) {
             c.stats.incMovingOut(node, c.getBucketSpace());
         } else if (missingReplica) {
@@ -680,21 +696,21 @@ addStatisticsForNonIdealNodes(const StateChecker::Context& c, bool missingReplic
     }
 }
 
-MergeNodes checkForNodesMissingFromIdealState(StateChecker::Context& c) __attribute__((noinline));
-MergeNodes checkIfBucketsAreOutOfSyncAndNeedMerging(StateChecker::Context& c) __attribute__((noinline));
+MergeNodes checkForNodesMissingFromIdealState(const StateChecker::Context& c) __attribute__((noinline));
+MergeNodes checkIfBucketsAreOutOfSyncAndNeedMerging(const StateChecker::Context& c) __attribute__((noinline));
 
 MergeNodes
-checkForNodesMissingFromIdealState(StateChecker::Context& c)
+checkForNodesMissingFromIdealState(const StateChecker::Context& c)
 {
     MergeNodes ret;
 
     // Check if we need to add copies to get to ideal state.
-    if (!c.entry->emptyAndConsistent()) {
+    if (!c.entry()->emptyAndConsistent()) {
         bool hasMissingReplica = false;
         for (uint16_t node : c.idealState()) {
             bool found = false;
-            for (uint32_t j = 0; j < c.entry->getNodeCount(); j++) {
-                if (c.entry->getNodeRef(j).getNode() == node) {
+            for (uint32_t j = 0; j < c.entry()->getNodeCount(); j++) {
+                if (c.entry()->getNodeRef(j).getNode() == node) {
                     found = true;
                     break;
                 }
@@ -702,7 +718,7 @@ checkForNodesMissingFromIdealState(StateChecker::Context& c)
 
             if (!found) {
                 const auto & mp = c.distributorConfig.getMaintenancePriorities();
-                if (c.idealState().size() > c.entry->getNodeCount()) {
+                if (c.idealState().size() > c.entry()->getNodeCount()) {
                     ret.markMissingReplica(node, mp.mergeTooFewCopies);
                 } else {
                     ret.markMoveToIdealLocation(node,mp.mergeMoveToIdealNode);
@@ -717,20 +733,20 @@ checkForNodesMissingFromIdealState(StateChecker::Context& c)
 }
 
 void
-addStatisticsForOutOfSyncCopies(StateChecker::Context& c)
+addStatisticsForOutOfSyncCopies(const StateChecker::Context& c)
 {
-    const uint32_t n = c.entry->getNodeCount();
+    const uint32_t n = c.entry()->getNodeCount();
     for (uint32_t i = 0; i < n; ++i) {
-        const BucketCopy& cp(c.entry->getNodeRef(i));
+        const BucketCopy& cp(c.entry()->getNodeRef(i));
         c.stats.incSyncing(cp.getNode(), c.getBucketSpace());
     }
 }
 
 MergeNodes
-checkIfBucketsAreOutOfSyncAndNeedMerging(StateChecker::Context& c)
+checkIfBucketsAreOutOfSyncAndNeedMerging(const StateChecker::Context& c)
 {
     MergeNodes ret;
-    if (!consistentApartFromEmptyBucketsInNonIdealLocationAndInvalidEntries(c.idealState(),c.entry.getBucketInfo())) {
+    if (!consistentApartFromEmptyBucketsInNonIdealLocationAndInvalidEntries(c.idealState(),c.entry().getBucketInfo())) {
         auto pri(c.distributorConfig.getMaintenancePriorities().mergeOutOfSyncCopies);
         ret.markOutOfSync(c, pri);
         addStatisticsForOutOfSyncCopies(c);
@@ -741,9 +757,9 @@ checkIfBucketsAreOutOfSyncAndNeedMerging(StateChecker::Context& c)
 bool
 allCopiesAreInvalid(const StateChecker::Context& c)
 {
-    const uint32_t n = c.entry->getNodeCount();
+    const uint32_t n = c.entry()->getNodeCount();
     for (uint32_t i = 0; i < n; ++i) {
-        const BucketCopy& cp(c.entry->getNodeRef(i));
+        const BucketCopy& cp(c.entry()->getNodeRef(i));
         if (cp.valid()) {
             return false;
         }
@@ -762,7 +778,7 @@ merging_effectively_disabled_for_state_checker(const StateChecker::Context& c) n
 }
 
 StateChecker::Result
-SynchronizeAndMoveStateChecker::check(Context& c) const
+SynchronizeAndMoveStateChecker::check(const Context &c) const
 {
     if (merging_effectively_disabled_for_state_checker(c)) {
         return Result::noMaintenanceNeeded();
@@ -780,9 +796,9 @@ SynchronizeAndMoveStateChecker::check(Context& c) const
         return Result::noMaintenanceNeeded();
     }
 
-    assert(c.entry->getNodeCount() > 0);
+    assert(c.entry()->getNodeCount() > 0);
 
-    MergeNodes result(c.entry);
+    MergeNodes result(c.entry());
     result += checkForNodesMissingFromIdealState(c);
     result += checkIfBucketsAreOutOfSyncAndNeedMerging(c);
 
@@ -807,7 +823,7 @@ SynchronizeAndMoveStateChecker::check(Context& c) const
         return Result::createStoredResult(std::move(op), schedPri);
     } else {
         LOG(spam, "Bucket %s: No need for merge, as bucket is in consistent state (or inconsistent buckets are empty) %s",
-            c.bucket.toString().c_str(), c.entry->toString().c_str());
+            c.bucket.toString().c_str(), c.entry()->toString().c_str());
         return Result::noMaintenanceNeeded();
     }
 }
@@ -815,8 +831,8 @@ SynchronizeAndMoveStateChecker::check(Context& c) const
 bool
 DeleteExtraCopiesStateChecker::bucketHasNoData(const Context& c)
 {
-    return (c.entry->getHighestMetaCount() == 0
-            && !c.entry->hasRecentlyCreatedEmptyCopy());
+    return (c.entry()->getHighestMetaCount() == 0
+            && !c.entry()->hasRecentlyCreatedEmptyCopy());
 }
 
 bool
@@ -845,10 +861,10 @@ DeleteExtraCopiesStateChecker::addToRemoveSet(
 uint32_t
 DeleteExtraCopiesStateChecker::numberOfIdealCopiesPresent(const Context& c)
 {
-    const uint32_t cnt = c.entry->getNodeCount();
+    const uint32_t cnt = c.entry()->getNodeCount();
     uint32_t idealCopies = 0;
     for (uint32_t i = 0; i < cnt; ++i) {
-        const BucketCopy& cp(c.entry->getNodeRef(i));
+        const BucketCopy& cp(c.entry()->getNodeRef(i));
         if (copyIsInIdealState(cp, c)) {
             ++idealCopies;
         }
@@ -865,19 +881,19 @@ DeleteExtraCopiesStateChecker::numberOfIdealCopiesPresent(const Context& c)
  */
 void
 DeleteExtraCopiesStateChecker::removeRedundantEmptyOrConsistentCopies(
-        Context& c,
+        const Context& c,
         std::vector<uint16_t>& removedCopies,
         vespalib::asciistream& reasons)
 {
     assert(removedCopies.empty());
-    const bool copiesAreConsistent = c.entry->validAndConsistent();
-    const uint32_t cnt = c.entry->getNodeCount();
+    const bool copiesAreConsistent = c.entry()->validAndConsistent();
+    const uint32_t cnt = c.entry()->getNodeCount();
     // Always keep all ideal copies
     uint32_t keptIdealCopies = numberOfIdealCopiesPresent(c);
     uint32_t keptNonIdealCopies = 0;
 
     for (uint32_t i = 0; i < cnt; ++i) {
-        const BucketCopy& cp(c.entry->getNodeRef(i));
+        const BucketCopy& cp(c.entry()->getNodeRef(i));
         if (copyIsInIdealState(cp, c)) {
             continue;
         }
@@ -898,9 +914,9 @@ DeleteExtraCopiesStateChecker::removeRedundantEmptyOrConsistentCopies(
 }
 
 StateChecker::Result
-DeleteExtraCopiesStateChecker::check(Context& c) const
+DeleteExtraCopiesStateChecker::check(const Context &c) const
 {
-    if (c.entry->hasInvalidCopy()) {
+    if (c.entry()->hasInvalidCopy()) {
         // Don't delete anything here.
         return Result::noMaintenanceNeeded();
     }
@@ -914,14 +930,14 @@ DeleteExtraCopiesStateChecker::check(Context& c) const
     std::vector<uint16_t> removedCopies;
 
     if (bucketHasNoData(c)) {
-        reasons << "[Removing all copies since bucket is empty:" << c.entry->toString() << "]";
+        reasons << "[Removing all copies since bucket is empty:" << c.entry()->toString() << "]";
 
-        for (uint32_t j = 0, cnt = c.entry->getNodeCount(); j < cnt; ++j) {
-            removedCopies.push_back(c.entry->getNodeRef(j).getNode());
+        for (uint32_t j = 0, cnt = c.entry()->getNodeCount(); j < cnt; ++j) {
+            removedCopies.push_back(c.entry()->getNodeRef(j).getNode());
         }
-    } else if (c.entry->getNodeCount() <= c.distribution.getRedundancy()) {
+    } else if (c.entry()->getNodeCount() <= c.distribution.getRedundancy()) {
         return Result::noMaintenanceNeeded();
-    } else if (c.entry->hasRecentlyCreatedEmptyCopy()) {
+    } else if (c.entry()->hasRecentlyCreatedEmptyCopy()) {
         return Result::noMaintenanceNeeded();
     } else {
         removeRedundantEmptyOrConsistentCopies(c, removedCopies, reasons);
@@ -938,25 +954,32 @@ DeleteExtraCopiesStateChecker::check(Context& c) const
     return Result::noMaintenanceNeeded();
 }
 
+namespace {
+
 bool
-BucketStateStateChecker::shouldSkipActivationDueToMaintenance(const ActiveList& activeNodes, const Context& c)
-{
+shouldSkipActivationDueToMaintenanceOrGatherOperationNodes(const ActiveList &activeNodes,
+                                                           const StateChecker::Context &c,
+                                                           std::vector<uint16_t> & operationNodes) {
     for (uint32_t i = 0; i < activeNodes.size(); ++i) {
-        const auto node_index = activeNodes[i].nodeIndex();
-        const BucketCopy* cp(c.entry->getNode(node_index));
-        if (!cp || cp->active()) {
-            continue;
-        }
-        if (!cp->ready()) {
+        const ActiveCopy & active = activeNodes[i];
+        if ( ! active.entryIndex().valid()) continue;
+        const BucketCopy & cp(c.entry()->getNodeRef(active.entryIndex()));
+        if (cp.active()) continue;
+
+        const auto node_index = active.nodeIndex();
+        if (!cp.ready()) {
             if (!c.op_ctx.node_supported_features_repo().node_supported_features(node_index).no_implicit_indexing_of_active_buckets) {
                 // If copy is not ready, we don't want to activate it if a node
                 // is set in maintenance. Doing so would imply that we want proton
                 // to start background indexing.
-                return containsMaintenanceNode(c.idealState(), c);
+                if (containsMaintenanceNode(c.idealState(), c)) return true;
             } // else: activation does not imply indexing, so we can safely do it at any time.
         }
+        operationNodes.push_back(node_index);
     }
     return false;
+}
+
 }
 
 /**
@@ -970,7 +993,7 @@ BucketStateStateChecker::shouldSkipActivationDueToMaintenance(const ActiveList& 
  *  7. Any valid copy if no copies are active
  */
 StateChecker::Result
-BucketStateStateChecker::check(Context& c) const
+BucketStateStateChecker::check(const Context &c) const
 {
     if (c.distributorConfig.isBucketActivationDisabled()) {
         return Result::noMaintenanceNeeded();
@@ -981,29 +1004,28 @@ BucketStateStateChecker::check(Context& c) const
     }
 
     ActiveList activeNodes = ActiveCopy::calculate(c.idealStateBundle.nonretired_or_maintenance_to_index(),
-                                                   c.distribution, c.entry,
+                                                   c.distribution, c.entry(),
                                                    c.distributorConfig.max_activation_inhibited_out_of_sync_groups());
     if (activeNodes.empty()) {
         return Result::noMaintenanceNeeded();
     }
-    if (shouldSkipActivationDueToMaintenance(activeNodes, c)) {
+    std::vector<uint16_t> operationNodes;
+    if (shouldSkipActivationDueToMaintenanceOrGatherOperationNodes(activeNodes, c, operationNodes)) {
         return Result::noMaintenanceNeeded();
     }
-
     vespalib::asciistream reason;
-    std::vector<uint16_t> operationNodes;
-    for (uint32_t i=0; i<activeNodes.size(); ++i) {
-        const BucketCopy* cp = c.entry->getNode(activeNodes[i].nodeIndex());
-        if (cp == nullptr || cp->active()) {
-            continue;
+    for (uint16_t nodeIndex : operationNodes) { // Most of the time empty
+        for (uint32_t i = 0; i < activeNodes.size(); ++i) {
+            const ActiveCopy &active = activeNodes[i];
+            if (nodeIndex == active.nodeIndex()) {
+                reason << "[Setting node " << active.nodeIndex() << " as active: " << active.getReason() << "]";
+            }
         }
-        operationNodes.push_back(activeNodes[i].nodeIndex());
-        reason << "[Setting node " << activeNodes[i].nodeIndex() << " as active: " << activeNodes[i].getReason() << "]";
     }
 
     // Deactivate all copies that are currently marked as active.
-    for (uint32_t i = 0; i < c.entry->getNodeCount(); ++i) {
-        const BucketCopy& cp = c.entry->getNodeRef(i);
+    for (uint32_t i = 0; i < c.entry()->getNodeCount(); ++i) {
+        const BucketCopy& cp = c.entry()->getNodeRef(i);
         if (!cp.active()) {
             continue;
         }
@@ -1050,32 +1072,32 @@ GarbageCollectionStateChecker::garbage_collection_disabled(const Context& c) noe
 bool
 GarbageCollectionStateChecker::needs_garbage_collection(const Context& c, vespalib::duration time_since_epoch)
 {
-    if (c.entry->getNodeCount() == 0) {
+    if (c.entry()->getNodeCount() == 0) {
         return false;
     }
     if (containsMaintenanceNode(c.idealState(), c)) {
         return false;
     }
-    std::chrono::seconds lastRunAt(c.entry->getLastGarbageCollectionTime());
+    std::chrono::seconds lastRunAt(c.entry()->getLastGarbageCollectionTime());
     return c.gcTimeCalculator.shouldGc(c.getBucketId(), time_since_epoch, lastRunAt);
 }
 
 StateChecker::Result
-GarbageCollectionStateChecker::check(Context& c) const
+GarbageCollectionStateChecker::check(const Context &c) const
 {
     if (garbage_collection_disabled(c)) {
         return Result::noMaintenanceNeeded();
     }
     const vespalib::duration now(c.node_ctx.clock().getSystemTime().time_since_epoch());
-    const std::chrono::seconds last_run_at(c.entry->getLastGarbageCollectionTime());
+    const std::chrono::seconds last_run_at(c.entry()->getLastGarbageCollectionTime());
     c.stats.update_observed_time_since_last_gc(now - last_run_at);
 
     if (needs_garbage_collection(c, now)) {
-        auto op = std::make_unique<GarbageCollectionOperation>(c.node_ctx, BucketAndNodes(c.getBucket(), c.entry->getNodes()));
+        auto op = std::make_unique<GarbageCollectionOperation>(c.node_ctx, BucketAndNodes(c.getBucket(), c.entry()->getNodes()));
 
         vespalib::asciistream reason;
         reason << "[Needs garbage collection: Last check at "
-               << c.entry->getLastGarbageCollectionTime()
+               << c.entry()->getLastGarbageCollectionTime()
                << ", current time "
                << vespalib::count_s(now)
                << ", configured interval "

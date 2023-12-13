@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "optimize_tensor_function.h"
 #include "tensor_function.h"
@@ -37,11 +37,19 @@
 #include <vespa/eval/instruction/mixed_l2_distance.h>
 #include <vespa/eval/instruction/simple_join_count.h>
 #include <vespa/eval/instruction/mapped_lookup.h>
+#include <vespa/eval/instruction/universal_dot_product.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".eval.eval.optimize_tensor_function");
 
 namespace vespalib::eval {
+
+OptimizeTensorFunctionOptions::OptimizeTensorFunctionOptions() noexcept
+  : allow_universal_dot_product(true)
+{
+}
+
+OptimizeTensorFunctionOptions::~OptimizeTensorFunctionOptions() = default;
 
 namespace {
 
@@ -59,7 +67,9 @@ void run_optimize_pass(const Child &root, Func&& optimize_node) {
     }
 }
 
-const TensorFunction &optimize_for_factory(const ValueBuilderFactory &, const TensorFunction &expr, Stash &stash) {
+const TensorFunction &optimize_for_factory(const ValueBuilderFactory &, const TensorFunction &expr, Stash &stash,
+                                           const OptimizeTensorFunctionOptions &options)
+{
     Child root(expr);
     run_optimize_pass(root, [&stash](const Child &child)
                       {
@@ -77,7 +87,7 @@ const TensorFunction &optimize_for_factory(const ValueBuilderFactory &, const Te
                           child.set(L2Distance::optimize(child.get(), stash));
                           child.set(MixedL2Distance::optimize(child.get(), stash));                                                    
                       });
-    run_optimize_pass(root, [&stash](const Child &child)
+    run_optimize_pass(root, [&stash,&options](const Child &child)
                       {
                           child.set(DenseDotProductFunction::optimize(child.get(), stash));
                           child.set(SparseDotProductFunction::optimize(child.get(), stash));
@@ -88,6 +98,9 @@ const TensorFunction &optimize_for_factory(const ValueBuilderFactory &, const Te
                           child.set(DenseHammingDistance::optimize(child.get(), stash));
                           child.set(SimpleJoinCount::optimize(child.get(), stash));
                           child.set(MappedLookup::optimize(child.get(), stash));
+                          if (options.allow_universal_dot_product) {
+                              child.set(UniversalDotProduct::optimize(child.get(), stash, false));
+                          }
                       });
     run_optimize_pass(root, [&stash](const Child &child)
                       {
@@ -114,11 +127,31 @@ const TensorFunction &optimize_for_factory(const ValueBuilderFactory &, const Te
 
 } // namespace vespalib::eval::<unnamed>
 
-const TensorFunction &optimize_tensor_function(const ValueBuilderFactory &factory, const TensorFunction &function, Stash &stash) {
+const TensorFunction &optimize_tensor_function(const ValueBuilderFactory &factory, const TensorFunction &function, Stash &stash,
+                                               const OptimizeTensorFunctionOptions &options)
+{
     LOG(debug, "tensor function before optimization:\n%s\n", function.as_string().c_str());
-    const TensorFunction &optimized = optimize_for_factory(factory, function, stash);
+    const TensorFunction &optimized = optimize_for_factory(factory, function, stash, options);
     LOG(debug, "tensor function after optimization:\n%s\n", optimized.as_string().c_str());
     return optimized;
+}
+
+const TensorFunction &optimize_tensor_function(const ValueBuilderFactory &factory, const TensorFunction &function, Stash &stash) {
+    return optimize_tensor_function(factory, function, stash, OptimizeTensorFunctionOptions());
+}
+
+const TensorFunction &apply_tensor_function_optimizer(const TensorFunction &function, tensor_function_optimizer optimizer, Stash &stash, tensor_function_listener listener) {
+    Child root(function);
+    run_optimize_pass(root, [&](const Child &child)
+                            {
+                                const TensorFunction &child_before = child.get();
+                                const TensorFunction &child_after = optimizer(child_before, stash);
+                                if (std::addressof(child_after) != std::addressof(child_before)) {
+                                    child.set(child_after);
+                                    listener(child_after);
+                                }
+                            });
+    return root.get();
 }
 
 } // namespace vespalib::eval

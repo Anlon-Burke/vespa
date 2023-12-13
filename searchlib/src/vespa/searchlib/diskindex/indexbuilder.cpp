@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "indexbuilder.h"
 #include "fieldwriter.h"
@@ -95,7 +95,7 @@ FileHandle::open(vespalib::stringref dir,
                  const TuneFileSeqWrite &tuneFileWrite,
                  const FileHeaderContext &fileHeaderContext)
 {
-    assert(_fieldWriter.get() == nullptr);
+    assert( ! _fieldWriter);
 
     _fieldWriter = std::make_shared<FieldWriter>(docIdLimit, numWordIds, dir + "/");
 

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "persistenceutil.h"
 #include <vespa/persistence/spi/persistenceprovider.h>
@@ -15,8 +15,7 @@ namespace {
     {
         return (id == api::MessageType::PUT_ID ||
                 id == api::MessageType::REMOVE_ID ||
-                id == api::MessageType::UPDATE_ID ||
-                id == api::MessageType::REVERT_ID);
+                id == api::MessageType::UPDATE_ID);
     }
 
     bool hasBucketInfo(api::MessageType::Id id)

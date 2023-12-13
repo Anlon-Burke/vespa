@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "joinoperation.h"
 #include <vespa/storageapi/message/bucketsplitting.h>
@@ -93,14 +93,18 @@ JoinOperation::enqueueJoinMessagePerTargetNode(
 void
 JoinOperation::onReceive(DistributorStripeMessageSender&, const api::StorageReply::SP& msg)
 {
-    auto& rep = static_cast<api::JoinBucketsReply&>(*msg);
+    auto& rep = dynamic_cast<api::JoinBucketsReply&>(*msg);
     uint16_t node = _tracker.handleReply(rep);
     if (node == 0xffff) {
         LOG(debug, "Ignored reply since node was max uint16_t for unknown reasons");
         return;
     }
 
-    if (rep.getResult().success()) {
+    _ok = rep.getResult().success();
+    if (_cancel_scope.node_is_cancelled(node)) {
+        LOG(debug, "Join operation for %s has been cancelled", getBucketId().toString().c_str());
+        _ok = false;
+    } else if (rep.getResult().success()) {
         const std::vector<document::BucketId>& sourceBuckets(
                 rep.getSourceBuckets());
         for (auto bucket : sourceBuckets) {
@@ -133,7 +137,6 @@ JoinOperation::onReceive(DistributorStripeMessageSender&, const api::StorageRepl
         LOG(debug, "Join failed for %s with non-critical failure: %s",
             getBucketId().toString().c_str(), rep.getResult().toString().c_str());
     }
-    _ok = rep.getResult().success();
 
     LOG(debug, "Bucket %s join finished", getBucketId().toString().c_str());
     if (_tracker.finished()) {

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
 import com.google.common.collect.Sets;
@@ -114,9 +114,10 @@ public class LoadBalancerExpirer extends NodeRepositoryMaintainer {
                 LOG.log(Level.INFO, () -> "Removing reals from inactive load balancer " + lb.id() + ": " + Sets.difference(lb.instance().get().reals(), reals));
                 LoadBalancerInstance instance = service.configure(lb.instance().get(),
                                                                   new LoadBalancerSpec(lb.id().application(), lb.id().cluster(), reals,
-                                                                                       lb.instance().get().settings(), lb.instance().get().cloudAccount()),
+                                                                                       lb.instance().get().settings(),
+                                                                                       lb.instance().get().cloudAccount(), lb.idSeed()),
                                                                   true);
-                db.writeLoadBalancer(lb.with(Optional.of(instance)), lb.state());
+                db.writeLoadBalancer(lb.with(instance), lb.state());
             } catch (Exception e) {
                 failed.add(lb.id());
                 lastException.set(e);

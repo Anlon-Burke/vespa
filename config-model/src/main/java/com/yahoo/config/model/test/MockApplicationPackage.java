@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.model.test;
 
 import com.yahoo.component.Version;
@@ -487,6 +487,8 @@ public class MockApplicationPackage implements ApplicationPackage {
         public MetaData getMetaData() {
             throw new UnsupportedOperationException();
         }
+
+        @Override public long getSize() { return file.length(); }
 
         @Override
         public int compareTo(ApplicationFile other) {

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
+<!-- Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root. -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -24,7 +24,7 @@
             This version must match the string in all ExportPackage annotations in this module.
             It must also be in sync junit version specified in 'hosted-tenant-base'.
         -->
-        <hosted-tenant-base-junit-version>5.8.1</hosted-tenant-base-junit-version>
+        <hosted-tenant-base-junit-version>${junit.vespa.tenant.version}</hosted-tenant-base-junit-version>
 
     </properties>
 
@@ -69,7 +69,7 @@
         <dependency>
             <groupId>org.junit.platform</groupId>
             <artifactId>junit-platform-commons</artifactId>
-            <version>1.8.1</version>
+            <version>${junit.platform.vespa.tenant.version}</version>
         </dependency>
         <dependency>
             <groupId>com.yahoo.vespa</groupId>

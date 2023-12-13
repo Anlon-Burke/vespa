@@ -1,14 +1,17 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.curator;
 
 import com.yahoo.path.Path;
+import com.yahoo.vespa.curator.transaction.CuratorOperations;
+import com.yahoo.vespa.curator.transaction.CuratorTransaction;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
+
+import static com.yahoo.vespa.curator.Curator.CompletionWaiter;
 
 /**
  * Implementation of a Barrier that handles the case where more than number of members can call synchronize.
@@ -18,18 +21,18 @@ import java.util.logging.Level;
  * @author Vegard Havdal
  * @author Ulf Lilleengen
  */
-class CuratorCompletionWaiter implements Curator.CompletionWaiter {
+class CuratorCompletionWaiter implements CompletionWaiter {
 
     private static final java.util.logging.Logger log = java.util.logging.Logger.getLogger(CuratorCompletionWaiter.class.getName());
 
     private final Curator curator;
-    private final String barrierPath;
-    private final String myId;
+    private final Path barrierPath;
+    private final Path waiterNode;
     private final Clock clock;
     private final Duration waitForAll;
 
-    CuratorCompletionWaiter(Curator curator, String barrierPath, String myId, Clock clock, Duration waitForAll) {
-        this.myId = barrierPath + "/" + myId;
+    CuratorCompletionWaiter(Curator curator, Path barrierPath, String serverId, Clock clock, Duration waitForAll) {
+        this.waiterNode = barrierPath.append(serverId);
         this.curator = curator;
         this.barrierPath = barrierPath;
         this.clock = clock;
@@ -60,10 +63,9 @@ class CuratorCompletionWaiter implements Curator.CompletionWaiter {
         Instant endTime = startTime.plus(timeout);
         Instant gotQuorumTime = Instant.EPOCH;
 
-        List<String> respondents = new ArrayList<>();
+        List<String> respondents;
         do {
-            respondents.clear();
-            respondents.addAll(curator.framework().getChildren().forPath(barrierPath));
+            respondents = curator.framework().getChildren().forPath(barrierPath.getAbsolute());
             if (log.isLoggable(Level.FINER)) {
                 log.log(Level.FINER, respondents.size() + "/" + curator.zooKeeperEnsembleCount() + " responded: " +
                                      respondents + ", all participants: " + curator.zooKeeperEnsembleConnectionSpec());
@@ -105,14 +107,10 @@ class CuratorCompletionWaiter implements Curator.CompletionWaiter {
     @Override
     public void notifyCompletion() {
         try {
-            notifyInternal();
+            curator.framework().create().forPath(waiterNode.getAbsolute());
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-    }
-
-    private void notifyInternal() throws Exception {
-        curator.framework().create().forPath(myId);
     }
 
     @Override
@@ -120,22 +118,17 @@ class CuratorCompletionWaiter implements Curator.CompletionWaiter {
         return "'" + barrierPath + "', " + barrierMemberCount() + " members";
     }
 
-    public static Curator.CompletionWaiter create(Curator curator, Path barrierPath, String id, Duration waitForAll) {
-        return new CuratorCompletionWaiter(curator, barrierPath.getAbsolute(), id, Clock.systemUTC(), waitForAll);
+    public static CompletionWaiter create(Curator curator, Path barrierPath, String id, Duration waitForAll) {
+        return new CuratorCompletionWaiter(curator, barrierPath, id, Clock.systemUTC(), waitForAll);
     }
 
-    public static Curator.CompletionWaiter createAndInitialize(Curator curator, Path parentPath, String waiterNode, String id, Duration waitForAll) {
-        Path waiterPath = parentPath.append(waiterNode);
+    public static CompletionWaiter createAndInitialize(Curator curator, Path barrierPath, String id, Duration waitForAll) {
+        // Note: Should be done atomically, but unable to that when path may not exist before delete
+        // and create should be able to create any missing parent paths
+        curator.delete(barrierPath);
+        curator.create(barrierPath);
 
-        String debugMessage = log.isLoggable(Level.FINE) ? "Recreating ZK path " + waiterPath : null;
-        if (debugMessage != null) log.fine(debugMessage);
-
-        curator.delete(waiterPath);
-        curator.createAtomically(waiterPath);
-
-        if (debugMessage != null) log.fine(debugMessage + ": Done");
-
-        return new CuratorCompletionWaiter(curator, waiterPath.getAbsolute(), id, Clock.systemUTC(), waitForAll);
+        return new CuratorCompletionWaiter(curator, barrierPath, id, Clock.systemUTC(), waitForAll);
     }
 
     private int barrierMemberCount() {

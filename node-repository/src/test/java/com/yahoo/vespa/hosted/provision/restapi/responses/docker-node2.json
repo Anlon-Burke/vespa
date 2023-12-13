@@ -114,8 +114,11 @@
       "agent": "application"
     }
   ],
-  "ipAddresses": ["127.0.101.1", "::101:1"],
+  "ipAddresses": ["::101:1", "127.0.101.1"],
   "additionalIpAddresses": ["::101:2", "::101:3", "::101:4"],
   "cloudAccount": "aws:777888999000",
-  "wireguardPubkey": "000011112222333344445555666677778888999900c="
+  "wireguard": {
+    "key": "000011112222333344445555666677778888999900c=",
+    "timestamp": 123
+  }
 }

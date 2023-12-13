@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.streamingvisitors;
 
 import com.yahoo.container.core.documentapi.VespaDocumentAccess;
@@ -136,10 +136,8 @@ public class StreamingSearcher extends VespaBackEndSearcher {
 
         initializeMissingQueryFields(query);
         if (documentSelectionQueryParameterCount(query) != 1) {
-            return new Result(query, ErrorMessage.createBackendCommunicationError("Streaming search needs one and " +
-                                                                                  "only one of these query parameters to be set: " +
-                                                                                  "streaming.userid, streaming.groupname, or " +
-                                                                                  "streaming.selection"));
+            return new Result(query, ErrorMessage.createIllegalQuery("Streaming search requires either " +
+                                                                     "streaming.groupname or streaming.selection"));
         }
         if (query.getTrace().isTraceable(4))
             query.trace("Routing to search cluster " + getSearchClusterName() + " and document type " + documentType, 4);
@@ -150,11 +148,11 @@ public class StreamingSearcher extends VespaBackEndSearcher {
         try {
             visitor.doSearch();
         } catch (ParseException e) {
-            return new Result(query, ErrorMessage.createBackendCommunicationError("Failed to parse document selection string: " +
-                                                                                  e.getMessage() + "'."));
+            return new Result(query, ErrorMessage.createInvalidQueryParameter("Failed to parse document selection string: " +
+                                                                              e.getMessage()));
         } catch (TokenMgrException e) {
-            return new Result(query, ErrorMessage.createBackendCommunicationError("Failed to tokenize document selection string: " +
-                                                                                  e.getMessage() + "'."));
+            return new Result(query, ErrorMessage.createInvalidQueryParameter("Failed to tokenize document selection string: " +
+                                                                              e.getMessage()));
         } catch (TimeoutException e) {
             double elapsedMillis = durationInMillisFromNanoTime(timeStartedNanos);
             if ((effectiveTraceLevel > 0) && timeoutBadEnoughToBeReported(query, elapsedMillis)) {
@@ -163,10 +161,9 @@ public class StreamingSearcher extends VespaBackEndSearcher {
                                                                                                        query, elapsedMillis / 1000.0)));
             }
             return new Result(query, ErrorMessage.createTimeout(e.getMessage()));
-        } catch (InterruptedException | IllegalArgumentException e) {
+        } catch (InterruptedException e) {
             return new Result(query, ErrorMessage.createBackendCommunicationError(e.getMessage()));
         }
-
         return buildResultFromCompletedVisitor(query, visitor);
     }
 

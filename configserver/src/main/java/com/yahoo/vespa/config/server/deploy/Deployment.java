@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.deploy;
 
 import ai.vespa.metrics.ConfigServerMetrics;
@@ -11,7 +11,7 @@ import com.yahoo.config.provision.ApplicationLockException;
 import com.yahoo.config.provision.ApplicationTransaction;
 import com.yahoo.config.provision.HostFilter;
 import com.yahoo.config.provision.HostSpec;
-import com.yahoo.config.provision.ProvisionLock;
+import com.yahoo.config.provision.ApplicationMutex;
 import com.yahoo.config.provision.Provisioner;
 import com.yahoo.config.provision.TransientException;
 import com.yahoo.transaction.NestedTransaction;
@@ -40,6 +40,7 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import static com.yahoo.vespa.config.server.application.ConfigConvergenceChecker.ServiceListResponse;
+import static com.yahoo.vespa.config.server.session.Session.Status.DELETE;
 
 /**
  * The process of deploying an application.
@@ -131,15 +132,8 @@ public class Deployment implements com.yahoo.config.provision.Deployment {
             TimeoutBudget timeoutBudget = params.getTimeoutBudget();
             timeoutBudget.assertNotTimedOut(() -> "Timeout exceeded when trying to activate '" + applicationId + "'");
 
-            try {
-                Activation activation = applicationRepository.activate(session, applicationId, tenant, params.force());
-                waitForActivation(applicationId, timeoutBudget, activation);
-            } catch (Exception e) {
-                log.log(Level.FINE, "Activating session " + session.getSessionId() + " failed, deleting it");
-                deleteSession();
-                throw e;
-            }
-
+            Activation activation = applicationRepository.activate(session, applicationId, tenant, params.force());
+            waitForActivation(applicationId, timeoutBudget, activation);
             restartServicesIfNeeded(applicationId);
             storeReindexing(applicationId, session.getMetaData().getGeneration());
 
@@ -162,6 +156,9 @@ public class Deployment implements com.yahoo.config.provision.Deployment {
 
     private void deleteSession() {
         sessionRepository().deleteLocalSession(session.getSessionId());
+        try (var transaction = sessionRepository().createSetStatusTransaction(session, DELETE)) {
+            transaction.commit();
+        }
     }
 
     private SessionRepository sessionRepository() {
@@ -313,7 +310,7 @@ public class Deployment implements com.yahoo.config.provision.Deployment {
                     () -> "Timeout exceeded while waiting for application resources of '" + session.getApplicationId() + "'" +
                             Optional.ofNullable(lastException.get()).map(e -> ". Last exception: " + e.getMessage()).orElse(""));
 
-            try (ProvisionLock lock = provisioner.get().lock(session.getApplicationId())) {
+            try (ApplicationMutex lock = provisioner.get().lock(session.getApplicationId())) {
                 // Call to activate to make sure that everything is ready, but do not commit the transaction
                 ApplicationTransaction transaction = new ApplicationTransaction(lock, new NestedTransaction());
                 provisioner.get().activate(preparedHosts, context, transaction);

@@ -1,3 +1,4 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.container.plugin.mojo;
 
 import org.apache.commons.io.FileUtils;
@@ -24,8 +25,8 @@ import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 
 /**
- * Replaces the Class-Path of a jar file manifest with a list of provided artifacts.
- * The Class-Path is used because it is trivial to generate with the maven-jar-plugin.
+ * Replaces the Class-Path of a jar file manifest with a list of provided artifacts in a new manifest entry.
+ * The Class-Path is used as input because it is trivial to generate with the maven-jar-plugin.
  *
  * @author gjoranv
  */

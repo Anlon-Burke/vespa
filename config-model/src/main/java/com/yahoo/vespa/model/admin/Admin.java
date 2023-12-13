@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.admin;
 
 import ai.vespa.metrics.set.MetricSet;
@@ -21,15 +21,16 @@ import com.yahoo.vespa.model.admin.clustercontroller.ClusterControllerContainer;
 import com.yahoo.vespa.model.admin.clustercontroller.ClusterControllerContainerCluster;
 import com.yahoo.vespa.model.admin.metricsproxy.MetricsProxyContainer;
 import com.yahoo.vespa.model.admin.metricsproxy.MetricsProxyContainerCluster;
+import com.yahoo.vespa.model.admin.monitoring.MetricsConsumer;
 import com.yahoo.vespa.model.admin.monitoring.Monitoring;
 import com.yahoo.vespa.model.admin.monitoring.builder.Metrics;
-import com.yahoo.vespa.model.filedistribution.FileDistributionConfigProducer;
-import com.yahoo.vespa.model.filedistribution.FileDistributionConfigProvider;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static ai.vespa.metrics.set.MetricSet.empty;
 
@@ -49,6 +50,7 @@ public class Admin extends TreeConfigProducer<AnyConfigProducer> implements Seri
     private final Metrics metrics;
     private MetricsProxyContainerCluster metricsProxyCluster;
     private MetricSet additionalDefaultMetrics = empty();
+    private Set<MetricsConsumer> amendedMetricsConsumers = new HashSet<>();
 
     private final List<Slobrok> slobroks = new ArrayList<>();
     private Configserver defaultConfigserver;
@@ -78,7 +80,6 @@ public class Admin extends TreeConfigProducer<AnyConfigProducer> implements Seri
     private Optional<LogserverContainerCluster> logServerContainerCluster = Optional.empty();
 
     private ZooKeepersConfigProvider zooKeepersConfigProvider;
-    private final FileDistributionConfigProducer fileDistribution;
     private final boolean multitenant;
 
     public Admin(TreeConfigProducer<AnyConfigProducer> parent,
@@ -92,7 +93,6 @@ public class Admin extends TreeConfigProducer<AnyConfigProducer> implements Seri
         this.monitoring = monitoring;
         this.metrics = metrics;
         this.multitenant = multitenant;
-        this.fileDistribution = new FileDistributionConfigProducer(parent);
         this.applicationType = applicationType;
         this.logctlSpecs.addAll(defaultLogctlSpecs());
     }
@@ -118,6 +118,15 @@ public class Admin extends TreeConfigProducer<AnyConfigProducer> implements Seri
 
     public MetricSet getAdditionalDefaultMetrics() {
         return additionalDefaultMetrics;
+    }
+
+    public void setAmendedMetricsConsumers(Set<MetricsConsumer> amendedMetricsConsumers) {
+        if (amendedMetricsConsumers == null) return;
+        this.amendedMetricsConsumers = Set.copyOf(amendedMetricsConsumers);
+    }
+
+    public Set<MetricsConsumer> getAmendedMetricsConsumers() {
+        return amendedMetricsConsumers;
     }
 
     /** Returns a list of all config servers */
@@ -208,10 +217,6 @@ public class Admin extends TreeConfigProducer<AnyConfigProducer> implements Seri
         zooKeepersConfigProvider.getConfig(builder);
     }
 
-    public FileDistributionConfigProducer getFileDistributionConfigProducer() {
-        return fileDistribution;
-    }
-
     /**
      * Adds services to all hosts in the system.
      */
@@ -245,7 +250,6 @@ public class Admin extends TreeConfigProducer<AnyConfigProducer> implements Seri
         addConfigSentinel(deployState, host);
         addLogd(deployState, host);
         addConfigProxy(deployState, host);
-        addFileDistribution(host);
         if (logForwarderConfig != null) {
             boolean actuallyAdd = true;
             var membership = host.spec().membership();
@@ -284,11 +288,6 @@ public class Admin extends TreeConfigProducer<AnyConfigProducer> implements Seri
     public void addAndInitializeService(DeployState deployState, HostResource host, AbstractService service) {
         service.setHostResource(host);
         service.initService(deployState);
-    }
-
-    private void addFileDistribution(HostResource host) {
-        var configProvider = new FileDistributionConfigProvider(fileDistribution, host.getHost());
-        fileDistribution.addProvider(host.getHost(), configProvider);
     }
 
     // If not configured by user: Use default setup: max 3 slobroks, 1 on the default configserver host

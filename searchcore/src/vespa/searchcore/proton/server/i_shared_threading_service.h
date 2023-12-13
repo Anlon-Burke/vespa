@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 class FNET_Transport;
@@ -20,11 +20,6 @@ namespace proton {
 class ISharedThreadingService {
 public:
     virtual ~ISharedThreadingService() = default;
-
-    /**
-     * Returns the executor used for warmup (e.g. index warmup).
-     */
-    virtual vespalib::ThreadExecutor& warmup() = 0;
 
     /**
      * Returns the shared executor used for various assisting tasks in a document db.

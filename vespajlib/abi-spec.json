@@ -1002,36 +1002,21 @@
     ],
     "fields" : [ ]
   },
-  "com.yahoo.tensor.MixedTensor$Index$Builder" : {
+  "com.yahoo.tensor.MixedTensor$DenseSubspace" : {
     "superClass" : "java.lang.Object",
     "interfaces" : [ ],
     "attributes" : [
-      "public"
+      "public",
+      "final"
     ],
     "methods" : [
-      "public void <init>(com.yahoo.tensor.TensorType)",
-      "public void put(com.yahoo.tensor.TensorAddress, long)",
-      "public com.yahoo.tensor.MixedTensor$Index build()",
-      "public com.yahoo.tensor.MixedTensor$Index index()"
+      "public int hashCode()",
+      "public boolean equals(java.lang.Object)"
     ],
-    "fields" : [ ]
-  },
-  "com.yahoo.tensor.MixedTensor$UnboundBuilder" : {
-    "superClass" : "com.yahoo.tensor.MixedTensor$Builder",
-    "interfaces" : [ ],
-    "attributes" : [
-      "public"
-    ],
-    "methods" : [
-      "public com.yahoo.tensor.Tensor$Builder cell(com.yahoo.tensor.TensorAddress, float)",
-      "public com.yahoo.tensor.Tensor$Builder cell(com.yahoo.tensor.TensorAddress, double)",
-      "public com.yahoo.tensor.MixedTensor build()",
-      "public void trackBounds(com.yahoo.tensor.TensorAddress)",
-      "public com.yahoo.tensor.TensorType createBoundType()",
-      "public static com.yahoo.tensor.MixedTensor$UnboundBuilder of(com.yahoo.tensor.TensorType)",
-      "public bridge synthetic com.yahoo.tensor.Tensor build()"
-    ],
-    "fields" : [ ]
+    "fields" : [
+      "public final com.yahoo.tensor.TensorAddress sparseAddress",
+      "public final double[] cells"
+    ]
   },
   "com.yahoo.tensor.MixedTensor" : {
     "superClass" : "java.lang.Object",
@@ -1042,6 +1027,7 @@
       "public"
     ],
     "methods" : [
+      "public java.util.List getInternalDenseSubspaces()",
       "public com.yahoo.tensor.TensorType type()",
       "public long size()",
       "public double get(com.yahoo.tensor.TensorAddress)",
@@ -1876,6 +1862,25 @@
       "public static com.yahoo.tensor.TensorType outputType(com.yahoo.tensor.TensorType)",
       "public com.yahoo.tensor.functions.TensorFunction argument()",
       "public java.util.function.DoubleUnaryOperator mapper()",
+      "public java.util.List arguments()",
+      "public com.yahoo.tensor.functions.TensorFunction withArguments(java.util.List)",
+      "public com.yahoo.tensor.functions.PrimitiveTensorFunction toPrimitive()",
+      "public com.yahoo.tensor.TensorType type(com.yahoo.tensor.evaluation.TypeContext)",
+      "public com.yahoo.tensor.Tensor evaluate(com.yahoo.tensor.evaluation.EvaluationContext)",
+      "public java.lang.String toString(com.yahoo.tensor.functions.ToStringContext)",
+      "public int hashCode()"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.tensor.functions.MapSubspaces" : {
+    "superClass" : "com.yahoo.tensor.functions.PrimitiveTensorFunction",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(com.yahoo.tensor.functions.TensorFunction, java.lang.String, com.yahoo.tensor.functions.TensorFunction)",
+      "public com.yahoo.tensor.functions.TensorFunction argument()",
       "public java.util.List arguments()",
       "public com.yahoo.tensor.functions.TensorFunction withArguments(java.util.List)",
       "public com.yahoo.tensor.functions.PrimitiveTensorFunction toPrimitive()",
@@ -3291,6 +3296,7 @@
       "public static boolean isDisplayable(int)",
       "public static java.lang.String stripInvalidCharacters(java.lang.String)",
       "public static java.lang.String truncate(java.lang.String, int)",
+      "public static java.lang.String substringByCodepoints(java.lang.String, int, int)",
       "public static varargs java.lang.String format(java.lang.String, java.lang.Object[])"
     ],
     "fields" : [ ]
@@ -3566,6 +3572,7 @@
       "public boolean equals(java.lang.Object)",
       "public java.lang.String toString()",
       "protected static int registerClass(int, java.lang.Class)",
+      "protected static int registerClass(int, java.lang.Class, java.util.function.Supplier)",
       "public static com.yahoo.vespa.objects.Identifiable create(com.yahoo.vespa.objects.Deserializer)",
       "public static com.yahoo.vespa.objects.Identifiable createFromId(int)",
       "protected static com.yahoo.vespa.objects.Serializer serializeOptional(com.yahoo.vespa.objects.Serializer, com.yahoo.vespa.objects.Identifiable)",
@@ -4043,7 +4050,8 @@
       "abstract"
     ],
     "methods" : [
-      "public abstract java.util.List complete(ai.vespa.llm.completion.Prompt)"
+      "public abstract java.util.List complete(ai.vespa.llm.completion.Prompt)",
+      "public abstract java.util.concurrent.CompletableFuture completeAsync(ai.vespa.llm.completion.Prompt, java.util.function.Consumer)"
     ],
     "fields" : [ ]
   },
@@ -4057,6 +4065,7 @@
       "public void <init>(java.lang.String)",
       "public ai.vespa.llm.client.openai.OpenAiClient$Builder model(java.lang.String)",
       "public ai.vespa.llm.client.openai.OpenAiClient$Builder temperature(double)",
+      "public ai.vespa.llm.client.openai.OpenAiClient$Builder maxTokens(long)",
       "public ai.vespa.llm.client.openai.OpenAiClient build()"
     ],
     "fields" : [ ]
@@ -4070,7 +4079,8 @@
       "public"
     ],
     "methods" : [
-      "public java.util.List complete(ai.vespa.llm.completion.Prompt)"
+      "public java.util.List complete(ai.vespa.llm.completion.Prompt)",
+      "public java.util.concurrent.CompletableFuture completeAsync(ai.vespa.llm.completion.Prompt, java.util.function.Consumer)"
     ],
     "fields" : [ ]
   },
@@ -4088,7 +4098,8 @@
     ],
     "fields" : [
       "public static final enum ai.vespa.llm.completion.Completion$FinishReason length",
-      "public static final enum ai.vespa.llm.completion.Completion$FinishReason stop"
+      "public static final enum ai.vespa.llm.completion.Completion$FinishReason stop",
+      "public static final enum ai.vespa.llm.completion.Completion$FinishReason none"
     ]
   },
   "ai.vespa.llm.completion.Completion" : {
@@ -4165,7 +4176,8 @@
     ],
     "methods" : [
       "public void <init>(ai.vespa.llm.test.MockLanguageModel$Builder)",
-      "public java.util.List complete(ai.vespa.llm.completion.Prompt)"
+      "public java.util.List complete(ai.vespa.llm.completion.Prompt)",
+      "public java.util.concurrent.CompletableFuture completeAsync(ai.vespa.llm.completion.Prompt, java.util.function.Consumer)"
     ],
     "fields" : [ ]
   }

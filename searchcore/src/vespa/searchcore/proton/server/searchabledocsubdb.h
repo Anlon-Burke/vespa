@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "fast_access_doc_subdb.h"
@@ -108,6 +108,8 @@ public:
     void setBucketStateCalculator(const std::shared_ptr<IBucketStateCalculator> &calc, OnDone onDone) override;
 
     void clearViews() override;
+
+    std::shared_ptr<IAttributeWriter> get_attribute_writer() const override;
 
     std::shared_ptr<IAttributeManager> getAttributeManager() const override {
         return _rSearchView.get()->getAttributeManager();

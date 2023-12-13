@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "sequencedtaskexecutor.h"
 #include "adaptive_sequenced_executor.h"
@@ -149,6 +149,16 @@ SequencedTaskExecutor::getStats()
         accumulatedStats.aggregate(executor->getStats());
     }
     return accumulatedStats;
+}
+
+std::vector<ExecutorStats>
+SequencedTaskExecutor::get_raw_stats()
+{
+    std::vector<ExecutorStats> result;
+    for (auto& executor : _executors) {
+        result.push_back(executor->getStats());
+    }
+    return result;
 }
 
 ISequencedTaskExecutor::ExecutorId

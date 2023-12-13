@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -20,6 +20,7 @@ public:
     EmptyBlueprint(FieldSpecBase field) : SimpleLeafBlueprint(field) {}
     EmptyBlueprint() = default;
     SearchIterator::UP createFilterSearch(bool strict, FilterConstraint constraint) const override;
+    EmptyBlueprint *as_empty() noexcept final override { return this; }
 };
 
 class AlwaysTrueBlueprint : public SimpleLeafBlueprint
@@ -83,7 +84,7 @@ public:
         return *this;
     }
 
-    const attribute::ISearchContext *get_attribute_search_context() const override {
+    const attribute::ISearchContext *get_attribute_search_context() const noexcept final {
         return _ctx.get();
     }
 

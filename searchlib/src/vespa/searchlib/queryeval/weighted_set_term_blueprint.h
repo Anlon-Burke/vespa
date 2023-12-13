@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -18,7 +18,7 @@ class WeightedSetTermBlueprint : public ComplexLeafBlueprint
     std::vector<Blueprint::UP> _terms;
 
 public:
-    WeightedSetTermBlueprint(const FieldSpec &field);
+    explicit WeightedSetTermBlueprint(const FieldSpec &field);
     WeightedSetTermBlueprint(const WeightedSetTermBlueprint &) = delete;
     WeightedSetTermBlueprint &operator=(const WeightedSetTermBlueprint &) = delete;
     ~WeightedSetTermBlueprint() override;

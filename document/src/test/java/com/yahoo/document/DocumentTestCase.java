@@ -1,8 +1,7 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.document;
 
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yahoo.document.datatypes.Array;
 import com.yahoo.document.datatypes.BoolFieldValue;
 import com.yahoo.document.datatypes.ByteFieldValue;
@@ -21,6 +20,7 @@ import com.yahoo.document.serialization.DocumentDeserializerFactory;
 import com.yahoo.document.serialization.DocumentReader;
 import com.yahoo.document.serialization.DocumentSerializerFactory;
 import com.yahoo.io.GrowableByteBuffer;
+import com.yahoo.test.json.Jackson;
 import com.yahoo.vespa.objects.BufferSerializer;
 import org.junit.Test;
 
@@ -29,13 +29,14 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -550,8 +551,8 @@ public class DocumentTestCase extends DocumentTestCaseBase {
             doc.iterateNested(path, 0, handler);
 
             FieldValue fv = doc.getRecursiveValue("l1s1.ss.iarray");
-            assertTrue(((Array)fv).contains(new IntegerFieldValue(32)));
-            assertEquals(4, ((Array)fv).size());
+            assertTrue(((Array<?>)fv).contains(new IntegerFieldValue(32)));
+            assertEquals(4, ((Array<?>)fv).size());
         }
 
         {
@@ -561,8 +562,8 @@ public class DocumentTestCase extends DocumentTestCaseBase {
 
             FieldValue fv = doc.getRecursiveValue("l1s1.ss.iarray");
 
-            assertFalse(((Array)fv).contains(Integer.valueOf(12)));
-            assertEquals(3, ((Array)fv).size());
+            assertFalse(((Array<?>)fv).contains(12));
+            assertEquals(3, ((Array<?>)fv).size());
         }
 
         {
@@ -571,7 +572,7 @@ public class DocumentTestCase extends DocumentTestCaseBase {
             doc.iterateNested(path, 0, handler);
 
             FieldValue fv = doc.getRecursiveValue("l1s1.ss.iarray");
-            assertEquals(0, ((Array)fv).size());
+            assertEquals(0, ((Array<?>)fv).size());
         }
 
         {
@@ -580,7 +581,7 @@ public class DocumentTestCase extends DocumentTestCaseBase {
             doc.iterateNested(path, 0, handler);
 
             FieldValue fv = doc.getRecursiveValue("l1s1.structmap.value.smap");
-            assertFalse(((MapFieldValue)fv).contains(new StringFieldValue("leonardo")));
+            assertFalse(((MapFieldValue<?, ?>)fv).contains(new StringFieldValue("leonardo")));
         }
 
         {
@@ -589,7 +590,7 @@ public class DocumentTestCase extends DocumentTestCaseBase {
             doc.iterateNested(path, 0, handler);
 
             FieldValue fv = doc.getRecursiveValue("l1s1.wset");
-            assertFalse(((WeightedSet)fv).contains(new StringFieldValue("foo")));
+            assertFalse(((WeightedSet<?>)fv).contains(new StringFieldValue("foo")));
         }
     }
 
@@ -648,7 +649,7 @@ public class DocumentTestCase extends DocumentTestCaseBase {
 
     public void validateCppDoc(Document doc) {
         validateCppDocNotMap(doc);
-        MapFieldValue map = (MapFieldValue)doc.getFieldValue("mapfield");
+        MapFieldValue<?, ?> map = (MapFieldValue<?, ?>)doc.getFieldValue("mapfield");
         assertEquals(map.get(new StringFieldValue("foo1")), new StringFieldValue("bar1"));
         assertEquals(map.get(new StringFieldValue("foo2")), new StringFieldValue("bar2"));
     }
@@ -734,7 +735,7 @@ public class DocumentTestCase extends DocumentTestCaseBase {
     }
 
     @Test
-    public void testSerializeDeserialize() {
+    public void testSerializeDeserialize() throws IOException {
         setUpSertestDocType();
         Document doc = getSertestDocument();
 
@@ -746,11 +747,8 @@ public class DocumentTestCase extends DocumentTestCaseBase {
 
         data.flip();
 
-        try {
-            FileOutputStream fos = new FileOutputStream("src/test/files/testser.dat");
+        try (FileOutputStream fos = new FileOutputStream("src/test/files/testser.dat")) {
             fos.write(data.array(), 0, data.remaining());
-            fos.close();
-        } catch (Exception e) {
         }
 
         Document doc2 = docMan.createDocument(data);
@@ -960,17 +958,15 @@ public class DocumentTestCase extends DocumentTestCaseBase {
         setUpSertestDocType();
         Document doc = getSertestDocument();
         String json = doc.toJson();
-        Map<String, Object> parsed = new ObjectMapper().readValue(json, new TypeReference<>() {
-        });
+        Map<String, Object> parsed = Jackson.mapper().readValue(json, new TypeReference<>() {});
         assertEquals(parsed.get("id"), "id:ns:sertest::foobar");
         assertTrue(parsed.get("fields") instanceof Map);
         Object fieldMap = parsed.get("fields");
-        if (fieldMap instanceof Map) {
-            Map<?, ?> fields = (Map<?, ?>) fieldMap;
+        if (fieldMap instanceof Map<?, ?> fields) {
             assertEquals(fields.get("mailid"), "emailfromalicetobob");
             assertEquals(fields.get("date"), -2013512400);
             assertTrue(fields.get("docindoc") instanceof Map);
-            assertTrue(fields.keySet().containsAll(Arrays.asList("mailid", "date", "attachmentcount", "rawfield", "weightedfield", "docindoc", "mapfield", "myboolfield")));
+            assertTrue(fields.keySet().containsAll(List.of("mailid", "date", "attachmentcount", "rawfield", "weightedfield", "docindoc", "mapfield", "myboolfield")));
         }
     }
 
@@ -1095,24 +1091,15 @@ public class DocumentTestCase extends DocumentTestCaseBase {
     @Test
     public void testRequireThatDocumentWithIdSchemaIdChecksType() {
         DocumentType docType = new DocumentType("mytype");
-        try {
-            new Document(docType, "id:namespace:mytype::foo");
-        } catch (Exception e) {
-            fail();
-        }
-
-        try {
-            new Document(docType, "id:namespace:wrong-type::foo");
-            fail();
-        } catch (IllegalArgumentException e) {
-        }
+        new Document(docType, "id:namespace:mytype::foo");
+        assertThrows(IllegalArgumentException.class,
+                     () -> new Document(docType, "id:namespace:wrong-type::foo"));
     }
 
-    private class MyDocumentReader implements DocumentReader {
+    private static class MyDocumentReader implements DocumentReader {
 
         @Override
-        public void read(Document document) {
-        }
+        public void read(Document document) { }
 
         @Override
         public DocumentId readDocumentId() {
@@ -1129,22 +1116,17 @@ public class DocumentTestCase extends DocumentTestCaseBase {
     @Test
     public void testRequireThatChangingDocumentTypeChecksId() {
         MyDocumentReader reader = new MyDocumentReader();
+
         Document doc = new Document(reader);
         doc.setId(new DocumentId("id:namespace:mytype::foo"));
         DocumentType docType = new DocumentType("mytype");
-        try {
-            doc.setDataType(docType);
-        } catch (Exception e) {
-            fail();
-        }
-        doc = new Document(reader);
-        doc.setId(new DocumentId("id:namespace:mytype::foo"));
+        doc.setDataType(docType);
+
+        Document notOkDoc = new Document(reader);
+        notOkDoc.setId(new DocumentId("id:namespace:mytype::foo"));
         DocumentType wrongType = new DocumentType("wrongtype");
-        try {
-            doc.setDataType(wrongType);
-            fail();
-        } catch (IllegalArgumentException e) {
-        }
+        assertThrows(IllegalArgumentException.class,
+                     () -> notOkDoc.setDataType(wrongType));
     }
 
     @Test

@@ -1,9 +1,8 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/searchcore/proton/bucketdb/bucket_db_owner.h>
 #include <vespa/searchcore/proton/documentmetastore/documentmetastore.h>
 #include <vespa/searchcore/proton/matching/fakesearchcontext.h>
-#include <vespa/searchcore/proton/matching/match_context.h>
 #include <vespa/searchcore/proton/matching/match_params.h>
 #include <vespa/searchcore/proton/matching/match_tools.h>
 #include <vespa/searchcore/proton/matching/matcher.h>
@@ -28,7 +27,6 @@
 #include <vespa/searchlib/query/tree/stackdumpcreator.h>
 #include <vespa/searchlib/queryeval/isourceselector.h>
 #include <vespa/searchlib/test/mock_attribute_context.h>
-#include <vespa/searchcommon/attribute/iattributecontext.h>
 #include <vespa/document/base/globalid.h>
 #include <vespa/eval/eval/simple_value.h>
 #include <vespa/eval/eval/tensor_spec.h>
@@ -377,7 +375,8 @@ struct MyWorld {
     void verify_diversity_filter(const SearchRequest & req, bool expectDiverse) {
         Matcher::SP matcher = createMatcher();
         search::fef::Properties overrides;
-        auto mtf = matcher->create_match_tools_factory(req, searchContext, attributeContext, metaStore, overrides, ttb(), nullptr, true);
+        auto mtf = matcher->create_match_tools_factory(req, searchContext, attributeContext, metaStore, overrides,
+                                                       ttb(), nullptr, searchContext.getDocIdLimit(), true);
         auto diversity = mtf->createDiversifier(HeapSize::lookup(config));
         EXPECT_EQUAL(expectDiverse, static_cast<bool>(diversity));
     }
@@ -386,7 +385,8 @@ struct MyWorld {
         Matcher::SP matcher = createMatcher();
         SearchRequest::SP request = createSimpleRequest("f1", "spread");
         search::fef::Properties overrides;
-        auto mtf = matcher->create_match_tools_factory(*request, searchContext, attributeContext, metaStore, overrides, ttb(), nullptr, true);
+        auto mtf = matcher->create_match_tools_factory(*request, searchContext, attributeContext, metaStore, overrides,
+                                                       ttb(), nullptr, searchContext.getDocIdLimit(), true);
         MatchTools::UP match_tools = mtf->createMatchTools();
         match_tools->setup_first_phase(nullptr);
         return match_tools->match_data().get_termwise_limit();
@@ -1135,12 +1135,15 @@ TEST("require that docsum matcher can extract matching elements from single attr
     EXPECT_EQUAL(list[1], 3u);
 }
 
+using FMA = vespalib::FuzzyMatchingAlgorithm;
+
 struct AttributeBlueprintParamsFixture {
    BlueprintFactory factory;
    search::fef::test::IndexEnvironment index_env;
    RankSetup rank_setup;
    Properties rank_properties;
-   AttributeBlueprintParamsFixture(double lower_limit, double upper_limit, double target_hits_max_adjustment_factor)
+   AttributeBlueprintParamsFixture(double lower_limit, double upper_limit, double target_hits_max_adjustment_factor,
+                                   FMA fuzzy_matching_algorithm)
        : factory(),
          index_env(),
          rank_setup(factory, index_env),
@@ -1149,36 +1152,41 @@ struct AttributeBlueprintParamsFixture {
        rank_setup.set_global_filter_lower_limit(lower_limit);
        rank_setup.set_global_filter_upper_limit(upper_limit);
        rank_setup.set_target_hits_max_adjustment_factor(target_hits_max_adjustment_factor);
+       rank_setup.set_fuzzy_matching_algorithm(fuzzy_matching_algorithm);
    }
    void set_query_properties(vespalib::stringref lower_limit, vespalib::stringref upper_limit,
-                             vespalib::stringref target_hits_max_adjustment_factor) {
+                             vespalib::stringref target_hits_max_adjustment_factor,
+                             const vespalib::string & fuzzy_matching_algorithm) {
        rank_properties.add(GlobalFilterLowerLimit::NAME, lower_limit);
        rank_properties.add(GlobalFilterUpperLimit::NAME, upper_limit);
        rank_properties.add(TargetHitsMaxAdjustmentFactor::NAME, target_hits_max_adjustment_factor);
+       rank_properties.add(FuzzyAlgorithm::NAME, fuzzy_matching_algorithm);
    }
    AttributeBlueprintParams extract(uint32_t active_docids = 9, uint32_t docid_limit = 10) const {
        return MatchToolsFactory::extract_attribute_blueprint_params(rank_setup, rank_properties, active_docids, docid_limit);
    }
 };
 
-TEST_F("attribute blueprint params are extracted from rank profile", AttributeBlueprintParamsFixture(0.2, 0.8, 5.0))
+TEST_F("attribute blueprint params are extracted from rank profile", AttributeBlueprintParamsFixture(0.2, 0.8, 5.0, FMA::DfaTable))
 {
     auto params = f.extract();
     EXPECT_EQUAL(0.2, params.global_filter_lower_limit);
     EXPECT_EQUAL(0.8, params.global_filter_upper_limit);
     EXPECT_EQUAL(5.0, params.target_hits_max_adjustment_factor);
+    EXPECT_EQUAL(FMA::DfaTable, params.fuzzy_matching_algorithm);
 }
 
-TEST_F("attribute blueprint params are extracted from query", AttributeBlueprintParamsFixture(0.2, 0.8, 5.0))
+TEST_F("attribute blueprint params are extracted from query", AttributeBlueprintParamsFixture(0.2, 0.8, 5.0, FMA::DfaTable))
 {
-    f.set_query_properties("0.15", "0.75", "3.0");
+    f.set_query_properties("0.15", "0.75", "3.0", "dfa_explicit");
     auto params = f.extract();
     EXPECT_EQUAL(0.15, params.global_filter_lower_limit);
     EXPECT_EQUAL(0.75, params.global_filter_upper_limit);
     EXPECT_EQUAL(3.0, params.target_hits_max_adjustment_factor);
+    EXPECT_EQUAL(FMA::DfaExplicit, params.fuzzy_matching_algorithm);
 }
 
-TEST_F("global filter params are scaled with active hit ratio", AttributeBlueprintParamsFixture(0.2, 0.8, 5.0))
+TEST_F("global filter params are scaled with active hit ratio", AttributeBlueprintParamsFixture(0.2, 0.8, 5.0, FMA::DfaTable))
 {
     auto params = f.extract(5, 10);
     EXPECT_EQUAL(0.12, params.global_filter_lower_limit);

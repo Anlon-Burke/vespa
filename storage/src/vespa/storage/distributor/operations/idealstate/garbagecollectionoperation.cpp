@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "garbagecollectionoperation.h"
 #include <vespa/storage/distributor/cancelled_replicas_pruner.h>
@@ -23,7 +23,6 @@ GarbageCollectionOperation::GarbageCollectionOperation(const ClusterContext& clu
       _cluster_state_version_at_phase1_start_time(0),
       _remove_candidates(),
       _replica_info(),
-      _cancel_scope(),
       _max_documents_removed(0),
       _is_done(false)
 {}
@@ -148,10 +147,6 @@ GarbageCollectionOperation::onReceive(DistributorStripeMessageSender& sender,
             mark_operation_complete();
         }
     }
-}
-
-void GarbageCollectionOperation::on_cancel(DistributorStripeMessageSender&, const CancelScope& cancel_scope) {
-    _cancel_scope.merge(cancel_scope);
 }
 
 void GarbageCollectionOperation::update_replica_response_info_from_reply(uint16_t from_node, const api::RemoveLocationReply& reply) {

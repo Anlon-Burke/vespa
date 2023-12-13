@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -21,7 +21,10 @@ struct DenseJoinReducePlan {
     template <typename F> void execute(size_t lhs, size_t rhs, size_t res, const F &f) const {
         run_nested_loop(lhs, rhs, res, loop_cnt, lhs_stride, rhs_stride, res_stride, f);
     }
-    bool distinct_result() const;
+    template <typename F> void execute_distinct(size_t lhs, size_t rhs, const F &f) const {
+        run_nested_loop(lhs, rhs, loop_cnt, lhs_stride, rhs_stride, f);
+    }
+    bool is_distinct() const;
 };
 
 } // namespace

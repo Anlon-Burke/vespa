@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include <vespa/searchlib/queryeval/blueprint.h>
 #include <vespa/searchlib/queryeval/multisearch.h>
 #include <vespa/searchlib/fef/termfieldmatchdataarray.h>
@@ -58,10 +58,10 @@ public:
         if (!_isLeaf) {
             ok &= (_md == &md);
         }
-        for (size_t i = 0; i < _children.size(); ++i) {
-            MySearch *child = dynamic_cast<MySearch *>(_children[i].get());
-            ok &= (child != 0);
-            if (child != 0) {
+        for (const auto & my_search : _children) {
+            auto *child = dynamic_cast<MySearch *>(my_search.get());
+            ok &= (child != nullptr);
+            if (child != nullptr) {
                 ok &= child->verifyAndInferImpl(md);
             }
         }
@@ -80,8 +80,8 @@ public:
     }
 
     static bool verifyAndInfer(SearchIterator *search, MatchData &md) {
-        MySearch *self = dynamic_cast<MySearch *>(search);
-        if (self == 0) {
+        auto *self = dynamic_cast<MySearch *>(search);
+        if (self == nullptr) {
             return false;
         } else {
             return self->verifyAndInferImpl(md);

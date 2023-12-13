@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.jdisc.core;
 
 import com.yahoo.jdisc.Metric;
@@ -42,6 +42,9 @@ public class ContainerWatchdogTest {
         assertEquals(1, runMonitorStepAndGetStaleContainerCount(watchdog, metric));
 
         containerWithoutRetainedResources.release();
+        assertEquals(1, runMonitorStepAndGetStaleContainerCount(watchdog, metric));
+
+        containerWithoutRetainedResources.shutdown().close();
         assertEquals(0, runMonitorStepAndGetStaleContainerCount(watchdog, metric));
     }
 

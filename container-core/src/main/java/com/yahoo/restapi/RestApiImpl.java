@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.restapi;
 
 import ai.vespa.http.HttpURL;
@@ -21,6 +21,7 @@ import com.yahoo.security.tls.TransportSecurityUtils;
 
 import javax.net.ssl.SSLSession;
 import java.io.InputStream;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.security.Principal;
 import java.util.ArrayList;
@@ -76,7 +77,11 @@ class RestApiImpl implements RestApi {
                         resolvedRoute, requestContext, filters,
                         createFilterContextRecursive(resolvedRoute, requestContext, resolvedRoute.filters, null));
         if (filterContext != null) {
-            return filterContext.executeFirst();
+            try {
+                return filterContext.executeFirst();
+            } catch (RuntimeException e) {
+                return mapException(requestContext, e);
+            }
         } else {
             return dispatchToRoute(resolvedRoute, requestContext);
         }
@@ -487,7 +492,7 @@ class RestApiImpl implements RestApi {
         @Override public Optional<ConnectionAuthContext> connectionAuthContext() {
             return sslSession().flatMap(TransportSecurityUtils::getConnectionAuthContext);
         }
-
+        @Override public InetSocketAddress remoteAddress() { return (InetSocketAddress) request.getJDiscRequest().getRemoteAddress(); }
 
         private class PathParametersImpl implements RestApi.RequestContext.PathParameters {
             @Override
@@ -496,7 +501,7 @@ class RestApiImpl implements RestApi {
             }
             @Override public String getStringOrThrow(String name) {
                 return getString(name)
-                        .orElseThrow(() -> new RestApiException.BadRequest("Path parameter '" + name + "' is missing"));
+                        .orElseThrow(() -> new RestApiException.NotFound("Path parameter '" + name + "' is missing"));
             }
             @Override public HttpURL.Path getFullPath() {
                 return pathMatcher.getPath();
@@ -554,6 +559,7 @@ class RestApiImpl implements RestApi {
 
         @Override public RestApi.RequestContext requestContext() { return requestContext; }
         @Override public String route() { return route.name != null ? route.name : route.pathPattern; }
+        @Override public void setPrincipal(Principal p) { requestContext.request.getJDiscRequest().setUserPrincipal(p); }
 
         HttpResponse executeFirst() { return filter.filterRequest(this); }
 

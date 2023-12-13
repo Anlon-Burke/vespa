@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
@@ -49,7 +49,7 @@ private:
     using ValueModifier = typename B::BaseClass::ValueModifier;
     using generation_t = typename SingleValueNumericEnumAttribute<B>::generation_t;
 
-    using PostingParent::_postingList;
+    using PostingParent::_posting_store;
     using PostingParent::clearAllPostings;
     using PostingParent::handle_load_posting_lists;
     using PostingParent::handle_load_posting_lists_and_update_enum_store;

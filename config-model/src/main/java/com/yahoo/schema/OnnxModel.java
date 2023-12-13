@@ -1,6 +1,7 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.schema;
 
+import com.yahoo.config.model.api.OnnxModelOptions;
 import com.yahoo.searchlib.rankingexpression.Reference;
 import com.yahoo.tensor.TensorType;
 import com.yahoo.vespa.model.ml.OnnxModelInfo;
@@ -18,17 +19,16 @@ import java.util.Set;
  *
  * @author lesters
  */
-public class OnnxModel extends DistributableResource {
+public class OnnxModel extends DistributableResource implements Cloneable {
 
+    // Model information
     private OnnxModelInfo modelInfo = null;
     private final Map<String, String> inputMap = new HashMap<>();
     private final Map<String, String> outputMap = new HashMap<>();
     private final Set<String> initializers = new HashSet<>();
 
-    private String  statelessExecutionMode = null;
-    private Integer statelessInterOpThreads = null;
-    private Integer statelessIntraOpThreads = null;
-    private GpuDevice gpuDevice = null;
+    // Runtime options
+    private OnnxModelOptions onnxModelOptions = OnnxModelOptions.empty();
 
     public OnnxModel(String name) {
         super(name);
@@ -37,6 +37,15 @@ public class OnnxModel extends DistributableResource {
     public OnnxModel(String name, String fileName) {
         super(name, fileName);
         validate();
+    }
+
+    @Override
+    public OnnxModel clone() {
+        try {
+            return (OnnxModel) super.clone(); // Shallow clone is sufficient here
+        } catch (CloneNotSupportedException e) {
+            throw new RuntimeException("Clone not supported", e);
+        }
     }
 
     @Override
@@ -122,52 +131,46 @@ public class OnnxModel extends DistributableResource {
 
     public void setStatelessExecutionMode(String executionMode) {
         if ("parallel".equalsIgnoreCase(executionMode)) {
-            this.statelessExecutionMode = "parallel";
+            onnxModelOptions = onnxModelOptions.withExecutionMode("parallel");
         } else if ("sequential".equalsIgnoreCase(executionMode)) {
-            this.statelessExecutionMode = "sequential";
+            onnxModelOptions = onnxModelOptions.withExecutionMode("sequential");
         }
     }
 
     public Optional<String> getStatelessExecutionMode() {
-        return Optional.ofNullable(statelessExecutionMode);
+        return onnxModelOptions.executionMode();
     }
 
     public void setStatelessInterOpThreads(int interOpThreads) {
         if (interOpThreads >= 0) {
-            this.statelessInterOpThreads = interOpThreads;
+            onnxModelOptions = onnxModelOptions.withInterOpThreads(interOpThreads);
         }
     }
 
     public Optional<Integer> getStatelessInterOpThreads() {
-        return Optional.ofNullable(statelessInterOpThreads);
+        return onnxModelOptions.interOpThreads();
     }
 
     public void setStatelessIntraOpThreads(int intraOpThreads) {
         if (intraOpThreads >= 0) {
-            this.statelessIntraOpThreads = intraOpThreads;
-        }
-    }
-
-    public void setGpuDevice(int deviceNumber, boolean required) {
-        if (deviceNumber >= 0) {
-            this.gpuDevice = new GpuDevice(deviceNumber, required);
+            onnxModelOptions = onnxModelOptions.withIntraOpThreads(intraOpThreads);
         }
     }
 
     public Optional<Integer> getStatelessIntraOpThreads() {
-        return Optional.ofNullable(statelessIntraOpThreads);
+        return onnxModelOptions.intraOpThreads();
     }
 
-    public Optional<GpuDevice> getGpuDevice() {
-        return Optional.ofNullable(gpuDevice);
-    }
-
-    public record GpuDevice(int deviceNumber, boolean required) {
-
-        public GpuDevice {
-            if (deviceNumber < 0) throw new IllegalArgumentException("deviceNumber cannot be negative, got " + deviceNumber);
+    public void setGpuDevice(int deviceNumber, boolean required) {
+        if (deviceNumber >= 0) {
+            onnxModelOptions = onnxModelOptions.withGpuDevice(new OnnxModelOptions.GpuDevice(deviceNumber, required));
         }
-
     }
+
+    public Optional<OnnxModelOptions.GpuDevice> getGpuDevice() {
+        return onnxModelOptions.gpuDevice();
+    }
+
+    public OnnxModelOptions onnxModelOptions() { return onnxModelOptions; }
 
 }

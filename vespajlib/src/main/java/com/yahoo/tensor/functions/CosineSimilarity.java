@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.tensor.functions;
 
 import com.yahoo.tensor.evaluation.EvaluationContext;
@@ -8,7 +8,6 @@ import com.yahoo.tensor.Tensor;
 import com.yahoo.tensor.TensorType;
 import com.yahoo.tensor.TensorType.Dimension;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -51,7 +50,7 @@ public class CosineSimilarity<NAMETYPE extends Name> extends TensorFunction<NAME
         if (d1.isEmpty() || d2.isEmpty()
             || d1.get().type() != Dimension.Type.indexedBound
             || d2.get().type() != Dimension.Type.indexedBound
-            || d1.get().size().get() != d2.get().size().get())
+            || ! d1.get().size().equals(d2.get().size()))
         {
             throw new IllegalArgumentException("cosine_similarity expects both arguments to have the '"
                                                + dimension + "' dimension with same size, but input types were "

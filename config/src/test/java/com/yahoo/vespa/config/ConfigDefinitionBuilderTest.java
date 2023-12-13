@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config;
 
 import com.yahoo.config.codegen.CNode;
@@ -77,9 +77,18 @@ public class ConfigDefinitionBuilderTest {
         assertThat(def.getFileDefs().size(), is(1));
         assertNotNull(def.getFileDefs().get("fileVal"));
 
-        assertThat(def.getArrayDefs().size(), is(9));
+        assertThat(def.getPathDefs().size(), is(1));
+        assertNotNull(def.getPathDefs().get("pathVal"));
+        assertThat(def.getOptionalPathDefs().size(), is(1));
+        assertNotNull(def.getOptionalPathDefs().get("optionalPathVal"));
+
+        // An array does not have to have any elements set
+        assertThat(def.getArrayDefs().size(), is(10));
         assertNotNull(def.getArrayDefs().get("boolarr"));
         assertThat(def.getArrayDefs().get("boolarr").getTypeSpec().getType(), is("bool"));
+
+        assertNotNull(def.getArrayDefs().get("boolarrEmpty"));
+        assertThat(def.getArrayDefs().get("boolarrEmpty").getTypeSpec().getType(), is("bool"));
 
         assertNotNull(def.getArrayDefs().get("enumarr"));
         assertThat(def.getArrayDefs().get("enumarr").getTypeSpec().getType(), is("enum"));

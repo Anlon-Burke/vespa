@@ -1,10 +1,9 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.persistence;
 
 import ai.vespa.http.DomainName;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
-import com.google.common.util.concurrent.UncheckedExecutionException;
 import com.yahoo.collections.Pair;
 import com.yahoo.component.Version;
 import com.yahoo.concurrent.UncheckedTimeoutException;
@@ -42,13 +41,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
-import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static com.yahoo.stream.CustomCollectors.toLinkedMap;
 import static java.util.stream.Collectors.collectingAndThen;
@@ -84,6 +83,8 @@ public class CuratorDb {
     private final CachingCurator db;
     private final Clock clock;
     private final CuratorCounter provisionIndexCounter;
+    private final CuratorCounter loadBalancerPoolHead;
+    private final CuratorCounter loadBalancerPoolTail;
 
     /** Simple cache for deserialized node objects, based on their ZK node version. */
     private final Cache<Path, Pair<Integer, Node>> cachedNodes = CacheBuilder.newBuilder().recordStats().build();
@@ -93,6 +94,8 @@ public class CuratorDb {
         this.db = new CachingCurator(curator, root, useCache);
         this.clock = clock;
         this.provisionIndexCounter = new CuratorCounter(curator, root.append("provisionIndexCounter"));
+        this.loadBalancerPoolHead = new CuratorCounter(curator, root.append("loadBalancerPoolHead"));
+        this.loadBalancerPoolTail = new CuratorCounter(curator, root.append("loadBalancerPoolTail"));
         initZK();
     }
 
@@ -111,6 +114,8 @@ public class CuratorDb {
         db.create(archiveUrisPath);
         db.create(loadBalancersPath);
         provisionIndexCounter.initialize(100);
+        loadBalancerPoolHead.initialize(1);
+        loadBalancerPoolTail.initialize(1);
     }
 
     /** Adds a set of nodes. Rollbacks/fails transaction if any node is not in the expected state. */
@@ -222,8 +227,9 @@ public class CuratorDb {
                                     toState.isAllocated() ? node.allocation() : Optional.empty(),
                                     node.history().recordStateTransition(node.state(), toState, agent, clock.instant()),
                                     node.type(), node.reports(), node.modelName(), node.reservedTo(),
-                                    node.exclusiveToApplicationId(), node.hostTTL(), node.hostEmptyAt(), node.exclusiveToClusterType(),
-                                    node.switchHostname(), node.trustedCertificates(), node.cloudAccount(), node.wireguardPubKey());
+                                    node.exclusiveToApplicationId(), node.provisionedForApplicationId(), node.hostTTL(), node.hostEmptyAt(),
+                                    node.exclusiveToClusterType(), node.switchHostname(), node.trustedCertificates(),
+                                    node.cloudAccount(), node.wireguardPubKey());
             curatorTransaction.add(createOrSet(nodePath(newNode), nodeSerializer.toJson(newNode)));
             writtenNodes.add(newNode);
         }
@@ -457,7 +463,12 @@ public class CuratorDb {
         transaction.onCommitted(() -> {
             for (var lb : loadBalancers) {
                 if (lb.state() == fromState) continue;
-                Optional<String> target = lb.instance().flatMap(instance -> instance.hostname().map(DomainName::value).or(instance::ipAddress));
+                Optional<String> target = lb.instance()
+                                            .flatMap(instance -> instance.hostname()
+                                                                         .map(DomainName::value)
+                                                                         .or(() -> Optional.of(Stream.concat(instance.ip4Address().stream(),
+                                                                                                             instance.ip6Address().stream())
+                                                                                                     .collect(Collectors.joining(",")))));
                 if (fromState == null) {
                     log.log(Level.INFO, () -> "Creating " + lb.id() + target.map(t -> " (" +  t + ")").orElse("") +
                                               " in " + lb.state());
@@ -497,6 +508,22 @@ public class CuratorDb {
         return IntStream.range(0, count)
                         .mapToObj(i -> firstIndex + i)
                         .toList();
+    }
+
+    public long readLoadBalancerPoolHead() {
+        return loadBalancerPoolHead.get();
+    }
+
+    public long incrementLoadBalancerPoolHead() {
+        return loadBalancerPoolHead.add(1);
+    }
+
+    public long readLoadBalancerPoolTail() {
+        return loadBalancerPoolTail.get();
+    }
+
+    public long incrementLoadBalancerPoolTail() {
+        return loadBalancerPoolTail.add(1);
     }
 
     public CacheStats cacheStats() {

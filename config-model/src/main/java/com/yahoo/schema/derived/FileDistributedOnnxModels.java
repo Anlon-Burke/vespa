@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.schema.derived;
 
 import com.yahoo.config.application.api.FileRegistry;
@@ -33,6 +33,16 @@ public class FileDistributedOnnxModels extends Derived implements OnnxModelsConf
             distributableModels.put(model.getName(), model);
         }
         this.models = Collections.unmodifiableMap(distributableModels);
+    }
+
+    private FileDistributedOnnxModels(Collection<OnnxModel> models) {
+        Map<String, OnnxModel> distributableModels = models.stream()
+                .collect(LinkedHashMap::new, (m, v) -> m.put(v.getName(), v.clone()), LinkedHashMap::putAll);
+        this.models = Collections.unmodifiableMap(distributableModels);
+    }
+
+    public FileDistributedOnnxModels clone() {
+        return new FileDistributedOnnxModels(models.values());
     }
 
     public Map<String, OnnxModel> asMap() { return models; }

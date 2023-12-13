@@ -18,6 +18,10 @@
 
 package org.apache.zookeeper.server.quorum;
 
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.util.Objects;
+import java.util.stream.Collectors;
 import org.apache.zookeeper.ZooDefs.OpCode;
 import org.apache.zookeeper.jmx.MBeanRegistry;
 import org.apache.zookeeper.server.DataTreeBean;
@@ -30,11 +34,6 @@ import org.apache.zookeeper.server.ZKDatabase;
 import org.apache.zookeeper.server.ZooKeeperServer;
 import org.apache.zookeeper.server.ZooKeeperServerBean;
 import org.apache.zookeeper.server.persistence.FileTxnSnapLog;
-
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.util.Objects;
-import java.util.stream.Collectors;
 
 /**
  * A ZooKeeperServer which comes into play when peer is partitioned from the
@@ -89,7 +88,7 @@ public class ReadOnlyZooKeeperServer extends ZooKeeperServer {
     public void createSessionTracker() {
         sessionTracker = new LearnerSessionTracker(
                 this, getZKDatabase().getSessionWithTimeOuts(),
-                this.tickTime, self.getId(), self.areLocalSessionsEnabled(),
+                this.tickTime, self.getMyId(), self.areLocalSessionsEnabled(),
                 getZooKeeperServerListener());
     }
 
@@ -187,16 +186,14 @@ public class ReadOnlyZooKeeperServer extends ZooKeeperServer {
      */
     @Override
     public long getServerId() {
-        return self.getId();
+        return self.getMyId();
     }
 
     @Override
     public synchronized void shutdown(boolean fullyShutDown) {
         if (!canShutdown()) {
-            super.shutdown(fullyShutDown);
             LOG.debug("ZooKeeper server is not running, so not proceeding to shutdown!");
-        }
-        else {
+        } else {
             shutdown = true;
             unregisterJMX(this);
 

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.*;
@@ -46,8 +46,8 @@ public class GuardTestCase {
     public void requireThatExpressionCanBeVerified() {
         Expression exp = new GuardExpression(SimpleExpression.newConversion(DataType.INT, DataType.STRING));
         assertVerify(DataType.INT, exp, DataType.STRING);
-        assertVerifyThrows(null, exp, "Expected int input, got null.");
-        assertVerifyThrows(DataType.STRING, exp, "Expected int input, got string.");
+        assertVerifyThrows(null, exp, "Expected int input, but no input is specified");
+        assertVerifyThrows(DataType.STRING, exp, "Expected int input, got string");
     }
 
     @Test

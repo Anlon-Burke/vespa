@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "protocolserialization7.h"
 #include "serializationhelper.h"
@@ -48,12 +48,6 @@ ProtocolSerialization::encode(const api::StorageMessage& msg) const
         break;
     case api::MessageType::REMOVE_REPLY_ID:
         onEncode(buf, static_cast<const api::RemoveReply&>(msg));
-        break;
-    case api::MessageType::REVERT_ID:
-        onEncode(buf, static_cast<const api::RevertCommand&>(msg));
-        break;
-    case api::MessageType::REVERT_REPLY_ID:
-        onEncode(buf, static_cast<const api::RevertReply&>(msg));
         break;
     case api::MessageType::DELETEBUCKET_ID:
         onEncode(buf, static_cast<const api::DeleteBucketCommand&>(msg));
@@ -140,9 +134,8 @@ ProtocolSerialization::encode(const api::StorageMessage& msg) const
         onEncode(buf, static_cast<const api::SetBucketStateReply&>(msg));
         break;
     default:
-        LOG(error, "Trying to encode unhandled type %s",
-            msg.getType().toString().c_str());
-        break;
+        LOG(error, "Trying to encode unhandled type %s", msg.getType().toString().c_str());
+        abort();
     }
 
     mbus::Blob retVal(buf.position());
@@ -174,8 +167,6 @@ ProtocolSerialization::decodeCommand(mbus::BlobRef data) const
         cmd = onDecodeGetCommand(buf); break;
     case api::MessageType::REMOVE_ID:
         cmd = onDecodeRemoveCommand(buf); break;
-    case api::MessageType::REVERT_ID:
-        cmd = onDecodeRevertCommand(buf); break;
     case api::MessageType::CREATEBUCKET_ID:
         cmd = onDecodeCreateBucketCommand(buf); break;
     case api::MessageType::DELETEBUCKET_ID:
@@ -238,8 +229,6 @@ ProtocolSerialization::decodeReply(mbus::BlobRef data, const api::StorageCommand
         reply = onDecodeGetReply(cmd, buf); break;
     case api::MessageType::REMOVE_REPLY_ID:
         reply = onDecodeRemoveReply(cmd, buf); break;
-    case api::MessageType::REVERT_REPLY_ID:
-        reply = onDecodeRevertReply(cmd, buf); break;
     case api::MessageType::CREATEBUCKET_REPLY_ID:
         reply = onDecodeCreateBucketReply(cmd, buf); break;
     case api::MessageType::DELETEBUCKET_REPLY_ID:

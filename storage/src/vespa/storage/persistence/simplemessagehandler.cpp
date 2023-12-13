@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "simplemessagehandler.h"
 #include "persistenceutil.h"
@@ -98,18 +98,6 @@ SimpleMessageHandler::handleGet(api::GetCommand& cmd, MessageTracker::UP tracker
                                                           false, result.is_tombstone(), false));
     }
 
-    return tracker;
-}
-
-MessageTracker::UP
-SimpleMessageHandler::handleRevert(api::RevertCommand& cmd, MessageTracker::UP tracker) const
-{
-    tracker->setMetric(_env._metrics.revert);
-    spi::Bucket b = spi::Bucket(cmd.getBucket());
-    const std::vector<api::Timestamp> & tokens = cmd.getRevertTokens();
-    for (const api::Timestamp & token : tokens) {
-        spi::Result result = _spi.removeEntry(b, spi::Timestamp(token));
-    }
     return tracker;
 }
 

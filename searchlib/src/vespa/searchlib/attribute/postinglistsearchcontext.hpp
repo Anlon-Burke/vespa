@@ -1,15 +1,14 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
 #include "postinglistsearchcontext.h"
-#include "dociditerator.h"
+#include "array_iterator.h"
 #include "attributeiterators.h"
 #include "diversity.h"
 #include "postingstore.hpp"
 #include "posting_list_traverser.h"
 #include <vespa/searchlib/queryeval/emptysearch.h>
-#include <vespa/searchlib/queryeval/executeinfo.h>
 #include <vespa/searchlib/common/bitvectoriterator.h>
 #include <vespa/searchlib/common/growablebitvector.h>
 
@@ -22,9 +21,9 @@ namespace search::attribute {
 template <typename DataT>
 PostingListSearchContextT<DataT>::
 PostingListSearchContextT(const IEnumStoreDictionary& dictionary, uint32_t docIdLimit, uint64_t numValues, bool hasWeight,
-                          const PostingList &postingList, bool useBitVector, const ISearchContext &searchContext)
+                          const PostingStore& posting_store, bool useBitVector, const ISearchContext &searchContext)
     : PostingListSearchContext(dictionary, dictionary.get_has_btree_dictionary(), docIdLimit, numValues, hasWeight, useBitVector, searchContext),
-      _postingList(postingList),
+      _posting_store(posting_store),
       _merger(docIdLimit)
 {
 }
@@ -40,16 +39,16 @@ PostingListSearchContextT<DataT>::lookupSingle()
     PostingListSearchContext::lookupSingle();
     if (!_pidx.valid())
         return;
-    uint32_t typeId = _postingList.getTypeId(_pidx);
-    if (!_postingList.isSmallArray(typeId)) {
-        if (_postingList.isBitVector(typeId)) {
-            const BitVectorEntry *bve = _postingList.getBitVectorEntry(_pidx);
+    uint32_t typeId = _posting_store.getTypeId(_pidx);
+    if (!_posting_store.isSmallArray(typeId)) {
+        if (_posting_store.isBitVector(typeId)) {
+            const BitVectorEntry *bve = _posting_store.getBitVectorEntry(_pidx);
             const GrowableBitVector *bv = bve->_bv.get();
             _bv = &bv->reader();
             _pidx = bve->_tree;
         }
         if (_pidx.valid()) {
-            auto frozenView = _postingList.getTreeEntry(_pidx)->getFrozenView(_postingList.getAllocator());
+            auto frozenView = _posting_store.getTreeEntry(_pidx)->getFrozenView(_posting_store.getAllocator());
             _frozenRoot = frozenView.getRoot();
             if (!_frozenRoot.valid()) {
                 _pidx = vespalib::datastore::EntryRef();
@@ -58,56 +57,61 @@ PostingListSearchContextT<DataT>::lookupSingle()
     }
 }
 
-
-template <typename DataT>
-size_t
-PostingListSearchContextT<DataT>::countHits() const
-{
-    size_t sum(0);
-    for (auto it(_lowerDictItr); it != _upperDictItr; ++it) {
-        if (useThis(it)) {
-            sum += _postingList.frozenSize(it.getData().load_acquire());
-        }
-    }
-    return sum;
-}
-
-
 template <typename DataT>
 void
 PostingListSearchContextT<DataT>::fillArray()
 {
     for (auto it(_lowerDictItr); it != _upperDictItr; ++it) {
-        if (useThis(it)) {
-            _merger.addToArray(PostingListTraverser<PostingList>(_postingList,
-                                                                 it.getData().load_acquire()));
-        }
+        _merger.addToArray(PostingListTraverser<PostingStore>(_posting_store, it.getData().load_acquire()));
     }
     _merger.merge();
 }
-
 
 template <typename DataT>
 void
 PostingListSearchContextT<DataT>::fillBitVector()
 {
     for (auto it(_lowerDictItr); it != _upperDictItr; ++it) {
-        if (useThis(it)) {
-            _merger.addToBitVector(PostingListTraverser<PostingList>(_postingList,
-                                                                     it.getData().load_acquire()));
-        }
+        _merger.addToBitVector(PostingListTraverser<PostingStore>(_posting_store, it.getData().load_acquire()));
     }
 }
-
 
 template <typename DataT>
 void
 PostingListSearchContextT<DataT>::fetchPostings(const queryeval::ExecuteInfo & execInfo)
 {
-    if (!_merger.merge_done() && _uniqueValues >= 2u) {
-        if (execInfo.isStrict() && !fallbackToFiltering()) {
-            size_t sum(countHits());
-            if (sum < _docIdLimit / 64) {
+    // The following constant is derived after running parts of
+    // the range search performance test with 10M documents on an Apple M1 Pro with 32 GB memory.
+    // This code was compiled with two different strategies:
+    //   1) 'always array merging'
+    //   2) 'always bitvector merging'
+    // https://github.com/vespa-engine/system-test/tree/master/tests/performance/range_search
+    //
+    // The following 33 test cases were used:
+    // range_hits_ratio=[1, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50], values_in_range=[1, 100, 10000], fast_search=true, filter_hits_ratio=0.
+    //
+    // The baseline performance is given by values_in_range=1, as this uses a single posting list.
+    // The total cost of posting list merging is the difference in avg query latency (ms) between the baseline and the case in question.
+    // Based on perf analysis we observe that the cost of iterating the posting list entries and inserting them into
+    // either an array or bitvector is equal.
+    // The differences however are:
+    //  1) Merging sorted array segments (one per posting list) into one large sorted array.
+    //  2) Allocating the memory needed for the bitvector.
+    //
+    // The cost of the two strategies is modeled as:
+    //  1) estimated_hits_in_range * X
+    //  2) docIdLimit * Y
+    //
+    // Based on the performance results we calculate average values for X and Y:
+    //  1) X = Array merging cost per hit = 32 ns
+    //  2) Y = Memory allocation cost per document = 0.08 ns
+    //
+    // The threshold for when to use array merging is therefore 0.0025 (0.08 / 32).
+    constexpr float threshold_for_using_array = 0.0025;
+    if (!_merger.merge_done() && _uniqueValues >= 2u && this->_dictionary.get_has_btree_dictionary()) {
+        if (execInfo.is_strict() || use_posting_lists_when_non_strict(execInfo)) {
+            size_t sum = estimated_hits_in_range();
+            if (sum < (_docIdLimit * threshold_for_using_array)) {
                 _merger.reserveArray(_uniqueValues, sum);
                 fillArray();
             } else {
@@ -128,10 +132,10 @@ PostingListSearchContextT<DataT>::diversify(bool forward, size_t wanted_hits, co
     if (!_merger.merge_done()) {
         _merger.reserveArray(128, wanted_hits);
         if (_uniqueValues == 1u && !_lowerDictItr.valid() && _pidx.valid()) {
-            diversity::diversify_single(_pidx, _postingList, wanted_hits, diversity_attr,
+            diversity::diversify_single(_pidx, _posting_store, wanted_hits, diversity_attr,
                                         max_per_group, cutoff_groups, cutoff_strict, _merger.getWritableArray(), _merger.getWritableStartPos());
         } else {
-            diversity::diversify(forward, _lowerDictItr, _upperDictItr, _postingList, wanted_hits, diversity_attr,
+            diversity::diversify(forward, _lowerDictItr, _upperDictItr, _posting_store, wanted_hits, diversity_attr,
                                  max_per_group, cutoff_groups, cutoff_strict, _merger.getWritableArray(), _merger.getWritableStartPos());
         }
         _merger.merge();
@@ -150,11 +154,11 @@ createPostingIterator(fef::TermFieldMatchData *matchData, bool strict)
     if (_merger.hasArray() || _merger.hasBitVector()) { // synthetic results are available
         if (!_merger.emptyArray()) {
             assert(_merger.hasArray());
-            using DocIt = DocIdIterator<Posting>;
+            using DocIt = ArrayIterator<Posting>;
             DocIt postings;
             vespalib::ConstArrayRef<Posting> array = _merger.getArray();
             postings.set(&array[0], &array[array.size()]);
-            if (_postingList.isFilter()) {
+            if (_posting_store.isFilter()) {
                 return std::make_unique<FilterAttributePostingListIteratorT<DocIt>>(_baseSearchCtx, matchData, postings);
             } else {
                 return std::make_unique<AttributePostingListIteratorT<DocIt>>(_baseSearchCtx, _hasWeight, matchData, postings);
@@ -174,31 +178,30 @@ createPostingIterator(fef::TermFieldMatchData *matchData, bool strict)
         if (!_pidx.valid()) {
             return std::make_unique<EmptySearch>();
         }
-        const PostingList &postingList = _postingList;
         if (!_frozenRoot.valid()) {
-            uint32_t clusterSize = _postingList.getClusterSize(_pidx);
+            uint32_t clusterSize = _posting_store.getClusterSize(_pidx);
             assert(clusterSize != 0);
             using DocIt = DocIdMinMaxIterator<Posting>;
             DocIt postings;
-            const Posting *array = postingList.getKeyDataEntry(_pidx, clusterSize);
+            const Posting *array = _posting_store.getKeyDataEntry(_pidx, clusterSize);
             postings.set(array, array + clusterSize);
-            if (postingList.isFilter()) {
+            if (_posting_store.isFilter()) {
                 return std::make_unique<FilterAttributePostingListIteratorT<DocIt>>(_baseSearchCtx, matchData, postings);
             } else {
                 return std::make_unique<AttributePostingListIteratorT<DocIt>>(_baseSearchCtx, _hasWeight, matchData, postings);
             }
         }
-        typename PostingList::BTreeType::FrozenView frozen(_frozenRoot, postingList.getAllocator());
+        typename PostingStore::BTreeType::FrozenView frozen(_frozenRoot, _posting_store.getAllocator());
 
-        using DocIt = typename PostingList::ConstIterator;
-        if (_postingList.isFilter()) {
+        using DocIt = typename PostingStore::ConstIterator;
+        if (_posting_store.isFilter()) {
             return std::make_unique<FilterAttributePostingListIteratorT<DocIt>>(_baseSearchCtx, matchData, frozen.getRoot(), frozen.getAllocator());
         } else {
             return std::make_unique<AttributePostingListIteratorT<DocIt>> (_baseSearchCtx, _hasWeight, matchData, frozen.getRoot(), frozen.getAllocator());
         }
     }
     // returning nullptr will trigger fallback to filter iterator
-    return SearchIterator::UP();
+    return {};
 }
 
 
@@ -214,9 +217,9 @@ PostingListSearchContextT<DataT>::singleHits() const
         return 0u;
     }
     if (!_frozenRoot.valid()) {
-        return _postingList.getClusterSize(_pidx);
+        return _posting_store.getClusterSize(_pidx);
     }
-    typename PostingList::BTreeType::FrozenView frozenView(_frozenRoot, _postingList.getAllocator());
+    typename PostingStore::BTreeType::FrozenView frozenView(_frozenRoot, _posting_store.getAllocator());
     return frozenView.size();
 }
 
@@ -224,83 +227,149 @@ template <typename DataT>
 unsigned int
 PostingListSearchContextT<DataT>::approximateHits() const
 {
-    unsigned int numHits = 0;
+    size_t numHits = 0;
     if (_uniqueValues == 0u) {
     } else if (_uniqueValues == 1u) {
         numHits = singleHits();
+    } else if (_dictionary.get_has_btree_dictionary()) {
+        numHits = estimated_hits_in_range();
     } else {
-        if (this->fallbackToFiltering()) {
-            numHits = _docIdLimit;
-        } else if (_uniqueValues > MIN_UNIQUE_VALUES_BEFORE_APPROXIMATION) {
-            if ((_uniqueValues * MIN_UNIQUE_VALUES_TO_NUMDOCS_RATIO_BEFORE_APPROXIMATION > static_cast<int>(_docIdLimit)) ||
-                (this->calculateApproxNumHits() * MIN_APPROXHITS_TO_NUMDOCS_RATIO_BEFORE_APPROXIMATION > _docIdLimit) ||
-                (_uniqueValues > MIN_UNIQUE_VALUES_BEFORE_APPROXIMATION*10))
-            {
-                numHits = this->calculateApproxNumHits();
-            } else {
-                // XXX: Unsafe
-                numHits = countHits();
-            }
-        } else {
-            // XXX: Unsafe
-            numHits = countHits();
-        }
+        numHits = _docIdLimit;
     }
-    return numHits;
+    return std::min(numHits, size_t(std::numeric_limits<uint32_t>::max()));
 }
-
 
 template <typename DataT>
 void
-PostingListSearchContextT<DataT>::applyRangeLimit(int rangeLimit)
+PostingListSearchContextT<DataT>::applyRangeLimit(long rangeLimit)
 {
+    long n = 0;
+    size_t count = 0;
     if (rangeLimit > 0) {
         DictionaryConstIterator middle = _lowerDictItr;
-        for (int n(0); (n < rangeLimit) && (middle != _upperDictItr); ++middle) {
-            n += _postingList.frozenSize(middle.getData().load_acquire());
+        for (; (n < rangeLimit) && (count < max_posting_lists_to_count) && (middle != _upperDictItr); ++middle, count++) {
+            n += _posting_store.frozenSize(middle.getData().load_acquire());
         }
-        _upperDictItr = middle;
-        _uniqueValues = _upperDictItr - _lowerDictItr;
+        if (middle == _upperDictItr) {
+            // All there is
+        } else if (n >= rangeLimit) {
+            _upperDictItr = middle;
+        } else {
+            size_t offset = ((rangeLimit - n) * count)/n;
+            middle += offset;
+            if (middle.valid() && ((_upperDictItr - middle) > 0)) {
+                _upperDictItr = middle;
+            }
+        }
     } else if ((rangeLimit < 0) && (_lowerDictItr != _upperDictItr)) {
         rangeLimit = -rangeLimit;
         DictionaryConstIterator middle = _upperDictItr;
-        for (int n(0); (n < rangeLimit) && (middle != _lowerDictItr); ) {
+        for (; (n < rangeLimit) && (count < max_posting_lists_to_count) && (middle != _lowerDictItr); count++) {
             --middle;
-            n += _postingList.frozenSize(middle.getData().load_acquire());
+            n += _posting_store.frozenSize(middle.getData().load_acquire());
         }
-        _lowerDictItr = middle;
-        _uniqueValues = _upperDictItr - _lowerDictItr;
+        if (middle == _lowerDictItr) {
+            // All there is
+        } else if (n >= rangeLimit) {
+            _lowerDictItr = middle;
+        } else {
+            size_t offset = ((rangeLimit - n) * count)/n;
+            middle -= offset;
+            if (middle.valid() && ((middle - _lowerDictItr) > 0)) {
+                _lowerDictItr = middle;
+            }
+        }
     }
+    _uniqueValues = std::abs(_upperDictItr - _lowerDictItr);
 }
 
 
 template <typename DataT>
 PostingListFoldedSearchContextT<DataT>::
 PostingListFoldedSearchContextT(const IEnumStoreDictionary& dictionary, uint32_t docIdLimit, uint64_t numValues,
-                                bool hasWeight, const PostingList &postingList,
+                                bool hasWeight, const PostingStore& posting_store,
                                 bool useBitVector, const ISearchContext &searchContext)
-    : Parent(dictionary, docIdLimit, numValues, hasWeight, postingList, useBitVector, searchContext)
+    : Parent(dictionary, docIdLimit, numValues, hasWeight, posting_store, useBitVector, searchContext),
+      _resume_scan_itr(),
+      _posting_indexes()
 {
 }
 
+template <typename DataT>
+PostingListFoldedSearchContextT<DataT>::~PostingListFoldedSearchContextT() = default;
 
 template <typename DataT>
-unsigned int
-PostingListFoldedSearchContextT<DataT>::approximateHits() const
+size_t
+PostingListFoldedSearchContextT<DataT>::calc_estimated_hits_in_range() const
 {
-    unsigned int numHits = 0;
-    if (_uniqueValues == 0u) {
-    } else if (_uniqueValues == 1u) {
-        numHits = singleHits();
-    } else {
-        if (this->fallbackToFiltering()) {
-            numHits = _docIdLimit;
-        } else {
-            // XXX: Unsafe
-            numHits = countHits();
+    size_t sum = 0;
+    bool overflow = false;
+    for (auto it(_lowerDictItr); it != _upperDictItr;) {
+        if (use_dictionary_entry(it)) {
+            auto pidx = it.getData().load_acquire();
+            if (pidx.valid()) {
+                sum += _posting_store.frozenSize(pidx);
+                if (!overflow) {
+                    if (_posting_indexes.size() < MAX_POSTING_INDEXES_SIZE) {
+                        _posting_indexes.emplace_back(pidx);
+                    } else {
+                        overflow = true;
+                        _resume_scan_itr = it;
+                    }
+                }
+            }
+            ++it;
         }
     }
-    return numHits;
+    return sum;
+}
+
+template <typename DataT>
+template <bool fill_array>
+void
+PostingListFoldedSearchContextT<DataT>::fill_array_or_bitvector_helper(EntryRef pidx)
+{
+    if constexpr (fill_array) {
+        _merger.addToArray(PostingListTraverser<PostingStore>(_posting_store, pidx));
+    } else {
+        _merger.addToBitVector(PostingListTraverser<PostingStore>(_posting_store, pidx));
+    }
+}
+
+template <typename DataT>
+template <bool fill_array>
+void
+PostingListFoldedSearchContextT<DataT>::fill_array_or_bitvector()
+{
+    for (auto pidx : _posting_indexes) {
+        fill_array_or_bitvector_helper<fill_array>(pidx);
+    }
+    if (_resume_scan_itr.valid()) {
+        for (auto it(_resume_scan_itr); it != _upperDictItr;) {
+            if (use_dictionary_entry(it)) {
+                auto pidx = it.getData().load_acquire();
+                if (pidx.valid()) {
+                    fill_array_or_bitvector_helper<fill_array>(pidx);
+                }
+                ++it;
+            }
+        }
+    }
+    _merger.merge();
+}
+
+template <typename DataT>
+void
+PostingListFoldedSearchContextT<DataT>::fillArray()
+{
+    fill_array_or_bitvector<true>();
+}
+
+template <typename DataT>
+void
+PostingListFoldedSearchContextT<DataT>::fillBitVector()
+{
+    fill_array_or_bitvector<false>();
 }
 
 }

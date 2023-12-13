@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container.xml;
 
 import com.yahoo.component.ComponentId;
@@ -217,6 +217,26 @@ public class SearchBuilderTest extends ContainerModelBuilderTestBase {
         assertEquals(100, config.maxThreads());
         assertEquals(80, config.minThreads());
         assertEquals(10, config.queueSize());
+    }
+
+    @Test
+    void threadpool_configuration_allow_new_syntax() {
+        Element clusterElem = DomBuilderTest.parse(
+                "<container id='default' version='1.0'>",
+                "  <search>",
+                "    <threadpool>",
+                "      <threads boost=\"10.2\">0.4</threads>",
+                "      <queue>50</queue>",
+                "    </threadpool>",
+                "  </search>",
+                nodesXml,
+                "</container>");
+        createModel(root, clusterElem);
+        ContainerThreadpoolConfig config = root.getConfig(
+                ContainerThreadpoolConfig.class, "default/component/" + SearchHandler.HANDLER_CLASSNAME + "/threadpool@search-handler");
+        assertEquals(-10, config.maxThreads());
+        assertEquals(-1, config.minThreads());
+        assertEquals(-50, config.queueSize());
     }
 
     @Test

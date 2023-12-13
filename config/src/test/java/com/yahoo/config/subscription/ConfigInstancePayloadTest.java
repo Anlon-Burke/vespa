@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.subscription;
 
 import com.yahoo.config.ConfigInstance;
@@ -13,6 +13,7 @@ import org.junit.Test;
 import java.io.File;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 import static com.yahoo.foo.FunctionTestConfig.*;
 import static org.junit.Assert.assertNotNull;
@@ -46,6 +47,7 @@ public class ConfigInstancePayloadTest {
                 refwithdef(":parent:").
                 fileVal("etc").
                 pathVal(FileReference.mockFileReferenceForUnitTesting(new File("src/test/resources/configs/def-files/function-test.def"))).
+                optionalPathVal(Optional.of(FileReference.mockFileReferenceForUnitTesting(new File("src/test/resources/configs/def-files/function-test.def")))).
                 boolarr(false).
                 longarr(9223372036854775807L).
                 longarr(-9223372036854775808L).

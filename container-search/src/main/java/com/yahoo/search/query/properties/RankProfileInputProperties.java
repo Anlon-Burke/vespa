@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.query.properties;
 
 import com.yahoo.api.annotations.Beta;
@@ -38,17 +38,17 @@ public class RankProfileInputProperties extends Properties {
     @Override
     public void set(CompoundName name, Object value, Map<String, String> context) {
         if (RankFeatures.isFeatureName(name.toString())) {
-            TensorType expectedType = typeOf(name);
-            if (expectedType != null) {
-                try {
+            try {
+                TensorType expectedType = typeOf(name);
+                if (expectedType != null) {
                     value = tensorConverter.convertTo(expectedType,
                                                       name.last(),
                                                       value,
                                                       query.getModel().getLanguage());
                 }
-                catch (IllegalArgumentException e) {
-                    throw new IllegalInputException("Could not set '" + name + "' to '" + value + "'", e);
-                }
+            }
+            catch (IllegalArgumentException e) {
+                throw new IllegalInputException("Could not set '" + name + "' to '" + value + "'", e);
             }
         }
         super.set(name, value, context);

@@ -1,11 +1,10 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config;
 
 import com.yahoo.yolean.Exceptions;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +37,7 @@ public class ConfigDefinition {
     private final Map<String, RefDef> referenceDefs = new LinkedHashMap<>();
     private final Map<String, FileDef> fileDefs = new LinkedHashMap<>();
     private final Map<String, PathDef> pathDefs = new LinkedHashMap<>();
+    private final Map<String, OptionalPathDef> optionalPathDefs = new LinkedHashMap<>();
     private final Map<String, UrlDef> urlDefs = new LinkedHashMap<>();
     private final Map<String, ModelDef> modelDefs = new LinkedHashMap<>();
     private final Map<String, StructDef> structDefs = new LinkedHashMap<>();
@@ -98,6 +98,8 @@ public class ConfigDefinition {
             verifyFile(id);
         } else if (pathDefs.containsKey(id)) {
             verifyPath(id);
+        } else if (optionalPathDefs.containsKey(id)) {
+            verifyOptionalPath(id);
         } else if (urlDefs.containsKey(id)) {
             verifyUrl(id);
         } else if (modelDefs.containsKey(id)) {
@@ -144,34 +146,6 @@ public class ConfigDefinition {
 
     public void verify(String id) {
         verify(id, null);
-    }
-
-    /**
-     * Compares def-versions. Examples: 2 is higher than 1, and 2-0-0 is higher than 1-2-2 but the same as 2.
-     */
-    public static class VersionComparator implements Comparator<String> {
-        int[] parseVersion(String version) {
-            int[] result = {0, 0, 0};
-            String[] v = version.split("-");
-
-            for (int i = 0; i < 3; i++) {
-                if (v.length > i) result[i] = Integer.parseInt(v[i]);
-            }
-
-            return result;
-        }
-
-        public int compare(String o1, String o2) throws ClassCastException {
-            int[] version1 = parseVersion(o1);
-            int[] version2 = parseVersion(o2);
-
-            for (int i = 0; i < 3; i ++) {
-                int diff = version1[i] - version2[i];
-                if (diff != 0) return diff;
-            }
-
-            return 0;
-        }
     }
 
     /**
@@ -540,6 +514,19 @@ public class ConfigDefinition {
         }
     }
 
+    public static class OptionalPathDef implements DefaultValued<String> {
+        private final String defVal;
+
+        OptionalPathDef(String defVal) {
+            this.defVal = defVal;
+        }
+
+        @Override
+        public String getDefVal() {
+            return defVal;
+        }
+    }
+
     public static class UrlDef implements DefaultValued<String> {
         private final String defVal;
 
@@ -643,20 +630,14 @@ public class ConfigDefinition {
         referenceDefs.put(refId, new RefDef(null));
     }
 
-    public void addFileDef(String refId, String defVal) {
-        fileDefs.put(refId, new FileDef(defVal));
-    }
-
     public void addFileDef(String refId) {
         fileDefs.put(refId, new FileDef(null));
     }
 
-    public void addPathDef(String refId, String defVal) {
-        pathDefs.put(refId, new PathDef(defVal));
-    }
+    public void addPathDef(String refId) { pathDefs.put(refId, new PathDef(null)); }
 
-    public void addPathDef(String refId) {
-        pathDefs.put(refId, new PathDef(null));
+    public void addOptionalPathDef(String refId) {
+        optionalPathDefs.put(refId, new OptionalPathDef(null));
     }
 
     public void addUrlDef(String url, String defVal) {
@@ -700,6 +681,8 @@ public class ConfigDefinition {
     }
 
     public Map<String, PathDef> getPathDefs() { return pathDefs; }
+
+    public Map<String, OptionalPathDef> getOptionalPathDefs() { return optionalPathDefs; }
 
     public Map<String, UrlDef> getUrlDefs() { return urlDefs; }
 
@@ -866,6 +849,11 @@ public class ConfigDefinition {
     private void verifyPath(String id) {
         if ( ! pathDefs.containsKey(id))
             throw new IllegalArgumentException("No such path in " + verifyWarning(id));
+    }
+
+    private void verifyOptionalPath(String id) {
+        if ( ! optionalPathDefs.containsKey(id))
+            throw new IllegalArgumentException("No such optional path in " + verifyWarning(id));
     }
 
     private void verifyUrl(String id) {

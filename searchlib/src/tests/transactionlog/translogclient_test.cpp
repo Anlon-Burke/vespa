@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include <vespa/searchlib/transactionlog/translogclient.h>
 #include <vespa/searchlib/transactionlog/translogserver.h>
 #include <vespa/searchlib/test/directory_handler.h>
@@ -35,7 +35,7 @@ std::unique_ptr<Session> openDomainTest(TransLogClient & tls, const vespalib::st
 bool fillDomainTest(Session * s1, const vespalib::string & name);
 void fillDomainTest(Session * s1, size_t numPackets, size_t numEntries);
 void fillDomainTest(Session * s1, size_t numPackets, size_t numEntries, size_t entrySize);
-uint32_t countFiles(const vespalib::string &dir);
+uint32_t countFiles(const std::string& dir);
 void checkFilledDomainTest(Session &s1, size_t numEntries);
 bool visitDomainTest(TransLogClient & tls, Session * s1, const vespalib::string & name);
 void createAndFillDomain(const vespalib::string & dir, const vespalib::string & name, Encoding encoding, size_t preExistingDomains);
@@ -392,15 +392,12 @@ fillDomainTest(Session * s1, size_t numPackets, size_t numEntries, size_t entryS
 
 
 uint32_t
-countFiles(const vespalib::string &dir)
+countFiles(const std::string& dir)
 {
     uint32_t res = 0;
-    FastOS_DirectoryScan dirScan(dir.c_str());
-    while (dirScan.ReadNext()) {
-        const char *ename = dirScan.GetName();
-        if (strcmp(ename, ".") == 0 ||
-            strcmp(ename, "..") == 0)
-            continue;
+    std::filesystem::directory_iterator dir_scan(dir);
+    for (auto& entry : dir_scan) {
+        (void) entry;
         ++res;
     }
     return res;

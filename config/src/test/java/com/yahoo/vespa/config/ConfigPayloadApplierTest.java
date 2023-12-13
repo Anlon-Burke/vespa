@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config;
 
 import com.yahoo.config.FileReference;
@@ -9,6 +9,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
@@ -90,7 +91,7 @@ public class ConfigPayloadApplierTest {
     private static class MockDownloader extends UrlDownloader {
 
         @Override
-        public File waitFor(UrlReference urlReference, long timeout) {
+        public File waitFor(UrlReference urlReference, Duration timeout) {
             return new File("resolvedUrl", urlReference.value());
         }
 

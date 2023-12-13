@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.http.v2;
 
 import com.yahoo.cloud.config.ConfigserverConfig;
@@ -92,7 +92,7 @@ public class SessionPrepareHandlerTest extends SessionHandlerTest {
     public void require_error_when_session_id_does_not_exist() throws Exception {
         // No session with this id exists
         HttpResponse response = request(HttpRequest.Method.PUT, 9999L);
-        assertHttpStatusCodeErrorCodeAndMessage(response, NOT_FOUND, HttpErrorResponse.ErrorCode.NOT_FOUND, "Session 9999 was not found");
+        assertHttpStatusCodeErrorCodeAndMessage(response, NOT_FOUND, HttpErrorResponse.ErrorCode.NOT_FOUND, "Local session 9999 for 'test' was not found");
     }
 
     @Test
@@ -180,7 +180,7 @@ public class SessionPrepareHandlerTest extends SessionHandlerTest {
         HttpResponse getResponse = request(HttpRequest.Method.GET, 9999L);
         assertHttpStatusCodeErrorCodeAndMessage(getResponse, NOT_FOUND,
                                                 HttpErrorResponse.ErrorCode.NOT_FOUND,
-                                                "Session 9999 was not found");
+                                                "Remote session 9999 for 'test' was not found");
     }
 
     @Test

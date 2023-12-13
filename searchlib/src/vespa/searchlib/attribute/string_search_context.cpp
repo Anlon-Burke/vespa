@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "string_search_context.h"
 #include "enumhintsearchcontext.h"
@@ -9,9 +9,10 @@
 
 namespace search::attribute {
 
-StringSearchContext::StringSearchContext(const AttributeVector& to_be_searched, std::unique_ptr<QueryTermSimple> query_term, bool cased)
+StringSearchContext::StringSearchContext(const AttributeVector& to_be_searched, std::unique_ptr<QueryTermSimple> query_term,
+                                         bool cased, vespalib::FuzzyMatchingAlgorithm fuzzy_matching_algorithm)
     : SearchContext(to_be_searched),
-      StringMatcher(std::move(query_term), cased)
+      StringMatcher(std::move(query_term), cased, fuzzy_matching_algorithm)
 {
 }
 

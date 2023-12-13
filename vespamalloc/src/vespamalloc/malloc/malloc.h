@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "common.h"
@@ -171,6 +171,7 @@ void MemoryManager<MemBlockPtrT, ThreadListT>::info(FILE * os, size_t level)
     _segment.info(os, level);
     _allocPool.info(os, level);
     _threadList.info(os, level);
+    _mmapPool.info(os, level);
     fflush(os);
 }
 

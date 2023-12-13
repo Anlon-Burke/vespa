@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
 import ai.vespa.http.DomainName;
@@ -237,7 +237,7 @@ public class RetiredExpirerTest {
         MockNameResolver nameResolver = (MockNameResolver) tester.nodeRepository().nameResolver();
         String ipv4 = "127.0.1.4";
         nameResolver.addRecord(retiredNode.hostname(), ipv4);
-        Node node = Node.create(retiredNode.hostname(), IP.Config.of(Set.of(ipv4), Set.of()), retiredNode.hostname(),
+        Node node = Node.create(retiredNode.hostname(), IP.Config.ofEmptyPool(ipv4), retiredNode.hostname(),
                                 tester.asFlavor("default", NodeType.config), NodeType.config).build();
         var nodes = List.of(node);
         nodes = nodeRepository.nodes().addNodes(nodes, Agent.system);

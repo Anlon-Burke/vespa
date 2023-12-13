@@ -1,10 +1,11 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #pragma once
 
+#include <vespa/searchlib/common/feature.h>
+#include <vespa/vespalib/fuzzy/fuzzy_matching_algorithm.h>
 #include <vespa/vespalib/stllike/string.h>
 #include <vector>
-#include <vespa/searchlib/common/feature.h>
 
 namespace search::fef { class Properties; }
 
@@ -175,11 +176,8 @@ namespace mutate {
     };
 }
 
+// Add temporary flags used for safe rollout of new features here
 namespace temporary {
-    struct EnableNestedMultivalueGrouping {
-        static const vespalib::string NAME;
-        static bool check(const Properties &props);
-    };
 }
 
 namespace mutate::on_match {
@@ -327,6 +325,47 @@ namespace matching {
         static const double DEFAULT_VALUE;
         static double lookup(const Properties &props);
         static double lookup(const Properties &props, double defaultValue);
+    };
+
+    /**
+     * Property to control the algorithm using for fuzzy matching.
+     **/
+    struct FuzzyAlgorithm {
+        static const vespalib::string NAME;
+        static const vespalib::FuzzyMatchingAlgorithm DEFAULT_VALUE;
+        static vespalib::FuzzyMatchingAlgorithm lookup(const Properties& props);
+        static vespalib::FuzzyMatchingAlgorithm lookup(const Properties& props, vespalib::FuzzyMatchingAlgorithm default_value);
+    };
+
+    /**
+     * When enabled, the unpacking part of the phrase iterator will be tagged as expensive
+     * under all intermediate iterators, not only AND.
+     **/
+    struct AlwaysMarkPhraseExpensive {
+        static const vespalib::string NAME;
+        static const bool DEFAULT_VALUE;
+        static bool check(const Properties &props) { return check(props, DEFAULT_VALUE); }
+        static bool check(const Properties &props, bool fallback);
+    };
+
+    /**
+     * When enabled posting lists can be created on the fly even if iterator is not strict.
+     **/
+    struct CreatePostingListWhenNonStrict {
+        static const vespalib::string NAME;
+        static const bool DEFAULT_VALUE;
+        static bool check(const Properties &props) { return check(props, DEFAULT_VALUE); }
+        static bool check(const Properties &props, bool fallback);
+    };
+
+    /**
+     * When enabled posting lists can be created on the fly even if iterator is not strict.
+     **/
+    struct UseEstimateForFetchPostings {
+        static const vespalib::string NAME;
+        static const bool DEFAULT_VALUE;
+        static bool check(const Properties &props) { return check(props, DEFAULT_VALUE); }
+        static bool check(const Properties &props, bool fallback);
     };
 }
 

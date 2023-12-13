@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.model.container.xml;
 
 import com.yahoo.component.ComponentId;
@@ -225,7 +225,7 @@ public class AccessControlTest extends ContainerModelBuilderTestBase {
                 "http://*:4443/metrics/v2/*")));
 
         Set<String> actualCustomChainBindings = getFilterBindings(http, ComponentId.fromString("my-custom-request-chain"));
-        assertTrue(actualCustomChainBindings.containsAll(List.of("http://*/custom-handler/*", "http://*/")));
+        assertTrue(actualCustomChainBindings.containsAll(List.of("http://*:4443/custom-handler/*", "http://*:4443/")));
     }
 
     @Test
@@ -262,7 +262,7 @@ public class AccessControlTest extends ContainerModelBuilderTestBase {
                 "http://*:4443/custom-handler/*")));
 
         Set<String> actualCustomChainBindings = getFilterBindings(http, ComponentId.fromString("my-custom-response-chain"));
-        assertTrue(actualCustomChainBindings.contains("http://*/custom-handler/*"));
+        assertTrue(actualCustomChainBindings.contains("http://*:4443/custom-handler/*"));
     }
 
     @Test

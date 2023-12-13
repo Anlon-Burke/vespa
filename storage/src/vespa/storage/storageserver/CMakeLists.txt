@@ -1,4 +1,4 @@
-# Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+# Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 vespa_add_library(storage_storageserver OBJECT
     SOURCES
@@ -14,7 +14,6 @@ vespa_add_library(storage_storageserver OBJECT
     documentapiconverter.cpp
     fnet_metrics_wrapper.cpp
     mergethrottler.cpp
-    opslogger.cpp
     priorityconverter.cpp
     rpcrequestwrapper.cpp
     service_layer_error_listener.cpp

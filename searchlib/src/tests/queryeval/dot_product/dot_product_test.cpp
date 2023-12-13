@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/searchlib/queryeval/dot_product_search.h>
@@ -73,7 +73,7 @@ struct DP {
         FieldSpecList fields;
         fields.add(FieldSpec(field, fieldId, handle, field_is_filter));
         queryeval::Blueprint::UP bp = searchable.createBlueprint(requestContext, fields, *node);
-        bp->fetchPostings(ExecuteInfo::create(strict));
+        bp->fetchPostings(ExecuteInfo::createForTest(strict));
         SearchIterator::UP sb = bp->createSearch(*md, strict);
         EXPECT_TRUE(dynamic_cast<DotProductSearch*>(sb.get()) != 0);
         sb->initFullRange();
@@ -274,10 +274,10 @@ private:
     }
 };
 
-class WeightIteratorChildrenVerifier : public search::test::DwaIteratorChildrenVerifier {
+class WeightIteratorChildrenVerifier : public search::test::DwwIteratorChildrenVerifier {
 private:
     SearchIterator::UP
-    create(std::vector<DocumentWeightIterator> && children) const override {
+    create(std::vector<DocidWithWeightIterator> && children) const override {
         return DotProductSearch::create(_tfmd, false, _weights, std::move(children));
     }
 };

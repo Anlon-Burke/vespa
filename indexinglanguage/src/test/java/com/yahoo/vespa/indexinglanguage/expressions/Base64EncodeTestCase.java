@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
@@ -40,7 +40,7 @@ public class Base64EncodeTestCase {
     public void requireThatExpressionCanBeVerified() {
         Expression exp = new Base64EncodeExpression();
         assertVerify(DataType.LONG, exp, DataType.STRING);
-        assertVerifyThrows(null, exp, "Expected long input, got null.");
-        assertVerifyThrows(DataType.STRING, exp, "Expected long input, got string.");
+        assertVerifyThrows(null, exp, "Expected long input, but no input is specified");
+        assertVerifyThrows(DataType.STRING, exp, "Expected long input, got string");
     }
 }

@@ -1,8 +1,10 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "query.h"
 #include "nearest_neighbor_query_node.h"
 #include <vespa/searchlib/parsequery/stackdumpiterator.h>
+#include <vespa/searchlib/query/streaming/in_term.h>
+#include <vespa/searchlib/query/tree/term_vector.h>
 #include <charconv>
 #include <vespa/log/log.h>
 LOG_SETUP(".vsm.querynode");
@@ -178,6 +180,10 @@ QueryNode::Build(const QueryNode * parent, const QueryNodeResultFactory & factor
         }
     }
     break;
+    case ParseItem::ITEM_STRING_IN:
+    case ParseItem::ITEM_NUMERIC_IN:
+        qn = std::make_unique<InTerm>(factory.create(), queryRep.getIndexName(), queryRep.get_terms());
+        break;
     default:
     {
         for (uint32_t skipCount = arity; (skipCount > 0) && queryRep.next(); skipCount--) {

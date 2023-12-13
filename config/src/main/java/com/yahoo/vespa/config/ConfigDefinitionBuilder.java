@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config;
 
 import com.yahoo.config.codegen.CNode;
@@ -67,6 +67,8 @@ public class ConfigDefinitionBuilder {
                     addNode(def, (LeafCNode.FileLeaf) node);
                 } else if (node instanceof LeafCNode.PathLeaf) {
                     addNode(def, (LeafCNode.PathLeaf) node);
+                } else if (node instanceof LeafCNode.OptionalPathLeaf) {
+                    addNode(def, (LeafCNode.OptionalPathLeaf) node);
                 } else if (node instanceof LeafCNode.UrlLeaf) {
                     addNode(def, (LeafCNode.UrlLeaf) node);
                 } else if (node instanceof LeafCNode.ModelLeaf) {
@@ -106,7 +108,6 @@ public class ConfigDefinitionBuilder {
             }
         }
     }
-
 
     private static void addNode(ConfigDefinition def, LeafCNode.IntegerLeaf leaf) {
         if (leaf.getDefaultValue() != null) {
@@ -157,19 +158,15 @@ public class ConfigDefinitionBuilder {
     }
 
     private static void addNode(ConfigDefinition def, LeafCNode.FileLeaf leaf) {
-        if (leaf.getDefaultValue() != null) {
-            def.addFileDef(leaf.getName(), leaf.getDefaultValue().getValue());
-        } else {
-            def.addFileDef(leaf.getName(), null);
-        }
+        def.addFileDef(leaf.getName());
     }
 
     private static void addNode(ConfigDefinition def, LeafCNode.PathLeaf leaf) {
-        if (leaf.getDefaultValue() != null) {
-            def.addPathDef(leaf.getName(), leaf.getDefaultValue().getValue());
-        } else {
-            def.addPathDef(leaf.getName(), null);
-        }
+        def.addPathDef(leaf.getName());
+    }
+
+    private static void addNode(ConfigDefinition def, LeafCNode.OptionalPathLeaf leaf) {
+        def.addOptionalPathDef(leaf.getName());
     }
 
     private static void addNode(ConfigDefinition def, LeafCNode.UrlLeaf leaf) {

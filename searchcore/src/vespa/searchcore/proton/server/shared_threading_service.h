@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
 #include "i_shared_threading_service.h"
@@ -20,7 +20,6 @@ class SharedThreadingService : public ISharedThreadingService {
 private:
     using Registration = std::unique_ptr<vespalib::IDestructorCallback>;
     FNET_Transport                                  & _transport;
-    std::unique_ptr<vespalib::SyncableThreadExecutor> _warmup;
     std::shared_ptr<vespalib::SyncableThreadExecutor> _shared;
     std::unique_ptr<vespalib::ISequencedTaskExecutor> _field_writer;
     std::unique_ptr<vespalib::InvokeService>          _invokeService;
@@ -36,7 +35,6 @@ public:
     std::shared_ptr<vespalib::Executor> shared_raw() { return _shared; }
     void sync_all_executors();
 
-    vespalib::ThreadExecutor& warmup() override { return *_warmup; }
     vespalib::ThreadExecutor& shared() override { return *_shared; }
     vespalib::ISequencedTaskExecutor& field_writer() override { return *_field_writer; }
     vespalib::InvokeService & invokeService() override { return *_invokeService; }

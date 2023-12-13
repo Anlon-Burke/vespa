@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.maintenance;
 
 import com.yahoo.config.provision.ApplicationId;
@@ -179,6 +179,30 @@ public class PeriodicApplicationMaintainerTest {
         assertEquals(instant1, fixture.deployer.activationTime(fixture.app2).get());
 
         clock.advance(Duration.ofMinutes(30));
+    }
+
+    @Test(timeout = 60_000)
+    public void application_deploy_triggered_by_reindexing_ready() {
+        fixture.activate();
+
+        assertEquals("No deployment expected", 2, fixture.deployer.activations);
+
+        // Holds off on deployments a while after starting
+        fixture.setBootstrapping(false);
+        fixture.runApplicationMaintainer();
+        assertEquals("No deployment expected", 2, fixture.deployer.activations);
+
+        Instant firstDeployTime = clock.instant();
+
+        // Reindexing readied before last deploy time triggers nothing.
+        fixture.deployer.setReadiedReindexingAt(firstDeployTime.minusSeconds(1));
+        fixture.runApplicationMaintainer();
+        assertEquals("No deployment expected", 2, fixture.deployer.activations);
+
+        // Reindexing readied after last deploy time triggers nothing.
+        fixture.deployer.setReadiedReindexingAt(firstDeployTime.plusSeconds(1));
+        fixture.runApplicationMaintainer();
+        assertEquals("No deployment expected", 4, fixture.deployer.activations);
     }
 
     @Test(timeout = 60_000)

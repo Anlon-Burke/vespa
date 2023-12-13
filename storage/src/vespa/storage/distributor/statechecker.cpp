@@ -1,10 +1,9 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include "statechecker.h"
 #include "distributor_bucket_space.h"
 #include "distributor_stripe_component.h"
 #include <vespa/vdslib/distribution/distribution.h>
 #include <vespa/vdslib/state/clusterstate.h>
-#include <vespa/vespalib/stllike/hash_set_insert.hpp>
 #include <sstream>
 
 #include <vespa/log/log.h>
@@ -78,10 +77,38 @@ StateChecker::Context::Context(const DistributorNodeContext& node_ctx_in,
       op_ctx(op_ctx_in),
       db(distributorBucketSpace.getBucketDatabase()),
       stats(statsTracker),
-      merges_inhibited_in_bucket_space(distributorBucketSpace.merges_inhibited())
+      merges_inhibited_in_bucket_space(distributorBucketSpace.merges_inhibited()),
+      _entry()
 { }
 
 StateChecker::Context::~Context() = default;
+
+void
+StateChecker::Context::fillParentAndChildBuckets()
+{
+    db.getAll(getBucketId(), entries);
+    if (entries.empty()) {
+        LOG(spam, "Did not find bucket %s in bucket database", bucket.toString().c_str());
+    }
+}
+
+void
+StateChecker::Context::fillSiblingBucket()
+{
+    siblingEntry = db.get(siblingBucket);
+}
+
+const BucketDatabase::Entry*
+StateChecker::Context::getEntryForPrimaryBucket() const
+{
+    for (auto & e : entries) {
+        if (e.getBucketId() == getBucketId() && ! e->getNodes().empty()) {
+            return &e;
+        }
+    }
+    return nullptr;
+}
+
 
 std::string
 StateChecker::Context::toString() const

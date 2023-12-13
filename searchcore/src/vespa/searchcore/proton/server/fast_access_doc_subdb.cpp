@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "fast_access_doc_subdb.h"
 #include "document_subdb_reconfig.h"
@@ -70,7 +70,7 @@ FastAccessDocSubDB::createAttributeManagerInitializer(const DocumentDBConfig &co
                                                configSnapshot.getTuneFileDocumentDBSP()->_attr,
                                                _fileHeaderContext,
                                                _attribute_interlock,
-                                               _writeService.attributeFieldWriter(),
+                                               _writeService.field_writer(),
                                                _writeService.shared(),
                                                attrFactory,
                                                _hwInfo);
@@ -272,7 +272,7 @@ FastAccessDocSubDB::applyConfig(const DocumentDBConfig &newConfigSnapshot, const
             reconfigureAttributeMetrics(*newMgr, *oldMgr);
         }
         _iFeedView.set(_fastAccessFeedView.get());
-        if (isNodeRetired()) {
+        if (is_node_retired_or_maintenance()) {
             // TODO Should probably ahve a similar OnDone callback to applyConfig too.
             vespalib::Gate gate;
             reconfigureAttributesConsideringNodeState(std::make_shared<vespalib::GateCallback>(gate));
@@ -280,6 +280,12 @@ FastAccessDocSubDB::applyConfig(const DocumentDBConfig &newConfigSnapshot, const
         }
     }
     return tasks;
+}
+
+std::shared_ptr<IAttributeWriter>
+FastAccessDocSubDB::get_attribute_writer() const
+{
+    return _fastAccessFeedView.get()->getAttributeWriter();
 }
 
 proton::IAttributeManager::SP

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.restapi;
 
 import com.yahoo.config.provision.ApplicationId;
@@ -50,6 +50,7 @@ public class LoadBalancersResponse extends SlimeJsonResponse {
         loadBalancers.forEach(lb -> {
             Cursor lbObject = loadBalancerArray.addObject();
             lbObject.setString("id", lb.id().serializedForm());
+            lbObject.setString("idSeed", lb.idSeed());
             lbObject.setString("state", lb.state().name());
             lbObject.setLong("changedAt", lb.changedAt().toEpochMilli());
             lbObject.setString("application", lb.id().application().application().value());
@@ -57,7 +58,8 @@ public class LoadBalancersResponse extends SlimeJsonResponse {
             lbObject.setString("instance", lb.id().application().instance().value());
             lbObject.setString("cluster", lb.id().cluster().value());
             lb.instance().flatMap(LoadBalancerInstance::hostname).ifPresent(hostname -> lbObject.setString("hostname", hostname.value()));
-            lb.instance().flatMap(LoadBalancerInstance::ipAddress).ifPresent(ipAddress -> lbObject.setString("ipAddress", ipAddress));
+            lb.instance().flatMap(LoadBalancerInstance::ip4Address).ifPresent(ip -> lbObject.setString("ipAddress", ip));
+            lb.instance().flatMap(LoadBalancerInstance::ip6Address).ifPresent(ip -> lbObject.setString("ip6Address", ip));
             lb.instance().flatMap(LoadBalancerInstance::dnsZone).ifPresent(dnsZone -> lbObject.setString("dnsZone", dnsZone.id()));
 
             Cursor networkArray = lbObject.setArray("networks");

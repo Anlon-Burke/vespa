@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "bitvector.h"
 #include "allocatedbitvector.h"
@@ -49,7 +49,7 @@ BitVector::allocatePaddedAndAligned(Index start, Index end, Index capacity, cons
     return alloc;
 }
 
-BitVector::BitVector(void * buf, Index start, Index end) :
+BitVector::BitVector(void * buf, Index start, Index end) noexcept :
     _words(static_cast<Word *>(buf) - wordNum(start)),
     _startOffset(start),
     _sz(end),

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision;
 
 import com.yahoo.config.provision.Cloud;
@@ -64,9 +64,9 @@ public class NodeRepositoryTest {
                             Environment.prod,
                             RegionName.from("aws-us-east-1a"));
         NodeRepositoryTester tester = new NodeRepositoryTester(zone);
-        IP.Config ipConfig = IP.Config.of(Set.of("1.2.3.4", "10.2.3.4"), Set.of("1.2.3.4", "10.2.3.4"));
-        IP.Config publicIpConfig = IP.Config.of(Set.of("1.2.3.4"), Set.of("1.2.3.4"));
-        IP.Config privateIpConfig = IP.Config.of(Set.of("10.2.3.4"), Set.of("10.2.3.4"));
+        IP.Config ipConfig = IP.Config.of(List.of("1.2.3.4", "10.2.3.4"), List.of("1.2.3.4", "10.2.3.4"));
+        IP.Config publicIpConfig = IP.Config.of(List.of("1.2.3.4"), List.of("1.2.3.4"));
+        IP.Config privateIpConfig = IP.Config.of(List.of("10.2.3.4"), List.of("10.2.3.4"));
 
         Node host1 = Node.create("id1", ipConfig, "host1", tester.nodeFlavors().getFlavorOrThrow("default"), NodeType.host)
                                .build();

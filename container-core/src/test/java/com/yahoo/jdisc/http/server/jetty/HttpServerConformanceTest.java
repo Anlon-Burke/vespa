@@ -1,11 +1,13 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.jdisc.http.server.jetty;
 
 import com.google.inject.AbstractModule;
 import com.google.inject.Module;
+import com.google.inject.Singleton;
 import com.google.inject.util.Modules;
 import com.yahoo.container.logging.ConnectionLog;
 import com.yahoo.container.logging.RequestLog;
+import com.yahoo.jdisc.application.GuiceRepository;
 import com.yahoo.jdisc.http.ServerConfig;
 import com.yahoo.jdisc.http.server.jetty.testutils.ConnectorFactoryRegistryModule;
 import com.yahoo.jdisc.test.ServerProviderConformanceTest;
@@ -59,9 +61,8 @@ public class HttpServerConformanceTest extends ServerProviderConformanceTest {
 
     private static final String REQUEST_CONTENT = "myRequestContent";
     private static final String RESPONSE_CONTENT = "myResponseContent";
+    private static final Logger httpRequestDispatchLogger = Logger.getLogger(HttpRequestDispatch.class.getName());
 
-    @SuppressWarnings("LoggerInitializedWithForeignClass")
-    private static Logger httpRequestDispatchLogger = Logger.getLogger(HttpRequestDispatch.class.getName());
     private static Level httpRequestDispatchLoggerOriginalLevel;
     private static CloseableHttpClient httpClient;
     private static ExecutorService executorService;
@@ -767,14 +768,11 @@ public class HttpServerConformanceTest extends ServerProviderConformanceTest {
                     new AbstractModule() {
                         @Override
                         protected void configure() {
-                            bind(FilterBindings.class)
-                                    .toInstance(new FilterBindings.Builder().build());
-                            bind(ServerConfig.class)
-                                    .toInstance(new ServerConfig(new ServerConfig.Builder()));
-                            bind(ConnectionLog.class)
-                                    .toInstance(new VoidConnectionLog());
-                            bind(RequestLog.class)
-                                    .toInstance(new VoidRequestLog());
+                            bind(JettyHttpServer.class).in(Singleton.class);
+                            bind(FilterBindings.class).toInstance(new FilterBindings.Builder().build());
+                            bind(ServerConfig.class).toInstance(new ServerConfig(new ServerConfig.Builder()));
+                            bind(ConnectionLog.class).toInstance(new VoidConnectionLog());
+                            bind(RequestLog.class).toInstance(new VoidRequestLog());
                         }
                     },
                     new ConnectorFactoryRegistryModule());
@@ -783,6 +781,11 @@ public class HttpServerConformanceTest extends ServerProviderConformanceTest {
         @Override
         public Class<JettyHttpServer> getServerProviderClass() {
             return JettyHttpServer.class;
+        }
+
+        @Override
+        public AutoCloseable configureServerProvider(GuiceRepository guice) {
+            return guice.getInstance(JettyHttpServerContext.class)::deconstruct;
         }
 
         @Override

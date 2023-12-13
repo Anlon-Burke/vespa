@@ -1,7 +1,6 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.hosted.provision.persistence;
 
-import com.google.common.collect.ImmutableSet;
 import com.yahoo.component.Version;
 import com.yahoo.component.Vtag;
 import com.yahoo.config.provision.ApplicationId;
@@ -42,7 +41,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.yahoo.config.provision.NodeResources.Architecture;
@@ -251,7 +249,7 @@ public class NodeSerializerTest {
     @Test
     public void serialize_parent_hostname() {
         final String parentHostname = "parent.yahoo.com";
-        Node node = Node.create("myId", IP.Config.of(Set.of("127.0.0.1"), Set.of()), "myHostname", nodeFlavors.getFlavorOrThrow("default"), NodeType.tenant)
+        Node node = Node.create("myId", IP.Config.of(List.of("127.0.0.1"), List.of()), "myHostname", nodeFlavors.getFlavorOrThrow("default"), NodeType.tenant)
                 .parentHostname(parentHostname)
                 .build();
 
@@ -264,7 +262,7 @@ public class NodeSerializerTest {
     public void serializes_multiple_ip_addresses() {
         byte[] nodeWithMultipleIps = createNodeJson("node4.yahoo.tld", "127.0.0.4", "::4");
         Node deserializedNode = nodeSerializer.fromJson(nodeWithMultipleIps);
-        assertEquals(ImmutableSet.of("127.0.0.4", "::4"), deserializedNode.ipConfig().primary());
+        assertEquals(List.of("127.0.0.4", "::4"), deserializedNode.ipConfig().primary());
     }
 
     @Test
@@ -273,7 +271,7 @@ public class NodeSerializerTest {
 
         // Test round-trip with address pool
         node = node.with(node.ipConfig().withPool(IP.Pool.of(
-                Set.of("::1", "::2", "::3"),
+                List.of("::1", "::2", "::3"),
                 List.of(HostName.of("a"), HostName.of("b"), HostName.of("c")))));
         Node copy = nodeSerializer.fromJson(nodeSerializer.toJson(node));
         assertEquals(node.ipConfig(), copy.ipConfig());
@@ -482,14 +480,19 @@ public class NodeSerializerTest {
         assertFalse(node.hostTTL().isPresent());
         assertFalse(node.exclusiveToClusterType().isPresent());
 
-        ApplicationId exclusiveToApp = ApplicationId.from("tenant1", "app1", "instance1");
+        ApplicationId provisionedForApp = ApplicationId.from("tenant1", "app1", "instance1");
+        node = nodeSerializer.fromJson(nodeSerializer.toJson(builder.exclusiveToApplicationId(provisionedForApp).build()));
+        assertEquals(Optional.of(provisionedForApp), node.exclusiveToApplicationId());
+        assertEquals(Optional.empty(), node.provisionedForApplicationId());
+
         ClusterSpec.Type exclusiveToCluster = ClusterSpec.Type.admin;
-        node = builder.exclusiveToApplicationId(exclusiveToApp)
+        node = builder.provisionedForApplicationId(provisionedForApp)
                       .hostTTL(Duration.ofDays(1))
                       .hostEmptyAt(clock.instant().minus(Duration.ofDays(1)).truncatedTo(MILLIS))
                       .exclusiveToClusterType(exclusiveToCluster).build();
         node = nodeSerializer.fromJson(nodeSerializer.toJson(node));
-        assertEquals(exclusiveToApp, node.exclusiveToApplicationId().get());
+        assertEquals(provisionedForApp, node.exclusiveToApplicationId().get());
+        assertEquals(provisionedForApp, node.provisionedForApplicationId().get());
         assertEquals(Duration.ofDays(1), node.hostTTL().get());
         assertEquals(clock.instant().minus(Duration.ofDays(1)).truncatedTo(MILLIS), node.hostEmptyAt().get());
         assertEquals(exclusiveToCluster, node.exclusiveToClusterType().get());
@@ -510,7 +513,7 @@ public class NodeSerializerTest {
         CloudAccount account = CloudAccount.from("012345678912");
         Node node = Node.create("id", "host1.example.com", nodeFlavors.getFlavorOrThrow("default"), State.provisioned, NodeType.host)
                         .cloudAccount(account)
-                        .exclusiveToApplicationId(ApplicationId.defaultId())
+                        .provisionedForApplicationId(ApplicationId.defaultId())
                         .build();
         node = nodeSerializer.fromJson(nodeSerializer.toJson(node));
         assertEquals(account, node.cloudAccount());
@@ -536,7 +539,7 @@ public class NodeSerializerTest {
 
     private Node createNode() {
         return Node.create("myId",
-                           IP.Config.of(Set.of("127.0.0.1"), Set.of()),
+                           IP.Config.of(List.of("127.0.0.1"), List.of()),
                            "myHostname",
                            nodeFlavors.getFlavorOrThrow("default"),
                            NodeType.tenant).build();

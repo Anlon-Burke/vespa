@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "documentdb.h"
 #include "bootstrapconfig.h"
@@ -19,7 +19,6 @@
 #include <vespa/searchcore/proton/attribute/attribute_writer.h>
 #include <vespa/searchcore/proton/attribute/i_attribute_usage_listener.h>
 #include <vespa/searchcore/proton/attribute/imported_attributes_repo.h>
-#include <vespa/searchcore/proton/common/eventlogger.h>
 #include <vespa/searchcore/proton/common/i_transient_resource_usage_provider.h>
 #include <vespa/searchcore/proton/common/statusreport.h>
 #include <vespa/searchcore/proton/docsummary/isummarymanager.h>
@@ -153,7 +152,7 @@ DocumentDB::create(const vespalib::string &baseDir,
                    std::shared_ptr<search::attribute::Interlock> attribute_interlock,
                    ConfigStore::UP config_store,
                    InitializeThreads initializeThreads,
-                   const HwInfo &hwInfo)
+                   const vespalib::HwInfo &hwInfo)
 {
     return DocumentDB::SP(
             new DocumentDB(baseDir, std::move(currentSnapshot), tlsSpec, queryLimiter, docTypeName, bucketSpace,
@@ -176,7 +175,7 @@ DocumentDB::DocumentDB(const vespalib::string &baseDir,
                        std::shared_ptr<search::attribute::Interlock> attribute_interlock,
                        ConfigStore::UP config_store,
                        InitializeThreads initializeThreads,
-                       const HwInfo &hwInfo)
+                       const vespalib::HwInfo &hwInfo)
     : DocumentDBConfigOwner(),
       IReplayConfig(),
       IFeedHandlerOwner(),
@@ -218,7 +217,7 @@ DocumentDB::DocumentDB(const vespalib::string &baseDir,
       _transient_usage_provider(std::make_shared<DocumentDBResourceUsageProvider>(*this)),
       _feedHandler(std::make_unique<FeedHandler>(_writeService, tlsSpec, docTypeName, *this, _writeFilter, *this, tlsWriterFactory)),
       _subDBs(*this, *this, *_feedHandler, _docTypeName,
-              _writeService, shared_service.warmup(), fileHeaderContext, std::move(attribute_interlock),
+              _writeService, shared_service.shared(), fileHeaderContext, std::move(attribute_interlock),
               metricsWireService, getMetrics(), queryLimiter, shared_service.clock(),
               _configMutex, _baseDir, hwInfo),
       _maintenanceController(shared_service.transport(), _writeService.master(), _refCount, _docTypeName),
@@ -413,7 +412,7 @@ DocumentDB::applySubDBConfig(const DocumentDBConfig &newConfigSnapshot,
     auto newDocType = newRepo->getDocumentType(_docTypeName.getName());
     assert(newDocType != nullptr);
     DocumentDBReferenceResolver resolver(*registry, *newDocType, newConfigSnapshot.getImportedFieldsConfig(), *oldDocType,
-                                         _refCount, _writeService.attributeFieldWriter(), _state.getAllowReconfig());
+                                         _refCount, _writeService.field_writer(), _state.getAllowReconfig());
     _subDBs.applyConfig(newConfigSnapshot, *_activeConfigSnapshot, serialNum, params, resolver, prepared_reconfig);
 }
 
@@ -535,7 +534,7 @@ DocumentDB::tearDownReferences()
     auto docType = repo->getDocumentType(_docTypeName.getName());
     assert(docType != nullptr);
     DocumentDBReferenceResolver resolver(*registry, *docType, activeConfig->getImportedFieldsConfig(), *docType,
-                                         _refCount, _writeService.attributeFieldWriter(), false);
+                                         _refCount, _writeService.field_writer(), false);
     _subDBs.tearDownReferences(resolver);
     registry->remove(_docTypeName.getName());
 }

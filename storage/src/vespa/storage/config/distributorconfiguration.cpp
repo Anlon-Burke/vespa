@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include "distributorconfiguration.h"
 #include <vespa/document/select/parser.h>
 #include <vespa/document/select/traversingvisitor.h>
@@ -48,12 +48,12 @@ DistributorConfiguration::DistributorConfiguration(StorageComponent& component)
       _use_weak_internal_read_consistency_for_client_gets(false),
       _enable_metadata_only_fetch_phase_for_inconsistent_updates(false),
       _prioritize_global_bucket_merges(true),
-      _enable_revert(true),
       _implicitly_clear_priority_on_schedule(false),
       _use_unordered_merge_chaining(false),
       _inhibit_default_merges_when_global_merges_pending(false),
       _enable_two_phase_garbage_collection(false),
       _enable_condition_probing(false),
+      _enable_operation_cancellation(false),
       _minimumReplicaCountingMode(ReplicaCountingMode::TRUSTED)
 {
 }
@@ -173,12 +173,12 @@ DistributorConfiguration::configure(const vespa::config::content::core::StorDist
     _enable_metadata_only_fetch_phase_for_inconsistent_updates = config.enableMetadataOnlyFetchPhaseForInconsistentUpdates;
     _prioritize_global_bucket_merges = config.prioritizeGlobalBucketMerges;
     _max_activation_inhibited_out_of_sync_groups = config.maxActivationInhibitedOutOfSyncGroups;
-    _enable_revert = config.enableRevert;
     _implicitly_clear_priority_on_schedule = config.implicitlyClearBucketPriorityOnSchedule;
     _use_unordered_merge_chaining = config.useUnorderedMergeChaining;
     _inhibit_default_merges_when_global_merges_pending = config.inhibitDefaultMergesWhenGlobalMergesPending;
     _enable_two_phase_garbage_collection = config.enableTwoPhaseGarbageCollection;
     _enable_condition_probing = config.enableConditionProbing;
+    _enable_operation_cancellation = config.enableOperationCancellation;
 
     _minimumReplicaCountingMode = config.minimumReplicaCountingMode;
 

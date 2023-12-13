@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include <vespa/vespalib/data/memorydatastore.h>
 #include <vespa/vespalib/util/array.hpp>
 
@@ -39,23 +39,6 @@ MemoryDataStore::push_back(const void * data, const size_t sz)
         memcpy(ref.data(), data, sz);
     }
     return ref;
-}
-
-VariableSizeVector::VariableSizeVector(size_t initialCount, size_t initialBufferSize)
-    : _vector(),
-      _store(Alloc::alloc(initialBufferSize))
-{
-    _vector.reserve(initialCount);
-}
-
-VariableSizeVector::~VariableSizeVector() = default;
-
-VariableSizeVector::Reference
-VariableSizeVector::push_back(const void * data, const size_t sz)
-{
-    MemoryDataStore::Reference ptr(_store.push_back(data, sz));
-    _vector.push_back(Reference(ptr.data(), sz));
-    return _vector.back();
 }
 
 } // namespace vespalib

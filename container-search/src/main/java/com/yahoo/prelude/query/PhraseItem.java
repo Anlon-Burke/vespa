@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.query;
 
 import com.yahoo.prelude.query.textualrepresentation.Discloser;
@@ -93,6 +93,15 @@ public class PhraseItem extends CompositeIndexedItem {
     }
 
     @Override
+    public boolean acceptsItemsOfType(ItemType itemType) {
+        return itemType == ItemType.WORD ||
+               itemType == ItemType.WORD_ALTERNATIVES ||
+               itemType == ItemType.INT ||
+               itemType == ItemType.EXACT ||
+               itemType == ItemType.PHRASE;
+    }
+
+    @Override
     public void addItem(int index, Item item) {
         if (item instanceof WordItem || item instanceof PhraseSegmentItem) {
             addIndexedItem(index, (IndexedItem) item);
@@ -115,8 +124,7 @@ public class PhraseItem extends CompositeIndexedItem {
             return setIndexedItem(index, (IndexedItem) item);
         } else if (item instanceof IntItem) {
             return setIndexedItem(index, convertIntToWord(item));
-        } else if (item instanceof PhraseItem) {
-            PhraseItem phrase = (PhraseItem) item;
+        } else if (item instanceof PhraseItem phrase) {
             Iterator<Item> i = phrase.getItemIterator();
             // we assume we don't try to add empty phrases
             IndexedItem firstItem = (IndexedItem) i.next();

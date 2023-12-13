@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.indexinglanguage.expressions;
 
 import com.yahoo.document.DataType;
@@ -30,7 +30,7 @@ public final class SetVarExpression extends Expression {
         DataType prev = context.getVariable(varName);
         if (prev != null && !prev.equals(next)) {
             throw new VerificationException(this, "Attempting to assign conflicting types to variable '" + varName +
-                                                  "', " + prev.getName() + " vs " + next.getName() + ".");
+                                                  "', " + prev.getName() + " vs " + next.getName());
         }
         context.setVariable(varName, next);
     }

@@ -1,7 +1,7 @@
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.config.provision;
 
 import ai.vespa.validation.PatternedStringWrapper;
-import com.google.common.io.CharStreams;
 
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -16,6 +16,8 @@ public class WireguardKey extends PatternedStringWrapper<WireguardKey> {
 
     // See https://stackoverflow.com/questions/74438436/how-to-validate-a-wireguard-public-key
     private static final Pattern pattern = Pattern.compile("^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$");
+
+    public static final WireguardKey UNINITIALIZED = new WireguardKey("uninitialized+++++++++++++++++++++++++++++0=");
 
     public WireguardKey(String value) {
         super(value, pattern, "Wireguard key");

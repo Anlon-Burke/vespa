@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "lid_allocator.h"
 #include <vespa/searchlib/common/bitvectoriterator.h>
@@ -222,7 +222,11 @@ public:
         setEstimate(HitEstimate(_activeLids.size(), false));
     }
 
-    bool isWhiteList() const override { return true; }
+    double calculate_relative_estimate() const final {
+        return abs_to_rel_est(getState().estimate().estHits, get_docid_limit());
+    }
+
+    bool isWhiteList() const noexcept final { return true; }
 
     SearchIterator::UP createFilterSearch(bool strict, FilterConstraint) const override {
         if (_all_lids_active) {
@@ -231,7 +235,7 @@ public:
         return create_search_helper(strict);
     }
 
-    ~WhiteListBlueprint() {
+    ~WhiteListBlueprint() override {
         for (auto matchData : _matchDataVector) {
             delete matchData;
         }

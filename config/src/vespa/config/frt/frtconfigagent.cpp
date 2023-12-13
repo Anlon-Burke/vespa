@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include "frtconfigagent.h"
 #include "frtconfigrequestv3.h"
 #include <vespa/config/common/trace.h>
@@ -88,7 +88,7 @@ FRTConfigAgent::handleErrorResponse(const ConfigRequest & request, std::unique_p
     setWaitTime(_numConfigured > 0 ? _timingValues.configuredErrorDelay : _timingValues.unconfiguredDelay, multiplier);
     _nextTimeout = _timingValues.errorTimeout;
     const ConfigKey & key(request.getKey());
-    LOG(info, "Error response or no response from config server (key: %s) (errcode=%d, validresponse:%d), trying again in %f seconds",
+    LOG(info, "No response / error from config server. This is normal before an application package is deployed. (key: %s) (errcode=%d, validresponse:%d), trying again in %f seconds",
         key.toString().c_str(), response->errorCode(), response->hasValidResponse() ? 1 : 0, to_s(_waitTime));
 }
 

@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.prelude.cluster;
 
 import com.yahoo.component.annotation.Inject;
@@ -83,7 +83,7 @@ public class ClusterSearcher extends Searcher {
         int searchClusterIndex = clusterConfig.clusterId();
         searchClusterName = clusterConfig.clusterName();
         QrSearchersConfig.Searchcluster searchClusterConfig = getSearchClusterConfigFromClusterName(qrsConfig, searchClusterName);
-        this.globalPhaseRanker = searchClusterConfig.globalphase() ? globalPhaseRanker : null;
+        this.globalPhaseRanker = globalPhaseRanker;
         schemas = new LinkedHashSet<>();
 
         maxQueryTimeout = ParameterParser.asMilliSeconds(clusterConfig.maxQueryTimeout(), DEFAULT_MAX_QUERY_TIMEOUT);
@@ -244,13 +244,24 @@ public class ClusterSearcher extends Searcher {
             throw new IllegalStateException("perSchemaSearch must always be called with 1 schema, got: " + restrict.size());
         }
         String schema = restrict.iterator().next();
-        boolean useGlobalPhase = globalPhaseRanker != null;
+        int rerankCount = globalPhaseRanker != null ? globalPhaseRanker.getRerankCount(query, schema) : 0;
+        boolean useGlobalPhase = rerankCount > 0;
+        final int wantOffset = query.getOffset();
+        final int wantHits = query.getHits();
         if (useGlobalPhase) {
             var error = globalPhaseRanker.validateNoSorting(query, schema).orElse(null);
             if (error != null) return new Result(query, error);
+            int useHits = Math.max(wantOffset + wantHits, rerankCount);
+            query.setOffset(0);
+            query.setHits(useHits);
         }
         Result result = searcher.search(query, execution);
-        if (useGlobalPhase) globalPhaseRanker.rerankHits(query, result, schema);
+        if (useGlobalPhase) {
+            globalPhaseRanker.rerankHits(query, result, schema);
+            result.hits().trim(wantOffset, wantHits);
+            query.setOffset(wantOffset);
+            query.setHits(wantHits);
+        }
         return result;
     }
 

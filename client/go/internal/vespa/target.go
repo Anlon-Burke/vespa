@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 package vespa
 
@@ -9,10 +9,10 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/vespa-engine/vespa/client/go/internal/util"
+	"github.com/vespa-engine/vespa/client/go/internal/curl"
+	"github.com/vespa-engine/vespa/client/go/internal/httputil"
 	"github.com/vespa-engine/vespa/client/go/internal/version"
 )
 
@@ -37,10 +37,42 @@ const (
 )
 
 var errWaitTimeout = errors.New("wait timed out")
+var errAuth = errors.New("auth failed")
 
 // Authenticator authenticates the given HTTP request.
 type Authenticator interface {
 	Authenticate(request *http.Request) error
+}
+
+// CurlWriter configures printing of Curl-equivalent commands for HTTP requests passing through a Service.
+type CurlWriter struct {
+	Writer    io.Writer
+	InputFile string
+}
+
+func (c *CurlWriter) print(request *http.Request, tlsOptions TLSOptions, timeout time.Duration) error {
+	if c.Writer == nil {
+		return nil
+	}
+	cmd, err := curl.RawArgs(request.URL.String())
+	if err != nil {
+		return err
+	}
+	cmd.Method = request.Method
+	for k, vs := range request.Header {
+		for _, v := range vs {
+			cmd.Header(k, v)
+		}
+	}
+	cmd.CaCertificate = tlsOptions.CACertificateFile
+	cmd.Certificate = tlsOptions.CertificateFile
+	cmd.PrivateKey = tlsOptions.PrivateKeyFile
+	cmd.Timeout = timeout
+	if c.InputFile != "" {
+		cmd.WithBodyFile(c.InputFile)
+	}
+	_, err = fmt.Fprintln(c.Writer, cmd.String())
+	return err
 }
 
 // Service represents a Vespa service.
@@ -48,11 +80,12 @@ type Service struct {
 	BaseURL    string
 	Name       string
 	TLSOptions TLSOptions
+	CurlWriter CurlWriter
 
 	deployAPI     bool
-	once          sync.Once
 	auth          Authenticator
-	httpClient    util.HTTPClient
+	httpClient    httputil.Client
+	customClient  bool
 	retryInterval time.Duration
 }
 
@@ -108,28 +141,31 @@ type LogOptions struct {
 
 // Do sends request to this service. Authentication of the request happens automatically.
 func (s *Service) Do(request *http.Request, timeout time.Duration) (*http.Response, error) {
-	s.once.Do(func() {
-		util.ConfigureTLS(s.httpClient, s.TLSOptions.KeyPair, s.TLSOptions.CACertificate, s.TLSOptions.TrustAll)
-	})
+	if !s.customClient {
+		// Do not override TLS config if a custom client has been configured
+		httputil.ConfigureTLS(s.httpClient, s.TLSOptions.KeyPair, s.TLSOptions.CACertificate, s.TLSOptions.TrustAll)
+	}
 	if s.auth != nil {
 		if err := s.auth.Authenticate(request); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %s", errAuth, err)
 		}
+	}
+	if err := s.CurlWriter.print(request, s.TLSOptions, timeout); err != nil {
+		return nil, err
 	}
 	return s.httpClient.Do(request, timeout)
 }
 
-// SetClient sets the HTTP client that this service should use.
-func (s *Service) SetClient(client util.HTTPClient) { s.httpClient = client }
+// SetClient sets a custom HTTP client that this service should use.
+func (s *Service) SetClient(client httputil.Client) {
+	s.httpClient = client
+	s.customClient = true
+}
 
 // Wait polls the health check of this service until it succeeds or timeout passes.
 func (s *Service) Wait(timeout time.Duration) error {
-	url := s.BaseURL
-	if s.deployAPI {
-		url += "/status.html" // because /ApplicationStatus is not publicly reachable in Vespa Cloud
-	} else {
-		url += "/ApplicationStatus"
-	}
+	// A path that does not need authentication, on any target
+	url := strings.TrimRight(s.BaseURL, "/") + "/status.html"
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -220,7 +256,9 @@ func wait(service *Service, okFn responseFunc, reqFn requestFunc, timeout, retry
 	loopOnce := timeout == 0
 	for time.Now().Before(deadline) || loopOnce {
 		response, err = service.Do(reqFn(), 10*time.Second)
-		if err == nil {
+		if errors.Is(err, errAuth) {
+			return status, fmt.Errorf("aborting wait: %w", err)
+		} else if err == nil {
 			status = response.StatusCode
 			body, err := io.ReadAll(response.Body)
 			if err != nil {

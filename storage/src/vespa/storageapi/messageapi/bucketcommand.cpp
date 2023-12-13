@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "bucketcommand.h"
 #include <ostream>
@@ -7,10 +7,9 @@ using document::Bucket;
 using document::BucketId;
 using document::BucketSpace;
 
-namespace storage {
-namespace api {
+namespace storage::api {
 
-BucketCommand::BucketCommand(const MessageType& type, const Bucket &bucket)
+BucketCommand::BucketCommand(const MessageType& type, const Bucket &bucket) noexcept
     : StorageCommand(type),
       _bucket(bucket),
       _originalBucket()
@@ -42,5 +41,4 @@ BucketCommand::print(std::ostream& out,
     }
 }
 
-} // api
-} // storage
+}

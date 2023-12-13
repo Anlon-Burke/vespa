@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.vespa.config.server.session;
 
 import com.google.common.collect.HashMultiset;
@@ -9,6 +9,7 @@ import com.yahoo.concurrent.StripedExecutor;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.api.ConfigDefinitionRepo;
+import com.yahoo.config.model.api.OnnxModelCost;
 import com.yahoo.config.model.application.provider.DeployData;
 import com.yahoo.config.model.application.provider.FilesApplicationPackage;
 import com.yahoo.config.provision.ApplicationId;
@@ -82,7 +83,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static com.yahoo.vespa.curator.Curator.CompletionWaiter;
-import static com.yahoo.vespa.flags.FetchVector.Dimension.APPLICATION_ID;
+import static com.yahoo.vespa.flags.Dimension.INSTANCE_ID;
 import static java.nio.file.Files.readAttributes;
 
 /**
@@ -118,6 +119,7 @@ public class SessionRepository {
     private final SessionPreparer sessionPreparer;
     private final Path sessionsPath;
     private final TenantName tenantName;
+    private final OnnxModelCost onnxModelCost;
     private final SessionCounter sessionCounter;
     private final SecretStore secretStore;
     private final HostProvisionerProvider hostProvisionerProvider;
@@ -129,6 +131,7 @@ public class SessionRepository {
     private final int maxNodeSize;
     private final LongFlag expiryTimeFlag;
     private final BooleanFlag writeSessionData;
+    private final BooleanFlag readSessionData;
 
     public SessionRepository(TenantName tenantName,
                              TenantApplications applicationRepo,
@@ -147,8 +150,10 @@ public class SessionRepository {
                              Clock clock,
                              ModelFactoryRegistry modelFactoryRegistry,
                              ConfigDefinitionRepo configDefinitionRepo,
-                             int maxNodeSize) {
+                             int maxNodeSize,
+                             OnnxModelCost onnxModelCost) {
         this.tenantName = tenantName;
+        this.onnxModelCost = onnxModelCost;
         sessionCounter = new SessionCounter(curator, tenantName);
         this.sessionsPath = TenantRepository.getSessionsPath(tenantName);
         this.clock = clock;
@@ -172,6 +177,7 @@ public class SessionRepository {
         this.maxNodeSize = maxNodeSize;
         this.expiryTimeFlag = PermanentFlags.CONFIG_SERVER_SESSION_EXPIRY_TIME.bindTo(flagSource);
         this.writeSessionData = Flags.WRITE_CONFIG_SERVER_SESSION_DATA_AS_ONE_BLOB.bindTo(flagSource);
+        this.readSessionData = Flags.READ_CONFIG_SERVER_SESSION_DATA_AS_ONE_BLOB.bindTo(flagSource);
 
         loadSessions(); // Needs to be done before creating cache below
         this.directoryCache = curator.createDirectoryCache(sessionsPath.getAbsolute(), false, false, zkCacheExecutor);
@@ -553,7 +559,8 @@ public class SessionRepository {
                                                                     configserverConfig,
                                                                     zone,
                                                                     modelFactoryRegistry,
-                                                                    configDefinitionRepo);
+                                                                    configDefinitionRepo,
+                                                                    onnxModelCost);
         return ApplicationVersions.fromList(builder.buildModels(session.getApplicationId(),
                                                                 session.getDockerImageRepository(),
                                                                 session.getVespaVersion(),
@@ -600,6 +607,10 @@ public class SessionRepository {
                                 existingSession.getCloudAccount(),
                                 existingSession.getDataplaneTokens(),
                                 writeSessionData);
+    }
+
+    public SessionData read(Session session) {
+        return new SessionSerializer().read(session.getSessionZooKeeperClient(), readSessionData);
     }
 
     // ---------------- Common stuff ----------------------------------------------------------------
@@ -728,7 +739,7 @@ public class SessionRepository {
         } catch (IllegalArgumentException e) {
             if (configserverConfig.hostedVespa()) {
                 UnboundStringFlag flag = PermanentFlags.APPLICATION_FILES_WITH_UNKNOWN_EXTENSION;
-                String value = flag.bindTo(flagSource).with(APPLICATION_ID, applicationId.serializedForm()).value();
+                String value = flag.bindTo(flagSource).with(INSTANCE_ID, applicationId.serializedForm()).value();
                 switch (value) {
                     case "FAIL" -> throw new InvalidApplicationException(e);
                     case "LOG" -> deployLogger.ifPresent(logger -> logger.logApplicationPackage(Level.WARNING, e.getMessage()));

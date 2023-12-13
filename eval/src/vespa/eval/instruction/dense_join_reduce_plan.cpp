@@ -1,4 +1,4 @@
-// Copyright Yahoo. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
+// Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "dense_join_reduce_plan.h"
 #include <vespa/vespalib/util/overload.h>
@@ -82,7 +82,7 @@ DenseJoinReducePlan::DenseJoinReducePlan(const ValueType &lhs, const ValueType &
 DenseJoinReducePlan::~DenseJoinReducePlan() = default;
 
 bool
-DenseJoinReducePlan::distinct_result() const
+DenseJoinReducePlan::is_distinct() const
 {
     for (size_t stride: res_stride) {
         if (stride == 0) {
