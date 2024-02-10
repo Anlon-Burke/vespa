@@ -4,7 +4,7 @@
 #include "rankprocessor.h"
 #include <vespa/searchlib/fef/handle.h>
 #include <vespa/searchlib/fef/simpletermfielddata.h>
-#include <vespa/searchlib/query/streaming/multi_term.h>
+#include <vespa/searchlib/query/streaming/equiv_query_node.h>
 #include <vespa/searchlib/query/streaming/nearest_neighbor_query_node.h>
 #include <vespa/vsm/vsm/fieldsearchspec.h>
 #include <algorithm>
@@ -53,11 +53,51 @@ getFeature(const RankProgram &rankProgram) {
     return resolver.resolve(0);
 }
 
-uint16_t
-cap_16_bits(uint32_t value) {
-    return std::min(value, static_cast<uint32_t>(std::numeric_limits<uint16_t>::max()));
 }
 
+void
+RankProcessor::resolve_fields_from_children(QueryTermData& qtd, MultiTerm& mt)
+{
+    vespalib::hash_set<uint32_t> field_ids;
+    for (auto& subterm : mt.get_terms()) {
+        vespalib::string expandedIndexName = vsm::FieldSearchSpecMap::stripNonFields(subterm->index());
+        const RankManager::View *view = _rankManagerSnapshot->getView(expandedIndexName);
+        if (view != nullptr) {
+            for (auto field_id : *view) {
+                field_ids.insert(field_id);
+            }
+        } else {
+            LOG(warning, "Could not find a view for index '%s'. Ranking no fields.",
+                getIndexName(subterm->index(), expandedIndexName).c_str());
+        }
+    }
+    std::vector<uint32_t> sorted_field_ids;
+    sorted_field_ids.reserve(field_ids.size());
+    for (auto field_id : field_ids) {
+        sorted_field_ids.emplace_back(field_id);
+    }
+    std::sort(sorted_field_ids.begin(), sorted_field_ids.end());
+    for (auto field_id : sorted_field_ids) {
+        qtd.getTermData().addField(field_id).setHandle(_mdLayout.allocTermField(field_id));
+    }
+}
+
+void
+RankProcessor::resolve_fields_from_term(QueryTermData& qtd, search::streaming::QueryTerm& term)
+{
+    vespalib::string expandedIndexName = vsm::FieldSearchSpecMap::stripNonFields(term.index());
+    const RankManager::View *view = _rankManagerSnapshot->getView(expandedIndexName);
+    if (view != nullptr) {
+        for (auto field_id : *view) {
+            qtd.getTermData().addField(field_id).setHandle(_mdLayout.allocTermField(field_id));
+        }
+    } else {
+        LOG(warning, "Could not find a view for index '%s'. Ranking no fields.",
+            getIndexName(term.index(), expandedIndexName).c_str());
+    }
+    LOG(debug, "Setup query term '%s:%s'",
+        getIndexName(term.index(), expandedIndexName).c_str(),
+        term.getTerm());
 }
 
 void
@@ -66,46 +106,27 @@ RankProcessor::initQueryEnvironment()
     QueryWrapper::TermList & terms = _query.getTermList();
 
     for (auto& term : terms) {
-        if (term.isGeoPosTerm()) {
-            const vespalib::string & fieldName = term.getTerm()->index();
-            const vespalib::string & locStr = term.getTerm()->getTermString();
+        if (term->isGeoLoc()) {
+            const vespalib::string & fieldName = term->index();
+            const vespalib::string & locStr = term->getTermString();
             _queryEnv.addGeoLocation(fieldName, locStr);
         }
-        if (!term.isPhraseTerm() || term.isFirstPhraseTerm()) { // register 1 term data per phrase
-            QueryTermData & qtd = dynamic_cast<QueryTermData &>(term.getTerm()->getQueryItem());
+        QueryTermData & qtd = dynamic_cast<QueryTermData &>(term->getQueryItem());
 
-            qtd.getTermData().setWeight(term.getTerm()->weight());
-            qtd.getTermData().setUniqueId(term.getTerm()->uniqueId());
-            if (term.isFirstPhraseTerm()) {
-                qtd.getTermData().setPhraseLength(term.getParent()->width());
-            } else {
-                qtd.getTermData().setPhraseLength(1);
-            }
-            auto* nn_term = term.getTerm()->as_nearest_neighbor_query_node();
-            if (nn_term != nullptr) {
-                qtd.getTermData().set_query_tensor_name(nn_term->get_query_tensor_name());
-            }
-
-            vespalib::string expandedIndexName = vsm::FieldSearchSpecMap::stripNonFields(term.getTerm()->index());
-            const RankManager::View *view = _rankManagerSnapshot->getView(expandedIndexName);
-            if (view != nullptr) {
-                for (auto field_id : *view) {
-                    qtd.getTermData().addField(field_id).setHandle(_mdLayout.allocTermField(field_id));
-                }
-            } else {
-                LOG(warning, "Could not find a view for index '%s'. Ranking no fields.",
-                    getIndexName(term.getTerm()->index(), expandedIndexName).c_str());
-            }
-
-            LOG(debug, "Setup query term '%s:%s' (%s)",
-                getIndexName(term.getTerm()->index(), expandedIndexName).c_str(),
-                term.getTerm()->getTerm(),
-                term.isFirstPhraseTerm() ? "phrase" : "term");
-            _queryEnv.addTerm(&qtd.getTermData());
-        } else {
-            LOG(debug, "Ignore query term '%s:%s' (part of phrase)",
-                term.getTerm()->index().c_str(), term.getTerm()->getTerm());
+        qtd.getTermData().setWeight(term->weight());
+        qtd.getTermData().setUniqueId(term->uniqueId());
+        qtd.getTermData().setPhraseLength(term->width());
+        auto* nn_term = term->as_nearest_neighbor_query_node();
+        if (nn_term != nullptr) {
+            qtd.getTermData().set_query_tensor_name(nn_term->get_query_tensor_name());
         }
+        auto* eqn = term->as_equiv_query_node();
+        if (eqn != nullptr) {
+            resolve_fields_from_children(qtd, *eqn);
+        } else {
+            resolve_fields_from_term(qtd, *term);
+        }
+        _queryEnv.addTerm(&qtd.getTermData());
     }
     _rankSetup.prepareSharedState(_queryEnv, _queryEnv.getObjectStore());
     _match_data = _mdLayout.createMatchData();
@@ -114,13 +135,13 @@ RankProcessor::initQueryEnvironment()
 void
 RankProcessor::initHitCollector(size_t wantedHitCount)
 {
-    _hitCollector.reset(new HitCollector(wantedHitCount));
+    _hitCollector = std::make_unique<HitCollector>(wantedHitCount);
 }
 
 void
 RankProcessor::setupRankProgram(RankProgram &program)
 {
-    program.setup(*_match_data, _queryEnv, search::fef::Properties());
+    program.setup(*_match_data, _queryEnv, _featureOverrides);
 }
 
 void
@@ -153,13 +174,15 @@ RankProcessor::RankProcessor(std::shared_ptr<const RankManager::Snapshot> snapsh
                              const vespalib::string &rankProfile,
                              Query & query,
                              const vespalib::string & location,
-                             Properties & queryProperties,
+                             const Properties & queryProperties,
+                             const Properties & featureOverrides,
                              const search::IAttributeManager * attrMgr) :
 
     _rankManagerSnapshot(std::move(snapshot)),
     _rankSetup(_rankManagerSnapshot->getRankSetup(rankProfile)),
     _query(query),
     _queryEnv(location, _rankManagerSnapshot->getIndexEnvironment(rankProfile), queryProperties, attrMgr),
+    _featureOverrides(featureOverrides),
     _mdLayout(),
     _match_data(),
     _rankProgram(),
@@ -209,9 +232,8 @@ class RankProgramWrapper : public HitCollector::IRankProgram
 {
 private:
     MatchData &_match_data;
-
 public:
-    RankProgramWrapper(MatchData &match_data) : _match_data(match_data) {}
+    explicit RankProgramWrapper(MatchData &match_data) : _match_data(match_data) {}
     void run(uint32_t docid, const std::vector<search::fef::TermFieldMatchData> &matchData) override {
         // Prepare the match data object used by the rank program with earlier unpacked match data.
         copyTermFieldMatchData(matchData, _match_data);
@@ -261,93 +283,10 @@ RankProcessor::unpackMatchData(uint32_t docId)
 void
 RankProcessor::unpack_match_data(uint32_t docid, MatchData &matchData, QueryWrapper& query)
 {
-    for (QueryWrapper::Term & term: query.getTermList()) {
-        auto nn_node = term.getTerm()->as_nearest_neighbor_query_node();
-        if (nn_node != nullptr) {
-            auto raw_score = nn_node->get_raw_score();
-            if (raw_score.has_value()) {
-                auto& qtd = static_cast<QueryTermData &>(term.getTerm()->getQueryItem());
-                auto& td = qtd.getTermData();
-                if (td.numFields() == 1u) {
-                    auto tfd = td.field(0u);
-                    auto tmd = matchData.resolveTermField(tfd.getHandle());
-                    assert(tmd != nullptr);
-                    tmd->setRawScore(docid, raw_score.value());
-                }
-            }
-        } else if (auto multi_term = term.getTerm()->as_multi_term()) {
-            auto& qtd = static_cast<QueryTermData &>(term.getTerm()->getQueryItem());
-            auto& td = qtd.getTermData();
-            multi_term->unpack_match_data(docid, td, matchData);
-        } else if (!term.isPhraseTerm() || term.isFirstPhraseTerm()) { // consider 1 term data per phrase
-            bool isPhrase = term.isFirstPhraseTerm();
-            QueryTermData & qtd = static_cast<QueryTermData &>(term.getTerm()->getQueryItem());
-            const ITermData &td = qtd.getTermData();
-
-            HitList list;
-            const HitList & hitList = isPhrase
-                                      ? term.getParent()->evaluateHits(list)
-                                      : term.getTerm()->evaluateHits(list);
-
-            if (hitList.size() > 0) { // only unpack if we have a hit
-                LOG(debug, "Unpack match data for query term '%s:%s' (%s)",
-                    term.getTerm()->index().c_str(), term.getTerm()->getTerm(), isPhrase ? "phrase" : "term");
-
-                uint32_t lastFieldId = -1;
-                TermFieldMatchData *tmd = nullptr;
-                uint32_t fieldLen = search::fef::FieldPositionsIterator::UNKNOWN_LENGTH;
-                uint32_t num_occs = 0;
-
-                // optimize for hitlist giving all hits for a single field in one chunk
-                for (const Hit & hit : hitList) {
-                    uint32_t fieldId = hit.context();
-                    if (fieldId != lastFieldId) {
-                        // reset to notfound/unknown values
-                        tmd = nullptr;
-                        fieldLen = search::fef::FieldPositionsIterator::UNKNOWN_LENGTH;
-                        num_occs = 0;
-
-                        // setup for new field that had a hit
-                        const ITermFieldData *tfd = td.lookupField(fieldId);
-                        if (tfd != nullptr) {
-                            tmd = matchData.resolveTermField(tfd->getHandle());
-                            tmd->setFieldId(fieldId);
-                            // reset field match data, but only once per docId
-                            if (tmd->getDocId() != docid) {
-                                tmd->reset(docid);
-                            }
-                        }
-                        // find fieldLen for new field
-                        if (isPhrase) {
-                            if (fieldId < term.getParent()->getFieldInfoSize()) {
-                                auto& field_info = term.getParent()->getFieldInfo(fieldId);
-                                fieldLen = field_info.getFieldLength();
-                                num_occs = field_info.getHitCount();
-                            }
-                        } else {
-                            if (fieldId < term.getTerm()->getFieldInfoSize()) {
-                                auto& field_info = term.getTerm()->getFieldInfo(fieldId);
-                                fieldLen = field_info.getFieldLength();
-                                num_occs = field_info.getHitCount();
-                            }
-                        }
-                        lastFieldId = fieldId;
-                    }
-                    if (tmd != nullptr) {
-                        // adjust so that the position for phrase terms equals the match for the first term
-                        TermFieldMatchDataPosition pos(hit.elemId(), hit.wordpos() - term.getPosAdjust(),
-                                                       hit.weight(), fieldLen);
-                        tmd->appendPosition(pos);
-                        LOG(debug, "Append elemId(%u),position(%u), weight(%d), tfmd.weight(%d)",
-                                   pos.getElementId(), pos.getPosition(), pos.getElementWeight(), tmd->getWeight());
-                        if (tmd->needs_interleaved_features()) {
-                            tmd->setFieldLength(cap_16_bits(fieldLen));
-                            tmd->setNumOccs(cap_16_bits(num_occs));
-                        }
-                    }
-                }
-            }
-        }
+    for (auto& term : query.getTermList()) {
+        QueryTermData & qtd = static_cast<QueryTermData &>(term->getQueryItem());
+        const ITermData &td = qtd.getTermData();
+        term->unpack_match_data(docid, td, matchData);
     }
 }
 

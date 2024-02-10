@@ -2,13 +2,13 @@
 #pragma once
 
 #include "hit.h"
-#include <vespa/vespalib/stllike/string.h>
-#include <memory>
+#include "querynoderesultbase.h"
 
 namespace search { class SimpleQueryStackDumpIterator; }
 
 namespace search::streaming {
 
+class MultiTerm;
 class QueryTerm;
 class QueryNode;
 class QueryNodeResultFactory;
@@ -29,10 +29,17 @@ using ConstQueryTermList = std::vector<const QueryTerm *>;
 class QueryNode
 {
     static std::unique_ptr<QueryNode> build_nearest_neighbor_query_node(const QueryNodeResultFactory& factory, SimpleQueryStackDumpIterator& queryRep);
+    static void populate_multi_term(Normalizing string_normalize_mode, MultiTerm& mt, SimpleQueryStackDumpIterator& queryRep);
+    static std::unique_ptr<QueryNode> build_dot_product_term(const QueryNodeResultFactory& factory, SimpleQueryStackDumpIterator& queryRep);
+    static std::unique_ptr<QueryNode> build_wand_term(const QueryNodeResultFactory& factory, SimpleQueryStackDumpIterator& queryRep);
+    static std::unique_ptr<QueryNode> build_weighted_set_term(const QueryNodeResultFactory& factory, SimpleQueryStackDumpIterator& queryRep);
+    static std::unique_ptr<QueryNode> build_phrase_term(const QueryNodeResultFactory& factory, SimpleQueryStackDumpIterator& queryRep);
+    static std::unique_ptr<QueryNode> build_equiv_term(const QueryNodeResultFactory& factory, SimpleQueryStackDumpIterator& queryRep, bool allow_rewrite);
+    static void skip_unknown(SimpleQueryStackDumpIterator& queryRep);
  public:
   using UP = std::unique_ptr<QueryNode>;
 
-  virtual ~QueryNode() { }
+  virtual ~QueryNode() = default;
   /// This evalutes if the subtree starting here evaluates to true.
   virtual bool evaluate() const = 0;
   /// This return the hitList for this subtree. Does only give meaning in a
@@ -44,10 +51,6 @@ class QueryNode
   virtual void getLeaves(QueryTermList & tl) = 0;
   /// Gives you all leafs of this tree. Indicating that they are all const.
   virtual void getLeaves(ConstQueryTermList & tl) const = 0;
-  /// Gives you all phrases of this tree.
-  virtual void getPhrases(QueryNodeRefList & tl) = 0;
-  /// Gives you all phrases of this tree. Indicating that they are all const.
-  virtual void getPhrases(ConstQueryNodeRefList & tl) const = 0;
   virtual void setIndex(const vespalib::string & index) = 0;
   virtual const vespalib::string & getIndex() const = 0;
 

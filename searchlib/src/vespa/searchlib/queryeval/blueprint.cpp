@@ -89,7 +89,6 @@ Blueprint::sat_sum(const std::vector<HitEstimate> &data, uint32_t docid_limit)
 
 Blueprint::State::State() noexcept
     : _fields(),
-      _relative_estimate(0.0),
       _estimateHits(0),
       _tree_size(1),
       _estimateEmpty(true),
@@ -106,7 +105,6 @@ Blueprint::State::State(FieldSpecBase field) noexcept
 
 Blueprint::State::State(FieldSpecBaseList fields_in) noexcept
     : _fields(std::move(fields_in)),
-      _relative_estimate(0.0),
       _estimateHits(0),
       _tree_size(1),
       _estimateEmpty(true),
@@ -120,6 +118,7 @@ Blueprint::State::~State() = default;
 
 Blueprint::Blueprint() noexcept
     : _parent(nullptr),
+      _flow_stats(0.0, 0.0, 0.0),
       _sourceId(0xffffffff),
       _docid_limit(0),
       _frozen(false)
@@ -160,6 +159,20 @@ Blueprint::root() const
         bp = bp->_parent;
     }
     return *bp;
+}
+
+FlowStats
+Blueprint::default_flow_stats(uint32_t docid_limit, uint32_t abs_est, size_t child_cnt)
+{
+    double rel_est = abs_to_rel_est(abs_est, docid_limit);
+    double seek_cost = (child_cnt == 0) ? rel_est : (rel_est * 2.0);
+    return {rel_est, 1.0 + child_cnt, seek_cost};
+}
+
+FlowStats
+Blueprint::default_flow_stats(size_t child_cnt)
+{
+    return {0.5, 1.0 + child_cnt, 1.0 + child_cnt};
 }
 
 std::unique_ptr<MatchingElementsSearch>
@@ -352,11 +365,13 @@ Blueprint::visitMembers(vespalib::ObjectVisitor &visitor) const
     visitor.openStruct("estimate", "HitEstimate");
     visitor.visitBool("empty", state.estimate().empty);
     visitor.visitInt("estHits", state.estimate().estHits);
-    visitor.visitFloat("relative_estimate", state.relative_estimate());
     visitor.visitInt("cost_tier", state.cost_tier());
     visitor.visitInt("tree_size", state.tree_size());
     visitor.visitBool("allow_termwise_eval", state.allow_termwise_eval());
     visitor.closeStruct();
+    visitor.visitFloat("relative_estimate", estimate());
+    visitor.visitFloat("cost", cost());
+    visitor.visitFloat("strict_cost", strict_cost());
     visitor.visitInt("sourceId", _sourceId);
     visitor.visitInt("docid_limit", _docid_limit);
 }
@@ -516,7 +531,6 @@ IntermediateBlueprint::calculateState() const
 {
     State state(exposeFields());
     state.estimate(calculateEstimate());
-    state.relative_estimate(calculate_relative_estimate());
     state.cost_tier(calculate_cost_tier());
     state.allow_termwise_eval(infer_allow_termwise_eval());
     state.want_global_filter(infer_want_global_filter());
@@ -525,10 +539,9 @@ IntermediateBlueprint::calculateState() const
 }
 
 double
-IntermediateBlueprint::computeNextHitRate(const Blueprint & child, double hit_rate, bool use_estimate) const
+IntermediateBlueprint::computeNextHitRate(const Blueprint & child, double hit_rate) const
 {
     (void) child;
-    (void) use_estimate;
     return hit_rate;
 }
 
@@ -550,18 +563,25 @@ void
 IntermediateBlueprint::optimize(Blueprint* &self, OptimizePass pass)
 {
     assert(self == this);
-    if (should_optimize_children()) {
-        for (auto &child : _children) {
-            auto *child_ptr = child.release();
-            child_ptr->optimize(child_ptr, pass);
-            child.reset(child_ptr);
-        }
+    for (auto &child : _children) {
+        auto *child_ptr = child.release();
+        child_ptr->optimize(child_ptr, pass);
+        child.reset(child_ptr);
     }
     optimize_self(pass);
     if (pass == OptimizePass::LAST) {
-        sort(_children);
+        update_flow_stats(get_docid_limit());
     }
     maybe_eliminate_self(self, get_replacement());
+}
+
+void
+IntermediateBlueprint::sort(bool strict, bool sort_by_cost)
+{
+    sort(_children, strict, sort_by_cost);
+    for (size_t i = 0; i < _children.size(); ++i) {
+        _children[i]->sort(strict && inheritStrict(i), sort_by_cost);
+    }
 }
 
 void
@@ -632,7 +652,7 @@ IntermediateBlueprint::fetchPostings(const ExecuteInfo &execInfo)
     for (size_t i = 0; i < _children.size(); ++i) {
         Blueprint & child = *_children[i];
         child.fetchPostings(ExecuteInfo::create(execInfo.is_strict() && inheritStrict(i), nextHitRate, execInfo));
-        nextHitRate = computeNextHitRate(child, nextHitRate, execInfo.use_estimate_for_fetch_postings());
+        nextHitRate = computeNextHitRate(child, nextHitRate);
     }
 }
 
@@ -709,25 +729,6 @@ IntermediateBlueprint::calculateUnpackInfo(const fef::MatchData & md) const
 //-----------------------------------------------------------------------------
 
 void
-LeafBlueprint::setDocIdLimit(uint32_t limit) noexcept {
-    Blueprint::setDocIdLimit(limit);
-    _state.relative_estimate(calculate_relative_estimate());
-    notifyChange();
-}
-
-double
-LeafBlueprint::calculate_relative_estimate() const
-{
-    double rel_est = abs_to_rel_est(_state.estimate().estHits, get_docid_limit());
-    if (rel_est > 0.9) {
-        // Assume we do not really know how much we are matching when
-        // we claim to match 'everything'
-        return 0.5;
-    }
-    return rel_est;
-}
-
-void
 LeafBlueprint::fetchPostings(const ExecuteInfo &)
 {
 }
@@ -760,7 +761,15 @@ LeafBlueprint::optimize(Blueprint* &self, OptimizePass pass)
 {
     assert(self == this);
     optimize_self(pass);
+    if (pass == OptimizePass::LAST) {
+        update_flow_stats(get_docid_limit());
+    }
     maybe_eliminate_self(self, get_replacement());
+}
+
+void
+LeafBlueprint::sort(bool, bool)
+{
 }
 
 void
@@ -788,8 +797,6 @@ LeafBlueprint::set_tree_size(uint32_t value)
 //-----------------------------------------------------------------------------
 
 }
-
-//-----------------------------------------------------------------------------
 
 void visit(vespalib::ObjectVisitor &self, const vespalib::string &name,
            const search::queryeval::Blueprint *obj)

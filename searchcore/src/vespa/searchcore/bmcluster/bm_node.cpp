@@ -31,37 +31,30 @@
 #include <vespa/searchlib/transactionlog/translogserver.h>
 #include <vespa/searchsummary/config/config-juniperrc.h>
 #include <vespa/storage/common/i_storage_chain_builder.h>
-#include <vespa/storage/config/config-stor-bouncer.h>
-#include <vespa/storage/config/config-stor-communicationmanager.h>
 #include <vespa/storage/config/config-stor-distributormanager.h>
-#include <vespa/storage/config/config-stor-opslogger.h>
 #include <vespa/storage/config/config-stor-prioritymapping.h>
-#include <vespa/storage/config/config-stor-server.h>
 #include <vespa/storage/config/config-stor-status.h>
 #include <vespa/storage/config/config-stor-visitordispatcher.h>
+#include <vespa/storage/visiting/config-stor-visitor.h>
 #include <vespa/storage/distributor/bucket_spaces_stats_provider.h>
 #include <vespa/storage/storageserver/mergethrottler.h>
 #include <vespa/storage/storageserver/rpc/shared_rpc_resources.h>
-#include <vespa/storage/visiting/config-stor-visitor.h>
 #include <vespa/storageserver/app/distributorprocess.h>
 #include <vespa/storageserver/app/servicelayerprocess.h>
 #include <vespa/vdslib/state/clusterstate.h>
 #include <vespa/vespalib/stllike/asciistream.h>
-#include <vespa/vespalib/util/size_literals.h>
 #include <vespa/config-attributes.h>
 #include <vespa/config-bucketspaces.h>
 #include <vespa/config-imported-fields.h>
 #include <vespa/config-indexschema.h>
-#include <vespa/config-persistence.h>
 #include <vespa/config-rank-profiles.h>
 #include <vespa/config-slobroks.h>
-#include <vespa/config-stor-distribution.h>
-#include <vespa/config-stor-filestor.h>
 #include <vespa/config-summary.h>
 #include <vespa/config-upgrading.h>
+#include <vespa/config-stor-filestor.h>
+#include <vespa/config-persistence.h>
 #include <vespa/config/common/configcontext.h>
 #include <vespa/document/bucket/bucketspace.h>
-#include <vespa/document/config/documenttypes_config_fwd.h>
 #include <vespa/document/repo/configbuilder.h>
 #include <vespa/document/repo/document_type_repo_factory.h>
 #include <vespa/document/repo/documenttyperepo.h>
@@ -103,7 +96,6 @@ using vespa::config::content::core::BucketspacesConfigBuilder;
 using vespa::config::content::core::StorBouncerConfigBuilder;
 using vespa::config::content::core::StorCommunicationmanagerConfigBuilder;
 using vespa::config::content::core::StorDistributormanagerConfigBuilder;
-using vespa::config::content::core::StorOpsloggerConfigBuilder;
 using vespa::config::content::core::StorPrioritymappingConfigBuilder;
 using vespa::config::content::core::StorServerConfigBuilder;
 using vespa::config::content::core::StorStatusConfigBuilder;
@@ -275,7 +267,6 @@ struct StorageConfigSet
     StorDistributionConfigBuilder stor_distribution;
     StorBouncerConfigBuilder      stor_bouncer;
     StorCommunicationmanagerConfigBuilder stor_communicationmanager;
-    StorOpsloggerConfigBuilder    stor_opslogger;
     StorPrioritymappingConfigBuilder stor_prioritymapping;
     UpgradingConfigBuilder        upgrading;
     StorServerConfigBuilder       stor_server;
@@ -292,7 +283,6 @@ struct StorageConfigSet
           stor_distribution(),
           stor_bouncer(),
           stor_communicationmanager(),
-          stor_opslogger(),
           stor_prioritymapping(),
           upgrading(),
           stor_server(),
@@ -303,7 +293,6 @@ struct StorageConfigSet
           messagebus()
     {
         stor_distribution = distribution.get_distribution_config();
-        stor_server.disableQueueLimitsForChainedMerges = params.get_disable_queue_limits_for_chained_merges();
         stor_server.nodeIndex = node_idx;
         stor_server.isDistributor = distributor;
         stor_server.contentNodeBucketDbStripeBits = params.get_bucket_db_stripe_bits();
@@ -335,7 +324,6 @@ struct StorageConfigSet
         set.addBuilder(config_id, &stor_distribution);
         set.addBuilder(config_id, &stor_bouncer);
         set.addBuilder(config_id, &stor_communicationmanager);
-        set.addBuilder(config_id, &stor_opslogger);
         set.addBuilder(config_id, &stor_prioritymapping);
         set.addBuilder(config_id, &upgrading);
         set.addBuilder(config_id, &stor_server);
@@ -391,7 +379,6 @@ struct DistributorConfigSet : public StorageConfigSet
           stor_visitordispatcher()
     {
         stor_distributormanager.inhibitMergeSendingOnBusyNodeDurationSec = params.get_distributor_merge_busy_wait();
-        stor_distributormanager.maxpendingidealstateoperations = params.get_max_pending_idealstate_operations();
         stor_distributormanager.numDistributorStripes = params.get_distributor_stripes();
     }
 

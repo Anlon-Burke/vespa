@@ -25,6 +25,10 @@ protected:
     DotProductSearch() {}
 
 public:
+    static constexpr bool filter_search = false;
+    static constexpr bool require_btree_iterators = true;
+    static constexpr bool supports_hash_filter = false;
+
     // TODO: use MultiSearch::Children to pass ownership
     static SearchIterator::UP create(const std::vector<SearchIterator*> &children,
                                      search::fef::TermFieldMatchData &tmd,

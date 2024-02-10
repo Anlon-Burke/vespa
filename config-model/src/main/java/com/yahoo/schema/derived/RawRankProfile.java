@@ -170,9 +170,8 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
         private final OptionalDouble approximateThreshold;
         private final OptionalDouble targetHitsMaxAdjustmentFactor;
         private final double rankScoreDropLimit;
+        private final boolean sortBlueprintsByCost;
         private final boolean alwaysMarkPhraseExpensive;
-        private final boolean createPostinglistWhenNonStrict;
-        private final boolean useEstimateForFetchPostings;
 
         /**
          * The rank type definitions used to derive settings for the native rank features
@@ -214,9 +213,8 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             minHitsPerThread = compiled.getMinHitsPerThread();
             numSearchPartitions = compiled.getNumSearchPartitions();
             termwiseLimit = compiled.getTermwiseLimit().orElse(deployProperties.featureFlags().defaultTermwiseLimit());
+            sortBlueprintsByCost = deployProperties.featureFlags().sortBlueprintsByCost();
             alwaysMarkPhraseExpensive = deployProperties.featureFlags().alwaysMarkPhraseExpensive();
-            createPostinglistWhenNonStrict = deployProperties.featureFlags().createPostinglistWhenNonStrict();
-            useEstimateForFetchPostings = deployProperties.featureFlags().useEstimateForFetchPostings();
             postFilterThreshold = compiled.getPostFilterThreshold();
             approximateThreshold = compiled.getApproximateThreshold();
             targetHitsMaxAdjustmentFactor = compiled.getTargetHitsMaxAdjustmentFactor();
@@ -467,14 +465,11 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
             if (termwiseLimit < 1.0) {
                 properties.add(new Pair<>("vespa.matching.termwise_limit", termwiseLimit + ""));
             }
+            if (sortBlueprintsByCost) {
+                properties.add(new Pair<>("vespa.matching.sort_blueprints_by_cost", String.valueOf(sortBlueprintsByCost)));
+            }
             if (alwaysMarkPhraseExpensive) {
                 properties.add(new Pair<>("vespa.matching.always_mark_phrase_expensive", String.valueOf(alwaysMarkPhraseExpensive)));
-            }
-            if ( ! createPostinglistWhenNonStrict) {
-                properties.add(new Pair<>("vespa.matching.create_postinglist_when_non_strict", String.valueOf(createPostinglistWhenNonStrict)));
-            }
-            if (useEstimateForFetchPostings) {
-                properties.add(new Pair<>("vespa.matching.use_estimate_for_fetch_postings", String.valueOf(useEstimateForFetchPostings)));
             }
             if (postFilterThreshold.isPresent()) {
                 properties.add(new Pair<>("vespa.matching.global_filter.upper_limit", String.valueOf(postFilterThreshold.getAsDouble())));

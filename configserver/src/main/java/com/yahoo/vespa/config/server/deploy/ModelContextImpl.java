@@ -201,16 +201,11 @@ public class ModelContextImpl implements ModelContext {
         private final int rpc_events_before_wakeup;
         private final int heapPercentage;
         private final String summaryDecodePolicy;
+        private final boolean sortBlueprintsByCost;
         private final boolean alwaysMarkPhraseExpensive;
-        private final boolean createPostinglistWhenNonStrict;
-        private final boolean useEstimateForFetchPostings;
         private final int contentLayerMetadataFeatureLevel;
-        private final boolean dynamicHeapSize;
         private final String unknownConfigDefinition;
         private final int searchHandlerThreadpool;
-        private final long mergingMaxMemoryUsagePerNode;
-        private final boolean usePerDocumentThrottledDeleteBucket;
-        private final boolean restartOnDeployWhenOnnxModelChanges;
 
         public FeatureFlags(FlagSource source, ApplicationId appId, Version version) {
             this.defaultTermwiseLimit = flagValue(source, appId, version, Flags.DEFAULT_TERM_WISE_LIMIT);
@@ -249,15 +244,10 @@ public class ModelContextImpl implements ModelContext {
             this.heapPercentage = flagValue(source, appId, version, PermanentFlags.HEAP_SIZE_PERCENTAGE);
             this.summaryDecodePolicy = flagValue(source, appId, version, Flags.SUMMARY_DECODE_POLICY);
             this.contentLayerMetadataFeatureLevel = flagValue(source, appId, version, Flags.CONTENT_LAYER_METADATA_FEATURE_LEVEL);
-            this.dynamicHeapSize = flagValue(source, appId, version, Flags.DYNAMIC_HEAP_SIZE);
             this.unknownConfigDefinition = flagValue(source, appId, version, Flags.UNKNOWN_CONFIG_DEFINITION);
             this.searchHandlerThreadpool = flagValue(source, appId, version, Flags.SEARCH_HANDLER_THREADPOOL);
-            this.mergingMaxMemoryUsagePerNode = flagValue(source, appId, version, Flags.MERGING_MAX_MEMORY_USAGE_PER_NODE);
-            this.usePerDocumentThrottledDeleteBucket = flagValue(source, appId, version, Flags.USE_PER_DOCUMENT_THROTTLED_DELETE_BUCKET);
             this.alwaysMarkPhraseExpensive =  flagValue(source, appId, version, Flags.ALWAYS_MARK_PHRASE_EXPENSIVE);
-            this.createPostinglistWhenNonStrict = flagValue(source, appId, version, Flags.CREATE_POSTINGLIST_WHEN_NON_STRICT);
-            this.useEstimateForFetchPostings = flagValue(source, appId, version, Flags.USE_ESTIMATE_FOR_FETCH_POSTINGS);
-            this.restartOnDeployWhenOnnxModelChanges = flagValue(source, appId, version, Flags.RESTART_ON_DEPLOY_WHEN_ONNX_MODEL_CHANGES);
+            this.sortBlueprintsByCost = flagValue(source, appId, version, Flags.SORT_BLUEPRINTS_BY_COST);
         }
 
         @Override public int heapSizePercentage() { return heapPercentage; }
@@ -304,15 +294,10 @@ public class ModelContextImpl implements ModelContext {
             return defVal;
         }
         @Override public boolean alwaysMarkPhraseExpensive() { return alwaysMarkPhraseExpensive; }
-        @Override public boolean createPostinglistWhenNonStrict() { return createPostinglistWhenNonStrict; }
-        @Override public boolean useEstimateForFetchPostings() { return useEstimateForFetchPostings; }
         @Override public int contentLayerMetadataFeatureLevel() { return contentLayerMetadataFeatureLevel; }
-        @Override public boolean dynamicHeapSize() { return dynamicHeapSize; }
         @Override public String unknownConfigDefinition() { return unknownConfigDefinition; }
         @Override public int searchHandlerThreadpool() { return searchHandlerThreadpool; }
-        @Override public long mergingMaxMemoryUsagePerNode() { return mergingMaxMemoryUsagePerNode; }
-        @Override public boolean usePerDocumentThrottledDeleteBucket() { return usePerDocumentThrottledDeleteBucket; }
-        @Override public boolean restartOnDeployWhenOnnxModelChanges() { return restartOnDeployWhenOnnxModelChanges; }
+        @Override public boolean sortBlueprintsByCost() { return sortBlueprintsByCost; }
 
         private static <V> V flagValue(FlagSource source, ApplicationId appId, Version vespaVersion, UnboundFlag<? extends V, ?, ?> flag) {
             return flag.bindTo(source)

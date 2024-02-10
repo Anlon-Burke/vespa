@@ -22,6 +22,7 @@
 #include <vespa/config/common/exceptions.h>
 #include <vespa/vespalib/gtest/gtest.h>
 #include <vespa/vespalib/objects/nbostream.h>
+#include <vespa/config-stor-filestor.h>
 #include <gmock/gmock.h>
 #include <optional>
 #include <thread>
@@ -98,7 +99,7 @@ VisitorManagerTest::initializeTest(bool defer_manager_thread_start)
                                                defer_manager_thread_start);
     _manager = vm.get();
     _top->push_back(std::move(vm));
-    using vespa::config::content::StorFilestorConfig;
+    using StorFilestorConfig = vespa::config::content::internal::InternalStorFilestorType;
     auto filestor_cfg = config_from<StorFilestorConfig>(config::ConfigUri(config.getConfigId()));
     _top->push_back(std::make_unique<FileStorManager>(*filestor_cfg, _node->getPersistenceProvider(),
                                                       _node->getComponentRegister(), *_node, _node->get_host_info()));
@@ -1032,7 +1033,7 @@ TEST_F(VisitorManagerTest, status_page) {
     EXPECT_THAT(str, HasSubstr("Running 1 visitors")); // 1 active
     EXPECT_THAT(str, HasSubstr("waiting visitors 1")); // 1 queued
     EXPECT_THAT(str, HasSubstr("Visitor thread 0"));
-    EXPECT_THAT(str, HasSubstr("Disconnected visitor timeout")); // verbose per thread
+    EXPECT_THAT(str, HasSubstr("Iterators per bucket")); // verbose per thread
     EXPECT_THAT(str, HasSubstr("Message #1 <b>putdocumentmessage</b>")); // 1 active
 
     for (uint32_t session = 0; session < 2 ; ++session){

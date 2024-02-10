@@ -104,7 +104,8 @@ public:
 class MyLeaf : public SimpleLeafBlueprint
 {
     using TFMDA = search::fef::TermFieldMatchDataArray;
-    bool _got_global_filter;
+    bool _got_global_filter = false;
+    double _cost = 1.0;
 
 public:
     SearchIterator::UP
@@ -113,18 +114,22 @@ public:
         return std::make_unique<MySearch>("leaf", tfmda, strict);
     }
 
-    MyLeaf()
-        : SimpleLeafBlueprint(), _got_global_filter(false)
-    {}
-    MyLeaf(FieldSpecBaseList fields)
-        : SimpleLeafBlueprint(std::move(fields)), _got_global_filter(false)
-    {}
+    MyLeaf() : SimpleLeafBlueprint() {}
+    MyLeaf(FieldSpecBaseList fields) : SimpleLeafBlueprint(std::move(fields)) {}
+    void set_cost(double value) noexcept { _cost = value; }
+    FlowStats calculate_flow_stats(uint32_t docid_limit) const override {
+        double rel_est = abs_to_rel_est(getState().estimate().estHits, docid_limit);
+        if (rel_est > 0.9) {
+            return {0.5, _cost, _cost};
+        } else {
+            return {rel_est, _cost, _cost * rel_est};
+        }
+    }
 
     MyLeaf &estimate(uint32_t hits, bool empty = false) {
         setEstimate(HitEstimate(hits, empty));
         return *this;
     }
-
     MyLeaf &cost_tier(uint32_t value) {
         set_cost_tier(value);
         return *this;
@@ -153,7 +158,7 @@ private:
 
 public:
     explicit MyLeafSpec(uint32_t estHits, bool empty = false)
-        : _fields(), _estimate(estHits, empty), _cost_tier(0), _want_global_filter(false) {}
+      : _fields(), _estimate(estHits, empty), _cost_tier(0), _want_global_filter(false) {}
 
     MyLeafSpec &addField(uint32_t fieldId, uint32_t handle) {
         _fields.add(FieldSpecBase(fieldId, handle));

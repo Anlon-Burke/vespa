@@ -31,7 +31,6 @@ PostingListSearchContextT(const IEnumStoreDictionary& dictionary, uint32_t docId
 template <typename DataT>
 PostingListSearchContextT<DataT>::~PostingListSearchContextT() = default;
 
-
 template <typename DataT>
 void
 PostingListSearchContextT<DataT>::lookupSingle()
@@ -68,17 +67,77 @@ PostingListSearchContextT<DataT>::fillArray()
 }
 
 template <typename DataT>
-void
-PostingListSearchContextT<DataT>::fillBitVector()
-{
-    for (auto it(_lowerDictItr); it != _upperDictItr; ++it) {
-        _merger.addToBitVector(PostingListTraverser<PostingStore>(_posting_store, it.getData().load_acquire()));
+struct PostingListSearchContextT<DataT>::FillPart : public vespalib::Runnable {
+    FillPart(const vespalib::Doom & doom, const PostingStore& posting_store, const DictionaryConstIterator & from,
+             size_t count, uint32_t limit)
+        : FillPart(doom, posting_store, from, count, nullptr, limit)
+    { }
+    FillPart(const vespalib::Doom & doom, const PostingStore& posting_store, const DictionaryConstIterator & from,
+             size_t count, BitVector * bv, uint32_t limit)
+        : _doom(doom),
+          _posting_store(posting_store),
+          _bv(bv),
+          _docIdLimit(limit),
+          _from(from),
+          _to(from),
+          _owned_bv()
+    {
+        _to += count;
     }
+    void run() override {
+        if (_bv == nullptr) {
+            _owned_bv = BitVector::create(_docIdLimit);
+            _bv = _owned_bv.get();
+        }
+        //TODO Add  && !_doom.soft_doom() to loop
+        for ( ;_from != _to; ++_from) {
+            addToBitVector(PostingListTraverser<PostingStore>(_posting_store, _from.getData().load_acquire()));
+        }
+    }
+    void addToBitVector(const PostingListTraverser<PostingStore> & postingList) {
+        postingList.foreach_key([this](uint32_t key) {
+            if (__builtin_expect(key < _docIdLimit, true)) { _bv->setBit(key); }
+        });
+    }
+    const vespalib::Doom       _doom;
+    const PostingStore        &_posting_store;
+    BitVector                 *_bv;
+    uint32_t                   _docIdLimit;
+    DictionaryConstIterator    _from;
+    DictionaryConstIterator    _to;
+    std::unique_ptr<BitVector> _owned_bv;
+};
+
+template <typename DataT>
+void
+PostingListSearchContextT<DataT>::fillBitVector(const ExecuteInfo & exec_info)
+{
+    vespalib::ThreadBundle & thread_bundle = exec_info.thread_bundle();
+    size_t num_iter = _upperDictItr - _lowerDictItr;
+    size_t num_threads = std::min(thread_bundle.size(), num_iter);
+
+    uint32_t per_thread = num_iter / num_threads;
+    uint32_t rest_docs = num_iter % num_threads;
+    std::vector<FillPart> parts;
+    parts.reserve(num_threads);
+    BitVector * master = _merger.getBitVector();
+    parts.emplace_back(exec_info.doom(), _posting_store, _lowerDictItr, per_thread + (rest_docs > 0), master, _merger.getDocIdLimit());
+    for (size_t i(1); i < num_threads; i++) {
+        size_t num_this_thread = per_thread + (i < rest_docs);
+        parts.emplace_back(exec_info.doom(), _posting_store, parts[i-1]._to, num_this_thread, _merger.getDocIdLimit());
+    }
+    thread_bundle.run(parts);
+    std::vector<BitVector *> vectors;
+    vectors.reserve(parts.size());
+    for (const auto & part : parts) {
+        vectors.push_back(part._bv);
+    }
+    BitVector::parallellOr(thread_bundle, vectors);
 }
 
 template <typename DataT>
 void
-PostingListSearchContextT<DataT>::fetchPostings(const queryeval::ExecuteInfo & execInfo)
+PostingListSearchContextT<DataT>::fetchPostings(const ExecuteInfo & exec_info)
 {
     // The following constant is derived after running parts of
     // the range search performance test with 10M documents on an Apple M1 Pro with 32 GB memory.
@@ -109,14 +168,15 @@ PostingListSearchContextT<DataT>::fetchPostings(const queryeval::ExecuteInfo & e
     // The threshold for when to use array merging is therefore 0.0025 (0.08 / 32).
     constexpr float threshold_for_using_array = 0.0025;
     if (!_merger.merge_done() && _uniqueValues >= 2u && this->_dictionary.get_has_btree_dictionary()) {
-        if (execInfo.is_strict() || use_posting_lists_when_non_strict(execInfo)) {
+        if (exec_info.is_strict() || use_posting_lists_when_non_strict(exec_info)) {
             size_t sum = estimated_hits_in_range();
+            //TODO Honour soft_doom and forward it to merge code
             if (sum < (_docIdLimit * threshold_for_using_array)) {
                 _merger.reserveArray(_uniqueValues, sum);
                 fillArray();
             } else {
                 _merger.allocBitVector();
-                fillBitVector();
+                fillBitVector(exec_info);
             }
             _merger.merge();
         }
@@ -169,7 +229,7 @@ createPostingIterator(fef::TermFieldMatchData *matchData, bool strict)
         }
         const BitVector *bv(_merger.getBitVector());
         assert(bv != nullptr);
-        return search::BitVectorIterator::create(bv, bv->size(), *matchData, strict);
+        return BitVectorIterator::create(bv, bv->size(), *matchData, strict);
     }
     if (_uniqueValues == 1) {
         if (_bv != nullptr && (!_pidx.valid() || _useBitVector || matchData->isNotNeeded())) {
@@ -224,8 +284,8 @@ PostingListSearchContextT<DataT>::singleHits() const
 }
 
 template <typename DataT>
-unsigned int
-PostingListSearchContextT<DataT>::approximateHits() const
+HitEstimate
+PostingListSearchContextT<DataT>::calc_hit_estimate() const
 {
     size_t numHits = 0;
     if (_uniqueValues == 0u) {
@@ -234,9 +294,9 @@ PostingListSearchContextT<DataT>::approximateHits() const
     } else if (_dictionary.get_has_btree_dictionary()) {
         numHits = estimated_hits_in_range();
     } else {
-        numHits = _docIdLimit;
+        return HitEstimate::unknown(_docIdLimit);
     }
-    return std::min(numHits, size_t(std::numeric_limits<uint32_t>::max()));
+    return HitEstimate(std::min(numHits, size_t(std::numeric_limits<uint32_t>::max())));
 }
 
 template <typename DataT>
@@ -367,9 +427,104 @@ PostingListFoldedSearchContextT<DataT>::fillArray()
 
 template <typename DataT>
 void
-PostingListFoldedSearchContextT<DataT>::fillBitVector()
+PostingListFoldedSearchContextT<DataT>::fillBitVector(const ExecuteInfo & exec_info)
 {
+    (void) exec_info;
     fill_array_or_bitvector<false>();
+}
+
+
+template <typename BaseSC, typename AttrT, typename DataT>
+StringPostingSearchContext<BaseSC, AttrT, DataT>::
+StringPostingSearchContext(BaseSC&& base_sc, bool useBitVector, const AttrT &toBeSearched)
+    : Parent(std::move(base_sc), useBitVector, toBeSearched)
+{
+    if (this->valid()) {
+        if (this->isPrefix()) {
+            auto comp = _enumStore.make_folded_comparator_prefix(this->queryTerm()->getTerm());
+            this->lookupRange(comp, comp);
+        } else if (this->isRegex()) {
+            vespalib::string prefix(RegexpUtil::get_prefix(this->queryTerm()->getTerm()));
+            auto comp = _enumStore.make_folded_comparator_prefix(prefix.c_str());
+            this->lookupRange(comp, comp);
+        } else if (this->isFuzzy()) {
+            vespalib::string prefix(this->getFuzzyMatcher().getPrefix());
+            auto comp = _enumStore.make_folded_comparator_prefix(prefix.c_str());
+            this->lookupRange(comp, comp);
+        } else {
+            auto comp = _enumStore.make_folded_comparator(this->queryTerm()->getTerm());
+            this->lookupTerm(comp);
+        }
+        if (this->_uniqueValues == 1u) {
+            /*
+             * A single dictionary entry from lookupRange() might not be
+             * a match if this is a regex search or a fuzzy search.
+             */
+            if (!this->_lowerDictItr.valid() || use_single_dictionary_entry(this->_lowerDictItr)) {
+                this->lookupSingle();
+            } else {
+                this->_uniqueValues = 0;
+            }
+        }
+    }
+}
+
+template <typename BaseSC, typename AttrT, typename DataT>
+bool
+StringPostingSearchContext<BaseSC, AttrT, DataT>::use_dictionary_entry(PostingListSearchContext::DictionaryConstIterator& it) const {
+    if ( this->isRegex() ) {
+        if (this->getRegex().valid() &&
+            this->getRegex().partial_match(_enumStore.get_value(it.getKey().load_acquire()))) {
+            return true;
+        }
+        ++it;
+        return false;
+    } else if ( this->isCased() ) {
+        if (this->match(_enumStore.get_value(it.getKey().load_acquire()))) {
+            return true;
+        }
+        ++it;
+        return false;
+    } else if (this->isFuzzy()) {
+        return this->is_fuzzy_match(_enumStore.get_value(it.getKey().load_acquire()), it, _enumStore.get_data_store());
+    }
+    return true;
+}
+
+template <typename BaseSC, typename AttrT, typename DataT>
+bool
+StringPostingSearchContext<BaseSC, AttrT, DataT>::use_posting_lists_when_non_strict(const ExecuteInfo& info) const
+{
+    if (this->isFuzzy()) {
+        uint32_t exp_doc_hits = this->_docIdLimit * info.hit_rate();
+        constexpr uint32_t fuzzy_use_posting_lists_doc_limit = 10000;
+        /**
+         * The above constant was derived after a query latency experiment with fuzzy matching
+         * on 2M documents with a dictionary size of 292070.
+         *
+         * Cost per document in dfa-based fuzzy matching (scanning the dictionary and merging posting lists) - strict iterator:
+         *   2.8 ms / 2k = 0.0014 ms
+         *   4.4 ms / 20k = 0.00022 ms
+         *   9.0 ms / 200k = 0.000045 ms
+         *   98 ms / 1M = 0.000098 ms
+         *
+         * Cost per document in lookup-based fuzzy matching - non-strict iterator:
+         *   7.6 ms / 2k = 0.0038 ms
+         *   54 ms / 20k = 0.0027 ms
+         *   529 ms / 200k = 0.0026 ms
+         *
+         * Based on this experiment, we observe that we should avoid lookup-based fuzzy matching
+         * when the number of documents to calculate this on exceeds a number between 2000 - 20000.
+         *
+         * Also note that the cost of scanning the dictionary and performing the fuzzy matching
+         * is already performed at this point.
+         * The only work remaining if returning true is merging the posting lists.
+         */
+        if (exp_doc_hits > fuzzy_use_posting_lists_doc_limit) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }

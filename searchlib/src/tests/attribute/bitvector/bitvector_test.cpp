@@ -7,7 +7,7 @@
 #include <vespa/searchlib/common/bitvectoriterator.h>
 #include <vespa/searchlib/fef/termfieldmatchdata.h>
 #include <vespa/searchlib/parsequery/parse.h>
-#include <vespa/searchlib/queryeval/document_weight_search_iterator.h>
+#include <vespa/searchlib/queryeval/docid_with_weight_search_iterator.h>
 #include <vespa/searchlib/queryeval/executeinfo.h>
 #include <vespa/searchlib/test/searchiteratorverifier.h>
 #include <vespa/searchlib/util/randomgenerator.h>
@@ -430,9 +430,10 @@ BitVectorTest::test(BasicType bt, CollectionType ct, const vespalib::string &pre
     sc = getSearch<VectorType>(tv, filter);
     checkSearch(v, std::move(sc), 2, 1022, 205, !filter, true);
     const auto* dww = v->as_docid_with_weight_posting_store();
-    if (dww != nullptr) {
+    if ((dww != nullptr) && (bt == BasicType::STRING)) {
+        // This way of doing lookup is only supported by string attributes.
         auto lres = dww->lookup(getSearchStr<VectorType>(), dww->get_dictionary_snapshot());
-        using DWSI = search::queryeval::DocumentWeightSearchIterator;
+        using DWSI = search::queryeval::DocidWithWeightSearchIterator;
         TermFieldMatchData md;
         auto dwsi = std::make_unique<DWSI>(md, *dww, lres);
         if (!filter) {

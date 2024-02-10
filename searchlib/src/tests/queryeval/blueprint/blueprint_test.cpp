@@ -1,6 +1,7 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #include "mysearch.h"
 #include <vespa/vespalib/testkit/testapp.h>
+#include <vespa/searchlib/queryeval/flow.h>
 #include <vespa/searchlib/queryeval/blueprint.h>
 #include <vespa/searchlib/queryeval/intermediate_blueprints.h>
 #include <vespa/vespalib/objects/objectdumper.h>
@@ -22,7 +23,11 @@ class MyOr : public IntermediateBlueprint
 {
 private:
 public:
-    double calculate_relative_estimate() const final { return 0.5; }
+    FlowStats calculate_flow_stats(uint32_t) const final {
+        return {OrFlow::estimate_of(get_children()),
+                OrFlow::cost_of(get_children(), false),
+                OrFlow::cost_of(get_children(), true)};
+    }
     HitEstimate combine(const std::vector<HitEstimate> &data) const override {
         return max(data);
     }
@@ -31,7 +36,7 @@ public:
         return mixChildrenFields();
     }
 
-    void sort(Children &children) const override {
+    void sort(Children &children, bool, bool) const override {
         std::sort(children.begin(), children.end(), TieredGreaterEstimate());
     }
 
@@ -139,6 +144,9 @@ public:
 struct MyTerm : SimpleLeafBlueprint {
     MyTerm(FieldSpecBase field, uint32_t hitEstimate) : SimpleLeafBlueprint(field) {
         setEstimate(HitEstimate(hitEstimate, false));
+    }
+    FlowStats calculate_flow_stats(uint32_t docid_limit) const override {
+        return default_flow_stats(docid_limit, getState().estimate().estHits, 0);
     }
     SearchIterator::UP createLeafSearch(const search::fef::TermFieldMatchDataArray &, bool) const override {
         return {};
@@ -439,7 +447,8 @@ TEST_F("testChildAndNotCollapsing", Fixture)
                                    )
                               );
     TEST_DO(f.check_not_equal(*sorted, *unsorted));
-    unsorted = Blueprint::optimize(std::move(unsorted));
+    unsorted->setDocIdLimit(1000);
+    unsorted = Blueprint::optimize_and_sort(std::move(unsorted), true, true);
     TEST_DO(f.check_equal(*sorted, *unsorted));
 }
 
@@ -478,7 +487,8 @@ TEST_F("testChildAndCollapsing", Fixture)
                               );
 
     TEST_DO(f.check_not_equal(*sorted, *unsorted));
-    unsorted = Blueprint::optimize(std::move(unsorted));
+    unsorted->setDocIdLimit(1000);
+    unsorted = Blueprint::optimize_and_sort(std::move(unsorted), true, true);
     TEST_DO(f.check_equal(*sorted, *unsorted));
 }
 
@@ -516,7 +526,11 @@ TEST_F("testChildOrCollapsing", Fixture)
                                    .add(MyLeafSpec(1).addField(2, 42).create())
                               );
     TEST_DO(f.check_not_equal(*sorted, *unsorted));
-    unsorted = Blueprint::optimize(std::move(unsorted));
+    unsorted->setDocIdLimit(1000);
+    // we sort non-strict here since the default costs of 1/est for
+    // non-strict/strict leaf iterators makes the order of iterators
+    // under a strict OR irrelevant.
+    unsorted = Blueprint::optimize_and_sort(std::move(unsorted), false, true);
     TEST_DO(f.check_equal(*sorted, *unsorted));
 }
 
@@ -559,7 +573,8 @@ TEST_F("testChildSorting", Fixture)
                               );
 
     TEST_DO(f.check_not_equal(*sorted, *unsorted));
-    unsorted = Blueprint::optimize(std::move(unsorted));
+    unsorted->setDocIdLimit(1000);
+    unsorted = Blueprint::optimize_and_sort(std::move(unsorted), true, true);
     TEST_DO(f.check_equal(*sorted, *unsorted));
 }
 
@@ -640,11 +655,13 @@ getExpectedBlueprint()
            "    estimate: HitEstimate {\n"
            "        empty: false\n"
            "        estHits: 9\n"
-           "        relative_estimate: 0.5\n"
            "        cost_tier: 1\n"
            "        tree_size: 2\n"
            "        allow_termwise_eval: false\n"
            "    }\n"
+           "    relative_estimate: 0\n"
+           "    cost: 0\n"
+           "    strict_cost: 0\n"
            "    sourceId: 4294967295\n"
            "    docid_limit: 0\n"
            "    children: std::vector {\n"
@@ -660,11 +677,13 @@ getExpectedBlueprint()
            "            estimate: HitEstimate {\n"
            "                empty: false\n"
            "                estHits: 9\n"
-           "                relative_estimate: 0.5\n"
            "                cost_tier: 1\n"
            "                tree_size: 1\n"
            "                allow_termwise_eval: true\n"
            "            }\n"
+           "            relative_estimate: 0\n"
+           "            cost: 0\n"
+           "            strict_cost: 0\n"
            "            sourceId: 4294967295\n"
            "            docid_limit: 0\n"
            "        }\n"
@@ -690,11 +709,13 @@ getExpectedSlimeBlueprint() {
            "        '[type]': 'HitEstimate',"
            "        empty: false,"
            "        estHits: 9,"
-           "        relative_estimate: 0.5,"
            "        cost_tier: 1,"
            "        tree_size: 2,"
            "        allow_termwise_eval: false"
            "    },"
+           "    relative_estimate: 0.0,"
+           "    cost: 0.0,"
+           "    strict_cost: 0.0,"
            "    sourceId: 4294967295,"
            "    docid_limit: 0,"
            "    children: {"
@@ -715,11 +736,13 @@ getExpectedSlimeBlueprint() {
            "                '[type]': 'HitEstimate',"
            "                empty: false,"
            "                estHits: 9,"
-           "                relative_estimate: 0.5,"
            "                cost_tier: 1,"
            "                tree_size: 1,"
            "                allow_termwise_eval: true"
            "            },"
+           "            relative_estimate: 0.0,"
+           "            cost: 0.0,"
+           "            strict_cost: 0.0,"
            "            sourceId: 4294967295,"
            "            docid_limit: 0"
            "        }"
@@ -772,9 +795,9 @@ TEST("requireThatDocIdLimitInjectionWorks")
 }
 
 TEST("Control object sizes") {
-    EXPECT_EQUAL(40u, sizeof(Blueprint::State));
-    EXPECT_EQUAL(32u, sizeof(Blueprint));
-    EXPECT_EQUAL(72u, sizeof(LeafBlueprint));
+    EXPECT_EQUAL(32u, sizeof(Blueprint::State));
+    EXPECT_EQUAL(56u, sizeof(Blueprint));
+    EXPECT_EQUAL(88u, sizeof(LeafBlueprint));
 }
 
 TEST_MAIN() {

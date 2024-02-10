@@ -2,9 +2,14 @@
 
 #include <vespa/searchlib/fef/simpletermdata.h>
 #include <vespa/searchlib/fef/matchdata.h>
+#include <vespa/searchlib/query/streaming/dot_product_term.h>
+#include <vespa/searchlib/query/streaming/equiv_query_node.h>
 #include <vespa/searchlib/query/streaming/in_term.h>
+#include <vespa/searchlib/query/streaming/phrase_query_node.h>
 #include <vespa/searchlib/query/streaming/query.h>
 #include <vespa/searchlib/query/streaming/nearest_neighbor_query_node.h>
+#include <vespa/searchlib/query/streaming/wand_term.h>
+#include <vespa/searchlib/query/streaming/weighted_set_term.h>
 #include <vespa/searchlib/query/tree/querybuilder.h>
 #include <vespa/searchlib/query/tree/simplequery.h>
 #include <vespa/searchlib/query/tree/stackdumpcreator.h>
@@ -20,11 +25,13 @@ using TermType = QueryTerm::Type;
 using search::fef::SimpleTermData;
 using search::fef::MatchData;
 
-void assertHit(const Hit & h, size_t expWordpos, size_t expContext, int32_t weight) {
-    EXPECT_EQ(h.wordpos(), expWordpos);
-    EXPECT_EQ(h.context(), expContext);
-    EXPECT_EQ(h.weight(), weight);
+void assertHit(const Hit & h, uint32_t exp_field_id, uint32_t exp_element_id, int32_t exp_element_weight, size_t exp_position) {
+    EXPECT_EQ(h.field_id(), exp_field_id);
+    EXPECT_EQ(h.element_id(), exp_element_id);
+    EXPECT_EQ(h.element_weight(), exp_element_weight);
+    EXPECT_EQ(h.position(), exp_position);
 }
+
 
 TEST(StreamingQueryTest, test_query_language)
 {
@@ -37,7 +44,7 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, 7);
         EXPECT_EQ(ib, 7);
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_EQ(da, 7);
         EXPECT_EQ(db, 7);
     }
@@ -47,15 +54,24 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, -7);
         EXPECT_EQ(ib, -7);
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_EQ(da, -7);
         EXPECT_EQ(db, -7);
+    }
+    {
+        QueryTerm q(factory.create(), "+7", "index", TermType::WORD);
+        EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
+        EXPECT_EQ(ia, 7);
+        EXPECT_EQ(ib, 7);
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
+        EXPECT_EQ(da, 7);
+        EXPECT_EQ(db, 7);
     }
 
     {
         QueryTerm q(factory.create(), "7.5", "index", TermType::WORD);
         EXPECT_TRUE(!q.getAsIntegerTerm(ia, ib));
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_EQ(da, 7.5);
         EXPECT_EQ(db, 7.5);
     }
@@ -63,7 +79,7 @@ TEST(StreamingQueryTest, test_query_language)
     {
         QueryTerm q(factory.create(), "-7.5", "index", TermType::WORD);
         EXPECT_TRUE(!q.getAsIntegerTerm(ia, ib));
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_EQ(da, -7.5);
         EXPECT_EQ(db, -7.5);
     }
@@ -73,8 +89,8 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, std::numeric_limits<int64_t>::min());
         EXPECT_EQ(ib, 6);
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
-        EXPECT_EQ(da, -std::numeric_limits<double>::max());
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
+        EXPECT_EQ(da, -std::numeric_limits<double>::infinity());
         EXPECT_LT(db, 7);
         EXPECT_GT(db, 6.99);
     }
@@ -84,8 +100,8 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, std::numeric_limits<int64_t>::min());
         EXPECT_EQ(ib, 7);
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
-        EXPECT_EQ(da, -std::numeric_limits<double>::max());
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
+        EXPECT_EQ(da, -std::numeric_limits<double>::infinity());
         EXPECT_EQ(db, 7);
     }
 
@@ -94,10 +110,10 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, 8);
         EXPECT_EQ(ib, std::numeric_limits<int64_t>::max());
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_GT(da, 7);
         EXPECT_LT(da, 7.01);
-        EXPECT_EQ(db, std::numeric_limits<double>::max());
+        EXPECT_EQ(db, std::numeric_limits<double>::infinity());
     }
 
     {
@@ -105,9 +121,9 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, 7);
         EXPECT_EQ(ib, std::numeric_limits<int64_t>::max());
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_EQ(da, 7);
-        EXPECT_EQ(db, std::numeric_limits<double>::max());
+        EXPECT_EQ(db, std::numeric_limits<double>::infinity());
     }
 
     {
@@ -115,7 +131,7 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, -7);
         EXPECT_EQ(ib, 7);
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_EQ(da, -7);
         EXPECT_EQ(db, 7);
     }
@@ -125,7 +141,7 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_FALSE(q.getAsIntegerTerm(ia, ib)); // This is dubious and perhaps a regression.
         EXPECT_EQ(ia, std::numeric_limits<int64_t>::min());
         EXPECT_EQ(ib, std::numeric_limits<int64_t>::max());
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_EQ(da, -7.1);
         EXPECT_EQ(db, 7.1);
     }
@@ -135,7 +151,7 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_FALSE(q.getAsIntegerTerm(ia, ib)); // This is dubious and perhaps a regression.
         EXPECT_EQ(ia, std::numeric_limits<int64_t>::min());
         EXPECT_EQ(ib, std::numeric_limits<int64_t>::max());
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_EQ(da, 500.0);
         EXPECT_EQ(db, std::numeric_limits<double>::max());
     }
@@ -146,8 +162,8 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, -6);
         EXPECT_EQ(ib, 7);
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
-        EXPECT_EQ(da, std::nextafterf(minusSeven, seven));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
+        EXPECT_EQ(da, std::nextafter(minusSeven, seven));
         EXPECT_EQ(db, seven);
     }
 
@@ -156,9 +172,9 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, -6);
         EXPECT_EQ(ib, 6);
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
-        EXPECT_EQ(da, std::nextafterf(minusSeven, seven));
-        EXPECT_EQ(db, std::nextafterf(seven, minusSeven));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
+        EXPECT_EQ(da, std::nextafter(minusSeven, seven));
+        EXPECT_EQ(db, std::nextafter(seven, minusSeven));
     }
 
     {
@@ -173,9 +189,9 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, -7);
         EXPECT_EQ(ib, 6);
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_EQ(da, minusSeven);
-        EXPECT_EQ(db, std::nextafterf(seven, minusSeven));
+        EXPECT_EQ(db, std::nextafter(seven, minusSeven));
     }
 
     {
@@ -183,8 +199,8 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, std::numeric_limits<int64_t>::min());
         EXPECT_EQ(ib, -8);
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
-        EXPECT_EQ(da, -std::numeric_limits<double>::max());
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
+        EXPECT_EQ(da, -std::numeric_limits<double>::infinity());
         EXPECT_LT(db, -7);
         EXPECT_GT(db, -7.01);
     }
@@ -194,8 +210,8 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, std::numeric_limits<int64_t>::min());
         EXPECT_EQ(ib, -7);
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
-        EXPECT_EQ(da, -std::numeric_limits<double>::max());
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
+        EXPECT_EQ(da, -std::numeric_limits<double>::infinity());
         EXPECT_EQ(db, -7);
     }
 
@@ -204,8 +220,8 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, std::numeric_limits<int64_t>::min());
         EXPECT_EQ(ib, -7);
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
-        EXPECT_EQ(da, -std::numeric_limits<double>::max());
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
+        EXPECT_EQ(da, -std::numeric_limits<double>::infinity());
         EXPECT_EQ(db, -7);
     }
 
@@ -214,10 +230,10 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, -6);
         EXPECT_EQ(ib, std::numeric_limits<int64_t>::max());
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_GT(da, -7);
         EXPECT_LT(da, -6.99);
-        EXPECT_EQ(db, std::numeric_limits<double>::max());
+        EXPECT_EQ(db, std::numeric_limits<double>::infinity());
     }
 
     {
@@ -225,9 +241,9 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, -7);
         EXPECT_EQ(ib, std::numeric_limits<int64_t>::max());
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_EQ(da, -7);
-        EXPECT_EQ(db, std::numeric_limits<double>::max());
+        EXPECT_EQ(db, std::numeric_limits<double>::infinity());
     }
 
     {
@@ -235,15 +251,15 @@ TEST(StreamingQueryTest, test_query_language)
         EXPECT_TRUE(q.getAsIntegerTerm(ia, ib));
         EXPECT_EQ(ia, -7);
         EXPECT_EQ(ib, std::numeric_limits<int64_t>::max());
-        EXPECT_TRUE(q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(q.getAsFloatTerm(da, db));
         EXPECT_EQ(da, -7);
-        EXPECT_EQ(db, std::numeric_limits<double>::max());
+        EXPECT_EQ(db, std::numeric_limits<double>::infinity());
     }
 
     {
         QueryTerm q(factory.create(), "a", "index", TermType::WORD);
         EXPECT_TRUE(!q.getAsIntegerTerm(ia, ib));
-        EXPECT_TRUE(!q.getAsDoubleTerm(da, db));
+        EXPECT_TRUE(!q.getAsFloatTerm(da, db));
     }
 
     {
@@ -286,7 +302,10 @@ TEST(StreamingQueryTest, test_query_language)
 class AllowRewrite : public QueryNodeResultFactory
 {
 public:
-    virtual bool getRewriteFloatTerms() const override { return true; }
+    explicit AllowRewrite(vespalib::stringref index) noexcept : _allowedIndex(index) {}
+    bool allow_float_terms_rewrite(vespalib::stringref index) const noexcept override { return index == _allowedIndex; }
+private:
+    vespalib::string _allowedIndex;
 };
 
 const char TERM_UNIQ = static_cast<char>(ParseItem::ITEM_TERM) | static_cast<char>(ParseItem::IF_UNIQUEID);
@@ -296,12 +315,12 @@ TEST(StreamingQueryTest, e_is_not_rewritten_even_if_allowed)
     const char term[6] = {TERM_UNIQ, 3, 1, 'c', 1, 'e'};
     vespalib::stringref stackDump(term, sizeof(term));
     EXPECT_EQ(6u, stackDump.size());
-    AllowRewrite allowRewrite;
+    AllowRewrite allowRewrite("c");
     const Query q(allowRewrite, stackDump);
     EXPECT_TRUE(q.valid());
     const QueryNode & root = q.getRoot();
     EXPECT_TRUE(dynamic_cast<const QueryTerm *>(&root) != nullptr);
-    const QueryTerm & qt = static_cast<const QueryTerm &>(root);
+    const auto & qt = static_cast<const QueryTerm &>(root);
     EXPECT_EQ("c", qt.index());
     EXPECT_EQ(vespalib::stringref("e"), qt.getTerm());
     EXPECT_EQ(3u, qt.uniqueId());
@@ -312,12 +331,12 @@ TEST(StreamingQueryTest, onedot0e_is_not_rewritten_by_default)
     const char term[9] = {TERM_UNIQ, 3, 1, 'c', 4, '1', '.', '0', 'e'};
     vespalib::stringref stackDump(term, sizeof(term));
     EXPECT_EQ(9u, stackDump.size());
-    QueryNodeResultFactory empty;
+    AllowRewrite empty("nix");
     const Query q(empty, stackDump);
     EXPECT_TRUE(q.valid());
     const QueryNode & root = q.getRoot();
     EXPECT_TRUE(dynamic_cast<const QueryTerm *>(&root) != nullptr);
-    const QueryTerm & qt = static_cast<const QueryTerm &>(root);
+    const auto & qt = static_cast<const QueryTerm &>(root);
     EXPECT_EQ("c", qt.index());
     EXPECT_EQ(vespalib::stringref("1.0e"), qt.getTerm());
     EXPECT_EQ(3u, qt.uniqueId());
@@ -328,34 +347,32 @@ TEST(StreamingQueryTest, onedot0e_is_rewritten_if_allowed_too)
     const char term[9] = {TERM_UNIQ, 3, 1, 'c', 4, '1', '.', '0', 'e'};
     vespalib::stringref stackDump(term, sizeof(term));
     EXPECT_EQ(9u, stackDump.size());
-    AllowRewrite empty;
+    AllowRewrite empty("c");
     const Query q(empty, stackDump);
     EXPECT_TRUE(q.valid());
     const QueryNode & root = q.getRoot();
     EXPECT_TRUE(dynamic_cast<const EquivQueryNode *>(&root) != nullptr);
-    const EquivQueryNode & equiv = static_cast<const EquivQueryNode &>(root);
-    EXPECT_EQ(2u, equiv.size());
-    EXPECT_TRUE(dynamic_cast<const QueryTerm *>(equiv[0].get()) != nullptr);
+    const auto & equiv = static_cast<const EquivQueryNode &>(root);
+    EXPECT_EQ(2u, equiv.get_terms().size());
+    EXPECT_TRUE(dynamic_cast<const QueryTerm *>(equiv.get_terms()[0].get()) != nullptr);
     {
-        const QueryTerm & qt = static_cast<const QueryTerm &>(*equiv[0]);
+        const auto & qt = static_cast<const QueryTerm &>(*equiv.get_terms()[0]);
         EXPECT_EQ("c", qt.index());
         EXPECT_EQ(vespalib::stringref("1.0e"), qt.getTerm());
         EXPECT_EQ(3u, qt.uniqueId());
     }
-    EXPECT_TRUE(dynamic_cast<const PhraseQueryNode *>(equiv[1].get()) != nullptr);
+    EXPECT_TRUE(dynamic_cast<const PhraseQueryNode *>(equiv.get_terms()[1].get()) != nullptr);
     {
-        const PhraseQueryNode & phrase = static_cast<const PhraseQueryNode &>(*equiv[1]);
-        EXPECT_EQ(2u, phrase.size());
-        EXPECT_TRUE(dynamic_cast<const QueryTerm *>(phrase[0].get()) != nullptr);
-        {
-            const QueryTerm & qt = static_cast<const QueryTerm &>(*phrase[0]);
+        const auto & phrase = static_cast<const PhraseQueryNode &>(*equiv.get_terms()[1]);
+        EXPECT_EQ(2u, phrase.get_terms().size());
+         {
+            const auto & qt = *phrase.get_terms()[0];
             EXPECT_EQ("c", qt.index());
             EXPECT_EQ(vespalib::stringref("1"), qt.getTerm());
             EXPECT_EQ(0u, qt.uniqueId());
         }
-        EXPECT_TRUE(dynamic_cast<const QueryTerm *>(phrase[1].get()) != nullptr);
         {
-            const QueryTerm & qt = static_cast<const QueryTerm &>(*phrase[1]);
+            const auto & qt = *phrase.get_terms()[1];
             EXPECT_EQ("c", qt.index());
             EXPECT_EQ(vespalib::stringref("0e"), qt.getTerm());
             EXPECT_EQ(0u, qt.uniqueId());
@@ -388,110 +405,36 @@ TEST(StreamingQueryTest, test_get_query_parts)
     QueryNodeResultFactory empty;
     Query q(empty, stackDump);
     QueryTermList terms;
-    QueryNodeRefList phrases;
     q.getLeaves(terms);
-    q.getPhrases(phrases);
-    ASSERT_TRUE(terms.size() == 7);
-    ASSERT_TRUE(phrases.size() == 2);
+    ASSERT_TRUE(terms.size() == 4);
+    PhraseQueryNode* null = nullptr;
+    EXPECT_EQ(null, dynamic_cast<PhraseQueryNode*>(terms[0]));
+    EXPECT_NE(null, dynamic_cast<PhraseQueryNode*>(terms[1]));
+    EXPECT_EQ(null, dynamic_cast<PhraseQueryNode*>(terms[2]));
+    EXPECT_NE(null, dynamic_cast<PhraseQueryNode*>(terms[3]));
     {
-        QueryTermList pts;
-        phrases[0]->getLeaves(pts);
+        auto& pts = dynamic_cast<PhraseQueryNode&>(*terms[1]).get_terms();
         ASSERT_TRUE(pts.size() == 3);
-        for (size_t i = 0; i < 3; ++i) {
-            EXPECT_EQ(pts[i], terms[i + 1]);
-        }
     }
     {
-        QueryTermList pts;
-        phrases[1]->getLeaves(pts);
+        auto& pts = dynamic_cast<PhraseQueryNode&>(*terms[3]).get_terms();
         ASSERT_TRUE(pts.size() == 2);
-        for (size_t i = 0; i < 2; ++i) {
-            EXPECT_EQ(pts[i], terms[i + 5]);
-        }
     }
-}
-
-TEST(StreamingQueryTest, test_phrase_evaluate)
-{
-    QueryBuilder<SimpleQueryNodeTypes> builder;
-    builder.addPhrase(3, "", 0, Weight(0));
-    {
-        builder.addStringTerm("a", "", 0, Weight(0));
-        builder.addStringTerm("b", "", 0, Weight(0));
-        builder.addStringTerm("c", "", 0, Weight(0));
-    }
-    Node::UP node = builder.build();
-    vespalib::string stackDump = StackDumpCreator::create(*node);
-    QueryNodeResultFactory empty;
-    Query q(empty, stackDump);
-    QueryNodeRefList phrases;
-    q.getPhrases(phrases);
-    QueryTermList terms;
-    q.getLeaves(terms);
-    for (QueryTerm * qt : terms) {
-        qt->resizeFieldId(1);
-    }
-
-    // field 0
-    terms[0]->add(0, 0, 0, 1);
-    terms[1]->add(1, 0, 0, 1);
-    terms[2]->add(2, 0, 0, 1);
-    terms[0]->add(7, 0, 0, 1);
-    terms[1]->add(8, 0, 1, 1);
-    terms[2]->add(9, 0, 0, 1);
-    // field 1
-    terms[0]->add(4, 1, 0, 1);
-    terms[1]->add(5, 1, 0, 1);
-    terms[2]->add(6, 1, 0, 1);
-    // field 2 (not complete match)
-    terms[0]->add(1, 2, 0, 1);
-    terms[1]->add(2, 2, 0, 1);
-    terms[2]->add(4, 2, 0, 1);
-    // field 3
-    terms[0]->add(0, 3, 0, 1);
-    terms[1]->add(1, 3, 0, 1);
-    terms[2]->add(2, 3, 0, 1);
-    // field 4 (not complete match)
-    terms[0]->add(1, 4, 0, 1);
-    terms[1]->add(2, 4, 0, 1);
-    // field 5 (not complete match)
-    terms[0]->add(2, 5, 0, 1);
-    terms[1]->add(1, 5, 0, 1);
-    terms[2]->add(0, 5, 0, 1);
-    HitList hits;
-    PhraseQueryNode * p = static_cast<PhraseQueryNode *>(phrases[0]);
-    p->evaluateHits(hits);
-    ASSERT_EQ(3u, hits.size());
-    EXPECT_EQ(hits[0].wordpos(), 2u);
-    EXPECT_EQ(hits[0].context(), 0u);
-    EXPECT_EQ(hits[1].wordpos(), 6u);
-    EXPECT_EQ(hits[1].context(), 1u);
-    EXPECT_EQ(hits[2].wordpos(), 2u);
-    EXPECT_EQ(hits[2].context(), 3u);
-    ASSERT_EQ(4u, p->getFieldInfoSize());
-    EXPECT_EQ(p->getFieldInfo(0).getHitOffset(), 0u);
-    EXPECT_EQ(p->getFieldInfo(0).getHitCount(),  1u);
-    EXPECT_EQ(p->getFieldInfo(1).getHitOffset(), 1u);
-    EXPECT_EQ(p->getFieldInfo(1).getHitCount(),  1u);
-    EXPECT_EQ(p->getFieldInfo(2).getHitOffset(), 0u); // invalid, but will never be used
-    EXPECT_EQ(p->getFieldInfo(2).getHitCount(),  0u);
-    EXPECT_EQ(p->getFieldInfo(3).getHitOffset(), 2u);
-    EXPECT_EQ(p->getFieldInfo(3).getHitCount(),  1u);
-    EXPECT_TRUE(p->evaluate());
 }
 
 TEST(StreamingQueryTest, test_hit)
 {
-    // positions (0 - (2^24-1))
-    assertHit(Hit(0,        0, 0, 0),        0, 0, 0);
-    assertHit(Hit(256,      0, 0, 1),      256, 0, 1);
-    assertHit(Hit(16777215, 0, 0, -1), 16777215, 0, -1);
-    assertHit(Hit(16777216, 0, 0, 1),        0, 1, 1); // overflow
+    // field id
+    assertHit(Hit(  1, 0, 1, 0),   1, 0, 1, 0);
+    assertHit(Hit(255, 0, 1, 0), 255, 0, 1, 0);
+    assertHit(Hit(256, 0, 1, 0), 256, 0, 1, 0);
 
-    // contexts (0 - 255)
-    assertHit(Hit(0,   1, 0, 1), 0,   1, 1);
-    assertHit(Hit(0, 255, 0, 1), 0, 255, 1);
-    assertHit(Hit(0, 256, 0, 1), 0,   0, 1); // overflow
+    // positions
+    assertHit(Hit(0, 0,  0,        0), 0, 0,  0,        0);
+    assertHit(Hit(0, 0,  1,      256), 0, 0,  1,      256);
+    assertHit(Hit(0, 0, -1, 16777215), 0, 0, -1, 16777215);
+    assertHit(Hit(0, 0,  1, 16777216), 0, 0,  1, 16777216);
+
 }
 
 void assertInt8Range(const std::string &term, bool expAdjusted, int64_t expLow, int64_t expHigh) {
@@ -520,6 +463,7 @@ void assertInt64Range(const std::string &term, bool expAdjusted, int64_t expLow,
     EXPECT_EQ(expLow, (int64_t)res.low);
     EXPECT_EQ(expHigh, (int64_t)res.high);
 }
+
 
 TEST(StreamingQueryTest, require_that_int8_limits_are_enforced)
 {
@@ -606,6 +550,20 @@ TEST(StreamingQueryTest, require_that_we_can_take_floating_point_values_in_range
     assertInt64Range("[1.7976931348623157E308;-1.7976931348623157E308]", false, std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::min());
 }
 
+void assertIllegalRangeQueries(const QueryTermSimple & qt) {
+    QueryTermSimple::RangeResult<int64_t> ires = qt.getRange<int64_t>();
+    EXPECT_EQ(false, ires.valid);
+    QueryTermSimple::RangeResult<double> fres = qt.getRange<double>();
+    EXPECT_EQ(false, fres.valid);
+}
+
+TEST(StreamingQueryTest, require_safe_parsing_of_illegal_ranges) {
+    // The 2 below are created when naively splitting numeric terms by dot.
+    // T=A.B => T EQUIV PHRASE(A, B)
+    assertIllegalRangeQueries(QueryTermSimple("[1", TermType::WORD));
+    assertIllegalRangeQueries(QueryTermSimple(".1;2.1]", TermType::WORD));
+}
+
 TEST(StreamingQueryTest, require_that_we_handle_empty_range_as_expected)
 {
     assertInt64Range("[1;1]", false, 1, 1);
@@ -626,11 +584,11 @@ TEST(StreamingQueryTest, require_that_ascending_range_can_be_specified_with_limi
     QueryTerm ascending_query(eqnr.create(), "[;;500]", "index", TermType::WORD);
 
     EXPECT_TRUE(ascending_query.getAsIntegerTerm(low_integer, high_integer));
-    EXPECT_TRUE(ascending_query.getAsDoubleTerm(low_double, high_double));
+    EXPECT_TRUE(ascending_query.getAsFloatTerm(low_double, high_double));
     EXPECT_EQ(std::numeric_limits<int64_t>::min(), low_integer);
     EXPECT_EQ(std::numeric_limits<int64_t>::max(), high_integer);
-    EXPECT_EQ(-std::numeric_limits<double>::max(), low_double);
-    EXPECT_EQ(std::numeric_limits<double>::max(), high_double);
+    EXPECT_EQ(-std::numeric_limits<double>::infinity(), low_double);
+    EXPECT_EQ(std::numeric_limits<double>::infinity(), high_double);
     EXPECT_EQ(500, ascending_query.getRangeLimit());
 }
 
@@ -645,11 +603,11 @@ TEST(StreamingQueryTest, require_that_descending_range_can_be_specified_with_lim
     QueryTerm descending_query(eqnr.create(), "[;;-500]", "index", TermType::WORD);
 
     EXPECT_TRUE(descending_query.getAsIntegerTerm(low_integer, high_integer));
-    EXPECT_TRUE(descending_query.getAsDoubleTerm(low_double, high_double));
+    EXPECT_TRUE(descending_query.getAsFloatTerm(low_double, high_double));
     EXPECT_EQ(std::numeric_limits<int64_t>::min(), low_integer);
     EXPECT_EQ(std::numeric_limits<int64_t>::max(), high_integer);
-    EXPECT_EQ(-std::numeric_limits<double>::max(), low_double);
-    EXPECT_EQ(std::numeric_limits<double>::max(), high_double);
+    EXPECT_EQ(-std::numeric_limits<double>::infinity(), low_double);
+    EXPECT_EQ(std::numeric_limits<double>::infinity(), high_double);
     EXPECT_EQ(-500, descending_query.getRangeLimit());
 }
 
@@ -734,107 +692,8 @@ TEST(StreamingQueryTest, require_that_incorrectly_specified_diversity_can_be_par
 
 TEST(StreamingQueryTest, require_that_we_do_not_break_the_stack_on_bad_query)
 {
-    QueryTermSimple term("<form><iframe+&#09;&#10;&#11;+src=\\\"javascript&#58;alert(1)\\\"&#11;&#10;&#09;;>", TermType::WORD);
+    QueryTermSimple term(R"(<form><iframe+&#09;&#10;&#11;+src=\"javascript&#58;alert(1)\"&#11;&#10;&#09;;>)", TermType::WORD);
     EXPECT_FALSE(term.isValid());
-}
-
-TEST(StreamingQueryTest, a_unhandled_sameElement_stack)
-{
-    const char * stack = "\022\002\026xyz_abcdefghij_xyzxyzxQ\001\vxxxxxx_name\034xxxxxx_xxxx_xxxxxxx_xxxxxxxxE\002\005delta\b<0.00393";
-    vespalib::stringref stackDump(stack);
-    EXPECT_EQ(85u, stackDump.size());
-    AllowRewrite empty;
-    const Query q(empty, stackDump);
-    EXPECT_TRUE(q.valid());
-    const QueryNode & root = q.getRoot();
-    auto sameElement = dynamic_cast<const SameElementQueryNode *>(&root);
-    EXPECT_TRUE(sameElement != nullptr);
-    EXPECT_EQ(2u, sameElement->size());
-    EXPECT_EQ("xyz_abcdefghij_xyzxyzx", sameElement->getIndex());
-    auto term0 = dynamic_cast<const QueryTerm *>((*sameElement)[0].get());
-    EXPECT_TRUE(term0 != nullptr);
-    auto term1 = dynamic_cast<const QueryTerm *>((*sameElement)[1].get());
-    EXPECT_TRUE(term1 != nullptr);
-}
-
-namespace {
-    void verifyQueryTermNode(const vespalib::string & index, const QueryNode *node) {
-        EXPECT_TRUE(dynamic_cast<const QueryTerm *>(node) != nullptr);
-        EXPECT_EQ(index, node->getIndex());
-    }
-}
-
-TEST(StreamingQueryTest, test_same_element_evaluate)
-{
-    QueryBuilder<SimpleQueryNodeTypes> builder;
-    builder.addSameElement(3, "field", 0, Weight(0));
-    {
-        builder.addStringTerm("a", "f1", 0, Weight(0));
-        builder.addStringTerm("b", "f2", 1, Weight(0));
-        builder.addStringTerm("c", "f3", 2, Weight(0));
-    }
-    Node::UP node = builder.build();
-    vespalib::string stackDump = StackDumpCreator::create(*node);
-    QueryNodeResultFactory empty;
-    Query q(empty, stackDump);
-    SameElementQueryNode * sameElem = dynamic_cast<SameElementQueryNode *>(&q.getRoot());
-    EXPECT_TRUE(sameElem != nullptr);
-    EXPECT_EQ("field", sameElem->getIndex());
-    EXPECT_EQ(3u, sameElem->size());
-    verifyQueryTermNode("field.f1", (*sameElem)[0].get());
-    verifyQueryTermNode("field.f2", (*sameElem)[1].get());
-    verifyQueryTermNode("field.f3", (*sameElem)[2].get());
-
-    QueryTermList terms;
-    q.getLeaves(terms);
-    EXPECT_EQ(3u, terms.size());
-    for (QueryTerm * qt : terms) {
-        qt->resizeFieldId(3);
-    }
-
-    // field 0
-    terms[0]->add(1, 0, 0, 10);
-    terms[0]->add(2, 0, 1, 20);
-    terms[0]->add(3, 0, 2, 30);
-    terms[0]->add(4, 0, 3, 40);
-    terms[0]->add(5, 0, 4, 50);
-    terms[0]->add(6, 0, 5, 60);
-
-    terms[1]->add(7, 1, 0, 70);
-    terms[1]->add(8, 1, 1, 80);
-    terms[1]->add(9, 1, 2, 90);
-    terms[1]->add(10, 1, 4, 100);
-    terms[1]->add(11, 1, 5, 110);
-    terms[1]->add(12, 1, 6, 120);
-
-    terms[2]->add(13, 2, 0, 130);
-    terms[2]->add(14, 2, 2, 140);
-    terms[2]->add(15, 2, 4, 150);
-    terms[2]->add(16, 2, 5, 160);
-    terms[2]->add(17, 2, 6, 170);
-    HitList hits;
-    sameElem->evaluateHits(hits);
-    EXPECT_EQ(4u, hits.size());
-    EXPECT_EQ(0u, hits[0].wordpos());
-    EXPECT_EQ(2u, hits[0].context());
-    EXPECT_EQ(0u, hits[0].elemId());
-    EXPECT_EQ(130,  hits[0].weight());
-
-    EXPECT_EQ(0u, hits[1].wordpos());
-    EXPECT_EQ(2u, hits[1].context());
-    EXPECT_EQ(2u, hits[1].elemId());
-    EXPECT_EQ(140,  hits[1].weight());
-
-    EXPECT_EQ(0u, hits[2].wordpos());
-    EXPECT_EQ(2u, hits[2].context());
-    EXPECT_EQ(4u, hits[2].elemId());
-    EXPECT_EQ(150,  hits[2].weight());
-
-    EXPECT_EQ(0u, hits[3].wordpos());
-    EXPECT_EQ(2u, hits[3].context());
-    EXPECT_EQ(5u, hits[3].elemId());
-    EXPECT_EQ(160,  hits[3].weight());
-    EXPECT_TRUE(sameElem->evaluate());
 }
 
 TEST(StreamingQueryTest, test_nearest_neighbor_query_node)
@@ -877,7 +736,7 @@ TEST(StreamingQueryTest, test_in_term)
 {
     auto term_vector = std::make_unique<StringTermVector>(1);
     term_vector->addTerm("7");
-    search::streaming::InTerm term({}, "index", std::move(term_vector));
+    search::streaming::InTerm term({}, "index", std::move(term_vector), Normalizing::NONE);
     SimpleTermData td;
     td.addField(10);
     td.addField(11);
@@ -886,8 +745,8 @@ TEST(StreamingQueryTest, test_in_term)
     td.lookupField(12)->setHandle(1);
     EXPECT_FALSE(term.evaluate());
     auto& q = *term.get_terms().front();
-    q.add(0, 11, 0, 1);
-    q.add(0, 12, 0, 1);
+    q.add(11, 0, 1, 0);
+    q.add(12, 0, 1, 0);
     EXPECT_TRUE(term.evaluate());
     MatchData md(MatchData::params().numTermFields(2));
     term.unpack_match_data(23, td, md);
@@ -895,6 +754,141 @@ TEST(StreamingQueryTest, test_in_term)
     EXPECT_NE(23, tmd0->getDocId());
     auto tmd2 = md.resolveTermField(1);
     EXPECT_EQ(23, tmd2->getDocId());
+}
+
+TEST(StreamingQueryTest, dot_product_term)
+{
+    search::streaming::DotProductTerm term({}, "index", 2);
+    term.add_term(std::make_unique<QueryTerm>(std::unique_ptr<QueryNodeResultBase>(), "7", "", QueryTermSimple::Type::WORD));
+    term.get_terms().back()->setWeight(Weight(27));
+    term.add_term(std::make_unique<QueryTerm>(std::unique_ptr<QueryNodeResultBase>(), "9", "", QueryTermSimple::Type::WORD));
+    term.get_terms().back()->setWeight(Weight(2));
+    EXPECT_EQ(2, term.get_terms().size());
+    SimpleTermData td;
+    td.addField(10);
+    td.addField(11);
+    td.addField(12);
+    td.lookupField(10)->setHandle(0);
+    td.lookupField(12)->setHandle(1);
+    EXPECT_FALSE(term.evaluate());
+    auto& q0 = *term.get_terms()[0];
+    q0.add(11, 0, -13, 0);
+    q0.add(12, 0, -17, 0);
+    auto& q1 = *term.get_terms()[1];
+    q1.add(11, 0, 4, 0);
+    q1.add(12, 0, 9, 0);
+    EXPECT_TRUE(term.evaluate());
+    MatchData md(MatchData::params().numTermFields(2));
+    term.unpack_match_data(23, td, md);
+    auto tmd0 = md.resolveTermField(0);
+    EXPECT_NE(23, tmd0->getDocId());
+    auto tmd1 = md.resolveTermField(1);
+    EXPECT_EQ(23, tmd1->getDocId());
+    EXPECT_EQ(-17 * 27 + 9 * 2, tmd1->getRawScore());
+}
+
+namespace {
+
+constexpr double exp_wand_score_field_12 = 13 * 27 + 4 * 2;
+constexpr double exp_wand_score_field_11 = 17 * 27 + 9 * 2;
+
+void
+check_wand_term(double limit, const vespalib::string& label)
+{
+    SCOPED_TRACE(label);
+    search::streaming::WandTerm term({}, "index", 2);
+    term.add_term(std::make_unique<QueryTerm>(std::unique_ptr<QueryNodeResultBase>(), "7", "", QueryTermSimple::Type::WORD));
+    term.get_terms().back()->setWeight(Weight(27));
+    term.add_term(std::make_unique<QueryTerm>(std::unique_ptr<QueryNodeResultBase>(), "9", "", QueryTermSimple::Type::WORD));
+    term.get_terms().back()->setWeight(Weight(2));
+    EXPECT_EQ(2, term.get_terms().size());
+    term.set_score_threshold(limit);
+    SimpleTermData td;
+    /*
+     * Search in fields 10, 11 and 12 (cf. fieldset in schema).
+     * Fields 11 and 12 have content for doc containing the keys.
+     * Fields 10 and 12 have valid handles and can be used for ranking.
+     * Field 11 does not have a valid handle, thus no associated match data.
+     */
+    td.addField(10);
+    td.addField(11);
+    td.addField(12);
+    td.lookupField(10)->setHandle(0);
+    td.lookupField(12)->setHandle(1);
+    EXPECT_FALSE(term.evaluate());
+    auto& q0 = *term.get_terms()[0];
+    q0.add(11, 0, 17, 0);
+    q0.add(12, 0, 13, 0);
+    auto& q1 = *term.get_terms()[1];
+    q1.add(11, 0, 9, 0);
+    q1.add(12, 0, 4, 0);
+    EXPECT_EQ(limit < exp_wand_score_field_11, term.evaluate());
+    MatchData md(MatchData::params().numTermFields(2));
+    term.unpack_match_data(23, td, md);
+    auto tmd0 = md.resolveTermField(0);
+    EXPECT_NE(23, tmd0->getDocId());
+    auto tmd1 = md.resolveTermField(1);
+    if (limit < exp_wand_score_field_12) {
+        EXPECT_EQ(23, tmd1->getDocId());
+        EXPECT_EQ(exp_wand_score_field_12, tmd1->getRawScore());
+    } else {
+        EXPECT_NE(23, tmd1->getDocId());
+    }
+}
+
+}
+
+TEST(StreamingQueryTest, wand_term)
+{
+    check_wand_term(0.0, "no limit");
+    check_wand_term(exp_wand_score_field_12 - 1, "score above limit");
+    check_wand_term(exp_wand_score_field_12, "score at limit");
+    check_wand_term(exp_wand_score_field_12 + 1, "score below limit");
+    check_wand_term(exp_wand_score_field_11 - 1, "hidden score above limit");
+    check_wand_term(exp_wand_score_field_11, "hidden score at limit");
+    check_wand_term(exp_wand_score_field_11 + 1, "hidden score below limit");
+}
+
+TEST(StreamingQueryTest, weighted_set_term)
+{
+    search::streaming::WeightedSetTerm term({}, "index", 2);
+    term.add_term(std::make_unique<QueryTerm>(std::unique_ptr<QueryNodeResultBase>(), "7", "", QueryTermSimple::Type::WORD));
+    term.get_terms().back()->setWeight(Weight(4));
+    term.add_term(std::make_unique<QueryTerm>(std::unique_ptr<QueryNodeResultBase>(), "9", "", QueryTermSimple::Type::WORD));
+    term.get_terms().back()->setWeight(Weight(13));
+    EXPECT_EQ(2, term.get_terms().size());
+    SimpleTermData td;
+    /*
+     * Search in fields 10, 11 and 12 (cf. fieldset in schema).
+     * Fields 11 and 12 have content for doc containing the keys.
+     * Fields 10 and 12 have valid handles and can be used for ranking.
+     * Field 11 does not have a valid handle, thus no associated match data.
+     */
+    td.addField(10);
+    td.addField(11);
+    td.addField(12);
+    td.lookupField(10)->setHandle(0);
+    td.lookupField(12)->setHandle(1);
+    EXPECT_FALSE(term.evaluate());
+    auto& q0 = *term.get_terms()[0];
+    q0.add(11, 0, 10, 0);
+    q0.add(12, 0, 10, 0);
+    auto& q1 = *term.get_terms()[1];
+    q1.add(11, 0, 10, 0);
+    q1.add(12, 0, 10, 0);
+    EXPECT_TRUE(term.evaluate());
+    MatchData md(MatchData::params().numTermFields(2));
+    term.unpack_match_data(23, td, md);
+    auto tmd0 = md.resolveTermField(0);
+    EXPECT_NE(23, tmd0->getDocId());
+    auto tmd1 = md.resolveTermField(1);
+    EXPECT_EQ(23, tmd1->getDocId());
+    using Weights = std::vector<int32_t>;
+    Weights weights;
+    for (auto& pos : *tmd1) {
+        weights.emplace_back(pos.getElementWeight());
+    }
+    EXPECT_EQ((Weights{13, 4}), weights);
 }
 
 TEST(StreamingQueryTest, control_the_size_of_query_terms)

@@ -3,8 +3,9 @@
 #pragma once
 
 #include "singlenumericpostattribute.h"
-#include "enumstore.h"
 #include "enumcomparator.h"
+#include "enumstore.h"
+#include "numeric_direct_posting_store_adapter.hpp"
 #include "singlenumericenumattribute.hpp"
 
 namespace search {
@@ -21,7 +22,8 @@ template <typename B>
 SingleValueNumericPostingAttribute<B>::SingleValueNumericPostingAttribute(const vespalib::string & name,
                                                                           const AttributeVector::Config & c) :
     SingleValueNumericEnumAttribute<B>(name, c),
-    PostingParent(*this, this->getEnumStore())
+    PostingParent(*this, this->getEnumStore()),
+    _posting_store_adapter(this->get_posting_store(), this->_enumStore, this->getIsFilter())
 {
 }
 
@@ -148,5 +150,15 @@ SingleValueNumericPostingAttribute<B>::getSearch(QueryTermSimple::UP qTerm,
     return std::make_unique<SC>(std::move(base_sc), params, *this);
 }
 
-} // namespace search
+template <typename B>
+const IDocidPostingStore*
+SingleValueNumericPostingAttribute<B>::as_docid_posting_store() const
+{
+    if (this->getConfig().basicType().is_integer_type()) {
+        return &_posting_store_adapter;
+    }
+    return nullptr;
+}
+
+}
 

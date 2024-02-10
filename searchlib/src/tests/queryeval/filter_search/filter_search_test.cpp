@@ -47,8 +47,9 @@ concept ChildCollector = requires(T a, std::unique_ptr<Blueprint> bp) {
 
 // inherit Blueprint to capture the default filter factory
 struct DefaultBlueprint : Blueprint {
-    double calculate_relative_estimate() const override { abort(); }
+    FlowStats calculate_flow_stats(uint32_t) const override { abort(); }
     void optimize(Blueprint* &, OptimizePass) override { abort(); }
+    void sort(bool, bool) override { abort(); }
     const State &getState() const override { abort(); }
     void fetchPostings(const ExecuteInfo &) override { abort(); }
     void freeze() override { abort(); }
@@ -70,6 +71,7 @@ struct LeafProxy : SimpleLeafBlueprint {
       : SimpleLeafBlueprint(), child(std::move(child_in)) { init(); }
     LeafProxy(FieldSpecBase field, std::unique_ptr<Blueprint> child_in)
       : SimpleLeafBlueprint(field), child(std::move(child_in)) { init(); }
+    FlowStats calculate_flow_stats(uint32_t) const override { abort(); }
     SearchIteratorUP createLeafSearch(const TermFieldMatchDataArray &, bool) const override { abort(); }
     SearchIteratorUP createFilterSearch(bool strict, Constraint constraint) const override {
         return child->createFilterSearch(strict, constraint);

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "attribute_object_visitor.h"
-#include "i_docid_with_weight_posting_store.h"
+#include "i_direct_posting_store.h"
 #include <vespa/searchcommon/attribute/iattributevector.h>
 #include <vespa/searchlib/common/matching_elements_fields.h>
 #include <vespa/searchlib/fef/termfieldmatchdataarray.h>
@@ -18,7 +18,7 @@ namespace search::attribute {
 
 /**
  * Blueprint used for multi-term query operators as InTerm, WeightedSetTerm or DotProduct
- * over a multi-value attribute which supports the IDocidWithWeightPostingStore interface.
+ * over an attribute which supports the IDocidPostingStore or IDocidWithWeightPostingStore interface.
  *
  * This uses access to low-level posting lists, which speeds up query execution.
  */
@@ -32,9 +32,12 @@ private:
     const PostingStoreType                        &_attr;
     vespalib::datastore::EntryRef                  _dictionary_snapshot;
 
+    using IteratorType = typename PostingStoreType::IteratorType;
     using IteratorWeights = std::variant<std::reference_wrapper<const std::vector<int32_t>>, std::vector<int32_t>>;
 
-    IteratorWeights create_iterators(std::vector<DocidWithWeightIterator>& weight_iterators,
+    bool use_hash_filter(bool strict) const;
+
+    IteratorWeights create_iterators(std::vector<IteratorType>& btree_iterators,
                                      std::vector<std::unique_ptr<queryeval::SearchIterator>>& bitvectors,
                                      bool use_bitvector_when_available,
                                      fef::TermFieldMatchData& tfmd, bool strict) const;
@@ -43,7 +46,9 @@ private:
                                                                  std::vector<std::unique_ptr<queryeval::SearchIterator>>&& bitvectors,
                                                                  bool strict) const;
 
-    std::unique_ptr<queryeval::SearchIterator> create_search_helper(const fef::TermFieldMatchDataArray& tfmda, bool strict, bool is_filter_search) const;
+    template <bool filter_search>
+    std::unique_ptr<queryeval::SearchIterator> create_search_helper(const fef::TermFieldMatchDataArray& tfmda,
+                                                                    bool strict) const;
 
 public:
     DirectMultiTermBlueprint(const queryeval::FieldSpec &field, const IAttributeVector &iattr, const PostingStoreType &attr, size_t size_hint);
@@ -64,6 +69,10 @@ public:
     }
     void complete(HitEstimate estimate) {
         setEstimate(estimate);
+    }
+
+    queryeval::FlowStats calculate_flow_stats(uint32_t docid_limit) const override {
+        return default_flow_stats(docid_limit, getState().estimate().estHits, _terms.size());
     }
 
     std::unique_ptr<queryeval::SearchIterator> createLeafSearch(const fef::TermFieldMatchDataArray &tfmda, bool) const override;

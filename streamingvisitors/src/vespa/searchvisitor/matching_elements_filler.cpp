@@ -3,6 +3,8 @@
 #include "matching_elements_filler.h"
 #include <vespa/searchlib/common/matching_elements.h>
 #include <vespa/searchlib/common/matching_elements_fields.h>
+#include <vespa/searchlib/query/streaming/same_element_query_node.h>
+#include <vespa/searchlib/query/streaming/weighted_set_term.h>
 #include <vespa/vsm/searcher/fieldsearcher.h>
 #include <vespa/vdslib/container/searchresult.h>
 #include "hitcollector.h"
@@ -17,6 +19,7 @@ using search::streaming::QueryConnector;
 using search::streaming::QueryNode;
 using search::streaming::QueryTerm;
 using search::streaming::SameElementQueryNode;
+using search::streaming::WeightedSetTerm;
 using vdslib::SearchResult;
 using vsm::FieldIdTSearcherMap;
 using vsm::StorageDocument;
@@ -79,6 +82,13 @@ Matcher::select_query_nodes(const MatchingElementsFields& fields, const QueryNod
         if (fields.has_field(same_element->getIndex())) {
             _same_element_nodes.emplace_back(same_element);
         }
+    } else if (auto weighted_set_term = as<WeightedSetTerm>(query_node)) {
+        if (fields.has_field(weighted_set_term->getIndex())) {
+            auto &terms = weighted_set_term->get_terms();
+            for (auto& term : terms) {
+                _sub_field_terms.emplace_back(weighted_set_term->getIndex(), term.get());
+            }
+        }
     } else if (auto query_term = as<QueryTerm>(query_node)) {
         if (fields.has_struct_field(query_term->getIndex())) {
             _sub_field_terms.emplace_back(fields.get_enclosing_field(query_term->getIndex()), query_term);
@@ -100,7 +110,7 @@ Matcher::add_matching_elements(const vespalib::string& field_name, uint32_t doc_
 {
     _elements.clear();
     for (auto& hit : hit_list) {
-        _elements.emplace_back(hit.elemId());
+        _elements.emplace_back(hit.element_id());
     }
     if (_elements.size() > 1) {
         std::sort(_elements.begin(), _elements.end());

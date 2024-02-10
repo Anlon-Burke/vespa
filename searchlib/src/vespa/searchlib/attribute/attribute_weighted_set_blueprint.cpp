@@ -1,17 +1,17 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "attribute_weighted_set_blueprint.h"
-#include "multi_term_filter.hpp"
+#include "multi_term_hash_filter.hpp"
 #include <vespa/searchcommon/attribute/i_search_context.h>
 #include <vespa/searchlib/common/bitvector.h>
 #include <vespa/searchlib/fef/matchdatalayout.h>
 #include <vespa/searchlib/query/query_term_ucs4.h>
-#include <vespa/searchlib/queryeval/weighted_set_term_search.h>
-#include <vespa/vespalib/objects/visit.h>
-#include <vespa/vespalib/util/stringfmt.h>
-#include <vespa/vespalib/stllike/hash_map.hpp>
 #include <vespa/searchlib/queryeval/filter_wrapper.h>
 #include <vespa/searchlib/queryeval/orsearch.h>
+#include <vespa/searchlib/queryeval/weighted_set_term_search.h>
+#include <vespa/vespalib/objects/visit.h>
+#include <vespa/vespalib/stllike/hash_map.hpp>
+#include <vespa/vespalib/util/stringfmt.h>
 
 
 namespace search {
@@ -38,6 +38,7 @@ class StringEnumWrapper : public AttrWrapper
 {
 public:
     using TokenT = uint32_t;
+    static constexpr bool unpack_weights = true;
     explicit StringEnumWrapper(const IAttributeVector & attr)
         : AttrWrapper(attr) {}
     auto mapToken(const ISearchContext &context) const {
@@ -52,6 +53,7 @@ class IntegerWrapper : public AttrWrapper
 {
 public:
     using TokenT = uint64_t;
+    static constexpr bool unpack_weights = true;
     explicit IntegerWrapper(const IAttributeVector & attr) : AttrWrapper(attr) {}
     std::vector<int64_t> mapToken(const ISearchContext &context) const {
         std::vector<int64_t> result;
@@ -73,7 +75,7 @@ make_multi_term_filter(fef::TermFieldMatchData& tfmd,
                        const std::vector<int32_t>& weights,
                        const std::vector<ISearchContext*>& contexts)
 {
-    using FilterType = attribute::MultiTermFilter<WrapperType>;
+    using FilterType = attribute::MultiTermHashFilter<WrapperType>;
     typename FilterType::TokenMap tokens;
     WrapperType wrapper(attr);
     for (size_t i = 0; i < contexts.size(); ++i) {
@@ -108,10 +110,16 @@ AttributeWeightedSetBlueprint::~AttributeWeightedSetBlueprint()
 void
 AttributeWeightedSetBlueprint::addToken(std::unique_ptr<ISearchContext> context, int32_t weight)
 {
-    _estHits = std::min(_estHits + context->approximateHits(), _numDocs);
+    _estHits = std::min(_estHits + context->calc_hit_estimate().est_hits(), _numDocs);
     setEstimate(HitEstimate(_estHits, (_estHits == 0)));
     _weights.push_back(weight);
     _contexts.push_back(context.release());
+}
+
+queryeval::FlowStats
+AttributeWeightedSetBlueprint::calculate_flow_stats(uint32_t docid_limit) const
+{
+    return default_flow_stats(docid_limit, _estHits, _weights.size());
 }
 
 queryeval::SearchIterator::UP

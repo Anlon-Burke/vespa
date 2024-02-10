@@ -13,6 +13,8 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
+import static com.yahoo.vespa.flags.Dimension.APPLICATION;
+import static com.yahoo.vespa.flags.Dimension.CERTIFICATE_PROVIDER;
 import static com.yahoo.vespa.flags.Dimension.CLOUD_ACCOUNT;
 import static com.yahoo.vespa.flags.Dimension.INSTANCE_ID;
 import static com.yahoo.vespa.flags.Dimension.CLUSTER_ID;
@@ -35,10 +37,15 @@ public class PermanentFlags {
     static final Instant CREATED_AT = Instant.EPOCH;
     static final Instant EXPIRES_AT = ZonedDateTime.of(2100, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC).toInstant();
 
+    // TODO(mpolden): Remove this flag
     public static final UnboundBooleanFlag USE_ALTERNATIVE_ENDPOINT_CERTIFICATE_PROVIDER = defineFeatureFlag(
             "use-alternative-endpoint-certificate-provider", false,
             "Whether to use an alternative CA when provisioning new certificates",
             "Takes effect only on initial application deployment - not on later certificate refreshes!");
+
+    public static final UnboundStringFlag ENDPOINT_CERTIFICATE_PROVIDER = defineStringFlag(
+            "endpoint-certificate-provider", "digicert", "The CA to use for endpoint certificates. Must be 'digicert', 'globalsign' or 'zerossl'",
+            "Takes effect on initial deployment", TENANT_ID, APPLICATION, INSTANCE_ID);
 
     public static final UnboundStringFlag JVM_GC_OPTIONS = defineStringFlag(
             "jvm-gc-options", "",
@@ -412,7 +419,8 @@ public class PermanentFlags {
     public static final UnboundIntFlag CERT_POOL_SIZE = defineIntFlag(
             "cert-pool-size", 0,
             "Target number of preprovisioned endpoints certificates to maintain",
-            "Takes effect on next run of CertPoolMaintainer"
+            "Takes effect on next run of CertificatePoolMaintainer",
+            CERTIFICATE_PROVIDER
     );
 
     public static final UnboundBooleanFlag ENCLAVE_WITHOUT_WIREGUARD = defineFeatureFlag(

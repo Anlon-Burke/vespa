@@ -26,16 +26,6 @@ public class DummyPersistence extends PersistenceEngine {
         }
 
         @Override
-        public boolean supportRevert() {
-            return true;
-        }
-
-        @Override
-        public boolean enableMultiLevelSplitting() {
-            return true;
-        }
-
-        @Override
         public ContentCluster.DistributionMode getDefaultDistributionMode() {
             return ContentCluster.DistributionMode.LOOSE;
         }

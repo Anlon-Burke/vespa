@@ -268,7 +268,7 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
             boolean down = NodeHealthTracker.allDown(services);
             metric.set(ConfigServerMetrics.NODE_FAILER_BAD_NODE.baseName(), (down ? 1 : 0), context);
 
-            boolean nodeDownInNodeRepo = node.isDown();
+            boolean nodeDownInNodeRepo = node.history().isDown();;
             metric.set(ConfigServerMetrics.DOWN_IN_NODE_REPO.baseName(), (nodeDownInNodeRepo ? 1 : 0), context);
         }
 
@@ -408,7 +408,7 @@ public class MetricsReporter extends NodeRepositoryMaintainer {
         metric.set(ConfigServerMetrics.NODES_EMPTY_EXCLUSIVE.baseName(), emptyHosts, null);
     }
 
-    public static Map<String, String> dimensions(ApplicationId application, ClusterSpec.Id cluster) {
+    static Map<String, String> dimensions(ApplicationId application, ClusterSpec.Id cluster) {
         Map<String, String> dimensions = new HashMap<>(dimensions(application));
         dimensions.put("clusterid", cluster.value());
         return dimensions;

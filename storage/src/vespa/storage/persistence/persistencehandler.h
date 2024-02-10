@@ -10,8 +10,6 @@
 #include "simplemessagehandler.h"
 #include <vespa/storage/common/storagecomponent.h>
 #include <vespa/vespalib/util/isequencedtaskexecutor.h>
-#include <vespa/config-stor-filestor.h>
-#include <atomic>
 
 namespace storage {
 
@@ -26,7 +24,7 @@ class PersistenceHandler : public Types
 {
 public:
     PersistenceHandler(vespalib::ISequencedTaskExecutor &, const ServiceLayerComponent & component,
-                      const vespa::config::content::StorFilestorConfig &, spi::PersistenceProvider &,
+                      uint32_t mergeChunkSize, bool multibitSplit, spi::PersistenceProvider &,
                       FileStorHandler &, BucketOwnershipNotifier &, FileStorThreadMetrics&);
     ~PersistenceHandler();
 
@@ -36,16 +34,12 @@ public:
     const AsyncHandler & asyncHandler() const { return _asyncHandler; }
     const SplitJoinHandler & splitjoinHandler() const { return _splitJoinHandler; }
     const SimpleMessageHandler & simpleMessageHandler() const { return _simpleHandler; }
-
-    void set_throttle_merge_feed_ops(bool throttle) noexcept;
-    void set_use_per_document_throttled_delete_bucket(bool throttle) noexcept;
 private:
     // Message handling functions
     MessageTracker::UP handleCommandSplitByType(api::StorageCommand&, MessageTracker::UP tracker) const;
     MessageTracker::UP handleReply(api::StorageReply&, MessageTracker::UP) const;
 
     MessageTracker::UP processMessage(api::StorageMessage& msg, MessageTracker::UP tracker) const;
-    [[nodiscard]] bool use_per_op_throttled_delete_bucket() const noexcept;
 
     const framework::Clock  & _clock;
     PersistenceUtil           _env;
@@ -54,7 +48,6 @@ private:
     AsyncHandler              _asyncHandler;
     SplitJoinHandler          _splitJoinHandler;
     SimpleMessageHandler      _simpleHandler;
-    std::atomic<bool>         _use_per_op_throttled_delete_bucket;
 };
 
 } // storage

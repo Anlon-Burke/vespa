@@ -42,12 +42,6 @@ public class ContainerInCloudValidatorTest {
         String servicesXml = """
                         <services version='1.0'>
                           %s
-                          <content id='foo' version='1.0'>
-                            <redundancy>2</redundancy>
-                            <documents>
-                            </documents>
-                            <nodes count='2' />
-                          </content>
                         </services>
                 """.formatted(container);
         ApplicationPackage app = new MockApplicationPackage.Builder()
@@ -61,7 +55,7 @@ public class ContainerInCloudValidatorTest {
         }
         DeployState deployState = builder.build();
         VespaModel model = new VespaModel(new NullConfigModelRegistry(), deployState);
-        new ContainerInCloudValidator().validate(model, deployState);
+        ValidationTester.validate(new ContainerInCloudValidator(), model, deployState);
     }
 
 }

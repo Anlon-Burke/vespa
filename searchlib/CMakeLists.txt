@@ -77,8 +77,7 @@ vespa_define_module(
     src/tests/attribute/compaction
     src/tests/attribute/dfa_fuzzy_matcher
     src/tests/attribute/direct_multi_term_blueprint
-    src/tests/attribute/document_weight_iterator
-    src/tests/attribute/document_weight_or_filter_search
+    src/tests/attribute/direct_posting_store
     src/tests/attribute/enum_attribute_compaction
     src/tests/attribute/enum_comparator
     src/tests/attribute/enumeratedsave
@@ -87,6 +86,7 @@ vespa_define_module(
     src/tests/attribute/guard
     src/tests/attribute/imported_attribute_vector
     src/tests/attribute/imported_search_context
+    src/tests/attribute/multi_term_or_filter_search
     src/tests/attribute/multi_value_mapping
     src/tests/attribute/multi_value_read_view
     src/tests/attribute/posting_list_merger
@@ -190,18 +190,22 @@ vespa_define_module(
     src/tests/postinglistbm
     src/tests/predicate
     src/tests/query
+    src/tests/query/streaming
     src/tests/queryeval
     src/tests/queryeval/blueprint
     src/tests/queryeval/dot_product
     src/tests/queryeval/equiv
     src/tests/queryeval/fake_searchable
     src/tests/queryeval/filter_search
+    src/tests/queryeval/flow
     src/tests/queryeval/getnodeweight
     src/tests/queryeval/global_filter
+    src/tests/queryeval/iterator_benchmark
     src/tests/queryeval/matching_elements_search
     src/tests/queryeval/monitoring_search_iterator
     src/tests/queryeval/multibitvectoriterator
     src/tests/queryeval/nearest_neighbor
+    src/tests/queryeval/or_speed
     src/tests/queryeval/parallel_weak_and
     src/tests/queryeval/predicate
     src/tests/queryeval/profiled_iterator

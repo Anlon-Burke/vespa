@@ -68,6 +68,11 @@ public class InfrastructureMetricSet {
         addMetric(metrics, ConfigServerMetrics.CLUSTER_LOAD_IDEAL_MEMORY.max());
         addMetric(metrics, ConfigServerMetrics.CLUSTER_LOAD_IDEAL_DISK.max());
         addMetric(metrics, ConfigServerMetrics.NODES_EMPTY_EXCLUSIVE.max());
+        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_DEPROVISIONED.sum());
+        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_DIRTY.sum());
+        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_INACTIVE.sum());
+        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_PROVISIONED.sum());
+        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_RESERVED.sum());
         addMetric(metrics, ConfigServerMetrics.WANT_TO_REBOOT.max());
         addMetric(metrics, ConfigServerMetrics.WANT_TO_RESTART.max());
         addMetric(metrics, ConfigServerMetrics.WANT_TO_RETIRE.max());
@@ -116,6 +121,7 @@ public class InfrastructureMetricSet {
         addMetric(metrics, ConfigServerMetrics.THROTTLED_HOST_FAILURES.max());
         addMetric(metrics, ConfigServerMetrics.THROTTLED_NODE_FAILURES.max());
         addMetric(metrics, ConfigServerMetrics.NODE_FAIL_THROTTLING.max());
+        addMetric(metrics, ConfigServerMetrics.CLUSTER_AUTOSCALED.count());
 
         addMetric(metrics, ConfigServerMetrics.ORCHESTRATOR_LOCK_ACQUIRE_SUCCESS.count());
         addMetric(metrics, ConfigServerMetrics.ORCHESTRATOR_LOCK_ACQUIRE_TIMEOUT.count());

@@ -11,7 +11,8 @@ namespace storage {
 
 PersistenceHandler::PersistenceHandler(vespalib::ISequencedTaskExecutor & sequencedExecutor,
                                       const ServiceLayerComponent & component,
-                                      const vespa::config::content::StorFilestorConfig & cfg,
+                                      uint32_t bucketMergeChunkSize,
+                                      bool multibitSplit,
                                       spi::PersistenceProvider& provider,
                                       FileStorHandler& filestorHandler,
                                       BucketOwnershipNotifier & bucketOwnershipNotifier,
@@ -19,13 +20,10 @@ PersistenceHandler::PersistenceHandler(vespalib::ISequencedTaskExecutor & sequen
     : _clock(component.getClock()),
       _env(component, filestorHandler, metrics, provider),
       _processAllHandler(_env, provider),
-      _mergeHandler(_env, provider, component.cluster_context(), _clock, sequencedExecutor,
-                    cfg.bucketMergeChunkSize,
-                    cfg.commonMergeChainOptimalizationMinimumSize),
+      _mergeHandler(_env, provider, component.cluster_context(), _clock, sequencedExecutor, bucketMergeChunkSize),
       _asyncHandler(_env, provider, bucketOwnershipNotifier, sequencedExecutor, component.getBucketIdFactory()),
-      _splitJoinHandler(_env, provider, bucketOwnershipNotifier, cfg.enableMultibitSplitOptimalization),
-      _simpleHandler(_env, provider, component.getBucketIdFactory()),
-      _use_per_op_throttled_delete_bucket(false)
+      _splitJoinHandler(_env, provider, bucketOwnershipNotifier, multibitSplit),
+      _simpleHandler(_env, provider, component.getBucketIdFactory())
 {
 }
 
@@ -69,11 +67,7 @@ PersistenceHandler::handleCommandSplitByType(api::StorageCommand& msg, MessageTr
     case api::MessageType::CREATEBUCKET_ID:
         return _asyncHandler.handleCreateBucket(static_cast<api::CreateBucketCommand&>(msg), std::move(tracker));
     case api::MessageType::DELETEBUCKET_ID:
-        if (use_per_op_throttled_delete_bucket()) {
-            return _asyncHandler.handle_delete_bucket_throttling(static_cast<api::DeleteBucketCommand&>(msg), std::move(tracker));
-        } else {
-            return _asyncHandler.handleDeleteBucket(static_cast<api::DeleteBucketCommand&>(msg), std::move(tracker));
-        }
+        return _asyncHandler.handle_delete_bucket_throttling(static_cast<api::DeleteBucketCommand&>(msg), std::move(tracker));
     case api::MessageType::JOINBUCKETS_ID:
         return _splitJoinHandler.handleJoinBuckets(static_cast<api::JoinBucketsCommand&>(msg), std::move(tracker));
     case api::MessageType::SPLITBUCKET_ID:
@@ -114,7 +108,7 @@ PersistenceHandler::handleCommandSplitByType(api::StorageCommand& msg, MessageTr
     default:
         break;
     }
-    return MessageTracker::UP();
+    return {};
 }
 
 MessageTracker::UP
@@ -178,22 +172,6 @@ PersistenceHandler::processLockedMessage(FileStorHandler::LockedMessage lock) co
     if (tracker) {
         tracker->sendReply();
     }
-}
-
-void
-PersistenceHandler::set_throttle_merge_feed_ops(bool throttle) noexcept
-{
-    _mergeHandler.set_throttle_merge_feed_ops(throttle);
-}
-
-bool
-PersistenceHandler::use_per_op_throttled_delete_bucket() const noexcept {
-    return _use_per_op_throttled_delete_bucket.load(std::memory_order_relaxed);
-}
-
-void
-PersistenceHandler::set_use_per_document_throttled_delete_bucket(bool throttle) noexcept {
-    _use_per_op_throttled_delete_bucket.store(throttle, std::memory_order_relaxed);
 }
 
 }

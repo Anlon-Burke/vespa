@@ -12,8 +12,9 @@ using search::query::TermVector;
 
 namespace search::streaming {
 
-InTerm::InTerm(std::unique_ptr<QueryNodeResultBase> result_base, const string & index, std::unique_ptr<TermVector> terms)
-    : MultiTerm(std::move(result_base), index, Type::WORD, std::move(terms))
+InTerm::InTerm(std::unique_ptr<QueryNodeResultBase> result_base, const string & index,
+               std::unique_ptr<TermVector> terms, Normalizing normalize_mode)
+    : MultiTerm(std::move(result_base), index, std::move(terms), normalize_mode)
 {
 }
 
@@ -28,9 +29,9 @@ InTerm::unpack_match_data(uint32_t docid, const ITermData& td, MatchData& match_
     for (const auto& term : _terms) {
         auto& hl = term->evaluateHits(hl_store);
         for (auto& hit : hl) {
-            if (!prev_field_id.has_value() || prev_field_id.value() != hit.context()) {
-                prev_field_id = hit.context();
-                matching_field_ids.insert(hit.context());
+            if (!prev_field_id.has_value() || prev_field_id.value() != hit.field_id()) {
+                prev_field_id = hit.field_id();
+                matching_field_ids.insert(hit.field_id());
             }
         }
     }

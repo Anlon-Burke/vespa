@@ -25,7 +25,7 @@
 #include <vespa/vespalib/util/sequencedtaskexecutor.h>
 #include <vespa/vespalib/util/string_escape.h>
 #include <vespa/vespalib/util/stringfmt.h>
-#include <vespa/config/subscription/configuri.h>
+#include <vespa/config-stor-filestor.h>
 #include <vespa/config/helper/configfetcher.hpp>
 #include <thread>
 
@@ -49,7 +49,7 @@ namespace {
 
 class BucketExecutorWrapper : public spi::BucketExecutor {
 public:
-    BucketExecutorWrapper(spi::BucketExecutor & executor) noexcept : _executor(executor) { }
+    explicit BucketExecutorWrapper(spi::BucketExecutor & executor) noexcept : _executor(executor) { }
 
     void execute(const spi::Bucket &bucket, std::unique_ptr<spi::BucketTask> task) override {
         _executor.execute(bucket, std::move(task));
@@ -190,8 +190,8 @@ FileStorManager::createRegisteredHandler(const ServiceLayerComponent & component
     size_t index = _persistenceHandlers.size();
     assert(index < _metrics->threads.size());
     _persistenceHandlers.push_back(
-            std::make_unique<PersistenceHandler>(*_sequencedExecutor, component,
-                                                 *_config, *_provider, *_filestorHandler,
+            std::make_unique<PersistenceHandler>(*_sequencedExecutor, component, _config->bucketMergeChunkSize,
+                                                 false, *_provider, *_filestorHandler,
                                                  *_bucketOwnershipNotifier, *_metrics->threads[index]));
     return *_persistenceHandlers.back();
 }
@@ -212,9 +212,7 @@ FileStorManager::on_configure(const StorFilestorConfig& config)
 
     _use_async_message_handling_on_schedule = config.useAsyncMessageHandlingOnSchedule;
     _host_info_reporter.set_noise_level(config.resourceUsageReporterNoiseLevel);
-    const bool use_dynamic_throttling = ((config.asyncOperationThrottlerType  == StorFilestorConfig::AsyncOperationThrottlerType::DYNAMIC) ||
-                                         (config.asyncOperationThrottler.type == StorFilestorConfig::AsyncOperationThrottler::Type::DYNAMIC));
-    const bool throttle_merge_feed_ops = config.asyncOperationThrottler.throttleIndividualMergeFeedOps;
+    const bool use_dynamic_throttling = (config.asyncOperationThrottler.type == StorFilestorConfig::AsyncOperationThrottler::Type::DYNAMIC);
 
     if (!liveUpdate) {
         _config = std::make_unique<StorFilestorConfig>(config);
@@ -244,12 +242,7 @@ FileStorManager::on_configure(const StorFilestorConfig& config)
     // TODO remove once desired throttling behavior is set in stone
     {
         _filestorHandler->use_dynamic_operation_throttling(use_dynamic_throttling);
-        _filestorHandler->set_throttle_apply_bucket_diff_ops(!throttle_merge_feed_ops);
-        std::lock_guard guard(_lock);
-        for (auto& ph : _persistenceHandlers) {
-            ph->set_throttle_merge_feed_ops(throttle_merge_feed_ops);
-            ph->set_use_per_document_throttled_delete_bucket(config.usePerDocumentThrottledDeleteBucket);
-        }
+        _filestorHandler->set_throttle_apply_bucket_diff_ops(false);
     }
 }
 
@@ -314,7 +307,7 @@ FileStorManager::mapOperationToBucketAndDisk(api::BucketCommand& cmd, const docu
             if (results.size() > 1) {
                 error << "Bucket was inconsistent with " << results.size()
                       << " entries so no automatic remapping done:";
-                BucketMap::const_iterator it = results.begin();
+                auto it = results.begin();
                 for (uint32_t i=0; i <= 4 && it != results.end(); ++it, ++i) {
                     error << " " << it->first;
                 }
@@ -553,10 +546,7 @@ FileStorManager::onDeleteBucket(const shared_ptr<api::DeleteBucketCommand>& cmd)
 
 
 StorBucketDatabase::WrappedEntry
-FileStorManager::ensureConsistentBucket(
-        const document::Bucket& bucket,
-        api::StorageMessage& msg,
-        const char* callerId)
+FileStorManager::ensureConsistentBucket(const document::Bucket& bucket, api::StorageMessage& msg, const char* callerId)
 {
     StorBucketDatabase::WrappedEntry entry(_component.getBucketDatabase(bucket.getBucketSpace()).get(
                     bucket.getBucketId(), callerId, StorBucketDatabase::CREATE_IF_NONEXISTING));
@@ -567,7 +557,7 @@ FileStorManager::ensureConsistentBucket(
             entry.remove();
         }
         replyDroppedOperation(msg, bucket, api::ReturnCode::ABORTED, "bucket is inconsistently split");
-        return StorBucketDatabase::WrappedEntry();
+        return {};
     }
 
     return entry;
@@ -895,13 +885,13 @@ namespace {
 bool
 FileStorManager::maintenance_in_all_spaces(const lib::Node& node) const noexcept
 {
-    for (auto& elem :  _component.getBucketSpaceRepo()) {
-        ContentBucketSpace& bucket_space = *elem.second;
+    for (const auto& elem :  _component.getBucketSpaceRepo()) {
+        const ContentBucketSpace& bucket_space = *elem.second;
         auto derived_cluster_state = bucket_space.getClusterState();
         if (!derived_cluster_state->getNodeState(node).getState().oneOf("m")) {
             return false;
         }
-    };
+    }
     return true;
 }
 

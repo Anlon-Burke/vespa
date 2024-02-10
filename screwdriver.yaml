@@ -303,7 +303,7 @@ jobs:
       screwdriver.cd/buildPeriodically: H 6 1 * *
 
     environment:
-      IMAGE_NAME: "docker.io/vespaengine/vespa-generic-intel-x86_64"
+      IMAGE_NAME: "vespaengine/vespa-generic-intel-x86_64"
 
     secrets:
       - DOCKER_HUB_DEPLOY_KEY
@@ -357,7 +357,7 @@ jobs:
           $SD_SOURCE_DIR/screwdriver/test-quick-start-guide.sh
       - publish-image: |
           if [[ -z $SD_PULL_REQUEST ]]; then
-            if curl -fsSL https://index.docker.io/v1/repositories/$IMAGE_NAME/tags/$VESPA_VERSION &> /dev/null; then
+            if curl -fsSL https://hub.docker.com/v2/repositories/$IMAGE_NAME/tags/$VESPA_VERSION/ &> /dev/null; then
               echo "Container image docker.io/$IMAGE_NAME:$VESPA_VERSION aldready exists."
             else
               OPT_STATE="$(set +o)"
@@ -382,7 +382,7 @@ jobs:
 
     environment:
       BASE_IMAGE: "el9"
-      IMAGE_NAME: "vespa-el9-preview"
+      IMAGE_NAME: "vespaengine/vespa-el9-preview"
 
     secrets:
       - DOCKER_HUB_DEPLOY_KEY
@@ -418,14 +418,14 @@ jobs:
                 --build-arg VESPA_VERSION=$VESPA_VERSION \
                 --file Dockerfile  \
                 --tag docker.io/vespaengine/vespa:latest \
-                --tag docker.io/vespaengine/$IMAGE_NAME:latest \
+                --tag docker.io/$IMAGE_NAME:latest \
                 .
       - verify-container-image: |
           # Run quick start guide
           $SD_SOURCE_DIR/screwdriver/test-quick-start-guide.sh
       - publish-image: |
           if [[ -z $SD_PULL_REQUEST ]]; then
-            if curl -fsSL https://index.docker.io/v1/repositories/$IMAGE_NAME/tags/$VESPA_VERSION &> /dev/null; then
+            if curl -fsSL https://hub.docker.com/v2/repositories/$IMAGE_NAME/tags/$VESPA_VERSION/ &> /dev/null; then
               echo "Container image docker.io/$IMAGE_NAME:$VESPA_VERSION aldready exists."
             else
               OPT_STATE="$(set +o)"
@@ -439,9 +439,9 @@ jobs:
                 --build-arg VESPA_BASE_IMAGE=$BASE_IMAGE \
                 --build-arg VESPA_VERSION=$VESPA_VERSION \
                 --file Dockerfile  \
-                --tag docker.io/vespaengine/$IMAGE_NAME:$VESPA_VERSION \
-                --tag docker.io/vespaengine/$IMAGE_NAME:$VESPA_MAJOR \
-                --tag docker.io/vespaengine/$IMAGE_NAME:latest \
+                --tag docker.io/$IMAGE_NAME:$VESPA_VERSION \
+                --tag docker.io/$IMAGE_NAME:$VESPA_MAJOR \
+                --tag docker.io/$IMAGE_NAME:latest \
                 .
             fi
           fi
@@ -530,40 +530,12 @@ jobs:
       screwdriver.cd/cpu: LOW
       screwdriver.cd/ram: LOW
       screwdriver.cd/timeout: 10
-      screwdriver.cd/buildPeriodically: H 6 * * 1
+      screwdriver.cd/buildPeriodically: H 6 * * *
     secrets:
       - CLOUDSMITH_API_CREDS
     steps:
       - cleanup: |
           screwdriver/delete-old-cloudsmith-artifacts.sh
-
-  mirror-copr-rpms-to-artifactory:
-    image: docker.io/almalinux:8
-    annotations:
-      screwdriver.cd/cpu: LOW
-      screwdriver.cd/ram: LOW
-      screwdriver.cd/disk: HIGH
-      screwdriver.cd/timeout: 60
-      screwdriver.cd/buildPeriodically: H 6 * * *
-    secrets:
-      - JFROG_API_TOKEN
-    steps:
-      - install: |
-          dnf install -y dnf-plugins-core
-      - mirror: |
-          screwdriver/publish-unpublished-rpms-to-jfrog-cloud.sh
-
-  delete-old-versions-on-artifactory:
-    annotations:
-      screwdriver.cd/cpu: LOW
-      screwdriver.cd/ram: LOW
-      screwdriver.cd/timeout: 10
-      screwdriver.cd/buildPeriodically: H 6 * * 1
-    secrets:
-      - JFROG_API_TOKEN
-    steps:
-      - cleanup: |
-          screwdriver/delete-old-artifactory-artifacts.sh
 
   link-check:
     image: ruby:3.1
@@ -582,7 +554,7 @@ jobs:
           bundle exec jekyll build
       - check-links: |
           bundle exec htmlproofer \
-          --assume-extension --check-html --check-external-hash --no-enforce-http \
+          --assume-extension --check-html --no-check-external-hash --no-enforce-http \
           --typhoeus '{"connecttimeout": 10, "timeout": 30, "followlocation": false}' \
           --hydra '{"max_concurrency": 1}' \
           --ignore-urls '/slack.vespa.ai/,/localhost:8080/,/127.0.0.1:3000/,/favicon.svg/,/main.jsx/' \

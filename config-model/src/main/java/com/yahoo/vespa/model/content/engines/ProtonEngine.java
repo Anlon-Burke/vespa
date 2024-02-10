@@ -27,16 +27,6 @@ public class ProtonEngine {
         }
 
         @Override
-        public boolean supportRevert() {
-            return false;
-        }
-
-        @Override
-        public boolean enableMultiLevelSplitting() {
-            return false;
-        }
-
-        @Override
         public ContentCluster.DistributionMode getDefaultDistributionMode() {
             return ContentCluster.DistributionMode.LOOSE;
         }

@@ -22,6 +22,7 @@
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/util/compress.h>
+#include <vespa/vespalib/util/simple_thread_bundle.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <initializer_list>
 #include <set>
@@ -59,6 +60,7 @@ using largeint_t = AttributeVector::largeint_t;
 using attribute::BasicType;
 using attribute::CollectionType;
 using attribute::Config;
+using attribute::HitEstimate;
 using attribute::SearchContextParams;
 using attribute::test::AttributeBuilder;
 using fef::MatchData;
@@ -86,6 +88,12 @@ public:
 DocSet::DocSet() noexcept = default;
 DocSet::~DocSet() = default;
 
+bool is_flag_attribute(const Config& cfg) {
+    return cfg.fastSearch() &&
+        (cfg.basicType() == BasicType::INT8) &&
+        (cfg.collectionType() == CollectionType::ARRAY);
+}
+
 template <typename V, typename T>
 class PostingList
 {
@@ -103,6 +111,21 @@ public:
     DocSet & getHits() { return _hits; }
     const DocSet & getHits() const { return _hits; }
     uint32_t getHitCount() const { return _hits.size(); }
+    attribute::HitEstimate expected_hit_estimate() const {
+        if (getHitCount() == 0) {
+            return HitEstimate(0);
+        }
+        uint32_t docid_limit = _vec->getStatus().getNumDocs();
+        if (is_flag_attribute(_vec->getConfig())) {
+            return HitEstimate::unknown(docid_limit);
+        } else if (_vec->getConfig().fastSearch()) {
+            return HitEstimate(getHitCount());
+        } else if (_vec->getConfig().collectionType() == CollectionType::SINGLE) {
+            return HitEstimate::unknown(docid_limit);
+        } else {
+            return HitEstimate::unknown(std::max((uint64_t)docid_limit, _vec->getStatus().getNumValues()));
+        }
+    }
 };
 
 template <typename V, typename T>
@@ -150,9 +173,13 @@ private:
 
     ResultSetPtr performSearch(SearchIterator & sb, uint32_t numDocs);
     template <typename V, typename T>
-    ResultSetPtr performSearch(const V & vec, const T & term, TermType termType=TermType::WORD);
+    ResultSetPtr performSearch(const V & vec, const T & term);
+    template <typename V, typename T>
+    ResultSetPtr performSearch(const queryeval::ExecuteInfo & executeInfo, const V & vec, const T & term, TermType termType);
     template <typename V>
-    void performSearch(const V & vec, const vespalib::string & term,
+    void performSearch(const V & vec, const vespalib::string & term, const DocSet & expected, TermType termType);
+    template <typename V>
+    void performSearch(const queryeval::ExecuteInfo & executeInfo, const V & vec, const vespalib::string & term,
                        const DocSet & expected, TermType termType);
     void checkResultSet(const ResultSet & rs, const DocSet & exp, bool bitVector);
 
@@ -161,7 +188,7 @@ private:
     void testSearchIteratorConformance();
     // test search functionality
     template <typename V, typename T>
-    void testFind(const PostingList<V, T> & first);
+    void testFind(const PostingList<V, T> & first, bool verify_hit_estimate);
 
     template <typename V, typename T>
     void testSearch(V & attribute, uint32_t numDocs, const std::vector<T> & values);
@@ -461,11 +488,18 @@ SearchContextTest::performSearch(SearchIterator & sb, uint32_t numDocs)
 
 template <typename V, typename T>
 ResultSetPtr
-SearchContextTest::performSearch(const V & vec, const T & term, TermType termType)
+SearchContextTest::performSearch(const V & vec, const T & term)
+{
+    return performSearch(queryeval::ExecuteInfo::TRUE, vec, term, TermType::WORD);
+}
+
+template <typename V, typename T>
+ResultSetPtr
+SearchContextTest::performSearch(const queryeval::ExecuteInfo & executeInfo, const V & vec, const T & term, TermType termType)
 {
     TermFieldMatchData dummy;
     SearchContextPtr sc = getSearch(vec, term, termType);
-    sc->fetchPostings(queryeval::ExecuteInfo::TRUE);
+    sc->fetchPostings(executeInfo);
     SearchBasePtr sb = sc->createIterator(&dummy, true);
     ResultSetPtr rs = performSearch(*sb, vec.getNumDocs());
     return rs;
@@ -473,7 +507,7 @@ SearchContextTest::performSearch(const V & vec, const T & term, TermType termTyp
 
 template <typename V>
 void
-SearchContextTest::performSearch(const V & vec, const vespalib::string & term,
+SearchContextTest::performSearch(const queryeval::ExecuteInfo & executeInfo, const V & vec, const vespalib::string & term,
                                  const DocSet & expected, TermType termType)
 {
 #if 0
@@ -482,9 +516,16 @@ SearchContextTest::performSearch(const V & vec, const vespalib::string & term,
     std::cout << "}, prefix(" << (prefix ? "true" : "false") << ")" << std::endl;
 #endif
     { // strict search iterator
-        ResultSetPtr rs = performSearch(vec, term, termType);
+        ResultSetPtr rs = performSearch(executeInfo, vec, term, termType);
         checkResultSet(*rs, expected, false);
     }
+}
+template <typename V>
+void
+SearchContextTest::performSearch(const V & vec, const vespalib::string & term,
+                                 const DocSet & expected, TermType termType)
+{
+    performSearch(queryeval::ExecuteInfo::TRUE, vec, term, expected, termType);
 }
 
 void
@@ -517,10 +558,16 @@ SearchContextTest::checkResultSet(const ResultSet & rs, const DocSet & expected,
 //-----------------------------------------------------------------------------
 template <typename V, typename T>
 void
-SearchContextTest::testFind(const PostingList<V, T> & pl)
+SearchContextTest::testFind(const PostingList<V, T> & pl, bool verify_hit_estimate)
 {
     { // strict search iterator
         SearchContextPtr sc = getSearch(pl.getAttribute(), pl.getValue());
+        if (verify_hit_estimate) {
+            auto act_est = sc->calc_hit_estimate();
+            auto exp_est = pl.expected_hit_estimate();
+            EXPECT_EQUAL(exp_est.est_hits(), act_est.est_hits());
+            EXPECT_EQUAL(exp_est.is_unknown(), act_est.is_unknown());
+        }
         sc->fetchPostings(queryeval::ExecuteInfo::TRUE);
         TermFieldMatchData dummy;
         SearchBasePtr sb = sc->createIterator(&dummy, true);
@@ -552,7 +599,7 @@ SearchContextTest::testSearch(V & attribute, uint32_t numDocs, const std::vector
 
     // test find()
     for (const auto & list : lists) {
-        testFind(list);
+        testFind(list, true);
     }
 }
 
@@ -572,7 +619,7 @@ SearchContextTest::testMultiValueSearchHelper(V & vec, const std::vector<T> & va
     for (const auto & list : lists) {
         //std::cout << "testFind(lists[" << i << "]): value = " << lists[i].getValue()
         //                                            << ", hit count = " << lists[i].getHitCount() << std::endl;
-        testFind(list);
+        testFind(list, false);
     }
 }
 
@@ -1090,10 +1137,13 @@ SearchContextTest::testSearchIteratorUnpacking()
 
 template <typename VectorType>
 void
-SearchContextTest::performRangeSearch(const VectorType & vec, const vespalib::string & term,
-                                      const DocSet & expected)
+SearchContextTest::performRangeSearch(const VectorType & vec, const vespalib::string & term, const DocSet & expected)
 {
-    performSearch(vec, term, expected, TermType::WORD);
+    for (size_t num_threads : {1,3}) {
+        vespalib::SimpleThreadBundle thread_bundle(num_threads);
+        auto executeInfo = queryeval::ExecuteInfo::create(true, 1.0, vespalib::Doom::never(), thread_bundle);
+        performSearch(executeInfo, vec, term, expected, TermType::WORD);
+    }
 }
 
 template <typename VectorType, typename ValueType>

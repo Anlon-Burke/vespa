@@ -16,6 +16,8 @@
 
 namespace streaming {
 
+class QueryTermData;
+
 /**
  * This class is associated with a query and a rank profile and
  * is used to calculate rank and feature set for matched documents.
@@ -31,6 +33,7 @@ private:
     QueryWrapper                   _query;
 
     QueryEnvironment                     _queryEnv;
+    const search::fef::Properties       &_featureOverrides;
     search::fef::MatchDataLayout         _mdLayout;
     search::fef::MatchData::UP           _match_data;
     search::fef::RankProgram::UP         _rankProgram;
@@ -42,6 +45,8 @@ private:
     HitCollector::UP                     _hitCollector;
     std::unique_ptr<RankProgram>         _match_features_program;
 
+    void resolve_fields_from_children(QueryTermData& qtd, search::streaming::MultiTerm& mt);
+    void resolve_fields_from_term(QueryTermData& qtd, search::streaming::QueryTerm& term);
     void initQueryEnvironment();
     void initHitCollector(size_t wantedHitCount);
     void setupRankProgram(search::fef::RankProgram &program);
@@ -62,7 +67,8 @@ public:
                   const vespalib::string &rankProfile,
                   search::streaming::Query & query,
                   const vespalib::string & location,
-                  search::fef::Properties & queryProperties,
+                  const search::fef::Properties & queryProperties,
+                  const search::fef::Properties & featureOverrides,
                   const search::IAttributeManager * attrMgr);
 
     void initForRanking(size_t wantedHitCount);

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "flow.h"
 #include "field_spec.h"
 #include "unpackinfo.h"
 #include "executeinfo.h"
@@ -53,7 +54,7 @@ public:
     using SearchIteratorUP = std::unique_ptr<SearchIterator>;
 
     enum class OptimizePass { FIRST, LAST };
-    
+
     struct HitEstimate {
         uint32_t estHits;
         bool     empty;
@@ -75,7 +76,6 @@ public:
     {
     private:
         FieldSpecBaseList _fields;
-        double            _relative_estimate;
         uint32_t          _estimateHits;
         uint32_t          _tree_size : 20;
         bool              _estimateEmpty : 1;
@@ -111,9 +111,6 @@ public:
             return nullptr;
         }
 
-        void relative_estimate(double value) noexcept { _relative_estimate = value; }
-        double relative_estimate() const noexcept { return _relative_estimate; }
-        
         void estimate(HitEstimate est) noexcept {
             _estimateHits = est.estHits;
             _estimateEmpty = est.empty;
@@ -182,6 +179,7 @@ public:
 
 private:
     Blueprint *_parent;
+    FlowStats  _flow_stats;
     uint32_t   _sourceId;
     uint32_t   _docid_limit;
     bool       _frozen;
@@ -226,10 +224,15 @@ public:
     uint32_t get_docid_limit() const noexcept { return _docid_limit; }
 
     static Blueprint::UP optimize(Blueprint::UP bp);
+    virtual void sort(bool strict, bool sort_by_cost) = 0;
+    static Blueprint::UP optimize_and_sort(Blueprint::UP bp, bool strict, bool sort_by_cost) {
+        auto result = optimize(std::move(bp));
+        result->sort(strict, sort_by_cost);
+        return result;
+    }
     virtual void optimize(Blueprint* &self, OptimizePass pass) = 0;
     virtual void optimize_self(OptimizePass pass);
     virtual Blueprint::UP get_replacement();
-    virtual bool should_optimize_children() const { return true; }
 
     virtual bool supports_termwise_children() const { return false; }
     virtual bool always_needs_unpack() const { return false; }
@@ -249,8 +252,34 @@ public:
     const Blueprint &root() const;
 
     double hit_ratio() const { return getState().hit_ratio(_docid_limit); }
-    double estimate() const { return getState().relative_estimate(); }
-    virtual double calculate_relative_estimate() const = 0;
+
+    // The flow statistics for a blueprint is calculated during the
+    // LAST optimize pass (just prior to sorting). After being
+    // calculated, each value is available through a simple accessor
+    // function. Since the optimize process is performed bottom-up, a
+    // blueprint can expect all children to already have these values
+    // calculated when the calculate_flow_stats function is called.
+    //
+    // Note that values are not automatically available for blueprints
+    // used inside complex leafs since they are not part of the tree
+    // seen by optimize. When the calculate_flow_stats function is
+    // called on a complex leaf, it can call the update_flow_stats
+    // function directly (the function that is normally called by
+    // optimize) on internal blueprints to make these values available
+    // before using them to calculate its own flow stats.
+    //
+    //    'estimate': relative estimate in the range [0,1]
+    //        'cost': cost of non-strict evaluation: multiply by non-strict in-flow
+    // 'strict_cost': cost of strict evaluation: assuming strict in-flow of 1.0
+    double estimate() const noexcept { return _flow_stats.estimate; }
+    double cost() const noexcept { return _flow_stats.cost; }
+    double strict_cost() const noexcept { return _flow_stats.strict_cost; }
+    virtual FlowStats calculate_flow_stats(uint32_t docid_limit) const = 0;
+    void update_flow_stats(uint32_t docid_limit) {
+        _flow_stats = calculate_flow_stats(docid_limit);
+    }
+    static FlowStats default_flow_stats(uint32_t docid_limit, uint32_t abs_est, size_t child_cnt);
+    static FlowStats default_flow_stats(size_t child_cnt);
 
     virtual void fetchPostings(const ExecuteInfo &execInfo) = 0;
     virtual void freeze() = 0;
@@ -333,7 +362,7 @@ private:
     bool infer_want_global_filter() const;
 
     size_t count_termwise_nodes(const UnpackInfo &unpack) const;
-    virtual double computeNextHitRate(const Blueprint & child, double hit_rate, bool use_estimate) const;
+    virtual double computeNextHitRate(const Blueprint & child, double hit_rate) const;
 
 protected:
     // returns an empty collection if children have empty or
@@ -356,6 +385,7 @@ public:
     void setDocIdLimit(uint32_t limit) noexcept final;
 
     void optimize(Blueprint* &self, OptimizePass pass) final;
+    void sort(bool strict, bool sort_by_cost) override;
     void set_global_filter(const GlobalFilter &global_filter, double estimated_hit_ratio) override;
 
     IndexList find(const IPredicate & check) const;
@@ -371,7 +401,7 @@ public:
     
     virtual HitEstimate combine(const std::vector<HitEstimate> &data) const = 0;
     virtual FieldSpecBaseList exposeFields() const = 0;
-    virtual void sort(Children &children) const = 0;
+    virtual void sort(Children &children, bool strict, bool sort_by_cost) const = 0;
     virtual bool inheritStrict(size_t i) const = 0;
     virtual SearchIteratorUP
     createIntermediateSearch(MultiSearch::Children subSearches,
@@ -392,9 +422,9 @@ private:
     State _state;
 protected:
     void optimize(Blueprint* &self, OptimizePass pass) final;
+    void sort(bool strict, bool sort_by_cost) override;
     void setEstimate(HitEstimate est) {
         _state.estimate(est);
-        _state.relative_estimate(calculate_relative_estimate());
         notifyChange();
     }
     void set_cost_tier(uint32_t value);
@@ -425,8 +455,6 @@ protected:
 public:
     ~LeafBlueprint() override = default;
     const State &getState() const final { return _state; }
-    void setDocIdLimit(uint32_t limit) noexcept final;
-    double calculate_relative_estimate() const override;
     void fetchPostings(const ExecuteInfo &execInfo) override;
     void freeze() final;
     SearchIteratorUP createSearch(fef::MatchData &md, bool strict) const override;

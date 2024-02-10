@@ -18,6 +18,7 @@
 #include <vespa/storage/distributor/operations/external/statbucketoperation.h>
 #include <vespa/storage/distributor/operations/external/twophaseupdateoperation.h>
 #include <vespa/storage/distributor/operations/external/visitoroperation.h>
+#include <vespa/storage/config/distributorconfiguration.h>
 #include <vespa/storageapi/message/persistence.h>
 #include <vespa/storageapi/message/removelocation.h>
 #include <vespa/storageapi/message/stat.h>
@@ -236,11 +237,6 @@ ExternalOperationHandler::makeConcurrentMutationRejectionReply(api::StorageComma
 }
 
 bool ExternalOperationHandler::allowMutation(const SequencingHandle& handle) const {
-    const auto& config(_op_ctx.distributor_config());
-    if (!config.getSequenceMutatingOperations()) {
-        // Sequencing explicitly disabled, so always allow.
-        return true;
-    }
     return handle.valid();
 }
 
