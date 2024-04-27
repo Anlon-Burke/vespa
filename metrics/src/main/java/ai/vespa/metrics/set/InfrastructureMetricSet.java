@@ -68,11 +68,11 @@ public class InfrastructureMetricSet {
         addMetric(metrics, ConfigServerMetrics.CLUSTER_LOAD_IDEAL_MEMORY.max());
         addMetric(metrics, ConfigServerMetrics.CLUSTER_LOAD_IDEAL_DISK.max());
         addMetric(metrics, ConfigServerMetrics.NODES_EMPTY_EXCLUSIVE.max());
-        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_DEPROVISIONED.sum());
-        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_DIRTY.sum());
-        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_INACTIVE.sum());
-        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_PROVISIONED.sum());
-        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_RESERVED.sum());
+        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_DEPROVISIONED.count());
+        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_DIRTY.count());
+        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_INACTIVE.count());
+        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_PROVISIONED.count());
+        addMetric(metrics, ConfigServerMetrics.NODES_EXPIRED_RESERVED.count());
         addMetric(metrics, ConfigServerMetrics.WANT_TO_REBOOT.max());
         addMetric(metrics, ConfigServerMetrics.WANT_TO_RESTART.max());
         addMetric(metrics, ConfigServerMetrics.WANT_TO_RETIRE.max());
@@ -81,6 +81,7 @@ public class InfrastructureMetricSet {
         addMetric(metrics, ConfigServerMetrics.HAS_WIRE_GUARD_KEY.max());
         addMetric(metrics, ConfigServerMetrics.WANT_TO_DEPROVISION.max());
         addMetric(metrics, ConfigServerMetrics.SUSPENDED.max());
+        addMetric(metrics, ConfigServerMetrics.SUSPENDED_SECONDS.count());
         addMetric(metrics, ConfigServerMetrics.SOME_SERVICES_DOWN.max());
         addMetric(metrics, ConfigServerMetrics.NODE_FAILER_BAD_NODE.max());
         addMetric(metrics, ConfigServerMetrics.LOCK_ATTEMPT_LOCKED_LOAD, EnumSet.of(max,average));
@@ -184,6 +185,7 @@ public class InfrastructureMetricSet {
         addMetric(metrics, ControllerMetrics.ZMS_QUOTA_USAGE.max());
         addMetric(metrics, ControllerMetrics.COREDUMP_PROCESSED.count());
         addMetric(metrics, ControllerMetrics.AUTH0_EXCEPTIONS.count());
+        addMetric(metrics, ControllerMetrics.BILLING_WEBHOOK_FAILURES.count());
         addMetric(metrics, ControllerMetrics.CERTIFICATE_POOL_AVAILABLE.max());
         addMetric(metrics, ControllerMetrics.BILLING_EXCEPTIONS.count());
 

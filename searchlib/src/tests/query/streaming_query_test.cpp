@@ -2,6 +2,7 @@
 
 #include <vespa/searchlib/fef/simpletermdata.h>
 #include <vespa/searchlib/fef/matchdata.h>
+#include <vespa/searchlib/fef/test/indexenvironment.h>
 #include <vespa/searchlib/query/streaming/dot_product_term.h>
 #include <vespa/searchlib/query/streaming/equiv_query_node.h>
 #include <vespa/searchlib/query/streaming/in_term.h>
@@ -24,6 +25,7 @@ using namespace search::streaming;
 using TermType = QueryTerm::Type;
 using search::fef::SimpleTermData;
 using search::fef::MatchData;
+using search::fef::test::IndexEnvironment;
 
 void assertHit(const Hit & h, uint32_t exp_field_id, uint32_t exp_element_id, int32_t exp_element_weight, size_t exp_position) {
     EXPECT_EQ(h.field_id(), exp_field_id);
@@ -377,6 +379,31 @@ TEST(StreamingQueryTest, onedot0e_is_rewritten_if_allowed_too)
             EXPECT_EQ(vespalib::stringref("0e"), qt.getTerm());
             EXPECT_EQ(0u, qt.uniqueId());
         }
+    }
+}
+
+TEST(StreamingQueryTest, negative_integer_is_rewritten_if_allowed_for_string_field)
+{
+    const char term[7] = {TERM_UNIQ, 3, 1, 'c', 2, '-', '5'};
+    vespalib::stringref stackDump(term, sizeof(term));
+    EXPECT_EQ(7u, stackDump.size());
+    AllowRewrite empty("c");
+    const Query q(empty, stackDump);
+    EXPECT_TRUE(q.valid());
+    auto& root = q.getRoot();
+    auto& equiv = dynamic_cast<const EquivQueryNode &>(root);
+    EXPECT_EQ(2u, equiv.get_terms().size());
+    {
+        auto& qt = *equiv.get_terms()[0];
+        EXPECT_EQ("c", qt.index());
+        EXPECT_EQ(vespalib::stringref("-5"), qt.getTerm());
+        EXPECT_EQ(3u, qt.uniqueId());
+    }
+    {
+        auto& qt = *equiv.get_terms()[1];
+        EXPECT_EQ("c", qt.index());
+        EXPECT_EQ(vespalib::stringref("5"), qt.getTerm());
+        EXPECT_EQ(0u, qt.uniqueId());
     }
 }
 
@@ -749,7 +776,8 @@ TEST(StreamingQueryTest, test_in_term)
     q.add(12, 0, 1, 0);
     EXPECT_TRUE(term.evaluate());
     MatchData md(MatchData::params().numTermFields(2));
-    term.unpack_match_data(23, td, md);
+    IndexEnvironment ie;
+    term.unpack_match_data(23, td, md, ie);
     auto tmd0 = md.resolveTermField(0);
     EXPECT_NE(23, tmd0->getDocId());
     auto tmd2 = md.resolveTermField(1);
@@ -779,7 +807,8 @@ TEST(StreamingQueryTest, dot_product_term)
     q1.add(12, 0, 9, 0);
     EXPECT_TRUE(term.evaluate());
     MatchData md(MatchData::params().numTermFields(2));
-    term.unpack_match_data(23, td, md);
+    IndexEnvironment ie;
+    term.unpack_match_data(23, td, md, ie);
     auto tmd0 = md.resolveTermField(0);
     EXPECT_NE(23, tmd0->getDocId());
     auto tmd1 = md.resolveTermField(1);
@@ -824,7 +853,8 @@ check_wand_term(double limit, const vespalib::string& label)
     q1.add(12, 0, 4, 0);
     EXPECT_EQ(limit < exp_wand_score_field_11, term.evaluate());
     MatchData md(MatchData::params().numTermFields(2));
-    term.unpack_match_data(23, td, md);
+    IndexEnvironment ie;
+    term.unpack_match_data(23, td, md, ie);
     auto tmd0 = md.resolveTermField(0);
     EXPECT_NE(23, tmd0->getDocId());
     auto tmd1 = md.resolveTermField(1);
@@ -878,7 +908,8 @@ TEST(StreamingQueryTest, weighted_set_term)
     q1.add(12, 0, 10, 0);
     EXPECT_TRUE(term.evaluate());
     MatchData md(MatchData::params().numTermFields(2));
-    term.unpack_match_data(23, td, md);
+    IndexEnvironment ie;
+    term.unpack_match_data(23, td, md, ie);
     auto tmd0 = md.resolveTermField(0);
     EXPECT_NE(23, tmd0->getDocId());
     auto tmd1 = md.resolveTermField(1);

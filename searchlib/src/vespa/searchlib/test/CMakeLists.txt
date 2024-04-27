@@ -4,7 +4,6 @@ vespa_add_library(searchlib_test
     attribute_builder.cpp
     document_weight_attribute_helper.cpp
     doc_builder.cpp
-    ft_test_app.cpp
     ft_test_app_base.cpp
     imported_attribute_fixture.cpp
     initrange.cpp
@@ -27,6 +26,7 @@ vespa_add_library(searchlib_test
 
 vespa_add_library(searchlib_test_gtest_migration OBJECT
     SOURCES
+    ft_test_app_base.cpp
     initrange.cpp
     searchiteratorverifier.cpp
 )

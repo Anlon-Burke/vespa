@@ -1095,12 +1095,6 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
         return getTenant(appId).getSessionRepository().activeApplicationVersions(appId);
     }
 
-    public Application getActiveApplication(ApplicationId applicationId) {
-        return getActiveApplicationSet(applicationId)
-                .map(a -> a.getForVersionOrLatest(Optional.empty(), clock.instant()))
-                .orElseThrow(() -> new RuntimeException("Found no active application for " + applicationId));
-    }
-
     private File decompressApplication(InputStream in, String contentType, File tempDir) {
         try (CompressedApplicationInputStream application =
                      CompressedApplicationInputStream.createFromCompressedStream(in, contentType, configserverConfig.maxApplicationPackageSize())) {
@@ -1113,7 +1107,7 @@ public class ApplicationRepository implements com.yahoo.config.provision.Deploye
     private File decompressApplication(CompressedApplicationInputStream in, File tempDir) {
         try {
             return in.decompress(tempDir);
-        } catch (IOException e) {
+        } catch (IOException | UncheckedIOException e) {
             throw new IllegalArgumentException("Unable to decompress application stream", e);
         }
     }

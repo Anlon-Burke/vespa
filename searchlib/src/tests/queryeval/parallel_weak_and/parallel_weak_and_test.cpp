@@ -179,9 +179,9 @@ struct WandBlueprintSpec
         Node::UP term = createNode();
         Blueprint::UP bp = blueprint(searchable, field, *term);
         MatchData::UP md(MatchData::makeTestInstance(1, 1));
-        bp->fetchPostings(ExecuteInfo::TRUE);
-        bp->setDocIdLimit(docIdLimit);
-        SearchIterator::UP sb = bp->createSearch(*md, true);
+        bp->basic_plan(true, docIdLimit);
+        bp->fetchPostings(ExecuteInfo::FULL);
+        SearchIterator::UP sb = bp->createSearch(*md);
         EXPECT_TRUE(dynamic_cast<ParallelWeakAndSearch*>(sb.get()) != 0);
         return sb;
     }
@@ -194,9 +194,9 @@ struct WandBlueprintSpec
     FakeResult search(Searchable &searchable, const std::string &field, const search::query::Node &term) const {
         Blueprint::UP bp = blueprint(searchable, field, term);
         MatchData::UP md(MatchData::makeTestInstance(1, 1));
-        bp->fetchPostings(ExecuteInfo::TRUE);
-        bp->setDocIdLimit(docIdLimit);
-        SearchIterator::UP sb = bp->createSearch(*md, true);
+        bp->basic_plan(true, docIdLimit);
+        bp->fetchPostings(ExecuteInfo::FULL);
+        SearchIterator::UP sb = bp->createSearch(*md);
         EXPECT_TRUE(dynamic_cast<ParallelWeakAndSearch*>(sb.get()) != 0);
         return doSearch(*sb, *md->resolveTermField(handle));
     }
@@ -635,6 +635,7 @@ TEST(ParallelWeakAndTest, require_that_asString_on_blueprint_works)
                               "    strict_cost: 0\n"
                               "    sourceId: 4294967295\n"
                               "    docid_limit: 0\n"
+                              "    strict: false\n"
                               "    _weights: std::vector {\n"
                               "        [0]: 5\n"
                               "    }\n"
@@ -660,6 +661,7 @@ TEST(ParallelWeakAndTest, require_that_asString_on_blueprint_works)
                               "            strict_cost: 0\n"
                               "            sourceId: 4294967295\n"
                               "            docid_limit: 0\n"
+                              "            strict: false\n"
                               "        }\n"
                               "    }\n"
                               "}\n";

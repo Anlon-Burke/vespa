@@ -54,7 +54,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -284,6 +283,19 @@ public class HttpServerTest {
                         .execute();
         response.expectStatusCode(is(OK))
                 .expectContent(is("{foo=[bar]}"));
+        assertTrue(driver.close());
+    }
+
+    @Test
+    void requireThatFormPostWithInvalidDataFailsWith400() throws Exception {
+        final JettyTestDriver driver = newDriverWithFormPostContentRemoved(new ParameterPrinterRequestHandler(), true);
+        final ResponseValidator response =
+                driver.client().newPost("/status.html")
+                        .addHeader(CONTENT_TYPE, APPLICATION_X_WWW_FORM_URLENCODED)
+                        .setContent("%!Foo=bar")
+                        .execute();
+        response.expectStatusCode(is(BAD_REQUEST))
+                .expectContent(containsString("Failed to parse form parameters"));
         assertTrue(driver.close());
     }
 
@@ -654,7 +666,7 @@ public class HttpServerTest {
 
     private ResponseMetricAggregator.StatisticsEntry waitForStatistics(ResponseMetricAggregator
                                                                                       statisticsCollector) {
-        List<ResponseMetricAggregator.StatisticsEntry> entries = Collections.emptyList();
+        List<ResponseMetricAggregator.StatisticsEntry> entries = List.of();
         int tries = 0;
         // Wait up to 30 seconds before giving up
         while (entries.isEmpty() && tries < 300) {
@@ -899,7 +911,7 @@ public class HttpServerTest {
         @Override
         public ContentChannel handleRequest(final Request request, final ResponseHandler handler) {
             final HttpResponse response = HttpResponse.newInstance(OK);
-            response.encodeSetCookieHeader(Collections.singletonList(cookie));
+            response.encodeSetCookieHeader(List.of(cookie));
             ResponseDispatch.newInstance(response).dispatch(handler);
             return null;
         }
@@ -909,8 +921,8 @@ public class HttpServerTest {
 
         @Override
         public ContentChannel handleRequest(final Request request, final ResponseHandler handler) {
-            final List<Cookie> cookies = new ArrayList<>(((HttpRequest)request).decodeCookieHeader());
-            Collections.sort(cookies, new CookieComparator());
+            List<Cookie> cookies = new ArrayList<>(((HttpRequest)request).decodeCookieHeader());
+            cookies.sort(new CookieComparator());
             final ContentChannel out = ResponseDispatch.newInstance(Response.Status.OK).connect(handler);
             out.write(StandardCharsets.UTF_8.encode(cookies.toString()), null);
             out.close(null);

@@ -222,7 +222,6 @@ public:
         } else {
             validate_posting_lists<StringKey>(*store);
         }
-        blueprint->setDocIdLimit(doc_id_limit);
         if (need_term_field_match_data) {
             tfmd.needs_normal_features();
         } else {
@@ -263,8 +262,9 @@ public:
             add_term(value);
         }
     }
-    std::unique_ptr<SearchIterator> create_leaf_search(bool strict = true) const {
-        return blueprint->createLeafSearch(tfmda, strict);
+    std::unique_ptr<SearchIterator> create_leaf_search(bool strict = true) {
+        blueprint->basic_plan(strict, doc_id_limit);
+        return blueprint->createLeafSearch(tfmda);
     }
     vespalib::string resolve_iterator_with_unpack() const {
         if (in_operator) {
@@ -433,6 +433,15 @@ TEST_P(DirectMultiTermBlueprintTest, hash_filter_with_string_folding_used_for_no
     auto itr = create_leaf_search(false);
     EXPECT_THAT(itr->asString(), StartsWith("search::attribute::MultiTermHashFilter"));
     expect_hits({30, 31, 40, 41}, *itr);
+}
+
+TEST_P(DirectMultiTermBlueprintTest, supports_more_than_64k_btree_iterators) {
+    setup(false, true);
+    std::vector<int64_t> term_values(std::numeric_limits<uint16_t>::max() + 1, 3);
+    add_terms(term_values);
+    auto itr = create_leaf_search();
+    EXPECT_THAT(itr->asString(), StartsWith(resolve_iterator_with_unpack()));
+    expect_hits({30, 31}, *itr);
 }
 
 GTEST_MAIN_RUN_ALL_TESTS()

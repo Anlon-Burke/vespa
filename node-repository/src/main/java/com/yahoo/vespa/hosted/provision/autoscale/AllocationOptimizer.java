@@ -2,6 +2,7 @@
 package com.yahoo.vespa.hosted.provision.autoscale;
 
 import com.yahoo.config.provision.ClusterResources;
+import com.yahoo.config.provision.Flavor;
 import com.yahoo.config.provision.IntRange;
 import com.yahoo.config.provision.NodeResources;
 import com.yahoo.vespa.hosted.provision.NodeRepository;
@@ -9,7 +10,6 @@ import com.yahoo.vespa.hosted.provision.NodeRepository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 import static com.yahoo.vespa.hosted.provision.autoscale.Autoscaler.headroomRequiredToScaleDown;
 
@@ -37,9 +37,7 @@ public class AllocationOptimizer {
      * @return the best allocation, if there are any possible legal allocations, fulfilling the target
      *         fully or partially, within the limits
      */
-    public Optional<AllocatableResources> findBestAllocation(Load loadAdjustment,
-                                                             ClusterModel model,
-                                                             Limits limits) {
+    public Optional<AllocatableResources> findBestAllocation(Load loadAdjustment, ClusterModel model, Limits limits) {
         return findBestAllocations(loadAdjustment, model, limits).stream().findFirst();
     }
 
@@ -50,9 +48,7 @@ public class AllocationOptimizer {
      * @return the best allocations, if there are any possible legal allocations, fulfilling the target
      *         fully or partially, within the limits. The list contains the three best allocations, sorted from most to least preferred.
      */
-    public List<AllocatableResources> findBestAllocations(Load loadAdjustment,
-                                                         ClusterModel model,
-                                                         Limits limits) {
+    public List<AllocatableResources> findBestAllocations(Load loadAdjustment, ClusterModel model, Limits limits) {
         if (limits.isEmpty())
             limits = Limits.of(new ClusterResources(minimumNodes,    1, NodeResources.unspecified()),
                                new ClusterResources(maximumNodes, maximumNodes, NodeResources.unspecified()),
@@ -61,7 +57,7 @@ public class AllocationOptimizer {
             limits = atLeast(minimumNodes, limits).fullySpecified(model.current().clusterSpec(), nodeRepository, model.application().id());
         List<AllocatableResources> bestAllocations = new ArrayList<>();
         var availableRealHostResources = nodeRepository.zone().cloud().dynamicProvisioning()
-                                         ? nodeRepository.flavors().getFlavors().stream().map(flavor -> flavor.resources()).toList()
+                                         ? nodeRepository.flavors().getFlavors().stream().map(Flavor::resources).toList()
                                          : nodeRepository.nodes().list().hosts().stream().map(host -> host.flavor().resources())
                                                          .map(hostResources -> maxResourcesOf(hostResources, model))
                                                          .toList();

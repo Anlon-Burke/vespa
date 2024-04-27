@@ -31,6 +31,7 @@ public class ContainerModelEvaluation implements
     public final static String EVALUATION_BUNDLE_NAME = "model-evaluation";
     public final static String INTEGRATION_BUNDLE_NAME = "model-integration";
     public final static String ONNXRUNTIME_BUNDLE_NAME = "container-onnxruntime.jar";
+    public final static String LLAMA_BUNDLE_NAME = "container-llama.jar";
     public final static String ONNX_RUNTIME_CLASS = "ai.vespa.modelintegration.evaluator.OnnxRuntime";
 
     private final static String EVALUATOR_NAME = ModelsEvaluator.class.getName();
@@ -55,25 +56,25 @@ public class ContainerModelEvaluation implements
 
     @Override
     public void getConfig(RankProfilesConfig.Builder builder) {
-        rankProfileList.getConfig(builder);
+        builder.rankprofile(rankProfileList.getRankProfilesConfig());
     }
 
     @Override
     public void getConfig(RankingConstantsConfig.Builder builder) {
-        rankProfileList.getConfig(builder);
+        builder.constant(rankProfileList.getConstantsConfig());
     }
 
     @Override
     public void getConfig(OnnxModelsConfig.Builder builder) {
         if (onnxModels != null) {
-            onnxModels.getConfig(builder);
+            builder.model(onnxModels.getConfig());
         } else {
-            rankProfileList.getConfig(builder);
+            builder.model(rankProfileList.getOnnxConfig());
         }
     }
 
     public void getConfig(RankingExpressionsConfig.Builder builder) {
-        rankProfileList.getConfig(builder);
+        builder.expression(rankProfileList.getExpressionsConfig());
     }
 
     public static Handler getHandler() {

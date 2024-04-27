@@ -6,7 +6,9 @@
 #include <vespa/searchlib/index/postinglistparams.h>
 #include <vespa/vespalib/data/fileheader.h>
 #include <vespa/vespalib/data/databuffer.h>
+#include <vespa/vespalib/datastore/aligner.h>
 #include <vespa/vespalib/util/arrayref.h>
+#include <vespa/vespalib/util/round_up_to_page_size.h>
 #include <vespa/vespalib/util/size_literals.h>
 
 namespace search::bitcompression {
@@ -181,6 +183,12 @@ readHeader(vespalib::GenericHeader &header, int64_t fileSize)
     return headerLen;
 }
 
+bool
+DecodeContext64Base::is_padded_for_memory_map(uint64_t file_bit_size, uint64_t file_size) noexcept
+{
+    using Aligner = vespalib::datastore::Aligner<64>;
+    return (Aligner::align(file_bit_size) + 128 <= (vespalib::round_up_to_page_size(file_size) * 8));
+}
 
 template <bool bigEndian>
 void
@@ -359,6 +367,24 @@ getParams(PostingListParams &params) const
     params.clear();
 }
 
+template <bool bigEndian>
+void
+FeatureEncodeContext<bigEndian>::pad_for_memory_map_and_flush()
+{
+    // Write some pad bits to avoid decompression readahead going past
+    // memory mapped file during search and into SIGSEGV territory.
+
+    // First pad to 64 bits alignment.
+    this->smallAlign(64);
+    writeComprBufferIfNeeded();
+
+    // Then write 128 more bits.  This allows for 64-bit decoding
+    // with a readbits that always leaves a nonzero preRead
+    padBits(128);
+    this->alignDirectIO();
+    this->flush();
+    writeComprBuffer(); // Also flushes slack
+}
 
 template <bool bigEndian>
 void

@@ -20,6 +20,8 @@
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/config/helper/configgetter.hpp>
 #include <vespa/vespalib/util/signalhandler.h>
+#include <google/protobuf/message_lite.h>
+#include <absl/debugging/failure_signal_handler.h>
 #include <iostream>
 #include <csignal>
 #include <cstdlib>
@@ -203,6 +205,8 @@ int StorageApp::main(int argc, char **argv)
     vespalib::ShutdownGuard shutdownGuard(getMaxShutDownTime());
     LOG(debug, "Attempting proper shutdown");
     _process.reset();
+    // Clean up Protobuf library globals to avoid false positive leak warnings from Valgrind et al.
+    google::protobuf::ShutdownProtobufLibrary();
     LOG(debug, "Completed controlled shutdown.");
     return 0;
 }
@@ -210,8 +214,15 @@ int StorageApp::main(int argc, char **argv)
 } // storage
 
 int main(int argc, char **argv) {
+    absl::FailureSignalHandlerOptions opts;
+    // See `searchcore/src/apps/proton/proton.cpp` for parameter and handler ordering rationale.
+    opts.call_previous_handler = true;
+    opts.use_alternate_stack = false;
+    absl::InstallFailureSignalHandler(opts);
+
     vespalib::SignalHandler::PIPE.ignore();
     vespalib::SignalHandler::enable_cross_thread_stack_tracing();
+
     storage::StorageApp app;
     storage::sigtramp = &app;
     int retval = app.main(argc,argv);

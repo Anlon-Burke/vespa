@@ -4,6 +4,7 @@
 #include <vespa/searchlib/common/bitvectoriterator.h>
 #include <vespa/searchlib/queryeval/booleanmatchiteratorwrapper.h>
 #include <vespa/searchlib/queryeval/filter_wrapper.h>
+#include <vespa/searchlib/queryeval/flow_tuning.h>
 #include <vespa/searchlib/queryeval/intermediate_blueprints.h>
 #include <vespa/vespalib/objects/visit.h>
 #include <vespa/vespalib/util/stringfmt.h>
@@ -14,12 +15,14 @@ LOG_SETUP(".diskindex.disktermblueprint");
 using search::BitVectorIterator;
 using search::fef::TermFieldMatchDataArray;
 using search::index::Schema;
+using search::queryeval::Blueprint;
 using search::queryeval::BooleanMatchIteratorWrapper;
 using search::queryeval::FieldSpec;
 using search::queryeval::FieldSpecBaseList;
-using search::queryeval::SearchIterator;
 using search::queryeval::LeafBlueprint;
-using search::queryeval::Blueprint;
+using search::queryeval::SearchIterator;
+using search::queryeval::flow::disk_index_cost;
+using search::queryeval::flow::disk_index_strict_cost;
 
 namespace search::diskindex {
 
@@ -68,16 +71,17 @@ DiskTermBlueprint::fetchPostings(const queryeval::ExecuteInfo &execInfo)
 queryeval::FlowStats
 DiskTermBlueprint::calculate_flow_stats(uint32_t docid_limit) const
 {
-    return default_flow_stats(docid_limit, _lookupRes->counts._numDocs, 0);
+    double rel_est = abs_to_rel_est(_lookupRes->counts._numDocs, docid_limit);
+    return {rel_est, disk_index_cost(rel_est), disk_index_strict_cost(rel_est)};
 }
 
 SearchIterator::UP
-DiskTermBlueprint::createLeafSearch(const TermFieldMatchDataArray & tfmda, bool strict) const
+DiskTermBlueprint::createLeafSearch(const TermFieldMatchDataArray & tfmda) const
 {
     if (_bitVector && (_useBitVector || tfmda[0]->isNotNeeded())) {
         LOG(debug, "Return BitVectorIterator: %s, wordNum(%" PRIu64 "), docCount(%" PRIu64 ")",
             getName(_lookupRes->indexId).c_str(), _lookupRes->wordNum, _lookupRes->counts._numDocs);
-        return BitVectorIterator::create(_bitVector.get(), *tfmda[0], strict);
+        return BitVectorIterator::create(_bitVector.get(), *tfmda[0], strict());
     }
     SearchIterator::UP search(_postingHandle->createIterator(_lookupRes->counts, tfmda, _useBitVector));
     if (_useBitVector) {
@@ -91,12 +95,12 @@ DiskTermBlueprint::createLeafSearch(const TermFieldMatchDataArray & tfmda, bool 
 }
 
 SearchIterator::UP
-DiskTermBlueprint::createFilterSearch(bool strict, FilterConstraint) const
+DiskTermBlueprint::createFilterSearch(FilterConstraint) const
 {
     auto wrapper = std::make_unique<queryeval::FilterWrapper>(getState().numFields());
     auto & tfmda = wrapper->tfmda();
     if (_bitVector) {
-        wrapper->wrap(BitVectorIterator::create(_bitVector.get(), *tfmda[0], strict));
+        wrapper->wrap(BitVectorIterator::create(_bitVector.get(), *tfmda[0], strict()));
     } else {
         wrapper->wrap(_postingHandle->createIterator(_lookupRes->counts, tfmda, _useBitVector));
     }

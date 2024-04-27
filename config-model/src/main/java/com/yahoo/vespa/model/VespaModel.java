@@ -36,6 +36,7 @@ import com.yahoo.schema.RankProfile;
 import com.yahoo.schema.RankProfileRegistry;
 import com.yahoo.schema.derived.AttributeFields;
 import com.yahoo.schema.derived.RankProfileList;
+import com.yahoo.schema.derived.SchemaInfo;
 import com.yahoo.schema.document.SDField;
 import com.yahoo.schema.processing.Processing;
 import com.yahoo.vespa.config.ConfigDefinitionKey;
@@ -54,7 +55,6 @@ import com.yahoo.vespa.model.ml.ConvertedModel;
 import com.yahoo.vespa.model.ml.ModelName;
 import com.yahoo.vespa.model.ml.OnnxModelInfo;
 import com.yahoo.vespa.model.routing.Routing;
-import com.yahoo.vespa.model.search.DocumentDatabase;
 import com.yahoo.vespa.model.search.SearchCluster;
 import com.yahoo.vespa.model.utils.internal.ReflectionUtil;
 import org.xml.sax.SAXException;
@@ -206,14 +206,13 @@ public final class VespaModel extends AbstractConfigProducerRoot implements Mode
                                                 .map(type -> type.getFullName().getName())
                                                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        Set<String> typesWithIndexedFields = content.getSearch().getIndexed() == null
+        Set<String> typesWithIndexedFields = content.getSearch().getSearchCluster() == null
                                              ? Set.of()
-                                             : content.getSearch().getIndexed().getDocumentDbs().stream()
-                                                      .filter(database -> database.getDerivedConfiguration()
-                                                                                  .getSchema()
+                                             : content.getSearch().getSearchCluster().schemas().values().stream()
+                                                      .filter(schemaInfo -> schemaInfo.fullSchema()
                                                                                   .allConcreteFields()
                                                                                   .stream().anyMatch(SDField::doesIndexing))
-                                                      .map(DocumentDatabase::getSchemaName)
+                                                      .map(SchemaInfo::name)
                                                       .collect(Collectors.toCollection(LinkedHashSet::new));
 
         return typesWithIndexMode.stream().filter(typesWithIndexedFields::contains)

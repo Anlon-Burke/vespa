@@ -39,15 +39,15 @@ class QueryBuilderBase
         bool _active;
         Weight _weight;
     public:
-        WeightOverride() : _active(false), _weight(0) {}
-        WeightOverride(Weight weight) : _active(true), _weight(weight) {}
+        WeightOverride() noexcept : _active(false), _weight(0) {}
+        explicit WeightOverride(Weight weight) noexcept : _active(true), _weight(weight) {}
         void adjustWeight(Weight &weight) const { if (_active) weight = _weight; }
     };
     struct NodeInfo {
         Intermediate *node;
         int remaining_child_count;
         WeightOverride weight_override;
-        NodeInfo(Intermediate *n, int c) : node(n), remaining_child_count(c) {}
+        NodeInfo(Intermediate *n, int c) noexcept : node(n), remaining_child_count(c) {}
     };
     Node::UP _root;
     std::stack<NodeInfo> _nodes;
@@ -226,8 +226,8 @@ create_nearest_neighbor_term(vespalib::stringref query_tensor_name, vespalib::st
 template <class NodeTypes>
 typename NodeTypes::FuzzyTerm *
 createFuzzyTerm(vespalib::stringref term, vespalib::stringref view, int32_t id, Weight weight,
-                uint32_t maxEditDistance, uint32_t prefixLength) {
-    return new typename NodeTypes::FuzzyTerm(term, view, id, weight, maxEditDistance, prefixLength);
+                uint32_t max_edit_distance, uint32_t prefix_lock_length, bool prefix_match) {
+    return new typename NodeTypes::FuzzyTerm(term, view, id, weight, max_edit_distance, prefix_lock_length, prefix_match);
 }
 
 template <class NodeTypes>
@@ -343,9 +343,10 @@ public:
         return addTerm(createRegExpTerm<NodeTypes>(term, view, id, weight));
     }
     typename NodeTypes::FuzzyTerm &addFuzzyTerm(stringref term, stringref view, int32_t id, Weight weight,
-                                                uint32_t maxEditDistance, uint32_t prefixLength) {
+                                                uint32_t max_edit_distance, uint32_t prefix_lock_length,
+                                                bool prefix_match) {
         adjustWeight(weight);
-        return addTerm(createFuzzyTerm<NodeTypes>(term, view, id, weight, maxEditDistance, prefixLength));
+        return addTerm(createFuzzyTerm<NodeTypes>(term, view, id, weight, max_edit_distance, prefix_lock_length, prefix_match));
     }
     typename NodeTypes::NearestNeighborTerm &add_nearest_neighbor_term(stringref query_tensor_name, stringref field_name,
                                                                        int32_t id, Weight weight, uint32_t target_num_hits,

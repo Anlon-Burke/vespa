@@ -12,6 +12,7 @@ import com.yahoo.schema.RankProfileRegistry;
 import com.yahoo.schema.Schema;
 import com.yahoo.schema.derived.validation.Validation;
 import com.yahoo.vespa.config.search.AttributesConfig;
+import com.yahoo.vespa.config.search.core.OnnxModelsConfig;
 import com.yahoo.vespa.config.search.core.RankingConstantsConfig;
 import com.yahoo.vespa.model.container.search.QueryProfiles;
 
@@ -24,9 +25,10 @@ import java.io.Writer;
  *
  * @author bratseth
  */
-public class DerivedConfiguration implements AttributesConfig.Producer {
+public class DerivedConfiguration {
 
     private final Schema schema;
+    private final SchemaInfo.IndexMode indexMode;
     private Summaries summaries;
     private Juniperrc juniperrc;
     private AttributeFields attributeFields;
@@ -55,7 +57,8 @@ public class DerivedConfiguration implements AttributesConfig.Producer {
     }
 
     DerivedConfiguration(Schema schema, RankProfileRegistry rankProfileRegistry, QueryProfileRegistry queryProfiles) {
-        this(schema, new DeployState.Builder().rankProfileRegistry(rankProfileRegistry).queryProfiles(queryProfiles).build(), false);
+        this(new DeployState.Builder().rankProfileRegistry(rankProfileRegistry).queryProfiles(queryProfiles).build(),
+                schema, SchemaInfo.IndexMode.INDEX);
     }
 
     /**
@@ -65,7 +68,8 @@ public class DerivedConfiguration implements AttributesConfig.Producer {
      *               argument is live. Which means that this object will be inconsistent if the given
      *               schema is later modified.
      */
-    public DerivedConfiguration(Schema schema, DeployState deployState, boolean isStreaming) {
+    public DerivedConfiguration(DeployState deployState, Schema schema, SchemaInfo.IndexMode indexMode) {
+        this.indexMode = indexMode;
         try {
             Validator.ensureNotNull("Schema", schema);
             this.schema = schema;
@@ -74,15 +78,13 @@ public class DerivedConfiguration implements AttributesConfig.Producer {
             if (!schema.isDocumentsOnly()) {
                 streamingFields = new VsmFields(schema);
                 streamingSummary = new VsmSummary(schema);
-            }
-            if (!schema.isDocumentsOnly()) {
                 attributeFields = new AttributeFields(schema);
                 summaries = new Summaries(schema, deployState.getDeployLogger(), deployState.getProperties().featureFlags());
                 juniperrc = new Juniperrc(schema);
                 rankProfileList = new RankProfileList(schema, schema.rankExpressionFiles(), attributeFields, deployState);
-                indexingScript = new IndexingScript(schema, isStreaming);
-                indexInfo = new IndexInfo(schema, isStreaming);
-                schemaInfo = new SchemaInfo(schema, deployState.rankProfileRegistry(), summaries);
+                indexingScript = new IndexingScript(schema, isStreaming());
+                indexInfo = new IndexInfo(schema, isStreaming());
+                schemaInfo = new SchemaInfo(schema, indexMode, deployState.rankProfileRegistry(), summaries);
                 indexSchema = new IndexSchema(schema);
                 importedFields = new ImportedFields(schema);
             }
@@ -128,9 +130,14 @@ public class DerivedConfiguration implements AttributesConfig.Producer {
     }
 
     public void exportConstants(String toDirectory) throws IOException {
-        RankingConstantsConfig.Builder b = new RankingConstantsConfig.Builder();
-        rankProfileList.getConfig(b);
+        var b = new RankingConstantsConfig.Builder()
+                .constant(rankProfileList.getConstantsConfig());
         exportCfg(b.build(), toDirectory + "/" + "ranking-constants.cfg");
+    }
+    public void exportOnnxModels(String toDirectory) throws IOException {
+        var b = new OnnxModelsConfig.Builder()
+                .model(rankProfileList.getOnnxConfig());
+        exportCfg(b.build(), toDirectory + "/" + "onnx-models.cfg");
     }
 
     private static void exportCfg(ConfigInstance instance, String fileName) throws IOException {
@@ -146,15 +153,13 @@ public class DerivedConfiguration implements AttributesConfig.Producer {
         }
     }
 
-    public Summaries getSummaries() {
-        return summaries;
-    }
+    public boolean isStreaming() { return indexMode == SchemaInfo.IndexMode.STREAMING; }
 
-    public AttributeFields getAttributeFields() {
-        return attributeFields;
-    }
+    public SchemaInfo.IndexMode getIndexMode() { return indexMode; }
 
-    @Override
+    public Summaries getSummaries() { return summaries; }
+    public AttributeFields getAttributeFields() { return attributeFields; }
+
     public void getConfig(AttributesConfig.Builder builder) {
         getConfig(builder, AttributeFields.FieldSet.ALL);
     }
@@ -163,46 +168,17 @@ public class DerivedConfiguration implements AttributesConfig.Producer {
         attributeFields.getConfig(builder, fs, maxUncommittedMemory);
     }
 
-    public IndexingScript getIndexingScript() {
-        return indexingScript;
-    }
-
-    public IndexInfo getIndexInfo() {
-        return indexInfo;
-    }
-
+    public IndexingScript getIndexingScript() { return indexingScript; }
+    public IndexInfo getIndexInfo() { return indexInfo; }
     public SchemaInfo getSchemaInfo() { return schemaInfo; }
-
-    public void setIndexingScript(IndexingScript script) {
-        this.indexingScript = script;
-    }
-
+    public void setIndexingScript(IndexingScript script) { this.indexingScript = script; }
     public Schema getSchema() { return schema; }
-
-    public RankProfileList getRankProfileList() {
-        return rankProfileList;
-    }
-
-    public VsmSummary getVsmSummary() {
-        return streamingSummary;
-    }
-
-    public VsmFields getVsmFields() {
-        return streamingFields;
-    }
-
-    public IndexSchema getIndexSchema() {
-        return indexSchema;
-    }
-
-    public Juniperrc getJuniperrc() {
-        return juniperrc;
-    }
-
-    public ImportedFields getImportedFields() {
-        return importedFields;
-    }
-
+    public RankProfileList getRankProfileList() { return rankProfileList; }
+    public VsmSummary getVsmSummary() { return streamingSummary; }
+    public VsmFields getVsmFields() { return streamingFields; }
+    public IndexSchema getIndexSchema() { return indexSchema; }
+    public Juniperrc getJuniperrc() { return juniperrc; }
+    public ImportedFields getImportedFields() { return importedFields; }
     public QueryProfileRegistry getQueryProfiles() { return queryProfiles; }
 
 }

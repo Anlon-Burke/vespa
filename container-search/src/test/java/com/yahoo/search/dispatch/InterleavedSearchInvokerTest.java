@@ -28,11 +28,10 @@ import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.StreamSupport;
@@ -61,7 +60,7 @@ public class InterleavedSearchInvokerTest {
             expectedEvents.add(new Event(4900, 100, 1));
             expectedEvents.add(new Event(4800, 100, 2));
 
-            invoker.search(query, null);
+            invoker.search(query);
 
             assertTrue(expectedEvents.isEmpty(), "All test scenario events processed");
         }
@@ -75,7 +74,7 @@ public class InterleavedSearchInvokerTest {
             expectedEvents.add(new Event(4700, 300, 1));
             expectedEvents.add(null);
 
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
 
             assertTrue(expectedEvents.isEmpty(), "All test scenario events processed");
             assertNull(result.hits().getErrorHit(), "Result is not marked as an error");
@@ -94,7 +93,7 @@ public class InterleavedSearchInvokerTest {
             expectedEvents.add(new Event(2400, 100, 2));
             expectedEvents.add(new Event(0, 0, null));
 
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
 
             assertTrue(expectedEvents.isEmpty(), "All test scenario events processed");
             assertNull(result.hits().getErrorHit(), "Result is not marked as an error");
@@ -113,7 +112,7 @@ public class InterleavedSearchInvokerTest {
             expectedEvents.add(new Event(null, 100, 0));
             expectedEvents.add(new Event(null, 200, 1));
 
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
 
             Coverage cov = result.getCoverage(true);
             assertEquals(100000L, cov.getDocs());
@@ -134,7 +133,7 @@ public class InterleavedSearchInvokerTest {
             expectedEvents.add(new Event(null, 100, 0));
             expectedEvents.add(new Event(null, 200, 1));
 
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
 
             Coverage cov = result.getCoverage(true);
             assertEquals(23420L, cov.getDocs());
@@ -156,7 +155,7 @@ public class InterleavedSearchInvokerTest {
             expectedEvents.add(new Event(null, 100, 0));
             expectedEvents.add(new Event(null, 200, 1));
 
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
 
             Coverage cov = result.getCoverage(true);
             assertEquals(9900L, cov.getDocs());
@@ -178,7 +177,7 @@ public class InterleavedSearchInvokerTest {
             expectedEvents.add(new Event(null, 100, 0));
             expectedEvents.add(null);
 
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
 
             Coverage cov = result.getCoverage(true);
             assertEquals(50155L, cov.getDocs());
@@ -203,17 +202,17 @@ public class InterleavedSearchInvokerTest {
     }
 
     private static final double DELTA = 0.000000000001;
-    private static final List<Double> A5 = Arrays.asList(11.0,8.5,7.5,3.0,2.0);
-    private static final List<Double> B5 = Arrays.asList(9.0,8.0,7.0,6.0,1.0);
-    private static final List<Double> A5Aux = Arrays.asList(-1.0,11.0,8.5,7.5,-7.0,3.0,2.0);
-    private static final List<Double> B5Aux = Arrays.asList(9.0,8.0,-3.0,7.0,6.0,1.0, -1.0);
+    private static final List<Double> A5 = List.of(11.0,8.5,7.5,3.0,2.0);
+    private static final List<Double> B5 = List.of(9.0,8.0,7.0,6.0,1.0);
+    private static final List<Double> A5Aux = List.of(-1.0,11.0,8.5,7.5,-7.0,3.0,2.0);
+    private static final List<Double> B5Aux = List.of(9.0,8.0,-3.0,7.0,6.0,1.0, -1.0);
 
     private void validateThatTopKProbabilityOverrideTakesEffect(Double topKProbability, int expectedK, Group group) throws IOException {
         try (InterleavedSearchInvoker invoker = createInterLeavedTestInvoker(A5, B5, group)) {
             query.setHits(8);
             query.properties().set(Dispatcher.topKProbability, topKProbability);
             SearchInvoker[] invokers = invoker.invokers().toArray(new SearchInvoker[0]);
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
             assertEquals(2, invokers.length);
             assertEquals(expectedK, ((MockInvoker) invokers[0]).hitsRequested);
             assertEquals(8, result.hits().size());
@@ -264,7 +263,7 @@ public class InterleavedSearchInvokerTest {
     void requireThatMergeOfConcreteHitsObeySorting() throws IOException {
         try (InterleavedSearchInvoker invoker = createInterLeavedTestInvoker(A5, B5, new Group(0, List.of()))) {
             query.setHits(12);
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
             assertEquals(10, result.hits().size());
             assertEquals(11.0, result.hits().get(0).getRelevance().getScore(), DELTA);
             assertEquals(1.0, result.hits().get(9).getRelevance().getScore(), DELTA);
@@ -273,7 +272,7 @@ public class InterleavedSearchInvokerTest {
         }
 
         try ( InterleavedSearchInvoker invoker = createInterLeavedTestInvoker(B5, A5, new Group(0, List.of()))) {
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
             assertEquals(10, result.hits().size());
             assertEquals(11.0, result.hits().get(0).getRelevance().getScore(), DELTA);
             assertEquals(1.0, result.hits().get(9).getRelevance().getScore(), DELTA);
@@ -287,7 +286,7 @@ public class InterleavedSearchInvokerTest {
         try (InterleavedSearchInvoker invoker = createInterLeavedTestInvoker(A5, B5, new Group(0, List.of()))) {
             query.setHits(3);
             query.setOffset(5);
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
             assertEquals(3, result.hits().size());
             assertEquals(7.0, result.hits().get(0).getRelevance().getScore(), DELTA);
             assertEquals(3.0, result.hits().get(2).getRelevance().getScore(), DELTA);
@@ -297,7 +296,7 @@ public class InterleavedSearchInvokerTest {
 
         try (InterleavedSearchInvoker invoker = createInterLeavedTestInvoker(B5, A5, new Group(0, List.of()))) {
             query.setOffset(5);
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
             assertEquals(3, result.hits().size());
             assertEquals(7.0, result.hits().get(0).getRelevance().getScore(), DELTA);
             assertEquals(3.0, result.hits().get(2).getRelevance().getScore(), DELTA);
@@ -311,7 +310,7 @@ public class InterleavedSearchInvokerTest {
         try (InterleavedSearchInvoker invoker = createInterLeavedTestInvoker(A5Aux, B5Aux, new Group(0, List.of()))) {
             query.setHits(3);
             query.setOffset(5);
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
             assertEquals(7, result.hits().size());
             assertEquals(7.0, result.hits().get(0).getRelevance().getScore(), DELTA);
             assertEquals(3.0, result.hits().get(2).getRelevance().getScore(), DELTA);
@@ -322,7 +321,7 @@ public class InterleavedSearchInvokerTest {
 
         try (InterleavedSearchInvoker invoker = createInterLeavedTestInvoker(B5Aux, A5Aux, new Group(0, List.of()))) {
             query.setOffset(5);
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
             assertEquals(7, result.hits().size());
             assertEquals(7.0, result.hits().get(0).getRelevance().getScore(), DELTA);
             assertEquals(3.0, result.hits().get(2).getRelevance().getScore(), DELTA);
@@ -356,10 +355,10 @@ public class InterleavedSearchInvokerTest {
                         .addAggregationResult(new MinAggregationResult().setMin(new IntegerResultNode(6)).setTag(3))));
         invokers.add(new MockInvoker(0).setHits(List.of(new GroupingListHit(List.of(grouping2)))));
 
-        try (InterleavedSearchInvoker invoker = new InterleavedSearchInvoker(Timer.monotonic, invokers, hitEstimator, dispatchConfig, new Group(0, List.of()), Collections.emptySet())) {
+        try (InterleavedSearchInvoker invoker = new InterleavedSearchInvoker(Timer.monotonic, invokers, hitEstimator, dispatchConfig, new Group(0, List.of()), Set.of())) {
             invoker.responseAvailable(invokers.get(0));
             invoker.responseAvailable(invokers.get(1));
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
             assertEquals(1, ((GroupingListHit) result.hits().get(0)).getGroupingList().size());
         }
         for (SearchInvoker invoker : invokers) {
@@ -373,7 +372,7 @@ public class InterleavedSearchInvokerTest {
         List<SearchInvoker> invokers = new ArrayList<>();
         invokers.add(createInvoker(a, 0));
         invokers.add(createInvoker(b, 1));
-        InterleavedSearchInvoker invoker = new InterleavedSearchInvoker(Timer.monotonic, invokers, hitEstimator, dispatchConfig, group, Collections.emptySet());
+        InterleavedSearchInvoker invoker = new InterleavedSearchInvoker(Timer.monotonic, invokers, hitEstimator, dispatchConfig, group, Set.of());
         invoker.responseAvailable(invokers.get(0));
         invoker.responseAvailable(invokers.get(1));
         return invoker;
@@ -404,7 +403,7 @@ public class InterleavedSearchInvokerTest {
             expectedEvents.add(new Event(null, 1, 1));
             expectedEvents.add(new Event(null, 100, 0));
 
-            Result result = invoker.search(query, null);
+            Result result = invoker.search(query);
 
             Coverage cov = result.getCoverage(true);
             assertEquals(50155L, cov.getDocs());

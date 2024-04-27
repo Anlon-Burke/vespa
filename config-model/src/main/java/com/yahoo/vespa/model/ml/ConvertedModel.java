@@ -30,8 +30,8 @@ import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
 import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -40,6 +40,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import static com.yahoo.yolean.Exceptions.uncheck;
 
 /**
  * A machine learned model imported from the models/ directory in the application package, for a single rank profile.
@@ -174,7 +176,7 @@ public class ConvertedModel {
         if (arguments.output().isEmpty()) {
             List<Map.Entry<String, ExpressionFunction>> entriesWithTheRightPrefix =
                     expressions.entrySet().stream().filter(entry -> entry.getKey().startsWith(arguments.signature().get() + ".")).toList();
-            if (entriesWithTheRightPrefix.size() < 1)
+            if (entriesWithTheRightPrefix.isEmpty())
                 throw new IllegalArgumentException("No expressions named '" + arguments.signature().get() +
                                                    missingExpressionMessageSuffix());
             if (entriesWithTheRightPrefix.size() > 1)
@@ -188,7 +190,7 @@ public class ConvertedModel {
 
     private String missingExpressionMessageSuffix() {
         return "' in model '" + modelDescription + "'. " +
-               "Available expressions: " + expressions.keySet().stream().collect(Collectors.joining(", "));
+               "Available expressions: " + String.join(", ", expressions.keySet());
     }
 
     // ----------------------- Static model conversion/storage below here
@@ -422,8 +424,7 @@ public class ConvertedModel {
     }
 
     private static void addFunctionNamesIn(ExpressionNode node, Set<String> names, ImportedMlModel model) {
-        if (node instanceof ReferenceNode) {
-            ReferenceNode referenceNode = (ReferenceNode)node;
+        if (node instanceof ReferenceNode referenceNode) {
             if (referenceNode.getOutput() == null) { // function references cannot specify outputs
                 if (names.add(referenceNode.getName())) {
                     if (model.functions().containsKey(referenceNode.getName())) {
@@ -482,7 +483,7 @@ public class ConvertedModel {
         List<Pair<String, ExpressionFunction>> readExpressions() {
             List<Pair<String, ExpressionFunction>> expressions = new ArrayList<>();
             ApplicationFile expressionPath = application.getFile(modelFiles.expressionsPath());
-            if ( ! expressionPath.exists() || ! expressionPath.isDirectory()) return Collections.emptyList();
+            if ( ! expressionPath.exists() || ! expressionPath.isDirectory()) return List.of();
             for (ApplicationFile expressionFile : expressionPath.listFiles()) {
                 try (BufferedReader reader = new BufferedReader(expressionFile.createReader())) {
                     String name = expressionFile.getPath().getName();
@@ -522,7 +523,7 @@ public class ConvertedModel {
         List<Pair<String, RankingExpression>> readFunctions() {
             try {
                 ApplicationFile file = application.getFile(modelFiles.functionsPath());
-                if ( ! file.exists()) return Collections.emptyList();
+                if ( ! file.exists()) return List.of();
 
                 List<Pair<String, RankingExpression>> functions = new ArrayList<>();
                 try (BufferedReader reader = new BufferedReader(file.createReader())) {
@@ -594,7 +595,7 @@ public class ConvertedModel {
         private List<Pair<String, Tensor>> readSmallConstants() {
             try {
                 ApplicationFile file = application.getFile(modelFiles.smallConstantsPath());
-                if ( ! file.exists()) return Collections.emptyList();
+                if ( ! file.exists()) return List.of();
 
                 List<Pair<String, Tensor>> constants = new ArrayList<>();
                 BufferedReader reader = new BufferedReader(file.createReader());
@@ -635,11 +636,7 @@ public class ConvertedModel {
         }
 
         private void createIfNeeded(Path path) {
-            File dir = application.getFileReference(path);
-            if ( ! dir.exists()) {
-                if (!dir.mkdirs())
-                    throw new IllegalStateException("Could not create " + dir);
-            }
+            uncheck(() -> Files.createDirectories(application.getFileReference(path).toPath()));
         }
 
     }

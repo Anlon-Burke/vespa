@@ -22,7 +22,6 @@ import com.yahoo.vespa.config.content.AllClustersBucketSpacesConfig;
 import com.yahoo.vespa.config.content.DistributionConfig;
 import com.yahoo.vespa.config.content.FleetcontrollerConfig;
 import com.yahoo.vespa.config.content.StorDistributionConfig;
-import com.yahoo.vespa.config.content.StorFilestorConfig;
 import com.yahoo.vespa.config.content.core.StorDistributormanagerConfig;
 import com.yahoo.vespa.config.content.core.StorServerConfig;
 import com.yahoo.vespa.config.search.DispatchConfig;
@@ -43,8 +42,6 @@ import com.yahoo.vespa.model.test.utils.VespaModelCreatorWithMockPkg;
 import com.yahoo.yolean.Exceptions;
 import org.junit.jupiter.api.Test;
 
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -57,6 +54,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -72,7 +70,7 @@ public class ContentClusterTest extends ContentBaseTest {
 
     @Test
     void testHierarchicRedundancy() {
-        ContentCluster cc = parse("" +
+        ContentCluster cc = parse(
                 "<content version=\"1.0\" id=\"storage\">\n" +
                 "  <documents/>" +
                 "  <engine>" +
@@ -947,8 +945,8 @@ public class ContentClusterTest extends ContentBaseTest {
                 .properties(props);
         MockRoot root = flavor.isPresent() ?
                 ContentClusterUtils.createMockRoot(new SingleNodeProvisioner(flavor.get()),
-                        Collections.emptyList(), deployStateBuilder) :
-                ContentClusterUtils.createMockRoot(Collections.emptyList(), deployStateBuilder);
+                        List.of(), deployStateBuilder) :
+                ContentClusterUtils.createMockRoot(List.of(), deployStateBuilder);
         ContentCluster cluster = ContentClusterUtils.createCluster(clusterXml, root);
         root.freezeModelTopology();
         cluster.validate();
@@ -1104,8 +1102,8 @@ public class ContentClusterTest extends ContentBaseTest {
 
         assertEquals(2, config.cluster().size());
 
-        assertClusterHasBucketSpaceMappings(config, "foo_c", Arrays.asList("bunnies", "hares"), Collections.emptyList());
-        assertClusterHasBucketSpaceMappings(config, "bar_c", Collections.emptyList(), Collections.singletonList("rabbits"));
+        assertClusterHasBucketSpaceMappings(config, "foo_c", List.of("bunnies", "hares"), List.of());
+        assertClusterHasBucketSpaceMappings(config, "bar_c", List.of(), List.of("rabbits"));
     }
 
     @Test
@@ -1263,7 +1261,7 @@ public class ContentClusterTest extends ContentBaseTest {
     }
 
     @Test
-    void verifyt_max_tls_size() throws Exception {
+    void verify_max_tls_size() throws Exception {
         var flavor = new Flavor(new FlavorsConfig.Flavor(new FlavorsConfig.Flavor.Builder().name("test").minDiskAvailableGb(100)));
         assertEquals(21474836480L, resolveMaxTLSSize(Optional.empty()));
         assertEquals(2147483648L, resolveMaxTLSSize(Optional.of(flavor)));
@@ -1488,6 +1486,24 @@ public class ContentClusterTest extends ContentBaseTest {
         assertFalse(resolveDistributorOperationCancellationConfig(0));
         assertTrue(resolveDistributorOperationCancellationConfig(1));
         assertTrue(resolveDistributorOperationCancellationConfig(2));
+    }
+
+    @Test
+    void node_distribution_key_outside_legal_range_is_disallowed() {
+        // Only [0, UINT16_MAX - 1] is a valid range. UINT16_MAX is a special content layer-internal
+        // sentinel value that must never be used by actual nodes.
+        for (int distKey : List.of(-1, 65535, 65536, 100000)) {
+            assertThrows(IllegalArgumentException.class, () ->
+                    parse("""
+                            <content version="1.0" id="storage">
+                              <documents/>
+                              <redundancy>1</redundancy>
+                              <group>
+                                <node hostalias='mockhost' distribution-key='%d' />
+                              </group>
+                            </content>""".formatted(distKey)
+                        ));
+        }
     }
 
     private String servicesWithGroups(int groupCount, double minGroupUpRatio) {

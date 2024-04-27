@@ -83,6 +83,7 @@ import com.yahoo.vespa.model.container.component.Handler;
 import com.yahoo.vespa.model.container.component.SimpleComponent;
 import com.yahoo.vespa.model.container.component.SystemBindingPattern;
 import com.yahoo.vespa.model.container.component.UserBindingPattern;
+import com.yahoo.vespa.model.container.component.SignificanceModelRegistry;
 import com.yahoo.vespa.model.container.docproc.ContainerDocproc;
 import com.yahoo.vespa.model.container.docproc.DocprocChains;
 import com.yahoo.vespa.model.container.http.AccessControl;
@@ -113,7 +114,6 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -425,7 +425,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
                         cluster.addComponent(accessLogComponent);
                     });
                 }
-                if (components.size() > 0) {
+                if ( ! components.isEmpty()) {
                     cluster.removeSimpleComponent(VoidRequestLog.class);
                     cluster.addSimpleComponent(AccessLog.class);
                 }
@@ -506,6 +506,13 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             boolean atLeastOneClientWithCertificate = clients.stream().anyMatch(client -> !client.certificates().isEmpty());
             if (!atLeastOneClientWithCertificate)
                 throw new IllegalArgumentException("At least one client must require a certificate");
+
+            List<String> duplicates = clients.stream().collect(Collectors.groupingBy(Client::id))
+                    .entrySet().stream().filter(entry -> entry.getValue().size() > 1)
+                    .map(Map.Entry::getKey).sorted().toList();
+            if (! duplicates.isEmpty()) {
+                throw new IllegalArgumentException("Duplicate client ids: " + duplicates);
+            }
         }
 
         List<X509Certificate> operatorAndTesterCertificates = deployState.getProperties().operatorCertificates();
@@ -598,7 +605,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
         // If the deployment contains certificate/private key reference, setup TLS port
         var builder = HostedSslConnectorFactory.builder(serverName, getMtlsDataplanePort(state))
-                .proxyProtocol(true, state.getProperties().featureFlags().enableProxyProtocolMixedMode())
+                .proxyProtocol(state.zone().cloud().useProxyProtocol())
                 .tlsCiphersOverride(state.getProperties().tlsCiphersOverride())
                 .endpointConnectionTtl(state.getProperties().endpointConnectionTtl());
         var endpointCert = state.endpointCertificateSecrets().orElse(null);
@@ -657,7 +664,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         // Setup dedicated connector
         var connector = HostedSslConnectorFactory.builder(server.getComponentId().getName()+"-token", tokenPort)
                 .tokenEndpoint(true)
-                .proxyProtocol(false, false)
+                .proxyProtocol(false)
                 .endpointCertificate(endpointCert)
                 .remoteAddressHeader("X-Forwarded-For")
                 .remotePortHeader("X-Forwarded-Port")
@@ -765,6 +772,16 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
         addSearchHandler(deployState, cluster, searchElement, context);
 
         validateAndAddConfiguredComponents(deployState, cluster, searchElement, "renderer", ContainerModelBuilder::validateRendererElement);
+
+        addSignificance(deployState, searchElement, cluster);
+    }
+
+    private void addSignificance(DeployState deployState, Element spec, ApplicationContainerCluster cluster) {
+        Element significanceElement = XML.getChild(spec, "significance");
+
+        SignificanceModelRegistry significanceModelRegistry = new SignificanceModelRegistry(deployState, significanceElement);
+        cluster.addComponent(significanceModelRegistry);
+
     }
 
     private void addModelEvaluation(Element spec, ApplicationContainerCluster cluster, ConfigModelContext context) {
@@ -881,7 +898,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
 
     private void addStandaloneNode(ApplicationContainerCluster cluster, DeployState deployState) {
         ApplicationContainer container = new ApplicationContainer(cluster, "standalone", cluster.getContainers().size(), deployState);
-        cluster.addContainers(Collections.singleton(container));
+        cluster.addContainers(List.of(container));
     }
 
     private static String buildJvmGCOptions(ConfigModelContext context, String jvmGCOptions) {
@@ -1002,7 +1019,7 @@ public class ContainerModelBuilder extends ConfigModelBuilder<ContainerModel> {
             return containers;
         } else if (nodesElement.hasAttribute("count")) // regular, hosted node spec
             return createNodesFromNodeCount(cluster, containerElement, nodesElement, context);
-        else if (cluster.isHostedVespa() && cluster.getZone().environment().isManuallyDeployed()) // default to 1 in manual zones
+        else if (cluster.isHostedVespa()) // default to 1 if node count is not specified
             return createNodesFromNodeCount(cluster, containerElement, nodesElement, context);
         else // the non-hosted option
             return createNodesFromNodeList(context.getDeployState(), cluster, nodesElement);

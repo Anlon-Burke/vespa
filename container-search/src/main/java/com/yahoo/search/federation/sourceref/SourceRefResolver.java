@@ -2,13 +2,11 @@
 package com.yahoo.search.federation.sourceref;
 
 import com.yahoo.component.ComponentSpecification;
-import com.yahoo.prelude.IndexFacts;
 import com.yahoo.processing.request.Properties;
 
-import java.util.Arrays;
-import java.util.LinkedHashSet;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 /**
  * Maps a source reference to search chain invocation specs.
@@ -18,30 +16,27 @@ import java.util.Set;
 public class SourceRefResolver {
 
     private final SearchChainResolver searchChainResolver;
+    private final Map<String, List<String>> schema2Clusters;
 
-    public SourceRefResolver(SearchChainResolver searchChainResolver) {
+    public SourceRefResolver(SearchChainResolver searchChainResolver, Map<String, List<String>> schema2Clusters) {
         this.searchChainResolver = searchChainResolver;
+        this.schema2Clusters = schema2Clusters;
     }
 
-    public Set<SearchChainInvocationSpec> resolve(ComponentSpecification sourceRef,
-                                                  Properties sourceToProviderMap,
-                                                  IndexFacts indexFacts) throws UnresolvedSearchChainException {
-        try {
-            return new LinkedHashSet<>(List.of(searchChainResolver.resolve(sourceRef, sourceToProviderMap)));
-        } catch (UnresolvedSourceRefException e) {
-            return resolveClustersWithDocument(sourceRef, sourceToProviderMap, indexFacts);
+    public List<ResolveResult> resolve(ComponentSpecification sourceRef, Properties sourceToProviderMap) {
+        ResolveResult searchChainResolveResult = searchChainResolver.resolve(sourceRef, sourceToProviderMap);
+        if (searchChainResolveResult.invocationSpec() == null) {
+            return resolveClustersWithDocument(sourceRef, sourceToProviderMap);
         }
+        return List.of(searchChainResolveResult);
     }
 
-    private Set<SearchChainInvocationSpec> resolveClustersWithDocument(ComponentSpecification sourceRef,
-                                                                       Properties sourceToProviderMap,
-                                                                       IndexFacts indexFacts)
-            throws UnresolvedSearchChainException {
+    private List<ResolveResult> resolveClustersWithDocument(ComponentSpecification sourceRef, Properties sourceToProviderMap) {
 
         if (hasOnlyName(sourceRef)) {
-            Set<SearchChainInvocationSpec> clusterSearchChains = new LinkedHashSet<>();
+            List<ResolveResult> clusterSearchChains = new ArrayList<>();
 
-            List<String> clusters = indexFacts.clustersHavingSearchDefinition(sourceRef.getName());
+            List<String> clusters = schema2Clusters.getOrDefault(sourceRef.getName(), List.of());
             for (String cluster : clusters) {
                 clusterSearchChains.add(resolveClusterSearchChain(cluster, sourceRef, sourceToProviderMap));
             }
@@ -49,23 +44,22 @@ public class SourceRefResolver {
             if ( ! clusterSearchChains.isEmpty())
                 return clusterSearchChains;
         }
-
-        throw UnresolvedSourceRefException.createForMissingSourceRef(sourceRef);
-
+        return List.of(new ResolveResult(createForMissingSourceRef(sourceRef)));
     }
 
-    private SearchChainInvocationSpec resolveClusterSearchChain(String cluster,
-                                                                ComponentSpecification sourceRef,
-                                                                Properties sourceToProviderMap)
-            throws UnresolvedSearchChainException {
-        try {
-            return searchChainResolver.resolve(new ComponentSpecification(cluster), sourceToProviderMap);
+    static String createForMissingSourceRef(ComponentSpecification source) {
+        return "Could not resolve source ref '" + source + "'.";
+    }
+
+    private ResolveResult resolveClusterSearchChain(String cluster,
+                                                    ComponentSpecification sourceRef,
+                                                    Properties sourceToProviderMap) {
+        var resolveResult = searchChainResolver.resolve(new ComponentSpecification(cluster), sourceToProviderMap);
+        if (resolveResult.invocationSpec() == null) {
+            return new ResolveResult("Failed to resolve cluster search chain '" + cluster +
+                                     "' when using source ref '" + sourceRef + "' as a document name.");
         }
-        catch (UnresolvedSearchChainException e) {
-            throw new UnresolvedSearchChainException("Failed to resolve cluster search chain '" + cluster +
-                                                     "' when using source ref '" + sourceRef +
-                                                     "' as a document name.");
-        }
+        return resolveResult;
     }
 
     private boolean hasOnlyName(ComponentSpecification sourceSpec) {

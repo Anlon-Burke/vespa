@@ -35,7 +35,6 @@ import org.w3c.dom.Element;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -128,15 +127,19 @@ public class Content extends ConfigModel {
     public static List<Content> getContent(ConfigModelRepo pc) {
         List<Content> contents = new ArrayList<>();
         for (ConfigModel model : pc.asMap().values())
-            if (model instanceof Content)
-                contents.add((Content)model);
+            if (model instanceof Content content)
+                contents.add(content);
         return contents;
     }
 
     public static List<SearchCluster> getSearchClusters(ConfigModelRepo pc) {
         List<SearchCluster> clusters = new ArrayList<>();
-        for (ContentCluster c : getContentClusters(pc))
-            clusters.addAll(c.getSearch().getClusters().values());
+        for (ContentCluster c : getContentClusters(pc)) {
+            SearchCluster sc = c.getSearch().getSearchCluster();
+            if (sc != null) {
+                clusters.add(sc);
+            }
+        }
         return clusters;
     }
 
@@ -191,7 +194,7 @@ public class Content extends ConfigModel {
 
     public static class Builder extends ConfigModelBuilder<Content> {
     
-        public static final List<ConfigModelId> configModelIds = Collections.singletonList(ConfigModelId.fromName("content"));
+        public static final List<ConfigModelId> configModelIds = List.of(ConfigModelId.fromName("content"));
     
         public Builder() {
             super(Content.class);

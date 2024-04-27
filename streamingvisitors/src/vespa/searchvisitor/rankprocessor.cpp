@@ -7,6 +7,7 @@
 #include <vespa/searchlib/query/streaming/equiv_query_node.h>
 #include <vespa/searchlib/query/streaming/nearest_neighbor_query_node.h>
 #include <vespa/vsm/vsm/fieldsearchspec.h>
+#include <vespa/vespalib/stllike/hash_set.h>
 #include <algorithm>
 #include <cmath>
 #include <vespa/log/log.h>
@@ -56,12 +57,12 @@ getFeature(const RankProgram &rankProgram) {
 }
 
 void
-RankProcessor::resolve_fields_from_children(QueryTermData& qtd, MultiTerm& mt)
+RankProcessor::resolve_fields_from_children(QueryTermData& qtd, const MultiTerm& mt)
 {
     vespalib::hash_set<uint32_t> field_ids;
     for (auto& subterm : mt.get_terms()) {
         vespalib::string expandedIndexName = vsm::FieldSearchSpecMap::stripNonFields(subterm->index());
-        const RankManager::View *view = _rankManagerSnapshot->getView(expandedIndexName);
+        const RankManager::View *view = _rankManagerSnapshot->getView(expandedIndexName, false);
         if (view != nullptr) {
             for (auto field_id : *view) {
                 field_ids.insert(field_id);
@@ -83,10 +84,10 @@ RankProcessor::resolve_fields_from_children(QueryTermData& qtd, MultiTerm& mt)
 }
 
 void
-RankProcessor::resolve_fields_from_term(QueryTermData& qtd, search::streaming::QueryTerm& term)
+RankProcessor::resolve_fields_from_term(QueryTermData& qtd, const search::streaming::QueryTerm& term)
 {
     vespalib::string expandedIndexName = vsm::FieldSearchSpecMap::stripNonFields(term.index());
-    const RankManager::View *view = _rankManagerSnapshot->getView(expandedIndexName);
+    const RankManager::View *view = _rankManagerSnapshot->getView(expandedIndexName, term.is_same_element_query_node());
     if (view != nullptr) {
         for (auto field_id : *view) {
             qtd.getTermData().addField(field_id).setHandle(_mdLayout.allocTermField(field_id));
@@ -106,6 +107,8 @@ RankProcessor::initQueryEnvironment()
     QueryWrapper::TermList & terms = _query.getTermList();
 
     for (auto& term : terms) {
+        if (!term->isRanked()) continue;
+
         if (term->isGeoLoc()) {
             const vespalib::string & fieldName = term->index();
             const vespalib::string & locStr = term->getTermString();
@@ -133,9 +136,9 @@ RankProcessor::initQueryEnvironment()
 }
 
 void
-RankProcessor::initHitCollector(size_t wantedHitCount)
+RankProcessor::initHitCollector(size_t wantedHitCount, bool use_sort_blob)
 {
-    _hitCollector = std::make_unique<HitCollector>(wantedHitCount);
+    _hitCollector = std::make_unique<HitCollector>(wantedHitCount, use_sort_blob);
 }
 
 void
@@ -145,7 +148,7 @@ RankProcessor::setupRankProgram(RankProgram &program)
 }
 
 void
-RankProcessor::init(bool forRanking, size_t wantedHitCount)
+RankProcessor::init(bool forRanking, size_t wantedHitCount, bool use_sort_blob)
 {
     initQueryEnvironment();
     if (forRanking) {
@@ -167,7 +170,7 @@ RankProcessor::init(bool forRanking, size_t wantedHitCount)
         _rankProgram = _rankSetup.create_dump_program();
         setupRankProgram(*_rankProgram);
     }
-    initHitCollector(wantedHitCount);
+    initHitCollector(wantedHitCount, use_sort_blob);
 }
 
 RankProcessor::RankProcessor(std::shared_ptr<const RankManager::Snapshot> snapshot,
@@ -197,15 +200,15 @@ RankProcessor::RankProcessor(std::shared_ptr<const RankManager::Snapshot> snapsh
 }
 
 void
-RankProcessor::initForRanking(size_t wantedHitCount)
+RankProcessor::initForRanking(size_t wantedHitCount, bool use_sort_blob)
 {
-    return init(true, wantedHitCount);
+    return init(true, wantedHitCount, use_sort_blob);
 }
 
 void
-RankProcessor::initForDumping(size_t wantedHitCount)
+RankProcessor::initForDumping(size_t wantedHitCount, bool use_sort_blob)
 {
-    return init(false, wantedHitCount);
+    return init(false, wantedHitCount, use_sort_blob);
 }
 
 void
@@ -247,7 +250,7 @@ FeatureSet::SP
 RankProcessor::calculateFeatureSet()
 {
     LOG(debug, "Calculate feature set");
-    RankProgram &rankProgram = *(_summaryProgram.get() != nullptr ? _summaryProgram : _rankProgram);
+    RankProgram &rankProgram = *(_summaryProgram ? _summaryProgram : _rankProgram);
     search::fef::FeatureResolver resolver(rankProgram.get_seeds(false));
     LOG(debug, "Feature handles: numNames(%ld)", resolver.num_features());
     RankProgramWrapper wrapper(*_match_data);
@@ -256,11 +259,24 @@ RankProcessor::calculateFeatureSet()
     return sf;
 }
 
+FeatureSet::SP
+RankProcessor::calculateFeatureSet(search::DocumentIdT docId)
+{
+    LOG(debug, "Calculate feature set for docId = %d", docId);
+    RankProgram &rankProgram = *(_summaryProgram ? _summaryProgram : _rankProgram);
+    search::fef::FeatureResolver resolver(rankProgram.get_seeds(false));
+    LOG(debug, "Feature handles: numNames(%ld)", resolver.num_features());
+    RankProgramWrapper wrapper(*_match_data);
+    FeatureSet::SP sf = _hitCollector->getFeatureSet(wrapper, docId, resolver, _rankSetup.get_feature_rename_map());
+    LOG(debug, "Feature set: numFeatures(%u), numDocs(%u)", sf->numFeatures(), sf->numDocs());
+    return sf;
+}
+
 FeatureValues
 RankProcessor::calculate_match_features()
 {
     if (!_match_features_program) {
-        return FeatureValues();
+        return {};
     }
     RankProgramWrapper wrapper(*_match_data);
     search::fef::FeatureResolver resolver(_match_features_program->get_seeds(false));
@@ -277,16 +293,16 @@ void
 RankProcessor::unpackMatchData(uint32_t docId)
 {
     _docId = docId;
-    unpack_match_data(docId, *_match_data, _query);
+    unpack_match_data(docId, *_match_data, _query, _queryEnv.getIndexEnvironment());
 }
 
 void
-RankProcessor::unpack_match_data(uint32_t docid, MatchData &matchData, QueryWrapper& query)
+RankProcessor::unpack_match_data(uint32_t docid, MatchData &matchData, QueryWrapper& query, const search::fef::IIndexEnvironment& index_env)
 {
     for (auto& term : query.getTermList()) {
-        QueryTermData & qtd = static_cast<QueryTermData &>(term->getQueryItem());
+        auto & qtd = static_cast<QueryTermData &>(term->getQueryItem());
         const ITermData &td = qtd.getTermData();
-        term->unpack_match_data(docid, td, matchData);
+        term->unpack_match_data(docid, td, matchData, index_env);
     }
 }
 

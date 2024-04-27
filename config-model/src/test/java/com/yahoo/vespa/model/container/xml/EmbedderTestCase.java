@@ -88,6 +88,8 @@ public class EmbedderTestCase {
         var tokenizerCfg = assertHuggingfaceTokenizerComponentPresent(cluster);
         assertEquals("https://my/url/tokenizer.json", modelReference(tokenizerCfg.model().get(0), "path").url().orElseThrow().value());
         assertEquals(-1, tokenizerCfg.maxLength());
+        assertEquals("Represent this sentence for searching relevant passages:", embedderCfg.prependQuery());
+        assertEquals("passage:", embedderCfg.prependDocument());
     }
 
     @Test
@@ -101,6 +103,8 @@ public class EmbedderTestCase {
         var tokenizerCfg = assertHuggingfaceTokenizerComponentPresent(cluster);
         assertEquals("https://data.vespa.oath.cloud/onnx_models/multilingual-e5-base/tokenizer.json", modelReference(tokenizerCfg.model().get(0), "path").url().orElseThrow().value());
         assertEquals(-1, tokenizerCfg.maxLength());
+        assertEquals("Represent this sentence for searching relevant passages:", embedderCfg.prependQuery());
+        assertEquals("passage:", embedderCfg.prependDocument());
     }
 
     @Test
@@ -158,7 +162,7 @@ public class EmbedderTestCase {
         var model = loadModel(Path.fromString("src/test/cfg/application/embed/"), false);
         var cluster = model.getContainerClusters().get("container");
         var embedderCfg = assertBertEmbedderComponentPresent(cluster);
-        assertEquals("application-url", modelReference(embedderCfg, "transformerModel").url().orElseThrow().value());
+        assertEquals("https://my/url/model.onnx", modelReference(embedderCfg, "transformerModel").url().orElseThrow().value());
         assertEquals("files/vocab.txt", modelReference(embedderCfg, "tokenizerVocab").path().orElseThrow().value());
         assertEquals("", embedderCfg.transformerTokenTypeIds());
     }

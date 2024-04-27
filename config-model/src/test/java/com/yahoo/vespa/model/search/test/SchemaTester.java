@@ -8,11 +8,10 @@ import com.yahoo.vespa.config.search.core.ProtonConfig;
 import com.yahoo.vespa.model.VespaModel;
 import com.yahoo.vespa.model.content.ContentSearchCluster;
 import com.yahoo.vespa.model.content.utils.DocType;
-import com.yahoo.vespa.model.search.IndexedSearchCluster;
+import com.yahoo.vespa.model.search.SearchCluster;
 import com.yahoo.vespa.model.test.utils.VespaModelCreatorWithMockPkg;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -39,23 +38,20 @@ public class SchemaTester {
         return createVespaServicesXml(nameAndModes, "");
     }
     private String createVespaServicesXml(List<DocType> nameAndModes, String xmlTuning) {
-        StringBuilder retval = new StringBuilder();
-        retval.append("" +
-                      "<?xml version='1.0' encoding='utf-8' ?>\n" +
-                      "<services version='1.0'>\n" +
-                      "<admin version='2.0'>\n" +
-                      "   <adminserver hostalias='node0' />\n" +
-                      "</admin>\n" +
-                      "<container version='1.0'>\n" +
-                      "   <nodes>\n" +
-                      "      <node hostalias='node0'/>\n" +
-                      "   </nodes>\n" +
-                      "   <search/>\n" +
-                      "</container>\n" +
-                      "<content version='1.0' id='test'>\n" +
-                      "   <redundancy>1</redundancy>\n");
-        retval.append(DocType.listToXml(nameAndModes));
-        retval.append(
+        return "<?xml version='1.0' encoding='utf-8' ?>\n" +
+                "<services version='1.0'>\n" +
+                "<admin version='2.0'>\n" +
+                "   <adminserver hostalias='node0' />\n" +
+                "</admin>\n" +
+                "<container version='1.0'>\n" +
+                "   <nodes>\n" +
+                "      <node hostalias='node0'/>\n" +
+                "   </nodes>\n" +
+                "   <search/>\n" +
+                "</container>\n" +
+                "<content version='1.0' id='test'>\n" +
+                "   <redundancy>1</redundancy>\n" +
+                DocType.listToXml(nameAndModes) +
                 "    <engine>\n" +
                 "      <proton>\n" +
                 "        <tuning>\n" +
@@ -69,8 +65,7 @@ public class SchemaTester {
                 "      <node hostalias='node0' distribution-key='0'/>\n" +
                 "    </nodes>\n" +
                 "  </content>\n" +
-                "</services>\n");
-        return retval.toString();
+                "</services>\n";
     }
 
     ProtonConfig getProtonConfig(ContentSearchCluster cluster) {
@@ -84,7 +79,7 @@ public class SchemaTester {
         VespaModel model = new VespaModelCreatorWithMockPkg(vespaHosts, createVespaServices(schemas, mode),
                                                             generateSchemas("", "", schemas),
                                                             Map.of()).create();
-        IndexedSearchCluster indexedSearchCluster = (IndexedSearchCluster)model.getSearchClusters().get(0);
+        SearchCluster indexedSearchCluster = model.getSearchClusters().get(0);
         ContentSearchCluster contentSearchCluster = model.getContentClusters().get("test").getSearch();
         assertEquals(1, indexedSearchCluster.getDocumentDbs().size());
         String type1Id = "test/search/cluster.test/type1";
@@ -185,7 +180,7 @@ public class SchemaTester {
     }
 
     public static List<String> generateSchemas(String schemaContent, String rankProfile, String ... schemaNames) {
-        return generateSchemas(schemaContent, rankProfile, Arrays.asList(schemaNames));
+        return generateSchemas(schemaContent, rankProfile, List.of(schemaNames));
     }
 
     public static List<String> generateSchemas(String schemaContent, String rankProfile, List<String> schemaNames) {

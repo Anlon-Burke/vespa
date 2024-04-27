@@ -9,7 +9,6 @@ import com.yahoo.vespa.model.content.utils.ContentClusterUtils;
 import com.yahoo.vespa.model.content.utils.SchemaBuilder;
 import com.yahoo.vespa.model.search.DocumentDatabase;
 
-import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -32,19 +31,19 @@ public abstract class ContentClusterFixture {
 
     public ContentClusterFixture(String entireSd) throws Exception {
         currentCluster = new ContentClusterBuilder().build(
-            ContentClusterUtils.createMockRoot(Arrays.asList(entireSd)));
+            ContentClusterUtils.createMockRoot(List.of(entireSd)));
         nextCluster = new ContentClusterBuilder().build(
-            ContentClusterUtils.createMockRoot(Arrays.asList(entireSd)));
+            ContentClusterUtils.createMockRoot(List.of(entireSd)));
     }
 
     private static ContentCluster createCluster(String sdContent) throws Exception {
         return new ContentClusterBuilder().build(
                 ContentClusterUtils.createMockRoot(
-                        Arrays.asList(new SchemaBuilder().content(sdContent).build())));
+                        List.of(new SchemaBuilder().content(sdContent).build())));
     }
 
     protected DocumentDatabase currentDb() {
-        return currentCluster.getSearch().getIndexed().getDocumentDbs().get(0);
+        return currentCluster.getSearch().getSearchCluster().getDocumentDbs().get(0);
     }
 
     protected NewDocumentType currentDocType() {
@@ -52,7 +51,7 @@ public abstract class ContentClusterFixture {
     }
 
     protected DocumentDatabase nextDb() {
-        return nextCluster.getSearch().getIndexed().getDocumentDbs().get(0);
+        return nextCluster.getSearch().getSearchCluster().getDocumentDbs().get(0);
     }
 
     protected NewDocumentType nextDocType() {
@@ -65,7 +64,7 @@ public abstract class ContentClusterFixture {
     }
 
     public void assertValidation(VespaConfigChangeAction exp) {
-        assertValidation(Arrays.asList(exp));
+        assertValidation(List.of(exp));
     }
 
     public void assertValidation(List<VespaConfigChangeAction> exp) {

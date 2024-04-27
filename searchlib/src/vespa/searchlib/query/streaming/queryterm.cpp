@@ -69,10 +69,12 @@ QueryTerm::visitMembers(vespalib::ObjectVisitor & visitor) const
 QueryTerm::QueryTerm(std::unique_ptr<QueryNodeResultBase> org, stringref termS, const string & indexS,
                      Type type, Normalizing normalizing)
     : QueryTermUCS4(QueryNormalization::optional_fold(termS, type, normalizing), type),
-      _index(indexS),
-      _encoding(0x01),
-      _result(org.release()),
       _hitList(),
+      _index(indexS),
+      _result(org.release()),
+      _encoding(0x01),
+      _isRanked(true),
+      _filter(false),
       _weight(100),
       _uniqueId(0),
       _fieldInfo()
@@ -114,11 +116,11 @@ QueryTerm::set_element_length(uint32_t hitlist_idx, uint32_t element_length)
 }
 
 void
-QueryTerm::unpack_match_data(uint32_t docid, const fef::ITermData& td, fef::MatchData& match_data)
+QueryTerm::unpack_match_data(uint32_t docid, const fef::ITermData& td, fef::MatchData& match_data, const fef::IIndexEnvironment& index_env)
 {
     HitList list;
     const HitList & hit_list = evaluateHits(list);
-    unpack_match_data_helper(docid, td, match_data, hit_list, *this);
+    unpack_match_data_helper(docid, td, match_data, hit_list, *this, is_filter(), index_env);
 }
 
 NearestNeighborQueryNode*
@@ -129,6 +131,12 @@ QueryTerm::as_nearest_neighbor_query_node() noexcept
 
 MultiTerm*
 QueryTerm::as_multi_term() noexcept
+{
+    return nullptr;
+}
+
+const MultiTerm*
+QueryTerm::as_multi_term() const noexcept
 {
     return nullptr;
 }
@@ -145,16 +153,16 @@ QueryTerm::as_fuzzy_term() noexcept
     return nullptr;
 }
 
-EquivQueryNode*
-QueryTerm::as_equiv_query_node() noexcept
-{
-    return nullptr;
-}
-
 const EquivQueryNode*
 QueryTerm::as_equiv_query_node() const noexcept
 {
     return nullptr;
+}
+
+bool
+QueryTerm::is_same_element_query_node() const noexcept
+{
+    return false;
 }
 
 }

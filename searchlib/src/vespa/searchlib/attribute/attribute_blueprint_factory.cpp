@@ -5,30 +5,32 @@
 #include "attribute_object_visitor.h"
 #include "attribute_weighted_set_blueprint.h"
 #include "direct_multi_term_blueprint.h"
+#include "direct_posting_store_flow_stats_adapter.h"
 #include "i_docid_posting_store.h"
 #include "i_docid_with_weight_posting_store.h"
 #include "in_term_search.h"
 #include "multi_term_or_filter_search.h"
 #include "predicate_attribute.h"
 #include <vespa/eval/eval/value.h>
+#include <vespa/searchcommon/attribute/config.h>
+#include <vespa/searchcommon/attribute/hit_estimate_flow_stats_adapter.h>
 #include <vespa/searchlib/common/location.h>
 #include <vespa/searchlib/common/locationiterators.h>
-#include <vespa/searchlib/common/matching_elements_fields.h>
 #include <vespa/searchlib/query/query_term_decoder.h>
 #include <vespa/searchlib/query/query_term_ucs4.h>
 #include <vespa/searchlib/query/tree/stackdumpcreator.h>
 #include <vespa/searchlib/queryeval/andsearchstrict.h>
 #include <vespa/searchlib/queryeval/create_blueprint_visitor_helper.h>
-#include <vespa/searchlib/queryeval/docid_with_weight_search_iterator.h>
 #include <vespa/searchlib/queryeval/dot_product_blueprint.h>
 #include <vespa/searchlib/queryeval/dot_product_search.h>
 #include <vespa/searchlib/queryeval/emptysearch.h>
 #include <vespa/searchlib/queryeval/field_spec.hpp>
 #include <vespa/searchlib/queryeval/filter_wrapper.h>
+#include <vespa/searchlib/queryeval/flow_tuning.h>
 #include <vespa/searchlib/queryeval/get_weight_from_node.h>
 #include <vespa/searchlib/queryeval/intermediate_blueprints.h>
+#include <vespa/searchlib/queryeval/irequestcontext.h>
 #include <vespa/searchlib/queryeval/leaf_blueprints.h>
-#include <vespa/searchlib/queryeval/matching_elements_search.h>
 #include <vespa/searchlib/queryeval/nearest_neighbor_blueprint.h>
 #include <vespa/searchlib/queryeval/orlikesearch.h>
 #include <vespa/searchlib/queryeval/predicate_blueprint.h>
@@ -36,23 +38,22 @@
 #include <vespa/searchlib/queryeval/wand/parallel_weak_and_search.h>
 #include <vespa/searchlib/queryeval/weighted_set_term_blueprint.h>
 #include <vespa/searchlib/queryeval/weighted_set_term_search.h>
-#include <vespa/searchlib/queryeval/irequestcontext.h>
 #include <vespa/searchlib/tensor/dense_tensor_attribute.h>
-#include <vespa/vespalib/util/regexp.h>
-#include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/util/issue.h>
-#include <sstream>
+#include <vespa/vespalib/util/regexp.h>
+#include <vespa/vespalib/util/stringfmt.h>
 #include <charconv>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".searchlib.attribute.attribute_blueprint_factory");
 
 using search::attribute::BasicType;
-using search::attribute::SearchContextParams;
 using search::attribute::CollectionType;
+using search::attribute::Config;
 using search::attribute::IAttributeVector;
 using search::attribute::ISearchContext;
+using search::attribute::SearchContextParams;
 using search::fef::TermFieldMatchData;
 using search::fef::TermFieldMatchDataArray;
 using search::fef::TermFieldMatchDataPosition;
@@ -89,7 +90,13 @@ using search::queryeval::PredicateBlueprint;
 using search::queryeval::SearchIterator;
 using search::queryeval::Searchable;
 using search::queryeval::SimpleLeafBlueprint;
+using search::queryeval::StrictHeapOrSearch;
 using search::queryeval::WeightedSetTermBlueprint;
+using search::queryeval::flow::btree_cost;
+using search::queryeval::flow::btree_strict_cost;
+using search::queryeval::flow::get_num_indirections;
+using search::queryeval::flow::lookup_cost;
+using search::queryeval::flow::lookup_strict_cost;
 using search::tensor::DenseTensorAttribute;
 using search::tensor::ITensorAttribute;
 using vespalib::Issue;
@@ -144,34 +151,35 @@ public:
         if (_hit_estimate.is_unknown()) {
             // E.g. attributes without fast-search are not able to provide a hit estimate.
             // In this case we just assume matching half of the document corpus.
-            // In addition, we are not able to skip documents efficiently when being strict.
-            return {0.5, 1.0, 1.0};
+            // In addition, matching is lookup based, and we are not able to skip documents efficiently when being strict.
+            size_t indirections = get_num_indirections(_attr.getBasicType(), _attr.getCollectionType());
+            return {0.5, lookup_cost(indirections), lookup_strict_cost(indirections)};
         } else {
             double rel_est = abs_to_rel_est(_hit_estimate.est_hits(), docid_limit);
-            return {rel_est, 1.0, rel_est};
+            return {rel_est, btree_cost(rel_est), btree_strict_cost(rel_est)};
         }
     }
 
-    SearchIteratorUP createLeafSearch(const TermFieldMatchDataArray &tfmda, bool strict) const override {
+    SearchIteratorUP createLeafSearch(const TermFieldMatchDataArray &tfmda) const override {
         assert(tfmda.size() == 1);
-        return _search_context->createIterator(tfmda[0], strict);
+        return _search_context->createIterator(tfmda[0], strict());
     }
 
-    SearchIterator::UP createSearch(fef::MatchData &md, bool strict) const override {
+    SearchIterator::UP createSearch(fef::MatchData &md) const override {
         const State &state = getState();
         assert(state.numFields() == 1);
-        return _search_context->createIterator(state.field(0).resolve(md), strict);
+        return _search_context->createIterator(state.field(0).resolve(md), strict());
     }
 
-    SearchIteratorUP createFilterSearch(bool strict, FilterConstraint constraint) const override {
+    SearchIteratorUP createFilterSearch(FilterConstraint constraint) const override {
         (void) constraint; // We provide an iterator with exact results, so no need to take constraint into consideration.
         auto wrapper = std::make_unique<FilterWrapper>(getState().numFields());
-        wrapper->wrap(createLeafSearch(wrapper->tfmda(), strict));
+        wrapper->wrap(createLeafSearch(wrapper->tfmda()));
         return wrapper;
     }
 
     void fetchPostings(const queryeval::ExecuteInfo &execInfo) override {
-        _search_context->fetchPostings(execInfo);
+        _search_context->fetchPostings(execInfo, strict());
     }
 
     void visitMembers(vespalib::ObjectVisitor &visitor) const override;
@@ -218,19 +226,21 @@ AttributeFieldBlueprint::visitMembers(vespalib::ObjectVisitor &visitor) const
 
 //-----------------------------------------------------------------------------
 
-template <bool is_strict>
-struct LocationPreFilterIterator : public OrLikeSearch<is_strict, NoUnpack>
+template <bool is_strict, typename Parent>
+struct LocationPreFilterIterator : public Parent
 {
     explicit LocationPreFilterIterator(OrSearch::Children children)
-        : OrLikeSearch<is_strict, NoUnpack>(std::move(children), NoUnpack()) {}
+      : Parent(std::move(children), NoUnpack()) {}
     void doUnpack(uint32_t) override {}
 };
 
 class LocationPreFilterBlueprint : public ComplexLeafBlueprint
 {
 private:
+    using AttrHitEstimate = attribute::HitEstimate;
     const IAttributeVector &_attribute;
     std::vector<ISearchContext::UP> _rangeSearches;
+    std::vector<AttrHitEstimate> _estimates;
     bool _should_use;
 
 public:
@@ -238,6 +248,7 @@ public:
         : ComplexLeafBlueprint(field),
           _attribute(attribute),
           _rangeSearches(),
+          _estimates(),
           _should_use(false)
     {
         uint64_t estHits(0);
@@ -247,7 +258,8 @@ public:
             query::SimpleRangeTerm rt(qr, "", 0, query::Weight(0));
             string stack(StackDumpCreator::create(rt));
             _rangeSearches.push_back(attr.createSearchContext(QueryTermDecoder::decodeTerm(stack), scParams));
-            estHits += _rangeSearches.back()->calc_hit_estimate().est_hits();
+            _estimates.push_back(_rangeSearches.back()->calc_hit_estimate());
+            estHits += _estimates.back().est_hits();
             LOG(debug, "Range '%s' estHits %" PRId64, qr.getRangeString().c_str(), estHits);
         }
         if (estHits > attr.getNumDocs()) {
@@ -265,30 +277,45 @@ public:
 
     bool should_use() const { return _should_use; }
 
-    queryeval::FlowStats calculate_flow_stats(uint32_t docid_limit) const override {
-        return default_flow_stats(docid_limit, getState().estimate().estHits, _rangeSearches.size());
+    void sort(queryeval::InFlow in_flow) override {
+        resolve_strict(in_flow);
     }
-    
+    queryeval::FlowStats calculate_flow_stats(uint32_t docid_limit) const override {
+        using OrFlow = search::queryeval::OrFlow;
+        using MyAdapter = attribute::HitEstimateFlowStatsAdapter;
+        size_t indirections = queryeval::flow::get_num_indirections(_attribute.getBasicType(), _attribute.getCollectionType());
+        double est = OrFlow::estimate_of(MyAdapter(docid_limit, indirections), _estimates);
+        return {est, OrFlow::cost_of(MyAdapter(docid_limit, indirections), _estimates, false),
+                OrFlow::cost_of(MyAdapter(docid_limit, indirections), _estimates, true) + queryeval::flow::heap_cost(est, _estimates.size())};
+    }
+
     SearchIterator::UP
-    createLeafSearch(const TermFieldMatchDataArray &tfmda, bool strict) const override
+    createLeafSearch(const TermFieldMatchDataArray &tfmda) const override
     {
         OrSearch::Children children;
         for (auto & search : _rangeSearches) {
-            children.push_back(search->createIterator(tfmda[0], strict));
+            children.push_back(search->createIterator(tfmda[0], strict()));
         }
-        if (strict) {
-            return std::make_unique<LocationPreFilterIterator<true>>(std::move(children));
+        if (strict()) {
+            if (children.size() < 0x70) {
+                using Parent = StrictHeapOrSearch<NoUnpack, vespalib::LeftArrayHeap, uint8_t>;
+                return std::make_unique<LocationPreFilterIterator<true, Parent>>(std::move(children));
+            } else {
+                using Parent = StrictHeapOrSearch<NoUnpack, vespalib::LeftHeap, uint32_t>;
+                return std::make_unique<LocationPreFilterIterator<true, Parent>>(std::move(children));
+            }
         } else {
-            return std::make_unique<LocationPreFilterIterator<false>>(std::move(children));
+            using Parent = OrLikeSearch<false, NoUnpack>;
+            return std::make_unique<LocationPreFilterIterator<false, Parent>>(std::move(children));
         }
     }
-    SearchIteratorUP createFilterSearch(bool strict, FilterConstraint constraint) const override {
-        return create_default_filter(strict, constraint);
+    SearchIteratorUP createFilterSearch(FilterConstraint constraint) const override {
+        return create_default_filter(constraint);
     }
 
     void fetchPostings(const queryeval::ExecuteInfo &execInfo) override {
         for (auto & search : _rangeSearches) {
-            search->fetchPostings(execInfo);
+            search->fetchPostings(execInfo, strict());
         }
     }
 
@@ -328,24 +355,28 @@ public:
 
     const common::Location &location() const { return _location; }
 
+    void sort(queryeval::InFlow in_flow) override {
+        resolve_strict(in_flow);
+    }
+
     queryeval::FlowStats calculate_flow_stats(uint32_t) const override {
         return default_flow_stats(0);
     }
 
     SearchIterator::UP
-    createLeafSearch(const TermFieldMatchDataArray &tfmda, bool strict) const override
+    createLeafSearch(const TermFieldMatchDataArray &tfmda) const override
     {
         if (tfmda.size() == 1) {
             // search in exactly one field
             fef::TermFieldMatchData &tfmd = *tfmda[0];
-            return common::create_location_iterator(tfmd, _attribute.getNumDocs(), strict, _location);
+            return common::create_location_iterator(tfmd, _attribute.getNumDocs(), strict(), _location);
         } else {
             LOG(debug, "wrong size tfmda: %zu (fallback to old location iterator)\n", tfmda.size());
         }
-        return FastS_AllocLocationIterator(_attribute.getNumDocs(), strict, _location);
+        return FastS_AllocLocationIterator(_attribute.getNumDocs(), strict(), _location);
     }
-    SearchIteratorUP createFilterSearch(bool strict, FilterConstraint constraint) const override {
-        return create_default_filter(strict, constraint);
+    SearchIteratorUP createFilterSearch(FilterConstraint constraint) const override {
+        return create_default_filter(constraint);
     }
     void visitMembers(vespalib::ObjectVisitor& visitor) const override {
         LeafBlueprint::visitMembers(visitor);
@@ -457,11 +488,21 @@ public:
         setEstimate(estimate);
     }
 
-    queryeval::FlowStats calculate_flow_stats(uint32_t docid_limit) const override {
-        return default_flow_stats(docid_limit, getState().estimate().estHits, _terms.size());
+    void sort(queryeval::InFlow in_flow) override {
+        resolve_strict(in_flow);
     }
 
-    SearchIterator::UP createLeafSearch(const TermFieldMatchDataArray &tfmda, bool strict) const override {
+    queryeval::FlowStats calculate_flow_stats(uint32_t docid_limit) const override {
+        using OrFlow = search::queryeval::OrFlow;
+        using MyAdapter = attribute::DirectPostingStoreFlowStatsAdapter;
+        double child_est = OrFlow::estimate_of(MyAdapter(docid_limit), _terms);
+        double my_est = abs_to_rel_est(_scores.getScoresToTrack(), docid_limit);
+        double est = (child_est + my_est) / 2.0;
+        return {est, OrFlow::cost_of(MyAdapter(docid_limit), _terms, false),
+                OrFlow::cost_of(MyAdapter(docid_limit), _terms, true) + queryeval::flow::heap_cost(est, _terms.size())};
+    }
+
+    SearchIterator::UP createLeafSearch(const TermFieldMatchDataArray &tfmda) const override {
         assert(tfmda.size() == 1);
         if (_terms.empty()) {
             return std::make_unique<queryeval::EmptySearch>();
@@ -469,17 +510,17 @@ public:
         return queryeval::ParallelWeakAndSearch::create(*tfmda[0],
                 queryeval::ParallelWeakAndSearch::MatchParams(_scores, _scoreThreshold,
                                                               _thresholdBoostFactor, _scoresAdjustFrequency)
-                        .setDocIdLimit(get_docid_limit()),
-                _weights, _terms, _attr, strict);
+                                                        .setDocIdLimit(get_docid_limit()),
+                                                        _weights, _terms, _attr, strict());
     }
-    std::unique_ptr<SearchIterator> createFilterSearch(bool strict, FilterConstraint constraint) const override;
+    std::unique_ptr<SearchIterator> createFilterSearch(FilterConstraint constraint) const override;
     bool always_needs_unpack() const override { return true; }
 };
 
 DirectWandBlueprint::~DirectWandBlueprint() = default;
 
 std::unique_ptr<SearchIterator>
-DirectWandBlueprint::createFilterSearch(bool, FilterConstraint constraint) const
+DirectWandBlueprint::createFilterSearch(FilterConstraint constraint) const
 {
     if (constraint == Blueprint::FilterConstraint::UPPER_BOUND) {
         std::vector<DocidWithWeightIterator> iterators;

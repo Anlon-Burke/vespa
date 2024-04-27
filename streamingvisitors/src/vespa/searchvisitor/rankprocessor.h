@@ -45,10 +45,10 @@ private:
     HitCollector::UP                     _hitCollector;
     std::unique_ptr<RankProgram>         _match_features_program;
 
-    void resolve_fields_from_children(QueryTermData& qtd, search::streaming::MultiTerm& mt);
-    void resolve_fields_from_term(QueryTermData& qtd, search::streaming::QueryTerm& term);
+    void resolve_fields_from_children(QueryTermData& qtd, const search::streaming::MultiTerm& mt);
+    void resolve_fields_from_term(QueryTermData& qtd, const search::streaming::QueryTerm& term);
     void initQueryEnvironment();
-    void initHitCollector(size_t wantedHitCount);
+    void initHitCollector(size_t wantedHitCount, bool use_sort_blob);
     void setupRankProgram(search::fef::RankProgram &program);
     FeatureValues calculate_match_features();
 
@@ -58,7 +58,7 @@ private:
      * @param wantedHitCount the number of hits we want to return from the hit collector.
      * @return whether the rank processor was initialized or not.
      **/
-    void init(bool forRanking, size_t wantedHitCount);
+    void init(bool forRanking, size_t wantedHitCount, bool use_sort_blob);
 
 public:
     using UP = std::unique_ptr<RankProcessor>;
@@ -71,12 +71,13 @@ public:
                   const search::fef::Properties & featureOverrides,
                   const search::IAttributeManager * attrMgr);
 
-    void initForRanking(size_t wantedHitCount);
-    void initForDumping(size_t wantedHitCount);
+    void initForRanking(size_t wantedHitCount, bool use_sort_blob);
+    void initForDumping(size_t wantedHitCount, bool use_sort_blob);
     void unpackMatchData(uint32_t docId);
-    static void unpack_match_data(uint32_t docid, search::fef::MatchData& matchData, QueryWrapper& query);
+    static void unpack_match_data(uint32_t docid, search::fef::MatchData& matchData, QueryWrapper& query, const search::fef::IIndexEnvironment& index_env);
     void runRankProgram(uint32_t docId);
     vespalib::FeatureSet::SP calculateFeatureSet();
+    vespalib::FeatureSet::SP calculateFeatureSet(search::DocumentIdT docId);
     void fillSearchResult(vdslib::SearchResult & searchResult);
     const search::fef::MatchData &getMatchData() const { return *_match_data; }
     void setRankScore(double score) { _score = score; } 

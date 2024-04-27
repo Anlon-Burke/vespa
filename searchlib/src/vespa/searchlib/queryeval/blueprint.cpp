@@ -121,11 +121,77 @@ Blueprint::Blueprint() noexcept
       _flow_stats(0.0, 0.0, 0.0),
       _sourceId(0xffffffff),
       _docid_limit(0),
+      _strict(false),
       _frozen(false)
 {
 }
 
 Blueprint::~Blueprint() = default;
+
+void
+Blueprint::resolve_strict(InFlow &in_flow) noexcept
+{
+    if (!in_flow.strict() && opt_allow_force_strict()) {
+        auto stats = FlowStats::from(flow::DefaultAdapter(), this);
+        if (flow::should_force_strict(stats, in_flow.rate())) {
+            in_flow.force_strict();
+        }
+    }
+    _strict = in_flow.strict();
+}
+
+void
+Blueprint::each_node_post_order(const std::function<void(Blueprint&)> &f)
+{
+    f(*this);
+}
+
+void
+Blueprint::basic_plan(InFlow in_flow, uint32_t docid_limit)
+{
+    auto opts_guard = bind_opts(Options().sort_by_cost(true));
+    setDocIdLimit(docid_limit);
+    each_node_post_order([docid_limit](Blueprint &bp){
+                             bp.update_flow_stats(docid_limit);
+                         });
+    sort(in_flow);
+}
+
+void
+Blueprint::null_plan(InFlow in_flow, uint32_t docid_limit)
+{
+    auto opts_guard = bind_opts(Options().keep_order(true));
+    setDocIdLimit(docid_limit);
+    each_node_post_order([docid_limit](Blueprint &bp){
+                             bp.update_flow_stats(docid_limit);
+                         });
+    sort(in_flow);
+}
+
+double
+Blueprint::estimate_actual_cost(InFlow in_flow) const noexcept
+{
+    double res = estimate_strict_cost_diff(in_flow);
+    if (in_flow.strict()) {
+        res += strict_cost();
+    } else {
+        res += in_flow.rate() * cost();
+    }
+    return res;
+}
+
+double
+Blueprint::estimate_strict_cost_diff(InFlow &in_flow) const noexcept
+{
+    if (in_flow.strict()) {
+        REQUIRE(strict());
+    } else if (strict()) {
+        double rate = in_flow.rate();
+        in_flow.force_strict();
+        return flow::strict_cost_diff(estimate(), rate);
+    }
+    return 0.0;
+}
 
 Blueprint::UP
 Blueprint::optimize(Blueprint::UP bp) {
@@ -194,10 +260,6 @@ Blueprint::FilterConstraint invert(Blueprint::FilterConstraint constraint) {
     abort();
 }
 
-template <typename Op> bool inherit_strict(size_t);
-template <> bool inherit_strict<AndSearch>(size_t i) { return (i == 0); }
-template <> bool inherit_strict<OrSearch>(size_t) { return true; }
-
 template <typename Op> bool should_short_circuit(Trinary);
 template <> bool should_short_circuit<AndSearch>(Trinary matches_any) { return (matches_any == Trinary::False); }
 template <> bool should_short_circuit<OrSearch>(Trinary matches_any) { return (matches_any == Trinary::True); }
@@ -217,8 +279,7 @@ create_op_filter(const Blueprint::Children &children, bool strict, Blueprint::Fi
     std::unique_ptr<SearchIterator> spare;
     list.reserve(children.size());
     for (size_t i = 0; i < children.size(); ++i) {
-        auto strict_child = strict && inherit_strict<Op>(i);
-        auto filter = children[i]->createFilterSearch(strict_child, constraint);
+        auto filter = children[i]->createFilterSearch(constraint);
         auto matches_any = filter->matches_any();
         if (should_short_circuit<Op>(matches_any)) {
             return filter;
@@ -281,14 +342,14 @@ Blueprint::create_andnot_filter(const Children &children, bool strict, Blueprint
     MultiSearch::Children list;
     list.reserve(children.size());
     {
-        auto filter = children[0]->createFilterSearch(strict, constraint);
+        auto filter = children[0]->createFilterSearch(constraint);
         if (filter->matches_any() == Trinary::False) {
             return filter;
         }
         list.push_back(std::move(filter));
     }
     for (size_t i = 1; i < children.size(); ++i) {
-        auto filter = children[i]->createFilterSearch(false, invert(constraint));
+        auto filter = children[i]->createFilterSearch(invert(constraint));
         auto matches_any = filter->matches_any();
         if (matches_any == Trinary::True) {
             return std::make_unique<EmptySearch>();
@@ -305,14 +366,14 @@ Blueprint::create_andnot_filter(const Children &children, bool strict, Blueprint
 }
 
 std::unique_ptr<SearchIterator>
-Blueprint::create_first_child_filter(const Children &children, bool strict, Blueprint::FilterConstraint constraint)
+Blueprint::create_first_child_filter(const Children &children, Blueprint::FilterConstraint constraint)
 {
     REQUIRE(!children.empty());
-    return children[0]->createFilterSearch(strict, constraint);
+    return children[0]->createFilterSearch(constraint);
 }
 
 std::unique_ptr<SearchIterator>
-Blueprint::create_default_filter(bool, FilterConstraint constraint)
+Blueprint::create_default_filter(FilterConstraint constraint)
 {
     if (constraint == FilterConstraint::UPPER_BOUND) {
         return std::make_unique<FullSearch>();
@@ -374,6 +435,7 @@ Blueprint::visitMembers(vespalib::ObjectVisitor &visitor) const
     visitor.visitFloat("strict_cost", strict_cost());
     visitor.visitInt("sourceId", _sourceId);
     visitor.visitInt("docid_limit", _docid_limit);
+    visitor.visitBool("strict", _strict);
 }
 
 namespace blueprint {
@@ -410,6 +472,15 @@ IntermediateBlueprint::setDocIdLimit(uint32_t limit) noexcept
     for (Blueprint::UP &child : _children) {
         child->setDocIdLimit(limit);
     }
+}
+
+void
+IntermediateBlueprint::each_node_post_order(const std::function<void(Blueprint&)> &f)
+{
+    for (Blueprint::UP &child : _children) {
+        f(*child);
+    }
+    f(*this);
 }
 
 Blueprint::HitEstimate
@@ -538,13 +609,6 @@ IntermediateBlueprint::calculateState() const
     return state;
 }
 
-double
-IntermediateBlueprint::computeNextHitRate(const Blueprint & child, double hit_rate) const
-{
-    (void) child;
-    return hit_rate;
-}
-
 bool
 IntermediateBlueprint::should_do_termwise_eval(const UnpackInfo &unpack, double match_limit) const
 {
@@ -557,6 +621,24 @@ IntermediateBlueprint::should_do_termwise_eval(const UnpackInfo &unpack, double 
         return false; // higher up will be better
     }
     return (count_termwise_nodes(unpack) > 1);
+}
+
+double
+IntermediateBlueprint::estimate_self_cost(InFlow) const noexcept
+{
+    return 0.0;
+}
+
+double
+IntermediateBlueprint::estimate_actual_cost(InFlow in_flow) const noexcept
+{
+    double res = estimate_strict_cost_diff(in_flow);
+    auto cost_of = [](const auto &child, InFlow child_flow)noexcept{
+                       return child->estimate_actual_cost(child_flow);
+                   };
+    res += flow::actual_cost_of(flow::DefaultAdapter(), _children, my_flow(in_flow), cost_of);
+    res += estimate_self_cost(in_flow);
+    return res;
 }
 
 void
@@ -576,11 +658,16 @@ IntermediateBlueprint::optimize(Blueprint* &self, OptimizePass pass)
 }
 
 void
-IntermediateBlueprint::sort(bool strict, bool sort_by_cost)
+IntermediateBlueprint::sort(InFlow in_flow)
 {
-    sort(_children, strict, sort_by_cost);
+    resolve_strict(in_flow);
+    if (!opt_keep_order()) [[likely]] {
+        sort(_children, in_flow);
+    }
+    auto flow = my_flow(in_flow);
     for (size_t i = 0; i < _children.size(); ++i) {
-        _children[i]->sort(strict && inheritStrict(i), sort_by_cost);
+        _children[i]->sort(InFlow(flow.strict(), flow.flow()));
+        flow.add(_children[i]->estimate());
     }
 }
 
@@ -595,15 +682,14 @@ IntermediateBlueprint::set_global_filter(const GlobalFilter &global_filter, doub
 }
 
 SearchIterator::UP
-IntermediateBlueprint::createSearch(fef::MatchData &md, bool strict) const
+IntermediateBlueprint::createSearch(fef::MatchData &md) const
 {
     MultiSearch::Children subSearches;
     subSearches.reserve(_children.size());
     for (size_t i = 0; i < _children.size(); ++i) {
-        bool strictChild = (strict && inheritStrict(i));
-        subSearches.push_back(_children[i]->createSearch(md, strictChild));
+        subSearches.push_back(_children[i]->createSearch(md));
     }
-    return createIntermediateSearch(std::move(subSearches), strict, md);
+    return createIntermediateSearch(std::move(subSearches), md);
 }
 
 IntermediateBlueprint::IntermediateBlueprint() noexcept = default;
@@ -648,11 +734,12 @@ IntermediateBlueprint::visitMembers(vespalib::ObjectVisitor &visitor) const
 void
 IntermediateBlueprint::fetchPostings(const ExecuteInfo &execInfo)
 {
-    double nextHitRate = execInfo.hit_rate();
+    auto flow = my_flow(InFlow(strict(), execInfo.hit_rate()));
     for (size_t i = 0; i < _children.size(); ++i) {
+        double nextHitRate = flow.flow();
         Blueprint & child = *_children[i];
-        child.fetchPostings(ExecuteInfo::create(execInfo.is_strict() && inheritStrict(i), nextHitRate, execInfo));
-        nextHitRate = computeNextHitRate(child, nextHitRate);
+        child.fetchPostings(ExecuteInfo::create(nextHitRate, execInfo));
+        flow.add(child.estimate());
     }
 }
 
@@ -740,7 +827,7 @@ LeafBlueprint::freeze()
 }
 
 SearchIterator::UP
-LeafBlueprint::createSearch(fef::MatchData &md, bool strict) const
+LeafBlueprint::createSearch(fef::MatchData &md) const
 {
     const State &state = getState();
     fef::TermFieldMatchDataArray tfmda;
@@ -748,7 +835,7 @@ LeafBlueprint::createSearch(fef::MatchData &md, bool strict) const
     for (size_t i = 0; i < state.numFields(); ++i) {
         tfmda.add(state.field(i).resolve(md));
     }
-    return createLeafSearch(tfmda, strict);
+    return createLeafSearch(tfmda);
 }
 
 bool
@@ -765,11 +852,6 @@ LeafBlueprint::optimize(Blueprint* &self, OptimizePass pass)
         update_flow_stats(get_docid_limit());
     }
     maybe_eliminate_self(self, get_replacement());
-}
-
-void
-LeafBlueprint::sort(bool, bool)
-{
 }
 
 void
@@ -795,6 +877,12 @@ LeafBlueprint::set_tree_size(uint32_t value)
 }
 
 //-----------------------------------------------------------------------------
+
+void
+SimpleLeafBlueprint::sort(InFlow in_flow)
+{
+    resolve_strict(in_flow);
+}
 
 }
 

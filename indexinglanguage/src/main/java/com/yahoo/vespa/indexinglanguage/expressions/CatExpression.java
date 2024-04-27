@@ -19,7 +19,7 @@ import java.util.*;
 public final class CatExpression extends ExpressionList<Expression> {
 
     public CatExpression(Expression... lst) {
-        this(Arrays.asList(lst));
+        this(List.of(lst));
     }
 
     public CatExpression(Collection<? extends Expression> lst) {
@@ -36,6 +36,7 @@ public final class CatExpression extends ExpressionList<Expression> {
         FieldValue input = context.getValue();
         DataType inputType = input != null ? input.getDataType() : null;
         VerificationContext ver = new VerificationContext(context);
+        context.fillVariableTypes(ver);
         List<FieldValue> values = new LinkedList<>();
         List<DataType> types = new LinkedList<>();
         for (Expression exp : this) {

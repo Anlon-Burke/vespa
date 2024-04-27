@@ -93,6 +93,7 @@ vespa_define_module(
     src/tests/attribute/posting_store
     src/tests/attribute/postinglist
     src/tests/attribute/postinglistattribute
+    src/tests/attribute/predicate_attribute
     src/tests/attribute/raw_attribute
     src/tests/attribute/reference_attribute
     src/tests/attribute/save_target
@@ -130,6 +131,7 @@ vespa_define_module(
     src/tests/engine/proto_rpc_adapter
     src/tests/expression/attributenode
     src/tests/expression/current_index_setup
+    src/tests/expression/interpolated_document_field_lookup_node
     src/tests/features
     src/tests/features/beta
     src/tests/features/bm25

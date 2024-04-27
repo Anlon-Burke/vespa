@@ -3,6 +3,7 @@ package com.yahoo.vespa.hosted.provision.autoscale;
 
 import com.yahoo.config.provision.ApplicationId;
 import com.yahoo.config.provision.Capacity;
+import com.yahoo.config.provision.CloudAccount;
 import com.yahoo.config.provision.ClusterResources;
 import com.yahoo.config.provision.ClusterSpec;
 import com.yahoo.config.provision.NodeResources;
@@ -42,17 +43,17 @@ public class ClusterModelTest {
         // No current traffic share: Ideal load is low but capped
         var model1 = clusterModel(new Status(0.0, 1.0),
                                   t -> t == 0 ? 10000.0 : 100.0, t -> 0.0);
-        assertEquals(0.32653061224489793, model1.idealLoad().cpu(), delta);
+        assertEquals(0.30612, model1.idealLoad().cpu(), delta);
 
         // Almost no current traffic share: Ideal load is low but capped
         var model2 = clusterModel(new Status(0.0001, 1.0),
                                   t -> t == 0 ? 10000.0 : 100.0, t -> 0.0);
-        assertEquals(0.32653061224489793, model2.idealLoad().cpu(), delta);
+        assertEquals(0.30612, model2.idealLoad().cpu(), delta);
 
         // Almost no traffic: Headroom impact is reduced due to uncertainty
         var model3 = clusterModel(new Status(0.0001, 1.0),
                                   t -> t == 0 ? 10000.0 : 1.0, t -> 0.0);
-        assertEquals(0.6465952717720751, model3.idealLoad().cpu(), delta);
+        assertEquals(0.606183, model3.idealLoad().cpu(), delta);
     }
 
     @Test
@@ -60,22 +61,22 @@ public class ClusterModelTest {
         // No traffic data: Ideal load assumes 2 regions
         var model1 = clusterModel(new Status(0.0, 0.0),
                                   t -> t == 0 ? 10000.0 : 100.0, t -> 0.0);
-        assertEquals(0.16326530612244897, model1.idealLoad().cpu(), delta);
+        assertEquals(0.15306, model1.idealLoad().cpu(), delta);
 
         // No traffic: Ideal load is higher since we now know there is only one zone
         var model2 = clusterModel(new Status(0.0, 1.0),
                                   t -> t == 0 ? 10000.0 : 100.0, t -> 0.0);
-        assertEquals(0.32653061224489793, model2.idealLoad().cpu(), delta);
+        assertEquals(0.30612, model2.idealLoad().cpu(), delta);
 
         // Almost no current traffic: Similar number as above
         var model3 = clusterModel(new Status(0.0001, 1.0),
                                   t -> t == 0 ? 10000.0 : 100.0, t -> 0.0);
-        assertEquals(0.32653061224489793, model3.idealLoad().cpu(), delta);
+        assertEquals(0.30612, model3.idealLoad().cpu(), delta);
 
         // Low query rate: Impact of growth headroom is reduced due to uncertainty
         var model4 = clusterModel(new Status(0.0001, 1.0),
                                   t -> t == 0 ? 100.0 : 1.0, t -> 0.0);
-        assertEquals(0.6465952717720751, model4.idealLoad().cpu(), delta);
+        assertEquals(0.60618, model4.idealLoad().cpu(), delta);
     }
 
     private ClusterModel clusterModelWithNoData() {
@@ -92,7 +93,7 @@ public class ClusterModelTest {
         return new ClusterModel(nodeRepository,
                                 application.with(status),
                                 clusterSpec, cluster,
-                                new AllocatableResources(clusterResources(), clusterSpec, nodeRepository),
+                                new AllocatableResources(clusterResources(), clusterSpec, nodeRepository, cluster.cloudAccount().orElse(CloudAccount.empty)),
                                 clock, Duration.ofMinutes(10), Duration.ofMinutes(5),
                                 timeseries(cluster,100, queryRate, writeRate, clock),
                                 ClusterNodesTimeseries.empty());

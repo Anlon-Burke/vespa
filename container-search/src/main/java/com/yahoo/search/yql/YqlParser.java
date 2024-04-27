@@ -913,7 +913,7 @@ public class YqlParser implements Parser {
             GroupingOperation groupingOperation = GroupingOperation.fromString(groupingAst.getArgument(0));
             VespaGroupingStep groupingStep = new VespaGroupingStep(groupingOperation);
             List<Object> continuations = getAnnotation(groupingAst, "continuations", List.class,
-                                                       Collections.emptyList(), "grouping continuations");
+                                                       List.of(), "grouping continuations");
 
             for (Object continuation : continuations) {
                 groupingStep.continuations().add(Continuation.fromString(dereference(continuation)));
@@ -1385,7 +1385,14 @@ public class YqlParser implements Parser {
                 FuzzyItem.DEFAULT_PREFIX_LENGTH,
                 PREFIX_LENGTH_DESCRIPTION);
 
-        FuzzyItem fuzzy = new FuzzyItem(field, true, wordData, maxEditDistance, prefixLength);
+        boolean prefixMatch = getAnnotation(
+                ast,
+                PREFIX,
+                Boolean.class,
+                Boolean.FALSE,
+                "setting for whether to use prefix match of input data");
+
+        FuzzyItem fuzzy = new FuzzyItem(field, true, wordData, maxEditDistance, prefixLength, prefixMatch);
         return leafStyleSettings(ast, fuzzy);
     }
 
@@ -1614,7 +1621,7 @@ public class YqlParser implements Parser {
         {
             Item leaf = (Item) out;
             Map<?, ?> itemAnnotations = getAnnotation(ast, ANNOTATIONS,
-                                                      Map.class, Collections.emptyMap(), "item annotation map");
+                                                      Map.class, Map.of(), "item annotation map");
             for (Map.Entry<?, ?> entry : itemAnnotations.entrySet()) {
                 Preconditions.checkArgument(entry.getKey() instanceof String,
                                             "Expected String annotation key, got %s.", entry.getKey().getClass());

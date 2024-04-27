@@ -8,9 +8,9 @@ import com.yahoo.vespa.configdefinition.IlscriptsConfig;
 import com.yahoo.vespa.configdefinition.IlscriptsConfig.Ilscript.Builder;
 import com.yahoo.vespa.indexinglanguage.ExpressionConverter;
 import com.yahoo.vespa.indexinglanguage.ExpressionVisitor;
+import com.yahoo.vespa.indexinglanguage.expressions.AttributeExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.ClearStateExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.Expression;
-import com.yahoo.vespa.indexinglanguage.expressions.ForEachExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.GuardExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.InputExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.OutputExpression;
@@ -21,6 +21,7 @@ import com.yahoo.vespa.indexinglanguage.expressions.StatementExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.TokenizeExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.ZCurveExpression;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -29,12 +30,12 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * An indexing language script derived from a search definition. An indexing script contains a set of indexing
+ * An indexing language script derived from a schema. An indexing script contains a set of indexing
  * statements, organized in a composite structure of indexing code snippets.
  *
  * @author bratseth
  */
-public final class IndexingScript extends Derived implements IlscriptsConfig.Producer {
+public final class IndexingScript extends Derived {
 
     private final List<String> docFields = new ArrayList<>();
     private final List<Expression> expressions = new ArrayList<>();
@@ -61,12 +62,8 @@ public final class IndexingScript extends Derived implements IlscriptsConfig.Pro
         if (field.hasFullIndexingDocprocRights())
             docFields.add(field.getName());
 
-        if (field.usesStructOrMap() && ! GeoPos.isAnyPos(field)) {
-            return; // unsupported
-        }
-
-        if (fieldsSettingLanguage.size() == 1 && fieldsSettingLanguage.get(0).equals(field))
-            return; // Already added
+        if (field.usesStructOrMap() && ! GeoPos.isAnyPos(field)) return; // unsupported
+        if (fieldsSettingLanguage.size() == 1 && fieldsSettingLanguage.get(0).equals(field)) return; // Already added
 
         addExpression(field.getIndexingScript());
     }
@@ -92,13 +89,19 @@ public final class IndexingScript extends Derived implements IlscriptsConfig.Pro
         return "ilscripts";
     }
 
-    @Override
     public void getConfig(IlscriptsConfig.Builder configBuilder) {
+        // Append
         IlscriptsConfig.Ilscript.Builder ilscriptBuilder = new IlscriptsConfig.Ilscript.Builder();
         ilscriptBuilder.doctype(getName());
         ilscriptBuilder.docfield(docFields);
         addContentInOrder(ilscriptBuilder);
         configBuilder.ilscript(ilscriptBuilder);
+    }
+
+    public void export(String toDirectory) throws IOException {
+        var builder = new IlscriptsConfig.Builder();
+        getConfig(builder);
+        export(toDirectory, builder.build());
     }
 
     private static class DropTokenize extends ExpressionConverter {
@@ -113,12 +116,49 @@ public final class IndexingScript extends Derived implements IlscriptsConfig.Pro
         }
     }
 
+    // for streaming, drop zcurve conversion to attribute with suffix
+    private static class DropZcurve extends ExpressionConverter {
+        private static final String zSuffix = "_zcurve";
+        private static final int zSuffixLen = zSuffix.length();
+        private boolean seenZcurve = false;
+
+        @Override
+        protected boolean shouldConvert(Expression exp) {
+            if (exp instanceof ZCurveExpression) {
+                seenZcurve = true;
+                return true;
+            }
+            if (seenZcurve && exp instanceof AttributeExpression attrExp) {
+                return attrExp.getFieldName().endsWith(zSuffix);
+            }
+            return false;
+        }
+
+        @Override
+        protected Expression doConvert(Expression exp) {
+            if (exp instanceof ZCurveExpression) {
+                return null;
+            }
+            if (exp instanceof AttributeExpression attrExp) {
+                String orig = attrExp.getFieldName();
+                int len = orig.length();
+                if (len > zSuffixLen && orig.endsWith(zSuffix)) {
+                    String fieldName = orig.substring(0, len - zSuffixLen);
+                    var result = new AttributeExpression(fieldName);
+                    return result;
+                }
+            }
+            return exp;
+        }
+    }
+
     private void addContentInOrder(IlscriptsConfig.Ilscript.Builder ilscriptBuilder) {
         ArrayList<Expression> later = new ArrayList<>();
         Set<String> touchedFields = new HashSet<>();
         for (Expression expression : expressions) {
             if (isStreaming) {
                 expression = expression.convertChildren(new DropTokenize());
+                expression = expression.convertChildren(new DropZcurve());
             }
             if (modifiesSelf(expression) && ! setsLanguage(expression)) {
                 later.add(expression);

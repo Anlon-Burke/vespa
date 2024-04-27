@@ -1,6 +1,8 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "fieldsearchspec.h"
+#include <vespa/searchlib/fef/fieldinfo.h>
+#include <vespa/searchlib/fef/iindexenvironment.h>
 #include <vespa/searchlib/query/streaming/equiv_query_node.h>
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/vsm/searcher/boolfieldsearcher.h>
@@ -223,9 +225,9 @@ FieldSearchSpecMap::buildFieldsInQuery(const Query & query) const
     query.getLeaves(qtl);
 
     for (const auto & term : qtl) {
-        auto equiv = term->as_equiv_query_node();
-        if (equiv != nullptr) {
-            for (const auto& subterm : equiv->get_terms()) {
+        auto multi_term = term->as_multi_term();
+        if (multi_term != nullptr && multi_term->multi_index_terms()) {
+            for (const auto& subterm : multi_term->get_terms()) {
                 addFieldsFromIndex(subterm->index(), fieldsInQuery);
             }
         } else {
@@ -271,8 +273,11 @@ buildFieldSet(const VsmfieldsConfig::Documenttype::Index & ci, const FieldSearch
     return ifm;
 }
 
+}
+
 search::Normalizing
-normalize_mode(VsmfieldsConfig::Fieldspec::Normalize normalize_mode) {
+FieldSearchSpecMap::convert_normalize_mode(VsmfieldsConfig::Fieldspec::Normalize normalize_mode)
+{
     switch (normalize_mode) {
         case VsmfieldsConfig::Fieldspec::Normalize::NONE: return search::Normalizing::NONE;
         case VsmfieldsConfig::Fieldspec::Normalize::LOWERCASE: return search::Normalizing::LOWERCASE;
@@ -281,19 +286,26 @@ normalize_mode(VsmfieldsConfig::Fieldspec::Normalize normalize_mode) {
     return search::Normalizing::LOWERCASE_AND_FOLD;
 }
 
-}
-
 void
-FieldSearchSpecMap::buildFromConfig(const VsmfieldsHandle & conf)
+FieldSearchSpecMap::buildFromConfig(const VsmfieldsHandle & conf, const search::fef::IIndexEnvironment& index_env)
 {
     LOG(spam, "Parsing %zd fields", conf->fieldspec.size());
     for(const VsmfieldsConfig::Fieldspec & cfs : conf->fieldspec) {
         LOG(spam, "Parsing %s", cfs.name.c_str());
         FieldIdT fieldId = specMap().size();
-        FieldSearchSpec fss(fieldId, cfs.name, cfs.searchmethod, normalize_mode(cfs.normalize), cfs.arg1, cfs.maxlength);
+        FieldSearchSpec fss(fieldId, cfs.name, cfs.searchmethod, convert_normalize_mode(cfs.normalize), cfs.arg1, cfs.maxlength);
         _specMap[fieldId] = std::move(fss);
         _nameIdMap.add(cfs.name, fieldId);
         LOG(spam, "M in %d = %s", fieldId, cfs.name.c_str());
+    }
+    /*
+     * Index env is based on same vsm fields config but has additional
+     * virtual fields, cf. IndexEnvironment::add_virtual_fields().
+     */
+    for (uint32_t field_id = specMap().size(); field_id < index_env.getNumFields(); ++field_id) {
+        auto& field = *index_env.getField(field_id);
+        assert(field.type() == search::fef::FieldType::VIRTUAL);
+        _nameIdMap.add(field.name(), field_id);
     }
 
     LOG(spam, "Parsing %zd document types", conf->documenttype.size());

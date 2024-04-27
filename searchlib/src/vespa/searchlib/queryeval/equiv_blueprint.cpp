@@ -3,6 +3,7 @@
 #include "equiv_blueprint.h"
 #include "equivsearch.h"
 #include "field_spec.hpp"
+#include "flow_tuning.h"
 #include <vespa/vespalib/objects/visit.hpp>
 #include <vespa/vespalib/stllike/hash_map.hpp>
 
@@ -52,14 +53,30 @@ EquivBlueprint::EquivBlueprint(FieldSpecBaseList fields,
 
 EquivBlueprint::~EquivBlueprint() = default;
 
+void
+EquivBlueprint::sort(InFlow in_flow)
+{
+    resolve_strict(in_flow);
+    auto flow = OrFlow(in_flow);
+    for (auto &term: _terms) {
+        term->sort(InFlow(flow.strict(), flow.flow()));
+        flow.add(term->estimate());
+    }
+}
+
 FlowStats
 EquivBlueprint::calculate_flow_stats(uint32_t docid_limit) const
 {
-    return default_flow_stats(docid_limit, _estimate.estHits, _terms.size());
+    for (auto &term: _terms) {
+        term->update_flow_stats(docid_limit);
+    }
+    double est = OrFlow::estimate_of(_terms);
+    return {est, OrFlow::cost_of(_terms, false),
+            OrFlow::cost_of(_terms, true) + flow::heap_cost(est, _terms.size())};
 }
 
 SearchIterator::UP
-EquivBlueprint::createLeafSearch(const fef::TermFieldMatchDataArray &outputs, bool strict) const
+EquivBlueprint::createLeafSearch(const fef::TermFieldMatchDataArray &outputs) const
 {
     fef::MatchData::UP md = _layout.createMatchData();
     MultiSearch::Children children;
@@ -76,15 +93,15 @@ EquivBlueprint::createLeafSearch(const fef::TermFieldMatchDataArray &outputs, bo
             unpack_needs[child_term_field_match_data->getFieldId()].notify(*child_term_field_match_data);
             childMatch.emplace_back(child_term_field_match_data, _exactness[i]);
         }
-        children.push_back(_terms[i]->createSearch(*md, strict));
+        children.push_back(_terms[i]->createSearch(*md));
     }
-    return EquivSearch::create(std::move(children), std::move(md), childMatch, outputs, strict);
+    return EquivSearch::create(std::move(children), std::move(md), childMatch, outputs, strict());
 }
 
 SearchIterator::UP
-EquivBlueprint::createFilterSearch(bool strict, FilterConstraint constraint) const
+EquivBlueprint::createFilterSearch(FilterConstraint constraint) const
 {
-    return create_or_filter(_terms, strict, constraint);
+    return create_or_filter(_terms, strict(), constraint);
 }
 
 void

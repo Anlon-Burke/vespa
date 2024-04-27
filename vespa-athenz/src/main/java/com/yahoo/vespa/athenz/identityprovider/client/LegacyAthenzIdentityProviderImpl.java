@@ -38,7 +38,6 @@ import java.security.cert.X509Certificate;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -277,7 +276,7 @@ public final class LegacyAthenzIdentityProviderImpl extends AbstractComponent im
 
     @Override
     public List<X509Certificate> getIdentityCertificate() {
-        return Collections.singletonList(credentials.getCertificate());
+        return List.of(credentials.getCertificate());
     }
 
     @Override
@@ -363,7 +362,7 @@ public final class LegacyAthenzIdentityProviderImpl extends AbstractComponent im
 
     private static SiaIdentityProvider createNodeIdentityProvider(IdentityConfig config) {
         return new SiaIdentityProvider(
-                new AthenzService(config.nodeIdentityName()), SiaUtils.DEFAULT_SIA_DIRECTORY, CLIENT_TRUST_STORE);
+                new AthenzService(config.nodeIdentityName()), SiaUtils.DEFAULT_SIA_DIRECTORY, CLIENT_TRUST_STORE, false);
     }
 
     private boolean isExpired(AthenzCredentials credentials) {

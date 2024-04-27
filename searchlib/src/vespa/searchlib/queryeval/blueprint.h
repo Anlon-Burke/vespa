@@ -55,6 +55,64 @@ public:
 
     enum class OptimizePass { FIRST, LAST };
 
+    class Options {
+    private:
+        bool _sort_by_cost;
+        bool _allow_force_strict;
+        bool _keep_order;
+    public:
+        constexpr Options() noexcept
+          : _sort_by_cost(false),
+            _allow_force_strict(false),
+            _keep_order(false) {}
+        constexpr bool sort_by_cost() const noexcept { return _sort_by_cost; }
+        constexpr Options &sort_by_cost(bool value) noexcept {
+            _sort_by_cost = value;
+            return *this;
+        }
+        constexpr bool allow_force_strict() const noexcept { return _allow_force_strict; }
+        constexpr Options &allow_force_strict(bool value) noexcept {
+            _allow_force_strict = value;
+            return *this;
+        }
+        constexpr bool keep_order() const noexcept { return _keep_order; }
+        constexpr Options &keep_order(bool value) noexcept {
+            _keep_order = value;
+            return *this;
+        }
+    };
+
+private:
+    static Options &thread_opts() noexcept {
+        thread_local Options opts;
+        return opts;
+    }
+    struct BindOpts {
+        Options prev;
+        BindOpts(Options opts) noexcept : prev(thread_opts()) {
+            thread_opts() = opts;
+        }
+        ~BindOpts() noexcept {
+            thread_opts() = prev;
+        }
+        BindOpts(BindOpts &&) = delete;
+        BindOpts(const BindOpts &) = delete;
+        BindOpts &operator=(BindOpts &&) = delete;
+        BindOpts &operator=(const BindOpts &) = delete;
+    };
+
+public:
+    // thread local Options are used during query planning (calculate_flow_stats/sort)
+    //
+    // The optimize_and_sort function will handle this for you by
+    // binding the given options to the current thread before calling
+    // optimize and sort. If you do low-level stuff directly, make
+    // sure to keep the relevant options bound while doing so.
+    static BindOpts bind_opts(Options opts) noexcept { return BindOpts(opts); }
+    static bool opt_sort_by_cost() noexcept { return thread_opts().sort_by_cost(); }
+    static bool opt_allow_force_strict() noexcept { return thread_opts().allow_force_strict(); }
+    static bool opt_keep_order() noexcept { return thread_opts().keep_order(); }
+
     struct HitEstimate {
         uint32_t estHits;
         bool     empty;
@@ -182,6 +240,7 @@ private:
     FlowStats  _flow_stats;
     uint32_t   _sourceId;
     uint32_t   _docid_limit;
+    bool       _strict;
     bool       _frozen;
 
 protected:
@@ -194,6 +253,12 @@ protected:
         getState();
         _frozen = true;
     }
+
+    // Call this first inside sort implementations to handle 2 things:
+    //
+    // (1) force in_flow to be strict if allowed and better.
+    // (2) tag blueprint with the strictness of the in_flow.
+    void resolve_strict(InFlow &in_flow) noexcept;
 
 public:
     class IPredicate {
@@ -223,12 +288,58 @@ public:
     virtual void setDocIdLimit(uint32_t limit) noexcept { _docid_limit = limit; }
     uint32_t get_docid_limit() const noexcept { return _docid_limit; }
 
+    bool strict() const noexcept { return _strict; }
+
+    virtual void each_node_post_order(const std::function<void(Blueprint&)> &f);
+
+    // The combination of 'optimize' (2 passes bottom-up) and 'sort'
+    // (1 pass top-down) is considered 'planning'. Flow stats are
+    // calculated during the last optimize pass (which itself requires
+    // knowledge about the docid limit) and strict tagging is done
+    // during sorting. Strict tagging is needed for fetchPostings
+    // (which also needs the estimate part of the flow stats),
+    // createSearch and createFilterSearch to work correctly. This
+    // means we always need to perform some form of planning.
+    //
+    // This function will perform basic planning. The docid limit will
+    // be tagged on all nodes, flow stats will be calculated for all
+    // nodes, sorting will be performed based on optimal flow cost and
+    // strict tagging will be conservative. The only structural change
+    // allowed is child node reordering.
+    void basic_plan(InFlow in_flow, uint32_t docid_limit);
+
+    // Similar to basic_plan, but will not reorder children. Note that
+    // this means that flow stats will be misleading as they assume
+    // optimal ordering. Used for testing.
+    void null_plan(InFlow in_flow, uint32_t docid_limit);
+
+    // Estimate the actual cost of evaluating the (sub-)query
+    // represented by this blueprint with the given in-flow. This
+    // function should be called after query planning has been
+    // performed. This function could be useful to predict very
+    // expensive queries, but the initial use-case is to understand
+    // query cost better in micro-benchmarks to improve low-level cost
+    // tuning.
+    virtual double estimate_actual_cost(InFlow in_flow) const noexcept;
+    // Estimate the change in cost caused by having a strict iterator
+    // with a non-strict in-flow. Note that this function might force
+    // the in_flow to be strict in order to align it with the
+    // strictness of this blueprint.
+    double estimate_strict_cost_diff(InFlow &in_flow) const noexcept;
+
     static Blueprint::UP optimize(Blueprint::UP bp);
-    virtual void sort(bool strict, bool sort_by_cost) = 0;
-    static Blueprint::UP optimize_and_sort(Blueprint::UP bp, bool strict, bool sort_by_cost) {
+    virtual void sort(InFlow in_flow) = 0;
+    static Blueprint::UP optimize_and_sort(Blueprint::UP bp, InFlow in_flow, const Options &opts) {
+        auto opts_guard = bind_opts(opts);
         auto result = optimize(std::move(bp));
-        result->sort(strict, sort_by_cost);
+        result->sort(in_flow);
         return result;
+    }
+    static Blueprint::UP optimize_and_sort(Blueprint::UP bp, InFlow in_flow) {
+        return optimize_and_sort(std::move(bp), in_flow, Options().sort_by_cost(true));
+    }
+    static Blueprint::UP optimize_and_sort(Blueprint::UP bp) {
+        return optimize_and_sort(std::move(bp), true);
     }
     virtual void optimize(Blueprint* &self, OptimizePass pass) = 0;
     virtual void optimize_self(OptimizePass pass);
@@ -285,15 +396,15 @@ public:
     virtual void freeze() = 0;
     bool frozen() const { return _frozen; }
 
-    virtual SearchIteratorUP createSearch(fef::MatchData &md, bool strict) const = 0;
-    virtual SearchIteratorUP createFilterSearch(bool strict, FilterConstraint constraint) const = 0;
+    virtual SearchIteratorUP createSearch(fef::MatchData &md) const = 0;
+    virtual SearchIteratorUP createFilterSearch(FilterConstraint constraint) const = 0;
     static SearchIteratorUP create_and_filter(const Children &children, bool strict, FilterConstraint constraint);
     static SearchIteratorUP create_or_filter(const Children &children, bool strict, FilterConstraint constraint);
     static SearchIteratorUP create_atmost_and_filter(const Children &children, bool strict, FilterConstraint constraint);
     static SearchIteratorUP create_atmost_or_filter(const Children &children, bool strict, FilterConstraint constraint);
     static SearchIteratorUP create_andnot_filter(const Children &children, bool strict, FilterConstraint constraint);
-    static SearchIteratorUP create_first_child_filter(const Children &children, bool strict, FilterConstraint constraint);
-    static SearchIteratorUP create_default_filter(bool strict, FilterConstraint constraint);
+    static SearchIteratorUP create_first_child_filter(const Children &children, FilterConstraint constraint);
+    static SearchIteratorUP create_default_filter(FilterConstraint constraint);
 
     // for debug dumping
     vespalib::string asString() const;
@@ -362,7 +473,7 @@ private:
     bool infer_want_global_filter() const;
 
     size_t count_termwise_nodes(const UnpackInfo &unpack) const;
-    virtual double computeNextHitRate(const Blueprint & child, double hit_rate) const;
+    virtual AnyFlow my_flow(InFlow in_flow) const = 0;
 
 protected:
     // returns an empty collection if children have empty or
@@ -383,9 +494,13 @@ public:
     ~IntermediateBlueprint() override;
 
     void setDocIdLimit(uint32_t limit) noexcept final;
+    void each_node_post_order(const std::function<void(Blueprint&)> &f) override;
 
+    // additional cost not attributed to the children flow (heap merge/unpack/etc)
+    virtual double estimate_self_cost(InFlow in_flow) const noexcept;
+    double estimate_actual_cost(InFlow in_flow) const noexcept override;
     void optimize(Blueprint* &self, OptimizePass pass) final;
-    void sort(bool strict, bool sort_by_cost) override;
+    void sort(InFlow in_flow) override;
     void set_global_filter(const GlobalFilter &global_filter, double estimated_hit_ratio) override;
 
     IndexList find(const IPredicate & check) const;
@@ -397,15 +512,13 @@ public:
     IntermediateBlueprint &addChild(Blueprint::UP child);
     Blueprint::UP removeChild(size_t n);
     Blueprint::UP removeLastChild() { return removeChild(childCnt() - 1); }
-    SearchIteratorUP createSearch(fef::MatchData &md, bool strict) const override;
+    SearchIteratorUP createSearch(fef::MatchData &md) const override;
     
     virtual HitEstimate combine(const std::vector<HitEstimate> &data) const = 0;
     virtual FieldSpecBaseList exposeFields() const = 0;
-    virtual void sort(Children &children, bool strict, bool sort_by_cost) const = 0;
-    virtual bool inheritStrict(size_t i) const = 0;
+    virtual void sort(Children &children, InFlow in_flow) const = 0;
     virtual SearchIteratorUP
-    createIntermediateSearch(MultiSearch::Children subSearches,
-                             bool strict, fef::MatchData &md) const = 0;
+    createIntermediateSearch(MultiSearch::Children subSearches, fef::MatchData &md) const = 0;
 
     void visitMembers(vespalib::ObjectVisitor &visitor) const override;
     void fetchPostings(const ExecuteInfo &execInfo) override;
@@ -422,7 +535,6 @@ private:
     State _state;
 protected:
     void optimize(Blueprint* &self, OptimizePass pass) final;
-    void sort(bool strict, bool sort_by_cost) override;
     void setEstimate(HitEstimate est) {
         _state.estimate(est);
         notifyChange();
@@ -457,11 +569,11 @@ public:
     const State &getState() const final { return _state; }
     void fetchPostings(const ExecuteInfo &execInfo) override;
     void freeze() final;
-    SearchIteratorUP createSearch(fef::MatchData &md, bool strict) const override;
+    SearchIteratorUP createSearch(fef::MatchData &md) const override;
     const LeafBlueprint * asLeaf() const noexcept final { return this; }
 
     virtual bool getRange(vespalib::string & from, vespalib::string & to) const;
-    virtual SearchIteratorUP createLeafSearch(const fef::TermFieldMatchDataArray &tfmda, bool strict) const = 0;
+    virtual SearchIteratorUP createLeafSearch(const fef::TermFieldMatchDataArray &tfmda) const = 0;
 };
 
 // for leaf nodes representing a single term
@@ -469,6 +581,7 @@ struct SimpleLeafBlueprint : LeafBlueprint {
     explicit SimpleLeafBlueprint() noexcept : LeafBlueprint(true) {}
     explicit SimpleLeafBlueprint(FieldSpecBase field) noexcept : LeafBlueprint(field, true) {}
     explicit SimpleLeafBlueprint(FieldSpecBaseList fields) noexcept: LeafBlueprint(std::move(fields), true) {}
+    void sort(InFlow in_flow) override;
 };
 
 // for leaf nodes representing more complex structures like wand/phrase

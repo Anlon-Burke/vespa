@@ -148,11 +148,7 @@
         <searcher id='inner-searcher' />
       </chain>
 
-      <provider id='yca-provider' type='vespa'>
-        <nodes>
-          <node host='sourcehost' port='12'/>
-        </nodes>
-      </provider>
+      <provider id='provider' type='local' cluster='foo'/>
 
       <chain id="parentchain" searchers="one two">
         <searcher id="three" />
@@ -170,6 +166,10 @@
         <min-threads>500</min-threads>
         <queue-size>0</queue-size>
       </threadpool>
+
+      <significance>
+        <model language="en" model-id="idf-wiki-simple-english" path="models/idf-simple-english-wiki.json.zst" />
+      </significance>
     </search>
 
     <processing>

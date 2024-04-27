@@ -12,9 +12,7 @@ import com.yahoo.vespa.indexinglanguage.ScriptParserContext;
 import com.yahoo.vespa.indexinglanguage.parser.IndexingInput;
 import com.yahoo.vespa.indexinglanguage.parser.ParseException;
 
-import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -26,11 +24,11 @@ import java.util.Objects;
 public final class ScriptExpression extends ExpressionList<StatementExpression> {
 
     public ScriptExpression() {
-        this(Collections.emptyList());
+        this(List.of());
     }
 
     public ScriptExpression(StatementExpression... statements) {
-        this(Arrays.asList(statements));
+        this(List.of(statements));
     }
 
     public ScriptExpression(Collection<? extends StatementExpression> statements) {
@@ -51,7 +49,8 @@ public final class ScriptExpression extends ExpressionList<StatementExpression> 
         for (StatementExpression statement : this) {
             if (context.isComplete() ||
                 (statement.getInputFields().isEmpty() || containsAtLeastOneInputFrom(statement.getInputFields(), context))) {
-                context.setValue(input).execute(statement);
+                context.setValue(input);
+                context.execute(statement);
             }
         }
         context.setValue(input);

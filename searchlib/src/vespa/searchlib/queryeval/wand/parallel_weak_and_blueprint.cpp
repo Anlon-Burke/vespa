@@ -5,6 +5,7 @@
 #include "parallel_weak_and_search.h"
 #include <vespa/searchlib/queryeval/field_spec.hpp>
 #include <vespa/searchlib/queryeval/searchiterator.h>
+#include <vespa/searchlib/queryeval/flow_tuning.h>
 #include <vespa/searchlib/fef/termfieldmatchdata.h>
 #include <vespa/vespalib/objects/visit.hpp>
 #include <algorithm>
@@ -65,14 +66,32 @@ ParallelWeakAndBlueprint::addTerm(Blueprint::UP term, int32_t weight, HitEstimat
     _terms.push_back(std::move(term));
 }
 
+void
+ParallelWeakAndBlueprint::sort(InFlow in_flow)
+{
+    resolve_strict(in_flow);
+    auto flow = OrFlow(in_flow);
+    for (auto &term: _terms) {
+        term->sort(InFlow(flow.strict(), flow.flow()));
+        flow.add(term->estimate());
+    }
+}
+
 FlowStats
 ParallelWeakAndBlueprint::calculate_flow_stats(uint32_t docid_limit) const
 {
-    return default_flow_stats(docid_limit, getState().estimate().estHits, _terms.size());
+    for (auto &term: _terms) {
+        term->update_flow_stats(docid_limit);
+    }
+    double child_est = OrFlow::estimate_of(_terms);
+    double my_est = abs_to_rel_est(_scores.getScoresToTrack(), docid_limit);
+    double est = (child_est + my_est) / 2.0;
+    return {est, OrFlow::cost_of(_terms, false),
+            OrFlow::cost_of(_terms, true) + flow::heap_cost(est, _terms.size())};
 }
 
 SearchIterator::UP
-ParallelWeakAndBlueprint::createLeafSearch(const search::fef::TermFieldMatchDataArray &tfmda, bool strict) const
+ParallelWeakAndBlueprint::createLeafSearch(const search::fef::TermFieldMatchDataArray &tfmda) const
 {
     assert(tfmda.size() == 1);
     fef::MatchData::UP childrenMatchData = _layout.createMatchData();
@@ -82,7 +101,7 @@ ParallelWeakAndBlueprint::createLeafSearch(const search::fef::TermFieldMatchData
         const State &childState = _terms[i]->getState();
         assert(childState.numFields() == 1);
         // TODO: pass ownership with unique_ptr
-        terms.emplace_back(_terms[i]->createSearch(*childrenMatchData, true).release(),
+        terms.emplace_back(_terms[i]->createSearch(*childrenMatchData).release(),
                            _weights[i],
                            childState.estimate().estHits,
                            childState.field(0).resolve(*childrenMatchData));
@@ -94,21 +113,20 @@ ParallelWeakAndBlueprint::createLeafSearch(const search::fef::TermFieldMatchData
                                                _thresholdBoostFactor,
                                                _scoresAdjustFrequency).setDocIdLimit(get_docid_limit()),
                                        ParallelWeakAndSearch::RankParams(*tfmda[0],
-                                               std::move(childrenMatchData)), strict));
+                                               std::move(childrenMatchData)), strict()));
 }
 
 std::unique_ptr<SearchIterator>
-ParallelWeakAndBlueprint::createFilterSearch(bool strict, FilterConstraint constraint) const
+ParallelWeakAndBlueprint::createFilterSearch(FilterConstraint constraint) const
 {
-    return create_atmost_or_filter(_terms, strict, constraint);
+    return create_atmost_or_filter(_terms, strict(), constraint);
 }
 
 void
 ParallelWeakAndBlueprint::fetchPostings(const ExecuteInfo & execInfo)
 {
-    ExecuteInfo childInfo = ExecuteInfo::create(true, execInfo);
     for (const auto & _term : _terms) {
-        _term->fetchPostings(childInfo);
+        _term->fetchPostings(execInfo);
     }
 }
 

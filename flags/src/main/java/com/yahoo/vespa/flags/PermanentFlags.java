@@ -14,8 +14,11 @@ import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 import static com.yahoo.vespa.flags.Dimension.APPLICATION;
+import static com.yahoo.vespa.flags.Dimension.ARCHITECTURE;
 import static com.yahoo.vespa.flags.Dimension.CERTIFICATE_PROVIDER;
+import static com.yahoo.vespa.flags.Dimension.CLAVE;
 import static com.yahoo.vespa.flags.Dimension.CLOUD_ACCOUNT;
+import static com.yahoo.vespa.flags.Dimension.FLAVOR;
 import static com.yahoo.vespa.flags.Dimension.INSTANCE_ID;
 import static com.yahoo.vespa.flags.Dimension.CLUSTER_ID;
 import static com.yahoo.vespa.flags.Dimension.CLUSTER_TYPE;
@@ -276,10 +279,19 @@ public class PermanentFlags {
 
     // This must be set in a feature flag to avoid flickering between the new and old value during config server upgrade
     public static final UnboundDoubleFlag HOST_MEMORY = defineDoubleFlag(
-            "host-memory", 0.6,
-            "The memory in GB required by a host's management processes.",
-            "Takes effect immediately"
-    );
+            "host-memory", -1.0,
+            "The memory in GB required by a host's management processes. " +
+            "A negative value falls back to hard-coded defaults.",
+            "Affects future deployments, JVM settings for new config server Podman containers, auto scaling modelling.",
+            ARCHITECTURE, CLAVE, CLOUD_ACCOUNT, FLAVOR);
+
+    // This must be set in a feature flag to avoid flickering between the new and old value during config server upgrade
+    public static final UnboundDoubleFlag HOST_MEMORY_RATIO = defineDoubleFlag(
+            "host-memory-ratio", -1.0,
+            "The ratio of MemTotal reserved for Linux or host processes, and not available to the Podman containers. " +
+            "A value outside the range [0.0, 1.0] will use a hard-coded ratio.",
+            "Affects future deployments, JVM settings for new config server Podman containers, auto scaling modelling.",
+            ARCHITECTURE, CLAVE, CLOUD_ACCOUNT, FLAVOR);
 
     public static final UnboundBooleanFlag FORWARD_ISSUES_AS_ERRORS = defineFeatureFlag(
             "forward-issues-as-errors", true,
@@ -398,6 +410,11 @@ public class PermanentFlags {
             "triggered",
             "Takes effect immediately");
 
+    public static final UnboundIntFlag MAX_CERTIFICATES_PER_HOUR = defineIntFlag(
+            "max-certificates-per-hour", 10,
+            "The number of certificates can be provisioned per hour, before throttling is triggered",
+            "Takes effect immediately");
+
     public static final UnboundBooleanFlag DROP_CACHES = defineFeatureFlag(
             "drop-caches", true,
             "Drop pagecache. " +
@@ -429,6 +446,13 @@ public class PermanentFlags {
             "and removed once that account is no longer in use with us",
             "Affects generated terraform code, and ip allocation on host provisioning",
             CLOUD_ACCOUNT
+    );
+
+    public static final UnboundStringFlag REFRESH_IDENTITY_BOUNDARY = defineStringFlag(
+            "refresh-identity-after", "",
+            "Refresh the identity document and certificates issued before this timestamp. Timestamp in ISO8601 format",
+            "Takes effect on next host admin tick",
+            HOSTNAME
     );
 
     private PermanentFlags() {}

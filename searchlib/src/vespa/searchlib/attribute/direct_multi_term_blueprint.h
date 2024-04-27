@@ -8,6 +8,7 @@
 #include <vespa/searchlib/common/matching_elements_fields.h>
 #include <vespa/searchlib/fef/termfieldmatchdataarray.h>
 #include <vespa/searchlib/queryeval/blueprint.h>
+#include <vespa/searchlib/queryeval/flow_tuning.h>
 #include <vespa/searchlib/queryeval/field_spec.h>
 #include <vespa/searchlib/queryeval/matching_elements_search.h>
 #include <variant>
@@ -71,13 +72,15 @@ public:
         setEstimate(estimate);
     }
 
-    queryeval::FlowStats calculate_flow_stats(uint32_t docid_limit) const override {
-        return default_flow_stats(docid_limit, getState().estimate().estHits, _terms.size());
+    void sort(queryeval::InFlow in_flow) override {
+        resolve_strict(in_flow);
     }
 
-    std::unique_ptr<queryeval::SearchIterator> createLeafSearch(const fef::TermFieldMatchDataArray &tfmda, bool) const override;
+    queryeval::FlowStats calculate_flow_stats(uint32_t docid_limit) const override;
 
-    std::unique_ptr<queryeval::SearchIterator> createFilterSearch(bool strict, FilterConstraint constraint) const override;
+    std::unique_ptr<queryeval::SearchIterator> createLeafSearch(const fef::TermFieldMatchDataArray &tfmda) const override;
+
+    std::unique_ptr<queryeval::SearchIterator> createFilterSearch(FilterConstraint constraint) const override;
     std::unique_ptr<queryeval::MatchingElementsSearch> create_matching_elements_search(const MatchingElementsFields &fields) const override {
         if (fields.has_field(_iattr.getName())) {
             return queryeval::MatchingElementsSearch::create(_iattr, _dictionary_snapshot, vespalib::ConstArrayRef<IDirectPostingStore::LookupResult>(_terms));

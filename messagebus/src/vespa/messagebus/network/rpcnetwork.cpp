@@ -18,6 +18,8 @@
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/vespalib/util/size_literals.h>
 #include <vespa/vespalib/util/stringfmt.h>
+#include <cstdlib>
+#include <string_view>
 #include <thread>
 
 #include <vespa/log/log.h>
@@ -25,6 +27,7 @@ LOG_SETUP(".rpcnetwork");
 
 using vespalib::make_string;
 using namespace std::chrono_literals;
+using namespace std::string_view_literals;
 
 namespace mbus {
 
@@ -151,7 +154,8 @@ RPCNetwork::flushTargetPool()
 const vespalib::Version &
 RPCNetwork::getVersion() const
 {
-    return vespalib::Vtag::currentVersion;
+    static vespalib::Version reported_version(8, 310); // _Allows_ new protobuf protocol
+    return reported_version;
 }
 
 void

@@ -18,7 +18,6 @@ import com.yahoo.search.query.profile.types.QueryProfileType;
 import com.yahoo.tensor.Tensor;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -127,7 +126,7 @@ public class QueryProfileProperties extends Properties {
             name = unalias(name, context);
 
             if (context == null)
-                context = Collections.emptyMap();
+                context = Map.of();
 
             if ( ! profile.isOverridable(name, context)) return;
 
@@ -192,7 +191,7 @@ public class QueryProfileProperties extends Properties {
 
             if (fieldDescription != null) {
                 if (i == name.size() - 1) { // at the end of the path, check the assignment type
-                    var conversionContext = new ConversionContext(localName, profile.getRegistry(), embedders, context);
+                    var conversionContext = new ConversionContext(localName, profile.getRegistry(), embedders, context, this);
                     var convertedValue = fieldDescription.getType().convertFrom(value, conversionContext);
                     if (convertedValue == null
                         && fieldDescription.getType() instanceof QueryProfileFieldType
@@ -237,7 +236,7 @@ public class QueryProfileProperties extends Properties {
         context = contextWithZoneInfo(context);
 
         path = unalias(path, context);
-        if (context == null) context = Collections.emptyMap();
+        if (context == null) context = Map.of();
 
         Map<String, Object> properties = new HashMap<>();
         for (var entry : profile.listValues(path, context, substitution).entrySet()) {

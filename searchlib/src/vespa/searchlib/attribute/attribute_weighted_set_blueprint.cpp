@@ -2,17 +2,18 @@
 
 #include "attribute_weighted_set_blueprint.h"
 #include "multi_term_hash_filter.hpp"
+#include <vespa/searchcommon/attribute/hit_estimate_flow_stats_adapter.h>
 #include <vespa/searchcommon/attribute/i_search_context.h>
-#include <vespa/searchlib/common/bitvector.h>
 #include <vespa/searchlib/fef/matchdatalayout.h>
 #include <vespa/searchlib/query/query_term_ucs4.h>
 #include <vespa/searchlib/queryeval/filter_wrapper.h>
+#include <vespa/searchlib/queryeval/flow.h>
+#include <vespa/searchlib/queryeval/flow_tuning.h>
 #include <vespa/searchlib/queryeval/orsearch.h>
 #include <vespa/searchlib/queryeval/weighted_set_term_search.h>
 #include <vespa/vespalib/objects/visit.h>
 #include <vespa/vespalib/stllike/hash_map.hpp>
 #include <vespa/vespalib/util/stringfmt.h>
-
 
 namespace search {
 
@@ -20,6 +21,7 @@ namespace {
 
 using attribute::ISearchContext;
 using attribute::IAttributeVector;
+using queryeval::OrFlow;
 
 class AttrWrapper
 {
@@ -94,7 +96,8 @@ AttributeWeightedSetBlueprint::AttributeWeightedSetBlueprint(const queryeval::Fi
       _estHits(0),
       _weights(),
       _attr(attr),
-      _contexts()
+      _contexts(),
+      _estimates()
 {
     set_allow_termwise_eval(true);
 }
@@ -110,29 +113,40 @@ AttributeWeightedSetBlueprint::~AttributeWeightedSetBlueprint()
 void
 AttributeWeightedSetBlueprint::addToken(std::unique_ptr<ISearchContext> context, int32_t weight)
 {
-    _estHits = std::min(_estHits + context->calc_hit_estimate().est_hits(), _numDocs);
+    _estimates.push_back(context->calc_hit_estimate());
+    _estHits = std::min(_estHits + _estimates.back().est_hits(), _numDocs);
     setEstimate(HitEstimate(_estHits, (_estHits == 0)));
     _weights.push_back(weight);
     _contexts.push_back(context.release());
 }
 
+void
+AttributeWeightedSetBlueprint::sort(queryeval::InFlow in_flow)
+{
+    resolve_strict(in_flow);
+}
+
 queryeval::FlowStats
 AttributeWeightedSetBlueprint::calculate_flow_stats(uint32_t docid_limit) const
 {
-    return default_flow_stats(docid_limit, _estHits, _weights.size());
+    using MyAdapter = attribute::HitEstimateFlowStatsAdapter;
+    size_t num_indirections = queryeval::flow::get_num_indirections(_attr.getBasicType(), _attr.getCollectionType());
+    double est = OrFlow::estimate_of(MyAdapter(docid_limit, num_indirections), _estimates);
+    return {est, OrFlow::cost_of(MyAdapter(docid_limit, num_indirections), _estimates, false),
+            OrFlow::cost_of(MyAdapter(docid_limit, num_indirections), _estimates, true) + queryeval::flow::heap_cost(est, _estimates.size())};
 }
 
 queryeval::SearchIterator::UP
-AttributeWeightedSetBlueprint::createLeafSearch(const fef::TermFieldMatchDataArray &tfmda, bool strict) const
+AttributeWeightedSetBlueprint::createLeafSearch(const fef::TermFieldMatchDataArray &tfmda) const
 {
     assert(tfmda.size() == 1);
     assert(getState().numFields() == 1);
     fef::TermFieldMatchData &tfmd = *tfmda[0];
     bool field_is_filter = getState().fields()[0].isFilter();
     if ((tfmd.isNotNeeded() || field_is_filter) && (_contexts.size() == 1)) {
-        return _contexts[0]->createIterator(&tfmd, strict);
+        return _contexts[0]->createIterator(&tfmd, strict());
     }
-    if (strict) { // use generic weighted set search
+    if (strict()) { // use generic weighted set search
         fef::MatchDataLayout layout;
         auto handle = layout.allocTermField(tfmd.getFieldId());
         auto match_data = layout.createMatchData();
@@ -156,24 +170,24 @@ AttributeWeightedSetBlueprint::createLeafSearch(const fef::TermFieldMatchDataArr
 }
 
 queryeval::SearchIterator::UP
-AttributeWeightedSetBlueprint::createFilterSearch(bool strict, FilterConstraint) const
+AttributeWeightedSetBlueprint::createFilterSearch(FilterConstraint) const
 {
     std::vector<std::unique_ptr<queryeval::SearchIterator>> children;
     children.reserve(_contexts.size());
     for (auto& context : _contexts) {
         auto wrapper = std::make_unique<queryeval::FilterWrapper>(1);
-        wrapper->wrap(context->createIterator(wrapper->tfmda()[0], strict));
+        wrapper->wrap(context->createIterator(wrapper->tfmda()[0], strict()));
         children.emplace_back(std::move(wrapper));
     }
-    return queryeval::OrSearch::create(std::move(children), strict, queryeval::UnpackInfo());
+    return queryeval::OrSearch::create(std::move(children), strict(), queryeval::UnpackInfo());
 }
 
 void
 AttributeWeightedSetBlueprint::fetchPostings(const queryeval::ExecuteInfo &execInfo)
 {
-    if (execInfo.is_strict()) {
+    if (strict()) {
         for (auto * context : _contexts) {
-            context->fetchPostings(execInfo);
+            context->fetchPostings(execInfo, strict());
         }
     }
 }

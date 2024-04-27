@@ -17,6 +17,7 @@ import com.yahoo.schema.expressiontransforms.ExpressionTransforms;
 import com.yahoo.schema.expressiontransforms.RankProfileTransformContext;
 import com.yahoo.schema.expressiontransforms.InputRecorder;
 import com.yahoo.schema.parser.ParseException;
+import com.yahoo.search.schema.RankProfile.InputType;
 import com.yahoo.searchlib.rankingexpression.ExpressionFunction;
 import com.yahoo.searchlib.rankingexpression.FeatureList;
 import com.yahoo.searchlib.rankingexpression.RankingExpression;
@@ -31,7 +32,6 @@ import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -486,12 +486,12 @@ public class RankProfile implements Cloneable {
     }
 
     void setFirstPhaseRanking(RankingExpression rankingExpression) {
-        this.firstPhaseRanking = new RankingExpressionFunction(new ExpressionFunction(FIRST_PHASE, Collections.emptyList(), rankingExpression), false);
+        this.firstPhaseRanking = new RankingExpressionFunction(new ExpressionFunction(FIRST_PHASE, List.of(), rankingExpression), false);
     }
 
     public void setFirstPhaseRanking(String expression) {
         try {
-            firstPhaseRanking = new RankingExpressionFunction(parseRankingExpression(FIRST_PHASE, Collections.emptyList(), expression), false);
+            firstPhaseRanking = new RankingExpressionFunction(parseRankingExpression(FIRST_PHASE, List.of(), expression), false);
         } catch (ParseException e) {
             throw new IllegalArgumentException("Illegal first phase ranking function", e);
         }
@@ -514,7 +514,7 @@ public class RankProfile implements Cloneable {
 
     public void setSecondPhaseRanking(String expression) {
         try {
-            secondPhaseRanking = new RankingExpressionFunction(parseRankingExpression(SECOND_PHASE, Collections.emptyList(), expression), false);
+            secondPhaseRanking = new RankingExpressionFunction(parseRankingExpression(SECOND_PHASE, List.of(), expression), false);
         }
         catch (ParseException e) {
             throw new IllegalArgumentException("Illegal second phase ranking function", e);
@@ -534,7 +534,7 @@ public class RankProfile implements Cloneable {
 
     public void setGlobalPhaseRanking(String expression) {
         try {
-            globalPhaseRanking = new RankingExpressionFunction(parseRankingExpression(GLOBAL_PHASE, Collections.emptyList(), expression), false);
+            globalPhaseRanking = new RankingExpressionFunction(parseRankingExpression(GLOBAL_PHASE, List.of(), expression), false);
         }
         catch (ParseException e) {
             throw new IllegalArgumentException("Illegal global-phase ranking function", e);
@@ -841,7 +841,7 @@ public class RankProfile implements Cloneable {
         if (inputs.containsKey(reference)) {
             Input existing = inputs().get(reference);
             if (! input.equals(existing))
-                throw new IllegalArgumentException("Duplicate input: Has both " + input + " and existing");
+                throw new IllegalArgumentException("Duplicate input: Has both " + input + " and existing " + existing);
         }
         inputs.put(reference, input);
     }
@@ -1035,7 +1035,7 @@ public class RankProfile implements Cloneable {
         Map<Reference, TensorType> featureTypes = featureTypes();
         // Function compiling first pass: compile inline functions without resolving other functions
         Map<String, RankingExpressionFunction> inlineFunctions =
-                compileFunctions(this::getInlineFunctions, queryProfiles, featureTypes, importedModels, Collections.emptyMap(), expressionTransforms);
+                compileFunctions(this::getInlineFunctions, queryProfiles, featureTypes, importedModels, Map.of(), expressionTransforms);
 
         firstPhaseRanking = compile(this.getFirstPhase(), queryProfiles, featureTypes, importedModels, constants(), inlineFunctions, expressionTransforms);
         secondPhaseRanking = compile(this.getSecondPhase(), queryProfiles, featureTypes, importedModels, constants(), inlineFunctions, expressionTransforms);
@@ -1177,7 +1177,8 @@ public class RankProfile implements Cloneable {
 
     private Map<Reference, TensorType> featureTypes() {
         Map<Reference, TensorType> featureTypes = inputs().values().stream()
-                                                          .collect(Collectors.toMap(input -> input.name(), input -> input.type()));
+                .collect(Collectors.toMap(input -> input.name(),
+                                          input -> input.type().tensorType()));
         allFields().forEach(field -> addAttributeFeatureTypes(field, featureTypes));
         allImportedFields().forEach(field -> addAttributeFeatureTypes(field, featureTypes));
         return featureTypes;
@@ -1545,17 +1546,21 @@ public class RankProfile implements Cloneable {
     public static final class Input {
 
         private final Reference name;
-        private final TensorType type;
+        private final InputType type;
         private final Optional<Tensor> defaultValue;
 
-        public Input(Reference name, TensorType type, Optional<Tensor> defaultValue) {
+        public Input(Reference name, InputType type, Optional<Tensor> defaultValue) {
             this.name = name;
             this.type = type;
             this.defaultValue = defaultValue;
         }
 
+        public Input(Reference name, TensorType tType, Optional<Tensor> defaultValue) {
+            this(name, new InputType(tType, false), defaultValue);
+        }
+
         public Reference name() { return name; }
-        public TensorType type() { return type; }
+        public InputType type() { return type; }
         public Optional<Tensor> defaultValue() { return defaultValue; }
 
         @Override

@@ -18,7 +18,7 @@ import com.yahoo.vespa.indexinglanguage.expressions.ScriptExpression;
 import com.yahoo.vespa.model.container.search.QueryProfiles;
 import org.junit.jupiter.api.Test;
 
-import java.util.Arrays;
+import java.util.List;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
@@ -64,7 +64,7 @@ public class IndexingScriptRewriterTestCase extends AbstractSchemaTestCase {
         field.addSummaryField(createStaticSummaryField(field, "test"));
         field.addSummaryField(createStaticSummaryField(field, "other"));
         field.addSummaryField(createDynamicSummaryField(field, "dyn2"));
-        assertIndexingScript("{ input test | tokenize normalize stem:\"BEST\" | summary other | " +
+        assertIndexingScript("{ input test | tokenize normalize stem:\"BEST\" | " +
                 "summary test | index test; }", field);
     }
 
@@ -105,7 +105,7 @@ public class IndexingScriptRewriterTestCase extends AbstractSchemaTestCase {
 
     @Test
     void testDerivingFromSimple() throws Exception {
-        assertIndexing(Arrays.asList("clear_state | guard { input access | attribute access; }",
+        assertIndexing(List.of("clear_state | guard { input access | attribute access; }",
                         "clear_state | guard { input category | split \";\" | attribute category_arr; }",
                         "clear_state | guard { input category | tokenize | index category; }",
                         "clear_state | guard { input categories_src | lowercase | normalize | tokenize normalize stem:\"BEST\" | index categories; }",
@@ -113,7 +113,7 @@ public class IndexingScriptRewriterTestCase extends AbstractSchemaTestCase {
                         "clear_state | guard { input chatter | tokenize normalize stem:\"BEST\" | index chatter; }",
                         "clear_state | guard { input description | tokenize normalize stem:\"BEST\" | summary description | index description; }",
                         "clear_state | guard { input exactemento_src | lowercase | tokenize normalize stem:\"BEST\" | index exactemento | summary exactemento; }",
-                        "clear_state | guard { input longdesc | summary longdesc | summary longstat; }",
+                        "clear_state | guard { input longdesc | summary longdesc; }",
                         "clear_state | guard { input measurement | attribute measurement | summary measurement; }",
                         "clear_state | guard { input measurement | to_array | attribute measurement_arr; }",
                         "clear_state | guard { input popularity | attribute popularity; }",
@@ -127,8 +127,7 @@ public class IndexingScriptRewriterTestCase extends AbstractSchemaTestCase {
     @Test
     void testIndexRewrite() throws Exception {
         assertIndexing(
-                Arrays.asList("clear_state | guard { input title_src | lowercase | normalize | " +
-                        "                      tokenize | index title; }",
+                List.of("clear_state | guard { input title_src | lowercase | normalize | tokenize | index title; }",
                         "clear_state | guard { input title_src | summary title_s; }"),
                 ApplicationBuilder.buildFromFile("src/test/examples/indexrewrite.sd"));
     }
@@ -151,7 +150,7 @@ public class IndexingScriptRewriterTestCase extends AbstractSchemaTestCase {
     void requireThatMaxTermOccurrencesIsPropagated() {
         var field = new SDField("test", DataType.STRING);
         field.getMatching().maxTermOccurrences(10);
-        field.parseIndexingScript("{ summary | index }");
+        field.parseIndexingScript("test", "{ summary | index }");
         assertIndexingScript("{ input test | tokenize normalize stem:\"BEST\" max-occurrences:10 | summary test | index test; }",
                 field);
     }
@@ -173,14 +172,14 @@ public class IndexingScriptRewriterTestCase extends AbstractSchemaTestCase {
 
     private static SDField createField(String name, DataType type, String script) {
         SDField field = new SDField(null, name, type);
-        field.parseIndexingScript(script);
+        field.parseIndexingScript("test", script);
         return field;
     }
 
     private static SDField createPredicateField(
             String name, DataType type, String script, int arity, OptionalLong lower_bound, OptionalLong upper_bound) {
         SDField field = new SDField(null, name, type);
-        field.parseIndexingScript(script);
+        field.parseIndexingScript("test", script);
         Index index = new Index("foo");
         index.setBooleanIndexDefiniton(new BooleanIndexDefinition(
                 OptionalInt.of(arity), lower_bound, upper_bound, OptionalDouble.empty()));

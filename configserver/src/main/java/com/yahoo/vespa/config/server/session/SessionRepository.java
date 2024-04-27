@@ -9,6 +9,7 @@ import com.yahoo.concurrent.StripedExecutor;
 import com.yahoo.config.application.api.ApplicationPackage;
 import com.yahoo.config.application.api.DeployLogger;
 import com.yahoo.config.model.api.ConfigDefinitionRepo;
+import com.yahoo.config.model.api.EndpointCertificateSecretStore;
 import com.yahoo.config.model.api.OnnxModelCost;
 import com.yahoo.config.model.application.provider.DeployData;
 import com.yahoo.config.model.application.provider.FilesApplicationPackage;
@@ -63,7 +64,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -121,6 +121,7 @@ public class SessionRepository {
     private final Path sessionsPath;
     private final TenantName tenantName;
     private final OnnxModelCost onnxModelCost;
+    private final List<EndpointCertificateSecretStore> endpointCertificateSecretStores;
     private final SessionCounter sessionCounter;
     private final SecretStore secretStore;
     private final HostProvisionerProvider hostProvisionerProvider;
@@ -152,9 +153,11 @@ public class SessionRepository {
                              ModelFactoryRegistry modelFactoryRegistry,
                              ConfigDefinitionRepo configDefinitionRepo,
                              int maxNodeSize,
-                             OnnxModelCost onnxModelCost) {
+                             OnnxModelCost onnxModelCost,
+                             List<EndpointCertificateSecretStore> endpointCertificateSecretStores) {
         this.tenantName = tenantName;
         this.onnxModelCost = onnxModelCost;
+        this.endpointCertificateSecretStores = endpointCertificateSecretStores;
         sessionCounter = new SessionCounter(curator, tenantName);
         this.sessionsPath = TenantRepository.getSessionsPath(tenantName);
         this.clock = clock;
@@ -561,7 +564,8 @@ public class SessionRepository {
                                                                     zone,
                                                                     modelFactoryRegistry,
                                                                     configDefinitionRepo,
-                                                                    onnxModelCost);
+                                                                    onnxModelCost,
+                                                                    endpointCertificateSecretStores);
         return ApplicationVersions.fromList(builder.buildModels(session.getApplicationId(),
                                                                 session.getDockerImageRepository(),
                                                                 session.getVespaVersion(),
@@ -846,7 +850,7 @@ public class SessionRepository {
                 File[] sdFiles = sdDir.listFiles();
                 if (sdFiles != null) {
                     Files.createDirectories(schemasDir.toPath());
-                    Arrays.asList(sdFiles).forEach(file -> Exceptions.uncheck(
+                    List.of(sdFiles).forEach(file -> Exceptions.uncheck(
                             () -> Files.move(file.toPath(),
                                              schemasDir.toPath().resolve(file.toPath().getFileName()),
                                              StandardCopyOption.REPLACE_EXISTING)));

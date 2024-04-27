@@ -2,7 +2,6 @@
 package com.yahoo.messagebus.network.rpc;
 
 import com.yahoo.component.Version;
-import com.yahoo.component.Vtag;
 import com.yahoo.concurrent.ThreadFactoryFactory;
 import com.yahoo.jrt.Acceptor;
 import com.yahoo.jrt.ListenFailedException;
@@ -301,15 +300,20 @@ public class RPCNetwork implements Network, MethodHandler {
         return false;
     }
 
+    private static final Version REPORTED_VERSION = new Version(8, 310);
+
     /**
-     * Returns the version of this network. This gets called when the "mbus.getVersion" method is invoked on this
-     * network, and is separated into its own function so that unit tests can override it to simulate other versions
-     * than current.
+     * Returns the (protocol) version of this network. This gets called when the "mbus.getVersion" method is invoked
+     * on this network, and is separated into its own function so that unit tests can override it to simulate other
+     * versions than current.
+     *
+     * Note that this version reflects the highest supported <em>protocol</em> version, and is not necessarily
+     * 1-1 with the actual Vespa release version of the underlying binary.
      *
      * @return the version to claim to be
      */
     protected Version getVersion() {
-        return Vtag.currentVersion;
+        return REPORTED_VERSION;
     }
 
     /**

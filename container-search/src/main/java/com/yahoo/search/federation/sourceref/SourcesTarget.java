@@ -1,7 +1,6 @@
 // Copyright Vespa.ai. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.search.federation.sourceref;
 
-
 import com.google.common.base.Joiner;
 import com.yahoo.component.ComponentId;
 import com.yahoo.component.ComponentSpecification;
@@ -17,7 +16,7 @@ import java.util.TreeSet;
 
 public class SourcesTarget extends Target {
 
-    private ComponentRegistry<ComponentAdaptor<SearchChainInvocationSpec>> providerSources = new ComponentRegistry<>() {};
+    private final ComponentRegistry<ComponentAdaptor<SearchChainInvocationSpec>> providerSources = new ComponentRegistry<>() {};
 
     private SearchChainInvocationSpec defaultProviderSource;
 
@@ -26,10 +25,10 @@ public class SourcesTarget extends Target {
     }
 
     @Override
-    public SearchChainInvocationSpec responsibleSearchChain(Properties queryProperties) throws UnresolvedSearchChainException {
+    public ResolveResult responsibleSearchChain(Properties queryProperties) {
         ComponentSpecification providerSpecification = providerSpecificationForSource(queryProperties);
         if (providerSpecification == null) {
-            return defaultProviderSource;
+            return new ResolveResult(defaultProviderSource);
         } else {
             return lookupProviderSource(providerSpecification);
         }
@@ -37,11 +36,7 @@ public class SourcesTarget extends Target {
 
     @Override
     public String searchRefDescription() {
-        StringBuilder builder = new StringBuilder(sourceId().stringValue());
-        builder.append("[provider = ").
-                append(Joiner.on(", ").join(allProviderIdsStringValue())).
-                append("]");
-        return builder.toString();
+        return sourceId().stringValue() + "[provider = " + Joiner.on(", ").join(allProviderIdsStringValue()) + "]";
     }
 
     private SortedSet<String> allProviderIdsStringValue() {
@@ -52,14 +47,13 @@ public class SourcesTarget extends Target {
         return result;
     }
 
-    private SearchChainInvocationSpec lookupProviderSource(ComponentSpecification providerSpecification)
-            throws UnresolvedSearchChainException {
+    private ResolveResult lookupProviderSource(ComponentSpecification providerSpecification) {
         ComponentAdaptor<SearchChainInvocationSpec> providerSource = providerSources.getComponent(providerSpecification);
 
         if (providerSource == null)
-            throw UnresolvedProviderException.createForMissingProvider(sourceId(), providerSpecification);
+            return new ResolveResult("No provider '" + sourceId() + "' for source '" + providerSpecification + "'.");
 
-        return providerSource.model;
+        return new ResolveResult(providerSource.model);
     }
 
     public void freeze() {

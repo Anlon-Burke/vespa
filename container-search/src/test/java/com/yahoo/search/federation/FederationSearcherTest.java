@@ -16,13 +16,13 @@ import com.yahoo.search.result.ErrorHit;
 import com.yahoo.search.result.ErrorMessage;
 import com.yahoo.search.result.Hit;
 import com.yahoo.search.result.HitGroup;
+import com.yahoo.search.schema.SchemaInfo;
 import com.yahoo.search.searchchain.Execution;
 import com.yahoo.search.searchchain.Execution.Context;
 import com.yahoo.search.searchchain.model.federation.FederationOptions;
 
 import org.junit.jupiter.api.Test;
 
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -168,6 +168,7 @@ public class FederationSearcherTest {
 
         FederationSearcher searcher = new FederationSearcher(
                 new FederationConfig(new FederationConfig.Builder().targetSelector(targetSelectorId.toString())),
+                SchemaInfo.empty(),
                 targetSelectors);
 
         Query query = new Query();
@@ -186,6 +187,7 @@ public class FederationSearcherTest {
 
         FederationSearcher searcher = new FederationSearcher(
                 new FederationConfig(new FederationConfig.Builder().targetSelector(targetSelectorId.toString())),
+                SchemaInfo.empty(),
                 targetSelectors);
 
         Query query = new Query();
@@ -336,7 +338,7 @@ public class FederationSearcherTest {
 
         @Override
         public Collection<FederationTarget<String>> getTargets(Query query, ChainRegistry<Searcher> searcherChainRegistry) {
-            return Arrays.asList(createTarget(1), createTarget(2));
+            return List.of(createTarget(1), createTarget(2));
         }
 
         private FederationTarget<String> createTarget(int number) {

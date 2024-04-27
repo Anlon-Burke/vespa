@@ -47,6 +47,18 @@ if (VESPA_USE_SANITIZER)
     set(C_WARN_OPTS "${C_WARN_OPTS} -Wno-tsan")
   endif()
 endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12.0 AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13.0)
+  if(VESPA_OS_DISTRO_COMBINED STREQUAL "debian 12" OR VESPA_OS_DISTRO_COMBINED STREQUAL "ubuntu 22.04")
+    # Turn off restrict warnings when compiling with gcc 12 on Debian 12 or
+    # Ubuntu 22.04
+    set(C_WARN_OPTS "${C_WARN_OPTS} -Wno-restrict")
+  endif()
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14.0)
+    # Turn off maybe uninitialized warning and don't promote inline warning
+    # to error when compiling with gcc 14 or newer.
+    set(C_WARN_OPTS "${C_WARN_OPTS} -Wno-maybe-uninitialized -Wno-error=inline")
+endif()
 
 # Warnings that are specific to C++ compilation
 # Note: this is not a union of C_WARN_OPTS, since CMAKE_CXX_FLAGS already includes CMAKE_C_FLAGS, which in turn includes C_WARN_OPTS transitively
@@ -78,12 +90,6 @@ else()
   message("-- liburing not found")
 endif()
 
-if(VESPA_OS_DISTRO_COMBINED STREQUAL "debian 10")
-  unset(VESPA_XXHASH_DEFINE)
-else()
-  set(VESPA_XXHASH_DEFINE "-DXXH_INLINE_ALL")
-endif()
-
 # Disable dangling reference and overloaded virtual warnings when using gcc 13
 # Disable stringop-oveflow, stringop-overread and array-bounds warning when using gcc 13.
 # The latter heuristics are sufficiently broken to be useless in practice.
@@ -99,7 +105,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND VESPA_USE_LTO)
 endif()
 
 # C and C++ compiler flags
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -O3 -fno-omit-frame-pointer ${C_WARN_OPTS} -fPIC ${VESPA_CXX_ABI_FLAGS} ${VESPA_XXHASH_DEFINE} -DBOOST_DISABLE_ASSERTS ${VESPA_CPU_ARCH_FLAGS} ${EXTRA_C_FLAGS}")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -O3 -fno-omit-frame-pointer ${C_WARN_OPTS} -fPIC ${VESPA_CXX_ABI_FLAGS} -DXXH_INLINE_ALL -DBOOST_DISABLE_ASSERTS ${VESPA_CPU_ARCH_FLAGS} ${EXTRA_C_FLAGS}")
 # AddressSanitizer/ThreadSanitizer work for both GCC and Clang
 if (VESPA_USE_SANITIZER)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=${VESPA_USE_SANITIZER}")

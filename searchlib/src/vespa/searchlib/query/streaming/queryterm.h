@@ -11,6 +11,7 @@
 
 namespace search::fef {
 
+class IIndexEnvironment;
 class ITermData;
 class MatchData;
 
@@ -83,6 +84,10 @@ public:
     size_t              termLen()                  const { return getTermLen(); }
     const string      & index()                    const { return _index; }
     void                setWeight(query::Weight v)       { _weight = v; }
+    void                setRanked(bool ranked)           { _isRanked = ranked; }
+    bool                isRanked()                 const { return _isRanked; }
+    void                set_filter(bool v) noexcept      { _filter = v; }
+    bool                is_filter() const noexcept       { return _filter; }
     void                setUniqueId(uint32_t u)          { _uniqueId = u; }
     query::Weight       weight()                   const { return _weight; }
     uint32_t            uniqueId()                 const { return _uniqueId; }
@@ -95,24 +100,28 @@ public:
     void visitMembers(vespalib::ObjectVisitor &visitor) const override;
     void setIndex(const string & index_) override { _index = index_; }
     const string & getIndex() const override { return _index; }
-    void setFuzzyMaxEditDistance(uint32_t fuzzyMaxEditDistance) { _fuzzyMaxEditDistance = fuzzyMaxEditDistance; }
-    void setFuzzyPrefixLength(uint32_t fuzzyPrefixLength) { _fuzzyPrefixLength = fuzzyPrefixLength; }
+    void set_fuzzy_max_edit_distance(uint32_t fuzzy_max_edit_distance) noexcept { _fuzzy_max_edit_distance = fuzzy_max_edit_distance; }
+    void set_fuzzy_prefix_lock_length(uint32_t fuzzy_prefix_length) noexcept { _fuzzy_prefix_lock_length = fuzzy_prefix_length; }
+    void set_fuzzy_prefix_match(bool prefix_match) noexcept { _fuzzy_prefix_match = prefix_match; }
     virtual NearestNeighborQueryNode* as_nearest_neighbor_query_node() noexcept;
     virtual MultiTerm* as_multi_term() noexcept;
+    virtual const MultiTerm* as_multi_term() const noexcept;
     virtual RegexpTerm* as_regexp_term() noexcept;
     virtual FuzzyTerm* as_fuzzy_term() noexcept;
-    virtual EquivQueryNode* as_equiv_query_node() noexcept;
     virtual const EquivQueryNode* as_equiv_query_node() const noexcept;
-    virtual void unpack_match_data(uint32_t docid, const fef::ITermData& td, fef::MatchData& match_data);
+    virtual bool is_same_element_query_node() const noexcept;
+    virtual void unpack_match_data(uint32_t docid, const fef::ITermData& td, fef::MatchData& match_data, const fef::IIndexEnvironment& index_env);
 protected:
     template <typename HitListType>
-    static void unpack_match_data_helper(uint32_t docid, const fef::ITermData& td, fef::MatchData& match_data, const HitListType& hit_list, const QueryTerm& fl_term);
+    static void unpack_match_data_helper(uint32_t docid, const fef::ITermData& td, fef::MatchData& match_data, const HitListType& hit_list, const QueryTerm& fl_term, bool term_filter, const fef::IIndexEnvironment& index_env);
     using QueryNodeResultBaseContainer = std::unique_ptr<QueryNodeResultBase>;
-    string                       _index;
-    EncodingBitMap               _encoding;
-    QueryNodeResultBaseContainer _result;
     HitList                      _hitList;
 private:
+    string                       _index;
+    QueryNodeResultBaseContainer _result;
+    EncodingBitMap               _encoding;
+    bool                         _isRanked;
+    bool                         _filter;
     query::Weight                _weight;
     uint32_t                     _uniqueId;
     std::vector<FieldInfo>       _fieldInfo;

@@ -22,6 +22,7 @@ vespa_add_executable(searchcore_fusionrunner_test_app TEST
     searchcore_server
     searchcore_index
     searchcore_pcommon
+    GTest::gtest
 )
 
 vespa_add_test(NAME searchcore_fusionrunner_test_app
@@ -32,6 +33,7 @@ vespa_add_executable(searchcore_diskindexcleaner_test_app TEST
     diskindexcleaner_test.cpp
     DEPENDS
     searchcore_index
+    GTest::gtest
 )
 
 vespa_add_test(NAME searchcore_diskindexcleaner_test_app

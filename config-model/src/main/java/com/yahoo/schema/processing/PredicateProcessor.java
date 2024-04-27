@@ -24,7 +24,7 @@ import com.yahoo.vespa.indexinglanguage.expressions.SetVarExpression;
 import com.yahoo.vespa.indexinglanguage.expressions.StatementExpression;
 import com.yahoo.vespa.model.container.search.QueryProfiles;
 
-import static com.yahoo.prelude.fastsearch.VespaBackEndSearcher.SORTABLE_ATTRIBUTES_SUMMARY_CLASS;
+import static com.yahoo.prelude.fastsearch.VespaBackend.SORTABLE_ATTRIBUTES_SUMMARY_CLASS;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,7 +45,7 @@ public class PredicateProcessor extends Processor {
         for (SDField field : schema.allConcreteFields()) {
             if (field.getDataType() == DataType.PREDICATE) {
                 if (validate && field.doesIndexing()) {
-                    fail(schema, field, "Use 'attribute' instead of 'index'. This will require a refeed if you have upgraded.");
+                    fail(schema, field, "Use 'attribute' instead of 'index'.");
                 }
                 if (field.doesAttributing()) {
                     Attribute attribute = field.getAttributes().get(field.getName());
@@ -107,7 +107,7 @@ public class PredicateProcessor extends Processor {
         script = new StatementExpression(makeSetPredicateVariablesScript(booleanIndexDefiniton), script);
 
         ExpressionConverter converter = new PredicateOutputTransformer(schema);
-        field.setIndexingScript(new ScriptExpression((StatementExpression)converter.convert(script)));
+        field.setIndexingScript(schema.getName(), new ScriptExpression((StatementExpression)converter.convert(script)));
     }
 
     private Expression makeSetPredicateVariablesScript(BooleanIndexDefinition options) {

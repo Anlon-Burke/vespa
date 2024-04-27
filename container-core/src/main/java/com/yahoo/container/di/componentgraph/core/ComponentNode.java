@@ -165,8 +165,7 @@ public class ComponentNode extends Node {
     }
 
     private Object initId(Object component) {
-        if (component instanceof AbstractComponent) {
-            AbstractComponent abstractComponent = (AbstractComponent) component;
+        if (component instanceof AbstractComponent abstractComponent) {
             if (abstractComponent.hasInitializedId() && !abstractComponent.getId().equals(componentId())) {
                 throw new IllegalStateException(
                         "Component with id '" + componentId() + "' is trying to set its component id explicitly: '" + abstractComponent.getId() + "'. " +
@@ -199,9 +198,8 @@ public class ComponentNode extends Node {
 
     @Override
     public boolean equals(Object other) {
-        if (other instanceof ComponentNode) {
-            ComponentNode that = (ComponentNode) other;
-            return super.equals(that) && equalEdges(Arrays.asList(this.arguments), Arrays.asList(that.arguments)) && this.usedConfigs().equals(that.usedConfigs());
+        if (other instanceof ComponentNode that) {
+            return super.equals(that) && equalEdges(List.of(this.arguments), List.of(that.arguments)) && this.usedConfigs().equals(that.usedConfigs());
         } else {
             return false;
         }
@@ -227,7 +225,7 @@ public class ComponentNode extends Node {
         List<Pair<Type, List<Annotation>>> ret = new ArrayList<>();
 
         for (int i = 0; i < types.length; i++) {
-            ret.add(new Pair<>(types[i], Arrays.asList(annotations[i])));
+            ret.add(new Pair<>(types[i], List.of(annotations[i])));
         }
         return ret;
     }

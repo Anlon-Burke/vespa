@@ -8,7 +8,8 @@ import com.yahoo.document.datatypes.StringFieldValue;
 import com.yahoo.vespa.indexinglanguage.SimpleTestAdapter;
 import org.junit.Test;
 
-import java.util.Arrays;
+
+import java.util.List;
 
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerify;
 import static com.yahoo.vespa.indexinglanguage.expressions.ExpressionAssert.assertVerifyThrows;
@@ -32,7 +33,7 @@ public class ScriptTestCase {
         assertEquals(2, exp.size());
         assertSame(foo, exp.get(0));
         assertSame(bar, exp.get(1));
-        assertEquals(Arrays.asList(foo, bar), exp.asList());
+        assertEquals(List.of(foo, bar), exp.asList());
     }
 
     @Test
@@ -72,6 +73,20 @@ public class ScriptTestCase {
                                             new AttributeExpression("out-2")))).execute(adapter);
         assertEquals(new IntegerFieldValue(69), adapter.getInputValue("out-1"));
         assertEquals(new IntegerFieldValue(69), adapter.getInputValue("out-2"));
+    }
+
+    @Test
+    public void testCache() {
+        SimpleTestAdapter adapter = new SimpleTestAdapter(new Field("field1", DataType.STRING));
+        var script = newScript(newStatement(new InputExpression("field1"),
+                                            new PutCacheExpression("myCacheKey", "myCacheValue")),
+                               newStatement(new ClearStateExpression()), // inserted by config model
+                               newStatement(new InputExpression("field1"),
+                                            new AssertCacheExpression("myCacheKey", "myCacheValue")));
+        adapter.setValue("field1", new StringFieldValue("foo1"));
+        ExecutionContext context = new ExecutionContext(adapter);
+        script.execute(context);
+        assertEquals("myCacheValue", context.getCachedValue("myCacheKey"));
     }
 
     @Test
@@ -145,6 +160,54 @@ public class ScriptTestCase {
         @Override
         protected void doExecute(ExecutionContext context) {
             throw new RuntimeException();
+        }
+
+        @Override
+        protected void doVerify(VerificationContext context) {}
+
+        @Override
+        public DataType createdOutputType() { return null; }
+
+    }
+
+    private static class PutCacheExpression extends Expression {
+
+        private final String keyToSet;
+        private final String valueToSet;
+
+        public PutCacheExpression(String keyToSet, String valueToSet) {
+            super(null);
+            this.keyToSet = keyToSet;
+            this.valueToSet = valueToSet;
+        }
+
+        @Override
+        protected void doExecute(ExecutionContext context) {
+            context.putCachedValue(keyToSet, valueToSet);
+        }
+
+        @Override
+        protected void doVerify(VerificationContext context) {}
+
+        @Override
+        public DataType createdOutputType() { return null; }
+
+    }
+
+    private static class AssertCacheExpression extends Expression {
+
+        private final String expectedKey;
+        private final String expectedValue;
+
+        public AssertCacheExpression(String expectedKey, String expectedValue) {
+            super(null);
+            this.expectedKey = expectedKey;
+            this.expectedValue = expectedValue;
+        }
+
+        @Override
+        protected void doExecute(ExecutionContext context) {
+            assertEquals(expectedValue, context.getCachedValue(expectedKey));
         }
 
         @Override

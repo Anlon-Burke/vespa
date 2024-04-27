@@ -2,6 +2,7 @@
 
 #include "dot_product_blueprint.h"
 #include "dot_product_search.h"
+#include "flow_tuning.h"
 #include "field_spec.hpp"
 #include <vespa/vespalib/objects/visit.hpp>
 
@@ -38,14 +39,29 @@ DotProductBlueprint::addTerm(Blueprint::UP term, int32_t weight, HitEstimate & e
     _terms.push_back(std::move(term));
 }
 
+void
+DotProductBlueprint::sort(InFlow in_flow)
+{
+    in_flow.force_strict();
+    resolve_strict(in_flow);
+    for (auto &term: _terms) {
+        term->sort(in_flow);
+    }
+}
+
 FlowStats
 DotProductBlueprint::calculate_flow_stats(uint32_t docid_limit) const
 {
-    return default_flow_stats(docid_limit, getState().estimate().estHits, _terms.size());
+    for (auto &term: _terms) {
+        term->update_flow_stats(docid_limit);
+    }
+    double est = OrFlow::estimate_of(_terms);
+    return {est, OrFlow::cost_of(_terms, false),
+            OrFlow::cost_of(_terms, true) + flow::heap_cost(est, _terms.size())};
 }
 
 SearchIterator::UP
-DotProductBlueprint::createLeafSearch(const search::fef::TermFieldMatchDataArray &tfmda, bool) const
+DotProductBlueprint::createLeafSearch(const search::fef::TermFieldMatchDataArray &tfmda) const
 {
     assert(tfmda.size() == 1);
     assert(getState().numFields() == 1);
@@ -57,24 +73,23 @@ DotProductBlueprint::createLeafSearch(const search::fef::TermFieldMatchDataArray
         assert(childState.numFields() == 1);
         childMatch.push_back(childState.field(0).resolve(*md));
         // TODO: pass ownership with unique_ptr
-        children[i] = _terms[i]->createSearch(*md, true).release();
+        children[i] = _terms[i]->createSearch(*md).release();
     }
     bool field_is_filter = getState().fields()[0].isFilter();
     return DotProductSearch::create(children, *tfmda[0], field_is_filter, childMatch, _weights, std::move(md));
 }
 
 SearchIterator::UP
-DotProductBlueprint::createFilterSearch(bool strict, FilterConstraint constraint) const
+DotProductBlueprint::createFilterSearch(FilterConstraint constraint) const
 {
-    return create_or_filter(_terms, strict, constraint);
+    return create_or_filter(_terms, strict(), constraint);
 }
 
 void
 DotProductBlueprint::fetchPostings(const ExecuteInfo &execInfo)
 {
-    ExecuteInfo childInfo = ExecuteInfo::create(true, execInfo);
     for (size_t i = 0; i < _terms.size(); ++i) {
-        _terms[i]->fetchPostings(childInfo);
+        _terms[i]->fetchPostings(execInfo);
     }    
 }
 

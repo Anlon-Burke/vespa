@@ -143,7 +143,7 @@ AsyncHandler::AsyncHandler(const PersistenceUtil & env, spi::PersistenceProvider
 MessageTracker::UP
 AsyncHandler::handleRunTask(RunTaskCommand& cmd, MessageTracker::UP tracker) const {
     auto task = makeResultTask([tracker = std::move(tracker)](spi::Result::UP response) {
-        tracker->checkForError(*response);
+        (void)tracker->checkForError(*response);
         tracker->sendReply();
     });
     spi::Bucket bucket(cmd.getBucket());
@@ -169,7 +169,7 @@ AsyncHandler::handlePut(api::PutCommand& cmd, MessageTracker::UP trackerUP) cons
 
     spi::Bucket bucket = _env.getBucket(cmd.getDocumentId(), cmd.getBucket());
     auto task = makeResultTask([tracker = std::move(trackerUP)](spi::Result::UP response) {
-        tracker->checkForError(*response);
+        (void)tracker->checkForError(*response);
         tracker->sendReply();
     });
     _spi.putAsync(bucket, spi::Timestamp(cmd.getTimestamp()), cmd.getDocument(),
@@ -349,9 +349,17 @@ AsyncHandler::handleUpdate(api::UpdateCommand& cmd, MessageTracker::UP trackerUP
         metrics.test_and_set_failed.inc();
         return trackerUP;
     }
-
     spi::Bucket bucket = _env.getBucket(cmd.getDocumentId(), cmd.getBucket());
 
+    if ((cmd.getOldTimestamp() != 0) &&
+        (fetch_existing_document_timestamp(cmd.getDocumentId(), bucket, tracker.context()) != cmd.getOldTimestamp()))
+    {
+        metrics.notFound.inc();
+        // It's debatable if this should be OK or a TaS failure, but OK is the legacy behavior, i.e. what
+        // the distributor already does as part of a multiphase update where the expected timestamp is set.
+        tracker.fail(api::ReturnCode::OK, "No document with requested timestamp found");
+        return trackerUP;
+    }
     // Note that the &cmd capture is OK since its lifetime is guaranteed by the tracker
     auto task = makeResultTask([&cmd, tracker = std::move(trackerUP)](spi::Result::UP responseUP) {
         auto & response = dynamic_cast<const spi::UpdateResult &>(*responseUP);
@@ -396,6 +404,12 @@ AsyncHandler::handleRemove(api::RemoveCommand& cmd, MessageTracker::UP trackerUP
     _spi.removeIfFoundAsync(bucket, spi::Timestamp(cmd.getTimestamp()), cmd.getDocumentId(),
                             std::make_unique<ResultTaskOperationDone>(_sequencedExecutor, cmd.getBucketId(), std::move(task)));
     return trackerUP;
+}
+
+api::Timestamp
+AsyncHandler::fetch_existing_document_timestamp(const document::DocumentId& id, const spi::Bucket& bucket, spi::Context& ctx) const
+{
+    return _spi.get(bucket, document::NoFields(), id, ctx).getTimestamp();
 }
 
 bool
@@ -503,7 +517,7 @@ AsyncHandler::handleRemoveLocation(api::RemoveLocationCommand& cmd, MessageTrack
     }
 
     auto task = makeResultTask([&cmd, tracker = std::move(tracker), removed = to_remove.size()](spi::Result::UP response) {
-        tracker->checkForError(*response);
+        (void)tracker->checkForError(*response);
         tracker->setReply(std::make_shared<api::RemoveLocationReply>(cmd, removed));
         tracker->sendReply();
     });

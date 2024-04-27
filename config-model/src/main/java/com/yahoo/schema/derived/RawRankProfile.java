@@ -43,7 +43,7 @@ import java.util.Set;
  *
  * @author bratseth
  */
-public class RawRankProfile implements RankProfilesConfig.Producer {
+public class RawRankProfile {
 
     /** A reusable compressor with default settings */
     private static final Compressor compressor = new Compressor();
@@ -130,12 +130,11 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
      */
     public List<Pair<String, String>> configProperties() { return decompress(compressedProperties); }
 
-    @Override
-    public void getConfig(RankProfilesConfig.Builder builder) {
+    public RankProfilesConfig.Rankprofile.Builder getConfig() {
         RankProfilesConfig.Rankprofile.Builder b = new RankProfilesConfig.Rankprofile.Builder().name(getName());
         getRankProperties(b);
         buildNormalizers(b);
-        builder.rankprofile(b);
+        return b;
     }
 
     @Override
@@ -519,12 +518,12 @@ public class RawRankProfile implements RankProfilesConfig.Producer {
 
             for (var input : inputs.values()) {
                 if (FeatureNames.isQueryFeature(input.name())) {
-                    if (input.type().rank() > 0) // Proton does not like representing the double type as a rank 0 tensor
+                    if (input.type().tensorType().rank() > 0) // Proton does not like representing the double type as a rank 0 tensor
                         properties.add(new Pair<>("vespa.type.query." + input.name().arguments().expressions().get(0),
                                                   input.type().toString()));
                     if (input.defaultValue().isPresent()) {
                         properties.add(new Pair<>(input.name().toString(),
-                                                  input.type().rank() == 0 ?
+                                                  input.type().tensorType().rank() == 0 ?
                                                   String.valueOf(input.defaultValue().get().asDouble()) :
                                                   input.defaultValue().get().toString(true, false)));
                     }

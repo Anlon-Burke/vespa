@@ -29,7 +29,7 @@ public class StreamingValidatorTest {
             new VespaModelCreatorWithFilePkg("src/test/cfg/application/validation/document_references_validation/")
                     .create();
         });
-        assertTrue(exception.getMessage().contains("For streaming search cluster 'content.ad': Attribute 'campaign_ref' has type 'Reference<campaign>'. " +
+        assertTrue(exception.getMessage().contains("For search cluster 'content', streaming schema 'ad': Attribute 'campaign_ref' has type 'Reference<campaign>'. " +
                 "Document references and imported fields are not allowed in streaming search."));
     }
 
@@ -52,8 +52,31 @@ public class StreamingValidatorTest {
                     "attribute { distance-metric: euclidean } }");
         var warnings = filter(logger.warnings);
         assertEquals(1, warnings.size());
-        assertEquals("For streaming search cluster 'content.test', SD field 'nn': hnsw index is not relevant and not supported, ignoring setting",
+        assertEquals("For search cluster 'content', streaming schema 'test', SD field 'nn': hnsw index is not relevant and not supported, ignoring setting",
                      warnings.get(0));
+    }
+
+    @Test
+    void uriFieldWithIndexTriggersWarningInStreamingSearch() {
+        var logger = new TestableDeployLogger();
+        var model = createModel(logger, "field URI type uri { indexing: index | summary }");
+        var warnings = filter(logger.warnings);
+        assertEquals(1, warnings.size());
+        assertEquals("For search cluster 'content', streaming schema 'test', SD field 'URI': " +
+                        "field type uri is not supported for streaming search, it will be handled as a string field",
+                warnings.get(0));
+    }
+
+    @Test
+    void predicateFieldWithAttributeTriggersWarningInStreamingSearch() {
+        var logger = new TestableDeployLogger();
+        var model = createModel(logger, "field pred type predicate { indexing: attribute | summary }");
+        var warnings = filter(logger.warnings);
+        assertEquals(1, warnings.size());
+        assertEquals("For search cluster 'content', streaming schema 'test', SD field 'pred': " +
+                        "field type predicate is not supported for streaming search",
+                warnings.get(0));
+
     }
 
     private static VespaModel createModel(DeployLogger logger, String sdContent) {

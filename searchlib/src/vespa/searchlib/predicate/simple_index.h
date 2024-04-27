@@ -8,7 +8,11 @@
 #include <vespa/vespalib/util/rcuvector.h>
 #include <optional>
 
+namespace search { class BufferWriter; }
+
 namespace search::predicate {
+
+class ISaver;
 
 template <typename Key = uint64_t, typename DocId = uint32_t>
 struct SimpleIndexDeserializeObserver {
@@ -17,9 +21,9 @@ struct SimpleIndexDeserializeObserver {
 };
 
 template <typename Posting>
-struct PostingSerializer {
-    virtual ~PostingSerializer() {}
-    virtual void serialize(const Posting &posting, vespalib::DataBuffer &buffer) const = 0;
+struct PostingSaver {
+    virtual ~PostingSaver() {}
+    virtual void save(const Posting &posting, BufferWriter& writer) const = 0;
 };
 
 template <typename Posting>
@@ -162,6 +166,7 @@ private:
                    double ratio, size_t vector_length) const;
     double getDocumentRatio(size_t document_count, uint32_t doc_id_limit) const;
     size_t getDocumentCount(vespalib::datastore::EntryRef ref) const;
+    size_t get_frozen_document_count(vespalib::datastore::EntryRef ref) const;
     bool shouldCreateVectorPosting(size_t size, double ratio) const;
     bool shouldRemoveVectorPosting(size_t size, double ratio) const;
     size_t getVectorPostingSize(const PostingVector &vector) const {
@@ -175,8 +180,6 @@ public:
         : _generation_holder(generation_holder), _config(config), _limit_provider(provider) {}
     ~SimpleIndex();
 
-    void serialize(vespalib::DataBuffer &buffer,
-                   const PostingSerializer<Posting> &serializer) const;
     void deserialize(vespalib::DataBuffer &buffer,
                      PostingDeserializer<Posting> &deserializer,
                      SimpleIndexDeserializeObserver<Key, DocId> &observer, uint32_t version);
@@ -215,6 +218,8 @@ public:
         return optional<VectorIterator>();
 
     }
+
+    std::unique_ptr<ISaver> make_saver(std::unique_ptr<PostingSaver<Posting>> subsaver) const;
 };
 
 template<typename Posting, typename Key, typename DocId>
@@ -222,7 +227,7 @@ template<typename FunctionType>
 void
 SimpleIndex<Posting, Key, DocId>::foreach_frozen_key(vespalib::datastore::EntryRef ref, Key key, FunctionType func) const {
     auto it = _vector_posting_lists.getFrozenView().find(key);
-    double ratio = getDocumentRatio(getDocumentCount(ref), _limit_provider.getDocIdLimit());
+    double ratio = getDocumentRatio(get_frozen_document_count(ref), _limit_provider.getDocIdLimit());
     if (it.valid() && ratio > _config.foreach_vector_threshold) {
         auto &vector = *it.getData();
         size_t size = getVectorPostingSize(vector);

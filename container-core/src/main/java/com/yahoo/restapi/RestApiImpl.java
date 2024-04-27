@@ -172,7 +172,9 @@ class RestApiImpl implements RestApi {
         log.log(Level.FINE, e, e::getMessage);
         ExceptionMapperHolder<?> mapper = exceptionMappers.stream()
                 .filter(holder -> holder.type.isAssignableFrom(e.getClass()))
-                .findFirst().orElseThrow(() -> e);
+                // Topologically sort children before superclasses, so most the specific match is found by iterating through mappers in order.
+                .min((a, b) -> (a.type.isAssignableFrom(b.type) ? 1 : 0) + (b.type.isAssignableFrom(a.type) ? -1 : 0))
+                .orElseThrow(() -> e);
         return mapper.toResponse(context, e);
     }
 
@@ -210,8 +212,6 @@ class RestApiImpl implements RestApi {
         if (!disableDefaultMappers){
             exceptionMappers.addAll(RestApiMappers.DEFAULT_EXCEPTION_MAPPERS);
         }
-        // Topologically sort children before superclasses, so most the specific match is found by iterating through mappers in order.
-        exceptionMappers.sort((a, b) -> (a.type.isAssignableFrom(b.type) ? 1 : 0) + (b.type.isAssignableFrom(a.type) ? -1 : 0));
         return exceptionMappers;
     }
 
@@ -479,6 +479,7 @@ class RestApiImpl implements RestApi {
             }
             return HttpURL.from(URI.create(sb.toString()));
         }
+        @Override public HttpURL url() { return HttpURL.from(request.getUri()); }
         @Override public AclMapping.Action aclAction() { return aclAction; }
         @Override public Optional<Principal> userPrincipal() {
             return Optional.ofNullable(request.getJDiscRequest().getUserPrincipal());

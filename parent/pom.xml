@@ -237,7 +237,7 @@
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
                     <artifactId>exec-maven-plugin</artifactId>
-                    <version>3.1.1</version>
+                    <version>3.2.0</version>
                 </plugin>
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
@@ -317,7 +317,7 @@
                     -->
                     <groupId>org.openrewrite.maven</groupId>
                     <artifactId>rewrite-maven-plugin</artifactId>
-                    <version>5.22.0</version>
+                    <version>5.29.0</version>
                     <configuration>
                         <activeRecipes>
                             <recipe>org.openrewrite.java.testing.junit5.JUnit5BestPractices</recipe>
@@ -327,7 +327,7 @@
                         <dependency>
                             <groupId>org.openrewrite.recipe</groupId>
                             <artifactId>rewrite-testing-frameworks</artifactId>
-                            <version>2.3.2</version>
+                            <version>2.7.0</version>
                         </dependency>
                     </dependencies>
                 </plugin>
@@ -518,12 +518,9 @@
                 <version>${luben.zstd.vespa.version}</version>
             </dependency>
             <dependency>
-                <!-- Needed by zookeeper, which has an optional dependency.
-                     Version must be the same as the one zk uses - check the zk pom file.
-                     https://github.com/apache/zookeeper/blob/master/pom.xml -->
-                <groupId>com.github.spotbugs</groupId>
-                <artifactId>spotbugs-annotations</artifactId>
-                <version>${spotbugs.vespa.version}</version>
+                <groupId>org.vafer</groupId>
+                <artifactId>jdependency</artifactId>
+                <version>${vafer.jdependency.vespa.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.wiremock</groupId>
@@ -587,6 +584,11 @@
                 <groupId>com.microsoft.onnxruntime</groupId>
                 <artifactId>onnxruntime</artifactId>
                 <version>${onnxruntime.vespa.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>de.kherud</groupId>
+                <artifactId>llama</artifactId>
+                <version>${kherud.llama.vespa.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.yahoo.athenz</groupId>
@@ -886,6 +888,11 @@
                 <version>2.2.1</version>
             </dependency>
             <dependency>
+                <groupId>org.apache.maven</groupId>
+                <artifactId>maven-xml-impl</artifactId>
+                <version>${maven-xml-impl.vespa.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.apache.maven.enforcer</groupId>
                 <artifactId>enforcer-api</artifactId>
                 <version>${maven-enforcer-plugin.vespa.version}</version>
@@ -993,8 +1000,28 @@
             </dependency>
             <dependency>
                 <groupId>org.codehaus.plexus</groupId>
+                <artifactId>plexus-archiver</artifactId>
+                <version>${plexus-archiver.vespa.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.codehaus.plexus</groupId>
                 <artifactId>plexus-interpolation</artifactId>
                 <version>${plexus-interpolation.vespa.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.codehaus.plexus</groupId>
+                <artifactId>plexus-io</artifactId>
+                <version>${plexus-io.vespa.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.codehaus.plexus</groupId>
+                <artifactId>plexus-utils</artifactId>
+                <version>${plexus-utils.vespa.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.codehaus.plexus</groupId>
+                <artifactId>plexus-xml</artifactId>
+                <version>${plexus-xml.vespa.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.bouncycastle</groupId>
@@ -1172,7 +1199,7 @@
                      See pluginManagement of rewrite-maven-plugin for more details -->
                 <groupId>org.openrewrite.recipe</groupId>
                 <artifactId>rewrite-recipe-bom</artifactId>
-                <version>2.6.4</version>
+                <version>2.10.0</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -1210,6 +1237,18 @@
                 <groupId>org.twdata.maven</groupId>
                 <artifactId>mojo-executor</artifactId>
                 <version>${mojo-executor.vespa.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Force fresh woodstox-core without security issue -->
+                <groupId>com.fasterxml.woodstox</groupId>
+                <artifactId>woodstox-core</artifactId>
+                <version>${woodstox.vespa.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Force fresh woodstox-core without security issue -->
+                <groupId>org.codehaus.woodstox</groupId>
+                <artifactId>stax2-api</artifactId>
+                <version>${stax2-api.vespa.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.xerial.snappy</groupId>

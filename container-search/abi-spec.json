@@ -555,11 +555,15 @@
       "public"
     ],
     "methods" : [
+      "public void <init>(java.lang.String, boolean, java.lang.String, int, int, boolean)",
       "public void <init>(java.lang.String, boolean, java.lang.String, int, int)",
       "public void setMaxEditDistance(int)",
       "public void setPrefixLength(int)",
       "public int getPrefixLength()",
       "public int getMaxEditDistance()",
+      "public boolean isPrefixMatch()",
+      "public void setPrefixMatch(boolean)",
+      "protected boolean hasPrefixMatchSemantics()",
       "public void setValue(java.lang.String)",
       "public java.lang.String getRawWord()",
       "public boolean isWords()",
@@ -820,6 +824,7 @@
       "public abstract java.lang.String getName()",
       "public void setFilter(boolean)",
       "public boolean isFilter()",
+      "protected boolean hasPrefixMatchSemantics()",
       "public com.yahoo.prelude.query.Item$ItemCreator getCreator()",
       "public void setCreator(com.yahoo.prelude.query.Item$ItemCreator)",
       "public void setWeight(int)",
@@ -2492,7 +2497,7 @@
       "public"
     ],
     "methods" : [
-      "public void <init>(com.yahoo.container.QrSearchersConfig, com.yahoo.search.config.ClusterConfig, com.yahoo.vespa.config.search.AttributesConfig)",
+      "public void <init>(com.yahoo.search.config.ClusterConfig, com.yahoo.vespa.config.search.AttributesConfig)",
       "public com.yahoo.search.Result search(com.yahoo.search.Query, com.yahoo.search.searchchain.Execution)"
     ],
     "fields" : [
@@ -6558,8 +6563,8 @@
       "public"
     ],
     "methods" : [
-      "public void <init>(java.lang.String, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.language.process.Embedder, java.util.Map)",
-      "public void <init>(java.lang.String, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, java.util.Map, java.util.Map)",
+      "public void <init>(java.lang.String, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, com.yahoo.language.process.Embedder, java.util.Map, com.yahoo.search.query.Properties)",
+      "public void <init>(java.lang.String, com.yahoo.search.query.profile.compiled.CompiledQueryProfileRegistry, java.util.Map, java.util.Map, com.yahoo.search.query.Properties)",
       "public java.lang.String destination()",
       "public static com.yahoo.search.query.profile.types.ConversionContext empty()"
     ],
@@ -7460,6 +7465,25 @@
     ],
     "fields" : [ ]
   },
+  "com.yahoo.search.rendering.EventRenderer" : {
+    "superClass" : "com.yahoo.processing.rendering.AsynchronousSectionedRenderer",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>()",
+      "public void <init>(java.util.concurrent.Executor)",
+      "public void beginResponse(java.io.OutputStream)",
+      "public void beginList(com.yahoo.processing.response.DataList)",
+      "public void data(com.yahoo.processing.response.Data)",
+      "public void endList(com.yahoo.processing.response.DataList)",
+      "public void endResponse()",
+      "public java.lang.String getEncoding()",
+      "public java.lang.String getMimeType()"
+    ],
+    "fields" : [ ]
+  },
   "com.yahoo.search.rendering.JsonRenderer$FieldConsumer" : {
     "superClass" : "java.lang.Object",
     "interfaces" : [
@@ -7554,6 +7578,7 @@
       "public static final com.yahoo.component.ComponentId xmlRendererId",
       "public static final com.yahoo.component.ComponentId pageRendererId",
       "public static final com.yahoo.component.ComponentId jsonRendererId",
+      "public static final com.yahoo.component.ComponentId eventRendererId",
       "public static final com.yahoo.component.ComponentId defaultRendererId"
     ]
   },
@@ -7820,6 +7845,65 @@
       "public static final int NULL_QUERY",
       "public static final int timeoutCode",
       "public static final int emptyDocsumsCode"
+    ]
+  },
+  "com.yahoo.search.result.EventStream$ErrorEvent" : {
+    "superClass" : "com.yahoo.search.result.EventStream$Event",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(int, java.lang.String, com.yahoo.search.result.ErrorMessage)",
+      "public java.lang.String source()",
+      "public int code()",
+      "public java.lang.String message()",
+      "public com.yahoo.search.result.Hit asHit()"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.search.result.EventStream$Event" : {
+    "superClass" : "com.yahoo.component.provider.ListenableFreezableClass",
+    "interfaces" : [
+      "com.yahoo.processing.response.Data"
+    ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(int, java.lang.String, java.lang.String)",
+      "public java.lang.String toString()",
+      "public java.lang.String type()",
+      "public com.yahoo.processing.Request request()",
+      "public com.yahoo.search.result.Hit asHit()"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.search.result.EventStream" : {
+    "superClass" : "com.yahoo.search.result.Hit",
+    "interfaces" : [
+      "com.yahoo.processing.response.DataList"
+    ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>()",
+      "public void add(java.lang.String)",
+      "public void add(java.lang.String, java.lang.String)",
+      "public void error(java.lang.String, com.yahoo.search.result.ErrorMessage)",
+      "public void markComplete()",
+      "public com.yahoo.processing.response.Data add(com.yahoo.processing.response.Data)",
+      "public com.yahoo.processing.response.Data get(int)",
+      "public java.util.List asList()",
+      "public com.yahoo.processing.response.IncomingData incoming()",
+      "public java.util.concurrent.CompletableFuture completeFuture()",
+      "public void addDataListener(java.lang.Runnable)",
+      "public void close()"
+    ],
+    "fields" : [
+      "public static final java.lang.String EVENT_TYPE_TOKEN",
+      "public static final java.lang.String DEFAULT_EVENT_TYPE"
     ]
   },
   "com.yahoo.search.result.FeatureData" : {
@@ -8452,8 +8536,27 @@
       "public void <init>(java.lang.String)",
       "public com.yahoo.search.schema.RankProfile$Builder setHasSummaryFeatures(boolean)",
       "public com.yahoo.search.schema.RankProfile$Builder setHasRankFeatures(boolean)",
-      "public com.yahoo.search.schema.RankProfile$Builder addInput(java.lang.String, com.yahoo.tensor.TensorType)",
+      "public com.yahoo.search.schema.RankProfile$Builder addInput(java.lang.String, com.yahoo.search.schema.RankProfile$InputType)",
       "public com.yahoo.search.schema.RankProfile build()"
+    ],
+    "fields" : [ ]
+  },
+  "com.yahoo.search.schema.RankProfile$InputType" : {
+    "superClass" : "java.lang.Record",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public",
+      "final",
+      "record"
+    ],
+    "methods" : [
+      "public void <init>(com.yahoo.tensor.TensorType, boolean)",
+      "public java.lang.String toString()",
+      "public static com.yahoo.search.schema.RankProfile$InputType fromSpec(java.lang.String)",
+      "public final int hashCode()",
+      "public final boolean equals(java.lang.Object)",
+      "public com.yahoo.tensor.TensorType tensorType()",
+      "public boolean declaredString()"
     ],
     "fields" : [ ]
   },
@@ -8517,8 +8620,9 @@
     ],
     "methods" : [
       "public boolean isStreaming()",
+      "public java.util.Collection schemas()",
       "public java.util.Optional fieldInfo(java.lang.String)",
-      "public com.yahoo.tensor.TensorType rankProfileInput(java.lang.String, java.lang.String)"
+      "public com.yahoo.search.schema.RankProfile$InputType rankProfileInput(java.lang.String, java.lang.String)"
     ],
     "fields" : [ ]
   },
@@ -9062,6 +9166,101 @@
       "public java.util.List getSubSpans()",
       "public int getFrom()",
       "public int getTo()"
+    ],
+    "fields" : [ ]
+  },
+  "ai.vespa.search.llm.LLMSearcher" : {
+    "superClass" : "com.yahoo.search.Searcher",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(ai.vespa.search.llm.LlmSearcherConfig, com.yahoo.component.provider.ComponentRegistry)",
+      "public com.yahoo.search.Result search(com.yahoo.search.Query, com.yahoo.search.searchchain.Execution)",
+      "protected com.yahoo.search.Result complete(com.yahoo.search.Query, ai.vespa.llm.completion.Prompt)",
+      "public java.lang.String getPrompt(com.yahoo.search.Query)",
+      "public java.lang.String getPropertyPrefix()",
+      "public java.lang.String lookupProperty(java.lang.String, com.yahoo.search.Query)",
+      "public java.lang.Boolean lookupPropertyBool(java.lang.String, com.yahoo.search.Query, boolean)",
+      "public java.lang.String lookupPropertyWithOrWithoutPrefix(java.lang.String, java.util.function.Function)",
+      "public java.lang.String getApiKeyHeader(com.yahoo.search.Query)"
+    ],
+    "fields" : [ ]
+  },
+  "ai.vespa.search.llm.LlmSearcherConfig$Builder" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [
+      "com.yahoo.config.ConfigInstance$Builder"
+    ],
+    "attributes" : [
+      "public",
+      "final"
+    ],
+    "methods" : [
+      "public void <init>()",
+      "public void <init>(ai.vespa.search.llm.LlmSearcherConfig)",
+      "public ai.vespa.search.llm.LlmSearcherConfig$Builder propertyPrefix(java.lang.String)",
+      "public ai.vespa.search.llm.LlmSearcherConfig$Builder stream(boolean)",
+      "public ai.vespa.search.llm.LlmSearcherConfig$Builder providerId(java.lang.String)",
+      "public final boolean dispatchGetConfig(com.yahoo.config.ConfigInstance$Producer)",
+      "public final java.lang.String getDefMd5()",
+      "public final java.lang.String getDefName()",
+      "public final java.lang.String getDefNamespace()",
+      "public final boolean getApplyOnRestart()",
+      "public final void setApplyOnRestart(boolean)",
+      "public ai.vespa.search.llm.LlmSearcherConfig build()"
+    ],
+    "fields" : [ ]
+  },
+  "ai.vespa.search.llm.LlmSearcherConfig$Producer" : {
+    "superClass" : "java.lang.Object",
+    "interfaces" : [
+      "com.yahoo.config.ConfigInstance$Producer"
+    ],
+    "attributes" : [
+      "public",
+      "interface",
+      "abstract"
+    ],
+    "methods" : [
+      "public abstract void getConfig(ai.vespa.search.llm.LlmSearcherConfig$Builder)"
+    ],
+    "fields" : [ ]
+  },
+  "ai.vespa.search.llm.LlmSearcherConfig" : {
+    "superClass" : "com.yahoo.config.ConfigInstance",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public",
+      "final"
+    ],
+    "methods" : [
+      "public static java.lang.String getDefMd5()",
+      "public static java.lang.String getDefName()",
+      "public static java.lang.String getDefNamespace()",
+      "public void <init>(ai.vespa.search.llm.LlmSearcherConfig$Builder)",
+      "public java.lang.String propertyPrefix()",
+      "public boolean stream()",
+      "public java.lang.String providerId()"
+    ],
+    "fields" : [
+      "public static final java.lang.String CONFIG_DEF_MD5",
+      "public static final java.lang.String CONFIG_DEF_NAME",
+      "public static final java.lang.String CONFIG_DEF_NAMESPACE",
+      "public static final java.lang.String[] CONFIG_DEF_SCHEMA"
+    ]
+  },
+  "ai.vespa.search.llm.RAGSearcher" : {
+    "superClass" : "ai.vespa.search.llm.LLMSearcher",
+    "interfaces" : [ ],
+    "attributes" : [
+      "public"
+    ],
+    "methods" : [
+      "public void <init>(ai.vespa.search.llm.LlmSearcherConfig, com.yahoo.component.provider.ComponentRegistry)",
+      "public com.yahoo.search.Result search(com.yahoo.search.Query, com.yahoo.search.searchchain.Execution)",
+      "protected ai.vespa.llm.completion.Prompt buildPrompt(com.yahoo.search.Query, com.yahoo.search.Result)"
     ],
     "fields" : [ ]
   }
